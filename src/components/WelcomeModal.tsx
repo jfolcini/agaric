@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 import { FileText, Keyboard, Tag } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -52,28 +53,27 @@ const FEATURES = [
   },
 ] as const
 
-async function createSamplePages(): Promise<void> {
+async function createSamplePages(t: TFunction): Promise<void> {
   // Create "Getting Started" page with child blocks
   const gettingStarted = await createBlock({
     blockType: 'page',
-    content: 'Getting Started',
+    content: t('welcome.sampleGettingStartedTitle'),
   })
   await createBlock({
     blockType: 'content',
-    content: 'Welcome to Agaric! This is a local-first note-taking app.',
+    content: t('welcome.sampleGettingStartedBody1'),
     parentId: gettingStarted.id,
     position: 0,
   })
   await createBlock({
     blockType: 'content',
-    content:
-      'Each page is made of **blocks** — small pieces of text that you can nest and reorganize.',
+    content: t('welcome.sampleGettingStartedBody2'),
     parentId: gettingStarted.id,
     position: 1,
   })
   await createBlock({
     blockType: 'content',
-    content: 'Use the sidebar to navigate between pages, journal, tags, and more.',
+    content: t('welcome.sampleGettingStartedBody3'),
     parentId: gettingStarted.id,
     position: 2,
   })
@@ -81,23 +81,23 @@ async function createSamplePages(): Promise<void> {
   // Create "Quick Tips" page with keyboard shortcut highlights
   const quickTips = await createBlock({
     blockType: 'page',
-    content: 'Quick Tips',
+    content: t('welcome.sampleQuickTipsTitle'),
   })
   await createBlock({
     blockType: 'content',
-    content: 'Press **?** to open the keyboard shortcuts reference.',
+    content: t('welcome.sampleQuickTipsBody1'),
     parentId: quickTips.id,
     position: 0,
   })
   await createBlock({
     blockType: 'content',
-    content: 'Use **Ctrl+N** to quickly create a new page.',
+    content: t('welcome.sampleQuickTipsBody2'),
     parentId: quickTips.id,
     position: 1,
   })
   await createBlock({
     blockType: 'content',
-    content: 'Type **//** to open the slash command menu for inserting dates, templates, and more.',
+    content: t('welcome.sampleQuickTipsBody3'),
     parentId: quickTips.id,
     position: 2,
   })
@@ -129,7 +129,7 @@ export function WelcomeModal() {
   const handleCreateSamplePages = useCallback(async () => {
     setCreating(true)
     try {
-      await createSamplePages()
+      await createSamplePages(t)
       toast.success(t('welcome.samplePagesCreated'))
       handleDismiss()
     } catch (err) {
@@ -154,9 +154,14 @@ export function WelcomeModal() {
           <DialogTitle>{t('welcome.title')}</DialogTitle>
           <DialogDescription>{t('welcome.description')}</DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4 py-2">
+        {/*
+          biome-ignore lint/a11y/noRedundantRoles: explicit role="list" is
+          required because Safari + VoiceOver strip the implicit list role
+          from a <ul> with `list-style: none` (Tailwind `list-none`). UX-278.
+        */}
+        <ul role="list" className="grid list-none gap-4 py-2 pl-0">
           {FEATURES.map((feature) => (
-            <div key={feature.titleKey} className="flex items-start gap-3">
+            <li key={feature.titleKey} className="flex items-start gap-3">
               <feature.icon
                 className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground"
                 aria-hidden="true"
@@ -165,9 +170,9 @@ export function WelcomeModal() {
                 <p className="text-sm font-medium">{t(feature.titleKey)}</p>
                 <p className="text-sm text-muted-foreground">{t(feature.descKey)}</p>
               </div>
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
         <DialogFooter>
           <Button variant="outline" onClick={handleCreateSamplePages} disabled={creating}>
             {t('welcome.createSamplePages')}

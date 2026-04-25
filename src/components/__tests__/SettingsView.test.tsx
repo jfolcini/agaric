@@ -88,6 +88,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.removeItem('theme-preference')
   localStorage.removeItem('agaric-font-size')
+  localStorage.removeItem('agaric-settings-active-tab')
   for (const cls of ALL_THEME_CLASSES) document.documentElement.classList.remove(cls)
   document.documentElement.style.removeProperty('--agaric-font-size')
 })
@@ -386,6 +387,55 @@ describe('SettingsView', () => {
 
     expect(localStorage.getItem('agaric-font-size')).toBe('small')
     expect(document.documentElement.style.getPropertyValue('--agaric-font-size')).toBe('14px')
+  })
+
+  // ── UX-276: active tab persistence ─────────────────────────────────
+
+  describe('active tab persistence (UX-276)', () => {
+    it('renders with the persisted active tab on first render', () => {
+      localStorage.setItem('agaric-settings-active-tab', 'keyboard')
+      render(<SettingsView />)
+
+      const keyboardTab = screen.getByRole('tab', { name: t('settings.tabKeyboard') })
+      expect(keyboardTab).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByTestId('keyboard-settings-tab')).toBeInTheDocument()
+
+      const generalTab = screen.getByRole('tab', { name: t('settings.tabGeneral') })
+      expect(generalTab).toHaveAttribute('aria-selected', 'false')
+    })
+
+    it('switching tab writes the new value to localStorage', async () => {
+      const user = userEvent.setup()
+      render(<SettingsView />)
+
+      // Initial render persists the default tab.
+      await waitFor(() => {
+        expect(localStorage.getItem('agaric-settings-active-tab')).toBe('general')
+      })
+
+      const propertiesTab = screen.getByRole('tab', { name: t('settings.tabProperties') })
+      await user.click(propertiesTab)
+
+      await waitFor(() => {
+        expect(localStorage.getItem('agaric-settings-active-tab')).toBe('properties')
+      })
+
+      const syncTab = screen.getByRole('tab', { name: t('settings.tabSync') })
+      await user.click(syncTab)
+
+      await waitFor(() => {
+        expect(localStorage.getItem('agaric-settings-active-tab')).toBe('sync')
+      })
+    })
+
+    it('falls back to general when the persisted value is not a known tab', () => {
+      localStorage.setItem('agaric-settings-active-tab', 'not-a-real-tab')
+      render(<SettingsView />)
+
+      const generalTab = screen.getByRole('tab', { name: t('settings.tabGeneral') })
+      expect(generalTab).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByTestId('deadline-warning-section')).toBeInTheDocument()
+    })
   })
 
   it('has no a11y violations', async () => {

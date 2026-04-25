@@ -176,4 +176,23 @@ describe('DuePanelFilters', () => {
     expect(screen.getByRole('button', { name: 'Scheduled' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Properties' })).toBeInTheDocument()
   })
+
+  // UX-268 — touch-target sizing
+  it('source filter pills include 44px min-width and min-height on coarse pointer', () => {
+    render(<DuePanelFilters {...defaultProps} />)
+
+    for (const name of ['All', 'Due', 'Scheduled', 'Properties']) {
+      const pill = screen.getByRole('button', { name })
+      expect(pill.className).toContain('[@media(pointer:coarse)]:min-h-[44px]')
+      expect(pill.className).toContain('[@media(pointer:coarse)]:min-w-[44px]')
+    }
+  })
+
+  it('hide-before-scheduled toggle has aria-label and 44px min-height on coarse pointer', () => {
+    render(<DuePanelFilters {...defaultProps} hideBeforeScheduled={false} />)
+
+    const toggle = screen.getByRole('button', { name: /Scheduled: show all/i })
+    expect(toggle).toHaveAttribute('aria-label', 'Scheduled: show all')
+    expect(toggle.className).toContain('[@media(pointer:coarse)]:min-h-[44px]')
+  })
 })

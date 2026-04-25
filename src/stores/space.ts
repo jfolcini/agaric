@@ -13,8 +13,10 @@
  * starts at `false` and flips to `true` once the first refresh resolves.
  */
 
+import { toast } from 'sonner'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type { SpaceRow } from '../lib/tauri'
 import { listSpaces } from '../lib/tauri'
@@ -74,12 +76,26 @@ export const useSpaceStore = create<SpaceState>()(
             return
           }
           const spaces = raw
-          const nextCurrent = reconcileCurrentSpaceId(get().currentSpaceId, spaces)
+          const prevCurrent = get().currentSpaceId
+          const nextCurrent = reconcileCurrentSpaceId(prevCurrent, spaces)
           set({
             availableSpaces: spaces,
             currentSpaceId: nextCurrent,
             isReady: true,
           })
+          // UX-266 — when the previously-active space disappeared from the
+          // server-truth list (e.g. deleted on another device and synced
+          // down) we silently fall back to the first available space. Tell
+          // the user once via a one-shot toast so they understand why the
+          // active space changed without their action. Skip on first boot
+          // (`prevCurrent === null`) and when the fallback finds no space
+          // to switch to (`nextCurrent === null`).
+          if (prevCurrent !== null && nextCurrent !== null && prevCurrent !== nextCurrent) {
+            const newSpace = spaces.find((s) => s.id === nextCurrent)
+            if (newSpace) {
+              toast.warning(i18n.t('space.activeDeletedNotification', { space: newSpace.name }))
+            }
+          }
         } catch (err) {
           // Never freeze the UI on backend error — mark ready and leave
           // `availableSpaces` untouched so a previously-loaded snapshot

@@ -50,6 +50,8 @@ const resources = {
       'space.movedToast': 'Page moved to {{space}}',
       'space.moveFailed': 'Failed to move page',
       'space.notReady': 'Loading spaces…',
+      'space.activeDeletedNotification':
+        'Your active space was deleted on another device. Switched to {{space}}.',
 
       // Empty states
       'empty.noBlocks': 'No blocks yet. Click + Add block below to start writing.',
@@ -1684,6 +1686,18 @@ const resources = {
       'welcome.createSamplePages': 'Create sample pages',
       'welcome.samplePagesCreated': 'Sample pages created!',
       'welcome.samplePagesFailed': 'Failed to create sample pages',
+      'welcome.sampleGettingStartedTitle': 'Getting Started',
+      'welcome.sampleGettingStartedBody1':
+        'Welcome to Agaric! This is a local-first note-taking app.',
+      'welcome.sampleGettingStartedBody2':
+        'Each page is made of **blocks** — small pieces of text that you can nest and reorganize.',
+      'welcome.sampleGettingStartedBody3':
+        'Use the sidebar to navigate between pages, journal, tags, and more.',
+      'welcome.sampleQuickTipsTitle': 'Quick Tips',
+      'welcome.sampleQuickTipsBody1': 'Press **?** to open the keyboard shortcuts reference.',
+      'welcome.sampleQuickTipsBody2': 'Use **Ctrl+N** to quickly create a new page.',
+      'welcome.sampleQuickTipsBody3':
+        'Type **//** to open the slash command menu for inserting dates, templates, and more.',
 
       // F-30: Settings view
       'sidebar.settings': 'Settings',
@@ -1910,6 +1924,7 @@ const resources = {
       'bugReport.copied': 'Report copied to clipboard',
       'bugReport.copyFailed': 'Failed to copy report',
       'bugReport.openIssue': 'Open in GitHub',
+      'bugReport.submitted': 'Bug report submitted. The GitHub issue is opening in a new tab.',
       'bugReport.loadMetadataFailed': 'Failed to collect bug-report metadata',
       'bugReport.readLogsFailed': 'Failed to read logs',
       'bugReport.buildZipFailed': 'Failed to build ZIP',

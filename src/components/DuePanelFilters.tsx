@@ -56,7 +56,7 @@ export function DuePanelFilters({
             key={opt.label}
             type="button"
             className={cn(
-              'rounded-full px-2.5 py-1 text-xs font-medium transition-colors [@media(pointer:coarse)]:min-h-[44px]',
+              'rounded-full px-2.5 py-1 text-xs font-medium transition-colors [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]',
               sourceFilter === opt.value
                 ? 'bg-primary text-primary-foreground'
                 : 'bg-muted text-muted-foreground hover:bg-muted/80',
@@ -74,7 +74,7 @@ export function DuePanelFilters({
       <button
         type="button"
         className={cn(
-          'text-xs px-1.5 py-0.5 rounded border transition-colors',
+          'text-xs px-1.5 py-0.5 rounded border transition-colors [@media(pointer:coarse)]:min-h-[44px]',
           hideBeforeScheduled
             ? 'bg-primary/10 border-primary/30 text-primary'
             : 'border-muted-foreground/20 text-muted-foreground hover:bg-accent/50 active:bg-accent/70',
@@ -84,6 +84,11 @@ export function DuePanelFilters({
           hideBeforeScheduled
             ? t('duePanel.showingScheduledTodayTooltip')
             : t('duePanel.showingAllTasksTooltip')
+        }
+        aria-label={
+          hideBeforeScheduled
+            ? t('duePanel.scheduledHideFutureButton')
+            : t('duePanel.scheduledShowAllButton')
         }
         aria-pressed={hideBeforeScheduled}
       >

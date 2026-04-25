@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -47,7 +48,6 @@ import { logger } from '@/lib/logger'
 import { openUrl } from '@/lib/open-url'
 import type { BugReport, LogFileEntry } from '@/lib/tauri'
 import { collectBugReportMetadata, readLogsForReport } from '@/lib/tauri'
-import { cn } from '@/lib/utils'
 
 interface BugReportDialogProps {
   open: boolean
@@ -185,6 +185,7 @@ export function BugReportDialog({
         }
       }
       await openUrl(issueUrl)
+      toast.success(t('bugReport.submitted'))
       onOpenChange(false)
     } finally {
       setSubmitting(false)
@@ -316,15 +317,12 @@ export function BugReportDialog({
 
           {/* Confirmation */}
           <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
+            <Checkbox
               id="bug-report-confirm"
               checked={confirmed}
-              onChange={(e) => setConfirmed(e.target.checked)}
-              className={cn(
-                'size-4 rounded-sm border-input accent-primary',
-                '[@media(pointer:coarse)]:size-5',
-              )}
+              onCheckedChange={(v) => {
+                if (typeof v === 'boolean') setConfirmed(v)
+              }}
             />
             <Label htmlFor="bug-report-confirm" muted={false}>
               {t('bugReport.confirmCheckbox')}

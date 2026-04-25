@@ -13,6 +13,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18n from 'i18next'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -73,6 +74,21 @@ describe('WelcomeModal', () => {
     expect(screen.getByText('Tags + properties')).toBeInTheDocument()
   })
 
+  // UX-278: feature list must use <ul role="list"> + <li> for proper SR semantics.
+  it('renders the feature list with semantic <ul>/<li> markup', () => {
+    render(<WelcomeModal />)
+
+    const list = screen.getByRole('list')
+    expect(list.tagName).toBe('UL')
+
+    const items = screen.getAllByRole('listitem')
+    expect(items).toHaveLength(3)
+    // Each <li> hosts one feature title
+    expect(items[0]).toHaveTextContent('Blocks + pages')
+    expect(items[1]).toHaveTextContent('Keyboard shortcuts')
+    expect(items[2]).toHaveTextContent('Tags + properties')
+  })
+
   it('"Get Started" dismisses and sets localStorage', async () => {
     const user = userEvent.setup()
     render(<WelcomeModal />)
@@ -116,19 +132,20 @@ describe('WelcomeModal', () => {
       expect(mockedInvoke).toHaveBeenCalledTimes(8)
     })
 
-    // Verify it created the two pages
+    // Verify it created the two pages — assert via i18n keys (UX-278) so
+    // a locale change cannot silently break the assertion.
     expect(mockedInvoke).toHaveBeenCalledWith(
       'create_block',
       expect.objectContaining({
         blockType: 'page',
-        content: 'Getting Started',
+        content: i18n.t('welcome.sampleGettingStartedTitle'),
       }),
     )
     expect(mockedInvoke).toHaveBeenCalledWith(
       'create_block',
       expect.objectContaining({
         blockType: 'page',
-        content: 'Quick Tips',
+        content: i18n.t('welcome.sampleQuickTipsTitle'),
       }),
     )
 
@@ -137,6 +154,56 @@ describe('WelcomeModal', () => {
       expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
     })
     expect(localStorage.getItem('agaric-onboarding-done')).toBe('true')
+  })
+
+  // UX-278: sample-page bodies must come from i18n keys so non-English
+  // locales don't see English onboarding content.
+  it('"Create sample pages" uses i18n strings for every block content', async () => {
+    const user = userEvent.setup()
+
+    let callCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_block') {
+        callCount++
+        return {
+          id: `block-${callCount}`,
+          block_type: 'page',
+          content: '',
+          parent_id: null,
+          position: 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          deleted_at: null,
+        }
+      }
+      return {}
+    })
+
+    render(<WelcomeModal />)
+    await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledTimes(8)
+    })
+
+    // Every i18n-backed string must appear in the create_block payloads
+    const expectedKeys = [
+      'welcome.sampleGettingStartedTitle',
+      'welcome.sampleGettingStartedBody1',
+      'welcome.sampleGettingStartedBody2',
+      'welcome.sampleGettingStartedBody3',
+      'welcome.sampleQuickTipsTitle',
+      'welcome.sampleQuickTipsBody1',
+      'welcome.sampleQuickTipsBody2',
+      'welcome.sampleQuickTipsBody3',
+    ] as const
+
+    for (const key of expectedKeys) {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'create_block',
+        expect.objectContaining({ content: i18n.t(key) }),
+      )
+    }
   })
 
   it('does not show during boot loading state', () => {

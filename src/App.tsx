@@ -958,6 +958,15 @@ function App() {
                     <RefreshCw className={syncing ? 'animate-spin' : ''} />
                   )}
                   <span>{isOnline ? t('sidebar.sync') : t('sidebar.offline')}</span>
+                  <span
+                    className={cn(
+                      'sync-button-status-dot ml-auto h-2.5 w-2.5 rounded-full',
+                      syncDotClass(syncState, syncPeers.length > 0),
+                    )}
+                    data-testid="sync-button-status-dot"
+                    data-sync-state={syncState}
+                    aria-hidden="true"
+                  />
                 </SidebarMenuButton>
                 <span
                   className="px-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden"

@@ -299,6 +299,25 @@ describe('SourcePageFilter', () => {
     expect(items[2]).toHaveTextContent('(1)')
   })
 
+  // UX-268 — touch-target sizing
+  it('trigger button has explicit desktop and coarse-pointer sizing classes', () => {
+    render(
+      <SourcePageFilter
+        sourcePages={samplePages}
+        included={[]}
+        excluded={[]}
+        onChange={onChange}
+      />,
+    )
+
+    const button = screen.getByLabelText('Filter by source page')
+    // Desktop (28px) + coarse pointer (44px), no fixed-height conflict from size="sm".
+    expect(button.className).toContain('h-7')
+    expect(button.className).toContain('w-7')
+    expect(button.className).toContain('[@media(pointer:coarse)]:h-11')
+    expect(button.className).toContain('[@media(pointer:coarse)]:w-11')
+  })
+
   // 13. a11y audit
   it('a11y: no violations', async () => {
     const { container } = render(
