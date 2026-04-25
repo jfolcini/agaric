@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
+import { LoadMoreButton } from '@/components/LoadMoreButton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CardButton } from '@/components/ui/card-button'
@@ -381,9 +382,32 @@ export function SearchPanel(): React.ReactElement {
           <Button type="submit" variant="outline" disabled={!query.trim()}>
             {t('search.searchButton')}
           </Button>
-          {(typing || searchLoading) && <Spinner className="text-muted-foreground" />}
+          {searchLoading ? (
+            <span
+              className="flex items-center gap-1.5 text-xs text-muted-foreground"
+              data-testid="search-fetching-indicator"
+            >
+              <Spinner /> {t('search.searching')}
+            </span>
+          ) : typing ? (
+            <span className="text-xs text-muted-foreground" data-testid="search-typing-indicator">
+              {t('search.typing')}
+            </span>
+          ) : null}
         </form>
       </ViewHeader>
+
+      {/* UX-269 — CJK limitation notice sits directly below the input so
+          CJK users see it before scanning results. */}
+      {hasCJK(query) && (
+        <div
+          className="rounded-lg border border-alert-info-border bg-alert-info p-3 text-sm text-alert-info-foreground"
+          data-testid="cjk-notice"
+        >
+          <span className="font-medium">{t('search.cjkNoteLabel')}</span>{' '}
+          {t('search.cjkLimitationNote')}
+        </div>
+      )}
 
       {/* Filter chip bar */}
       {/* biome-ignore lint/a11y/useSemanticElements: fieldset is for forms, not filter chip groups */}
@@ -467,13 +491,6 @@ export function SearchPanel(): React.ReactElement {
         )}
       </div>
 
-      {hasCJK(query) && (
-        <div className="rounded-lg border border-alert-info-border bg-alert-info p-3 text-sm text-alert-info-foreground">
-          <span className="font-medium">{t('search.cjkNoteLabel')}</span>{' '}
-          {t('search.cjkLimitationNote')}
-        </div>
-      )}
-
       {query.trim().length > 0 && query.trim().length < 3 && (
         <div className="rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground">
           {t('search.minCharsHint')}
@@ -501,88 +518,86 @@ export function SearchPanel(): React.ReactElement {
         <LoadingSkeleton count={2} height="h-12" className="search-loading" />
       )}
 
-      <div aria-live="polite">
-        {searched && !searchLoading && results.length === 0 && !error && !aliasMatch && (
-          <EmptyState icon={Search} message={t('search.noResultsFound')} />
-        )}
-
-        {aliasMatch && (
-          <div className="relative" data-testid="alias-match">
-            <ResultCard
-              block={aliasMatch}
-              onClick={() => handleResultClick(aliasMatch)}
-              disabled={loadingResultId === aliasMatch.id}
-              showSpinner={loadingResultId === aliasMatch.id}
-              contentClassName="line-clamp-2"
-            />
-            <span className="absolute top-1 right-2 text-xs text-muted-foreground">
-              {t('search.aliasMatch', { alias: aliasQuery })}
-            </span>
-          </div>
-        )}
-
-        {results.length > 0 && (
-          <div
-            className="search-results space-y-3 list-none m-0 p-0"
-            data-testid="search-results"
-            role="listbox"
-            tabIndex={0}
-            aria-label={t('search.resultsListLabel')}
-            onKeyDown={(e) => {
-              if (handleListKeyDown(e)) e.preventDefault()
-            }}
-            aria-activedescendant={
-              results[focusedIndex] ? `search-result-${results[focusedIndex].id}` : undefined
-            }
-          >
-            {results.map((block, index) => (
-              <div
-                key={block.id}
-                id={`search-result-${block.id}`}
-                role="option"
-                aria-selected={index === focusedIndex}
-                tabIndex={-1}
-                className={cn(index === focusedIndex && 'bg-accent rounded-lg')}
-              >
-                <ResultCard
-                  block={block}
-                  onClick={() => handleResultClick(block)}
-                  disabled={loadingResultId === block.id}
-                  showSpinner={loadingResultId === block.id}
-                  contentClassName="line-clamp-2"
-                >
-                  {block.page_id && pageTitles.get(block.page_id) && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      in:{' '}
-                      <PageLink
-                        pageId={block.page_id}
-                        title={pageTitles.get(block.page_id) ?? ''}
-                      />
-                    </p>
-                  )}
-                </ResultCard>
-              </div>
-            ))}
-          </div>
-        )}
-        {searched && !searchLoading && !error && results.length > 0 && (
-          <span className="text-xs text-muted-foreground">
+      {/* UX-269 — Status region: announces results-count changes to SR
+          users and renders the visible count. Sits ABOVE the listbox as
+          a separate sibling (NOT wrapping it) so interactive options
+          aren't re-announced on every result-set change. */}
+      <div role="status" aria-live="polite" aria-atomic="true" data-testid="search-results-status">
+        {searched && !searchLoading && !error && results.length > 0 ? (
+          <span className="text-xs text-muted-foreground" data-testid="search-results-count">
             {t('search.resultsCount', { count: results.length })}
           </span>
-        )}
+        ) : null}
       </div>
 
-      {hasMore && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="search-load-more w-full"
-          onClick={loadMore}
-          disabled={searchLoading}
-        >
-          {searchLoading ? t('search.loadingMessage') : t('search.loadMoreButton')}
-        </Button>
+      {searched && !searchLoading && results.length === 0 && !error && !aliasMatch && (
+        <EmptyState icon={Search} message={t('search.noResultsFound')} />
       )}
+
+      {aliasMatch && (
+        <div data-testid="alias-match">
+          <ResultCard
+            block={aliasMatch}
+            onClick={() => handleResultClick(aliasMatch)}
+            disabled={loadingResultId === aliasMatch.id}
+            showSpinner={loadingResultId === aliasMatch.id}
+            contentClassName="line-clamp-2"
+          >
+            <p className="text-xs text-muted-foreground mt-1" data-testid="alias-match-label">
+              {t('search.aliasMatch', { alias: aliasQuery })}
+            </p>
+          </ResultCard>
+        </div>
+      )}
+
+      {results.length > 0 && (
+        <div
+          className="search-results space-y-3 list-none m-0 p-0"
+          data-testid="search-results"
+          role="listbox"
+          tabIndex={0}
+          aria-label={t('search.resultsListLabel')}
+          onKeyDown={(e) => {
+            if (handleListKeyDown(e)) e.preventDefault()
+          }}
+          aria-activedescendant={
+            results[focusedIndex] ? `search-result-${results[focusedIndex].id}` : undefined
+          }
+        >
+          {results.map((block, index) => (
+            <div
+              key={block.id}
+              id={`search-result-${block.id}`}
+              role="option"
+              aria-selected={index === focusedIndex}
+              tabIndex={-1}
+              className={cn(index === focusedIndex && 'bg-accent rounded-lg')}
+            >
+              <ResultCard
+                block={block}
+                onClick={() => handleResultClick(block)}
+                disabled={loadingResultId === block.id}
+                showSpinner={loadingResultId === block.id}
+                contentClassName="line-clamp-2"
+              >
+                {block.page_id && pageTitles.get(block.page_id) && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    in:{' '}
+                    <PageLink pageId={block.page_id} title={pageTitles.get(block.page_id) ?? ''} />
+                  </p>
+                )}
+              </ResultCard>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <LoadMoreButton
+        hasMore={hasMore}
+        loading={searchLoading}
+        onLoadMore={loadMore}
+        className="search-load-more"
+      />
     </div>
   )
 }

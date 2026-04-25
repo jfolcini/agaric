@@ -12,62 +12,87 @@
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  addAttachment,
   addTag,
   batchResolve,
   cancelPairing,
   cancelSync,
+  collectBugReportMetadata,
+  compactOpLog,
   computeEditDiff,
   confirmPairing,
   countAgendaBatch,
   countAgendaBatchBySource,
   countBacklinksBatch,
   createBlock,
+  createPageInSpace,
   createPropertyDef,
+  deleteAttachment,
   deleteBlock,
+  deleteDraft,
   deletePeerRef,
   deleteProperty,
   deletePropertyDef,
   editBlock,
   exportPageMarkdown,
+  fetchLinkMetadata,
+  flushDraft,
   getBacklinks,
   getBatchProperties,
   getBlock,
   getBlockHistory,
+  getCompactionStatus,
   getConflicts,
   getDeviceId,
+  getLinkMetadata,
+  getLogDir,
   getPageAliases,
   getPeerRef,
   getProperties,
   getStatus,
+  importMarkdown,
+  listAttachments,
   listBacklinksGrouped,
   listBlocks,
+  listDrafts,
   listPageHistory,
+  listPageLinks,
   listPeerRefs,
+  listProjectedAgenda,
   listPropertyDefs,
   listPropertyKeys,
+  listSpaces,
   listTagsByPrefix,
   listTagsForBlock,
   listUndatedTasks,
   listUnlinkedReferences,
+  logFrontend,
   moveBlock,
+  purgeAllDeleted,
   purgeBlock,
   queryBacklinksFiltered,
   queryByProperty,
   queryByTags,
+  readLogsForReport,
   redoPageOp,
   removeTag,
   resolvePageByAlias,
+  restoreAllDeleted,
   restoreBlock,
+  restorePageToOp,
   revertOps,
+  saveDraft,
   searchBlocks,
   setDueDate,
   setPageAliases,
+  setPeerAddress,
   setPriority,
   setProperty,
   setScheduledDate,
   setTodoState,
   startPairing,
   startSync,
+  trashDescendantCounts,
   undoPageOp,
   updatePeerName,
   updatePropertyDefOptions,
@@ -1917,6 +1942,668 @@ describe('exportPageMarkdown', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('export_page_markdown', { pageId: 'PAGE1' })
     expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// restoreAllDeleted
+// ---------------------------------------------------------------------------
+
+describe('restoreAllDeleted', () => {
+  it('invokes restore_all_deleted with no arguments', async () => {
+    const expected = { affected_count: 5 }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await restoreAllDeleted()
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('restore_all_deleted')
+    expect(result).toEqual(expected)
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
+    await expect(restoreAllDeleted()).rejects.toThrow('db error')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// purgeAllDeleted
+// ---------------------------------------------------------------------------
+
+describe('purgeAllDeleted', () => {
+  it('invokes purge_all_deleted with no arguments', async () => {
+    const expected = { affected_count: 8 }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await purgeAllDeleted()
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('purge_all_deleted')
+    expect(result).toEqual(expected)
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
+    await expect(purgeAllDeleted()).rejects.toThrow('db error')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// trashDescendantCounts
+// ---------------------------------------------------------------------------
+
+describe('trashDescendantCounts', () => {
+  it('invokes trash_descendant_counts with rootIds array', async () => {
+    const expected = { ROOT1: 3, ROOT2: 1 }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await trashDescendantCounts(['ROOT1', 'ROOT2'])
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('trash_descendant_counts', {
+      rootIds: ['ROOT1', 'ROOT2'],
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('passes empty array unchanged', async () => {
+    mockedInvoke.mockResolvedValueOnce({})
+
+    await trashDescendantCounts([])
+
+    expect(mockedInvoke).toHaveBeenCalledWith('trash_descendant_counts', { rootIds: [] })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listProjectedAgenda
+// ---------------------------------------------------------------------------
+
+describe('listProjectedAgenda', () => {
+  it('invokes list_projected_agenda with all parameters', async () => {
+    const expected = [
+      {
+        block: {
+          id: 'BLK1',
+          block_type: 'task',
+          content: 'recurring',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+        },
+        projected_date: '2025-02-01',
+        source: 'due_date',
+      },
+    ]
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await listProjectedAgenda({
+      startDate: '2025-01-15',
+      endDate: '2025-02-15',
+      limit: 50,
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_projected_agenda', {
+      startDate: '2025-01-15',
+      endDate: '2025-02-15',
+      limit: 50,
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('defaults optional limit to null', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    await listProjectedAgenda({ startDate: '2025-01-15', endDate: '2025-02-15' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('list_projected_agenda', {
+      startDate: '2025-01-15',
+      endDate: '2025-02-15',
+      limit: null,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listPageLinks
+// ---------------------------------------------------------------------------
+
+describe('listPageLinks', () => {
+  it('invokes list_page_links with no arguments', async () => {
+    const expected = [
+      { source_id: 'PAGE1', target_id: 'PAGE2', ref_count: 3 },
+      { source_id: 'PAGE2', target_id: 'PAGE3', ref_count: 1 },
+    ]
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await listPageLinks()
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_page_links')
+    expect(result).toEqual(expected)
+  })
+
+  it('returns empty array when no links exist', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    const result = await listPageLinks()
+
+    expect(result).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// restorePageToOp
+// ---------------------------------------------------------------------------
+
+describe('restorePageToOp', () => {
+  it('invokes restore_page_to_op with all parameters', async () => {
+    const expected = { ops_reverted: 3, non_reversible_skipped: 1, results: [] }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await restorePageToOp({
+      pageId: 'PAGE1',
+      targetDeviceId: 'dev1',
+      targetSeq: 42,
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('restore_page_to_op', {
+      pageId: 'PAGE1',
+      targetDeviceId: 'dev1',
+      targetSeq: 42,
+    })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// setPeerAddress
+// ---------------------------------------------------------------------------
+
+describe('setPeerAddress', () => {
+  it('invokes set_peer_address with peerId and address', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await setPeerAddress('peer-1', '192.168.1.10:8765')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('set_peer_address', {
+      peerId: 'peer-1',
+      address: '192.168.1.10:8765',
+    })
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('invalid address'))
+    await expect(setPeerAddress('peer-1', 'bogus')).rejects.toThrow('invalid address')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listAttachments
+// ---------------------------------------------------------------------------
+
+describe('listAttachments', () => {
+  it('invokes list_attachments with blockId', async () => {
+    const expected = [
+      {
+        id: 'ATT1',
+        block_id: 'BLK001',
+        filename: 'photo.png',
+        mime_type: 'image/png',
+        size_bytes: 1024,
+        fs_path: '/tmp/photo.png',
+        created_at: '2025-01-15T00:00:00Z',
+      },
+    ]
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await listAttachments('BLK001')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_attachments', { blockId: 'BLK001' })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// addAttachment
+// ---------------------------------------------------------------------------
+
+describe('addAttachment', () => {
+  it('invokes add_attachment with all parameters', async () => {
+    const expected = {
+      id: 'ATT1',
+      block_id: 'BLK001',
+      filename: 'doc.pdf',
+      mime_type: 'application/pdf',
+      size_bytes: 2048,
+      fs_path: '/tmp/doc.pdf',
+      created_at: '2025-01-15T00:00:00Z',
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await addAttachment({
+      blockId: 'BLK001',
+      filename: 'doc.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 2048,
+      fsPath: '/tmp/doc.pdf',
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('add_attachment', {
+      blockId: 'BLK001',
+      filename: 'doc.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 2048,
+      fsPath: '/tmp/doc.pdf',
+    })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// deleteAttachment
+// ---------------------------------------------------------------------------
+
+describe('deleteAttachment', () => {
+  it('invokes delete_attachment with attachmentId', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await deleteAttachment('ATT1')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_attachment', { attachmentId: 'ATT1' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// importMarkdown
+// ---------------------------------------------------------------------------
+
+describe('importMarkdown', () => {
+  it('invokes import_markdown with content and filename', async () => {
+    const expected = {
+      page_title: 'My Page',
+      blocks_created: 5,
+      properties_set: 2,
+      warnings: [],
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await importMarkdown('# Title\n\nBody', 'my-page.md')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('import_markdown', {
+      content: '# Title\n\nBody',
+      filename: 'my-page.md',
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('defaults optional filename to null', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      page_title: 'Untitled',
+      blocks_created: 1,
+      properties_set: 0,
+      warnings: [],
+    })
+
+    await importMarkdown('hello')
+
+    expect(mockedInvoke).toHaveBeenCalledWith('import_markdown', {
+      content: 'hello',
+      filename: null,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// saveDraft
+// ---------------------------------------------------------------------------
+
+describe('saveDraft', () => {
+  it('invokes save_draft with blockId and content', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await saveDraft('BLK001', 'work in progress')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('save_draft', {
+      blockId: 'BLK001',
+      content: 'work in progress',
+    })
+  })
+
+  it('returns void (no return value)', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    const result = await saveDraft('BLK001', 'x')
+
+    expect(result).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// flushDraft
+// ---------------------------------------------------------------------------
+
+describe('flushDraft', () => {
+  it('invokes flush_draft with blockId', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await flushDraft('BLK001')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('flush_draft', { blockId: 'BLK001' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// deleteDraft
+// ---------------------------------------------------------------------------
+
+describe('deleteDraft', () => {
+  it('invokes delete_draft with blockId', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await deleteDraft('BLK001')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_draft', { blockId: 'BLK001' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listDrafts
+// ---------------------------------------------------------------------------
+
+describe('listDrafts', () => {
+  it('invokes list_drafts with no arguments', async () => {
+    const expected = [{ block_id: 'BLK001', content: 'draft', updated_at: '2025-01-15T00:00:00Z' }]
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await listDrafts()
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_drafts')
+    expect(result).toEqual(expected)
+  })
+
+  it('returns empty array when no drafts', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    const result = await listDrafts()
+
+    expect(result).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// logFrontend
+// ---------------------------------------------------------------------------
+
+describe('logFrontend', () => {
+  it('invokes log_frontend with all parameters', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await logFrontend('error', 'EditableBlock', 'failed to save', 'Error: x', 'ctx', '{"k":"v"}')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('log_frontend', {
+      level: 'error',
+      module: 'EditableBlock',
+      message: 'failed to save',
+      stack: 'Error: x',
+      context: 'ctx',
+      data: '{"k":"v"}',
+    })
+  })
+
+  it('defaults optional stack, context and data to null', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await logFrontend('info', 'mod', 'msg')
+
+    expect(mockedInvoke).toHaveBeenCalledWith('log_frontend', {
+      level: 'info',
+      module: 'mod',
+      message: 'msg',
+      stack: null,
+      context: null,
+      data: null,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getLogDir
+// ---------------------------------------------------------------------------
+
+describe('getLogDir', () => {
+  it('invokes get_log_dir with no arguments', async () => {
+    mockedInvoke.mockResolvedValueOnce('/home/user/.local/share/agaric/logs')
+
+    const result = await getLogDir()
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_log_dir')
+    expect(result).toBe('/home/user/.local/share/agaric/logs')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getCompactionStatus
+// ---------------------------------------------------------------------------
+
+describe('getCompactionStatus', () => {
+  it('invokes get_compaction_status with no arguments', async () => {
+    const expected = {
+      total_ops: 1000,
+      oldest_op_date: '2025-01-01T00:00:00Z',
+      eligible_ops: 200,
+      retention_days: 30,
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await getCompactionStatus()
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_compaction_status')
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// compactOpLog
+// ---------------------------------------------------------------------------
+
+describe('compactOpLog', () => {
+  it('invokes compact_op_log_cmd with retentionDays', async () => {
+    const expected = { snapshot_id: 'SNAP1', ops_deleted: 200 }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await compactOpLog(30)
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('compact_op_log_cmd', { retentionDays: 30 })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// fetchLinkMetadata
+// ---------------------------------------------------------------------------
+
+describe('fetchLinkMetadata', () => {
+  it('invokes fetch_link_metadata with url', async () => {
+    const expected = {
+      url: 'https://example.com',
+      title: 'Example',
+      favicon_url: 'https://example.com/favicon.ico',
+      description: 'An example site',
+      fetched_at: '2025-01-15T00:00:00Z',
+      auth_required: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await fetchLinkMetadata('https://example.com')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('fetch_link_metadata', {
+      url: 'https://example.com',
+    })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getLinkMetadata
+// ---------------------------------------------------------------------------
+
+describe('getLinkMetadata', () => {
+  it('invokes get_link_metadata with url', async () => {
+    const expected = {
+      url: 'https://example.com',
+      title: 'Example',
+      favicon_url: null,
+      description: null,
+      fetched_at: '2025-01-15T00:00:00Z',
+      auth_required: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await getLinkMetadata('https://example.com')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_link_metadata', {
+      url: 'https://example.com',
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('returns null when not cached', async () => {
+    mockedInvoke.mockResolvedValueOnce(null)
+
+    const result = await getLinkMetadata('https://uncached.example')
+
+    expect(result).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// collectBugReportMetadata
+// ---------------------------------------------------------------------------
+
+describe('collectBugReportMetadata', () => {
+  it('invokes collect_bug_report_metadata with no arguments', async () => {
+    const expected = {
+      app_version: '0.1.0',
+      os: 'linux',
+      arch: 'x86_64',
+      device_id: 'dev-1',
+      recent_errors: ['error: connection timeout'],
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await collectBugReportMetadata()
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// readLogsForReport
+// ---------------------------------------------------------------------------
+
+describe('readLogsForReport', () => {
+  it('invokes read_logs_for_report with redact=true', async () => {
+    const expected = [{ name: 'today.log', contents: 'INFO startup' }]
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await readLogsForReport(true)
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('read_logs_for_report', { redact: true })
+    expect(result).toEqual(expected)
+  })
+
+  it('invokes read_logs_for_report with redact=false', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    await readLogsForReport(false)
+
+    expect(mockedInvoke).toHaveBeenCalledWith('read_logs_for_report', { redact: false })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listSpaces
+// ---------------------------------------------------------------------------
+
+describe('listSpaces', () => {
+  it('invokes list_spaces with no arguments', async () => {
+    const expected = [
+      { id: 'SPACE1', name: 'Personal' },
+      { id: 'SPACE2', name: 'Work' },
+    ]
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await listSpaces()
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_spaces')
+    expect(result).toEqual(expected)
+  })
+
+  it('returns empty array when no spaces', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    const result = await listSpaces()
+
+    expect(result).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// createPageInSpace
+// ---------------------------------------------------------------------------
+
+describe('createPageInSpace', () => {
+  it('invokes create_page_in_space with all parameters', async () => {
+    mockedInvoke.mockResolvedValueOnce('NEW_PAGE_ID')
+
+    const result = await createPageInSpace({
+      parentId: 'PARENT1',
+      content: 'My new page',
+      spaceId: 'SPACE1',
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
+      parentId: 'PARENT1',
+      content: 'My new page',
+      spaceId: 'SPACE1',
+    })
+    expect(result).toBe('NEW_PAGE_ID')
+  })
+
+  it('defaults optional parentId to null', async () => {
+    mockedInvoke.mockResolvedValueOnce('NEW_PAGE_ID')
+
+    await createPageInSpace({ content: 'Top-level page', spaceId: 'SPACE1' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
+      parentId: null,
+      content: 'Top-level page',
+      spaceId: 'SPACE1',
+    })
   })
 })
 

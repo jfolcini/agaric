@@ -22,6 +22,7 @@ vi.mock('@floating-ui/dom', () => ({
   flip: vi.fn(() => ({})),
   shift: vi.fn(() => ({})),
   offset: vi.fn(() => ({})),
+  size: vi.fn((opts) => ({ __middleware: 'size', opts })),
 }))
 
 vi.mock('../../lib/keyboard-config', () => ({
@@ -941,5 +942,190 @@ describe('outside-click deferred registration (BUG-2)', () => {
     // Outside click should still work after the rapid cycle
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     expect(document.querySelector('.suggestion-popup')).toBeNull()
+  })
+})
+
+describe('viewport handling on coarse pointers (UX-273)', () => {
+  // biome-ignore lint/suspicious/noExplicitAny: minimal mock props for tests
+  function makeProps(): any {
+    return {
+      items: [],
+      command: vi.fn(),
+      clientRect: () =>
+        ({ left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      editor: {} as any,
+      query: '',
+      range: { from: 0, to: 1 },
+      text: '/',
+      decorationNode: null,
+    }
+  }
+
+  let matchMediaSpy: ReturnType<typeof vi.spyOn> | null = null
+
+  function stubCoarsePointer(coarse: boolean) {
+    matchMediaSpy = vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => {
+      const matches = query === '(pointer: coarse)' && coarse
+      return {
+        matches,
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      } as unknown as MediaQueryList
+    })
+  }
+
+  afterEach(() => {
+    matchMediaSpy?.mockRestore()
+    matchMediaSpy = null
+    for (const el of document.querySelectorAll('.suggestion-popup')) {
+      el.remove()
+    }
+  })
+
+  it('uses 8px padding and no size() middleware on desktop (fine pointer)', async () => {
+    stubCoarsePointer(false)
+
+    const { computePosition, flip, shift, size: sizeMw } = await import('@floating-ui/dom')
+    const mockedFlip = vi.mocked(flip)
+    const mockedShift = vi.mocked(shift)
+    const mockedSize = vi.mocked(sizeMw)
+    mockedFlip.mockClear()
+    mockedShift.mockClear()
+    mockedSize.mockClear()
+    vi.mocked(computePosition).mockResolvedValueOnce({
+      x: 100,
+      y: 104,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
+    })
+
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    await vi.waitFor(() => {
+      expect(vi.mocked(computePosition)).toHaveBeenCalled()
+    })
+
+    expect(mockedFlip).toHaveBeenCalledWith({ padding: 8 })
+    expect(mockedShift).toHaveBeenCalledWith({ padding: 8 })
+    expect(mockedSize).not.toHaveBeenCalled()
+
+    renderer.onExit()
+  })
+
+  it('uses 16px padding on coarse (touch) pointer viewports', async () => {
+    stubCoarsePointer(true)
+
+    const { computePosition, flip, shift } = await import('@floating-ui/dom')
+    const mockedFlip = vi.mocked(flip)
+    const mockedShift = vi.mocked(shift)
+    mockedFlip.mockClear()
+    mockedShift.mockClear()
+    vi.mocked(computePosition).mockResolvedValueOnce({
+      x: 100,
+      y: 104,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
+    })
+
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    await vi.waitFor(() => {
+      expect(vi.mocked(computePosition)).toHaveBeenCalled()
+    })
+
+    expect(mockedFlip).toHaveBeenCalledWith({ padding: 16 })
+    expect(mockedShift).toHaveBeenCalledWith({ padding: 16 })
+
+    renderer.onExit()
+  })
+
+  it('adds size() middleware with availableHeight cap on coarse pointer', async () => {
+    stubCoarsePointer(true)
+
+    const { computePosition, size: sizeMw } = await import('@floating-ui/dom')
+    const mockedSize = vi.mocked(sizeMw)
+    mockedSize.mockClear()
+    vi.mocked(computePosition).mockResolvedValueOnce({
+      x: 100,
+      y: 104,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
+    })
+
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    await vi.waitFor(() => {
+      expect(vi.mocked(computePosition)).toHaveBeenCalled()
+    })
+
+    expect(mockedSize).toHaveBeenCalledTimes(1)
+    const callArg = mockedSize.mock.calls[0]?.[0]
+    expect(callArg).toMatchObject({ padding: 16 })
+    expect(typeof (callArg as { apply?: unknown }).apply).toBe('function')
+
+    renderer.onExit()
+  })
+
+  it('size().apply caps maxHeight at min(availableHeight, 60vh)', async () => {
+    stubCoarsePointer(true)
+
+    const { computePosition, size: sizeMw } = await import('@floating-ui/dom')
+    const mockedSize = vi.mocked(sizeMw)
+    mockedSize.mockClear()
+    vi.mocked(computePosition).mockResolvedValueOnce({
+      x: 100,
+      y: 104,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
+    })
+
+    // Lock viewport for deterministic vh calculation
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      writable: true,
+      value: 800,
+    })
+
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    await vi.waitFor(() => {
+      expect(mockedSize).toHaveBeenCalled()
+    })
+
+    const apply = (mockedSize.mock.calls[0]?.[0] as { apply: (a: unknown) => void }).apply
+    const fakeFloating = document.createElement('div')
+
+    // Case 1: availableHeight (300) < cap (480 = 800 * 0.6) → use 300
+    apply({
+      availableHeight: 300,
+      availableWidth: 100,
+      elements: { floating: fakeFloating, reference: fakeFloating, domReference: null },
+    })
+    expect(fakeFloating.style.maxHeight).toBe('300px')
+    expect(fakeFloating.style.overflowY).toBe('auto')
+
+    // Case 2: availableHeight (1000) > cap (480) → use 480
+    apply({
+      availableHeight: 1000,
+      availableWidth: 100,
+      elements: { floating: fakeFloating, reference: fakeFloating, domReference: null },
+    })
+    expect(fakeFloating.style.maxHeight).toBe('480px')
+
+    renderer.onExit()
   })
 })

@@ -6,7 +6,7 @@
  * ReactRenderer from @tiptap/react to render outside the main tree.
  */
 
-import { computePosition, flip, offset, shift } from '@floating-ui/dom'
+import { computePosition, flip, offset, shift, size } from '@floating-ui/dom'
 import type { Editor } from '@tiptap/core'
 import type { PluginKey } from '@tiptap/pm/state'
 import { ReactRenderer } from '@tiptap/react'
@@ -14,6 +14,17 @@ import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion
 import { getShortcutKeys } from '../lib/keyboard-config'
 import { logger } from '../lib/logger'
 import { SuggestionList, type SuggestionListRef } from './SuggestionList'
+
+/**
+ * Mobile / touch viewports get a larger flip+shift padding (16px) plus a
+ * `size()` middleware that caps the popup height at 60vh. Desktop keeps the
+ * original 8px padding and natural sizing (UX-273). Detection is via
+ * `(pointer: coarse)` so it matches the rest of the design system's
+ * touch-target rules.
+ */
+const DESKTOP_PADDING = 8
+const COARSE_PADDING = 16
+const COARSE_MAX_HEIGHT_RATIO = 0.6
 
 async function updatePosition(
   el: HTMLElement,
@@ -50,9 +61,34 @@ async function updatePosition(
     getBoundingClientRect: () => rect,
   }
 
+  // Mobile/touch viewports get a larger padding so popups don't clip near
+  // the bottom of narrow viewports, plus a `size()` middleware that caps
+  // the popup at 60vh. Desktop behavior is unchanged (UX-273).
+  const isCoarsePointer =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(pointer: coarse)').matches
+  const padding = isCoarsePointer ? COARSE_PADDING : DESKTOP_PADDING
+  const middleware = [offset(4), flip({ padding }), shift({ padding })]
+  if (isCoarsePointer) {
+    middleware.push(
+      size({
+        padding,
+        apply({ availableHeight, elements }) {
+          const cap = window.innerHeight * COARSE_MAX_HEIGHT_RATIO
+          const maxH = Math.max(0, Math.min(availableHeight, cap))
+          Object.assign(elements.floating.style, {
+            maxHeight: `${maxH}px`,
+            overflowY: 'auto',
+          })
+        },
+      }),
+    )
+  }
+
   const { x, y } = await computePosition(virtualEl, el, {
     placement: 'bottom-start',
-    middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 })],
+    middleware,
   })
 
   Object.assign(el.style, {

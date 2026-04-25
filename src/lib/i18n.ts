@@ -1361,6 +1361,8 @@ const resources = {
       'search.noTagsFound': 'No tags found',
       'search.filtersActive': 'Filters active',
       'search.aliasMatch': 'via alias: {{alias}}',
+      'search.typing': 'Typing\u2026',
+      'search.searching': 'Searching\u2026',
 
       // Status panel (additions)
       'status.foregroundQueueTooltip':
