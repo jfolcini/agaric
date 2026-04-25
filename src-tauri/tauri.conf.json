@@ -35,7 +35,6 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/agaric-mcp"],
     "icon": [
       "icons/16x16.png",
       "icons/24x24.png",
