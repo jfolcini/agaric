@@ -7,7 +7,7 @@ Thanks for your interest in contributing. Agaric is a local-first block-based no
 - Read [**AGENTS.md**](AGENTS.md) — repository invariants, architectural guarantees, coupled-dependency rules, code style, and mandatory testing conventions. These are strict; PRs that violate them will be asked to re-work.
 - Read [**BUILD.md**](BUILD.md) — how to build on Linux / macOS / Windows / Android, required toolchain versions, and common troubleshooting steps.
 - Skim [**FEATURE-MAP.md**](FEATURE-MAP.md) and [**ARCHITECTURE.md**](ARCHITECTURE.md) if you want a guided tour of the feature surface before picking something to change.
-- Check [**REVIEW-LATER.md**](REVIEW-LATER.md) for items that are already known and triaged; the cost tier (S/M/L) gives a rough idea of scope.
+- Check the [issue tracker](https://github.com/jfolcini/agaric/issues) for items that are already known and triaged.
 - Abide by the [**Code of Conduct**](CODE_OF_CONDUCT.md).
 
 ## Development workflow

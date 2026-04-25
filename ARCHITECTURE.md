@@ -1617,7 +1617,7 @@ indefinite hangs during large op transfers.
 
 ## 19. Planned Features
 
-See [REVIEW-LATER.md](REVIEW-LATER.md) for full details on all planned items.
+Planned items are tracked in the [issue tracker](https://github.com/jfolcini/agaric/issues).
 
 **Recently completed** (formerly on this roadmap):
 
