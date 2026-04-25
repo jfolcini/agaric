@@ -39,10 +39,19 @@ test.describe('Settings panel', () => {
     await expect(themeTrigger).toBeVisible()
     await themeTrigger.click()
 
-    // Verify the three options appear
-    await expect(page.getByRole('option', { name: 'Light', exact: true })).toBeVisible()
-    await expect(page.getByRole('option', { name: 'Dark', exact: true })).toBeVisible()
-    await expect(page.getByRole('option', { name: 'System', exact: true })).toBeVisible()
+    // Verify all 7 shipped theme options appear
+    const themeNames = [
+      'Light',
+      'Dark',
+      'System',
+      'Solarized Light',
+      'Solarized Dark',
+      'Dracula',
+      'One Dark Pro',
+    ]
+    for (const name of themeNames) {
+      await expect(page.getByRole('option', { name, exact: true })).toBeVisible()
+    }
   })
 
   test('Keyboard settings tab renders shortcut list', async ({ page }) => {

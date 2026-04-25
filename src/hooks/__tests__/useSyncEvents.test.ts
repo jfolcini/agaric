@@ -241,14 +241,17 @@ describe('useSyncEvents', () => {
         expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
-      // Allow promises to settle
-      await new Promise((r) => setTimeout(r, 10))
-
       unmount()
 
-      expect(unlisten1).toHaveBeenCalled()
-      expect(unlisten2).toHaveBeenCalled()
-      expect(unlisten3).toHaveBeenCalled()
+      // Each listen() promise either resolves before unmount (cleanup loop calls
+      // unlisten) or after (the cancelled-flag branch calls unlisten directly).
+      // Either way, all three unlisten functions are eventually invoked — poll
+      // for the observable end state instead of relying on a real-timer sleep.
+      await vi.waitFor(() => {
+        expect(unlisten1).toHaveBeenCalled()
+        expect(unlisten2).toHaveBeenCalled()
+        expect(unlisten3).toHaveBeenCalled()
+      })
     })
 
     it('no-ops when __TAURI_INTERNALS__ is absent (browser mode)', async () => {
@@ -257,8 +260,10 @@ describe('useSyncEvents', () => {
 
       const { unmount } = renderHook(() => useSyncEvents())
 
-      // Give time for any async work
-      await new Promise((r) => setTimeout(r, 10))
+      // useEffect runs synchronously inside act(); the browser-mode early-return
+      // schedules no async work. Flush a microtask deterministically as a fence
+      // before asserting the negative.
+      await Promise.resolve()
 
       expect(mockListen).not.toHaveBeenCalled()
 
@@ -581,8 +586,12 @@ describe('useSyncEvents', () => {
         },
       })
 
-      // Let the getConflicts promise resolve
-      await new Promise((r) => setTimeout(r, 10))
+      // Wait for getConflicts to be invoked (positive observable), then drain
+      // the resolved-promise microtask chain so the .then() handler completes
+      // before we assert the negative.
+      await vi.waitFor(() => expect(mockGetConflicts).toHaveBeenCalled())
+      await Promise.resolve()
+      await Promise.resolve()
 
       expect(mockedToastWarning).not.toHaveBeenCalled()
 
@@ -606,7 +615,10 @@ describe('useSyncEvents', () => {
         },
       })
 
-      await new Promise((r) => setTimeout(r, 10))
+      // Conflict check is gated behind `if (ops_received > 0)` — the callback
+      // body runs synchronously without scheduling any async work in this branch.
+      // Flush a microtask as a fence before asserting the negative.
+      await Promise.resolve()
 
       expect(mockGetConflicts).not.toHaveBeenCalled()
 
@@ -632,8 +644,12 @@ describe('useSyncEvents', () => {
         },
       })
 
-      // Let the rejected promise settle — should not throw
-      await new Promise((r) => setTimeout(r, 10))
+      // Wait for getConflicts to be invoked (positive observable), then drain
+      // the rejected-promise microtask chain so the .catch() handler runs
+      // before we assert the negative — should not throw.
+      await vi.waitFor(() => expect(mockGetConflicts).toHaveBeenCalled())
+      await Promise.resolve()
+      await Promise.resolve()
 
       expect(mockedToastWarning).not.toHaveBeenCalled()
 
@@ -691,8 +707,12 @@ describe('useSyncEvents', () => {
 
       const { unmount } = renderHook(() => useSyncEvents())
 
-      // Give time for the rejected promises to settle
-      await new Promise((r) => setTimeout(r, 20))
+      // Wait for all three listen() calls to be issued (positive observable),
+      // then drain the rejected-promise microtask chain so each .catch() handler
+      // runs before we assert the negative.
+      await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+      await Promise.resolve()
+      await Promise.resolve()
 
       // Should not crash — hook catches the rejection internally
       // Unlisten should not be called since listen never resolved

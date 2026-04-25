@@ -600,6 +600,19 @@ describe('TabBar', () => {
       expect(screen.queryByRole('menu')).toBeNull()
       expect(useNavigationStore.getState().currentView).toBe('page-editor')
     })
+
+    it('pressing Escape with the dropdown open closes the menu', async () => {
+      setupThreeTabs(1)
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      await user.click(screen.getByText('Page 2'))
+      await screen.findByRole('menu')
+
+      await user.keyboard('{Escape}')
+
+      await waitForMenuClosed()
+    })
   })
 
   // ---------------------------------------------------------------------------
