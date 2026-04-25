@@ -143,6 +143,55 @@ describe('DataSettingsTab', () => {
     })
   })
 
+  it('shows per-file progress text during multi-file import (UX-283)', async () => {
+    let resolveFirst: (v: unknown) => void = () => {}
+    let resolveSecond: (v: unknown) => void = () => {}
+    mockImportMarkdown
+      .mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolveFirst = r
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolveSecond = r
+          }),
+      )
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file1 = new File(['# A'], 'one.md', { type: 'text/markdown' })
+    const file2 = new File(['# B'], 'two.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file1, file2] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Importing file 1 of 2: one.md')).toBeInTheDocument()
+    })
+
+    await act(async () => {
+      resolveFirst({ page_title: 'one', blocks_created: 1, properties_set: 0, warnings: [] })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Importing file 2 of 2: two.md')).toBeInTheDocument()
+    })
+
+    await act(async () => {
+      resolveSecond({ page_title: 'two', blocks_created: 1, properties_set: 0, warnings: [] })
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Importing file/)).not.toBeInTheDocument()
+    })
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<DataSettingsTab />)
 

@@ -54,6 +54,7 @@ export function ImageResizeToolbar({
           variant={currentWidth === preset.value ? 'secondary' : 'ghost'}
           size="sm"
           aria-label={t(preset.label)}
+          aria-pressed={currentWidth === preset.value}
           onClick={(e) => {
             e.stopPropagation()
             handleClick(preset.value)

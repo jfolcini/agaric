@@ -307,4 +307,161 @@ describe('PdfViewerDialog', () => {
     expect(prevBtn).toBeInTheDocument()
     expect(nextBtn).toBeInTheDocument()
   })
+
+  it('ArrowRight advances to the next page (UX-280)', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <PdfViewerDialog
+        open={true}
+        onOpenChange={vi.fn()}
+        fileUrl="http://example.com/test.pdf"
+        filename="test.pdf"
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+    })
+
+    await user.keyboard('{ArrowRight}')
+
+    await waitFor(() => {
+      expect(screen.getByText('Page 2 / 5')).toBeInTheDocument()
+    })
+  })
+
+  it('ArrowLeft goes back to the previous page (UX-280)', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <PdfViewerDialog
+        open={true}
+        onOpenChange={vi.fn()}
+        fileUrl="http://example.com/test.pdf"
+        filename="test.pdf"
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+    })
+
+    await user.keyboard('{ArrowRight}')
+    await waitFor(() => {
+      expect(screen.getByText('Page 2 / 5')).toBeInTheDocument()
+    })
+
+    await user.keyboard('{ArrowLeft}')
+    await waitFor(() => {
+      expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+    })
+  })
+
+  it('PageDown advances to the next page (UX-280)', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <PdfViewerDialog
+        open={true}
+        onOpenChange={vi.fn()}
+        fileUrl="http://example.com/test.pdf"
+        filename="test.pdf"
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+    })
+
+    await user.keyboard('{PageDown}')
+
+    await waitFor(() => {
+      expect(screen.getByText('Page 2 / 5')).toBeInTheDocument()
+    })
+  })
+
+  it('PageUp goes back to the previous page (UX-280)', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <PdfViewerDialog
+        open={true}
+        onOpenChange={vi.fn()}
+        fileUrl="http://example.com/test.pdf"
+        filename="test.pdf"
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+    })
+
+    await user.keyboard('{PageDown}')
+    await waitFor(() => {
+      expect(screen.getByText('Page 2 / 5')).toBeInTheDocument()
+    })
+
+    await user.keyboard('{PageUp}')
+    await waitFor(() => {
+      expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+    })
+  })
+
+  it('End jumps to the last page; Home returns to the first (UX-280)', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <PdfViewerDialog
+        open={true}
+        onOpenChange={vi.fn()}
+        fileUrl="http://example.com/test.pdf"
+        filename="test.pdf"
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+    })
+
+    await user.keyboard('{End}')
+    await waitFor(() => {
+      expect(screen.getByText('Page 5 / 5')).toBeInTheDocument()
+    })
+
+    await user.keyboard('{Home}')
+    await waitFor(() => {
+      expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+    })
+  })
+
+  it('does not navigate when dialog is closed (UX-280)', async () => {
+    const user = userEvent.setup()
+
+    const { rerender } = render(
+      <PdfViewerDialog
+        open={true}
+        onOpenChange={vi.fn()}
+        fileUrl="http://example.com/test.pdf"
+        filename="test.pdf"
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+    })
+
+    rerender(
+      <PdfViewerDialog
+        open={false}
+        onOpenChange={vi.fn()}
+        fileUrl="http://example.com/test.pdf"
+        filename="test.pdf"
+      />,
+    )
+
+    // Listener should be unregistered — keypress must not throw or change state
+    await user.keyboard('{ArrowRight}')
+    expect(screen.queryByText('Page 2 / 5')).not.toBeInTheDocument()
+  })
 })

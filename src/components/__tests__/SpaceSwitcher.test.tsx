@@ -149,6 +149,25 @@ describe('SpaceSwitcher', () => {
     )
   })
 
+  // UX-284: tooltips don't fire on touch. A small "ⓘ" (U+24D8 circled
+  // info) is appended to the "Manage spaces…" label as a visible
+  // affordance that there's additional context. The character is
+  // text-only (avoids nesting non-text content inside the native
+  // `<option>` rendered by the test mock); the tooltip's
+  // `space.manageComingSoon` string remains the accessible source of
+  // truth.
+  it('appends an info affordance to the disabled Manage spaces entry (UX-284)', async () => {
+    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+
+    render(<SpaceSwitcher />)
+    await waitFor(() => {
+      expect(useSpaceStore.getState().isReady).toBe(true)
+    })
+
+    const manageOption = screen.getByRole('option', { name: /Manage spaces/ })
+    expect(manageOption.textContent).toContain('ⓘ')
+  })
+
   it('does not update currentSpaceId when the Manage sentinel is selected', async () => {
     const user = userEvent.setup()
     mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])

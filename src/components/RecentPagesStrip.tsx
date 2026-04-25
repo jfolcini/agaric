@@ -157,6 +157,11 @@ export function RecentPagesStrip(): React.ReactElement | null {
               size="sm"
               className={cn(
                 'truncate justify-start text-xs text-muted-foreground hover:text-foreground',
+                // UX-284: subtle background tint on keyboard focus so the
+                // Button's focus-visible ring isn't the sole indicator —
+                // improves discoverability for arrow-key traversal across
+                // the strip.
+                'focus-visible:bg-accent/50',
               )}
               title={displayTitle}
               onClick={(e) => handleClick(ref, e)}

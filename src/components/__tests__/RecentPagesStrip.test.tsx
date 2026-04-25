@@ -228,6 +228,22 @@ describe('RecentPagesStrip', () => {
     )
   })
 
+  // UX-284: keyboard focus on a chip should be visible from more than
+  // just the Button's `focus-visible:ring` — a subtle background tint
+  // is also applied via `focus-visible:bg-accent/50`. The class is
+  // present unconditionally in markup; Tailwind activates it via the
+  // `focus-visible:` variant. Asserting the className substring is the
+  // simplest way to pin the discoverability fix without coupling to
+  // jsdom's :focus-visible matching (which is unreliable).
+  it('chips carry the focus-tint class for keyboard discoverability (UX-284)', () => {
+    useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+
+    render(<RecentPagesStrip />)
+
+    const chip = screen.getByRole('button', { name: 'Alpha' })
+    expect(chip.className).toContain('focus-visible:bg-accent/50')
+  })
+
   // ---------------------------------------------------------------------------
   // keyboard navigation (UX-256)
   // ---------------------------------------------------------------------------

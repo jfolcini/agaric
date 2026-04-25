@@ -220,8 +220,8 @@ export function TemplatesView(): React.ReactElement {
             )}
 
             {/* No search results */}
-            {filtered.length === 0 && templates.length > 0 && (
-              <p className="text-sm text-muted-foreground">{t('templates.noResults')}</p>
+            {filtered.length === 0 && search.length > 0 && (
+              <EmptyState icon={Search} message={t('templates.noSearchResults')} compact />
             )}
           </>
         )}

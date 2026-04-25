@@ -838,7 +838,13 @@ describe('DeviceManagement', () => {
     const unpairBtn = screen.getByRole('button', { name: /Unpair/i })
     await user.click(unpairBtn)
 
-    expect(screen.getByText(/This will remove the pairing with Work Laptop/)).toBeInTheDocument()
+    // UX-267: confirmation copy is now generic (does not interpolate the
+    // device name) and reassures the user that data is retained locally.
+    expect(
+      screen.getByText(
+        'This removes the pairing. Your notes and sync history remain on this device. You can pair again later to resume syncing.',
+      ),
+    ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Yes, unpair/i })).toBeInTheDocument()
   })
 

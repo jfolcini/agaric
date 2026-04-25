@@ -482,7 +482,7 @@ const resources = {
       'templates.journalIndicator': 'Journal template',
       'templates.navigateLabel': 'Open template {{name}}',
       'templates.removeTemplateLabel': 'Remove template status from {{name}}',
-      'templates.noResults': 'No templates match your search.',
+      'templates.noSearchResults': 'No templates match your search.',
       'templates.create': 'Create template',
       'templates.newTemplatePlaceholder': 'New template name...',
       'templates.newTemplateInputLabel': 'New template name',
@@ -934,7 +934,7 @@ const resources = {
       'device.thisDevice': 'This device',
       'device.unpairConfirmTitle': 'Unpair device?',
       'device.unpairConfirmDescription':
-        'This will remove the pairing with {{deviceName}}. You will need to pair again to sync.',
+        'This removes the pairing. Your notes and sync history remain on this device. You can pair again later to resume syncing.',
       'device.unpairConfirmAction': 'Yes, unpair',
       'device.pairedDevice': 'the paired device',
 
@@ -1855,6 +1855,7 @@ const resources = {
       'data.importDesc': 'Import Logseq or Markdown files as pages.',
       'data.importButton': 'Choose Files',
       'data.importingMessage': 'Importing...',
+      'data.importingProgress': 'Importing file {{index}} of {{total}}: {{name}}',
       'data.importedMessage': 'Imported {{totalBlocks}} blocks from {{fileCount}} file(s)',
       'data.exportTitle': 'Export All Pages',
       'data.exportDesc': 'Download all pages as a ZIP of Markdown files.',
