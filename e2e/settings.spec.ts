@@ -73,7 +73,14 @@ test.describe('Settings panel', () => {
     await expect(page.locator('[data-testid="export-panel-title"]')).toBeVisible()
   })
 
-  test('Navigate away and back resets to default tab', async ({ page }) => {
+  test('Navigate away and back restores the last selected tab', async ({ page }) => {
+    // UX-276 partial: SettingsView persists `activeTab` to localStorage under
+    // `agaric-settings-active-tab` so navigating away and coming back keeps
+    // the user's place, instead of remounting straight onto General. The
+    // "General is selected on first visit" invariant lives in the
+    // `General tab is selected by default` test above, which runs in a
+    // fresh browser context with empty localStorage.
+
     // Switch to Appearance tab
     await page.getByRole('tab', { name: 'Appearance' }).click()
     await expect(page.getByRole('tab', { name: 'Appearance' })).toHaveAttribute(
@@ -86,14 +93,19 @@ test.describe('Settings panel', () => {
     // Wait until we're on the Journal view (Settings panel is gone)
     await expect(page.locator('[data-testid="settings-panel-appearance"]')).not.toBeVisible()
 
-    // Navigate back to Settings
+    // Navigate back to Settings — the previously selected Appearance tab
+    // should still be active.
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
 
-    // General tab is selected by default (component remounts, state resets)
-    await expect(page.getByRole('tab', { name: 'General' })).toHaveAttribute(
+    await expect(page.getByRole('tab', { name: 'Appearance' })).toHaveAttribute(
       'aria-selected',
       'true',
     )
-    await expect(page.locator('[data-testid="settings-panel-general"]')).toBeVisible()
+    await expect(page.locator('[data-testid="settings-panel-appearance"]')).toBeVisible()
+    // And General should NOT be re-selected.
+    await expect(page.getByRole('tab', { name: 'General' })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    )
   })
 })
