@@ -732,6 +732,27 @@ describe('App', () => {
       expect(useJournalStore.getState().currentDate.getTime()).toBe(startDate.getTime())
       expect(announce).not.toHaveBeenCalled()
     })
+
+    // MAINT-105: holding Alt+Arrow generates repeat=true keydown events
+    // every ~30ms — without the e.repeat guard each one would shift
+    // setCurrentDate and emit a SR announcement. Verify the guard skips
+    // them.
+    it('ignores auto-repeat keydown events (e.repeat=true)', async () => {
+      const startDate = new Date(2025, 5, 15)
+      useJournalStore.setState({ mode: 'daily', currentDate: startDate })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(document, { key: 'ArrowLeft', altKey: true, repeat: true })
+      // Allow any microtasks to flush.
+      await Promise.resolve()
+
+      expect(useJournalStore.getState().currentDate.getTime()).toBe(startDate.getTime())
+      expect(announce).not.toHaveBeenCalled()
+    })
   })
 
   // ── BUG-18: shortcut rebinding (keyboard-config integration) ──────
@@ -1320,6 +1341,26 @@ describe('App', () => {
       window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
       try {
         fireEvent.keyDown(window, { key: 'a' })
+        await Promise.resolve()
+        expect(spy).not.toHaveBeenCalled()
+      } finally {
+        window.removeEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
+      }
+    })
+
+    // MAINT-105: holding Escape generates auto-repeat keydown events
+    // (e.repeat=true). Without the guard each one would dispatch the
+    // closeAllOverlays event + announce, spamming SR users.
+    it('ignores auto-repeat Escape (e.repeat=true)', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      const spy = vi.fn()
+      window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
+      try {
+        fireEvent.keyDown(window, { key: 'Escape', repeat: true })
         await Promise.resolve()
         expect(spy).not.toHaveBeenCalled()
       } finally {

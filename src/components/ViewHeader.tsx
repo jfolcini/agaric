@@ -20,7 +20,7 @@
  */
 
 import type React from 'react'
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { logger } from '../lib/logger'
 import { useViewHeaderOutlet } from './ViewHeaderOutlet'
@@ -31,29 +31,53 @@ interface ViewHeaderProps {
 }
 
 /**
+ * Module-scoped Set that dedupes the "outlet not resolved" warning across
+ * all <ViewHeader> instances. The outlet is a singleton owned by the
+ * provider, so a view that renders N <ViewHeader>s before the slot mounts
+ * would otherwise log N times in one paint. The Set is keyed by warning
+ * kind (currently a single key) to keep the structure flexible if more
+ * lifecycle warnings are added later. Entries are cleared when an outlet
+ * eventually resolves so a subsequent detach/reattach cycle can warn again.
+ */
+const warnedOutletKeys = new Set<string>()
+const WARN_OUTLET_NOT_RESOLVED = 'outlet-not-resolved'
+
+/**
+ * Test-only helper — clears the module-scoped warned-keys Set so each test
+ * starts from a clean state. Not part of the public API; do not call from
+ * production code.
+ *
+ * @internal
+ */
+export function __resetViewHeaderWarningsForTest(): void {
+  warnedOutletKeys.clear()
+}
+
+/**
  * Portal wrapper that renders `children` into the shared outlet element.
  * See module docstring for lifecycle / fallback semantics.
  */
 export function ViewHeader({ children }: ViewHeaderProps): React.ReactElement | null {
   const outlet = useViewHeaderOutlet()
-  const warnedRef = useRef(false)
 
   // Defer the warn via setTimeout so the common initial-mount race (slot's
   // ref callback hasn't run yet → outlet is null for the first commit)
   // doesn't produce a false positive. If the re-render from the slot's
   // `setOutlet` fires before the timer, the cleanup cancels the warn and we
   // stay quiet. If the outlet is genuinely never wired up, the timer fires
-  // and we log once per mount.
+  // and we log once total (across all ViewHeader instances).
   useEffect(() => {
     if (outlet) {
-      // Reset so a later detach cycle can warn again.
-      warnedRef.current = false
+      // Outlet wired up — clear so a later detach cycle can warn again.
+      warnedOutletKeys.delete(WARN_OUTLET_NOT_RESOLVED)
       return
     }
-    if (warnedRef.current) return
     if (outlet !== null) return // undefined — no provider, inline path
+    if (warnedOutletKeys.has(WARN_OUTLET_NOT_RESOLVED)) return
+    // Claim the warning slot synchronously so concurrently-mounting
+    // siblings don't each schedule their own timer.
+    warnedOutletKeys.add(WARN_OUTLET_NOT_RESOLVED)
     const id = setTimeout(() => {
-      warnedRef.current = true
       logger.warn(
         'ViewHeader',
         'Portal mount attempted before outlet resolved; header will render on next commit',

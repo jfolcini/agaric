@@ -645,6 +645,9 @@ function App() {
   // the cognitive-complexity budget (MAINT-53).
   useEffect(() => {
     function handleJournalNav(e: KeyboardEvent) {
+      // MAINT-105: ignore auto-repeat so holding Alt+Arrow doesn't spam
+      // setCurrentDate / SR announcements.
+      if (e.repeat) return
       if (useNavigationStore.getState().currentView !== 'journal') return
       if (isTypingInField(e.target as HTMLElement | null)) return
 
@@ -665,6 +668,9 @@ function App() {
   // effect (BUG-18).
   useEffect(() => {
     function handleGlobalShortcuts(e: KeyboardEvent) {
+      // MAINT-105: ignore auto-repeat so holding the shortcut doesn't
+      // re-fire view changes / new-page creation on every keypress.
+      if (e.repeat) return
       const target = e.target as HTMLElement | null
       const typingInField =
         target?.isContentEditable || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA'
@@ -722,6 +728,9 @@ function App() {
   // native semantics there (blur, cancel suggestion, etc.).
   useEffect(() => {
     function handleCloseOverlays(e: KeyboardEvent) {
+      // MAINT-105: ignore auto-repeat so holding Escape doesn't dispatch
+      // the custom event / SR announcement on every keypress.
+      if (e.repeat) return
       if (!matchesShortcutBinding(e, 'closeOverlays')) return
       if (isTypingInField(e.target as HTMLElement | null)) return
       e.preventDefault()
@@ -755,6 +764,9 @@ function App() {
   // meaningful UI affordance.
   useEffect(() => {
     function handleTabShortcuts(e: KeyboardEvent) {
+      // MAINT-105: ignore auto-repeat so holding the tab-cycle shortcut
+      // doesn't spin through every tab on each frame.
+      if (e.repeat) return
       if (isMobile) return
       const state = useNavigationStore.getState()
 
@@ -851,6 +863,12 @@ function App() {
         {t('accessibility.skipToMain')}
       </a>
       <SidebarProvider>
+        {/*
+         * "icon" collapses the sidebar to a 48px icon-only rail rather than
+         * fully off-canvas. Chosen over "offcanvas" so that on desktop the
+         * primary nav stays one click away (vs. requiring a swipe/click to
+         * re-open). See UX.md § Mobile Sidebar.
+         */}
         <Sidebar collapsible="icon">
           <SidebarHeader className="p-4 pb-2">
             {/*

@@ -84,7 +84,7 @@ Agaric is a **single-user, multi-device, local-first** application with **no clo
 - **WAL mode**, foreign keys ON on every connection
 - **Pool:** 2 writers + 4 readers (6 total)
 - **Migrations:** `src-tauri/migrations/` — auto-run on pool init (append-only, never modify shipped migrations)
-- **Schema:** 18 tables + 1 FTS5 virtual table (`fts_blocks`, trigram tokenizer), 29 indexes, 2 triggers across 30 migrations
+- **Schema:** 18 tables + 1 FTS5 virtual table (`fts_blocks`, trigram tokenizer), 29 indexes, 2 triggers across 35 migrations
 
 ## Frontend Architecture
 
@@ -107,7 +107,7 @@ Every frontend change — new component, bugfix, feature — must build on exist
 |-------|----------|---------|---------|
 | **Design tokens** | `src/index.css` | CSS custom properties (OKLch colors, spacing, semantic status/priority tokens), light/dark themes, `prefers-contrast` and `prefers-reduced-motion` support | `--status-done`, `--priority-urgent`, `--indent-width` |
 | **UI primitives** | `src/components/ui/` | Thin wrappers around Radix UI + CVA variants. Atomic building blocks. | Button, Select, Dialog, Popover, Badge, Input, ScrollArea, Tooltip, FilterPill, StatusIcon, Spinner, Label |
-| **Shared components** | `src/components/` (non-page) | Reusable composed components used across multiple views | CollapsiblePanelHeader, EmptyState, LoadingSkeleton, ConfirmDialog, LoadMoreButton, SearchablePopover, BlockGutterControls, RichContentRenderer |
+| **Shared components** | `src/components/` (non-page) | Reusable composed components used across multiple views | CollapsiblePanelHeader, EmptyState, LoadingSkeleton, ConfirmDialog, LoadMoreButton, SearchablePopover, BlockGutterControls, RichContentRenderer, BatchActionToolbar |
 | **Shared hooks** | `src/hooks/` | Reusable stateful logic | useBlockNavigation, usePaginatedQuery, useListKeyboardNavigation, useDebouncedCallback, usePropertySave, useDateInput, useQueryExecution, useBacklinkResolution |
 | **Page components** | `src/components/` (top-level) | Full views composed from the layers above | JournalPage, PageBrowser, HistoryView, SearchPanel |
 

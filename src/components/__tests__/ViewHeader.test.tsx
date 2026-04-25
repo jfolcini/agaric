@@ -16,7 +16,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { logger } from '../../lib/logger'
-import { ViewHeader } from '../ViewHeader'
+import { __resetViewHeaderWarningsForTest, ViewHeader } from '../ViewHeader'
 import { ViewHeaderOutletProvider, ViewHeaderOutletSlot } from '../ViewHeaderOutlet'
 
 vi.mock('../../lib/logger', () => ({
@@ -32,6 +32,7 @@ const mockedWarn = vi.mocked(logger.warn)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  __resetViewHeaderWarningsForTest()
 })
 
 describe('ViewHeader', () => {
@@ -111,6 +112,36 @@ describe('ViewHeader', () => {
       'ViewHeader',
       expect.stringContaining('Portal mount attempted before outlet resolved'),
     )
+  })
+
+  it('logs the outlet-not-resolved warn at most once across multiple ViewHeaders', async () => {
+    // Three sibling ViewHeaders all see a null outlet (provider mounted, no
+    // slot) — without module-scoped dedupe each instance would schedule its
+    // own setTimeout and we'd get 3 warns. The Set keyed by warning-kind
+    // collapses these into a single log.
+    const { queryByTestId } = render(
+      <ViewHeaderOutletProvider>
+        <ViewHeader>
+          <span data-testid="h1">first</span>
+        </ViewHeader>
+        <ViewHeader>
+          <span data-testid="h2">second</span>
+        </ViewHeader>
+        <ViewHeader>
+          <span data-testid="h3">third</span>
+        </ViewHeader>
+      </ViewHeaderOutletProvider>,
+    )
+    // None render — all three return null while the outlet is unresolved.
+    expect(queryByTestId('h1')).not.toBeInTheDocument()
+    expect(queryByTestId('h2')).not.toBeInTheDocument()
+    expect(queryByTestId('h3')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockedWarn).toHaveBeenCalledTimes(1)
+    })
+    // Belt-and-braces: wait a tick more to be sure no additional warn lands.
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(mockedWarn).toHaveBeenCalledTimes(1)
   })
 
   it('renders multiple ViewHeaders stacking into the same outlet', () => {

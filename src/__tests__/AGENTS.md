@@ -37,7 +37,7 @@ src/
 │   ├── smoke.test.ts
 │   ├── boot-store.test.ts
 │   └── fixtures/index.ts         # Shared fixture factories (makeBlock, makePage, etc.)
-├── components/__tests__/         # Component tests (.test.tsx) — 133 files
+├── components/__tests__/         # Component tests (.test.tsx) — 136 files
 │   ├── App.test.tsx
 │   ├── PageBrowser.test.tsx
 │   ├── EditableBlock.test.tsx
@@ -49,7 +49,7 @@ src/
 │   ├── extensions.test.ts
 │   ├── use-block-keyboard.test.ts
 │   └── ...
-├── stores/__tests__/             # Zustand store tests — 8 files
+├── stores/__tests__/             # Zustand store tests — 10 files
 │   ├── blocks.test.ts
 │   ├── page-blocks.test.ts
 │   ├── navigation.test.ts
@@ -59,7 +59,7 @@ src/
 │   ├── useBlockCollapse.test.ts
 │   ├── useBlockZoom.test.ts
 │   └── ...
-├── lib/__tests__/                # Utility & wrapper tests — 39 files
+├── lib/__tests__/                # Utility & wrapper tests — 42 files
 │   ├── tauri.test.ts             # Invoke wrapper contract tests
 │   ├── tauri-mock.test.ts        # Mock layer tests
 │   ├── tree-utils.test.ts
@@ -370,14 +370,14 @@ expect(store.getState().pages.get('PAGE_1')?.undoDepth).toBe(0) // rolled back
 
 ### Configuration
 
-- **Test dir:** `e2e/` — 21 spec files
+- **Test dir:** `e2e/` — 26 spec files
 - **Browser:** Chromium only
 - **Base URL:** `http://localhost:5173`
 - **Dev server:** auto-started via `npm run dev`, reused if already running
 - **Retries:** 2 on CI, 0 locally
 - **Workers:** 1 on CI, auto locally
 - **Tracing:** on first retry
-- **Global expect timeout:** 3000ms (set in `playwright.config.ts`, no per-assertion overrides needed)
+- **Global expect timeout:** 8000ms (set in `playwright.config.ts`, no per-assertion overrides needed)
 
 ### Mock backend
 
@@ -402,6 +402,39 @@ test('creates a block via the input form', async ({ page }) => {
 ```
 
 E2E tests verify full user flows: create, delete, navigate, persist across view switches, handle special characters. No page objects — tests are flat and direct. Use `data-testid` selectors (not CSS classes) for targeting elements.
+
+### Portal-scoped helpers
+
+Radix portals mount overlays (dialogs, sheets, popovers, menus, suggestion
+lists) to `document.body`, outside the React tree. When parallel test runs
+interleave mounts — or when a closing overlay's exit animation overlaps the
+next overlay's mount — vanilla `getByRole('dialog')` collisions become a
+flake source: the query either resolves to two elements (strict-mode error)
+or hits the stale subtree first. The `active*` helpers in `e2e/helpers.ts`
+scope queries to the most-recently-opened portal via `.last()`:
+
+- `activeDialog(page)` — `[data-slot="dialog-content"]` (Radix Dialog)
+- `activeAlertDialog(page)` — `[data-slot="alert-dialog-content"]` (Radix AlertDialog)
+- `activeSheet(page)` — `[data-slot="sheet-content"]` (Radix Sheet)
+- `activePopover(page)` — `[data-slot="popover-content"]` (Radix Popover)
+- `activeMenu(page)` — `[role="menu"]` (custom block-context menu)
+- `activeRoleDialog(page)` — generic `[role="dialog"]` overlay; use when a tighter `data-slot` match isn't available (e.g. hand-rolled pickers like `TemplatePicker`)
+- `activeSuggestionPopup(page)` — `[data-testid="suggestion-popup"]` (TipTap suggestion popup container)
+- `activeSuggestionList(page)` — `[data-testid="suggestion-list"]` (the `role="listbox"` child of the popup)
+
+Example:
+
+```ts
+import { activeDialog, expect, test } from './helpers'
+
+await page.getByRole('button', { name: 'Settings' }).click()
+await expect(activeDialog(page).getByRole('button', { name: 'Apply' })).toBeVisible()
+```
+
+Prefer these over root `page.getByRole` / `page.getByText` for any query
+targeting content inside a Radix overlay. Verify the exact set + names
+against `e2e/helpers.ts` before relying on this list — the helpers evolve.
+See TEST-1b in REVIEW-LATER.md for the full rationale.
 
 ### Undo/redo E2E helpers
 

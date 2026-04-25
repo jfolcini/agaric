@@ -1,4 +1,4 @@
-import { expect, openPage, test, waitForBoot } from './helpers'
+import { blurEditors, expect, openPage, reopenPage, test, waitForBoot } from './helpers'
 
 // TEST-1a: block-level undo/redo tests mutate shared mock op-log state
 // within a describe, so run them serially to avoid cross-test interference
@@ -16,51 +16,6 @@ test.describe.configure({ mode: 'serial' })
  *
  * Seed data: see tauri-mock.ts SEED_IDS.
  */
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Navigate away and back to force BlockTree to re-fetch from mock. */
-async function reopenPage(page: import('@playwright/test').Page, title: string) {
-  // Navigate to Status (a simple view that always shows "Status" in header).
-  // `exact: true` is load-bearing: a "Toggle template status" tooltip trigger
-  // also matches the accessible name "Status" by substring otherwise and
-  // Playwright strict-mode fails with two candidates.
-  await page.getByRole('button', { name: 'Status', exact: true }).click()
-  await expect(page.locator('[data-testid="header-label"]')).toContainText('Status')
-  await openPage(page, title)
-}
-
-/**
- * Escape any contentEditable / input focus so the next Ctrl+Z
- * is handled by useUndoShortcuts (which skips contentEditable targets).
- */
-async function blurEditors(page: import('@playwright/test').Page) {
-  await page.keyboard.press('Escape')
-  // Programmatically blur the active element so focus is on document.body
-  await page.evaluate(() => {
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur()
-    }
-  })
-  // Wait until no contenteditable or input is focused
-  await page.waitForFunction(
-    () => {
-      const el = document.activeElement
-      return (
-        !el ||
-        el === document.body ||
-        (!el.isContentEditable && el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')
-      )
-    },
-    { timeout: 2000 },
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 test.describe('Block-level undo/redo', () => {
   test.beforeEach(async ({ page }) => {

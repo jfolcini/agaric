@@ -110,6 +110,25 @@ export async function openPage(page: Page, title: string) {
   await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
 }
 
+/**
+ * Navigate away and back to force `BlockTree` to re-fetch from the mock backend.
+ *
+ * Used in undo/redo flows. Block-level undo (`useUndoShortcuts`) calls
+ * `undoPageOp` against the mock, which mutates the mock's in-memory state,
+ * but the frontend's `BlockTree` doesn't auto-refresh on undo. Navigating to
+ * Status and back triggers a full re-render with the post-undo state.
+ *
+ * `exact: true` on the Status button is load-bearing: a "Toggle template
+ * status" tooltip trigger also matches the accessible name "Status" by
+ * substring otherwise, and Playwright strict-mode then fails with two
+ * candidates.
+ */
+export async function reopenPage(page: Page, title: string) {
+  await page.getByRole('button', { name: 'Status', exact: true }).click()
+  await expect(page.locator('[data-testid="header-label"]')).toContainText('Status')
+  await openPage(page, title)
+}
+
 /** Click a block to enter edit mode and wait for the TipTap editor. */
 export async function focusBlock(page: Page, index = 0) {
   await page.locator('[data-testid="block-static"]').nth(index).click()
@@ -117,6 +136,41 @@ export async function focusBlock(page: Page, index = 0) {
   await expect(editor).toBeVisible()
   await editor.focus()
   return editor
+}
+
+/**
+ * Escape any `contentEditable` / input focus so the next Ctrl+Z is handled
+ * by `useUndoShortcuts` (which skips `contentEditable` targets) instead of
+ * ProseMirror's in-editor undo.
+ *
+ * Used to disambiguate the two-tier undo model in E2E flows:
+ *   - In-editor: ProseMirror undoes within the focused block.
+ *   - Page-level: `useUndoShortcuts` reverses the last block-level op.
+ *
+ * Presses Escape, then programmatically blurs the active element (so focus
+ * lands on `document.body`), and finally polls until the active element is
+ * `document.body` or any non-editable / non-input element.
+ */
+export async function blurEditors(page: Page) {
+  await page.keyboard.press('Escape')
+  // Programmatically blur the active element so focus is on document.body
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur()
+    }
+  })
+  // Wait until no contenteditable or input is focused
+  await page.waitForFunction(
+    () => {
+      const el = document.activeElement
+      return (
+        !el ||
+        el === document.body ||
+        (!el.isContentEditable && el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')
+      )
+    },
+    { timeout: 2000 },
+  )
 }
 
 /**

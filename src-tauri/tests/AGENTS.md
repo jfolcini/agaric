@@ -257,7 +257,7 @@ Tests sync message serialization, peer communication flows, and conflict resolut
 
 ### Where snapshots live
 
-Insta `.snap` files live alongside the code they test. Four directories
+Insta `.snap` files live alongside the code they test. Six directories
 currently hold snapshots:
 
 - **`src/snapshots/`** — snapshots for modules whose tests are inline in
@@ -268,6 +268,10 @@ currently hold snapshots:
 - **`src/commands/tests/snapshots/`** — `commands` submodule tests
   (BlockResponse, DeleteResponse, PageResponse, StatusInfo, HistoryEntry).
 - **`src/pagination/snapshots/`** — current `pagination::tests` snapshots.
+- **`src/mcp/snapshots/`** — MCP (Model Context Protocol) tool / response
+  snapshots (~11 files).
+- **`src/gcal_push/snapshots/`** — Google Calendar push payload / response
+  snapshots (~6 files).
 
 Naming: `agaric_lib__<module>__tests__<test_name>.snap`. If you add a new
 snapshot-testing module, create a sibling `snapshots/` directory next to
