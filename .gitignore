@@ -44,3 +44,6 @@ worktrees/
 UNDO-REDO-PLAN.md
 agaric-release.apk
 agaric-release.apk.idsig
+
+# Internal planning notes — kept locally, never committed.
+REVIEW-LATER.md
