@@ -1,5 +1,105 @@
 # Session Log
 
+## Session 479 — UX a11y + safety + deep-link batch: ConfirmDialog destructive focus, TabBar nested-interactive, Settings URL deep-link, FeatureErrorBoundary report-bug, weak-assertion sweep (UX-259 / UX-262 / UX-276 / UX-279 / TEST-6 partial) (2026-04-25)
+
+**4 REVIEW-LATER items fully resolved (UX-259, UX-262, UX-276, UX-279) + 1 partial closure (TEST-6 — narrowed to LinkEditPopover sub-batch, 7 of 8 sub-files done).** Open items: 49 → 45 (note: 10 new tauri-plugin items — FEAT-10/11/12/13, MAINT-106/107/108/109, PUB-8/9 — were added concurrently, hence the larger starting count). Mixed-domain frontend batch: destructive-dialog autoFocus flip with reflex-Enter safety across 8 callers, TabBar dropdown a11y (close button moved to a sibling Radix menuitem instead of nested-button), `?settings=tab` URL deep-linking for Settings, "Report bug" affordance on section-level error boundaries via global event + prefilled BugReportDialog, and 54 weak-assertion tightenings across 7 test files. Five build subagents launched in parallel. Technical reviewer caught two real safety blockers (single-conflict ConflictList dialogs + PageBrowser delete dialog were missing `actionVariant="destructive"` so they didn't get the safer focus); both fixed in-place with reflex-Enter tests added before commit.
+
+Batch composition (4 items, 1 partial):
+
+- **UX-259** — `ConfirmDialog` destructive-action autoFocus footgun:
+  - `src/components/ConfirmDialog.tsx`: when `actionVariant === 'destructive'`, autoFocus moves to `<AlertDialogCancel>` (was unconditional autoFocus on Action). Non-destructive callers retain action-button focus.
+  - The optional 500 ms aria-disabled "arming grace period" was implemented and ROLLED BACK — preventDefault on click pre-armed broke ~46 unrelated waitFor-based tests across destructive callers. Doc comment captures the rationale; focus-flip alone closes UX-259.
+  - Callers gained `actionVariant="destructive"` where it was missing: `UnpairConfirmDialog.tsx`, `HistoryView.tsx` Revert dialog (Restore-to-here was already destructive), `ConflictList.tsx` batch keep/discard.
+  - **TECHNICAL REVIEWER FOLLOW-UP** — caught two more callers missing the prop and fixed pre-commit: `ConflictList.tsx` single-conflict Keep + Discard dialogs (lines 527 + 566) and `PageBrowser.tsx` delete-page dialog (line 613). Added 3 reflex-Enter tests covering all three. The PageBrowser test asserts focus-state + no-mutation rather than dialog dismissal because jsdom's autoFocus + Radix focus-trap timing can lag the synthetic Enter event.
+  - Caveat: `HistoryView` Revert dialog reflex-Enter test verifies focus state instead of dialog dismissal because `HistoryView.tsx:233` has a pre-existing document-level Enter handler that re-opens the dialog whenever Enter is pressed with non-empty selection. Out-of-scope keydown bug worth tracking but not blocking here.
+
+- **UX-262** — `TabBar` close button nested-interactive a11y violation:
+  - Each tab row in the dropdown is now a `role="none"` flex container holding TWO sibling Radix-Popover menu items: a `role="menuitemradio"` (activate) + a `role="menuitem"` (close).
+  - Roving tabindex across `tabs.length * 2` items; ArrowUp/ArrowDown/Home/End keyboard navigation with wrap-around; Enter/Space on either fires its action; Esc still closes the dropdown via Radix's built-in handler.
+  - Two new useEffects seed focus on the active tab's activate item when the dropdown opens and keep DOM focus in sync with the roving index. Touch target on close: `[@media(pointer:coarse)]:min-h-11 :min-w-11`.
+  - Did NOT adopt a new Radix DropdownMenu primitive — the repo's existing pattern is to compose dropdowns from Popover + role="menu" (TabBar's preexisting structure). Flattened within that shell.
+  - Existing `tabs.closeTab` i18n key reused — no new keys.
+
+- **UX-276** — Settings URL deep-link support:
+  - **NEW** `src/lib/url-state.ts` (~50 LOC) — `getSettingsTabFromUrl(allowed)` and `setSettingsTabInUrl(tab | null)` helpers. Try/catch around URL parsing, allow-list validation, `replaceState` only (no `pushState` — Back doesn't have to escape Settings tab-by-tab), preserves other query params + hash, no-op on remove if param absent. SSR-safe via `typeof window === 'undefined'` guard.
+  - `src/components/SettingsView.tsx`: `readActiveTab` now resolves URL → localStorage → `'general'`. The existing tab-persist effect mirrors the active tab into the URL on every change. New unmount-only effect strips `?settings=…` so closing Settings doesn't leave stale state in the URL.
+  - 12 unit tests for `url-state.ts` (read happy path, missing param, invalid param, multi-param URL, write add / replace / preserve-other / remove / no-op-remove / replaceState invariant / hash preservation) + 7 SettingsView integration tests (deep-link mount, URL > localStorage, fallback chain, replaceState-not-pushState, unmount cleanup, axe a11y on URL-driven mount).
+  - Decision: did NOT integrate with the navigation store. The store's persistence is `zustand/middleware/persist` over localStorage — adding URL/query-param sync would require new responsibilities that the AGENTS.md "Architectural Stability" rule flags as needing user approval. The thin helper file is the smallest viable change.
+
+- **UX-279** — `FeatureErrorBoundary` "Report bug" affordance:
+  - **NEW** `src/lib/bug-report-events.ts` — `BUG_REPORT_EVENT` constant (`'agaric:report-bug'`), `BugReportEventDetail` type (`{ message: string; stack?: string }`), `dispatchBugReport(detail)` helper with SSR safety guard. Mirrors the existing `overlay-events.ts` pattern.
+  - `src/components/FeatureErrorBoundary.tsx`: added `Bug` icon button next to "Retry" (matches global `ErrorBoundary` styling: `variant="outline" size="sm"` + icon + label). Click dispatches the event with the captured error's `message` and `stack` (stack conditionally spread to satisfy `exactOptionalPropertyTypes`). Reuses existing `bugReport.reportCrashTitle` i18n key — no new strings.
+  - `src/App.tsx`: imports BugReportDialog + BUG_REPORT_EVENT. Adds `bugReportOpen` + `bugReportPrefill` state and a `useEffect` that listens for the global event. Mounts `<BugReportDialog>` next to `<Toaster>` at the App shell level (where `KeyboardShortcuts`, `WelcomeModal`, and other shell-level overlays already live). `onOpenChange(false)` clears prefill so the next open starts clean.
+  - `BugReportDialog` itself was NOT modified — it already accepted `initialTitle` / `initialDescription` props with the right reset semantics (used by global ErrorBoundary). The integration just wires App.tsx to map `detail.message → initialTitle`, `detail.stack → initialDescription`.
+  - 4 unit tests for `bug-report-events.ts` (event-name constant, dispatch with full detail, dispatch without stack, SSR no-op) + 3 FeatureErrorBoundary tests (renders both buttons; click dispatches event with message + stack; click without stack omits the stack field) + 3 App tests (dialog absent by default; opens with prefilled title + description on event; opens with empty description when stack is omitted).
+  - UX reviewer flagged a follow-up: focus restoration on dialog close isn't wired (focus lands on document body, not back to the Report bug button) — minor a11y gap, deferred. Acceptable behavior since the user can navigate back; the dialog opens and closes correctly otherwise.
+
+- **TEST-6 (partial)** — Weak-assertion sweep across 7 of 8 sub-files (LinkEditPopover deferred):
+  - 54 sites tightened across 7 test files: `SearchPanel.test.tsx` (+1: `toBeGreaterThan(0)` → `toHaveLength(3)` after reading `LoadingSkeleton count={3}`), `ConflictList.test.tsx` (+11: 8 `toBeTruthy()` → `toBeInTheDocument()`, 3 `mock.calls.find()` → `toBeDefined()`), `JournalPage.test.tsx` (+6: dueDots/scheduledDots/propDots `length > 0` → `toHaveLength(2)` since each renders one day-cell dot + one legend dot), `PageBrowser.test.tsx` (+4: 4 element-existence `toBeTruthy()` → `toBeInTheDocument()`), `suggestion-renderer.test.ts` (+26: `replace_all` `popup.toBeTruthy()` → `popup.toBeInTheDocument()` since popups are appended to `document.body`), `keyboard-config.test.ts` (+4: property-shape loop now uses `.toMatch(...)` regex matchers for id / keys / category / description), `MonthlyDayCell.test.tsx` (+2: `.not.toBeNull()` → `.toBeInTheDocument()`).
+  - **DEFERRED:** `LinkEditPopover.test.tsx` (~36 `toHaveBeenCalled()` sites, M-cost). REVIEW-LATER TEST-6 narrowed in-place to that scope.
+  - No production code changed; no test count change (just stronger assertions).
+
+### What changed
+
+**Frontend (production):**
+
+- **`src/components/ConfirmDialog.tsx`** — destructive-variant autoFocus flip + doc-comment rationale for the not-implemented arming grace period.
+- **`src/components/UnpairConfirmDialog.tsx`** — added `actionVariant="destructive"` (was missing).
+- **`src/components/HistoryView.tsx`** — added `actionVariant="destructive"` to the Revert dialog.
+- **`src/components/ConflictList.tsx`** — added `actionVariant="destructive"` to batch keep/discard + single-conflict Keep + single-conflict Discard dialogs (3 total).
+- **`src/components/PageBrowser.tsx`** — added `actionVariant="destructive"` to the delete-page dialog.
+- **`src/components/TabBar.tsx`** — restructured tab dropdown rows to two sibling menu items + roving tabindex + arrow-key navigation + focus seed on dropdown open.
+- **`src/components/SettingsView.tsx`** — `readActiveTab` URL → localStorage → 'general'; tab-persist effect mirrors to URL; new unmount effect strips param.
+- **`src/components/FeatureErrorBoundary.tsx`** — Bug icon "Report bug" button next to Retry; dispatches `BUG_REPORT_EVENT` with message + stack.
+- **`src/App.tsx`** — global event listener + bug-report dialog state + top-level `<BugReportDialog>` mount + prefill clear on close.
+
+**Frontend (lib — NEW):**
+
+- **`src/lib/url-state.ts`** — `getSettingsTabFromUrl` / `setSettingsTabInUrl` (~50 LOC).
+- **`src/lib/bug-report-events.ts`** — `BUG_REPORT_EVENT` + `BugReportEventDetail` + `dispatchBugReport` helper.
+
+**Tests:**
+
+- **`src/components/__tests__/ConfirmDialog.test.tsx`** — +5 destructive-variant tests (focus flip, reflex-Enter dismisses, click still works, non-destructive parity, axe).
+- **`src/components/__tests__/UnpairConfirmDialog.test.tsx`** — +1 reflex-Enter test.
+- **`src/components/__tests__/HistoryView.test.tsx`** — +2 tests (Revert focus check + no `revert_ops`; Restore-to-here dismissal + no `restore_page_to_op`).
+- **`src/components/__tests__/ConflictList.test.tsx`** — +2 reflex-Enter tests for batch keep/discard, +2 reflex-Enter tests for single-conflict keep/discard, +11 weak-assertion tightenings.
+- **`src/components/__tests__/TrashView.test.tsx`** — +1 reflex-Enter test for purge.
+- **`src/components/__tests__/CompactionCard.test.tsx`** — +1 reflex-Enter test.
+- **`src/components/__tests__/PageBrowser.test.tsx`** — +1 UX-259 reflex-Enter test (focus + no-mutation), +4 weak-assertion tightenings.
+- **`src/components/__tests__/TabBar.test.tsx`** — +9 dropdown-a11y tests (axe, no nested button, focus seed, ArrowDown traversal, ArrowUp wrap, Enter on close, Esc closes, click closes right tab).
+- **`src/components/__tests__/SettingsView.test.tsx`** — +7 URL deep-link tests.
+- **`src/lib/__tests__/url-state.test.ts`** — NEW, 12 unit tests.
+- **`src/components/__tests__/FeatureErrorBoundary.test.tsx`** — +3 Report-bug tests.
+- **`src/components/__tests__/App.test.tsx`** — +3 listener-integration tests.
+- **`src/lib/__tests__/bug-report-events.test.ts`** — NEW, 4 unit tests.
+- **`src/components/__tests__/SearchPanel.test.tsx`, `JournalPage.test.tsx`, `MonthlyDayCell.test.tsx`, `keyboard-config.test.ts`, `suggestion-renderer.test.ts`** — TEST-6 weak-assertion tightenings.
+
+### Verification
+
+- `npx tsc -b --noEmit` — clean.
+- `npx vitest run` (full frontend suite) — 307 files / **7902 tests** pass.
+- `prek run --all-files` — all 26 hooks green.
+
+### Notes / decisions
+
+- **Pre-commit safety expansion (3 dialogs, 3 tests).** The build subagent's UX-259 acceptance criteria listed 5 destructive callers; the technical reviewer found 3 more (single-conflict Keep + Discard, PageBrowser delete) that are equally destructive but were missing the variant prop. Closing them in-batch was strictly additive (the variant just changes initial focus) and prevents the same footgun on three more flows.
+- **Arming grace period rolled back.** The original UX-259 prompt mentioned an optional 500 ms `aria-disabled` arming gate. Implemented, then rolled back because every existing test that clicks the action button immediately after dialog open started failing on a `preventDefault`-induced waitFor timeout. The focus-flip alone is sufficient — reflex Enter on a focused Cancel button never reaches the destructive Action.
+- **HistoryView Revert dialog has a document-level Enter loop (out-of-scope).** Pressing Enter while the Revert dialog is open dismisses it, but `HistoryView.tsx:233` immediately re-opens it because there's still a non-empty selection. The reflex-Enter test asserts the safety contract (focus on Cancel + no `revert_ops`) instead of dialog dismissal. Worth filing as a separate bug — added to the open follow-ups.
+- **PageBrowser test focus-state assertion.** jsdom's autoFocus + Radix focus-trap timing can lag the synthetic Enter event. The PageBrowser test waits for `cancelBtn.toHaveFocus()` then asserts no-mutation, rather than dialog dismissal. The safety contract (no IPC firing) is what UX-259 actually guarantees.
+- **TabBar didn't adopt a Radix DropdownMenu primitive.** The repo composes dropdowns from Popover + role="menu" (the existing TabBar pattern). The fix flattens within that existing shell — `role="none"` wrapper + two sibling menu items + roving tabindex.
+- **Settings URL deep-link is pure helper, not a navigation-store integration.** The navigation store has no URL/query-param API; integrating one would expand store responsibilities and require user approval per AGENTS.md "Architectural Stability". The `~50` LOC helper file is scoped only to `getSettingsTabFromUrl` / `setSettingsTabInUrl`.
+- **TEST-6 arming-delay false positive.** The TEST-6 build subagent's parallel aggregate run reported 5 ConflictList batch tests failing because it saw an intermediate UX-259 state via `git diff` that included the (later rolled-back) arming delay. Final ConflictList.test.tsx passes — the flake was orchestration-level, not an actual TEST-6 issue.
+- **Concurrent REVIEW-LATER drift.** Open count grew from 39 (session 478 close) → 49 between sessions due to 10 new items added by another agent: FEAT-10/11/12/13 (tauri plugins), MAINT-106/107/108/109 (more tauri plugins), PUB-8/9 (Android keystore + Windows code signing). Per PROMPT.md, REVIEW-LATER was re-read before writing. Net session 479 result: 49 → 45 (4 closed, TEST-6 rescoped, no new items added by this session).
+
+### Open follow-ups
+
+- **HistoryView document-level Enter handler** — filed informally; should not fire while a modal is open. Add `if (!confirmRevert)` guard or move the listener to scope.
+- **TEST-6 LinkEditPopover sub-batch** — 36 `toHaveBeenCalled()` sites, M-cost; rescoped TEST-6 entry covers it.
+- **UX-279 focus restoration on BugReportDialog close** — focus should return to the Report bug button after dialog close. Currently lands on document body. Minor a11y gap, S-cost via passing a ref through props.
+
+---
+
 ## Session 478 — Mixed batch: TEST-1 deferred coverage, TEST-10 sticky-mock sweep, UX-271 backlinks distinction + filter count, UX-281 a11y/privacy guardrails, FEAT-4k privacy-safe MCP summaries (TEST-1 / TEST-10 / UX-271 / UX-281 partial / FEAT-4k) (2026-04-25)
 
 **4 REVIEW-LATER items resolved (TEST-1, TEST-10, UX-271, FEAT-4k) + 1 partial closure (UX-281 — narrowed in-place to gutter-touch-labels follow-up).** Open items: 43 → 39. Mixed-domain batch: 30 frontend tests for previously-uncovered risk paths (main.tsx error handlers, useEditorBlur portal scan, page-blocks loadSubtree cap), full sticky-mock sweep across `useBlockResolve.test.ts`, linked-vs-unlinked badge symmetry across both references panels with active-filter count badges, semantic `<h3>` headings in suggestion list + rate-limited toast on unknown serializer node types, and 15 privacy-safe per-tool summarisers for the MCP activity feed replacing the bare-tool-name placeholder. Five build subagents launched in parallel; UX review surfaced a real symmetry gap (UnlinkedReferences uses `CollapsibleGroupList` directly, not `BacklinkGroupRenderer`, so the "Unlinked" badge support added there was dead code) and an aria-label/visible-text duplication on the filter count badge — both addressed in-place before commit. Two read-only review subagents (technical + UX) approved the final tree.

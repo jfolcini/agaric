@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-49 open items.
+45 open items.
 
 Previously resolved: 422+ items across 149 sessions.
 
@@ -52,12 +52,10 @@ Previously resolved: 422+ items across 149 sessions.
 | TEST-3 | TEST | Browser/E2E `tauri-mock` `revert.ts` only handles 5 of 13 reversible op types — undo/redo for property/tag/state ops is a silent no-op in mock; can't be E2E-tested | M |
 | TEST-4 | TEST | 25 of 26 Playwright specs lack a console-error listener — backend / mock errors leak silently in every E2E suite except `smoke.spec.ts` | M |
 | TEST-5 | TEST | `property-picker.test.ts` (6 tests) and `checkbox-input-rule.test.ts` (17 tests) exercise extension config + regex only, not editor integration | M |
-| TEST-6 | TEST | Weak-assertion sweep: `toBeTruthy()` for element existence, `toBeGreaterThan(0)` for known-count arrays, `toHaveBeenCalled()` without `…With(...)` (verified in 5 files) | S |
+| TEST-6 | TEST | `LinkEditPopover.test.tsx` weak-assertion sub-batch — 36 `toHaveBeenCalled()` sites need tightening to `toHaveBeenCalledWith(...)` (other 7 sub-files closed in session 479) | M |
 | TEST-11 | TEST | 7 E2E specs use CSS-class selectors (23 instances total) instead of `data-testid` per the documented selector convention | M |
 | UX-257 | UX | Breadcrumb bar (zoom + page header) doesn't read as a breadcrumb, is oversized, and styling is inconsistent across the two surfaces | M |
-| UX-259 | UX | `ConfirmDialog` `autoFocus` lands on the destructive action button — Enter on a destructive confirm is a footgun | S |
 | UX-260 | UX | Discoverability sweep for keyboard shortcuts and gestures (sidebar swipe, journal nav, undo tiers, Shift+Click range, properties drawer shortcut, Ctrl+F, KeyboardShortcuts→Settings link) | M |
-| UX-262 | UX | `TabBar` close button is a `<button>` nested inside a `role="menuitemradio"` div — nested-interactive a11y violation | S |
 | UX-263 | UX | Pairing flow polish (countdown SR announcements, ordinal labels, address/rename validation, mid-pair close guard, countdown pause while typing) | M |
 | UX-264 | UX | Sync error UX (no retry action on failure toast, no online/offline transition feedback, no batch progress, camera-permission denial leaves user stuck on QR mode) | M |
 | UX-265 | UX | Conflict UI improvements (Keep/Discard label clarity, sort/filter for large conflict sets, type-badge tooltips, missing-original-block fallback, large-diff handling) | M |
@@ -67,9 +65,7 @@ Previously resolved: 422+ items across 149 sessions.
 | UX-273 | UX | Inline link UX — `LinkPreviewTooltip` only fires on hover (no keyboard activation); suggestion popups don't handle viewport edges on mobile | M |
 | UX-274 | UX | Agenda views — `DateChipEditor` parse error not shown on input itself; `QueryResult` error has no retry; `RescheduleDropZone` has no keyboard alternative; per-group collapse not persisted; empty-filter validation silent; `DuePanel` projected entries skipped by keyboard nav; `QueryBuilderModal` accepts unknown property keys | M |
 | UX-275 | UX | History view UX gaps — Restore-to-here wording, non-reversible icon a11y, missing inline filter clear, DiffDisplay hunk navigation, descendant-count badge wrap, batch keyboard shortcuts, restore-action missing undo toast, checkbox row-click ambiguity, generic error banner, no batch-restore confirmation | M |
-| UX-276 | UX | Settings — no URL-based deep-link to specific settings sections (tab persistence shipped; URL deep-link still pending) | S |
 | UX-277 | UX | `BugReportDialog` log-content preview before submit (Checkbox primitive swap + success toast shipped; log preview pending — may be superseded by H-9c) | M |
-| UX-279 | UX | `FeatureErrorBoundary` (section-level errors) lacks "Report bug" affordance — only the global `ErrorBoundary` has it | M |
 | UX-281 | UX | Gutter-button tooltips invisible on touch — gutter is fixed at 68px, three buttons already inflate to 44×44 on `pointer:coarse` so inline labels would overflow; needs a different affordance (long-press → toast, or wider gutter / drawer on touch) | S |
 | UX-282 | UX | `src/lib/announcer.ts` exists with `announce.*` i18n keys but is invoked from very few places — paid-for accessibility utility is largely unused | M |
 | PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S |
@@ -948,26 +944,15 @@ Compare with `src/editor/__tests__/at-tag-picker.test.ts` (~452 lines) and `src/
 **Risk:** S — additive tests.
 **Impact:** M — closes coverage on hot-path picker code where flushSync / portal / capture-phase regressions actually occur.
 
-### TEST-6 — Weak-assertion sweep: `toBeTruthy` / `toBeGreaterThan(0)` / `toHaveBeenCalled` without `…With(...)`
+### TEST-6 — `LinkEditPopover.test.tsx` weak-assertion sub-batch
 
-**Problem:** Five files (verified by independent grep) use weak assertions where stronger ones would catch real regressions. Quality-standards rule from `src/__tests__/AGENTS.md:529`: *"Use `toHaveLength(N)` with exact counts, not `Array.isArray()` or `.length >= 1`. […] `toHaveBeenCalledWith` with exact args, not just `toHaveBeenCalled`."*
+**Problem:** `src/components/__tests__/LinkEditPopover.test.tsx` has ~36 `expect(mock).toHaveBeenCalled()` assertions without `…With(...)`. Quality-standards rule from `src/__tests__/AGENTS.md:529`: *"Use `toHaveBeenCalledWith` with exact args, not just `toHaveBeenCalled`."* The other 7 TEST-6 sub-files (SearchPanel, ConflictList, JournalPage, PageBrowser, suggestion-renderer, keyboard-config, MonthlyDayCell) were closed in session 479 — 54 sites tightened. LinkEditPopover was deferred as the largest sub-batch (M-cost).
 
-| File | Line(s) | Pattern | Verified count |
-|------|---------|---------|----------------|
-| `src/components/__tests__/SearchPanel.test.tsx` | 1692 | `expect(skeletons.length).toBeGreaterThan(0)` (component renders exactly 2 skeletons) | 1 |
-| `src/components/__tests__/ConflictList.test.tsx` | 948, 971, 992, 1009, 1292, 1343, 1418, 1477, 1579, 1628, 1686 | `expect(x).toBeTruthy()` for element-existence checks | 11 |
-| `src/components/__tests__/JournalPage.test.tsx` | 2795, 2822, 2849, 2884, 2885, 2886 | `expect(dueDots.length).toBeGreaterThan(0)` | 6 |
-| `src/components/__tests__/PageBrowser.test.tsx` | 233, 239, 969, 1623 | `expect(...).toBeTruthy()` for element existence | 4 |
-| `src/components/__tests__/LinkEditPopover.test.tsx` | various | `expect(mock).toHaveBeenCalled()` without `…With(...)` | 36 |
-| `src/editor/__tests__/suggestion-renderer.test.ts` | 143, 167, 191, 224, 262, 290, 358, 445, 482, 526, 563, 592, 646, 660, 666, 675, 680, 714, 722, 747, 774, 846, 852, 866, 903 | `expect(popup).toBeTruthy()` for DOM element existence | 25 |
-| `src/lib/__tests__/keyboard-config.test.ts` | 39-42 | `expect(s.id).toBeTruthy()` in a property-shape loop | 4 |
-| `src/components/journal/__tests__/MonthlyDayCell.test.tsx` | 165 | `.not.toBeNull()` instead of `.toBeInstanceOf(HTMLElement)` | 1 |
+**Fix:** Replace each `toHaveBeenCalled()` with `toHaveBeenCalledWith(expectedArgs)` using the most specific matcher possible. If args are sometimes Symbol/closure (cannot be asserted), use `toHaveBeenCalledTimes(N)` instead — at minimum tighten the arity.
 
-**Fix:** File-by-file sweep. For element-existence: `toBeInTheDocument()` (RTL) or `toBeInstanceOf(HTMLElement)`. For known-count arrays: `toHaveLength(N)`. For mock invocations: `toHaveBeenCalledWith(expectedArgs)`. The `LinkEditPopover.test.tsx` case is the largest (36 instances) — bundle as its own commit.
-
-**Cost:** S (~half day for the small files) / M (~1–2 days incl. `LinkEditPopover.test.tsx`).
-**Risk:** S — pure tightening of assertions; tests still pass when behaviour is correct.
-**Impact:** M — catches off-by-one / wrong-arg regressions that currently pass.
+**Cost:** M (~1–2 days).
+**Risk:** S — pure tightening of assertions; tests still pass when behavior is correct.
+**Impact:** M — catches off-by-one / wrong-arg regressions on the link-edit popover, a heavily user-touched surface.
 
 ### TEST-11 — 7 E2E specs use CSS-class selectors (23 instances) instead of `data-testid`
 
@@ -1028,18 +1013,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 
 **Cost:** M — single focused refactor session. Two callers, one new primitive, one coordinated test pass. No protocol, schema, store, or sync-protocol changes; stays firmly inside AGENTS.md "Architectural Stability" guardrails.
 
-### UX-259 — `ConfirmDialog` `autoFocus` lands on the destructive action button
-
-**Problem:** `src/components/ConfirmDialog.tsx:75-86` always sets `autoFocus` on the `<AlertDialogAction>` regardless of variant. For dialogs raised with `actionVariant="destructive"` (purge selected, batch revert, restore-to-here, unpair, compact ops, conflict batch keep/discard) the dialog opens with focus already on the red action button — a reflex Enter confirms the destructive action without ever moving focus.
-
-**Fix:** when `actionVariant === 'destructive'`, focus the Cancel button instead. Drop `autoFocus` on the action; add it to Cancel when destructive. Optionally add a 500 ms grace period before allowing action-button activation so reflex Enter still lands on Cancel.
-
-**Acceptance:** test every destructive caller (`TrashView` purge, `HistoryView` revert + restore-to-here, `ConflictList` batch keep/discard, `UnpairConfirmDialog`, `CompactionCard`) — Enter immediately after the dialog opens must cancel, never confirm. Non-destructive callers retain action-button focus.
-
-**Cost:** S.
-**Risk:** M — touches the dialog primitive used by every destructive flow; needs every caller's tests refreshed.
-**Impact:** L — directly prevents accidental data destruction across the most dangerous code paths.
-
 ### UX-260 — Discoverability sweep for keyboard shortcuts, gestures, and customization
 
 **Problem:** Several real, working features are effectively invisible to users who don't read code or doc files:
@@ -1065,16 +1038,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Cost:** M — many small surfaces but each fix is XS.
 **Risk:** S — additive UI, no behaviour change.
 **Impact:** L — flips a large amount of latent capability into discoverable capability.
-
-### UX-262 — `TabBar` close button nested inside `role="menuitemradio"` — nested-interactive a11y violation
-
-**Problem:** `src/components/TabBar.tsx:245-259` renders an in-dropdown tab close button as a `<button>` inside a `<div role="menuitemradio">`. Nested interactive elements are forbidden by WAI-ARIA — keyboard navigation between menu items doesn't reach the close button, and screen readers may announce the row inconsistently.
-
-**Fix:** restructure to flatten the interactive tree. Preferred (matches the rest of the app's Radix-everywhere stance per AGENTS.md): split into two sibling `MenuItem`s in a row — one activates the tab, one closes it — both reachable by arrow keys. Pair with TEST-13 to assert Esc-closes-dropdown survives the restructure.
-
-**Cost:** S.
-**Risk:** M — high-traffic surface; needs a11y + keyboard tests refreshed.
-**Impact:** M — closes a clear a11y violation.
 
 ### UX-263 — Pairing flow polish
 
@@ -1216,14 +1179,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Risk:** S.
 **Impact:** M.
 
-### UX-276 — Settings: URL deep-link support
-
-**Problem:** `src/components/SettingsView.tsx` has no URL-based deep-link to a specific tab. Power users and support flows can't share `…?settings=keyboard` links. Sync `activeTab` with a query param via `useNavigationStore` (or a thin wrapper).
-
-**Cost:** S.
-**Risk:** M — needs coordination with the navigation store.
-**Impact:** M.
-
 ### UX-277 — `BugReportDialog` log-content preview before submit
 
 **Problem:** `src/components/BugReportDialog.tsx` lists filenames + sizes for attached logs but offers no preview of contents. Users cannot verify what data they're submitting before the report leaves the device. Add a per-entry "Preview" button that shows the first 500 chars in a modal.
@@ -1233,16 +1188,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Cost:** M.
 **Risk:** S.
 **Impact:** M — improves transparency before submit.
-
-### UX-279 — `FeatureErrorBoundary` lacks "Report bug" affordance
-
-**Problem:** `src/components/FeatureErrorBoundary.tsx:39-64` (section-level error boundary) only offers "Retry"; the global `ErrorBoundary` offers both "Reload" and "Report bug". For consistency and support workflows, section-level crashes should also surface the bug-report path.
-
-**Fix:** add a "Report bug" button that opens `BugReportDialog` with the error message and stack trace pre-filled. Requires plumbing — either pass `onReportBug` callback through children, use a React context, or dispatch a global event. Match the cost/complexity tier to the value: a global event is the smallest change.
-
-**Cost:** M.
-**Risk:** M.
-**Impact:** M.
 
 ### UX-281 — Gutter-button tooltips invisible on touch
 
