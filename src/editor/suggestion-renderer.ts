@@ -142,18 +142,24 @@ export function createSuggestionRenderer(label?: string, pluginKey?: PluginKey) 
           // Deactivate the Suggestion plugin so it doesn't stay stuck
           // active with a null renderer (B-77 fix layer 1).
           if (editorRef && pluginKey) {
-            try {
-              const { tr } = editorRef.state
-              tr.setMeta(pluginKey, { exit: true })
-              tr.setMeta('addToHistory', false)
-              editorRef.view.dispatch(tr)
-            } catch (err) {
-              logger.warn(
-                'SuggestionRenderer',
-                'failed to dispatch exit meta on outside click',
-                { label },
-                err,
-              )
+            if (editorRef.view.isDestroyed) {
+              logger.warn('SuggestionRenderer', 'skipping exit dispatch — view destroyed', {
+                label,
+              })
+            } else {
+              try {
+                const { tr } = editorRef.state
+                tr.setMeta(pluginKey, { exit: true })
+                tr.setMeta('addToHistory', false)
+                editorRef.view.dispatch(tr)
+              } catch (err) {
+                logger.warn(
+                  'SuggestionRenderer',
+                  'failed to dispatch exit meta on outside click',
+                  { label },
+                  err,
+                )
+              }
             }
           }
           cleanupListener()

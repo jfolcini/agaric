@@ -137,7 +137,7 @@ function buildPropertyFilter(s: BuildState, t: TFunc): BuildResult {
   const trimmedKey = s.propKey.trim()
   if (!trimmedKey) return { error: t('backlink.propertyKeyRequired') }
   if (s.propertyKeys.length > 0 && !s.propertyKeys.includes(trimmedKey)) {
-    return { error: `No blocks have property "${trimmedKey}"` }
+    return { error: t('backlink.propertyNotFound', { key: trimmedKey }) }
   }
   if (s.propType === 'num') {
     const numVal = Number.parseFloat(s.propValue)

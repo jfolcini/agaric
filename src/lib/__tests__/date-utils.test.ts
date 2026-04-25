@@ -5,6 +5,7 @@ import {
   getTodayString,
   getWeekOptions,
   isDateFormattedPage,
+  MONTH_SHORT,
 } from '../date-utils'
 
 describe('formatCompactDate', () => {
@@ -40,6 +41,12 @@ describe('formatCompactDate', () => {
   it('handles December of a different year', () => {
     expect(formatCompactDate('2027-12-31')).toBe('Dec 31, 2027')
   })
+})
+
+describe('MONTH_SHORT', () => {
+  it('has 12 entries', () => expect(MONTH_SHORT).toHaveLength(12))
+  it('starts with Jan', () => expect(MONTH_SHORT[0]).toBe('Jan'))
+  it('ends with Dec', () => expect(MONTH_SHORT[11]).toBe('Dec'))
 })
 
 describe('getDateRangeForFilter', () => {

@@ -3,6 +3,7 @@ import { Calendar, CalendarDays, Check, Paperclip, Repeat, X } from 'lucide-reac
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { dispatchBlockEvent } from '../lib/block-events'
+import { formatCompactDate, MONTH_SHORT } from '../lib/date-utils'
 import { priorityColor } from '../lib/priority-color'
 import { formatRepeatLabel } from '../lib/repeat-utils'
 import { cn } from '../lib/utils'
@@ -27,32 +28,9 @@ export function priorityLabel(priority: string): string {
  */
 export const PRIORITY_DISPLAY: Record<string, string> = { '1': 'P1', '2': 'P2', '3': 'P3' }
 
-export const MONTH_SHORT = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-]
-
-export function formatCompactDate(dateStr: string): string {
-  const parts = dateStr.split('-')
-  if (parts.length !== 3) return dateStr
-  const [y, m, d] = parts.map(Number)
-  if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return dateStr
-  const month = MONTH_SHORT[(m ?? 1) - 1] ?? 'Jan'
-  const day = d ?? 1
-  const now = new Date()
-  if (y === now.getFullYear()) return `${month} ${day}`
-  return `${month} ${day}, ${y}`
-}
+// Re-exported from date-utils so existing call sites + tests that import these
+// names from BlockInlineControls keep working after MAINT-94 deduplication.
+export { formatCompactDate, MONTH_SHORT }
 
 export function dueDateColor(dateStr: string): string {
   const now = new Date()

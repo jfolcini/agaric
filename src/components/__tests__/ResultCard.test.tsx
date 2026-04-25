@@ -10,7 +10,6 @@
  *  - Disabled state
  *  - Shows "(empty)" for empty content
  *  - Rich content: tag refs and block links render as resolved pills
- *  - highlightText prop accepted without crashing (API compat)
  *  - axe a11y audit
  */
 
@@ -131,17 +130,6 @@ describe('ResultCard', () => {
     const chip = screen.getByTestId('block-link-chip')
     expect(chip).toBeInTheDocument()
     expect(chip.textContent).toBe('My Page')
-  })
-
-  it('does not crash when highlightText is provided', () => {
-    render(
-      <ResultCard
-        block={makeBlock({ content: 'hello world' })}
-        onClick={() => {}}
-        highlightText="world"
-      />,
-    )
-    expect(screen.getByText('hello world')).toBeInTheDocument()
   })
 
   it('applies line-clamp-2 by default on the content span', () => {

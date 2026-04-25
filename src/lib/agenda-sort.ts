@@ -1,3 +1,4 @@
+import { MONTH_SHORT } from './date-utils'
 import { getPriorityLevels, priorityRank } from './priority-levels'
 import type { BlockRow } from './tauri'
 
@@ -400,22 +401,6 @@ export function sortAgendaBlocksBy(
       return sortAgendaBlocks(blocks)
   }
 }
-
-/** Short month names for compact date display. */
-const MONTH_SHORT = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-]
 
 /** Format YYYY-MM-DD for group headers. Same year -> "Mon DD", different year -> "Mon DD, YYYY". */
 function formatGroupDate(dateStr: string): string {

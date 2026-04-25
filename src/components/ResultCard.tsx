@@ -28,12 +28,6 @@ export interface ResultCardProps {
   showSpinner?: boolean
   /** CSS class name for the content span */
   contentClassName?: string
-  /**
-   * Text to highlight within block content.
-   * Currently accepted for API compatibility but rich content rendering
-   * takes priority over plain-text highlighting.
-   */
-  highlightText?: string
 }
 
 export function ResultCard({

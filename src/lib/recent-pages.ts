@@ -14,6 +14,16 @@ export interface RecentPage {
   visitedAt: string
 }
 
+function isRecentPage(item: unknown): item is RecentPage {
+  if (item === null || typeof item !== 'object') return false
+  const r = item as Record<string, unknown>
+  return (
+    typeof r['id'] === 'string' &&
+    typeof r['title'] === 'string' &&
+    typeof r['visitedAt'] === 'string'
+  )
+}
+
 /** Read the recent-pages list from localStorage. */
 export function getRecentPages(): RecentPage[] {
   try {
@@ -21,7 +31,7 @@ export function getRecentPages(): RecentPage[] {
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return parsed as RecentPage[]
+    return parsed.filter(isRecentPage)
   } catch {
     return []
   }

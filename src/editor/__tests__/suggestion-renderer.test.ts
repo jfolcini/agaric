@@ -1,3 +1,4 @@
+import { PluginKey } from '@tiptap/pm/state'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createSuggestionRenderer } from '../suggestion-renderer'
 
@@ -774,6 +775,41 @@ describe('outside-click dismissal', () => {
     expect(document.querySelector('.suggestion-popup')).toBeTruthy()
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     expect(document.querySelector('.suggestion-popup')).toBeNull()
+  })
+
+  it('skips view.dispatch when editor view is destroyed but still cleans up popup', () => {
+    const pluginKey = new PluginKey('test-suggestion')
+    const dispatch = vi.fn()
+    const mockEditor = {
+      state: { tr: { setMeta: vi.fn().mockReturnThis() } },
+      view: { isDestroyed: true, dispatch },
+      // biome-ignore lint/suspicious/noExplicitAny: minimal editor mock
+    } as any
+
+    const renderer = createSuggestionRenderer('Tags', pluginKey)
+    const props = makeProps()
+    props.editor = mockEditor
+    renderer.onStart(props)
+
+    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+
+    removeSpy.mockClear()
+
+    // Outside click while the captured editor's view is destroyed
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+
+    // Dispatch must be skipped because the view is destroyed
+    expect(dispatch).not.toHaveBeenCalled()
+
+    // Cleanup must still happen: popup gone, listener removed
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
+    expect(removeSpy).toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
+
+    // Confirm renderer was destroyed too
+    // biome-ignore lint/suspicious/noExplicitAny: mock instance typing
+    const lastInstance: any =
+      mockReactRenderer.mock.instances[mockReactRenderer.mock.instances.length - 1]
+    expect(lastInstance.destroy).toHaveBeenCalled()
   })
 })
 
