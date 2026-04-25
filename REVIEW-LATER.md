@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-52 open items.
+48 open items.
 
-Previously resolved: 413+ items across 149 sessions.
+Previously resolved: 417+ items across 149 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -38,14 +38,10 @@ Previously resolved: 413+ items across 149 sessions.
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
 | BUG-1 | BUG | Markdown serializer/parser round-trip splits code blocks whose content contains a line starting with three backticks | M |
 | MAINT-96 | MAINT | Decompose `AgentAccessSettingsTab.tsx` (910 lines) and extract inline `AddFilterRow` from `BacklinkFilterBuilder.tsx` (lines 234–553) | M |
-| MAINT-97 | MAINT | Test convention docs drifted from reality — file counts, Playwright timeout, missing snapshot directories, "21 spec files" claim | S |
-| MAINT-98 | MAINT | E2E helpers: extract inlined `blurEditors` / `reopenPage` to `e2e/helpers.ts` and document portal-scoped helpers in `src/__tests__/AGENTS.md` | S |
 | MAINT-99 | MAINT | No automated enforcement for several documented test rules (axe-audit per component test, IPC-error-path coverage, test file naming convention) | M |
-| MAINT-100 | MAINT | MD documentation drift sweep across UX.md / FEATURE-MAP.md / README.md / COMPARISON.md / AGENTS.md (~10 small drift items batched) | S |
 | MAINT-101 | MAINT | `tag-colors.ts` is localStorage-only despite header comment claiming property-sync persistence | M |
 | MAINT-103 | MAINT | `BlockPropertyEditor` inline editor uses absolute positioning without portal — should follow the `suggestion-renderer` pattern | M |
-| MAINT-105 | MAINT | Misc small consistency cleanups (selector-list comment, `e.repeat` guards, warned-ref noise, sidebar mode comment, undo-group window revisit) | S |
-| TEST-1 | TEST | Frontend test coverage gaps in 6 specific files surfaced by review (filter-pill, switch, textarea, useEditorBlur portal scan, page-blocks loadSubtree cap, main.tsx error handlers) | S |
+| TEST-1 | TEST | Frontend test coverage gaps in 3 specific files surfaced by review (useEditorBlur portal scan, page-blocks loadSubtree cap, main.tsx error handlers) | S |
 | TEST-2 | TEST | ~30 wrapper functions in `src/lib/tauri.ts` lack individual tests beyond the shallow cross-cutting test (only command-name verified, not `null` defaults / arg shape) | M |
 | TEST-3 | TEST | Browser/E2E `tauri-mock` `revert.ts` only handles 5 of 13 reversible op types — undo/redo for property/tag/state ops is a silent no-op in mock; can't be E2E-tested | M |
 | TEST-4 | TEST | 25 of 26 Playwright specs lack a console-error listener — backend / mock errors leak silently in every E2E suite except `smoke.spec.ts` | M |
@@ -788,44 +784,6 @@ If a user pastes (or types) a code block whose content contains a line beginning
 **Risk:** M — both files have substantial test surfaces (component tests + axe). After extraction, full vitest run + axe pass required.
 **Impact:** S–M — pure maintainability; no functional change, no UX change.
 
-### MAINT-97 — Test convention docs drifted from reality (counts, Playwright timeout, missing snapshot directories)
-
-**Problem:** A pass over the three test-convention docs (`AGENTS.md`, `src/__tests__/AGENTS.md`, `src-tauri/tests/AGENTS.md`) verified each numeric / structural claim against the code. Several have drifted:
-
-| Doc claim | Reality | Source |
-|-----------|---------|--------|
-| `src/__tests__/AGENTS.md:40` "133 component test files" | 136 (`src/components/__tests__/*.test.tsx`) | Drift |
-| `src/__tests__/AGENTS.md:46` "20 editor test files" | 21 (`src/editor/__tests__/`, 20 `.ts` + 1 `.tsx`) | Drift |
-| `src/__tests__/AGENTS.md:52` "8 store test files" | 10 (`src/stores/__tests__/`) | Drift |
-| `src/__tests__/AGENTS.md:62` "39 lib test files" | 42 (`src/lib/__tests__/`) | Drift |
-| `src/__tests__/AGENTS.md:373` "21 spec files" | 26 (`e2e/*.spec.ts`) — root `AGENTS.md:29` already says 26, so this one *contradicts* the root | Drift + internal contradiction |
-| `src/__tests__/AGENTS.md:380` "Global expect timeout: 3000ms" | `playwright.config.ts:11` sets `expect: { timeout: 8000 }` | Drift |
-| `src-tauri/tests/AGENTS.md:260–270` lists 4 snapshot directories | 6 exist — also `src-tauri/src/mcp/snapshots/` (11 files) and `src-tauri/src/gcal_push/snapshots/` (6 files) | Missing |
-| `AGENTS.md:87` "30 migrations" | 35 (`src-tauri/migrations/0001…0035`) | Drift |
-
-**Fix:** Single doc-update commit. Update each line to the verified number; add the two missing snapshot dirs to the `src-tauri/tests/AGENTS.md` list; reconcile the root vs. frontend "26 vs. 21" specs claim. Optional follow-up (in MAINT-99 below): a tiny `prek` hook that grep-counts files vs. the tables and fails if drift > 1.
-
-**Cost:** S (doc-only, ~30 min).
-**Risk:** S — pure documentation update; no production code touched.
-**Impact:** S — these docs are the source of truth for test conventions; wrong counts undermine trust in the rest of the document for new contributors and review subagents.
-
-### MAINT-98 — E2E helpers: extract inlined `blurEditors` / `reopenPage`, document portal-scoped helpers
-
-**Problem:** Two issues at the E2E test infrastructure layer:
-
-1. **Inlined helpers in spec files.** `e2e/undo-redo-blocks.spec.ts:25-33` defines `reopenPage(page)` (navigate-away-and-back to force a `BlockTree` re-fetch from the mock backend) and `e2e/undo-redo-blocks.spec.ts:39-59` defines `blurEditors(page)` (press Escape to leave `contentEditable` focus so Ctrl+Z hits the page-level handler instead of ProseMirror's in-editor undo). The frontend AGENTS.md `E2E undo/redo helpers` section (`src/__tests__/AGENTS.md:407-412`) describes these by name and explains why they're needed, but they're inlined in a spec file rather than exported from `e2e/helpers.ts`. Other specs that need the same behaviour have no easy way to consume them.
-
-2. **Portal-scoped helpers undocumented.** `e2e/helpers.ts:55-98` defines `activeDialog`, `activeSheet`, `activePopover`, `activeMenu`, `activeSuggestionList`, `activeRoleDialog`, `activeSuggestionPopup` — used heavily across specs (e.g. `properties-system.spec.ts:104,110,178`, `templates.spec.ts:68,156`, `inner-links.spec.ts:167,192,274`) to scope queries to the most-recently-opened Radix portal and avoid stale-DOM collisions in parallel test runs. None of these helpers are documented in `src/__tests__/AGENTS.md` "E2E Testing (Playwright)" section. New contributors will reinvent them and produce flaky tests.
-
-**Fix:**
-
-1. Move `blurEditors` and `reopenPage` out of `e2e/undo-redo-blocks.spec.ts` into `e2e/helpers.ts`; export them; update the spec to import. Add JSDoc describing why each is needed (links to AGENTS.md pitfalls).
-2. Add a "Portal-scoped helpers" subsection in `src/__tests__/AGENTS.md` (after the existing E2E "Patterns" block, ~line 402) listing each helper with a one-line example. Reference `TEST-1b` in REVIEW-LATER.md if/when that gets reopened. Mention the `.last()` pick-most-recent rule used internally so reviewers understand the design.
-
-**Cost:** S (~1h, mechanical extraction + doc subsection).
-**Risk:** S — pure refactor of test infrastructure; no production code touched. Existing specs continue to work because they only consume.
-**Impact:** S–M — closes a discoverability gap that's already costing reviewer-time (verification subagents flagged the missing doc explicitly).
-
 ### MAINT-99 — No automated enforcement for several documented test rules
 
 **Problem:** Several rules in the test-convention docs have no automated enforcement and rely on manual review. Each one is easy to add as a `prek` hook; together they make the documented conventions binding instead of aspirational.
@@ -843,26 +801,6 @@ If a user pastes (or types) a code block whose content contains a line beginning
 **Cost:** M (~1 day for the three easy hooks; ~half day each for the harder two).
 **Risk:** S — purely additive lint hooks. May surface a small number of pre-existing violations that need cleanup before the hook turns green; expect 1–2 hours of fix-up per hook on first activation.
 **Impact:** M — closes the gap between documented and actual conventions; reduces reviewer-time spent catching the same anti-patterns over and over.
-
-### MAINT-100 — MD documentation drift sweep across UX.md / FEATURE-MAP.md / README.md / COMPARISON.md / AGENTS.md
-
-**Problem:** A focused review surfaced ~10 small drift items between the docs and what ships. Bundled because each fix is one or two lines and they're disjoint:
-
-- `UX.md:1175` references `AddPropertySection`; the actual component is `AddPropertyPopover` (`src/components/AddPropertyPopover.tsx`).
-- `UX.md` Property Drawer section (lines 1166-1177) doesn't document focus-trap, focus-restoration on close, Tab cycling, or Esc behaviour.
-- `UX.md` LinkedReferences paragraph (lines 128-129) has no parallel paragraph for `UnlinkedReferences` filters (UX-168).
-- `UX.md` Toast Action Patterns specifies 6s for Undo actions; `useUndoShortcuts.ts:71,93` uses 1500 ms — clarify in the doc that 1500 ms is *operation feedback* (no action button) and 6 s is for toasts that carry an Undo button (different patterns).
-- `UX.md` History View Shortcuts (~382-394) is missing PageUp/Down (already implemented in `useListKeyboardNavigation`), Shift+Click range select (UX-140 in `useListMultiSelect.ts:76-102`), and the cursor-based pagination contract (`HistoryView.tsx:70-88`).
-- `UX.md` Two-Tier Undo/Redo section (~952-970) doesn't document `UNDO_GROUP_WINDOW_MS = 200` (`src/stores/undo.ts:24`) or `MAX_REDO_STACK = 100` (`src/stores/undo.ts:21`).
-- `FEATURE-MAP.md:38` claims "Query term highlighting in result cards (via HighlightMatch)"; `ResultCard.tsx:31-36` accepts `highlightText` but never uses it (see MAINT-102) — fix the doc or the code.
-- `FEATURE-MAP.md:117` mentions "circles with truncated labels" for graph nodes; truncation happens at 20 chars in `useGraphSimulation.ts:152` — document the cap.
-- `README.md:14` says "no telemetry"; the local `src/lib/logger.ts` IPC bridge writes errors to disk for `BugReportDialog`. Tighten to "no cloud telemetry / no external analytics".
-- `COMPARISON.md` carries version-specific claims (e.g. specific Logseq stable version + date) that can go stale; add a "verified as of" header so the staleness is visible.
-- `AGENTS.md` "Frontend Development Guidelines" doesn't mention the shared `BatchActionToolbar` primitive — add to the shared-components table.
-
-**Cost:** S — single doc-only sweep.
-**Risk:** S — pure docs.
-**Impact:** S — keeps docs honest; reduces "documented feature missing" surprises in onboarding.
 
 ### MAINT-101 — `src/lib/tag-colors.ts` is localStorage-only despite header comment claiming property-sync persistence
 
@@ -884,40 +822,19 @@ If a user pastes (or types) a code block whose content contains a line beginning
 **Risk:** M — touches editor blur lifecycle; needs careful tests.
 **Impact:** S — closes a small clipping risk and aligns with the documented floating-UI pattern.
 
-### MAINT-105 — Misc small consistency cleanups across editor / shell / sync
-
-**Problem:** Five low-risk consistency tweaks bundled into one entry because each is XS:
-
-1. `src/hooks/useEditorBlur.ts:31-40` — `EDITOR_PORTAL_SELECTORS` array has no inline comment linking back to the AGENTS.md "Floating UI lifecycle logging" rule it implements. Add a one-line `// AGENTS.md: keep selectors here in sync when adding new editor-side overlays`.
-2. `src/components/ViewHeader.tsx:47-63` — the portal-mount-race warning uses a single boolean `warnedRef`, so a view that renders multiple `<ViewHeader>`s fires the warning multiple times in one paint. Replace with a `Set` keyed by component identity, or rate-limit.
-3. `src/App.tsx:646-713` — global keyboard handlers (journal nav, tab cycle, etc.) don't check `e.repeat`, so holding a key fires repeated state writes / SR announcements. Add `if (e.repeat) return` to the navigation handlers.
-4. `src/App.tsx:854` — `<Sidebar collapsible="icon">` has no inline comment explaining why "icon" is chosen over "offcanvas". Add a one-liner pointing to UX.md § Mobile Sidebar.
-5. `src/stores/undo.ts:24` — `UNDO_GROUP_WINDOW_MS = 200` was set for recurrence ops creating 8-10 ops in a burst. Under any load (slow disk, network) ops can fall outside the 200 ms window and undo gets unwieldy. Re-evaluate at 500 ms; document the chosen value in UX.md (covered by MAINT-100).
-
-**Cost:** S — each is XS, total well under 2h.
-**Risk:** S — defensive / cosmetic.
-**Impact:** S — small, sustained quality bar.
-
----
-
-## TEST — Test coverage gaps surfaced during review
-
-### TEST-1 — Six specific files lack dedicated test coverage on real risk-bearing paths
+### TEST-1 — Three specific files lack dedicated test coverage on real risk-bearing paths
 
 **Problem:** Two independent review passes (one full + one validation) over `src/` agreed on the following specific gaps. Each is small and individually a `S` task; bundled here so a single contributor session can close them.
 
 | File | Missing coverage |
 |------|------------------|
-| `src/components/ui/filter-pill.tsx` | No dedicated test file. Keyboard handling (Delete/Backspace), `onRemove` invocation, `aria-label` on the remove button, and 44px touch-target sizing on `pointer:coarse` are untested. Currently covered only indirectly via consumers. |
-| `src/components/ui/switch.tsx` | No dedicated test. Touch-target sizing and focus-ring consistency are unverified. |
-| `src/components/ui/textarea.tsx` | No dedicated test. Touch-target sizing, focus-ring, and `aria-invalid` propagation unverified. |
 | `src/main.tsx` | No test for the global `error` / `unhandledrejection` handlers (`logger`-bridge wiring). The file is excluded from coverage, which is correct for the bootstrap, but the handler logic itself is non-trivial and should have a small dedicated test against a simulated `window.dispatchEvent`. |
 | `src/hooks/useEditorBlur.ts` | The "Step 4b" portal-scan logic (the `EDITOR_PORTAL_SELECTORS` walk that decides whether a blur is into a known overlay) has no dedicated test. This is a real production hot-path — a regression here causes premature persists / splits while users interact with pickers. |
 | `src/stores/page-blocks.ts` | The recursion bound on `loadSubtree()` (`MAX_SUBTREE_BLOCKS` cap) has no test. The cap exists to prevent runaway recursion on corrupted data; unverified caps tend to drift. |
 
 **Fix:** for each file, add a `__tests__/<File>.test.tsx` (or `.test.ts`) with the standard render + interaction + `axe(container)` triplet for primitives, and unit-level tests for the two non-component cases (`useEditorBlur` portal scan, `page-blocks` cap). Follow the patterns documented in `src/__tests__/AGENTS.md`.
 
-**Cost:** S (each file; ~30 min). Bundle suggestion: one PR per logical group (3 ui/ primitives; the two hooks/stores; main.tsx alone).
+**Cost:** S (each file; ~30 min). Bundle suggestion: one commit per logical group (the two hooks/stores; main.tsx alone).
 **Risk:** S — additive tests; no production-code change.
 **Impact:** S — closes coverage holes on paths that are demonstrably risk-bearing.
 
