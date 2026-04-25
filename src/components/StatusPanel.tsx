@@ -6,7 +6,15 @@
  * total ops dispatched, total background dispatched.
  */
 
-import { Activity, AlertTriangle, RefreshCw } from 'lucide-react'
+import {
+  Activity,
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle2,
+  Link2,
+  RefreshCw,
+  Search,
+} from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -78,6 +86,56 @@ function syncStateDotClasses(state: string): string {
       return 'bg-muted-foreground'
     default:
       return 'bg-muted-foreground'
+  }
+}
+
+/**
+ * Per-state icon next to the sync-state dot. Adds a non-color signal so
+ * `discovering` and `pairing` are distinguishable beyond the (identical)
+ * amber dot. The icon is decorative — the adjacent text label carries
+ * the canonical state name for assistive tech, so we mark it
+ * `aria-hidden`. See UX-266.
+ */
+function SyncStateIcon({ state }: { state: string }): React.ReactElement {
+  const className = 'sync-state-icon h-3 w-3 shrink-0 text-muted-foreground'
+  switch (state) {
+    case 'discovering':
+      return (
+        <Search
+          className={className}
+          data-testid="sync-state-icon-discovering"
+          aria-hidden="true"
+        />
+      )
+    case 'pairing':
+      return (
+        <Link2 className={className} data-testid="sync-state-icon-pairing" aria-hidden="true" />
+      )
+    case 'syncing':
+      return (
+        <RefreshCw
+          className={cn(className, 'animate-spin')}
+          data-testid="sync-state-icon-syncing"
+          aria-hidden="true"
+        />
+      )
+    case 'error':
+    case 'offline':
+      return (
+        <AlertCircle
+          className={cn(className, 'text-destructive')}
+          data-testid={`sync-state-icon-${state}`}
+          aria-hidden="true"
+        />
+      )
+    default:
+      return (
+        <CheckCircle2
+          className={className}
+          data-testid={`sync-state-icon-${state}`}
+          aria-hidden="true"
+        />
+      )
   }
 }
 
@@ -245,6 +303,7 @@ export function StatusPanel(): React.ReactElement {
                     role="status"
                     aria-label={t('status.syncStateLabel', { state: syncStateLabel(syncState, t) })}
                   />
+                  <SyncStateIcon state={syncState} />
                   <span className="sync-state-label text-sm font-medium">
                     {syncStateLabel(syncState, t)}
                   </span>

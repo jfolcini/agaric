@@ -9,6 +9,7 @@
  *  - `setCurrentSpace` updates state + persists via middleware
  */
 
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { logger } from '../../lib/logger'
 import type { SpaceRow } from '../../lib/tauri'
@@ -102,6 +103,55 @@ describe('useSpaceStore', () => {
       await useSpaceStore.getState().refreshAvailableSpaces()
 
       expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
+    })
+
+    // UX-266 — sub-fix 3: when sync brings down the deletion of the
+    // active space we silently switch to the first available one.
+    // Surface a one-shot toast so the user understands why they're now
+    // looking at a different space without having clicked anything.
+    describe('active-space-deleted toast (UX-266)', () => {
+      it('fires a warning toast when the active space disappears mid-session', async () => {
+        useSpaceStore.setState({ currentSpaceId: WORK.id })
+        // Sync brings down a list that no longer contains WORK.
+        mockedListSpaces.mockResolvedValueOnce([PERSONAL])
+
+        await useSpaceStore.getState().refreshAvailableSpaces()
+
+        expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
+        expect(toast.warning).toHaveBeenCalledTimes(1)
+        expect(toast.warning).toHaveBeenCalledWith(
+          'Your active space was deleted on another device. Switched to Personal.',
+        )
+      })
+
+      it('does not toast on first boot when no prior space was set', async () => {
+        // currentSpaceId is null (default).
+        mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+
+        await useSpaceStore.getState().refreshAvailableSpaces()
+
+        expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
+        expect(toast.warning).not.toHaveBeenCalled()
+      })
+
+      it('does not toast when the active space is preserved', async () => {
+        useSpaceStore.setState({ currentSpaceId: WORK.id })
+        mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+
+        await useSpaceStore.getState().refreshAvailableSpaces()
+
+        expect(toast.warning).not.toHaveBeenCalled()
+      })
+
+      it('does not toast when the fallback finds no space at all', async () => {
+        useSpaceStore.setState({ currentSpaceId: WORK.id })
+        mockedListSpaces.mockResolvedValueOnce([])
+
+        await useSpaceStore.getState().refreshAvailableSpaces()
+
+        expect(useSpaceStore.getState().currentSpaceId).toBeNull()
+        expect(toast.warning).not.toHaveBeenCalled()
+      })
     })
 
     it('sets currentSpaceId to null when no spaces exist', async () => {

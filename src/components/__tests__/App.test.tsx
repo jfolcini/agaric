@@ -1096,6 +1096,43 @@ describe('App', () => {
 
       expect(screen.getByTestId('last-synced')).toHaveTextContent(/Last synced/)
     })
+
+    // UX-266 — sub-fix 1: the sidebar-footer Sync button surfaces a
+    // glanceable colored dot so the user has a sync signal regardless
+    // of whether the StatusPanel view is open.
+    describe('sidebar Sync button status dot (UX-266)', () => {
+      it('renders the dot with the muted color when there are no peers', async () => {
+        useSyncStore.setState({ state: 'idle', peers: [] })
+        render(<App />)
+        const dot = await screen.findByTestId('sync-button-status-dot')
+        expect(dot).toBeInTheDocument()
+        expect(dot.className).toContain('bg-muted-foreground')
+        // Decorative — text label carries semantics.
+        expect(dot).toHaveAttribute('aria-hidden', 'true')
+      })
+
+      it('renders the dot with the active color while syncing with peers', async () => {
+        useSyncStore.setState({
+          state: 'syncing',
+          peers: [{ peerId: 'P1', lastSyncedAt: null, resetCount: 0 }],
+        })
+        render(<App />)
+        const dot = await screen.findByTestId('sync-button-status-dot')
+        expect(dot.className).toContain('bg-sync-active')
+        expect(dot).toHaveAttribute('data-sync-state', 'syncing')
+      })
+
+      it('renders the dot with the destructive color on sync error', async () => {
+        useSyncStore.setState({
+          state: 'error',
+          error: 'connection lost',
+          peers: [{ peerId: 'P1', lastSyncedAt: null, resetCount: 0 }],
+        })
+        render(<App />)
+        const dot = await screen.findByTestId('sync-button-status-dot')
+        expect(dot.className).toContain('bg-destructive')
+      })
+    })
   })
 
   // ── GlobalDateControls in non-journal views ──────────────────────────

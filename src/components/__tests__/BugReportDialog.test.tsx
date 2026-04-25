@@ -234,7 +234,30 @@ describe('BugReportDialog', () => {
       /^https:\/\/github\.com\/agaric-app\/org-mode-for-the-rest-of-us\/issues\/new\?/,
     )
     expect(downloadBlobMock).not.toHaveBeenCalled()
+    expect(mockedToastSuccess).toHaveBeenCalledWith(t('bugReport.submitted'))
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('renders the design-system Checkbox primitive (data-slot="checkbox") and toggles via onCheckedChange', async () => {
+    const user = userEvent.setup()
+    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+    const checkbox = await screen.findByRole('checkbox', {
+      name: t('bugReport.confirmCheckbox'),
+    })
+    // Design-system primitive — Radix-based Checkbox renders as a <button>
+    // with data-slot="checkbox", not a native <input type="checkbox">.
+    expect(checkbox).toHaveAttribute('data-slot', 'checkbox')
+    expect(checkbox.tagName).not.toBe('INPUT')
+    expect(checkbox).toHaveAttribute('aria-checked', 'false')
+
+    await user.click(checkbox)
+
+    expect(checkbox).toHaveAttribute('aria-checked', 'true')
+    // Confirm the primary button becomes enabled (downstream effect of
+    // onCheckedChange firing with `true`).
+    await screen.findByText(/## Description/)
+    expect(screen.getByRole('button', { name: t('bugReport.openIssue') })).not.toBeDisabled()
   })
 
   it('primary click with logs ON downloads a ZIP and then opens the GitHub URL', async () => {

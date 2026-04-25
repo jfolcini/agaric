@@ -165,4 +165,19 @@ describe('AgendaSortGroupControls', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  // -----------------------------------------------------------------------
+  // UX-268 — touch-target sizing
+  // -----------------------------------------------------------------------
+  it('group/sort triggers include 44px min-width and min-height on coarse pointer', () => {
+    renderControls()
+
+    const groupTrigger = screen.getByLabelText(t('agenda.groupBy'))
+    expect(groupTrigger.className).toContain('[@media(pointer:coarse)]:min-h-[44px]')
+    expect(groupTrigger.className).toContain('[@media(pointer:coarse)]:min-w-[44px]')
+
+    const sortTrigger = screen.getByLabelText(t('agenda.sortBy'))
+    expect(sortTrigger.className).toContain('[@media(pointer:coarse)]:min-h-[44px]')
+    expect(sortTrigger.className).toContain('[@media(pointer:coarse)]:min-w-[44px]')
+  })
 })

@@ -548,6 +548,67 @@ describe('StatusPanel', () => {
       expect(screen.getByText('Syncing...')).toBeInTheDocument()
     })
 
+    // UX-266 — sub-fix 2: each sync state renders a distinct lucide
+    // icon next to the dot so colour-blind users (and anyone glancing
+    // at the panel) can tell `discovering` and `pairing` apart even
+    // though both still share the amber dot. The icon is decorative —
+    // the text label carries the canonical state.
+    describe('per-state icon (UX-266)', () => {
+      it('renders a Search-style icon for the discovering state', async () => {
+        mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+        mockSyncStoreState.state = 'discovering'
+        mockedInvoke.mockResolvedValue(mockStatus)
+        render(<StatusPanel />)
+        await screen.findByText('Discovering...')
+        const icon = screen.getByTestId('sync-state-icon-discovering')
+        expect(icon).toBeInTheDocument()
+        expect(icon).toHaveAttribute('aria-hidden', 'true')
+      })
+
+      it('renders a Link-style icon for the pairing state', async () => {
+        mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+        mockSyncStoreState.state = 'pairing'
+        mockedInvoke.mockResolvedValue(mockStatus)
+        render(<StatusPanel />)
+        await screen.findByText('Pairing...')
+        const icon = screen.getByTestId('sync-state-icon-pairing')
+        expect(icon).toBeInTheDocument()
+        expect(icon).toHaveAttribute('aria-hidden', 'true')
+        // Sanity: the discovering icon must not also be present.
+        expect(screen.queryByTestId('sync-state-icon-discovering')).not.toBeInTheDocument()
+      })
+
+      it('renders a CheckCircle-style icon for the idle state', async () => {
+        mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+        mockSyncStoreState.state = 'idle'
+        mockedInvoke.mockResolvedValue(mockStatus)
+        render(<StatusPanel />)
+        await screen.findByText('Idle')
+        expect(screen.getByTestId('sync-state-icon-idle')).toBeInTheDocument()
+      })
+
+      it('renders an AlertCircle-style icon for the error state', async () => {
+        mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+        mockSyncStoreState.state = 'error'
+        mockSyncStoreState.error = 'boom'
+        mockedInvoke.mockResolvedValue(mockStatus)
+        render(<StatusPanel />)
+        await screen.findByText('Error')
+        expect(screen.getByTestId('sync-state-icon-error')).toBeInTheDocument()
+      })
+
+      it('renders a spinning RefreshCw icon for the syncing state', async () => {
+        mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+        mockSyncStoreState.state = 'syncing'
+        mockedInvoke.mockResolvedValue(mockStatus)
+        render(<StatusPanel />)
+        await screen.findByText('Syncing...')
+        const icon = screen.getByTestId('sync-state-icon-syncing')
+        expect(icon).toBeInTheDocument()
+        expect(icon.getAttribute('class') ?? '').toContain('animate-spin')
+      })
+    })
+
     it('shows tooltip on sync metric label hover', async () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'idle'

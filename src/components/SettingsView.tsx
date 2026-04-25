@@ -77,6 +77,25 @@ const TAB_IDS: SettingsTab[] = [
   'help',
 ]
 
+const ACTIVE_TAB_KEY = 'agaric-settings-active-tab'
+
+/**
+ * Load the persisted active tab. Validates the stored value against the
+ * `SettingsTab` union so a removed/renamed tab can't leave the panel in an
+ * inconsistent state — fall back to `'general'` instead.
+ */
+function readActiveTab(): SettingsTab {
+  try {
+    const stored = localStorage.getItem(ACTIVE_TAB_KEY)
+    if (stored !== null && (TAB_IDS as readonly string[]).includes(stored)) {
+      return stored as SettingsTab
+    }
+  } catch {
+    // localStorage unavailable
+  }
+  return 'general'
+}
+
 const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
   general: 'settings.tabGeneral',
   properties: 'settings.tabProperties',
@@ -125,7 +144,7 @@ function selectToTheme(value: string): ThemePreference {
 
 export function SettingsView(): React.ReactElement {
   const { t } = useTranslation()
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+  const [activeTab, setActiveTab] = useState<SettingsTab>(readActiveTab)
   const { theme, setTheme } = useTheme()
   const [fontSize, setFontSize] = useState<FontSize>(readFontSize)
   const [bugReportOpen, setBugReportOpen] = useState<boolean>(false)
@@ -134,6 +153,17 @@ export function SettingsView(): React.ReactElement {
   useEffect(() => {
     applyFontSize(fontSize)
   }, [fontSize])
+
+  // Persist active tab so navigating away and back restores the user's place
+  // (UX-276). Validation happens on read in `readActiveTab` — stored values
+  // that no longer match a known tab fall back to `'general'`.
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVE_TAB_KEY, activeTab)
+    } catch {
+      // localStorage unavailable
+    }
+  }, [activeTab])
 
   const handleThemeChange = useCallback(
     (value: string) => {

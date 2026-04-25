@@ -118,9 +118,8 @@ export function SourcePageFilter({
       <PopoverTrigger asChild>
         <Button
           variant="ghost"
-          size="sm"
           className={cn(
-            'source-page-filter-trigger h-7 w-7 p-0 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]',
+            'source-page-filter-trigger h-7 w-7 p-0 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
             buttonColor,
           )}
           aria-label={t('sourceFilter.filterLabel')}
