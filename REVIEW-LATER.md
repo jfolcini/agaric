@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-45 open items.
+42 open items.
 
 Previously resolved: 422+ items across 149 sessions.
 
@@ -45,18 +45,15 @@ Previously resolved: 422+ items across 149 sessions.
 | MAINT-101 | MAINT | `tag-colors.ts` is localStorage-only despite header comment claiming property-sync persistence | M |
 | MAINT-103 | MAINT | `BlockPropertyEditor` inline editor uses absolute positioning without portal — should follow the `suggestion-renderer` pattern | M |
 | MAINT-106 | MAINT | Adopt `tauri-plugin-single-instance` — guard against two SQLite pools racing on the same DB when the user double-launches | S |
-| MAINT-107 | MAINT | Replace `navigator.clipboard.writeText` (5 call-sites) with `tauri-plugin-clipboard-manager` for cross-platform reliability | S |
 | MAINT-108 | MAINT | Adopt `tauri-plugin-window-state` — remember window size / position / monitor / maximized state across launches | S |
 | MAINT-109 | MAINT | Adopt `tauri-plugin-os` — refactor `collect_bug_report_metadata` to use the plugin's platform/version/arch/locale/hostname API | S |
 | TEST-2 | TEST | ~30 wrapper functions in `src/lib/tauri.ts` lack individual tests beyond the shallow cross-cutting test (only command-name verified, not `null` defaults / arg shape) | M |
-| TEST-3 | TEST | Browser/E2E `tauri-mock` `revert.ts` only handles 5 of 13 reversible op types — undo/redo for property/tag/state ops is a silent no-op in mock; can't be E2E-tested | M |
 | TEST-4 | TEST | 25 of 26 Playwright specs lack a console-error listener — backend / mock errors leak silently in every E2E suite except `smoke.spec.ts` | M |
-| TEST-5 | TEST | `property-picker.test.ts` (6 tests) and `checkbox-input-rule.test.ts` (17 tests) exercise extension config + regex only, not editor integration | M |
 | TEST-6 | TEST | `LinkEditPopover.test.tsx` weak-assertion sub-batch — 36 `toHaveBeenCalled()` sites need tightening to `toHaveBeenCalledWith(...)` (other 7 sub-files closed in session 479) | M |
 | TEST-11 | TEST | 7 E2E specs use CSS-class selectors (23 instances total) instead of `data-testid` per the documented selector convention | M |
 | UX-257 | UX | Breadcrumb bar (zoom + page header) doesn't read as a breadcrumb, is oversized, and styling is inconsistent across the two surfaces | M |
 | UX-260 | UX | Discoverability sweep for keyboard shortcuts and gestures (sidebar swipe, journal nav, undo tiers, Shift+Click range, properties drawer shortcut, Ctrl+F, KeyboardShortcuts→Settings link) | M |
-| UX-263 | UX | Pairing flow polish (countdown SR announcements, ordinal labels, address/rename validation, mid-pair close guard, countdown pause while typing) | M |
+| UX-263 | UX | Pairing — pause countdown while typing in passphrase inputs (other sub-fixes shipped in session 480: SR announcements, ordinal labels, RenameDialog validation, mid-pair close guard) | S |
 | UX-264 | UX | Sync error UX (no retry action on failure toast, no online/offline transition feedback, no batch progress, camera-permission denial leaves user stuck on QR mode) | M |
 | UX-265 | UX | Conflict UI improvements (Keep/Discard label clarity, sort/filter for large conflict sets, type-badge tooltips, missing-original-block fallback, large-diff handling) | M |
 | UX-269 | UX | `SearchPanel` consolidation — switch custom load-more to shared `LoadMoreButton`, fix aria-live placement, debounce visual feedback, CJK notice placement, alias-overlay positioning, results-count announcement | M |
@@ -67,7 +64,7 @@ Previously resolved: 422+ items across 149 sessions.
 | UX-275 | UX | History view UX gaps — Restore-to-here wording, non-reversible icon a11y, missing inline filter clear, DiffDisplay hunk navigation, descendant-count badge wrap, batch keyboard shortcuts, restore-action missing undo toast, checkbox row-click ambiguity, generic error banner, no batch-restore confirmation | M |
 | UX-277 | UX | `BugReportDialog` log-content preview before submit (Checkbox primitive swap + success toast shipped; log preview pending — may be superseded by H-9c) | M |
 | UX-281 | UX | Gutter-button tooltips invisible on touch — gutter is fixed at 68px, three buttons already inflate to 44×44 on `pointer:coarse` so inline labels would overflow; needs a different affordance (long-press → toast, or wider gutter / drawer on touch) | S |
-| UX-282 | UX | `src/lib/announcer.ts` exists with `announce.*` i18n keys but is invoked from very few places — paid-for accessibility utility is largely unused | M |
+| UX-282 | UX | `announcer.ts` adoption — 3 deferred clusters: sync events (started/completed/failed/conflicts), agenda reschedule (drag/date-chip), page rename/move/delete/alias/export (undo/redo + batch ops + conflicts shipped in session 480) | M |
 | PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S |
 | PUB-3 | PUB | Employer IP clearance before public release | S |
 | PUB-5 | PUB | Tauri updater — wire endpoint URL + Minisign keypair (publish target is now jfolcini/agaric) | S |
@@ -845,24 +842,6 @@ If a user pastes (or types) a code block whose content contains a line beginning
 **Risk:** S — plugin is a thin wrapper; the only real surface is the focus-on-relaunch callback.
 **Impact:** M — closes a class of accidental-corruption bugs that is invisible until it bites; lowest-cost defensive add available.
 
-### MAINT-107 — Replace `navigator.clipboard.writeText` with `tauri-plugin-clipboard-manager`
-
-**Problem:** Five user-facing copy paths use `navigator.clipboard.writeText` directly:
-
-- `src/components/PageHeader.tsx:238, 254` (export page markdown)
-- `src/components/BugReportDialog.tsx:158, 162`
-- `src/components/AgentAccessSettingsTab.tsx:494`
-- `src/components/BlockContextMenu.tsx:324`
-- `src/components/DeviceManagement.tsx:221`
-
-The browser API works in WebKitGTK / WebView2 / Android WebView most of the time, but it is gated on secure-context + user-gesture in ways that vary per WebView, fails silently outside `https://` contexts on some Linux distros, and is the documented source of "copy didn't work" bug reports across other Tauri apps. The Tauri plugin gives a deterministic same-API one-liner that goes through the OS clipboard.
-
-**Fix:** Add `@tauri-apps/plugin-clipboard-manager` + `tauri-plugin-clipboard-manager`, expose a tiny wrapper `src/lib/clipboard.ts` (mirroring `src/lib/open-url.ts` and `src/lib/relaunch-app.ts`), replace the 5 call-sites. Add a vitest mock in the test setup (parity with the existing `@tauri-apps/plugin-shell` mock). Coupled stack — bump with the rest of the Tauri plugins.
-
-**Cost:** S.
-**Risk:** S — five mechanical site replacements + one new wrapper + one new mock.
-**Impact:** M — closes the recurring "copy didn't work on Linux Wayland / Android WebView" failure mode that is silent today.
-
 ### MAINT-108 — Adopt `tauri-plugin-window-state` (remember window size / position across launches)
 
 **Problem:** The app has no window-state persistence. Every launch opens at the OS-default size and position — multi-monitor users in particular re-arrange the window every session. AGENTS.md §"Frontend Development Guidelines" mandates "responsive, accessible, modern, and intuitive" — this is a low-cost adherence gap. The plugin handles size, position, monitor, maximized, and fullscreen automatically.
@@ -895,22 +874,6 @@ The browser API works in WebKitGTK / WebView2 / Android WebView most of the time
 **Risk:** S — additive tests; no production-code change.
 **Impact:** M — closes a real correctness gap on every IPC boundary that's currently unverified.
 
-### TEST-3 — Browser/E2E `tauri-mock` `revert.ts` only handles 5 of 13 reversible op types
-
-**Problem:** `src/lib/tauri-mock/revert.ts:30-45` switches on `op_type` and only handles `create_block`, `delete_block`, `edit_block`, `move_block`, `restore_block`. The `default:` case is a silent no-op (`return`). The other reversible op types — `set_property`, `delete_property`, `add_tag`, `remove_tag`, `set_todo_state`, `set_priority`, `set_due_date`, `set_scheduled_date` — fall through and produce no state change in the mock.
-
-**Why it matters:** This is both a *mock feature gap* and a downstream *test gap*: any E2E test that exercises undo/redo for property/tag/state changes runs against a mock that silently does nothing. The flow appears to "work" (no error, history bumps as expected) but the user-visible state in the mock doesn't actually revert. Real users of the desktop/Android build hit the real backend and see the correct revert; preview/E2E users do not. The header comment at `revert.ts:9-12` explicitly states "Keep behaviour identical to the real backend's reverse logic" — that's currently violated.
-
-**Fix:**
-
-1. Extend the switch in `revert.ts` to handle the 8 missing op types. Each case mutates the mock's `block_properties` / `block_tags` map back to the prior state recorded in the op payload (the payload already carries the `from_*` fields the real backend uses).
-2. Extend `src/lib/tauri-mock/__tests__/revert.test.ts` (currently 11 tests covering the 5 implemented types) with one happy-path test per added op type, plus the existing "no-op for unknown" test should still pass for genuinely unknown ops only.
-3. After landing, audit `e2e/undo-redo-blocks.spec.ts` for opportunities to add property/tag undo/redo flows that were previously impossible to test.
-
-**Cost:** M (~1 day — 8 cases each ~30 min, plus tests).
-**Risk:** S — adding cases to an existing switch; default branch unchanged.
-**Impact:** M — restores parity between mock and real backend on a documented contract; unlocks new E2E coverage for property/tag undo flows.
-
 ### TEST-4 — 25 of 26 Playwright specs lack a console-error listener
 
 **Problem:** `grep "page.on('console" e2e/*.spec.ts` returns one match: `e2e/smoke.spec.ts:31`. The other 25 specs run without any check that the page emitted a console error. Backend errors that reach the browser console (mock failures returning unexpected shapes, IPC handler crashes, React error-boundary fall-throughs, unhandled promise rejections, dev-time warnings escaping to prod) currently pass the suite silently for every feature except smoke.
@@ -926,23 +889,6 @@ The browser API works in WebKitGTK / WebView2 / Android WebView most of the time
 **Cost:** M (~1 day implementation + ~1–2 days triage on first activation).
 **Risk:** M — turning the listener on may surface real warnings that need triage. Some may be noisy dev-only logs that need filtering or fixing in production code.
 **Impact:** M — catches a real class of regressions that currently leaks through every E2E suite.
-
-### TEST-5 — `property-picker.test.ts` and `checkbox-input-rule.test.ts` test extension config only, not editor integration
-
-**Problem:** Two of the 10 custom TipTap extensions have test files that exercise only the static configuration shape of the extension, not its behaviour against an actual editor:
-
-- `src/editor/__tests__/property-picker.test.ts` — 6 tests; all check `Extension.create({...})` returns an object with the expected name / default options / options-merging behaviour. No test drives a TipTap editor through the picker's suggestion command, no test inserts a property reference into a doc.
-- `src/editor/__tests__/checkbox-input-rule.test.ts` — 17 tests across 3 describe blocks. The first 6 tests configuration; the next 8 test the regex patterns in isolation; the last 3 spy on the input-rule handler signature. None drive an actual ProseMirror transaction through `[ ] ` or `[x] ` to verify a checkbox node materialises in the resulting doc.
-
-Compare with `src/editor/__tests__/at-tag-picker.test.ts` (~452 lines) and `src/editor/__tests__/block-link-picker.test.ts` (~600+ lines), which both drive actual editor instances and assert on the resulting transactions / nodes.
-
-**Why it matters:** These extensions are exactly where the `EDITOR_PORTAL_SELECTORS` discipline (Pitfall 23, `src/__tests__/AGENTS.md:583`), capture-phase keydown handling (Pitfall 19), and `flushSync` ordering (Pitfall 16) bugs land. Configuration-only tests catch zero of those.
-
-**Fix:** Add an integration test file (or expand the existing one) for each extension following the `at-tag-picker` template: instantiate a minimal `Editor` with the extension under test, drive it through a suggestion-trigger sequence, assert the resulting JSON doc has the expected node / mark inserted at the correct position. ~10–15 new tests per extension.
-
-**Cost:** M (~1 day for both extensions).
-**Risk:** S — additive tests.
-**Impact:** M — closes coverage on hot-path picker code where flushSync / portal / capture-phase regressions actually occur.
 
 ### TEST-6 — `LinkEditPopover.test.tsx` weak-assertion sub-batch
 
@@ -1039,20 +985,15 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Risk:** S — additive UI, no behaviour change.
 **Impact:** L — flips a large amount of latent capability into discoverable capability.
 
-### UX-263 — Pairing flow polish
+### UX-263 — Pairing — pause countdown while typing in passphrase inputs
 
-**Problem:** Several small but real issues across the pairing UI:
+**Problem:** When the user is typing a passphrase, the pairing countdown keeps ticking. If the timer expires mid-keystroke, the in-flight handshake fails and the user has to start over. The other 4 sub-fixes that originally lived under UX-263 (countdown SR announcements, ordinal labels above passphrase inputs, RenameDialog validation, mid-pair close guard) shipped in session 480.
 
-- `src/components/PairingEntryForm.tsx:93` — passphrase inputs have aria-label and a placeholder ordinal ("1st/2nd/3rd/4th") but no visible label; on narrow screens or for users with cognitive load, position context can be lost.
-- `src/components/PairingQrDisplay.tsx:57-73` — SR countdown announces only at 60-second intervals + 30 s, then goes silent. For a 5-minute session, screen-reader users get no warning in the final 30 s. Announce at 60/30/10/5 s or every 10 s in the final minute.
-- `src/components/PeerListItem.tsx:49-62` — device address input accepts any string; only an error toast on failure. Add a regex check (`^[a-zA-Z0-9.-]+:\d+$`) with inline error and a "Format: host:port" hint; disable Save until valid.
-- `src/components/DeviceManagement.tsx:151-166` — device rename has no client-side validation or character limit. Add a 50-char cap, allow alphanumerics + space/hyphen/underscore, show a counter.
-- `src/components/PairingDialog.tsx:310-326` — Esc / outside-click closes the dialog mid-pairing without confirmation, discarding entered words / scanner state. Block the close when `pairLoading === true` or scanner is active, or surface a "Pairing in progress — close anyway?" confirm.
-- `src/components/PairingDialog.tsx:137-153` — countdown keeps ticking while user types passphrase; pause on focus of any input, resume on blur or 5 s of inactivity.
+**Fix:** Hook into each passphrase Input's `onFocus` / `onBlur` (or `onChange` with debounce) to pause the countdown timer in `PairingDialog.tsx`. Resume on blur OR after ~5 seconds of no keystrokes (whichever comes first, to prevent perpetual pause via stuck-focus). Add a small "Paused while typing…" indicator next to the timer text so users understand the pause is intentional. New i18n key under `pairing.*`.
 
-**Cost:** M — bundle of XS/S items.
-**Risk:** S — defensive UI tweaks.
-**Impact:** M — first-impression polish on the only flow most users see twice.
+**Cost:** S.
+**Risk:** S — touch-only logic on top of the existing countdown effect; no protocol or store changes.
+**Impact:** S — closes a real "I almost finished entering the passphrase but it expired on me" failure mode.
 
 ### UX-264 — Sync error UX
 
@@ -1205,15 +1146,21 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Risk:** S — touch-only path.
 **Impact:** S — improves discoverability for touch users; desktop unaffected.
 
-### UX-282 — `src/lib/announcer.ts` is largely unused
+### UX-282 — Announcer adoption — 3 deferred clusters
 
-**Problem:** `src/lib/announcer.ts` exposes `announce(message)` for SR-only announcements, and `src/lib/i18n.ts` defines a full `announce.*` keyspace (e.g. `announce.blockDeleted`, `announce.taskState`, `announce.navigatedToPrevious`). The keys are wired in some App-level handlers (`src/App.tsx:184-200` journal nav) but most user actions — toast successes, batch ops, drag-reschedule, conflict resolution — only show visual toasts and never call `announce()`. The accessibility infrastructure is paid for but not used.
+**Problem:** Session 480 wired `announce()` into 3 clusters (undo/redo, batch ops in TrashView/HistoryView, conflict resolution was already wired). Three more clusters still emit visual feedback (toast / state change) without an SR announcement, so screen-reader users get no audible confirmation when these actions complete. The announcer itself now coalesces identical messages within a 500 ms window (UX-282 follow-up shipped alongside the cluster sweep), so additional adoption won't spam screen readers on rapid actions.
 
-**Fix:** audit every action that emits a toast or updates state visibly, and call `announce(t('announce.<key>'))` in parallel. Group by feature area: undo/redo, batch ops, conflict resolution, sync events, agenda reschedule, page rename / move / delete. Add a regression test (component or e2e) per cluster: spy on `announce()` and assert it's called with the expected i18n key.
+**Remaining clusters to adopt:**
 
-**Cost:** M — broad sweep.
-**Risk:** S — additive.
-**Impact:** L — completes a documented a11y commitment that is currently fictional in most flows.
+1. **Sync events** — `src/hooks/useSyncTrigger.ts:108/114`, `src/hooks/useSyncEvents.ts:110/127/151`. Need keys: `announce.syncStarted`, `announce.syncCompleted`, `announce.syncFailed`, `announce.syncOpsReceived_one/_other`, `announce.syncCompletedWithConflicts`. Partial precedent exists in `AgentAccessSettingsTab`.
+2. **Agenda reschedule** — `src/components/journal/RescheduleDropZone.tsx:79/81`, `src/components/BlockListItem.tsx:126/128`, `src/components/DateChipEditor.tsx:54/57`. The drag-reschedule and date-chip-edit paths bypass `useBlockDatePicker.ts:121` which already announces. Need keys: `announce.taskRescheduled`, `announce.rescheduleFailed`, `announce.dateUpdated`, `announce.dateCleared`.
+3. **Page rename / move / delete / alias / export** — `src/components/PageHeader.tsx:197/201/213/239/242/255/264/275/279/323/329/378`. ~12 sites in one file; warrants a focused pass with one announce per outcome class. Need keys: `announce.pageRenamed`, `announce.pageDeleted`, `announce.pageMoved`, `announce.aliasAdded`, `announce.aliasRemoved`, `announce.exported`, `announce.exportFailed`, plus per-error variants.
+
+**Fix:** One subagent per cluster (~30-50 LoC implementation + 2-3 regression tests each). Clusters are independent and parallelizable.
+
+**Cost:** M — three independent sub-batches; each is S.
+**Risk:** S — additive, no behavior change.
+**Impact:** M — completes the documented a11y commitment for the remaining high-frequency flows.
 
 ### PUB-2 — Git author email across all history is corporate (`javier.folcini@avature.net`)
 

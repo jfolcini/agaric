@@ -1,5 +1,119 @@
 # Session Log
 
+## Session 480 — Tauri-plugin clipboard + mock-revert parity + editor integration tests + announcer adoption + pairing polish (MAINT-107 / TEST-3 / TEST-5 / UX-282 partial / UX-263 partial) (2026-04-26)
+
+**3 REVIEW-LATER items fully resolved (MAINT-107, TEST-3, TEST-5) + 2 partial closures (UX-282 — narrowed to 3 deferred announcer clusters; UX-263 — narrowed to "pause countdown while typing" sub-fix 5).** Open items: 45 → 42. Mixed-domain batch: clipboard plugin adoption with the existing dynamic-import wrapper convention, full mock-revert symmetry for 8 missing op types, real-Editor integration tests for 2 picker extensions, announcer wiring across 3 user-action clusters (undo/redo + trash batch ops + history batch ops), and 4-of-5 pairing flow polish sub-fixes. Five build subagents launched in parallel; one (TEST-3) stalled and was killed and finished by the orchestrator manually. Technical reviewer found no blockers; UX reviewer flagged one blocker (rapid-undo announcer spam) which was addressed in-place via a 500 ms identical-message coalescing window in `announcer.ts` plus regression tests, then re-verified through the full quality gate.
+
+Batch composition (3 items + 2 partial):
+
+- **MAINT-107** — `tauri-plugin-clipboard-manager` adoption:
+  - `src-tauri/Cargo.toml` adds `tauri-plugin-clipboard-manager = "2"` next to the existing `tauri-plugin-shell = "2"`. No other Tauri stack version bumps. `package.json` adds `@tauri-apps/plugin-clipboard-manager: ^2.3.0` (resolves to 2.3.2). `src-tauri/Cargo.lock` regenerated.
+  - `src-tauri/src/lib.rs` registers `.plugin(tauri_plugin_clipboard_manager::init())` in the Tauri::Builder chain.
+  - `src-tauri/capabilities/default.json` adds the write-only permission `clipboard-manager:allow-write-text` (matches the granularity of the existing `shell:allow-open` permission — only one operation in use).
+  - **NEW** `src/lib/clipboard.ts` (~25 LOC) — dynamic-import wrapper exporting `writeText(text)`. Mirrors `src/lib/open-url.ts` and `src/lib/relaunch-app.ts`: tries the Tauri plugin, falls back to `navigator.clipboard.writeText` on import failure, logs the fallback transition via `logger.warn`. Propagates rejections to callers (every existing call-site has a try/catch with toast + logger error UI; suppression would mask real failures).
+  - **NEW** `src/lib/__tests__/clipboard.test.ts` — 4 unit tests (plugin path, fallback on import failure, fallback on plugin reject, both-paths-fail propagation).
+  - Replaced 6 call-sites across 5 components: `AgentAccessSettingsTab.tsx`, `BlockContextMenu.tsx`, `BugReportDialog.tsx`, `DeviceManagement.tsx`, `PageHeader.tsx` (×2 — copy + export-on-success-toast paths). Each callsite imports `{ writeText } from '@/lib/clipboard'` and replaces `await navigator.clipboard.writeText(text)` with `await writeText(text)`. No surrounding logic changed.
+  - Test setup mock: `src/test-setup.ts` now mocks `@tauri-apps/plugin-clipboard-manager` globally with `{ writeText: vi.fn().mockResolvedValue(undefined) }` so component tests don't need per-test setup. Three component test files (`AgentAccessSettingsTab.test.tsx`, `BugReportDialog.test.tsx`, `BlockContextMenu.test.tsx`) updated to mock the new wrapper module instead of `Object.defineProperty(navigator, 'clipboard', ...)`.
+
+- **TEST-3** — `tauri-mock` `revert.ts` handles 8 missing op types:
+  - Subagent stalled mid-task; orchestrator killed it and finished manually. Scope was small (function under 50 LOC originally).
+  - **`src/lib/tauri-mock/revert.ts`** rewritten: `applyRevertForOp(target, blocks, state?: { properties?, blockTags? })`. Switch dispatched into 3 helpers (`revertBlockRowField`, `revertPropertyMap`, `revertTagSet`) to keep cognitive complexity under Biome's `noExcessiveCognitiveComplexity` threshold (the inline 13-case switch hit 41/25). Existing 5 cases preserved verbatim.
+  - 8 new cases: `set_todo_state`, `set_priority`, `set_due_date`, `set_scheduled_date` (block-row fields, restore from `from_state`/`from_level`/`from_date`); `set_property`, `delete_property` (mutate `properties` map, restore typed `from_value` `{value_text, value_num, value_date, value_ref}`); `add_tag`, `remove_tag` (mutate `blockTags` map by tag_id).
+  - `src/lib/tauri-mock/handlers.ts` updated: 4 task-property setters (`set_todo_state`/`set_priority`/`set_due_date`/`set_scheduled_date`) and 2 property setters (`set_property`/`delete_property`) now `pushOp(...)` with `from_*` fields captured BEFORE mutation. `set_property` and `delete_property` previously did NOT pushOp at all — closes a separate gap. Single applyRevertForOp call site updated to pass `{ properties, blockTags }`.
+  - `src/lib/tauri-mock/__tests__/revert.test.ts` — 11 → 22 tests (+11): 8 happy-path tests + 3 missing-state guard tests. Existing tests kept verbatim.
+  - **Backward compatibility**: applyRevertForOp signature change is additive (state is optional); existing callers without state still work, the new op types silently no-op for them (matches the documented "unknown op types are silent no-ops" contract).
+  - Add/remove tag reverts blindly do `delete`/`add` regardless of whether the original op was actually a no-op (e.g., adding a tag already present); this matches existing mock semantics for the 5 original cases and is acceptable for the dev-only mock surface.
+
+- **TEST-5** — picker editor integration tests (real-Editor harness):
+  - `src/editor/__tests__/property-picker.test.ts` — 6 → 20 tests (+14): suggestion plugin config (mocking `@tiptap/suggestion`), suggestion command paths (insertion + cancellation), real-Editor chain integration (Document/Paragraph/Text + the production extension; assert resulting JSON doc).
+  - `src/editor/__tests__/checkbox-input-rule.test.ts` — 17 → 30 tests (+13): real-Editor integration driving `editor.commands.insertContent('- [ ] ', { applyInputRules: true })` with `flushInputRule()` helper. Covers `[ ]`/`[x]`/`[X]` triggers, mid-line non-trigger, post-existing-checkbox no-retrigger, code-block bail-out (Pitfall 23), paste-no-trigger, undo via `undoInputRule()` (correct ProseMirror semantics — `commands.undo()` would revert past the rule due to history grouping within `newGroupDelay`).
+  - Added `@tiptap/extension-code-block: ^3.22.4` to package.json (devDep — used only in the new test). Tauri stack coupling preserved (matches the existing `^3.22.4` pin across all `@tiptap/*` packages).
+  - No production code changes; both extensions behave correctly. Decisions deviating from the task spec (e.g., why `undoInputRule` not `undo`, why suggestion plugin is mocked instead of typed-into) are documented in test comments.
+
+- **UX-282 (partial)** — announcer adoption sweep, 3 of 6 clusters covered + announcer hardening:
+  - `src/hooks/useUndoShortcuts.ts` — 4 new `announce()` calls (undo success, undo error, redo success, redo error). Co-located with the existing `toast(...)` calls.
+  - `src/components/TrashView.tsx` — 8 new calls covering single restore/purge (success+error), batch restore, batch purge, empty trash (success+error), restore all (success+error).
+  - `src/components/HistoryView.tsx` — 4 new calls covering batch revert (success+error) and restore-to-here (success+error).
+  - 16 new `announce()` call sites total. ConflictList already announced via `conflict.resolvedAnnounce`/`discardedAnnounce` — left as-is (different namespace, same effect).
+  - **NEW** 20 i18n keys under `announce.*`: `undone`, `undoFailed`, `redone`, `redoFailed`, `blockRestored`, `blockPurged`, `batchRestored_one/_other`, `batchPurged_one/_other`, `trashEmptied_one/_other`, `allRestored_one/_other`, `emptyTrashFailed`, `restoreAllFailed`, `restoreFailed`, `purgeFailed`, `opsReverted_one/_other`, `revertFailed`, `restoreToHereSucceeded_one/_other`, `restoreToHereFailed`. Plural `_one`/`_other` keys used wherever count is variable.
+  - 11 new regression tests across `useUndoShortcuts.test.ts`, `TrashView.test.tsx`, `HistoryView.test.tsx`. Each test mocks `announce()` and asserts it was called with the expected i18n key.
+  - **`src/lib/announcer.ts` hardening (UX-reviewer follow-up)**: added a 500 ms identical-message coalescing window. Rapid Ctrl+Z mashing now produces one announcement per burst rather than one per keystroke, but distinct messages (e.g., undo → redo → undo) are NEVER suppressed. Implemented via `lastMessage` + `lastAnnouncedAt` module-scoped state; 3 new tests in `src/lib/__tests__/announcer.test.ts` cover coalescing within window, distinct-messages-not-coalesced, and post-window re-announcement. Existing "handles repeated calls with the same message" test rewritten to assert the new coalescing behavior. Exported `__resetAnnouncerForTests()` so tests can wipe the cache between cases.
+  - DEFERRED clusters (rescoped UX-282 entry): sync events, agenda reschedule, page rename/move/delete/alias/export. Each is a self-contained S-cost follow-up.
+
+- **UX-263 (partial)** — Pairing flow polish, 4 of 5 sub-fixes shipped:
+  - **Sub-fix 1**: countdown SR announcements — `PairingDialog.tsx` fires `announce(...)` at exactly the 60s/30s/10s/expired thresholds (not per-tick). useEffect deps `[countdown, t]`. New keys `announce.pairingCountdown`, `announce.pairingCountdownMinute`, `announce.pairingExpired`.
+  - **Sub-fix 2**: visible ordinal labels — `PairingEntryForm.tsx` renders a `<Label>` with text "1st word"/"2nd word"/"3rd word"/"4th word" above each of the 4 passphrase Inputs. Linked via `useId()` (`htmlFor`/`id` pair). New key `pairing.entryFormWord` with `{{ordinal}}` template.
+  - **Sub-fix 3**: RenameDialog input validation — exported `MAX_RENAME_LENGTH=64`, `sanitizeRenameInput()`, `validateRenameInput()`. Strips ASCII control characters eagerly on input. Trim + disallow empty + 64-char cap on submit. Inline error via `<p role="alert" id={errorId}>` + `aria-invalid="true"` + `aria-describedby` on the Input. Save disabled while invalid. New keys `rename.errorEmpty`, `rename.errorTooLong`.
+  - **Sub-fix 4**: mid-pair close guard — Esc / X / backdrop close attempts route through `handleAttemptClose`. When `pairLoading=true`, opens a destructive `ConfirmDialog` ("Cancel pairing?" / "Cancel pairing" / "Keep pairing") with `actionVariant="destructive"` (matches UX-259's autofocus-Cancel pattern, so reflex Enter keeps pairing). New keys `pairing.confirmClose{Title,Description,Action,Keep}`.
+  - **DEFERRED** sub-fix 5: countdown pause while typing. Rescoped UX-263 entry covers it.
+  - 13 new regression tests across `PairingDialog.test.tsx`, `PairingEntryForm.test.tsx`, `RenameDialog.test.tsx`. Other pairing component tests confirmed green (DeviceManagement, TagList).
+
+### What changed
+
+**Backend (production):**
+
+- `src-tauri/Cargo.toml` — added `tauri-plugin-clipboard-manager = "2"`.
+- `src-tauri/Cargo.lock` — regenerated by clippy after the Cargo.toml change (27 transitive deps).
+- `src-tauri/capabilities/default.json` — added `clipboard-manager:allow-write-text`.
+- `src-tauri/src/lib.rs` — registered the plugin.
+
+**Frontend (production):**
+
+- **NEW** `src/lib/clipboard.ts` — `writeText(text)` wrapper with Tauri-plugin-first / `navigator.clipboard` fallback.
+- `src/lib/announcer.ts` — added 500 ms identical-message coalescing window + `__resetAnnouncerForTests` exported helper.
+- `src/lib/tauri-mock/revert.ts` — extended switch with 8 op types; refactored into helper functions to keep complexity under threshold.
+- `src/lib/tauri-mock/handlers.ts` — 6 pushOp sites now capture `from_*` fields; revert call-site passes `{ properties, blockTags }`.
+- `src/lib/i18n.ts` — +20 `announce.*` keys for undo/redo/trash/history clusters; +5 keys under `pairing.*` (`entryFormWord`, `confirmClose*`); +3 keys under `announce.*` (`pairingCountdown`, `pairingCountdownMinute`, `pairingExpired`); +2 keys under `rename.*` (`errorEmpty`, `errorTooLong`).
+- `src/components/PairingDialog.tsx` — countdown threshold announces + mid-pair close guard ConfirmDialog.
+- `src/components/PairingEntryForm.tsx` — visible ordinal labels above each passphrase input.
+- `src/components/RenameDialog.tsx` — exported `MAX_RENAME_LENGTH`, `sanitizeRenameInput`, `validateRenameInput`; eager control-char stripping; inline error via role="alert" + aria-invalid + aria-describedby.
+- `src/components/TrashView.tsx`, `src/components/HistoryView.tsx` — `announce()` calls co-located with toasts on success/error paths.
+- `src/hooks/useUndoShortcuts.ts` — `announce()` calls in undo/redo handlers.
+- `src/components/AgentAccessSettingsTab.tsx`, `BlockContextMenu.tsx`, `BugReportDialog.tsx`, `DeviceManagement.tsx`, `PageHeader.tsx` — replaced `navigator.clipboard.writeText` with `writeText` from the new wrapper.
+- `package.json` — added `@tauri-apps/plugin-clipboard-manager: ^2.3.0` (prod), `@tiptap/extension-code-block: ^3.22.4` (devDep).
+- `src/test-setup.ts` — added vi.mock for `@tauri-apps/plugin-clipboard-manager`.
+
+**Tests:**
+
+- **NEW** `src/lib/__tests__/clipboard.test.ts` — 4 unit tests.
+- `src/lib/__tests__/announcer.test.ts` — +3 coalescing tests.
+- `src/lib/tauri-mock/__tests__/revert.test.ts` — +11 tests (8 op-type happy paths + 3 missing-state guards).
+- `src/editor/__tests__/property-picker.test.ts` — 6 → 20 (+14).
+- `src/editor/__tests__/checkbox-input-rule.test.ts` — 17 → 30 (+13).
+- `src/hooks/__tests__/useUndoShortcuts.test.ts` — +5 announcer regression tests.
+- `src/components/__tests__/TrashView.test.tsx` — +4 announcer regression tests.
+- `src/components/__tests__/HistoryView.test.tsx` — +2 announcer regression tests.
+- `src/components/__tests__/PairingDialog.test.tsx` — +3 (countdown announces × 3 thresholds, mid-pair close guard).
+- `src/components/__tests__/PairingEntryForm.test.tsx` — +2 (ordinal labels render, htmlFor/id linkage).
+- `src/components/__tests__/RenameDialog.test.tsx` — +8 (validate/sanitize unit + Save-disabled empty + inline error + tooLong cap + control-char paste stripping).
+- `src/components/__tests__/AgentAccessSettingsTab.test.tsx`, `BugReportDialog.test.tsx`, `BlockContextMenu.test.tsx` — clipboard mock migration (no count change; helper bodies reduced).
+
+### Verification
+
+- `npx tsc -b --noEmit` — clean.
+- `npx vitest run` — 308 files / **7972 tests** pass (was 7902 → +70 from 6 unit-test additions, 4 picker integration suites, 4 announcer/clipboard suites, and the existing assertions).
+- `prek run --all-files` — all 26 hooks green (including cargo nextest, cargo clippy with the new clipboard plugin compiled in).
+
+### Notes / decisions
+
+- **TEST-3 subagent stall.** The 4th of 5 build subagents (TEST-3) stopped applying changes after one read-only inspection round and stayed in "running" without progress. Killed it manually and finished the work as orchestrator. Final result is identical to what the subagent would have produced — same 8 cases, same `from_*` fields, same test count delta — plus a refactor to extract per-case helpers when Biome flagged cognitive complexity post-merge.
+- **TEST-5 added a new devDep.** `@tiptap/extension-code-block` was added at exactly `^3.22.4` to match the rest of the @tiptap/* version line (per AGENTS.md "Coupled Dependency Updates" — the @tiptap stack must move together). Used only by the new checkbox-input-rule test for the "do not trigger inside a code block" assertion.
+- **MAINT-107 deviation from task wording on Test 3.** Task said "Test 3: Both paths fail — assert it doesn't throw out of the wrapper (gracefully degraded)." Implementation propagates the navigator rejection rather than swallowing it. Rationale: every existing call-site has a try/catch that calls `toast.error(...)` + `logger.warn/error(...)`. Suppressing both-paths-fail would show a success toast for a copy that never happened, and AGENTS.md's "no silent .catch()" rule pushes toward propagation. The wrapper still logs the fallback transition via `logger.warn`.
+- **UX reviewer found a real blocker (rapid undo announce spam) — addressed pre-commit.** Coalescing 500 ms window in `announcer.ts`. Distinct messages still announce independently; identical messages within the window are suppressed. Three new tests lock in the behavior. Test isolation handled via the new exported `__resetAnnouncerForTests()`.
+- **`navigator.clipboard.writeText` not removed entirely.** The wrapper falls back to it for browser dev mode (no Tauri runtime). Per the design — same pattern as `open-url.ts`. The capability `clipboard-manager:allow-write-text` is correctly the only Tauri-side permission (write is the only operation in use; expanding to `clipboard-manager:default` would grant read access we don't need).
+- **Cargo.lock churn.** Adding `tauri-plugin-clipboard-manager` pulls in 27 new transitive deps (arboard, clipboard-win, x11rb, wayland-*, etc.). All pinned to currently-published versions; no security advisories from `cargo deny`.
+- **REVIEW-LATER count drift handling.** Per PROMPT.md, re-read REVIEW-LATER before writing. Net session 480 result: 45 → 42 (3 closed fully + 2 rescoped in place; no new items added by this session).
+
+### Open follow-ups
+
+- **UX-263 sub-fix 5** — pause countdown while typing. S-cost; rescoped UX-263 entry covers it.
+- **UX-282 remaining 3 clusters** — sync events, agenda reschedule, page header actions. Each is S-cost and parallelizable.
+- **TEST-3 follow-up** — audit `e2e/undo-redo-blocks.spec.ts` for opportunities to add property/tag undo/redo flows now that the mock supports them. (Optional; bumps E2E coverage.)
+- **TEST-6 LinkEditPopover sub-batch** — ~36 `toHaveBeenCalled()` sites still need tightening. Carried over from session 479.
+- **Toast / announce duplication** — UX reviewer noted Sonner toasts may already announce via their own aria-live region. If confirmed, the announce() calls paired with toasts could be redundant. Investigate; if true, the cleaner pattern is to drop the manual announce and rely on Sonner's built-in. Not a blocker today.
+
+---
+
 ## Session 479 — UX a11y + safety + deep-link batch: ConfirmDialog destructive focus, TabBar nested-interactive, Settings URL deep-link, FeatureErrorBoundary report-bug, weak-assertion sweep (UX-259 / UX-262 / UX-276 / UX-279 / TEST-6 partial) (2026-04-25)
 
 **4 REVIEW-LATER items fully resolved (UX-259, UX-262, UX-276, UX-279) + 1 partial closure (TEST-6 — narrowed to LinkEditPopover sub-batch, 7 of 8 sub-files done).** Open items: 49 → 45 (note: 10 new tauri-plugin items — FEAT-10/11/12/13, MAINT-106/107/108/109, PUB-8/9 — were added concurrently, hence the larger starting count). Mixed-domain frontend batch: destructive-dialog autoFocus flip with reflex-Enter safety across 8 callers, TabBar dropdown a11y (close button moved to a sibling Radix menuitem instead of nested-button), `?settings=tab` URL deep-linking for Settings, "Report bug" affordance on section-level error boundaries via global event + prefilled BugReportDialog, and 54 weak-assertion tightenings across 7 test files. Five build subagents launched in parallel. Technical reviewer caught two real safety blockers (single-conflict ConflictList dialogs + PageBrowser delete dialog were missing `actionVariant="destructive"` so they didn't get the safer focus); both fixed in-place with reflex-Enter tests added before commit.
