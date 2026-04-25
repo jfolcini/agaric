@@ -93,6 +93,21 @@ jobs:
           # PUB-5: Uncomment once signing keys are generated and pubkey is set in tauri.conf.json
           # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS code signing + notarization (Apple Developer ID).
+          # tauri-action handles everything when these are set: imports the
+          # .p12 into a temporary keychain, calls codesign with the given
+          # identity, submits to notarytool, and staples the ticket. If any
+          # APPLE_* secret is unset, tauri-action skips signing for macOS
+          # and produces an unsigned .dmg / .app — Gatekeeper will warn on
+          # install but the bundle still works. See BUILD.md → "macOS
+          # code signing + notarization" for cert procurement + secret
+          # setup.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Agaric ${{ github.ref_name }}'
@@ -233,6 +248,67 @@ jobs:
           fi
           echo "Uploading (clobber) ${appimages[0]} to release ${GITHUB_REF_NAME}"
           gh release upload "${GITHUB_REF_NAME}" "${appimages[0]}" --clobber
+
+      # Post-build Windows code signing. tauri-action does not have a
+      # built-in Windows signing path that doesn't require modifying
+      # tauri.conf.json, so we sign the .msi / .exe in place after the
+      # build with signtool, then re-upload them to the draft release
+      # via `gh release upload --clobber` (same pattern as the Linux
+      # AppImage repack above). Skipped silently if the cert secrets
+      # are not yet provisioned. See BUILD.md → "Windows code signing"
+      # for cert procurement + secret setup.
+      - name: Sign Windows bundles
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if (-not $env:WINDOWS_CERTIFICATE_BASE64) {
+            Write-Host "WINDOWS_CERTIFICATE_BASE64 secret is not set — skipping Windows code signing."
+            Write-Host "Add WINDOWS_CERTIFICATE_BASE64 / _PASSWORD secrets in repo Settings -> Secrets and variables -> Actions to enable."
+            exit 0
+          }
+
+          $pfx = Join-Path $env:RUNNER_TEMP 'cert.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+
+          # Highest-versioned x64 signtool in the Windows SDK.
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+                      Where-Object { $_.FullName -match 'x64\\signtool\.exe$' } |
+                      Sort-Object FullName -Descending |
+                      Select-Object -ExpandProperty FullName -First 1
+          if (-not $signtool) { throw 'signtool.exe not found in Windows SDK' }
+          Write-Host "Using $signtool"
+
+          $bundleDir = "src-tauri/target/${{ matrix.target }}/release/bundle"
+          $files = Get-ChildItem -Path $bundleDir -Recurse -Include *.msi,*.exe -ErrorAction SilentlyContinue
+          if ($files.Count -eq 0) { throw "No .msi / .exe files in $bundleDir" }
+
+          foreach ($f in $files) {
+            Write-Host "Signing $($f.FullName)"
+            & $signtool sign `
+              /f $pfx `
+              /p $env:WINDOWS_CERTIFICATE_PASSWORD `
+              /t http://timestamp.digicert.com `
+              /fd SHA256 `
+              $f.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signtool sign failed for $($f.FullName)" }
+
+            & $signtool verify /pa $f.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signtool verify failed for $($f.FullName)" }
+
+            # Replace the unsigned asset that tauri-action already pushed
+            # to the draft release with the signed copy.
+            Write-Host "Uploading signed $($f.Name) to release $env:GITHUB_REF_NAME"
+            gh release upload $env:GITHUB_REF_NAME $f.FullName --clobber
+            if ($LASTEXITCODE -ne 0) { throw "gh release upload failed for $($f.Name)" }
+          }
+
+          Remove-Item $pfx -Force
 
   # ---------------------------------------------------------------------------
   # Android — separate job because tauri-action@v0 has no Android support.
