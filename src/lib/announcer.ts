@@ -4,6 +4,17 @@
  */
 let el: HTMLElement | null = null
 
+/**
+ * Coalescing window for identical announcements (ms). If `announce()` is called
+ * with the same message within this window (e.g. rapid `Ctrl+Z` mashing),
+ * subsequent calls are suppressed so screen-reader users hear "Undone" once
+ * per burst rather than once per keystroke. Distinct messages are NEVER
+ * suppressed — different events still produce independent announcements.
+ */
+const COALESCE_WINDOW_MS = 500
+let lastMessage: string | null = null
+let lastAnnouncedAt = 0
+
 function getOrCreate(): HTMLElement {
   if (el && document.body.contains(el)) return el
   el = document.createElement('div')
@@ -28,10 +39,29 @@ function getOrCreate(): HTMLElement {
 }
 
 export function announce(message: string): void {
+  // Suppress repeated identical messages within the coalescing window.
+  const now = Date.now()
+  if (message === lastMessage && now - lastAnnouncedAt < COALESCE_WINDOW_MS) {
+    return
+  }
+  lastMessage = message
+  lastAnnouncedAt = now
+
   const node = getOrCreate()
   // Clear first, then set — forces screen reader to re-read even if same message
   node.textContent = ''
   requestAnimationFrame(() => {
     node.textContent = message
   })
+}
+
+/**
+ * Reset the announcer's coalescing state. Test-only — clears the singleton
+ * DOM node and the last-announced cache so tests are isolated from each other.
+ */
+export function __resetAnnouncerForTests(): void {
+  if (el && el.parentNode) el.parentNode.removeChild(el)
+  el = null
+  lastMessage = null
+  lastAnnouncedAt = 0
 }

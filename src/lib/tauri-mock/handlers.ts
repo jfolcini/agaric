@@ -376,7 +376,7 @@ export const HANDLERS: Record<string, Handler> = {
       const target = opLog.find((o) => o.device_id === opRef.device_id && o.seq === opRef.seq)
       if (!target) continue
 
-      applyRevertForOp(target, blocks)
+      applyRevertForOp(target, blocks, { properties, blockTags })
 
       const newOp = pushOp(`revert_${target.op_type}`, { reverted: target })
       results.push(newOp)
@@ -530,6 +530,17 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const key = a['key'] as string
+    // Capture the prior typed value (if any) so revert can restore it.
+    // `from_value: null` signals "property did not exist" — revert removes it.
+    const priorRow = properties.get(blockId)?.get(key)
+    const fromValue = priorRow
+      ? {
+          value_text: (priorRow['value_text'] as string | null) ?? null,
+          value_num: (priorRow['value_num'] as number | null) ?? null,
+          value_date: (priorRow['value_date'] as string | null) ?? null,
+          value_ref: (priorRow['value_ref'] as string | null) ?? null,
+        }
+      : null
     if (!properties.has(blockId)) {
       properties.set(blockId, new Map())
     }
@@ -540,6 +551,7 @@ export const HANDLERS: Record<string, Handler> = {
       value_date: (a['valueDate'] as string | null) ?? null,
       value_ref: (a['valueRef'] as string | null) ?? null,
     })
+    pushOp('set_property', { block_id: blockId, key, from_value: fromValue })
     const b = blocks.get(blockId)
     return b ? { ...b } : null
   },
@@ -548,8 +560,19 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const key = a['key'] as string
+    // Capture the prior typed value so revert can re-add it.
+    const priorRow = properties.get(blockId)?.get(key)
+    const fromValue = priorRow
+      ? {
+          value_text: (priorRow['value_text'] as string | null) ?? null,
+          value_num: (priorRow['value_num'] as number | null) ?? null,
+          value_date: (priorRow['value_date'] as string | null) ?? null,
+          value_ref: (priorRow['value_ref'] as string | null) ?? null,
+        }
+      : null
     const blockProps = properties.get(blockId)
     if (blockProps) blockProps.delete(key)
+    pushOp('delete_property', { block_id: blockId, key, from_value: fromValue })
     return null
   },
 
@@ -775,8 +798,13 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)
     if (!b) throw new Error('not found')
+    const fromState = (b['todo_state'] as string | null) ?? null
     b['todo_state'] = (a['state'] as string | null) ?? null
-    pushOp('set_todo_state', { block_id: a['blockId'], state: b['todo_state'] })
+    pushOp('set_todo_state', {
+      block_id: a['blockId'],
+      state: b['todo_state'],
+      from_state: fromState,
+    })
     return { ...b }
   },
 
@@ -784,8 +812,13 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)
     if (!b) throw new Error('not found')
+    const fromLevel = (b['priority'] as string | null) ?? null
     b['priority'] = (a['level'] as string | null) ?? null
-    pushOp('set_priority', { block_id: a['blockId'], level: b['priority'] })
+    pushOp('set_priority', {
+      block_id: a['blockId'],
+      level: b['priority'],
+      from_level: fromLevel,
+    })
     return { ...b }
   },
 
@@ -793,8 +826,13 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)
     if (!b) throw new Error('not found')
+    const fromDate = (b['due_date'] as string | null) ?? null
     b['due_date'] = (a['date'] as string | null) ?? null
-    pushOp('set_due_date', { block_id: a['blockId'], date: b['due_date'] })
+    pushOp('set_due_date', {
+      block_id: a['blockId'],
+      date: b['due_date'],
+      from_date: fromDate,
+    })
     return { ...b }
   },
 
@@ -802,8 +840,13 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)
     if (!b) throw new Error('not found')
+    const fromDate = (b['scheduled_date'] as string | null) ?? null
     b['scheduled_date'] = (a['date'] as string | null) ?? null
-    pushOp('set_scheduled_date', { block_id: a['blockId'], date: b['scheduled_date'] })
+    pushOp('set_scheduled_date', {
+      block_id: a['blockId'],
+      date: b['scheduled_date'],
+      from_date: fromDate,
+    })
     return { ...b }
   },
 

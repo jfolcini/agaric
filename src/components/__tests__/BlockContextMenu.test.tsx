@@ -27,6 +27,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { writeText } from '../../lib/clipboard'
 import { t } from '../../lib/i18n'
 import { BlockContextMenu, type BlockContextMenuProps } from '../BlockContextMenu'
 
@@ -37,8 +38,16 @@ vi.mock('@floating-ui/dom', () => ({
   offset: vi.fn(() => ({})),
 }))
 
+// Mock the clipboard wrapper used by the "Copy URL" menu item so the test
+// does not depend on `@tauri-apps/plugin-clipboard-manager` IPC.
+vi.mock('../../lib/clipboard', () => ({
+  writeText: vi.fn().mockResolvedValue(undefined),
+}))
+const mockedWriteText = vi.mocked(writeText)
+
 beforeEach(() => {
   vi.clearAllMocks()
+  mockedWriteText.mockResolvedValue(undefined)
 })
 
 type MenuOverrides = { [K in keyof BlockContextMenuProps]?: BlockContextMenuProps[K] | undefined }
@@ -591,19 +600,12 @@ describe('BlockContextMenu', () => {
   })
 
   it('clicking "Copy URL" copies to clipboard and shows toast', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText },
-      writable: true,
-      configurable: true,
-    })
-
     const { props } = renderMenu({ linkUrl: 'https://example.com/page' })
 
     fireEvent.click(screen.getByText(t('contextMenu.copyUrl')))
 
     await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith('https://example.com/page')
+      expect(mockedWriteText).toHaveBeenCalledWith('https://example.com/page')
     })
     expect(props.onClose).toHaveBeenCalled()
   })

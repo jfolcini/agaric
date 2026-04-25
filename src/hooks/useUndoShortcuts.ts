@@ -12,6 +12,7 @@ import { toast } from 'sonner'
 import { selectPageStack, useNavigationStore } from '@/stores/navigation'
 import { pageBlockRegistry } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
+import { announce } from '../lib/announcer'
 import { getBlock } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 
@@ -69,10 +70,14 @@ export function useUndoShortcuts(): void {
               const opKey = `undo.op.${snakeToCamel(result.reversed_op_type)}`
               const message = t(opKey, { defaultValue: t('undo.undoneMessage') })
               toast(message, { duration: 1500 })
+              announce(t('announce.undone'))
               await refreshAfterUndoRedo(pageId)
             }
           })
-          .catch(() => toast.error(t('undo.undoFailedMessage')))
+          .catch(() => {
+            toast.error(t('undo.undoFailedMessage'))
+            announce(t('announce.undoFailed'))
+          })
         return
       }
 
@@ -91,10 +96,14 @@ export function useUndoShortcuts(): void {
               const opKey = `redo.op.${snakeToCamel(result.reversed_op_type)}`
               const message = t(opKey, { defaultValue: t('undo.redoneMessage') })
               toast(message, { duration: 1500 })
+              announce(t('announce.redone'))
               await refreshAfterUndoRedo(pageId)
             }
           })
-          .catch(() => toast.error(t('undo.redoFailedMessage')))
+          .catch(() => {
+            toast.error(t('undo.redoFailedMessage'))
+            announce(t('announce.redoFailed'))
+          })
         return
       }
     }

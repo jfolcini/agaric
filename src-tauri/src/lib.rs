@@ -308,6 +308,7 @@ pub fn run() {
     #[cfg_attr(mobile, allow(unused_mut))]
     let mut tauri_builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_process::init())
         // FEAT-5b — OAuth 2.0 PKCE loopback listener for the Agaric →
         // Google Calendar connector (see REVIEW-LATER § FEAT-5). The

@@ -19,6 +19,7 @@ import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
+import { announce } from '../lib/announcer'
 import { formatTimestamp } from '../lib/format'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import type { HistoryEntry } from '../lib/tauri'
@@ -159,12 +160,14 @@ export function HistoryView(): React.ReactElement {
       }))
 
       await revertOps({ ops })
+      announce(t('announce.opsReverted', { count: ops.length }))
       clearSelection()
       // Reload after revert
       setEntries([])
       await reload()
     } catch {
       toast.error(t('history.revertFailed'))
+      announce(t('announce.revertFailed'))
     }
     setReverting(false)
     setConfirmRevert(false)
@@ -185,6 +188,7 @@ export function HistoryView(): React.ReactElement {
         targetSeq: restoreTarget.seq,
       })
       toast.success(t('history.restoreSuccess', { count: result.ops_reverted }))
+      announce(t('announce.restoreToHereSucceeded', { count: result.ops_reverted }))
       if (result.non_reversible_skipped > 0) {
         toast.warning(t('history.restoreSkipped', { count: result.non_reversible_skipped }))
       }
@@ -192,6 +196,7 @@ export function HistoryView(): React.ReactElement {
       await reload()
     } catch {
       toast.error(t('history.restoreFailed'))
+      announce(t('announce.restoreToHereFailed'))
     }
     setRestoring(false)
     setConfirmRestore(false)

@@ -2,7 +2,12 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import { RenameDialog } from '../RenameDialog'
+import {
+  MAX_RENAME_LENGTH,
+  RenameDialog,
+  sanitizeRenameInput,
+  validateRenameInput,
+} from '../RenameDialog'
 
 describe('RenameDialog', () => {
   it('renders nothing when not open', () => {
@@ -85,5 +90,98 @@ describe('RenameDialog', () => {
     )
     const results = await axe(document.body)
     expect(results).toHaveNoViolations()
+  })
+
+  // ----------------------------------------------------------------------
+  // UX-263: input validation (trim, empty, length cap, control chars)
+  // ----------------------------------------------------------------------
+
+  describe('validateRenameInput / sanitizeRenameInput (UX-263)', () => {
+    it('reports empty for whitespace-only input', () => {
+      expect(validateRenameInput('')).toBe('empty')
+      expect(validateRenameInput('   ')).toBe('empty')
+      expect(validateRenameInput('\t\n')).toBe('empty')
+    })
+
+    it('reports tooLong above MAX_RENAME_LENGTH', () => {
+      const tooLong = 'a'.repeat(MAX_RENAME_LENGTH + 1)
+      expect(validateRenameInput(tooLong)).toBe('tooLong')
+    })
+
+    it('accepts a name exactly at the length cap', () => {
+      expect(validateRenameInput('a'.repeat(MAX_RENAME_LENGTH))).toBeNull()
+    })
+
+    it('accepts trimmed names that fit within the cap', () => {
+      expect(validateRenameInput('  Living Room Mac  ')).toBeNull()
+    })
+
+    it('strips ASCII control characters before measuring length', () => {
+      const noisy = `Lap\u0000top\u001Fname\u007F`
+      expect(sanitizeRenameInput(noisy)).toBe('Laptopname')
+      expect(validateRenameInput(noisy)).toBeNull()
+    })
+
+    it('treats input that becomes empty after stripping control chars as empty', () => {
+      expect(validateRenameInput('\u0000\u001F\u007F')).toBe('empty')
+    })
+  })
+
+  it('disables Save when the input is empty (UX-263)', () => {
+    render(<RenameDialog open={true} onOpenChange={vi.fn()} onConfirm={vi.fn()} currentName="" />)
+    const save = screen.getByRole('button', { name: /save/i })
+    expect(save).toBeDisabled()
+  })
+
+  it('shows inline error after the user clears the field (UX-263)', async () => {
+    const user = userEvent.setup()
+    const onConfirm = vi.fn()
+    render(
+      <RenameDialog
+        open={true}
+        onOpenChange={vi.fn()}
+        onConfirm={onConfirm}
+        currentName="Laptop"
+      />,
+    )
+    const input = screen.getByRole('textbox', { name: /device name/i }) as HTMLInputElement
+    await user.clear(input)
+
+    // aria-invalid is set on the input once the user has touched it.
+    expect(input.getAttribute('aria-invalid')).toBe('true')
+    expect(screen.getByRole('alert').textContent).toMatch(/empty/i)
+    expect(screen.getByRole('button', { name: /save/i })).toBeDisabled()
+    expect(onConfirm).not.toHaveBeenCalled()
+  })
+
+  it('blocks Save and shows tooLong error when the name exceeds the cap (UX-263)', async () => {
+    const user = userEvent.setup()
+    const onConfirm = vi.fn()
+    render(<RenameDialog open={true} onOpenChange={vi.fn()} onConfirm={onConfirm} currentName="" />)
+    const input = screen.getByRole('textbox', { name: /device name/i }) as HTMLInputElement
+    // Type one character past the cap. We type the full string so the touched
+    // flag is set via the onChange handler.
+    await user.type(input, 'a'.repeat(MAX_RENAME_LENGTH + 1))
+
+    expect(input.getAttribute('aria-invalid')).toBe('true')
+    expect(screen.getByRole('alert').textContent).toMatch(/64 characters or fewer/i)
+    expect(screen.getByRole('button', { name: /save/i })).toBeDisabled()
+    expect(onConfirm).not.toHaveBeenCalled()
+  })
+
+  it('strips control characters from pasted input before persisting (UX-263)', async () => {
+    const user = userEvent.setup()
+    const onConfirm = vi.fn()
+    render(<RenameDialog open={true} onOpenChange={vi.fn()} onConfirm={onConfirm} currentName="" />)
+    const input = screen.getByRole('textbox', { name: /device name/i }) as HTMLInputElement
+    await user.click(input)
+    // Paste a name with embedded control characters and surrounding whitespace.
+    await user.paste('  Living\u0000Room\u001FMac  ')
+
+    // Control chars are stripped on input; trim happens on submit.
+    expect(input.value).toBe('  LivingRoomMac  ')
+
+    await user.click(screen.getByRole('button', { name: /save/i }))
+    expect(onConfirm).toHaveBeenCalledWith('LivingRoomMac')
   })
 })

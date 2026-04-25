@@ -29,6 +29,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { AgentAccessSettingsTab } from '../AgentAccessSettingsTab'
 
@@ -71,24 +72,19 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 // ---------------------------------------------------------------------------
-// Clipboard stub — jsdom does not provide `navigator.clipboard` out of
-// the box. `@testing-library/user-event`'s `setup()` always installs its
-// own clipboard stub via `attachClipboardStubToView`, which overrides
-// any `navigator.clipboard` we defined earlier. Therefore every test
-// that cares about the clipboard re-defines it AFTER `userEvent.setup()`
-// via `installClipboardMock()`. Matches the pattern used by
-// `BugReportDialog.test.tsx`.
+// Clipboard wrapper mock — `AgentAccessSettingsTab` calls
+// `writeText(text)` from `@/lib/clipboard` (the Tauri clipboard-manager
+// plugin wrapper), not `navigator.clipboard.writeText` directly. Mocking
+// the wrapper here lets us assert on the call and force rejection paths
+// without wrestling with `userEvent.setup()`'s built-in jsdom clipboard
+// stub. Matches the pattern used by `BugReportDialog.test.tsx`.
 // ---------------------------------------------------------------------------
 
-let clipboardWriteText: ReturnType<typeof vi.fn>
+vi.mock('@/lib/clipboard', () => ({
+  writeText: vi.fn().mockResolvedValue(undefined),
+}))
 
-function installClipboardMock(): void {
-  clipboardWriteText = vi.fn().mockResolvedValue(undefined)
-  Object.defineProperty(navigator, 'clipboard', {
-    configurable: true,
-    value: { writeText: clipboardWriteText },
-  })
-}
+const clipboardWriteText = vi.mocked(writeText)
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastSuccess = vi.mocked(toast.success)
@@ -187,6 +183,9 @@ function setupInvoke(status: McpStatus = makeStatus(), rwStatus: McpRwStatus = m
 beforeEach(() => {
   vi.clearAllMocks()
   eventListeners.clear()
+  // Re-arm the wrapper mock — `vi.clearAllMocks()` wipes the default
+  // resolution installed at module load.
+  clipboardWriteText.mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -423,7 +422,6 @@ describe('AgentAccessSettingsTab — RW warning badge', () => {
 describe('AgentAccessSettingsTab — copy buttons', () => {
   it('copies the socket path to the clipboard', async () => {
     const user = userEvent.setup()
-    installClipboardMock()
     setupInvoke(makeStatus())
 
     render(<AgentAccessSettingsTab />)
@@ -440,7 +438,6 @@ describe('AgentAccessSettingsTab — copy buttons', () => {
 
   it('copies the RW socket path to the clipboard', async () => {
     const user = userEvent.setup()
-    installClipboardMock()
     setupInvoke(makeStatus(), makeRwStatus())
 
     render(<AgentAccessSettingsTab />)
@@ -457,7 +454,6 @@ describe('AgentAccessSettingsTab — copy buttons', () => {
 
   it('copies the Claude Desktop config as valid JSON', async () => {
     const user = userEvent.setup()
-    installClipboardMock()
     setupInvoke(makeStatus())
 
     render(<AgentAccessSettingsTab />)
@@ -482,7 +478,6 @@ describe('AgentAccessSettingsTab — copy buttons', () => {
 
   it('copies the generic MCP config as valid JSON', async () => {
     const user = userEvent.setup()
-    installClipboardMock()
     setupInvoke(makeStatus())
 
     render(<AgentAccessSettingsTab />)
@@ -503,7 +498,6 @@ describe('AgentAccessSettingsTab — copy buttons', () => {
 
   it('logs and toasts on clipboard failure', async () => {
     const user = userEvent.setup()
-    installClipboardMock()
     setupInvoke(makeStatus())
 
     render(<AgentAccessSettingsTab />)

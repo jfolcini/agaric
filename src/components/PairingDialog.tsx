@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import type { PeerRefRow } from '../lib/tauri'
 import {
@@ -27,6 +28,7 @@ import {
   startPairing,
 } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
+import { ConfirmDialog } from './ConfirmDialog'
 import { PairingEntryForm } from './PairingEntryForm'
 import { PairingPeersList } from './PairingPeersList'
 import { PairingQrDisplay } from './PairingQrDisplay'
@@ -58,6 +60,8 @@ export function PairingDialog({
   const [unpairPeerId, setUnpairPeerId] = useState<string | null>(null)
   const [countdown, setCountdown] = useState<number | null>(null)
   const [entryMode, setEntryMode] = useState<'manual' | 'scan'>('manual')
+  // UX-263: Guard against accidentally closing the dialog mid-handshake.
+  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false)
 
   const { t } = useTranslation()
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -151,6 +155,21 @@ export function PairingDialog({
 
     return () => clearInterval(interval)
   }, [countdownActive])
+
+  // UX-263: Announce countdown crossings at SR-relevant thresholds only.
+  // We deliberately avoid announcing every tick — only the meaningful
+  // boundaries (1 minute, 30 seconds, 10 seconds, expired) so screen-reader
+  // users get warned without being spammed.
+  useEffect(() => {
+    if (countdown === null) return
+    if (countdown === 60) {
+      announce(t('announce.pairingCountdownMinute'))
+    } else if (countdown === 30 || countdown === 10) {
+      announce(t('announce.pairingCountdown', { seconds: countdown }))
+    } else if (countdown === 0) {
+      announce(t('announce.pairingExpired'))
+    }
+  }, [countdown, t])
 
   // Focus first word input when pairing info is loaded
   useEffect(() => {
@@ -304,6 +323,19 @@ export function PairingDialog({
     }
   }, [error, isExpired])
 
+  // UX-263: When the user attempts to close the dialog (Esc, X button, or
+  // backdrop click) while a pairing handshake is mid-flight, show a
+  // confirmation guard so they don't accidentally abort the in-progress
+  // mTLS exchange. Direct prop changes from the parent still close the
+  // dialog (intentional escape hatch).
+  const handleAttemptClose = useCallback(() => {
+    if (pairLoading) {
+      setConfirmCloseOpen(true)
+      return
+    }
+    handleCancel()
+  }, [pairLoading, handleCancel])
+
   if (!open) return null
 
   return (
@@ -311,7 +343,7 @@ export function PairingDialog({
       <Dialog
         open={open}
         onOpenChange={(o) => {
-          if (!o) handleCancel()
+          if (!o) handleAttemptClose()
         }}
       >
         <DialogContent
@@ -413,6 +445,24 @@ export function PairingDialog({
           if (unpairPeerId) handleUnpair(unpairPeerId)
         }}
         className="pairing-unpair-confirm"
+      />
+
+      {/* UX-263: Mid-pair close guard. Cancelling a pairing in flight is
+          destructive (the in-flight handshake is dropped), so the action
+          variant is destructive and the cancel option keeps the dialog open. */}
+      <ConfirmDialog
+        open={confirmCloseOpen}
+        onOpenChange={setConfirmCloseOpen}
+        title={t('pairing.confirmCloseTitle')}
+        description={t('pairing.confirmCloseDescription')}
+        cancelLabel={t('pairing.confirmCloseKeep')}
+        actionLabel={t('pairing.confirmCloseAction')}
+        actionVariant="destructive"
+        onAction={() => {
+          setConfirmCloseOpen(false)
+          handleCancel()
+        }}
+        className="pairing-close-confirm"
       />
     </>
   )

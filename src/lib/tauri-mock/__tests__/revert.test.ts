@@ -175,4 +175,198 @@ describe('applyRevertForOp', () => {
     expect(target['content']).toBe('old')
     expect(sibling).toEqual(siblingSnapshot)
   })
+
+  // ---------------------------------------------------------------------------
+  // TEST-3: task-property setters (revert to from_state / from_level / from_date)
+  // ---------------------------------------------------------------------------
+
+  it('reverts set_todo_state by restoring from_state on the block row', () => {
+    const b = makeBlockRow('BLK_T1', { todo_state: 'DONE' })
+    blocks.set('BLK_T1', b)
+    const op = makeOp('set_todo_state', {
+      block_id: 'BLK_T1',
+      state: 'DONE',
+      from_state: 'TODO',
+    })
+
+    applyRevertForOp(op, blocks)
+
+    expect(b['todo_state']).toBe('TODO')
+  })
+
+  it('reverts set_todo_state with null from_state to null', () => {
+    const b = makeBlockRow('BLK_T2', { todo_state: 'TODO' })
+    blocks.set('BLK_T2', b)
+    const op = makeOp('set_todo_state', { block_id: 'BLK_T2', state: 'TODO', from_state: null })
+
+    applyRevertForOp(op, blocks)
+
+    expect(b['todo_state']).toBeNull()
+  })
+
+  it('reverts set_priority by restoring from_level on the block row', () => {
+    const b = makeBlockRow('BLK_P1', { priority: 'A' })
+    blocks.set('BLK_P1', b)
+    const op = makeOp('set_priority', { block_id: 'BLK_P1', level: 'A', from_level: 'C' })
+
+    applyRevertForOp(op, blocks)
+
+    expect(b['priority']).toBe('C')
+  })
+
+  it('reverts set_due_date by restoring from_date on the block row', () => {
+    const b = makeBlockRow('BLK_D1', { due_date: '2025-12-25' })
+    blocks.set('BLK_D1', b)
+    const op = makeOp('set_due_date', {
+      block_id: 'BLK_D1',
+      date: '2025-12-25',
+      from_date: '2025-01-01',
+    })
+
+    applyRevertForOp(op, blocks)
+
+    expect(b['due_date']).toBe('2025-01-01')
+  })
+
+  it('reverts set_scheduled_date by restoring from_date on the block row', () => {
+    const b = makeBlockRow('BLK_S1', { scheduled_date: '2025-06-01' })
+    blocks.set('BLK_S1', b)
+    const op = makeOp('set_scheduled_date', {
+      block_id: 'BLK_S1',
+      date: '2025-06-01',
+      from_date: null,
+    })
+
+    applyRevertForOp(op, blocks)
+
+    expect(b['scheduled_date']).toBeNull()
+  })
+
+  // ---------------------------------------------------------------------------
+  // TEST-3: property map mutations (set_property / delete_property)
+  // ---------------------------------------------------------------------------
+
+  it('reverts set_property by restoring the prior typed value', () => {
+    const b = makeBlockRow('BLK_PR1')
+    blocks.set('BLK_PR1', b)
+    const properties = new Map<string, Map<string, Record<string, unknown>>>()
+    properties.set(
+      'BLK_PR1',
+      new Map([
+        [
+          'effort',
+          { key: 'effort', value_text: null, value_num: 5, value_date: null, value_ref: null },
+        ],
+      ]),
+    )
+    const op = makeOp('set_property', {
+      block_id: 'BLK_PR1',
+      key: 'effort',
+      from_value: { value_text: null, value_num: 3, value_date: null, value_ref: null },
+    })
+
+    applyRevertForOp(op, blocks, { properties })
+
+    expect(properties.get('BLK_PR1')?.get('effort')?.['value_num']).toBe(3)
+  })
+
+  it('reverts set_property with null from_value by removing the property', () => {
+    const b = makeBlockRow('BLK_PR2')
+    blocks.set('BLK_PR2', b)
+    const properties = new Map<string, Map<string, Record<string, unknown>>>()
+    properties.set(
+      'BLK_PR2',
+      new Map([
+        [
+          'note',
+          { key: 'note', value_text: 'hi', value_num: null, value_date: null, value_ref: null },
+        ],
+      ]),
+    )
+    const op = makeOp('set_property', {
+      block_id: 'BLK_PR2',
+      key: 'note',
+      from_value: null,
+    })
+
+    applyRevertForOp(op, blocks, { properties })
+
+    expect(properties.get('BLK_PR2')?.has('note')).toBe(false)
+  })
+
+  it('reverts delete_property by re-adding the prior typed value', () => {
+    const b = makeBlockRow('BLK_PR3')
+    blocks.set('BLK_PR3', b)
+    const properties = new Map<string, Map<string, Record<string, unknown>>>()
+    // Property is currently absent (was just deleted).
+    const op = makeOp('delete_property', {
+      block_id: 'BLK_PR3',
+      key: 'tags',
+      from_value: {
+        value_text: 'urgent',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+      },
+    })
+
+    applyRevertForOp(op, blocks, { properties })
+
+    expect(properties.get('BLK_PR3')?.get('tags')?.['value_text']).toBe('urgent')
+  })
+
+  it('property reverts no-op silently when state.properties is missing', () => {
+    const b = makeBlockRow('BLK_PR4')
+    blocks.set('BLK_PR4', b)
+    const op = makeOp('set_property', {
+      block_id: 'BLK_PR4',
+      key: 'k',
+      from_value: { value_text: 'x', value_num: null, value_date: null, value_ref: null },
+    })
+
+    expect(() => {
+      applyRevertForOp(op, blocks)
+    }).not.toThrow()
+  })
+
+  // ---------------------------------------------------------------------------
+  // TEST-3: tag map mutations (add_tag / remove_tag)
+  // ---------------------------------------------------------------------------
+
+  it('reverts add_tag by removing the tag from the block', () => {
+    const b = makeBlockRow('BLK_TG1')
+    blocks.set('BLK_TG1', b)
+    const blockTags = new Map<string, Set<string>>()
+    blockTags.set('BLK_TG1', new Set(['TAG_A', 'TAG_B']))
+    const op = makeOp('add_tag', { block_id: 'BLK_TG1', tag_id: 'TAG_B' })
+
+    applyRevertForOp(op, blocks, { blockTags })
+
+    expect(blockTags.get('BLK_TG1')?.has('TAG_B')).toBe(false)
+    // Other tags untouched
+    expect(blockTags.get('BLK_TG1')?.has('TAG_A')).toBe(true)
+  })
+
+  it('reverts remove_tag by re-adding the tag to the block', () => {
+    const b = makeBlockRow('BLK_TG2')
+    blocks.set('BLK_TG2', b)
+    const blockTags = new Map<string, Set<string>>()
+    blockTags.set('BLK_TG2', new Set(['TAG_A']))
+    const op = makeOp('remove_tag', { block_id: 'BLK_TG2', tag_id: 'TAG_C' })
+
+    applyRevertForOp(op, blocks, { blockTags })
+
+    expect(blockTags.get('BLK_TG2')?.has('TAG_C')).toBe(true)
+    expect(blockTags.get('BLK_TG2')?.has('TAG_A')).toBe(true)
+  })
+
+  it('tag reverts no-op silently when state.blockTags is missing', () => {
+    const b = makeBlockRow('BLK_TG3')
+    blocks.set('BLK_TG3', b)
+    const op = makeOp('add_tag', { block_id: 'BLK_TG3', tag_id: 'TAG_X' })
+
+    expect(() => {
+      applyRevertForOp(op, blocks)
+    }).not.toThrow()
+  })
 })

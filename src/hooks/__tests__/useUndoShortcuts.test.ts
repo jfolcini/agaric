@@ -84,13 +84,19 @@ vi.mock('../../lib/tauri', () => ({
   getBlock: (...args: unknown[]) => mockGetBlock(...args),
 }))
 
+vi.mock('../../lib/announcer', () => ({
+  announce: vi.fn(),
+}))
+
 import { toast } from 'sonner'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
 import { useUndoStore } from '@/stores/undo'
+import { announce } from '../../lib/announcer'
 
 const mockedToast = vi.mocked(toast)
 const mockedToastError = vi.mocked(toast.error)
+const mockedAnnounce = vi.mocked(announce)
 const mockedNavGetState = vi.mocked(useNavigationStore.getState)
 const mockedUndoGetState = vi.mocked(useUndoStore.getState)
 
@@ -639,6 +645,78 @@ describe('refresh after undo/redo', () => {
 
     // Resolve cache should remain empty (getBlock failed, so set() was never called)
     expect(useResolveStore.getState().cache.size).toBe(0)
+
+    unmount()
+  })
+})
+
+describe('screen reader announcements (UX-282)', () => {
+  it('announces "Undone" after successful undo', async () => {
+    mockUndo.mockResolvedValueOnce({ reversed_op_type: 'edit_block' })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Undone')
+    })
+
+    unmount()
+  })
+
+  it('announces "Redone" after successful redo', async () => {
+    mockRedo.mockResolvedValueOnce({ reversed_op_type: 'edit_block' })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Redone')
+    })
+
+    unmount()
+  })
+
+  it('announces "Undo failed" when undo rejects', async () => {
+    mockUndo.mockRejectedValueOnce(new Error('undo failed'))
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Undo failed')
+    })
+
+    unmount()
+  })
+
+  it('announces "Redo failed" when redo rejects', async () => {
+    mockRedo.mockRejectedValueOnce(new Error('redo failed'))
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Redo failed')
+    })
+
+    unmount()
+  })
+
+  it('does NOT announce when undo returns null (nothing to undo)', async () => {
+    mockUndo.mockResolvedValueOnce(null)
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(mockedAnnounce).not.toHaveBeenCalled()
 
     unmount()
   })

@@ -45,6 +45,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { writeText } from '@/lib/clipboard'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
 import { revertOps } from '@/lib/tauri'
@@ -491,7 +492,7 @@ export function AgentAccessSettingsTab(): React.ReactElement {
   const copyToClipboard = useCallback(
     async (text: string, successKey: string) => {
       try {
-        await navigator.clipboard.writeText(text)
+        await writeText(text)
         toast.success(t(successKey))
       } catch (err) {
         logger.warn('AgentAccessSettingsTab', 'clipboard write failed', undefined, err)

@@ -26,6 +26,7 @@ import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
+import { announce } from '../lib/announcer'
 import { formatTimestamp } from '../lib/format'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { logger } from '../lib/logger'
@@ -240,9 +241,11 @@ export function TrashView(): React.ReactElement {
           useResolveStore.getState().set(block.id, block.content ?? 'Untitled', false)
         }
         toast.success(t('trash.blockRestored'))
+        announce(t('announce.blockRestored'))
       } catch (err) {
         logger.error('TrashView', 'Failed to restore block', { blockId: block.id }, err)
         toast.error(t('trash.restoreFailed'))
+        announce(t('announce.restoreFailed'))
       }
     },
     [setBlocks, t],
@@ -255,9 +258,11 @@ export function TrashView(): React.ReactElement {
         setBlocks((prev) => prev.filter((b) => b.id !== blockId))
         setConfirmPurgeId(null)
         toast.success(t('trash.blockPurged'))
+        announce(t('announce.blockPurged'))
       } catch (err) {
         logger.error('TrashView', 'Failed to purge block', { blockId }, err)
         toast.error(t('trash.purgeFailed'))
+        announce(t('announce.purgeFailed'))
       }
     },
     [setBlocks, t],
@@ -285,6 +290,7 @@ export function TrashView(): React.ReactElement {
     clearSelection()
     if (restored > 0) {
       toast.success(t('trash.batchRestored', { count: restored }))
+      announce(t('announce.batchRestored', { count: restored }))
     }
   }, [blocks, selected, reload, clearSelection, t])
 
@@ -318,6 +324,7 @@ export function TrashView(): React.ReactElement {
     setConfirmBatchPurge(false)
     if (purged > 0) {
       toast.success(t('trash.batchPurged', { count: purged }))
+      announce(t('announce.batchPurged', { count: purged }))
     }
   }, [selected, reload, clearSelection, t])
 
@@ -329,10 +336,12 @@ export function TrashView(): React.ReactElement {
       setConfirmEmptyTrash(false)
       if (result.affected_count > 0) {
         toast.success(t('trash.allPurged', { count: result.affected_count }))
+        announce(t('announce.trashEmptied', { count: result.affected_count }))
       }
     } catch (err) {
       logger.error('TrashView', 'Failed to empty trash', undefined, err)
       toast.error(t('trash.emptyTrashFailed'))
+      announce(t('announce.emptyTrashFailed'))
     }
   }, [reload, clearSelection, t])
 
@@ -344,10 +353,12 @@ export function TrashView(): React.ReactElement {
       setConfirmRestoreAll(false)
       if (result.affected_count > 0) {
         toast.success(t('trash.allRestored', { count: result.affected_count }))
+        announce(t('announce.allRestored', { count: result.affected_count }))
       }
     } catch (err) {
       logger.error('TrashView', 'Failed to restore all blocks', undefined, err)
       toast.error(t('trash.restoreAllFailed'))
+      announce(t('announce.restoreAllFailed'))
     }
   }, [reload, clearSelection, t])
 

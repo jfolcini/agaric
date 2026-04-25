@@ -24,6 +24,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { announce } from '../../lib/announcer'
 import { PairingDialog } from '../PairingDialog'
 
 // Mock react-qr-code — no longer used by the component, but keep mock to avoid import errors
@@ -31,6 +32,11 @@ vi.mock('react-qr-code', () => ({
   default: ({ value, ...props }: { value: string; [key: string]: unknown }) => (
     <div data-testid="pairing-qr-code-legacy" data-value={value} {...props} />
   ),
+}))
+
+// UX-263: capture announce() calls from the SR threshold effect
+vi.mock('../../lib/announcer', () => ({
+  announce: vi.fn(),
 }))
 
 vi.mock('../../stores/sync', () => ({
@@ -887,5 +893,146 @@ describe('PairingDialog', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  // -----------------------------------------------------------------------
+  // UX-263: Countdown SR-only announcer thresholds (60s / 30s / 10s / expired)
+  // -----------------------------------------------------------------------
+  it('announces countdown only at SR-relevant thresholds (UX-263)', async () => {
+    vi.useFakeTimers()
+    const announceMock = vi.mocked(announce)
+    announceMock.mockClear()
+
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+      cancel_pairing: undefined,
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+    // Flush init promises
+    await act(async () => {
+      await vi.runAllTimersAsync()
+    })
+
+    // Advance from 300 → 60 (240 seconds) — should announce "1 minute"
+    await act(async () => {
+      vi.advanceTimersByTime(240_000)
+    })
+    expect(announceMock).toHaveBeenCalledWith('Pairing session expires in 1 minute')
+
+    // Advance to 30s mark
+    await act(async () => {
+      vi.advanceTimersByTime(30_000)
+    })
+    expect(announceMock).toHaveBeenCalledWith('Pairing session expires in 30 seconds')
+
+    // Advance to 10s mark
+    await act(async () => {
+      vi.advanceTimersByTime(20_000)
+    })
+    expect(announceMock).toHaveBeenCalledWith('Pairing session expires in 10 seconds')
+
+    // Advance to expiry
+    await act(async () => {
+      vi.advanceTimersByTime(10_000)
+    })
+    expect(announceMock).toHaveBeenCalledWith('Pairing session expired')
+
+    // The threshold effect must not fire on every tick — there are exactly
+    // 4 announcement points across the 5-minute countdown.
+    expect(announceMock).toHaveBeenCalledTimes(4)
+
+    vi.useRealTimers()
+  })
+
+  // -----------------------------------------------------------------------
+  // UX-263: Mid-pair close guard — confirm before aborting in-flight pairing
+  // -----------------------------------------------------------------------
+  it('shows close-guard ConfirmDialog when Esc is pressed mid-pair (UX-263)', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+
+    // Make confirm_pairing hang so the dialog stays in pairLoading state
+    let resolveConfirm: (value: unknown) => void = () => {}
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'start_pairing') return mockPairingInfo
+      if (cmd === 'list_peer_refs') return []
+      if (cmd === 'cancel_pairing') return undefined
+      if (cmd === 'confirm_pairing') {
+        return new Promise((resolve) => {
+          resolveConfirm = resolve
+        })
+      }
+      return undefined
+    })
+
+    render(<PairingDialog open={true} onOpenChange={onOpenChange} />)
+    await screen.findByText('alpha bravo charlie delta')
+
+    const inputs = screen.getAllByRole('textbox')
+    await user.type(inputs[0] as HTMLElement, 'echo')
+    await user.type(inputs[1] as HTMLElement, 'foxtrot')
+    await user.type(inputs[2] as HTMLElement, 'golf')
+    await user.type(inputs[3] as HTMLElement, 'hotel')
+
+    // Click Pair, then while it hangs, attempt to close via Esc
+    const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
+    await user.click(pairBtn)
+
+    // Wait for confirm_pairing to be in flight
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', expect.any(Object))
+    })
+
+    // Press Escape on the dialog — should NOT close immediately, instead
+    // should show the close-guard ConfirmDialog.
+    await user.keyboard('{Escape}')
+
+    await waitFor(() => {
+      expect(screen.getByText('Cancel pairing?')).toBeInTheDocument()
+    })
+
+    // Parent onOpenChange must not have been called yet — the guard intercepted.
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+
+    // Confirm guard exposes both keep-pairing and cancel-pairing actions.
+    expect(screen.getByRole('button', { name: /Keep pairing/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Cancel pairing$/i })).toBeInTheDocument()
+
+    // Click "Cancel pairing" — should close the dialog and call cancelPairing.
+    await user.click(screen.getByRole('button', { name: /^Cancel pairing$/i }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('cancel_pairing')
+    })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+
+    // Resolve hung promise so test cleanup runs
+    resolveConfirm(undefined)
+  })
+
+  it('closes immediately without guard when not mid-pair (UX-263)', async () => {
+    const user = userEvent.setup()
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+      cancel_pairing: undefined,
+    })
+
+    const onOpenChange = vi.fn()
+    render(<PairingDialog open={true} onOpenChange={onOpenChange} />)
+    await screen.findByText('alpha bravo charlie delta')
+
+    // Press Escape (or any close vector) without an in-flight pairing.
+    await user.keyboard('{Escape}')
+
+    await waitFor(() => {
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    // No close-guard dialog should appear.
+    expect(screen.queryByText('Cancel pairing?')).not.toBeInTheDocument()
   })
 })

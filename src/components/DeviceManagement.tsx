@@ -19,6 +19,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
+import { writeText } from '@/lib/clipboard'
 import { truncateId } from '@/lib/format'
 import { logger } from '@/lib/logger'
 import { useSyncWithTimeout } from '../hooks/useSyncWithTimeout'
@@ -218,7 +219,7 @@ export function DeviceManagement(): React.ReactElement {
                     className="shrink-0 h-7 w-7 p-0"
                     onClick={async () => {
                       try {
-                        await navigator.clipboard.writeText(deviceId)
+                        await writeText(deviceId)
                         toast.success(t('device.deviceIdCopied'))
                       } catch {
                         toast.error(t('device.copyFailed'))

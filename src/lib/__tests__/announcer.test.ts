@@ -10,7 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { announce } from '../announcer'
+import { __resetAnnouncerForTests, announce } from '../announcer'
 
 /** Helper that fetches the announcer element, failing if absent. */
 function getAnnouncer(): HTMLElement {
@@ -21,13 +21,13 @@ function getAnnouncer(): HTMLElement {
 
 describe('announce', () => {
   beforeEach(() => {
-    // Remove any existing announcer element
-    document.getElementById('sr-announcer')?.remove()
+    // Reset the announcer's singleton + coalescing cache between tests.
+    __resetAnnouncerForTests()
     vi.useFakeTimers()
   })
 
   afterEach(() => {
-    document.getElementById('sr-announcer')?.remove()
+    __resetAnnouncerForTests()
     vi.useRealTimers()
   })
 
@@ -90,15 +90,41 @@ describe('announce', () => {
     expect(el2.textContent).toBe('Message 2')
   })
 
-  it('handles repeated calls with the same message', () => {
+  it('coalesces repeated identical calls within the 500ms window (UX-282)', () => {
     announce('Same message')
     vi.advanceTimersByTime(16)
     expect(getAnnouncer().textContent).toBe('Same message')
 
-    // Call again with the same message — should clear and re-set
+    // Call again with the same message immediately — should be SUPPRESSED
+    // (rapid Ctrl+Z mashing should not spam the screen reader).
+    announce('Same message')
+    // textContent stays at 'Same message' — second call was a no-op.
+    expect(getAnnouncer().textContent).toBe('Same message')
+  })
+
+  it('does NOT coalesce distinct messages, even back-to-back', () => {
+    announce('First')
+    vi.advanceTimersByTime(16)
+    expect(getAnnouncer().textContent).toBe('First')
+
+    // Different message — should always go through.
+    announce('Second')
+    expect(getAnnouncer().textContent).toBe('')
+    vi.advanceTimersByTime(16)
+    expect(getAnnouncer().textContent).toBe('Second')
+  })
+
+  it('repeats identical messages once the 500ms coalescing window has elapsed', () => {
+    announce('Same message')
+    vi.advanceTimersByTime(16)
+    expect(getAnnouncer().textContent).toBe('Same message')
+
+    // Wait past the coalescing window.
+    vi.advanceTimersByTime(600)
+
+    // Call with the same message again — now it goes through (clear + rAF set).
     announce('Same message')
     expect(getAnnouncer().textContent).toBe('')
-
     vi.advanceTimersByTime(16)
     expect(getAnnouncer().textContent).toBe('Same message')
   })

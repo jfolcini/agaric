@@ -133,6 +133,37 @@ const resources = {
       'announce.taskState': 'Task state: {{state}}',
       'announce.prioritySet': 'Priority set to {{level}}',
       'announce.scheduledDateSet': 'Scheduled date set to {{date}}',
+      // UX-263: Pairing countdown announcer thresholds
+      'announce.pairingCountdown': 'Pairing session expires in {{seconds}} seconds',
+      'announce.pairingCountdownMinute': 'Pairing session expires in 1 minute',
+      'announce.pairingExpired': 'Pairing session expired',
+      // Announcements — undo/redo
+      'announce.undone': 'Undone',
+      'announce.undoFailed': 'Undo failed',
+      'announce.redone': 'Redone',
+      'announce.redoFailed': 'Redo failed',
+      // Announcements — trash batch ops
+      'announce.blockRestored': 'Block restored from trash',
+      'announce.blockPurged': 'Block permanently deleted',
+      'announce.batchRestored_one': '{{count}} block restored from trash',
+      'announce.batchRestored_other': '{{count}} blocks restored from trash',
+      'announce.batchPurged_one': '{{count}} block permanently deleted',
+      'announce.batchPurged_other': '{{count}} blocks permanently deleted',
+      'announce.trashEmptied_one': 'Trash emptied — {{count}} item permanently deleted',
+      'announce.trashEmptied_other': 'Trash emptied — {{count}} items permanently deleted',
+      'announce.allRestored_one': 'All items restored — {{count}} block',
+      'announce.allRestored_other': 'All items restored — {{count}} blocks',
+      'announce.emptyTrashFailed': 'Empty trash failed',
+      'announce.restoreAllFailed': 'Restore all failed',
+      'announce.restoreFailed': 'Restore failed',
+      'announce.purgeFailed': 'Purge failed',
+      // Announcements — history view batch revert/restore
+      'announce.opsReverted_one': '{{count}} operation reverted',
+      'announce.opsReverted_other': '{{count}} operations reverted',
+      'announce.revertFailed': 'Revert failed',
+      'announce.restoreToHereSucceeded_one': 'Restored {{count}} operation',
+      'announce.restoreToHereSucceeded_other': 'Restored {{count}} operations',
+      'announce.restoreToHereFailed': 'Restore failed',
 
       // Formatting toolbar
       'toolbar.bold': 'Bold',
@@ -1085,11 +1116,18 @@ const resources = {
       'pairing.scanQrCodeButton': 'Scan QR Code',
       'pairing.wordPlaceholder': '{{ordinal}} word',
       'pairing.wordLabel': 'Passphrase word {{num}}',
+      'pairing.entryFormWord': '{{ordinal}} word',
       'pairing.loadingScannerMessage': 'Loading scanner...',
       'pairing.cancelButton': 'Cancel',
       'pairing.pairButton': 'Pair',
       'pairing.pairedDevicesTitle': 'Paired Devices',
       'pairing.noPairedDevices': 'No paired devices yet.',
+      // UX-263: Mid-pair close guard
+      'pairing.confirmCloseTitle': 'Cancel pairing?',
+      'pairing.confirmCloseDescription':
+        'Pairing is in progress. Closing this dialog will cancel the handshake and the other device will need to start over.',
+      'pairing.confirmCloseAction': 'Cancel pairing',
+      'pairing.confirmCloseKeep': 'Keep pairing',
 
       // Tag filter
       'tagFilter.title': 'Tag Filter',
@@ -1814,6 +1852,9 @@ const resources = {
       'rename.placeholder': 'Device name',
       'rename.cancel': 'Cancel',
       'rename.save': 'Save',
+      // UX-263: Rename validation
+      'rename.errorEmpty': 'Name cannot be empty.',
+      'rename.errorTooLong': 'Name must be {{max}} characters or fewer.',
 
       // UX-121: Link edit popover
       'linkEdit.label': 'Link text',
