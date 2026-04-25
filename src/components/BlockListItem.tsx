@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
+import { announce } from '../lib/announcer'
 import { logger } from '../lib/logger'
 import { getBlock, setDueDate, setScheduledDate } from '../lib/tauri'
 import { PageLink } from './PageLink'
@@ -124,8 +125,10 @@ function BlockListItemInner({
           await setDueDate(blockId, dateStr)
         }
         toast.success(t('journal.rescheduled', { date: dateStr }))
+        announce(t('announce.taskRescheduled', { date: dateStr }))
       } catch {
         toast.error(t('journal.rescheduleFailed'))
+        announce(t('announce.rescheduleFailed'))
       }
     },
     [blockId, onReschedule, t],

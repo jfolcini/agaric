@@ -9,7 +9,7 @@
 
 import { Camera } from 'lucide-react'
 import type React from 'react'
-import { lazy, Suspense, useId } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useId, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -19,6 +19,11 @@ import { Spinner } from '@/components/ui/spinner'
 
 // Lazy-load QrScanner to avoid bundling html5-qrcode on desktop
 const LazyQrScanner = lazy(() => import('./QrScanner').then((m) => ({ default: m.QrScanner })))
+
+// UX-263: Auto-resume window — even an idle user with focus in an input
+// must not keep the pairing countdown paused indefinitely. After this many
+// milliseconds without further keystrokes we notify the parent to resume.
+const TYPING_DEBOUNCE_MS = 5000
 
 export interface PairingEntryFormProps {
   words: [string, string, string, string]
@@ -32,6 +37,19 @@ export interface PairingEntryFormProps {
   onPair: () => void
   pairLoading: boolean
   isExpired: boolean
+  /**
+   * UX-263: Notify the parent dialog when the user starts/stops typing in
+   * a passphrase input so the countdown can be paused mid-keystroke. Fires
+   * `true` on every keystroke; fires `false` on blur, after a 5s debounce
+   * of no keystrokes, and on unmount.
+   *
+   * Note: we deliberately do NOT trigger on `onFocus`. The dialog
+   * autofocuses the first input on mount, and auto-focus alone is not
+   * "typing" — pausing the countdown the instant the dialog opens would
+   * be confusing UX (the timer would appear stuck before the user did
+   * anything). Real keystrokes via `onChange` are the trigger.
+   */
+  onTypingStateChange?: (isTyping: boolean) => void
 }
 
 export function PairingEntryForm({
@@ -46,10 +64,66 @@ export function PairingEntryForm({
   onPair,
   pairLoading,
   isExpired,
+  onTypingStateChange,
 }: PairingEntryFormProps): React.ReactElement {
   const { t } = useTranslation()
   // UX-263: Stable id prefix so visible ordinal Labels can htmlFor each input.
   const inputIdPrefix = useId()
+
+  // UX-263: Track the typing-debounce timer so each keystroke resets the
+  // 5-second auto-resume window. Stash the latest callback in a ref so the
+  // unmount cleanup always sees the most-recent prop reference without
+  // re-running on every parent render.
+  const debounceRef = useRef<number | null>(null)
+  const onTypingStateChangeRef = useRef(onTypingStateChange)
+  useEffect(() => {
+    onTypingStateChangeRef.current = onTypingStateChange
+  })
+
+  const notifyTyping = useCallback((isTyping: boolean) => {
+    onTypingStateChangeRef.current?.(isTyping)
+  }, [])
+
+  const armTypingDebounce = useCallback(() => {
+    if (debounceRef.current !== null) {
+      window.clearTimeout(debounceRef.current)
+    }
+    debounceRef.current = window.setTimeout(() => {
+      debounceRef.current = null
+      notifyTyping(false)
+    }, TYPING_DEBOUNCE_MS)
+  }, [notifyTyping])
+
+  const handleInputBlur = useCallback(() => {
+    if (debounceRef.current !== null) {
+      window.clearTimeout(debounceRef.current)
+      debounceRef.current = null
+    }
+    notifyTyping(false)
+  }, [notifyTyping])
+
+  const handleInputChange = useCallback(
+    (i: number, value: string) => {
+      notifyTyping(true)
+      armTypingDebounce()
+      onWordChange(i, value)
+    },
+    [notifyTyping, armTypingDebounce, onWordChange],
+  )
+
+  // UX-263: Cleanup — if the form unmounts while the user is mid-typing
+  // (e.g. parent closes the dialog), clear the pending debounce and tell
+  // the parent typing has ended so the countdown isn't left paused.
+  useEffect(
+    () => () => {
+      if (debounceRef.current !== null) {
+        window.clearTimeout(debounceRef.current)
+        debounceRef.current = null
+      }
+      notifyTyping(false)
+    },
+    [notifyTyping],
+  )
 
   return (
     <>
@@ -103,8 +177,9 @@ export function PairingEntryForm({
                 <Input
                   id={inputId}
                   value={words[i]}
-                  onChange={(e) => onWordChange(i, e.target.value)}
+                  onChange={(e) => handleInputChange(i, e.target.value)}
                   onKeyDown={(e) => onWordKeyDown(i, e)}
+                  onBlur={handleInputBlur}
                   placeholder={t('pairing.wordPlaceholder', { ordinal })}
                   aria-label={t('pairing.wordLabel', { num: i + 1 })}
                   className="text-center touch-target"

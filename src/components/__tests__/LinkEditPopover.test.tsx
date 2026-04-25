@@ -315,15 +315,15 @@ describe('LinkEditPopover', () => {
       fireEvent.change(input, { target: { value: 'example.com' } })
       fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
-      expect(mockChain).toHaveBeenCalled()
-      expect(mockFocus).toHaveBeenCalled()
+      expect(mockChain).toHaveBeenCalledWith()
+      expect(mockFocus).toHaveBeenCalledWith()
       expect(mockInsertContent).toHaveBeenCalledWith({
         type: 'text',
         text: 'https://example.com',
         marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
       })
-      expect(mockRun).toHaveBeenCalled()
-      expect(onClose).toHaveBeenCalled()
+      expect(mockRun).toHaveBeenCalledWith()
+      expect(onClose).toHaveBeenCalledWith()
     })
 
     it('applies link on Enter key in input', () => {
@@ -346,7 +346,7 @@ describe('LinkEditPopover', () => {
         text: 'https://example.com',
         marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
       })
-      expect(onClose).toHaveBeenCalled()
+      expect(onClose).toHaveBeenCalledWith()
     })
 
     it('does NOT call setLink when URL is empty', () => {
@@ -363,8 +363,8 @@ describe('LinkEditPopover', () => {
       fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       expect(mockSetLink).not.toHaveBeenCalled()
-      expect(mockCommandsFocus).toHaveBeenCalled()
-      expect(onClose).toHaveBeenCalled()
+      expect(mockCommandsFocus).toHaveBeenCalledWith()
+      expect(onClose).toHaveBeenCalledWith()
     })
 
     it('does NOT call setLink when URL is whitespace-only', () => {
@@ -383,8 +383,8 @@ describe('LinkEditPopover', () => {
       fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       expect(mockSetLink).not.toHaveBeenCalled()
-      expect(mockCommandsFocus).toHaveBeenCalled()
-      expect(onClose).toHaveBeenCalled()
+      expect(mockCommandsFocus).toHaveBeenCalledWith()
+      expect(onClose).toHaveBeenCalledWith()
     })
 
     it('Apply button prevents pointerdown default (preserves editor focus)', () => {
@@ -403,7 +403,7 @@ describe('LinkEditPopover', () => {
       const preventSpy = vi.spyOn(event, 'preventDefault')
       fireEvent(applyBtn, event)
 
-      expect(preventSpy).toHaveBeenCalled()
+      expect(preventSpy).toHaveBeenCalledWith()
     })
 
     it('triggers metadata prefetch after applying link (UX-165)', () => {
@@ -460,11 +460,11 @@ describe('LinkEditPopover', () => {
 
       fireEvent.click(screen.getByRole('button', { name: t('linkEdit.remove') }))
 
-      expect(mockChain).toHaveBeenCalled()
-      expect(mockFocus).toHaveBeenCalled()
-      expect(mockUnsetLink).toHaveBeenCalled()
-      expect(mockRun).toHaveBeenCalled()
-      expect(onClose).toHaveBeenCalled()
+      expect(mockChain).toHaveBeenCalledWith()
+      expect(mockFocus).toHaveBeenCalledWith()
+      expect(mockUnsetLink).toHaveBeenCalledWith()
+      expect(mockRun).toHaveBeenCalledWith()
+      expect(onClose).toHaveBeenCalledWith()
     })
 
     it('Remove button prevents pointerdown default (preserves editor focus)', () => {
@@ -483,7 +483,7 @@ describe('LinkEditPopover', () => {
       const preventSpy = vi.spyOn(event, 'preventDefault')
       fireEvent(removeBtn, event)
 
-      expect(preventSpy).toHaveBeenCalled()
+      expect(preventSpy).toHaveBeenCalledWith()
     })
   })
 
@@ -504,8 +504,8 @@ describe('LinkEditPopover', () => {
       const input = screen.getByTestId('link-url-input')
       fireEvent.keyDown(input, { key: 'Escape' })
 
-      expect(mockCommandsFocus).toHaveBeenCalled()
-      expect(onClose).toHaveBeenCalled()
+      expect(mockCommandsFocus).toHaveBeenCalledWith()
+      expect(onClose).toHaveBeenCalledWith()
       // setLink should NOT be called
       expect(mockSetLink).not.toHaveBeenCalled()
     })
@@ -526,7 +526,7 @@ describe('LinkEditPopover', () => {
       const preventSpy = vi.spyOn(event, 'preventDefault')
       fireEvent(input, event)
 
-      expect(preventSpy).toHaveBeenCalled()
+      expect(preventSpy).toHaveBeenCalledWith()
     })
   })
 
@@ -718,15 +718,15 @@ describe('LinkEditPopover', () => {
       fireEvent.change(input, { target: { value: 'https://example.com' } })
       fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
-      expect(mockChainWithSelection).toHaveBeenCalled()
-      expect(mockFocusWithSelection).toHaveBeenCalled()
+      expect(mockChainWithSelection).toHaveBeenCalledWith()
+      expect(mockFocusWithSelection).toHaveBeenCalledWith()
       expect(mockSetTextSelectionLocal).toHaveBeenCalledWith({ from: 5, to: 15 })
       expect(mockInsertContentLocal).toHaveBeenCalledWith({
         type: 'text',
         text: 'https://example.com',
         marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
       })
-      expect(mockRun).toHaveBeenCalled()
+      expect(mockRun).toHaveBeenCalledWith()
       expect(mockRemoveStoredMark).toHaveBeenCalledWith(mockLinkMarkType)
       expect(mockDispatch).toHaveBeenCalledWith(mockTr)
     })
@@ -748,8 +748,8 @@ describe('LinkEditPopover', () => {
       fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       // Should use the regular chain().focus().insertContent() path
-      expect(mockChain).toHaveBeenCalled()
-      expect(mockFocus).toHaveBeenCalled()
+      expect(mockChain).toHaveBeenCalledWith()
+      expect(mockFocus).toHaveBeenCalledWith()
       expect(mockInsertContent).toHaveBeenCalledWith({
         type: 'text',
         text: 'https://example.com',
@@ -773,8 +773,8 @@ describe('LinkEditPopover', () => {
       fireEvent.change(input, { target: { value: 'https://example.com' } })
       fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
-      expect(mockChain).toHaveBeenCalled()
-      expect(mockFocus).toHaveBeenCalled()
+      expect(mockChain).toHaveBeenCalledWith()
+      expect(mockFocus).toHaveBeenCalledWith()
       expect(mockInsertContent).toHaveBeenCalledWith({
         type: 'text',
         text: 'https://example.com',
@@ -931,7 +931,7 @@ describe('LinkEditPopover', () => {
         text: 'My label',
         marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
       })
-      expect(onClose).toHaveBeenCalled()
+      expect(onClose).toHaveBeenCalledWith()
     })
 
     it('Escape key in label input closes popover', () => {
@@ -948,8 +948,8 @@ describe('LinkEditPopover', () => {
       const labelInput = screen.getByTestId('link-label-input')
       fireEvent.keyDown(labelInput, { key: 'Escape' })
 
-      expect(mockCommandsFocus).toHaveBeenCalled()
-      expect(onClose).toHaveBeenCalled()
+      expect(mockCommandsFocus).toHaveBeenCalledWith()
+      expect(onClose).toHaveBeenCalledWith()
     })
 
     it('passes axe audit with label field', async () => {

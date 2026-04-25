@@ -98,11 +98,17 @@ vi.mock('@/lib/tauri', () => ({
   getConflicts: (...args: unknown[]) => mockGetConflicts(...args),
 }))
 
+vi.mock('@/lib/announcer', () => ({
+  announce: vi.fn(),
+}))
+
 import { toast } from 'sonner'
+import { announce } from '@/lib/announcer'
 
 const mockedToastSuccess = vi.mocked(toast.success)
 const mockedToastError = vi.mocked(toast.error)
 const mockedToastWarning = vi.mocked(toast.warning)
+const mockedAnnounce = vi.mocked(announce)
 
 // -- Minimal renderHook (matches project pattern) -----------------------------
 
@@ -717,6 +723,92 @@ describe('useSyncEvents', () => {
       // Should not crash — hook catches the rejection internally
       // Unlisten should not be called since listen never resolved
       expect(mockUnlisten).not.toHaveBeenCalled()
+
+      unmount()
+    })
+  })
+
+  // UX-282: screen-reader announcements paired with sync toast feedback
+  describe('screen reader announcements (UX-282)', () => {
+    it('announces ops received when sync:complete carries ops', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      const callback = getListenerCallback('sync:complete')
+      callback({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 3,
+          ops_sent: 0,
+        },
+      })
+
+      expect(mockedAnnounce).toHaveBeenCalledWith('3 operations received from sync')
+
+      unmount()
+    })
+
+    it('announces conflicts when sync:complete sees conflicts', async () => {
+      mockGetConflicts.mockResolvedValue({
+        items: [
+          {
+            id: 'CONFLICT1',
+            block_type: 'content',
+            content: 'conflict',
+            parent_id: null,
+            position: null,
+            deleted_at: null,
+            is_conflict: true,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      const callback = getListenerCallback('sync:complete')
+      callback({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-1',
+          ops_received: 2,
+          ops_sent: 0,
+        },
+      })
+
+      await vi.waitFor(() => {
+        expect(mockedAnnounce).toHaveBeenCalledWith('Sync completed with conflicts')
+      })
+
+      unmount()
+    })
+
+    it('announces sync failed on sync:error', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      const callback = getListenerCallback('sync:error')
+      callback({
+        payload: {
+          type: 'error',
+          message: 'Connection timed out',
+          remote_device_id: 'device-42',
+        },
+      })
+
+      expect(mockedAnnounce).toHaveBeenCalledWith('Sync failed')
 
       unmount()
     })

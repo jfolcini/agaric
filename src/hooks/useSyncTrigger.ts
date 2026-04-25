@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { announce } from '../lib/announcer'
 import { i18n } from '../lib/i18n'
 import { listPeerRefs, startSync } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
@@ -91,6 +92,7 @@ export function useSyncTrigger() {
     syncInProgressRef.current = true
     setSyncing(true)
     setState('syncing')
+    announce(i18n.t('announce.syncStarted'))
 
     let hadFailure = false
 
@@ -106,12 +108,14 @@ export function useSyncTrigger() {
       if (!hadFailure) {
         setState('idle')
         toast.success(i18n.t('device.syncComplete'))
+        announce(i18n.t('announce.syncCompleted'))
       }
     } catch {
       hadFailure = true
       if (mountedRef.current) {
         setState('error', 'Sync failed')
         toast.error(i18n.t('device.syncFailed'))
+        announce(i18n.t('announce.syncFailed'))
         intervalRef.current = computeNextSyncDelay(intervalRef.current, true)
       }
     } finally {

@@ -117,6 +117,18 @@ fn read_errors_from_path(path: &Path) -> Vec<String> {
 }
 
 /// Gather metadata about the running app + the tail of today's log file.
+///
+/// MAINT-109: `os` / `arch` are sourced from `tauri-plugin-os` rather than
+/// `std::env::consts::*` directly so per-platform branches are centralised
+/// behind the plugin's documented cross-platform API. The plugin's
+/// `platform()` / `arch()` helpers currently return `std::env::consts::OS`
+/// / `std::env::consts::ARCH` verbatim, so the returned values are
+/// byte-for-byte unchanged from the previous implementation — but routing
+/// through the plugin means future expansions (locale, hostname, OS
+/// version) can lean on the same surface without adding more `std::env`
+/// branches here. `app_version` stays sourced from `CARGO_PKG_VERSION`:
+/// that is the *application* version, not the OS version, and the plugin
+/// has no equivalent for it.
 pub fn collect_bug_report_metadata_inner(
     app_data_dir: &Path,
     device_id: String,
@@ -126,8 +138,8 @@ pub fn collect_bug_report_metadata_inner(
 
     Ok(BugReport {
         app_version: env!("CARGO_PKG_VERSION").to_string(),
-        os: std::env::consts::OS.to_string(),
-        arch: std::env::consts::ARCH.to_string(),
+        os: tauri_plugin_os::platform().to_string(),
+        arch: tauri_plugin_os::arch().to_string(),
         device_id,
         recent_errors,
     })

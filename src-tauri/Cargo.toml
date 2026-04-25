@@ -53,6 +53,21 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-shell = "2"
 tauri-plugin-clipboard-manager = "2"
+# MAINT-106: prevent two SQLite pools racing on the same DB if the user
+# double-launches.  Desktop-only (Android/iOS enforce single-instance via
+# the OS task model) — registration is gated `#[cfg(desktop)]` in lib.rs.
+# Part of the Tauri plugin coupled stack per AGENTS.md §"Coupled
+# Dependency Updates" — move in lockstep with the rest of the
+# tauri-plugin-* crates.
+tauri-plugin-single-instance = "2"
+# MAINT-108: remember window size / position / monitor / maximized state
+# across launches.  Desktop-only — registration is gated `#[cfg(desktop)]`
+# in lib.rs.  Part of the Tauri plugin coupled stack.
+tauri-plugin-window-state = "2"
+# MAINT-109: cross-platform platform/version/arch/locale/hostname API.
+# Used by the bug-report metadata collector (see commands/bug_report.rs).
+# Works on desktop and mobile.  Part of the Tauri plugin coupled stack.
+tauri-plugin-os = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }

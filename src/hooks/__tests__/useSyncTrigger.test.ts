@@ -18,6 +18,11 @@ vi.mock('../../lib/tauri', () => ({
   startSync: vi.fn(),
 }))
 
+vi.mock('../../lib/announcer', () => ({
+  announce: vi.fn(),
+}))
+
+import { announce } from '../../lib/announcer'
 import type { SyncSessionInfo } from '../../lib/tauri'
 import { listPeerRefs, startSync } from '../../lib/tauri'
 import { useSyncStore } from '../../stores/sync'
@@ -25,6 +30,7 @@ import { useSyncTrigger } from '../useSyncTrigger'
 
 const mockListPeerRefs = vi.mocked(listPeerRefs)
 const mockStartSync = vi.mocked(startSync)
+const mockedAnnounce = vi.mocked(announce)
 
 describe('useSyncTrigger', () => {
   beforeEach(() => {
@@ -485,5 +491,45 @@ describe('useSyncTrigger', () => {
 
     expect(mockListPeerRefs).toHaveBeenCalled()
     expect(mockStartSync).toHaveBeenCalledWith('PEER1')
+  })
+
+  // UX-282: screen-reader announcements paired with sync toast feedback
+  describe('screen reader announcements (UX-282)', () => {
+    it('announces sync started and completed on successful sync', async () => {
+      mockListPeerRefs.mockResolvedValue([
+        {
+          peer_id: 'PEER1',
+          last_hash: null,
+          last_sent_hash: null,
+          synced_at: null,
+          reset_count: 0,
+          last_reset_at: null,
+          cert_hash: null,
+          device_name: null,
+          last_address: null,
+        },
+      ])
+
+      const { result } = renderHook(() => useSyncTrigger())
+
+      await act(async () => {
+        await result.current.syncAll()
+      })
+
+      expect(mockedAnnounce).toHaveBeenCalledWith('Sync started')
+      expect(mockedAnnounce).toHaveBeenCalledWith('Sync completed')
+    })
+
+    it('announces sync failed when listPeerRefs rejects', async () => {
+      mockListPeerRefs.mockRejectedValue(new Error('DB error'))
+
+      const { result } = renderHook(() => useSyncTrigger())
+
+      await act(async () => {
+        await result.current.syncAll()
+      })
+
+      expect(mockedAnnounce).toHaveBeenCalledWith('Sync failed')
+    })
   })
 })

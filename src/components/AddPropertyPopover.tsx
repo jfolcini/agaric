@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { formatPropertyName } from '@/lib/property-utils'
 import type { PropertyDefinition } from '../lib/tauri'
@@ -39,6 +40,10 @@ export interface AddPropertyPopoverProps {
   open?: boolean
   /** Controlled open-change handler (optional). */
   onOpenChange?: (open: boolean) => void
+  /** When true, the trigger is disabled and a tooltip explains why. */
+  disabled?: boolean
+  /** Tooltip text to show when disabled. */
+  disabledTooltip?: string
 }
 
 export function AddPropertyPopover({
@@ -48,6 +53,8 @@ export function AddPropertyPopover({
   onCreateDef,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
+  disabled,
+  disabledTooltip,
 }: AddPropertyPopoverProps) {
   const { t } = useTranslation()
   const [internalOpen, setInternalOpen] = useState(false)
@@ -98,18 +105,38 @@ export function AddPropertyPopover({
     setNewDefType('text')
   }, [defSearch, newDefType, onCreateDef, setPopoverOpen])
 
+  const triggerButton = (
+    <Button
+      variant="ghost"
+      size="xs"
+      className="gap-1 text-muted-foreground"
+      aria-label={t('pageProperty.addPropertyLabel')}
+      disabled={disabled}
+    >
+      <Plus className="h-3.5 w-3.5" />
+      {t('pageProperty.addPropertyButton')}
+    </Button>
+  )
+
   return (
     <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
       <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="xs"
-          className="gap-1 text-muted-foreground"
-          aria-label={t('pageProperty.addPropertyLabel')}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          {t('pageProperty.addPropertyButton')}
-        </Button>
+        {disabled && disabledTooltip ? (
+          <TooltipProvider>
+            <Tooltip>
+              {/* `span` wrapper so the tooltip still shows on a disabled button.
+                  Radix Tooltip requires a focusable trigger; a disabled <button>
+                  doesn't fire pointer events, so we wrap it in a focusable span. */}
+              <TooltipTrigger asChild>
+                {/* biome-ignore lint/a11y/noNoninteractiveTabindex: Radix tooltip-on-disabled-button requires a focusable wrapper. */}
+                <span tabIndex={0}>{triggerButton}</span>
+              </TooltipTrigger>
+              <TooltipContent>{disabledTooltip}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          triggerButton
+        )}
       </PopoverTrigger>
       <PopoverContent
         className="w-64 space-y-2 p-3 max-w-[calc(100vw-2rem)]"
@@ -141,7 +168,8 @@ export function AddPropertyPopover({
           ))}
         </ScrollArea>
 
-        {/* "Create new definition" prompt */}
+        {/* "Create new definition" prompt — UX-272 sub-fix 7: surface the
+            default value type so users know what they get when clicking. */}
         {supportCreateDef && defSearch.trim() && !searchMatchesExistingDef && !creatingDef && (
           <Button
             variant="ghost"
@@ -150,6 +178,9 @@ export function AddPropertyPopover({
             onClick={() => setCreatingDef(true)}
           >
             {t('pageProperty.createButton', { name: defSearch.trim() })}
+            <span className="ml-1 text-[10px] opacity-70" data-testid="create-new-type-hint">
+              {t('properties.createNewTypeHint')}
+            </span>
           </Button>
         )}
 

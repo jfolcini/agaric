@@ -170,6 +170,32 @@ describe('AddPropertyPopover', () => {
     })
   })
 
+  // UX-272 sub-fix 7 — surface the default value type next to the
+  // "Create new" label so users know what they get when clicking.
+  it('UX-272 sub-fix 7 — surfaces the default "(text)" hint on the Create new button', async () => {
+    const user = userEvent.setup()
+    render(
+      <AddPropertyPopover
+        definitions={[]}
+        onAdd={vi.fn()}
+        supportCreateDef
+        onCreateDef={vi.fn()}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    )
+
+    await user.type(screen.getByLabelText('Search definitions'), 'myfield')
+
+    const hint = await screen.findByTestId('create-new-type-hint')
+    expect(hint).toHaveTextContent('(text)')
+
+    // The hint sits on the Create new button as a sibling of the label
+    const createBtn = screen.getByText(/Create "myfield"/).closest('button')
+    expect(createBtn).not.toBeNull()
+    expect(createBtn).toContainElement(hint)
+  })
+
   it('does NOT show "Create" button when supportCreateDef is false', async () => {
     const user = userEvent.setup()
     render(<AddPropertyPopover definitions={[]} onAdd={vi.fn()} open onOpenChange={vi.fn()} />)

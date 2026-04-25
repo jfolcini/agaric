@@ -36,7 +36,14 @@ vi.mock('../../../lib/tauri', () => ({
   setScheduledDate: (...args: unknown[]) => mockSetScheduledDate(...args),
 }))
 
+vi.mock('@/lib/announcer', () => ({
+  announce: vi.fn(),
+}))
+
+import { announce } from '@/lib/announcer'
 import { RESCHEDULE_DRAG_TYPE, RescheduleDropZone } from '../RescheduleDropZone'
+
+const mockedAnnounce = vi.mocked(announce)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -313,5 +320,39 @@ describe('RescheduleDropZone', () => {
       expect(mockSetDueDate).toHaveBeenCalledWith('block-err', '2025-01-15')
     })
     expect(mockSetScheduledDate).not.toHaveBeenCalled()
+  })
+
+  // UX-282: screen-reader announcement after successful reschedule
+  it('announces task rescheduled after successful drop', async () => {
+    render(
+      <RescheduleDropZone dateStr="2025-01-15">
+        <span>Content</span>
+      </RescheduleDropZone>,
+    )
+
+    const zone = screen.getByTestId('reschedule-drop-zone-2025-01-15')
+    fireEvent.drop(zone, { dataTransfer: makeDataTransfer('block-1') })
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Task rescheduled to 2025-01-15')
+    })
+  })
+
+  // UX-282: screen-reader announcement when reschedule fails
+  it('announces reschedule failed when setDueDate rejects', async () => {
+    mockSetDueDate.mockRejectedValueOnce(new Error('Network error'))
+
+    render(
+      <RescheduleDropZone dateStr="2025-01-15">
+        <span>Content</span>
+      </RescheduleDropZone>,
+    )
+
+    const zone = screen.getByTestId('reschedule-drop-zone-2025-01-15')
+    fireEvent.drop(zone, { dataTransfer: makeDataTransfer('block-fail') })
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Reschedule failed')
+    })
   })
 })

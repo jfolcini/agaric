@@ -25,11 +25,17 @@ import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
 const mockedInvoke = vi.mocked(invoke)
 
 vi.mock('lucide-react', () => ({
+  ArrowDown: () => <svg data-testid="arrow-down-icon" />,
+  ArrowUp: () => <svg data-testid="arrow-up-icon" />,
   CalendarCheck2: () => <svg data-testid="calendar-check2-icon" />,
   CalendarClock: () => <svg data-testid="calendar-clock-icon" />,
   CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
   CheckCircle2: () => <svg data-testid="check-circle2-icon" />,
   Clock: () => <svg data-testid="clock-icon" />,
+  FileSearch: () => <svg data-testid="file-search-icon" />,
+  Loader2: ({ className }: { className?: string }) => (
+    <svg data-testid="loader2-icon" className={className} />
+  ),
   Lock: () => <svg data-testid="lock-icon" />,
   MapPin: () => <svg data-testid="map-pin-icon" />,
   Pencil: () => <svg data-testid="pencil-icon" />,
@@ -355,7 +361,7 @@ describe('PropertyRowEditor NL date input', () => {
     expect(onSave).toHaveBeenCalledWith('2025-04-15')
   })
 
-  it('shows preview text while typing NL date', async () => {
+  it('shows preview text while typing NL date (after debounce)', async () => {
     const user = userEvent.setup()
     render(
       <PropertyRowEditor
@@ -371,9 +377,15 @@ describe('PropertyRowEditor NL date input', () => {
     await user.click(input)
     await user.type(input, 'today')
 
-    const preview = input.parentElement?.querySelector('.text-muted-foreground')
-    expect(preview).toBeInTheDocument()
-    expect(preview?.textContent).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    // useDateInput debounces NL parsing 300ms — wait for the preview to appear.
+    await waitFor(
+      () => {
+        const preview = input.parentElement?.querySelector('.text-muted-foreground')
+        expect(preview).toBeInTheDocument()
+        expect(preview?.textContent).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      },
+      { timeout: 2000 },
+    )
   })
 
   it('does not call onSave for invalid NL date input', async () => {
@@ -581,6 +593,117 @@ describe('PropertyRowEditor select options editing', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.updateOptionsFailed'))
     })
+  })
+
+  // ── UX-272 sub-fix 5: Options count badge ────────────────────────────
+
+  it('UX-272 sub-fix 5 — renders a Badge with the option count', async () => {
+    const user = userEvent.setup()
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('stage', { value_text: 'TODO' })}
+        def={makeDef('stage', 'select', '["TODO","DOING","DONE"]')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
+
+    const badge = await screen.findByTestId('options-count-badge')
+    expect(badge).toHaveTextContent(t('properties.optionsCount', { count: 3 }))
+  })
+
+  // ── UX-272 sub-fix 5: Reorder buttons (up/down) ──────────────────────
+
+  it('UX-272 sub-fix 5 — moves an option down via the Move Down button', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValue({
+      key: 'stage',
+      value_type: 'select',
+      options: '["DOING","TODO","DONE"]',
+      created_at: '2026-01-01T00:00:00Z',
+    })
+
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('stage', { value_text: 'TODO' })}
+        def={makeDef('stage', 'select', '["TODO","DOING","DONE"]')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+        onDefUpdated={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
+    await waitFor(() => {
+      expect(screen.getByTestId('options-count-badge')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByLabelText(t('properties.moveOptionDown', { option: 'TODO' })))
+
+    await user.click(screen.getByRole('button', { name: /save options/i }))
+
+    await waitFor(() => {
+      // After reorder TODO ↔ DOING the saved options begin with DOING
+      expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
+        key: 'stage',
+        options: '["DOING","TODO","DONE"]',
+      })
+    })
+  })
+
+  it('UX-272 sub-fix 5 — disables Move Up on first row and Move Down on last row', async () => {
+    const user = userEvent.setup()
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('stage', { value_text: 'TODO' })}
+        def={makeDef('stage', 'select', '["TODO","DOING"]')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
+
+    const moveUpFirst = await screen.findByLabelText(
+      t('properties.moveOptionUp', { option: 'TODO' }),
+    )
+    expect(moveUpFirst).toBeDisabled()
+
+    const moveDownLast = screen.getByLabelText(t('properties.moveOptionDown', { option: 'DOING' }))
+    expect(moveDownLast).toBeDisabled()
+  })
+
+  // ── UX-272 sub-fix 6: Disabled Add option button when input empty ────
+
+  it('UX-272 sub-fix 6 — disables the Add option button when input is empty', async () => {
+    const user = userEvent.setup()
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('stage', { value_text: 'TODO' })}
+        def={makeDef('stage', 'select', '["TODO"]')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
+
+    const addBtn = await screen.findByLabelText(t('pageProperty.addOptionLabel'))
+    expect(addBtn).toBeDisabled()
+
+    // Typing whitespace alone keeps it disabled
+    await user.type(screen.getByLabelText(t('pageProperty.newOptionLabel')), '   ')
+    expect(addBtn).toBeDisabled()
+
+    // Real content enables the button
+    await user.type(screen.getByLabelText(t('pageProperty.newOptionLabel')), 'NEW')
+    expect(addBtn).not.toBeDisabled()
   })
 
   it('adds option via Enter key', async () => {
@@ -905,6 +1028,240 @@ describe('PropertyRowEditor ref picker', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // ── UX-272 sub-fix 1: EmptyState + Create new page CTA ───────────────
+
+  describe('UX-272 sub-fix 1 — ref picker empty state', () => {
+    it('renders the EmptyState primitive when no pages match (with description)', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_blocks')
+          return {
+            items: [{ id: 'P1', content: 'Only Page', block_type: 'page' }],
+            next_cursor: null,
+            has_more: false,
+          }
+        return null
+      })
+
+      render(
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('linked_page', { value_ref: null })}
+          def={makeDef('linked_page', 'ref')}
+          onSave={vi.fn()}
+        />,
+      )
+
+      await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' })))
+      await waitFor(() => {
+        expect(screen.getByText('Only Page')).toBeInTheDocument()
+      })
+
+      const searchInput = screen.getByLabelText(t('block.searchPages'))
+      await user.type(searchInput, 'zzz_nope')
+
+      await waitFor(() => {
+        expect(screen.getByText(t('properties.refPickerEmptyTitle'))).toBeInTheDocument()
+        expect(screen.getByText(t('properties.refPickerEmptyDescription'))).toBeInTheDocument()
+      })
+    })
+
+    it('does not show "Create new page" without onCreateNewPage callback', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_blocks')
+          return {
+            items: [{ id: 'P1', content: 'Only Page', block_type: 'page' }],
+            next_cursor: null,
+            has_more: false,
+          }
+        return null
+      })
+
+      render(
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('linked_page', { value_ref: null })}
+          def={makeDef('linked_page', 'ref')}
+          onSave={vi.fn()}
+        />,
+      )
+
+      await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' })))
+      const searchInput = await screen.findByLabelText(t('block.searchPages'))
+      await user.type(searchInput, 'something')
+
+      await waitFor(() => {
+        expect(screen.getByText(t('properties.refPickerEmptyTitle'))).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('ref-picker-create-page')).not.toBeInTheDocument()
+    })
+
+    it('shows "Create new page" CTA when search has content and onCreateNewPage is wired', async () => {
+      const user = userEvent.setup()
+      const onCreateNewPage = vi.fn()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_blocks')
+          return {
+            items: [{ id: 'P1', content: 'Existing', block_type: 'page' }],
+            next_cursor: null,
+            has_more: false,
+          }
+        return null
+      })
+
+      render(
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('linked_page', { value_ref: null })}
+          def={makeDef('linked_page', 'ref')}
+          onSave={vi.fn()}
+          onCreateNewPage={onCreateNewPage}
+        />,
+      )
+
+      await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' })))
+      const searchInput = await screen.findByLabelText(t('block.searchPages'))
+      await user.type(searchInput, 'New Idea')
+
+      const cta = await screen.findByTestId('ref-picker-create-page')
+      expect(cta).toHaveTextContent(t('properties.createNewPageAction', { name: 'New Idea' }))
+
+      await user.click(cta)
+      expect(onCreateNewPage).toHaveBeenCalledWith('New Idea')
+    })
+
+    it('does not show "Create new page" CTA when search is empty', async () => {
+      const user = userEvent.setup()
+      const onCreateNewPage = vi.fn()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+        return null
+      })
+
+      render(
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('linked_page', { value_ref: null })}
+          def={makeDef('linked_page', 'ref')}
+          onSave={vi.fn()}
+          onCreateNewPage={onCreateNewPage}
+        />,
+      )
+
+      await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' })))
+
+      // Empty list, empty search — title is shown but CTA is not
+      await waitFor(() => {
+        expect(screen.getByText(t('properties.refPickerEmptyTitle'))).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('ref-picker-create-page')).not.toBeInTheDocument()
+    })
+  })
+
+  // ── UX-272 sub-fix 8: Spinner during ref save ────────────────────────
+
+  describe('UX-272 sub-fix 8 — spinner during ref save', () => {
+    it('shows a Spinner gated on the save promise', async () => {
+      const user = userEvent.setup()
+      // Pre-initialize with a no-op so TS narrows the type without losing the
+      // assignment from the async closure (where flow analysis can't track it).
+      let resolveSave: () => void = () => {}
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_blocks')
+          return {
+            items: [{ id: 'P1', content: 'Target Page', block_type: 'page' }],
+            next_cursor: null,
+            has_more: false,
+          }
+        if (cmd === 'set_property') {
+          return new Promise<void>((res) => {
+            resolveSave = () => res()
+          })
+        }
+        return null
+      })
+
+      render(
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('linked_page', { value_ref: null })}
+          def={makeDef('linked_page', 'ref')}
+          onSave={vi.fn()}
+          onRefSaved={vi.fn()}
+        />,
+      )
+
+      await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' })))
+      await waitFor(() => {
+        expect(screen.getByText('Target Page')).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByText('Target Page'))
+
+      // Spinner should be visible while the promise is pending. Loader2 mock
+      // exposes itself as `loader2-icon`.
+      await waitFor(() => {
+        expect(screen.getAllByTestId('loader2-icon').length).toBeGreaterThanOrEqual(1)
+      })
+
+      // Resolve the save → spinner clears
+      resolveSave()
+      await waitFor(() => {
+        expect(screen.queryByTestId('loader2-icon')).not.toBeInTheDocument()
+      })
+    })
+
+    it('clears the Spinner when the save fails (does not stick)', async () => {
+      const user = userEvent.setup()
+      // Pre-initialize with a no-op so TS narrows the type without losing the
+      // assignment from the async closure (where flow analysis can't track it).
+      let rejectSave: (err: Error) => void = () => {}
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_blocks')
+          return {
+            items: [{ id: 'P1', content: 'Target Page', block_type: 'page' }],
+            next_cursor: null,
+            has_more: false,
+          }
+        if (cmd === 'set_property') {
+          return new Promise<void>((_, rej) => {
+            rejectSave = (err) => rej(err)
+          })
+        }
+        return null
+      })
+
+      render(
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('linked_page', { value_ref: null })}
+          def={makeDef('linked_page', 'ref')}
+          onSave={vi.fn()}
+        />,
+      )
+
+      await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' })))
+      await waitFor(() => {
+        expect(screen.getByText('Target Page')).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByText('Target Page'))
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId('loader2-icon').length).toBeGreaterThanOrEqual(1)
+      })
+
+      rejectSave(new Error('save failed'))
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.saveFailed'))
+      })
+      await waitFor(() => {
+        expect(screen.queryByTestId('loader2-icon')).not.toBeInTheDocument()
+      })
+    })
   })
 
   // UX-201a: todo_state's options are locked — the edit-options button must

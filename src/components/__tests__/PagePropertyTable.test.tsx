@@ -21,6 +21,8 @@ import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
 const mockedInvoke = vi.mocked(invoke)
 
 vi.mock('lucide-react', () => ({
+  ArrowDown: () => <svg data-testid="arrow-down-icon" />,
+  ArrowUp: () => <svg data-testid="arrow-up-icon" />,
   CalendarCheck2: () => <svg data-testid="calendar-check2-icon" />,
   CalendarClock: () => <svg data-testid="calendar-clock-icon" />,
   CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
@@ -28,6 +30,11 @@ vi.mock('lucide-react', () => ({
   ChevronDown: () => <svg data-testid="chevron-down" />,
   ChevronRight: () => <svg data-testid="chevron-right" />,
   Clock: () => <svg data-testid="clock-icon" />,
+  FileSearch: () => <svg data-testid="file-search-icon" />,
+  Loader2: ({ className }: { className?: string }) => (
+    <svg data-testid="loader2-icon" className={className} />
+  ),
+  Lock: () => <svg data-testid="lock-icon" />,
   MapPin: () => <svg data-testid="map-pin-icon" />,
   Pencil: () => <svg data-testid="pencil-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,

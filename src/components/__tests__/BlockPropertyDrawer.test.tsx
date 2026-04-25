@@ -90,12 +90,37 @@ describe('BlockPropertyDrawer', () => {
     expect(screen.getByText('Block Properties')).toBeInTheDocument()
   })
 
-  it('shows loading state initially', () => {
+  it('shows LoadingSkeleton initially (UX-272 sub-fix 3)', () => {
     // Return a never-resolving promise to keep loading state
     mockedInvoke.mockReturnValue(new Promise(() => {}))
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
-    expect(screen.getByText('Loading...')).toBeInTheDocument()
+    // Sheet portals to document.body; query the document instead of container
+    const loading = document.querySelector('[data-testid="block-property-drawer-loading"]')
+    expect(loading).toBeInTheDocument()
+    // 3 skeleton rows
+    const skeletons = loading?.querySelectorAll('[data-slot="skeleton"]')
+    expect(skeletons?.length).toBe(3)
+  })
+
+  it('disables the Add property button while loading with a tooltip (UX-272 sub-fix 3)', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockReturnValue(new Promise(() => {}))
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    const addBtn = screen.getByRole('button', { name: 'Add property' })
+    expect(addBtn).toBeDisabled()
+
+    // Hover surfaces the loading tooltip
+    const trigger = addBtn.parentElement as HTMLElement
+    await user.hover(trigger)
+    await waitFor(
+      async () => {
+        const matches = await screen.findAllByText('Properties loading\u2026')
+        expect(matches.length).toBeGreaterThanOrEqual(1)
+      },
+      { timeout: 3000 },
+    )
   })
 
   it('shows property list after loading', async () => {
@@ -370,7 +395,7 @@ describe('BlockPropertyDrawer', () => {
 
     // Initially no date shown
     await waitFor(() => {
-      expect(screen.queryByText('Loading...')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
     })
     expect(screen.queryByTitle('Due')).not.toBeInTheDocument()
 
@@ -551,7 +576,7 @@ describe('BlockPropertyDrawer', () => {
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
-      expect(screen.queryByText('Loading...')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
     })
   })
 
@@ -760,7 +785,7 @@ describe('BlockPropertyDrawer', () => {
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
-      expect(screen.queryByText('Loading...')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
     })
 
     // Open the add-property popover

@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
+import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
@@ -238,9 +239,11 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       const markdown = await exportPageMarkdown(pageId)
       await writeText(markdown)
       toast.success(t('pageHeader.exportCopied'))
+      announce(t('announce.exported'))
     } catch (err) {
       logger.error('PageHeader', 'Failed to export page markdown', { pageId }, err)
       toast.error(t('pageHeader.exportFailed'))
+      announce(t('announce.exportFailed'))
     }
     setKebabOpen(false)
   }, [pageId, t])
@@ -254,6 +257,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           .then(async (markdown) => {
             await writeText(markdown)
             toast.success(t('pageHeader.exportCopied'))
+            announce(t('announce.exported'))
           })
           .catch((err: unknown) => {
             logger.error(
@@ -263,6 +267,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               err,
             )
             toast.error(t('pageHeader.exportFailed'))
+            announce(t('announce.exportFailed'))
           })
       }
     }
@@ -274,10 +279,12 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     try {
       await deleteBlock(pageId)
       toast.success(t('pageHeader.pageDeleted'))
+      announce(t('announce.pageDeleted'))
       onBack?.()
     } catch (err) {
       logger.error('PageHeader', 'Failed to delete page', { pageId }, err)
       toast.error(t('pageHeader.deleteFailed'))
+      announce(t('announce.pageDeleteFailed'))
     }
     setDeleteDialogOpen(false)
     setKebabOpen(false)
@@ -322,12 +329,14 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         await setProperty({ blockId: pageId, key: 'space', valueRef: targetSpaceId })
         setPageSpaceId(targetSpaceId)
         toast.success(t('space.movedToast', { space: targetName }))
+        announce(t('announce.pageMoved'))
         // Refresh the page block store so any space-scoped subviews
         // (outline, property table) pick up the new ownership.
         await pageStore.getState().load()
       } catch (err) {
         logger.error('PageHeader', 'Failed to move page to space', { pageId, targetSpaceId }, err)
         toast.error(t('space.moveFailed'))
+        announce(t('announce.pageMoveFailed'))
       }
     },
     [availableSpaces, pageId, pageStore, t],
@@ -374,9 +383,11 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         useUndoStore.getState().onNewAction(pageId)
         useNavigationStore.getState().replacePage(pageId, newTitle)
         useResolveStore.getState().set(pageId, newTitle, false)
+        announce(t('announce.pageRenamed'))
       } catch (err) {
         logger.error('PageHeader', 'Failed to rename page', { pageId }, err)
         toast.error(t('pageHeader.renameFailed'))
+        announce(t('announce.pageRenameFailed'))
         setEditableTitle(title)
         if (titleRef.current) titleRef.current.textContent = title
       }
@@ -421,9 +432,11 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     if (aliasInput.trim()) {
       const next = [...aliases, aliasInput.trim()]
       setAliases(next)
+      announce(t('announce.aliasAdded'))
       setPageAliases(pageId, next).catch((err: unknown) => {
         logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
         toast.error(t('pageHeader.aliasUpdateFailed'))
+        announce(t('announce.aliasFailed'))
       })
       setAliasInput('')
     }
@@ -433,9 +446,11 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     (alias: string) => {
       const next = aliases.filter((a) => a !== alias)
       setAliases(next)
+      announce(t('announce.aliasRemoved'))
       setPageAliases(pageId, next).catch((err: unknown) => {
         logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
         toast.error(t('pageHeader.aliasUpdateFailed'))
+        announce(t('announce.aliasFailed'))
       })
     },
     [aliases, pageId, t],

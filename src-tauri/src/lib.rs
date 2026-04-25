@@ -302,14 +302,44 @@ pub fn run() {
         commands::create_page_in_space,
     ]);
 
-    // `mut` is only consumed by the `#[cfg(not(mobile))]` updater plugin
-    // registration below. On Android/iOS the binding is never reassigned,
-    // so allow the warning there without relaxing it globally.
+    // `mut` is only consumed by the `#[cfg(desktop)]` / `#[cfg(not(mobile))]`
+    // plugin registrations below. On Android/iOS the binding is never
+    // reassigned, so allow the warning there without relaxing it globally.
     #[cfg_attr(mobile, allow(unused_mut))]
-    let mut tauri_builder = tauri::Builder::default()
+    let mut tauri_builder = tauri::Builder::default();
+
+    // MAINT-106: tauri-plugin-single-instance MUST be the first plugin
+    // registered (per upstream docs) so the second-instance probe runs
+    // before any other plugin's setup hook touches the file system / DB.
+    // The callback fires in the *original* (still-running) instance with
+    // the second instance's argv + cwd; we focus the existing window and
+    // let the second process exit cleanly.  This guards against two
+    // SQLite pools racing on the same `notes.db` (see AGENTS.md
+    // "Database").  Desktop-only — Android/iOS enforce single-instance
+    // via the OS task model, so the plugin is gated behind `#[cfg(desktop)]`
+    // (matching upstream's `desktop_only_plugin` posture).
+    #[cfg(desktop)]
+    {
+        tauri_builder =
+            tauri_builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+                use tauri::Manager;
+                let _ = args; // currently unused; deep-link handling lands in FEAT-10.
+                let _ = cwd;
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }));
+    }
+
+    tauri_builder = tauri_builder
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_process::init())
+        // MAINT-109: cross-platform platform/version/arch/locale/hostname
+        // API used by `commands::collect_bug_report_metadata`.  Works on
+        // both desktop and mobile, so no cfg gate.
+        .plugin(tauri_plugin_os::init())
         // FEAT-5b — OAuth 2.0 PKCE loopback listener for the Agaric →
         // Google Calendar connector (see REVIEW-LATER § FEAT-5). The
         // plugin spawns a localhost server on demand (via
@@ -319,6 +349,16 @@ pub fn run() {
         // Dependency Updates" — move in lockstep with the rest of the
         // tauri-plugin-* crates.
         .plugin(tauri_plugin_oauth::init());
+
+    // MAINT-108: remember window size / position / monitor / maximized
+    // state across launches.  Operates entirely Rust-side (no frontend
+    // permission needed).  Desktop-only — Android/iOS handle window
+    // state via the OS task lifecycle, so the plugin is gated behind
+    // `#[cfg(desktop)]`.
+    #[cfg(desktop)]
+    {
+        tauri_builder = tauri_builder.plugin(tauri_plugin_window_state::Builder::default().build());
+    }
 
     // MAINT-16: tauri-plugin-updater is desktop-only and currently not wired up
     // (empty pubkey in `tauri.conf.json`, no frontend code calls the update

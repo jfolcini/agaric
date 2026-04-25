@@ -27,6 +27,10 @@ vi.mock('@/lib/tauri', () => ({
   setScheduledDate: vi.fn().mockResolvedValue({}),
 }))
 
+vi.mock('@/lib/announcer', () => ({
+  announce: vi.fn(),
+}))
+
 vi.mock('@/components/ui/button', () => ({
   Button: ({
     children,
@@ -39,6 +43,7 @@ vi.mock('@/components/ui/button', () => ({
 }))
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { announce } from '@/lib/announcer'
 import { formatDate } from '@/lib/date-utils'
 import { setDueDate, setScheduledDate } from '@/lib/tauri'
 import { DateChipEditor } from '../DateChipEditor'
@@ -46,6 +51,7 @@ import { DateChipEditor } from '../DateChipEditor'
 const mockedSetDueDate = vi.mocked(setDueDate)
 const mockedSetScheduledDate = vi.mocked(setScheduledDate)
 const mockedToast = vi.mocked(toast)
+const mockedAnnounce = vi.mocked(announce)
 
 function todayStr(): string {
   const d = new Date()
@@ -138,8 +144,13 @@ describe('DateChipEditor', () => {
     const input = screen.getByRole('textbox')
     await user.type(input, 'tomorrow')
 
-    // Should show preview
-    expect(screen.getByText(/Parsed:/)).toBeInTheDocument()
+    // Preview appears after the 300ms NL parse debounce (useDateInput).
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Parsed:/)).toBeInTheDocument()
+      },
+      { timeout: 2000 },
+    )
 
     await user.keyboard('{Enter}')
 
@@ -249,6 +260,31 @@ describe('DateChipEditor', () => {
 
     await waitFor(() => {
       expect(mockedToast.error).toHaveBeenCalledWith('Failed to update date')
+    })
+  })
+
+  // UX-282: screen-reader announcements paired with date-chip toast feedback
+  it('announces date updated when applying a new date', async () => {
+    const user = userEvent.setup()
+
+    render(<DateChipEditor blockId="B1" dateType="due" currentDate="2025-01-01" />)
+
+    await user.click(screen.getByTestId('quick-today'))
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith(`Date updated to ${todayStr()}`)
+    })
+  })
+
+  it('announces date cleared when clearing the date', async () => {
+    const user = userEvent.setup()
+
+    render(<DateChipEditor blockId="B1" dateType="due" currentDate="2025-06-15" />)
+
+    await user.click(screen.getByTestId('quick-clear'))
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Date cleared')
     })
   })
 })

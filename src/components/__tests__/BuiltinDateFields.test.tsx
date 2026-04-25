@@ -244,10 +244,15 @@ describe('BuiltinDateFields', () => {
     await user.clear(input)
     await user.type(input, 'today')
 
-    // Preview should show a YYYY-MM-DD date
-    const preview = input.parentElement?.querySelector('.text-muted-foreground')
-    expect(preview).toBeInTheDocument()
-    expect(preview?.textContent).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    // Preview appears after the 300ms NL parse debounce (useDateInput).
+    await waitFor(
+      () => {
+        const preview = input.parentElement?.querySelector('.text-muted-foreground')
+        expect(preview).toBeInTheDocument()
+        expect(preview?.textContent).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      },
+      { timeout: 2000 },
+    )
   })
 
   it('does not call onSaveDate for invalid NL input', async () => {
