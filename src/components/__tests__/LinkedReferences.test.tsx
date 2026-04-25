@@ -57,7 +57,27 @@ vi.mock('../SourcePageFilter', () => ({
 }))
 
 vi.mock('../BacklinkFilterBuilder', () => ({
-  BacklinkFilterBuilder: () => <div data-testid="backlink-filter-builder">Advanced Filters</div>,
+  BacklinkFilterBuilder: (props: {
+    onFiltersChange: (filters: Array<{ type: string; [k: string]: unknown }>) => void
+  }) => (
+    <div data-testid="backlink-filter-builder">
+      Advanced Filters
+      <button
+        type="button"
+        data-testid="mock-add-filter"
+        onClick={() => props.onFiltersChange([{ type: 'TodoState', state: 'TODO' }])}
+      >
+        add filter
+      </button>
+      <button
+        type="button"
+        data-testid="mock-clear-filters"
+        onClick={() => props.onFiltersChange([])}
+      >
+        clear filters
+      </button>
+    </div>
+  ),
 }))
 
 const mockNavigateToPage = vi.fn()
@@ -1087,6 +1107,113 @@ describe('LinkedReferences', () => {
       expect(screen.getByRole('button', { name: /show filters/i })).toBeInTheDocument()
     })
     expect(screen.queryByTestId('backlink-filter-builder')).not.toBeInTheDocument()
+  })
+
+  // ---------------------------------------------------------------------------
+  // UX-271: active-filter count badge on Advanced filters trigger
+  // ---------------------------------------------------------------------------
+
+  it('does not render filter count badge when no filters are active (UX-271)', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockInvokeWith(resp)
+
+    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+
+    await screen.findByText('Page One (1)')
+
+    expect(container.querySelector('.linked-references-filter-count')).toBeNull()
+  })
+
+  it('renders filter count badge with active filter count (UX-271)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockInvokeWith(resp)
+
+    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+
+    await screen.findByText('Page One (1)')
+
+    // No badge initially
+    expect(container.querySelector('.linked-references-filter-count')).toBeNull()
+
+    // Open advanced filters and add a filter via the mock
+    await user.click(screen.getByRole('button', { name: /show filters/i }))
+    await user.click(screen.getByTestId('mock-add-filter'))
+
+    // Badge should now be visible with the count "1"
+    const badge = await waitFor(() => {
+      const el = container.querySelector('.linked-references-filter-count')
+      if (!el) throw new Error('badge not found yet')
+      return el
+    })
+    expect(badge).toHaveTextContent('1')
+  })
+
+  it('hides filter count badge after filters are cleared (UX-271)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockInvokeWith(resp)
+
+    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+
+    await screen.findByText('Page One (1)')
+
+    // Open advanced filters and add a filter
+    await user.click(screen.getByRole('button', { name: /show filters/i }))
+    await user.click(screen.getByTestId('mock-add-filter'))
+
+    await waitFor(() => {
+      expect(container.querySelector('.linked-references-filter-count')).not.toBeNull()
+    })
+
+    // Clear filters via the mock
+    await user.click(screen.getByTestId('mock-clear-filters'))
+
+    await waitFor(() => {
+      expect(container.querySelector('.linked-references-filter-count')).toBeNull()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // UX-271: linkType prop forwarded to BacklinkGroupRenderer renders "Linked"
+  // ---------------------------------------------------------------------------
+
+  it('renders "Linked" badge from BacklinkGroupRenderer (UX-271)', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockInvokeWith(resp)
+
+    renderLinkedReferences({ pageId: 'PAGE1' })
+
+    await screen.findByText('Page One (1)')
+    expect(screen.getByText('Linked')).toBeInTheDocument()
   })
 
   // ---------------------------------------------------------------------------

@@ -417,6 +417,18 @@ async fn handle_tools_call<R: ToolRegistry>(
         .cloned()
         .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
 
+    // FEAT-4k: keep a copy of the arg bag for the post-dispatch summary
+    // build, but only when an activity context is attached (otherwise
+    // the summary is never read and the clone would be pure waste).
+    // `registry.call_tool` consumes `args` by value, so this is the
+    // last point at which we can stash a copy without threading
+    // lifetimes through the registry contract.
+    let args_for_summary = if state.activity_ctx.is_some() {
+        Some(args.clone())
+    } else {
+        None
+    };
+
     // Build the per-request ActorContext. The handshake guarantees a
     // `clientInfo.name` when the client followed the protocol, but we
     // gracefully tolerate a client that skipped `initialize` (some test
@@ -467,19 +479,34 @@ async fn handle_tools_call<R: ToolRegistry>(
     // emission branches cover both the Ok and Err arms.
     if let Some(ref ctx) = state.activity_ctx {
         use super::activity::{emit_tool_completion, ActivityResult as ActRes, ActorKind};
-        // TODO(FEAT-4h-followup): per-tool privacy-safe summaries
-        // (counts, block_ids — never content). For MVP the tool name
-        // doubles as the summary.
-        let summary = name.clone();
-        let result_variant = match &result {
-            Ok(_) => ActRes::Ok,
+        // FEAT-4k: per-tool privacy-safe summaries. On success, dispatch
+        // through `super::summarise::summarise` so each tool produces a
+        // structural one-line summary (counts, ULID prefixes, property
+        // keys — never block content or text-property values). On
+        // failure, fall back to the bare tool name so the error message
+        // (already clipped to 200 chars below) is the entry's only
+        // free-form payload.
+        // `args_for_summary` is `Some` because we are inside the
+        // `state.activity_ctx.is_some()` branch (see the clone above),
+        // but be defensive: if a future refactor drops that guard the
+        // summariser still falls back to the bare name via an empty
+        // arg envelope.
+        let summary_args = args_for_summary
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+        let (summary, result_variant) = match &result {
+            Ok(value) => (
+                super::summarise::summarise(&name, &summary_args, value),
+                ActRes::Ok,
+            ),
             Err(err) => {
                 // Clip the message to avoid leaking long error chains
                 // into the activity feed. 200 Unicode scalars is
                 // plenty for "block not found" / "validation failed:
                 // ..." style messages.
                 let short: String = err.to_string().chars().take(200).collect();
-                ActRes::Err(short)
+                (name.clone(), ActRes::Err(short))
             }
         };
         // `ActorKind::Agent` is correct for every MCP dispatch today —

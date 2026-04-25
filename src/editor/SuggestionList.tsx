@@ -189,12 +189,12 @@ export const SuggestionList = ({ ref, items, command, label }: SuggestionListPro
                   {group.category && (
                     <>
                       {groupIdx > 0 && <hr className="border-t border-border/50 my-1" />}
-                      <div
+                      <h3
                         className="px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider"
                         data-testid="suggestion-category"
                       >
                         {t(group.category)}
-                      </div>
+                      </h3>
                     </>
                   )}
                   {group.items.map(({ item, flatIndex }) => renderItem(item, flatIndex))}

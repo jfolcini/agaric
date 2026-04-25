@@ -329,6 +329,11 @@ const resources = {
       'references.loadingMore': 'Loading more references',
       'references.loadMoreLabel': 'Load more references',
       'references.backlinksFrom': 'Backlinks from {{title}}',
+      'references.linkedBadge': 'Linked',
+      'references.unlinkedBadge': 'Unlinked',
+      'references.filtersAppliedBadge': '{{count}}',
+      'references.filtersAppliedAriaLabel_one': '{{count}} filter applied',
+      'references.filtersAppliedAriaLabel_other': '{{count}} filters applied',
 
       // Unlinked References
       'unlinkedRefs.headerNone': 'No Unlinked References',
@@ -650,6 +655,8 @@ const resources = {
       // Editor
       'editor.templatePlaceholder':
         'Type /template to start from a template, or just start typing...',
+      'editor.unknownNodeType':
+        "Some content (type: {{type}}) couldn't be saved as Markdown and was dropped.",
 
       // Property table
       'property.drawerTitle': 'Block Properties',

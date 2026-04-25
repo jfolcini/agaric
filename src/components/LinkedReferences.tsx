@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { logger } from '@/lib/logger'
@@ -321,6 +322,15 @@ export function LinkedReferences({
             </TooltipContent>
           </Tooltip>
         )}
+        {expanded && filters.length > 0 && (
+          <Badge
+            variant="secondary"
+            className="linked-references-filter-count shrink-0 h-5 min-w-5 px-1.5 text-[10px]"
+            aria-label={t('references.filtersAppliedAriaLabel', { count: filters.length })}
+          >
+            {t('references.filtersAppliedBadge', { count: filters.length })}
+          </Badge>
+        )}
       </div>
 
       {expanded && (
@@ -389,6 +399,7 @@ export function LinkedReferences({
                   resolveBlockTitle={resolveBlockTitle}
                   resolveBlockStatus={resolveBlockStatus}
                   resolveTagName={resolveTagName}
+                  linkType="linked"
                 />
               </div>
 

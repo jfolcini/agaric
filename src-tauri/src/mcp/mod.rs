@@ -20,6 +20,7 @@ pub mod actor;
 pub mod last_append;
 pub mod registry;
 pub mod server;
+pub mod summarise;
 pub mod tools_ro;
 pub mod tools_rw;
 
