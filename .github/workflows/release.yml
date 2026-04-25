@@ -330,22 +330,66 @@ jobs:
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
 
-      - name: Upload Android APK to GitHub Release
+      - name: Sign + upload Android APK
+        # If the four ANDROID_KEYSTORE_* secrets are configured, this step
+        # zipaligns and signs the APK with apksigner (APK signing scheme
+        # v2/v3 + v4 idsig) and uploads it as agaric-<tag>-android-aarch64.apk.
+        # If the secrets are NOT set, it uploads the unsigned APK as
+        # agaric-<tag>-android-aarch64-unsigned.apk so the workflow keeps
+        # working before the keystore is provisioned. See BUILD.md →
+        # "Release signing in CI" for the keystore generation + secret
+        # setup steps.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         shell: bash
         run: |
           set -euo pipefail
+
           src="src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
           if [ ! -f "$src" ]; then
             echo "ERROR: expected APK not found at $src" >&2
             exit 1
           fi
-          # Rename so the asset name on the Release is descriptive (the
-          # raw "app-universal-release-unsigned.apk" hides the version
-          # and platform). gh release upload uses the basename of the
-          # source path as the asset name.
-          dest="agaric-${GITHUB_REF_NAME}-android-aarch64-unsigned.apk"
-          cp "$src" "$dest"
-          echo "Uploading (clobber) $dest to release ${GITHUB_REF_NAME}"
+
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo "Keystore secret present — signing release APK"
+            # `find … | sort -V | tail -1` picks the highest-versioned
+            # build-tools dir (shellcheck SC2012 — don't parse `ls`).
+            BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+            keystore="$RUNNER_TEMP/release.jks"
+            aligned="$RUNNER_TEMP/aligned.apk"
+            dest="$RUNNER_TEMP/agaric-${GITHUB_REF_NAME}-android-aarch64.apk"
+
+            # Use a here-string + env-var refs so the password and the raw
+            # base64 keystore never appear in /proc/PID/cmdline. GH Actions
+            # masks secrets in logs anyway, but defence-in-depth is cheap.
+            base64 -d <<<"$ANDROID_KEYSTORE_BASE64" > "$keystore"
+
+            "$BUILD_TOOLS/zipalign" -p -f 4 "$src" "$aligned"
+            "$BUILD_TOOLS/apksigner" sign \
+              --ks "$keystore" \
+              --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --ks-pass "env:ANDROID_KEYSTORE_PASSWORD" \
+              --key-pass "env:ANDROID_KEY_PASSWORD" \
+              --out "$dest" \
+              "$aligned"
+            "$BUILD_TOOLS/apksigner" verify --verbose "$dest"
+
+            # Best-effort secure wipe of the decoded keystore. The runner
+            # is ephemeral, but no reason to leave the .jks readable for
+            # the rest of the job.
+            shred -u "$keystore" 2>/dev/null || rm -f "$keystore"
+          else
+            echo "ANDROID_KEYSTORE_BASE64 secret is not set — uploading unsigned APK."
+            echo "Add ANDROID_KEYSTORE_BASE64 / _PASSWORD / KEY_ALIAS / KEY_PASSWORD"
+            echo "secrets in repo Settings → Secrets and variables → Actions to enable signing."
+            dest="$RUNNER_TEMP/agaric-${GITHUB_REF_NAME}-android-aarch64-unsigned.apk"
+            cp "$src" "$dest"
+          fi
+
+          echo "Uploading (clobber) $(basename "$dest") to release ${GITHUB_REF_NAME}"
           gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber

@@ -354,6 +354,43 @@ APK_OUT="agaric-release.apk"
 
 For Play Store distribution, replace the debug keystore with your release signing key.
 
+### Release signing in CI
+
+The `release.yml` workflow signs the Android APK automatically on every tag push **iff** four GitHub Actions secrets are configured. If they aren't, the workflow falls back to uploading the unsigned APK so the rest of the release pipeline keeps working.
+
+Setup (one-time):
+
+1. **Generate a release keystore** locally (the `.jks` file is your forever-key for this app — back it up offline before configuring secrets):
+
+   ```bash
+   keytool -genkeypair -v \
+     -keystore ~/agaric-release.jks \
+     -alias agaric \
+     -keyalg RSA -keysize 4096 -validity 10000 \
+     -storetype PKCS12
+   ```
+
+   `keytool` will prompt for a keystore password, a key password (use the same), and a Distinguished Name (CN/OU/O/L/ST/C). The DN is embedded in the certificate users see in Android settings — pick something stable.
+
+2. **Base64-encode the keystore** and add four repo secrets at `Settings → Secrets and variables → Actions`:
+
+   ```bash
+   base64 -w0 ~/agaric-release.jks | xclip -selection clipboard   # paste into ANDROID_KEYSTORE_BASE64
+   ```
+
+   | Secret name | Value |
+   | --- | --- |
+   | `ANDROID_KEYSTORE_BASE64` | base64-encoded keystore (output of `base64 -w0 …jks`) |
+   | `ANDROID_KEYSTORE_PASSWORD` | the keystore password from step 1 |
+   | `ANDROID_KEY_ALIAS` | the alias from step 1 (`agaric` if you used the snippet verbatim) |
+   | `ANDROID_KEY_PASSWORD` | the key password from step 1 |
+
+3. **Tag a release.** The next `git push --tags` (or `gh release create`) triggers `release.yml`. Its Android job zipaligns the APK, signs it with `apksigner` (APK signing scheme v2/v3 + v4 idsig), `apksigner verify`s it, and uploads `agaric-<tag>-android-aarch64.apk` (no `-unsigned` suffix) to the GitHub Release.
+
+**Critical**: lose the keystore and you can never ship updates that overwrite installed apps. Android refuses to upgrade an APK if the new signature doesn't match the installed one — users would have to uninstall and lose their data. Store a copy of `agaric-release.jks` (and the passwords) somewhere offline that survives losing your dev machine. The base64 in the GitHub secret is *not* a backup — secrets are write-only and you can't read them back.
+
+This setup uses **APK direct distribution**. If you later move to Play Store, switch to **Play App Signing** (Google holds the app signing key; you only own the upload key) — the keystore generated here would become the upload key, not the app signing key.
+
 ### Installing on Emulator
 
 ```bash
