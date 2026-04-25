@@ -56,6 +56,19 @@ if [ ! -d "$APPDIR" ]; then
   exit 1
 fi
 
+# Normalise AppDir to an absolute path. The repack step `cd`s into the
+# AppImage directory and then passes both `--appdir` (a basename) and
+# OUTPUT (a path) to appimagetool. If APPDIR was relative, the derived
+# APPIMAGE_OUT is relative too and the post-`cd` resolution lands in a
+# non-existent nested path, causing
+#   `Could not create destination file: No such file or directory`
+#   `mksquashfs (pid …) exited with code 1`
+#   `sfs_mksquashfs error`
+# Release.yml passes the (relative) triple-prefixed AppDir; the
+# realpath() call here keeps both invocation modes (absolute default,
+# relative explicit) working uniformly.
+APPDIR="$(cd "$APPDIR" && pwd)"
+
 echo "Fixing icon symlinks in $APPDIR ..."
 
 # 1. Fix .DirIcon: absolute symlink → relative to Agaric.png (512×512, same dir)
