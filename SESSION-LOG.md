@@ -1,5 +1,93 @@
 # Session Log
 
+## Session 478 — Mixed batch: TEST-1 deferred coverage, TEST-10 sticky-mock sweep, UX-271 backlinks distinction + filter count, UX-281 a11y/privacy guardrails, FEAT-4k privacy-safe MCP summaries (TEST-1 / TEST-10 / UX-271 / UX-281 partial / FEAT-4k) (2026-04-25)
+
+**4 REVIEW-LATER items resolved (TEST-1, TEST-10, UX-271, FEAT-4k) + 1 partial closure (UX-281 — narrowed in-place to gutter-touch-labels follow-up).** Open items: 43 → 39. Mixed-domain batch: 30 frontend tests for previously-uncovered risk paths (main.tsx error handlers, useEditorBlur portal scan, page-blocks loadSubtree cap), full sticky-mock sweep across `useBlockResolve.test.ts`, linked-vs-unlinked badge symmetry across both references panels with active-filter count badges, semantic `<h3>` headings in suggestion list + rate-limited toast on unknown serializer node types, and 15 privacy-safe per-tool summarisers for the MCP activity feed replacing the bare-tool-name placeholder. Five build subagents launched in parallel; UX review surfaced a real symmetry gap (UnlinkedReferences uses `CollapsibleGroupList` directly, not `BacklinkGroupRenderer`, so the "Unlinked" badge support added there was dead code) and an aria-label/visible-text duplication on the filter count badge — both addressed in-place before commit. Two read-only review subagents (technical + UX) approved the final tree.
+
+Batch composition (4 items, 1 partial):
+
+- **TEST-1** — three deferred coverage gaps closed in-place (no production-code change):
+  - **NEW** `src/__tests__/main-error-handlers.test.ts` (10 tests): `error` and `unhandledrejection` global handlers wired up by `main.tsx`. `vi.mock`s react-dom/client + App + ErrorBoundary + PrimaryFocusProvider + tauri-mock + logger; `vi.spyOn(window, 'addEventListener')` captures the registered handlers during a dynamic `import('../main')`, then each test invokes them directly with synthetic event objects (sidesteps jsdom's spotty `ErrorEvent` / `PromiseRejectionEvent` constructors).
+  - **EXTENDED** `src/hooks/__tests__/useEditorBlur.test.ts` (+17 tests, 24 → 41): parameterized `it.each` over every entry in `EDITOR_PORTAL_SELECTORS` (8 selectors × 2 paths = 16) + 4 edge cases (offsetParent fallback, hidden portal, B-56 internal-portal exclusion, Step 4a precedence over Step 4b).
+  - **EXTENDED** `src/stores/__tests__/page-blocks.test.ts` (+3 tests, 74 → 77): `MAX_SUBTREE_BLOCKS` cap behaviour via `loadSubtree()` through the public `load()` action — cap-after-fetch (2000 root blocks → 1 invoke, 2000 loaded), deep-wide tree (500 blocks/call, callCount stays `< 2500`, `loading` returns to `false`), cap-before-fetch (1500 root + 600 per child, level-2 grandchildren never scheduled).
+
+- **TEST-10** — `src/hooks/__tests__/useBlockResolve.test.ts`: 50 occurrences of `mockResolvedValue(...)` → `mockResolvedValueOnce(...)`. Sticky-mock anti-pattern fully removed; every test now exercises a concrete call sequence, so a stray extra `invoke` or wrong-arg call is flagged. All 85 tests in the file still pass. (REVIEW-LATER documented "169 tests" but the actual file has 85 — stale doc, not a problem.)
+
+- **UX-271** — backlinks linked-vs-unlinked distinction + active-filter count badges:
+  - `src/components/BacklinkGroupRenderer.tsx` gained an optional `linkType?: 'linked' | 'unlinked'` prop. When provided, renders a small section-level `Badge variant="outline"` reading "Linked" / "Unlinked" at top-right of the group list (`linked-references-link-type-badge` test class). Default-undefined keeps the legacy callsites unaffected.
+  - `src/components/LinkedReferences.tsx` passes `linkType="linked"` and renders a `<Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">{count}</Badge>` next to the filter-toggle button when filter is expanded and at least one filter is applied. `aria-label` uses the i18n plural key `references.filtersAppliedAriaLabel` (e.g. "1 filter applied" / "3 filters applied") so screen readers don't hear the count text twice.
+  - **`src/components/UnlinkedReferences.tsx`** mirrors the LinkedReferences treatment despite using `CollapsibleGroupList` directly (not `BacklinkGroupRenderer`): adds an `unlinked-references-link-type-badge` "Unlinked" `Badge variant="outline"` above the keyboard-nav container and an `unlinked-references-filter-count` count Badge near the SlidersHorizontal toggle. Without this mirror the original `BacklinkGroupRenderer` `linkType` support was effectively dead code on the unlinked side. (UX reviewer caught this — addressed before commit.)
+  - `src/components/SearchablePopover.tsx:86` already wraps its result `<ul>` in `ScrollArea` — no change needed for the BacklinkFilterBuilder tag-search popover overflow.
+  - `src/lib/i18n.ts`: 5 new keys — `references.linkedBadge: 'Linked'`, `references.unlinkedBadge: 'Unlinked'`, `references.filtersAppliedBadge: '{{count}}'` (visible chip), `references.filtersAppliedAriaLabel_one: '{{count}} filter applied'` + `_other: '{{count}} filters applied'` (aria-label).
+
+- **UX-281 (partial)** — sub-fixes 1 and 2 closed; sub-fix 3 (gutter touch labels) DEFERRED, REVIEW-LATER UX-281 narrowed to that scope:
+  - `src/editor/SuggestionList.tsx:192-197` — category headers `<div>` → `<h3>` (semantic level-3 heading; Tailwind preflight resets default heading sizes so existing `text-xs font-medium text-muted-foreground uppercase tracking-wider` keeps the styling identical). Tests verify `getAllByRole('heading', { level: 3 })`, `tagName === 'H3'`, no `tabindex`, and that `useListKeyboardNavigation` ArrowDown still iterates only `role="option"` items.
+  - `src/editor/markdown-serializer.ts` — added `import { toast } from 'sonner'`, `import { t } from '../lib/i18n'`, module-scoped `toastedUnknownTypes = new Set<string>()` for one-toast-per-type-per-session rate limiting, `notifyUnknownNodeType(type)` helper with defensive try/catch (falls back to extra `logger.warn` on toast-layer failure), and `__resetUnknownNodeToastsForTests()` exported for test isolation. Wired into both unknown-node fallback sites: inline (line 288) and top-level (line 448). `logger.warn` still fires on every occurrence — only the user-facing toast is rate-limited.
+  - **DEFERRED:** `src/components/BlockGutterControls.tsx` not modified. The gutter is fixed at `w-[68px]` (`SortableBlock.tsx:39`) and contains 3 buttons (drag, history, delete) inside `flex items-center gap-1 justify-end`. On `pointer:coarse`, the `touch-target` utility already inflates each button to ≥44×44, so 3 buttons exceed 132 px combined and overflow the 68 px lane. Inline labels would compound the overflow without addressing the root constraint. REVIEW-LATER UX-281 rewritten to scope this remainder + enumerate three candidate affordances (long-press toast / coarse-pointer gutter expansion / overflow Sheet on touch).
+  - `src/lib/i18n.ts` — new key `editor.unknownNodeType: "Some content (type: {{type}}) couldn't be saved as Markdown and was dropped."`
+
+- **FEAT-4k** — privacy-safe per-tool MCP activity-feed summaries:
+  - **NEW** `src-tauri/src/mcp/summarise.rs` (~570 lines incl. tests). Module-level docs spell out the privacy invariants: counts, ULID 8-char prefixes (via `ulid_prefix(id)` helper), property keys, dates, and typed `ref`/`number`/`date` values are OK to surface; block content, page titles, text-property values, resolved chip text, attachment names, search queries are NOT. One `summarise_<tool>` function per registered MCP tool — robust against `Value::Null` results, falls back to a partial summary if a structural field is missing. Top-level `pub fn summarise(name, args, result) -> String` dispatches by exact tool name; default arm returns the bare tool name (defensive for future tools). Sample outputs: `list_pages — 3 pages (more)`, `search — 1 match`, `get_block — 01HZTEST`, `set_property — set effort=3 on 01HZTEST` (number), `set notes on 01HZTEST` (text — value omitted), `set linked=01HZTEST on 01HZTEST` (ref), `delete_block — deleted 01HZTEST (4 descendants)`.
+  - 31 unit tests including a cross-cutting `privacy_guard_no_summariser_leaks_content_or_value_text` that asserts no summariser leaks `SECRET_BLOCK_CONTENT` / `SECRET_TITLE` / `SECRET_TEXT_VALUE` / `SECRET_TAG_NAME` / `SECRET_QUERY` and never embeds a full ULID.
+  - `src-tauri/src/mcp/mod.rs` — added `pub mod summarise;`.
+  - `src-tauri/src/mcp/server.rs` `handle_tools_call` — removed the `TODO(FEAT-4h-followup)` comment + `let summary = name.clone();` placeholder. Added a conditional `args_for_summary = if state.activity_ctx.is_some() { Some(args.clone()) } else { None }` clone before the registry call (only clones when needed). Replaced the summary build with `match &result { Ok(value) => super::summarise::summarise(&name, &summary_args, value), Err(err) => name.clone() }` — error path is unchanged (still uses bare name + 200-char-clipped error message).
+  - 15 tools covered (matches the actually-shipped registries; the prospective tool names listed in REVIEW-LATER were aspirational). RO (9): `list_pages`, `get_page`, `search`, `get_block`, `list_backlinks`, `list_tags`, `list_property_defs`, `get_agenda`, `journal_for_date`. RW (6): `append_block`, `update_block_content`, `set_property`, `add_tag`, `create_page`, `delete_block`. Frontend renderer (`AgentAccessSettingsTab.tsx`) already reads `entry.summary` separately from the `Badge`-rendered `entry.toolName` — no frontend change required.
+
+### What changed
+
+**Backend (production):**
+
+- **`src-tauri/src/mcp/summarise.rs`** (NEW, ~570 lines) — privacy-safe per-tool summarisers + dispatcher + 31 tests.
+- **`src-tauri/src/mcp/mod.rs`** — `pub mod summarise;`.
+- **`src-tauri/src/mcp/server.rs`** — `handle_tools_call` summary build switched from bare-name placeholder to `super::summarise::summarise(...)` dispatch; conditional `args_for_summary` clone; error path unchanged.
+
+**Frontend (production):**
+
+- **`src/components/BacklinkGroupRenderer.tsx`** — new optional `linkType?: 'linked' | 'unlinked'` prop; section-level `Badge variant="outline"` rendered when prop is provided.
+- **`src/components/LinkedReferences.tsx`** — `Badge` import; filter count Badge near filter-toggle (variant="secondary", `h-5 min-w-5 px-1.5 text-[10px]`, plural aria-label via `references.filtersAppliedAriaLabel`); passes `linkType="linked"` to BacklinkGroupRenderer.
+- **`src/components/UnlinkedReferences.tsx`** — `Badge` import; filter count Badge mirroring LinkedReferences (`unlinked-references-filter-count`); section-level "Unlinked" `Badge variant="outline"` rendered above the keyboard-nav container (`unlinked-references-link-type-badge`).
+- **`src/editor/SuggestionList.tsx`** — category header `<div>` → `<h3>` (semantic level-3, styling preserved by Tailwind preflight).
+- **`src/editor/markdown-serializer.ts`** — `sonner` + `i18n` imports; module-scoped `toastedUnknownTypes` Set; `notifyUnknownNodeType(type)` helper with rate-limit + defensive try/catch; `__resetUnknownNodeToastsForTests()` exported; wired into both inline and top-level unknown-node fallback sites.
+- **`src/lib/i18n.ts`** — 6 new keys: 5 references-section (`linkedBadge`, `unlinkedBadge`, `filtersAppliedBadge`, `filtersAppliedAriaLabel_one`, `filtersAppliedAriaLabel_other`) + 1 editor (`unknownNodeType`).
+
+**Tests:**
+
+- **NEW** `src/__tests__/main-error-handlers.test.ts` — 10 tests for global error/unhandledrejection handlers via vi.mock + spy-on-addEventListener + dynamic import.
+- **`src/hooks/__tests__/useEditorBlur.test.ts`** — +17 tests parameterized over `EDITOR_PORTAL_SELECTORS` + 4 edge cases.
+- **`src/stores/__tests__/page-blocks.test.ts`** — +3 tests for `MAX_SUBTREE_BLOCKS` cap behaviour (cap-after-fetch, deep-wide tree, cap-before-fetch).
+- **`src/hooks/__tests__/useBlockResolve.test.ts`** — 50 sticky `mockResolvedValue` → `mockResolvedValueOnce` (full sweep).
+- **`src/components/__tests__/BacklinkGroupRenderer.test.tsx`** — +3 tests for `linkType` prop badge rendering.
+- **`src/components/__tests__/LinkedReferences.test.tsx`** — enhanced BacklinkFilterBuilder mock (mock-add-filter, mock-clear-filters); +4 tests for filter count badge visibility and clearing + linked-badge presence.
+- **`src/components/__tests__/UnlinkedReferences.test.tsx`** — enhanced BacklinkFilterBuilder mock (test-clear-filters); +4 tests for "Unlinked" section badge + filter count badge symmetry with LinkedReferences (incl. `aria-label="1 filter applied"` assertion for the plural i18n key).
+- **`src/editor/__tests__/SuggestionList.test.tsx`** — +2 tests for `<h3>` semantic headers + keyboard-nav skip.
+- **`src/editor/__tests__/markdown-serializer.test.ts`** — +4 tests for unknown-node toast (per-type rate limit, distinct types each toast, top-level fallback path, log-vs-toast cadence differentiation).
+- **`src-tauri/src/mcp/summarise.rs`** (NEW) — 31 tests covering happy paths, pluralisation/has_more variants, missing-field robustness, and a cross-cutting privacy guard.
+
+### Verification
+
+- `cargo nextest run mcp` — 213/213 pass (incl. 31 new summarise tests).
+- `cargo nextest run --no-fail-fast` — 2721/2721 pass.
+- `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo sqlx prepare --check -- --tests` — all clean.
+- `npx tsc -b --noEmit` — clean.
+- `npx vitest run` (full frontend suite) — 305 files / **7845 tests** pass.
+- `prek run --all-files` — all 26 hooks green.
+
+### Notes / decisions
+
+- **TEST-1 chose in-place tests over extraction.** `main.tsx` was kept untouched (tests use vi.mock + dynamic import + spy-on-addEventListener); `EDITOR_PORTAL_SELECTORS` was already exported, so the parameterized portal-scan tests required no production-code change; `loadSubtree` is internal but its contract is observable through the public `load()` action, so cap-behaviour tests assert via the store API.
+- **UX reviewer caught a symmetry bug pre-commit.** The original UX-271 implementation only added the "Linked" badge support to `BacklinkGroupRenderer`, but `UnlinkedReferences` uses `CollapsibleGroupList` directly. Without the in-place mirror added to `UnlinkedReferences.tsx`, the original `linkType="unlinked"` case had no callsite. Mirroring the badge + filter-count chip in `UnlinkedReferences` was a small structural improvement worth landing in-batch.
+- **Aria-label / visible-text duplication on the filter count badge.** Original implementation passed the same `references.filtersAppliedBadge` template (just `{{count}}`) to both visible content and `aria-label`, which read aloud as "3, 3" on screen readers. Switched to `references.filtersAppliedAriaLabel_one` / `_other` plural keys ("1 filter applied" / "3 filters applied") for the `aria-label` while keeping the visible chip as the bare count. Used in both `LinkedReferences` and `UnlinkedReferences`.
+- **FEAT-4k tool-name discrepancy.** The user task description listed prospective tool names (`list_blocks`, `get_property_definitions`, `restore_block`, `delete_property`, etc.) that don't exist in the actual `tools_ro.rs` / `tools_rw.rs` registries. Followed the "Read first" instruction and summarised the 15 tools that exist today. Defensive default arm in `summarise()` falls through to bare-name for any future tool added without a corresponding summariser — no regression risk.
+- **UX-281 sub-fix 3 deferred with rescoped REVIEW-LATER entry.** The 68 px gutter + 44×44 touch-target inflation makes inline labels physically impossible without overflow. Three candidate affordances enumerated in the rescoped REVIEW-LATER entry: long-press toast, coarse-pointer gutter expansion, overflow Sheet on touch. Future session will pick one based on usability testing.
+- **Sub-agent file-count discrepancy in TEST-10.** REVIEW-LATER claimed 169 tests in `useBlockResolve.test.ts`; actual count is 85. Stale doc, no impact on correctness — all 85 tests still pass with `mockResolvedValueOnce`.
+
+### Open follow-ups
+
+- **UX-281 (rescoped to gutter touch labels)** — pick an affordance and ship.
+- **Sub-fix-3-style gutter-overflow audit** — the same 68 px gutter + 44×44 touch logic might affect other touch-only paths; do a sweep.
+
+---
+
 ## Session 477 — Five small UX a11y / discoverability fixes: sync visibility, touch sizing, settings tab persistence, BugReport Checkbox primitive + success toast, WelcomeModal i18n + semantic markup (UX-266 / UX-268 / UX-276 partial / UX-277 partial / UX-278) (2026-04-25)
 
 **3 REVIEW-LATER items resolved (UX-266, UX-268, UX-278) + 2 partial closures (UX-276, UX-277 — both narrowed in-place to the remaining sub-items).** Open items: 48 → 43. Mixed-domain `S`-cost frontend UX batch: sync visibility (sidebar dot + per-state icons + space-deletion toast), touch-target sizing across Agenda + Search filters, Settings tab persistence to localStorage, BugReport native checkbox swap to a new design-system primitive (+ success toast), and WelcomeModal sample-content i18n + `<ul role="list">` semantic markup. Five build subagents launched in parallel; the UX-277 subagent was interrupted mid-flight when the user shifted focus to a release-CI fix, then re-launched with the same scope to complete the batch. Two read-only review subagents (technical + UX) ran in parallel against the merged tree and APPROVED all five items.

@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-43 open items.
+39 open items.
 
 Previously resolved: 422+ items across 149 sessions.
 
@@ -30,7 +30,6 @@ Previously resolved: 422+ items across 149 sessions.
 | FEAT-3p6 | FEAT | Spaces Phase 6: polish (keyboard shortcuts, space management UI, brand identity, collapsed-icon indicator) | M |
 | FEAT-4 | FEAT | Agent access: expose notes to external agents via an MCP server — parent / umbrella | L |
 | FEAT-4i | FEAT | MCP v3 — Mobile (HTTPS/LAN via mTLS reuse from `sync_cert.rs`, agent-pairing flow) — DEFERRED pending v2 | L |
-| FEAT-4k | FEAT | MCP activity feed shows the bare tool name as the entry summary; per-tool privacy-safe summaries pending (`TODO(FEAT-4h-followup)` in `src-tauri/src/mcp/server.rs`) | S |
 | FEAT-5 | FEAT | Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar) — parent / umbrella | L |
 | FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
@@ -41,13 +40,11 @@ Previously resolved: 422+ items across 149 sessions.
 | MAINT-99 | MAINT | No automated enforcement for several documented test rules (axe-audit per component test, IPC-error-path coverage, test file naming convention) | M |
 | MAINT-101 | MAINT | `tag-colors.ts` is localStorage-only despite header comment claiming property-sync persistence | M |
 | MAINT-103 | MAINT | `BlockPropertyEditor` inline editor uses absolute positioning without portal — should follow the `suggestion-renderer` pattern | M |
-| TEST-1 | TEST | Frontend test coverage gaps in 3 specific files surfaced by review (useEditorBlur portal scan, page-blocks loadSubtree cap, main.tsx error handlers) | S |
 | TEST-2 | TEST | ~30 wrapper functions in `src/lib/tauri.ts` lack individual tests beyond the shallow cross-cutting test (only command-name verified, not `null` defaults / arg shape) | M |
 | TEST-3 | TEST | Browser/E2E `tauri-mock` `revert.ts` only handles 5 of 13 reversible op types — undo/redo for property/tag/state ops is a silent no-op in mock; can't be E2E-tested | M |
 | TEST-4 | TEST | 25 of 26 Playwright specs lack a console-error listener — backend / mock errors leak silently in every E2E suite except `smoke.spec.ts` | M |
 | TEST-5 | TEST | `property-picker.test.ts` (6 tests) and `checkbox-input-rule.test.ts` (17 tests) exercise extension config + regex only, not editor integration | M |
 | TEST-6 | TEST | Weak-assertion sweep: `toBeTruthy()` for element existence, `toBeGreaterThan(0)` for known-count arrays, `toHaveBeenCalled()` without `…With(...)` (verified in 5 files) | S |
-| TEST-10 | TEST | `useBlockResolve.test.ts` uses sticky `mockResolvedValue` 50× and never `mockResolvedValueOnce` — call-ordering bugs go undetected | S |
 | TEST-11 | TEST | 7 E2E specs use CSS-class selectors (23 instances total) instead of `data-testid` per the documented selector convention | M |
 | UX-257 | UX | Breadcrumb bar (zoom + page header) doesn't read as a breadcrumb, is oversized, and styling is inconsistent across the two surfaces | M |
 | UX-259 | UX | `ConfirmDialog` `autoFocus` lands on the destructive action button — Enter on a destructive confirm is a footgun | S |
@@ -58,7 +55,6 @@ Previously resolved: 422+ items across 149 sessions.
 | UX-265 | UX | Conflict UI improvements (Keep/Discard label clarity, sort/filter for large conflict sets, type-badge tooltips, missing-original-block fallback, large-diff handling) | M |
 | UX-269 | UX | `SearchPanel` consolidation — switch custom load-more to shared `LoadMoreButton`, fix aria-live placement, debounce visual feedback, CJK notice placement, alias-overlay positioning, results-count announcement | M |
 | UX-270 | UX | `GraphView` a11y + filter persistence — bare `overflow-y-auto` → `ScrollArea`, redundant aria-label on labelled checkboxes, `role="img"` on interactive SVG, filter state reset on every navigation | M |
-| UX-271 | UX | Backlinks linked-vs-unlinked distinction missing in `BacklinkGroupRenderer`; `LinkedReferences` lacks active-filter count badge; tag-search popover scroll handling unclear | S |
 | UX-272 | UX | Properties drawer / picker polish (no-pages empty-state styling, AND/OR/NOT mode affordance, definitions-loading state, date-input debounce, choice options count + reorder, disabled "Add option" when empty, type badge for "Create new", ref-save spinner) | M |
 | UX-273 | UX | Inline link UX — `LinkPreviewTooltip` only fires on hover (no keyboard activation); suggestion popups don't handle viewport edges on mobile | M |
 | UX-274 | UX | Agenda views — `DateChipEditor` parse error not shown on input itself; `QueryResult` error has no retry; `RescheduleDropZone` has no keyboard alternative; per-group collapse not persisted; empty-filter validation silent; `DuePanel` projected entries skipped by keyboard nav; `QueryBuilderModal` accepts unknown property keys | M |
@@ -66,7 +62,7 @@ Previously resolved: 422+ items across 149 sessions.
 | UX-276 | UX | Settings — no URL-based deep-link to specific settings sections (tab persistence shipped; URL deep-link still pending) | S |
 | UX-277 | UX | `BugReportDialog` log-content preview before submit (Checkbox primitive swap + success toast shipped; log preview pending — may be superseded by H-9c) | M |
 | UX-279 | UX | `FeatureErrorBoundary` (section-level errors) lacks "Report bug" affordance — only the global `ErrorBoundary` has it | M |
-| UX-281 | UX | Suggestion list & roving editor polish — category headers use plain `<div>` (need `role="heading"`); markdown serializer warns on unknown inline nodes but strips them silently to user; gutter-button tooltips invisible on touch | S |
+| UX-281 | UX | Gutter-button tooltips invisible on touch — gutter is fixed at 68px, three buttons already inflate to 44×44 on `pointer:coarse` so inline labels would overflow; needs a different affordance (long-press → toast, or wider gutter / drawer on touch) | S |
 | UX-282 | UX | `src/lib/announcer.ts` exists with `announce.*` i18n keys but is invoked from very few places — paid-for accessibility utility is largely unused | M |
 | PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S |
 | PUB-3 | PUB | Employer IP clearance before public release | S |
@@ -412,35 +408,6 @@ Part of the FEAT-4 family. See FEAT-4 for the v3 rollout phase specification (de
 **Status:** DEFERRED — pending v2 ship + user-requested mobile support + separate design approval.
 
 **Cost:** L
-
-### FEAT-4k — MCP activity feed shows the bare tool name as the entry summary; per-tool privacy-safe summaries pending
-
-**Problem:** `src-tauri/src/mcp/server.rs:470` carries a `TODO(FEAT-4h-followup)` marker inside `handle_tools_call`'s activity-emission block. For the FEAT-4h v2 MVP, every entry rendered in the in-app activity feed (Settings → Agent Access) is summarised by the tool name only — `append_block`, `set_property`, `delete_block`, etc. — so a user looking at the feed cannot tell *what* an agent did, only *which kind of thing* it did. The FEAT-4h slice 3 design called for privacy-safe per-tool summaries (counts, block-ID prefixes, page-name hashes — never block content), but the per-tool helpers that extract those values from each tool's structured return shape were intentionally left out to keep the slice tight, and slice 4 closed FEAT-4h without picking them up.
-
-**Why it matters:** Without per-tool summaries the activity feed is a thin audit log — useful enough to drive the per-entry / per-session Undo affordances that already shipped, but not informative enough on its own. A user reviewing what an agent did over the last hour sees ten `append_block` rows and has no way to scan-read the differences. With privacy-safe summaries (e.g. `append_block — added 2 blocks under <ULID-prefix>`, `set_property — set space=<ULID-prefix> on 3 pages`) the feed becomes a legitimate review surface.
-
-**Scope:** add a small per-tool helper next to each tool definition in `src-tauri/src/mcp/tools_ro.rs` and `src-tauri/src/mcp/tools_rw.rs` that, given the tool's structured return value, produces a one-line privacy-safe summary string. The dispatcher in `handle_tools_call` reads that summary instead of `name.clone()`. No protocol change, no new IPC, no new tables, no new ops.
-
-**Privacy invariants (do not break):**
-
-- Never include block content. Counts, ULIDs (or ULID prefixes), tool name, and structural facts only.
-- Never include resolved chip text, attachment file names, or property values that are themselves user content (e.g. the literal value of a `text` property).
-- Property *keys* are fine (they are schema, not content); property *values* are content unless they are typed `ref` (in which case the ULID is OK), `number`, or `date`.
-- Error summaries already clip to 200 chars via `err.to_string().chars().take(200).collect::<String>()` — keep that clip; do not loosen it.
-
-**Acceptance:**
-
-- Every RO tool (`list_blocks`, `search_blocks`, `get_block`, `list_properties`, `get_backlinks`, `list_recent`, `get_property_definitions`, `agenda`, `query_by_property`) and every RW tool (`append_block`, `update_block`, `delete_block`, `restore_block`, `set_property`, `delete_property`) has its own summariser.
-- The dispatcher swaps `name.clone()` for the per-tool summary on success; error path is unchanged.
-- The Settings → Agent Access activity feed renders the new summary in place of the bare tool name.
-- The `TODO(FEAT-4h-followup)` comment is removed.
-- Existing tests covering activity emission updated to assert the new summary shape; one new per-tool summariser unit test per tool. Privacy invariants have a guard test (snapshot any string that would expose content fails the test).
-
-**Verification:** `cargo nextest run`, `npx vitest run`, `prek run --all-files`. No e2e impact.
-
-**Cost:** S — additive helper per tool + one dispatch swap + targeted tests. No invariant impact, no new abstractions.
-
-**Status:** Open — explicit follow-up filed by FEAT-4h slice 3 (session 463); FEAT-4h slice 4 closed without picking up this polish slice.
 
 ### FEAT-5 — Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar)
 
@@ -819,22 +786,6 @@ If a user pastes (or types) a code block whose content contains a line beginning
 **Risk:** M — touches editor blur lifecycle; needs careful tests.
 **Impact:** S — closes a small clipping risk and aligns with the documented floating-UI pattern.
 
-### TEST-1 — Three specific files lack dedicated test coverage on real risk-bearing paths
-
-**Problem:** Two independent review passes (one full + one validation) over `src/` agreed on the following specific gaps. Each is small and individually a `S` task; bundled here so a single contributor session can close them.
-
-| File | Missing coverage |
-|------|------------------|
-| `src/main.tsx` | No test for the global `error` / `unhandledrejection` handlers (`logger`-bridge wiring). The file is excluded from coverage, which is correct for the bootstrap, but the handler logic itself is non-trivial and should have a small dedicated test against a simulated `window.dispatchEvent`. |
-| `src/hooks/useEditorBlur.ts` | The "Step 4b" portal-scan logic (the `EDITOR_PORTAL_SELECTORS` walk that decides whether a blur is into a known overlay) has no dedicated test. This is a real production hot-path — a regression here causes premature persists / splits while users interact with pickers. |
-| `src/stores/page-blocks.ts` | The recursion bound on `loadSubtree()` (`MAX_SUBTREE_BLOCKS` cap) has no test. The cap exists to prevent runaway recursion on corrupted data; unverified caps tend to drift. |
-
-**Fix:** for each file, add a `__tests__/<File>.test.tsx` (or `.test.ts`) with the standard render + interaction + `axe(container)` triplet for primitives, and unit-level tests for the two non-component cases (`useEditorBlur` portal scan, `page-blocks` cap). Follow the patterns documented in `src/__tests__/AGENTS.md`.
-
-**Cost:** S (each file; ~30 min). Bundle suggestion: one commit per logical group (the two hooks/stores; main.tsx alone).
-**Risk:** S — additive tests; no production-code change.
-**Impact:** S — closes coverage holes on paths that are demonstrably risk-bearing.
-
 ### TEST-2 — ~30 wrapper functions in `src/lib/tauri.ts` lack individual tests beyond the shallow cross-cutting test
 
 **Problem:** `src/lib/tauri.ts` exports ~84 wrapper functions around Tauri `invoke()`. The cross-cutting test in `src/lib/__tests__/tauri.test.ts:1927-2049` calls 47 of them and verifies only the snake_case command name — not the argument shape, not the `?? null` defaulting that the wrappers exist for in the first place (Tauri 2 requires `null` for Rust `Option<T>`, not `undefined`; this is a documented Pitfall, `src/__tests__/AGENTS.md:539`). The remaining ~30 wrappers have no test at all in this file (verified absent from the imports at lines 14-74): `listPageLinks`, `importMarkdown`, `listProjectedAgenda`, `saveDraft`, `flushDraft`, `deleteDraft`, `setPeerAddress`, `fetchLinkMetadata`, `getLinkMetadata`, `collectBugReportMetadata`, `readLogsForReport`, `getLogDir`, `getCompactionStatus`, `compactOpLog`, `restorePageToOp`, `listSpaces`, `createPageInSpace`, `listDrafts`, `restoreAllDeleted`, `purgeAllDeleted`, plus several others.
@@ -916,20 +867,6 @@ Compare with `src/editor/__tests__/at-tag-picker.test.ts` (~452 lines) and `src/
 **Cost:** S (~half day for the small files) / M (~1–2 days incl. `LinkEditPopover.test.tsx`).
 **Risk:** S — pure tightening of assertions; tests still pass when behaviour is correct.
 **Impact:** M — catches off-by-one / wrong-arg regressions that currently pass.
-
-### TEST-10 — `useBlockResolve.test.ts` uses sticky `mockResolvedValue` 50× and never `mockResolvedValueOnce`
-
-**Problem:** Quality-standards rule from `src/__tests__/AGENTS.md:551`: *"`mockResolvedValueOnce` consumes in call order. If a component calls `invoke` multiple times on mount, chain `Once` calls in the right order or use `mockImplementation` with command dispatch."* `src/hooks/__tests__/useBlockResolve.test.ts` has 50 calls to `mockResolvedValue(...)` (verified by grep) and zero calls to `mockResolvedValueOnce(...)`.
-
-**Why it matters:** `useBlockResolve` calls `invoke('get_block', { blockId })` once per resolve target. With sticky mocks, every `invoke` call returns the same value regardless of which block ID was requested — a regression where the hook calls the wrong command, passes the wrong arg, or calls more times than expected goes undetected because every call returns the seeded value.
-
-**Fix:** File-by-file sweep of the 50 sites. For each test:
-- If the test exercises a single resolve, change to `mockResolvedValueOnce` so a stray extra call is flagged.
-- If the test exercises multiple resolves with different block IDs, change to `mockImplementation((cmd, args) => { … switch on args.blockId … })` so each ID gets its expected response.
-
-**Cost:** S–M (~half day — mostly mechanical, but each test needs context to choose the right pattern).
-**Risk:** S — current tests pass with sticky mocks because the hook's behaviour is correct today; the tightening makes future regressions detectable.
-**Impact:** M — closes the largest single-file violation of a documented mocking rule in the frontend.
 
 ### TEST-11 — 7 E2E specs use CSS-class selectors (23 instances) instead of `data-testid`
 
@@ -1113,18 +1050,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Risk:** S.
 **Impact:** M — a11y + persistence parity with the rest of the app.
 
-### UX-271 — Backlinks linked-vs-unlinked distinction & filter discoverability
-
-**Problem:**
-
-- `src/components/BacklinkGroupRenderer.tsx:1-86` — renders backlink groups with no visible signal of whether each is "Linked" (`[[ref]]`) or "Unlinked" (mention without link). FEATURE-MAP.md:128-129 documents the two as distinct sections; the renderer makes them indistinguishable. Add a badge or icon, fed by a prop from the parent (`LinkedReferences` vs `UnlinkedReferences`).
-- `src/components/LinkedReferences.tsx:1-413` — has advanced filters (type, status, priority, contains, property, date, has-tag, tag-prefix) but no count badge on the "Advanced filters" trigger when filters are active. Compare with `AgendaFilterBuilder` which surfaces active count.
-- `src/components/BacklinkFilterBuilder.tsx:547-571` — `SearchablePopover` is used for tag selection but no explicit scroll handling for large tag lists; verify the popover internally uses `ScrollArea` (otherwise wrap).
-
-**Cost:** S.
-**Risk:** S.
-**Impact:** M — clarifies one of the most useful but most-confused surfaces.
-
 ### UX-272 — Properties drawer / picker polish
 
 **Problem:** Eight small UX gaps in the properties UI. Bundled because each is XS:
@@ -1218,17 +1143,21 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Risk:** M.
 **Impact:** M.
 
-### UX-281 — Suggestion list & roving editor polish
+### UX-281 — Gutter-button tooltips invisible on touch
 
-**Problem:**
+**Problem:** `src/components/SortableBlock.tsx:39` fixes the gutter at `w-[68px]` and `src/components/BlockGutterControls.tsx:104-112` packs three icon-only buttons (drag, history, delete) into it relying on hover tooltips for labels. On `pointer:coarse`, each button inflates to ≥44×44 (touch-target utility), so the three buttons already exceed 132 px of horizontal space and overflow the 68 px lane — there is no room left for inline text labels. On touch the result is a row of unlabelled icons with no discoverable affordance.
 
-- `src/editor/SuggestionList.tsx:188-198` — suggestion category headers are plain `<div>`s with no semantic role. Use `<h3>` or `role="heading" aria-level="3"`. Verify keyboard nav still skips them.
-- `src/editor/markdown-serializer.ts:249-250, 407-410` — when an unknown TipTap inline node type appears, the serializer logs a warn and strips the content. The user gets no UI signal that data was dropped (rare but possible after an extension upgrade). Surface a `toast.warning(t('editor.unknownNodeType', { type }))` on the first occurrence per session (rate-limited).
-- `src/components/BlockGutterControls.tsx:104-112` — gutter buttons rely on tooltips for labels; on touch (no hover), the label is hidden. Either show inline labels on `pointer:coarse` or move to a long-press affordance.
+**History:** Sub-fixes for the suggestion-list `<h3>` headers and the markdown-serializer unknown-node toast were closed in session 478 (UX-281 sub-fixes 1 and 2). This sub-fix was deferred because `pointer:coarse` inline labels would compound the overflow without addressing the root constraint.
+
+**Fix:** needs a different affordance, not inline labels. Options to evaluate:
+
+- Long-press on `pointer:coarse` → show a small `toast` describing the action (works on a fixed gutter, but adds latency and a toast layer to a high-frequency interaction).
+- Expand the gutter on `pointer:coarse` to ~120-140 px and add inline icon+label rows (cleaner UX; needs `SortableBlock` width audit and may shift block content over).
+- Move the secondary actions (history, delete) into an overflow `Sheet` on touch and keep only drag in the gutter (smallest visual change, preserves existing layout).
 
 **Cost:** S.
-**Risk:** S.
-**Impact:** S.
+**Risk:** S — touch-only path.
+**Impact:** S — improves discoverability for touch users; desktop unaffected.
 
 ### UX-282 — `src/lib/announcer.ts` is largely unused
 
