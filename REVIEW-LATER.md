@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-63 open items.
+58 open items.
 
-Previously resolved: 402+ items across 149 sessions.
+Previously resolved: 407+ items across 149 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -51,13 +51,8 @@ Previously resolved: 402+ items across 149 sessions.
 | TEST-4 | TEST | 25 of 26 Playwright specs lack a console-error listener — backend / mock errors leak silently in every E2E suite except `smoke.spec.ts` | M |
 | TEST-5 | TEST | `property-picker.test.ts` (6 tests) and `checkbox-input-rule.test.ts` (17 tests) exercise extension config + regex only, not editor integration | M |
 | TEST-6 | TEST | Weak-assertion sweep: `toBeTruthy()` for element existence, `toBeGreaterThan(0)` for known-count arrays, `toHaveBeenCalled()` without `…With(...)` (verified in 5 files) | S |
-| TEST-7 | TEST | Real-timer `setTimeout` sleeps in 4 test files (RescheduleDropZone, recent-pages, useSyncEvents, helpers.ts dragBlock 50/150 ms) — flake risk under CI load | S |
-| TEST-8 | TEST | `page-blocks.test.ts` lacks `splitBlock()` error-rollback test; existing `remove()` error test only checks `toHaveLength(1)`, not block-content preservation | S |
-| TEST-9 | TEST | Hardcoded English assertions in `AttachmentList.test.tsx` and `SearchPanel.test.tsx` instead of `t('key')` per the i18n-in-tests rule | S |
 | TEST-10 | TEST | `useBlockResolve.test.ts` uses sticky `mockResolvedValue` 50× and never `mockResolvedValueOnce` — call-ordering bugs go undetected | S |
 | TEST-11 | TEST | 7 E2E specs use CSS-class selectors (23 instances total) instead of `data-testid` per the documented selector convention | M |
-| TEST-12 | TEST | `e2e/settings.spec.ts` theme-options test only checks 3 of 7 shipped themes | S |
-| TEST-13 | TEST | `TabBar` dropdown Esc-to-close behaviour not explicitly tested | S |
 | UX-257 | UX | Breadcrumb bar (zoom + page header) doesn't read as a breadcrumb, is oversized, and styling is inconsistent across the two surfaces | M |
 | UX-258 | UX | DailyView / DaySection don't scroll to `selectedBlockId` on mount when navigating into a date-titled page (`TODO(UX-242)` in `src/stores/navigation.ts`) | S |
 | UX-259 | UX | `ConfirmDialog` `autoFocus` lands on the destructive action button — Enter on a destructive confirm is a footgun | S |
@@ -1014,58 +1009,6 @@ Compare with `src/editor/__tests__/at-tag-picker.test.ts` (~452 lines) and `src/
 **Risk:** S — pure tightening of assertions; tests still pass when behaviour is correct.
 **Impact:** M — catches off-by-one / wrong-arg regressions that currently pass.
 
-### TEST-7 — Real-timer `setTimeout` sleeps in 4 test files
-
-**Problem:** Quality-standards rule from `src/__tests__/AGENTS.md:526`: *"Use `waitFor` / `findBy*` instead of `sleep`. Debounce tests use `vi.useFakeTimers()` + `vi.advanceTimersByTime()`."* These four sites violate it on real timers (verified absence of `vi.useFakeTimers()` for the relevant tests):
-
-| File | Line(s) | Sleep | What it's gating |
-|------|---------|-------|------------------|
-| `src/components/journal/__tests__/RescheduleDropZone.test.tsx` | 218 | `setTimeout(r, 50)` | A "should NOT have been called" assertion — the sleep gives the negative-path the chance to fail. **Highest flake risk** because there's no signal to wait for. |
-| `src/lib/__tests__/recent-pages.test.ts` | 80 | `setTimeout(r, 5)` | Forces a `Date.now()` delta between two `pushRecentPage` calls so the `visitedAt` ordering can be asserted. |
-| `src/hooks/__tests__/useSyncEvents.test.ts` | 245, 261, 585, 609, 636, 695 | `setTimeout(r, 10)` (×4) and `setTimeout(r, 50)` (×2) | Wait for async listener setup or IPC response. None are inside `vi.useFakeTimers()` scope. |
-| `e2e/helpers.ts` | 192 (350 ms), 200 (50 ms), 204 (150 ms) | `page.waitForTimeout(...)` inside `dragBlock` | The 350 ms is justified by dnd-kit's PointerSensor activation delay and should be kept (with a named `DND_ACTIVATION_DELAY_MS` constant + comment); the 50 / 150 ms are inter-step pauses without a clear deterministic alternative documented. |
-
-**Fix:**
-
-- `RescheduleDropZone`: replace with `await waitFor(() => expect(mockSetDueDate).not.toHaveBeenCalled())` or, better, restructure the test so the negative is asserted synchronously after a single deterministic event.
-- `recent-pages`: switch to `vi.useFakeTimers()` + `vi.setSystemTime(...)` between calls. Avoid wall-clock entirely.
-- `useSyncEvents`: convert to fake timers + `vi.advanceTimersByTime(...)` or `vi.waitFor(...)` against an observable end state.
-- `helpers.ts dragBlock`: extract `DND_ACTIVATION_DELAY_MS = 350` constant with a comment citing dnd-kit's PointerSensor; document the 50/150 ms gates with a similar comment, or replace with `expect.poll(() => …).toBe(...)` if a deterministic signal exists.
-
-**Cost:** S (~half day across all four files).
-**Risk:** S — these are flake sources today; fixes can only reduce flake.
-**Impact:** M — flake removal is a force multiplier on every CI run.
-
-### TEST-8 — `page-blocks.test.ts`: missing `splitBlock` error rollback test, weak `remove()` error assertion
-
-**Problem:** Two specific gaps in `src/stores/__tests__/page-blocks.test.ts`:
-
-1. **`splitBlock` has no error-path test.** The test suite at lines 459–654 covers happy paths (split at start, middle, end of content; split with marks; split preserving children). It does not cover the case where the composite operation `edit() + createBelow()` fails partway. `splitBlock` first persists the truncated content of the original block via `edit()`, then creates the new block with the remainder via `createBelow()`. If `createBelow()` fails after `edit()` has succeeded, the original block is left truncated *without* the corresponding new block — a silent data-loss scenario.
-
-2. **`remove()` error test is too loose.** Lines 425–434 (`'does not modify state on backend error'`) call `mockRejectedValueOnce` and then assert only `expect(store.getState().blocks).toHaveLength(1)`. The assertion passes whether the rolled-back block is the original or any other block of the right count — content is not verified.
-
-**Fix:**
-
-1. Add `it('rolls back on createBelow failure during splitBlock')`: mock `edit` to resolve, mock `createBelow` to reject, call `splitBlock(...)`, assert the block reverts to its original content (capture `previousContent` before the call, compare after).
-2. Strengthen the existing `remove()` error test to `expect(store.getState().blocks[0]).toEqual(originalBlock)` so content is asserted, not just count.
-
-**Cost:** S (~30 min — both fixes are mechanical).
-**Risk:** S — additive test + assertion strengthening.
-**Impact:** M — closes a real partial-failure scenario (`splitBlock` rollback on backend error) that's currently invisible to the test suite.
-
-### TEST-9 — Hardcoded English assertions in `AttachmentList.test.tsx` and `SearchPanel.test.tsx`
-
-**Problem:** Quality-standards rule from `src/__tests__/AGENTS.md:530`: *"Use `t('key')` calls in test assertions, not hardcoded English strings. This ensures tests don't break when translations change, and validates that i18n keys are wired correctly."* Two specific violations:
-
-- `src/components/__tests__/AttachmentList.test.tsx:126,128` — asserts on `'Delete "to-delete.txt"?'` and `'Click the delete button again to confirm.'` (toast strings).
-- `src/components/__tests__/SearchPanel.test.tsx:122, 195, 374, 383` — regex patterns `/No results found/`, `/CJK search is limited/` (visible text).
-
-**Fix:** Look up the relevant `t()` keys from the components under test. Replace each hardcoded string with `t('attachments.confirmDelete', { filename: 'to-delete.txt' })` (or the corresponding key — verify against the component source). For regex matchers, switch to `screen.getByText(t('search.noResults'))`.
-
-**Cost:** S (~30 min).
-**Risk:** S — pure tightening; current strings already match the English locale.
-**Impact:** S — prevents these tests from breaking on a translation update; validates that the keys are actually wired.
-
 ### TEST-10 — `useBlockResolve.test.ts` uses sticky `mockResolvedValue` 50× and never `mockResolvedValueOnce`
 
 **Problem:** Quality-standards rule from `src/__tests__/AGENTS.md:551`: *"`mockResolvedValueOnce` consumes in call order. If a component calls `invoke` multiple times on mount, chain `Once` calls in the right order or use `mockImplementation` with command dispatch."* `src/hooks/__tests__/useBlockResolve.test.ts` has 50 calls to `mockResolvedValue(...)` (verified by grep) and zero calls to `mockResolvedValueOnce(...)`.
@@ -1097,30 +1040,6 @@ Compare with `src/editor/__tests__/at-tag-picker.test.ts` (~452 lines) and `src/
 **Cost:** M (~1 day across 7 specs + ~7 component edits).
 **Risk:** S — additive `data-testid` attributes; existing CSS classes preserved for styling.
 **Impact:** M — CSS refactors are a recurring source of test breakage; switching to `data-testid` decouples test stability from style changes.
-
-### TEST-12 — `e2e/settings.spec.ts` theme-options test only checks 3 of 7 shipped themes
-
-**Problem:** `e2e/settings.spec.ts:33-46` opens the theme combobox and asserts that "Light", "Dark", and "System" options are visible. `SettingsView.tsx:207-215` ships seven themes: those three plus Solarized Light, Solarized Dark, Dracula, and One Dark Pro. The other four are not exercised — a regression that drops or renames any of them would not break this test.
-
-**Fix:** loop through all seven theme labels (use the i18n keys or hardcoded names matching the source) and assert each is visible. Optionally extend to assert that selecting each one applies the correct `data-theme` attribute on `<html>`.
-
-**Cost:** S.
-**Risk:** S — additive test.
-**Impact:** S — regression coverage for the four un-tested themes.
-
-### TEST-13 — `TabBar` dropdown Esc-to-close behaviour not explicitly tested
-
-**Problem:** `src/components/TabBar.tsx:143-264` uses a Radix Popover for the active-tab dropdown. Radix Popover handles Escape automatically, but this repo has no test that asserts the dropdown actually closes on Escape. If the Popover were ever swapped for a custom implementation, or if a parent listener captured Escape, the close behaviour could regress silently. Pair with UX-262 (the close button currently nested inside `role="menuitemradio"`).
-
-**Fix:** add a small test (component or e2e) that opens the dropdown, presses Escape, asserts the menu is gone and focus returns to the trigger.
-
-**Cost:** S.
-**Risk:** S.
-**Impact:** S — pinpoint regression catch on a high-traffic surface.
-
----
-
-## UX — User experience / Design polish
 
 ### UX-257 — Breadcrumb bar doesn't read as a breadcrumb, is oversized, and styling is inconsistent across the two surfaces
 
