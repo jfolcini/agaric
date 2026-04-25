@@ -386,12 +386,15 @@ File: `src/components/KeyboardShortcuts.tsx`
 | Shortcut | Action |
 | ---------- | -------- |
 | Space | Toggle selection |
-| Shift+Click | Range select |
+| Shift+Click | Range select (UX-140 — `useListMultiSelect.ts:76-102` walks `items` from `lastClickedId` to clicked id, applying `targetState` to every selectable item in range) |
 | Ctrl+A | Select all |
 | Enter | Revert selected |
 | Escape | Clear selection |
 | Arrow Up / Down | Navigate items |
+| Page Up / Page Down | Jump by page (`useListKeyboardNavigation` `pageUpDown: true`, default jump = 10 items, clamped at list boundaries — never wraps) |
 | j / k | Navigate items (vim-style) |
+
+**Cursor-based pagination contract** (`HistoryView.tsx:70-88`): the list is paged via `listPageHistory({ pageId: '__all__', cursor, limit: 50 })`. The hook (`usePaginatedQuery`) returns `{ items, loading, hasMore, error, loadMore, reload, setItems }` — every call after the first passes the `next_cursor` returned by the previous response. Never replace this with offset pagination (root AGENTS.md Invariant #3).
 
 ### Suggestion List Navigation
 
@@ -967,7 +970,12 @@ The app has two independent undo systems operating at different scopes:
 - Non-reversible operations: `purge_block`, `delete_attachment` — these are truly destructive.
 - Touch devices: Undo2/Redo2 icon buttons in `PageHeader.tsx` provide page-level undo/redo without keyboard.
 
-**Agent guidance:** When building features that modify blocks, ensure the operation goes through the op log (so page-level undo works automatically). If adding a new op type, verify `reverse.rs` can compute its inverse.
+**Page-level undo store constants** (`src/stores/undo.ts`):
+
+- `UNDO_GROUP_WINDOW_MS = 500` (`undo.ts`) — consecutive ops within 500 ms by the same device are grouped, so a single Ctrl+Z undoes the entire batch (e.g., recurrence ops triggered by `set_todo_state`). Same window is used by the backend `revert_ops` ordering. Bumped from 200 ms in MAINT-105 to give recurrence-op bursts headroom under load (slow disk, network) without breaking everyday typing-pace grouping.
+- `MAX_REDO_STACK = 100` (`undo.ts`) — per-page redo stack is capped at 100 entries; older entries are dropped on push (`redoStack.slice(0, MAX_REDO_STACK)`).
+
+**Agent guidance:** When building features that modify blocks, ensure the operation goes through the op log (so page-level undo works automatically). If adding a new op type, verify `reverse.rs` can compute its inverse. If you need to change the grouping window or redo stack depth, update these named constants — never hardcode `500` / `100` at call sites.
 
 ## Multi-Selection & Batch Operations
 
@@ -1172,8 +1180,15 @@ Sheet component for editing block properties:
 - Loads properties + definitions on open.
 - Inline editing: `<Input>` with blur-to-save (no explicit Save button).
 - Delete per property with confirmation.
-- `AddPropertySection`: definitions popover with search, type badges.
+- `AddPropertyPopover` (`src/components/AddPropertyPopover.tsx`): definitions popover with search, type badges.
 - Ref-type properties use a page picker (`PageResponse.items`).
+
+**Focus management:**
+
+- Focus is trapped inside the drawer while open (Radix `Sheet` primitive).
+- Tab / Shift+Tab cycle through focusable elements within the drawer; focus does not escape to the underlying page.
+- Esc closes the drawer (Radix dismiss behaviour).
+- On close, focus is restored to the element that opened the drawer (typically the gutter "properties" / kebab-menu trigger).
 
 ## Import UX
 
@@ -1189,12 +1204,18 @@ Extended toast patterns beyond basic success/error:
 
 | Pattern | Example | Duration |
 | --------- | --------- | ---------- |
-| **Undo action** | `toast.success('Resolved', { action: { label: 'Undo', onClick: revert } })` | 6s |
-| **Retry action** | `toast.error('Partial failure', { action: { label: 'Retry', onClick: retry } })` | 5s |
+| **Operation feedback (no action)** | `toast(t('undo.undoneMessage'), { duration: 1500 })` | 1500 ms |
+| **Undo action** | `toast.success('Resolved', { action: { label: 'Undo', onClick: revert } })` | 6 s |
+| **Retry action** | `toast.error('Partial failure', { action: { label: 'Retry', onClick: retry } })` | 5 s |
 | **Warning** | `toast.warning('Multiple journal templates found')` | default |
-| **Partial failure** | `toast.error('3 of 5 blocks failed')` with retry | 5s |
+| **Partial failure** | `toast.error('3 of 5 blocks failed')` with retry | 5 s |
 
-**Agent guidance:** Destructive or state-changing actions that can be reversed should include an "Undo" toast action. Batch operations that may partially fail should show the failure count and a "Retry" option.
+**Two distinct duration patterns:**
+
+- **1500 ms — operation feedback toasts.** No action button. Used to confirm a completed action the user already initiated (e.g., the "Undone" / "Redone" toasts emitted by `useUndoShortcuts.ts:71,93` after Ctrl+Z / Ctrl+Y). Short enough to acknowledge without lingering.
+- **6 s — toasts that carry an Undo button.** The longer duration is required because the user must have time to read the message and decide whether to click Undo. Never apply a 1500 ms duration to a toast with an action — the button vanishes before it can be used.
+
+**Agent guidance:** Destructive or state-changing actions that can be reversed should include an "Undo" toast action with the 6 s duration. Batch operations that may partially fail should show the failure count and a "Retry" option. Operation feedback (e.g., "Undone", "Saved") with no action button uses the 1500 ms duration.
 
 ## Editor UX
 

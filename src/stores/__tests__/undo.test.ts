@@ -456,16 +456,16 @@ describe('isWithinUndoGroup', () => {
     expect(isWithinUndoGroup('2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.050Z')).toBe(true)
   })
 
-  it('returns false for timestamps 500ms apart', () => {
-    expect(isWithinUndoGroup('2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.500Z')).toBe(false)
+  it('returns false for timestamps 800ms apart', () => {
+    expect(isWithinUndoGroup('2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.800Z')).toBe(false)
   })
 
-  it('returns true for timestamps exactly at the boundary (200ms)', () => {
-    expect(isWithinUndoGroup('2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.200Z')).toBe(true)
+  it('returns true for timestamps exactly at the boundary (500ms)', () => {
+    expect(isWithinUndoGroup('2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.500Z')).toBe(true)
   })
 
-  it('returns false for timestamps 201ms apart', () => {
-    expect(isWithinUndoGroup('2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.201Z')).toBe(false)
+  it('returns false for timestamps 501ms apart', () => {
+    expect(isWithinUndoGroup('2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.501Z')).toBe(false)
   })
 
   it('returns false when either timestamp is invalid', () => {
@@ -478,8 +478,8 @@ describe('isWithinUndoGroup', () => {
     expect(isWithinUndoGroup('2024-01-01T00:00:00.100Z', '2024-01-01T00:00:00.000Z')).toBe(true)
   })
 
-  it('uses UNDO_GROUP_WINDOW_MS constant (200ms)', () => {
-    expect(UNDO_GROUP_WINDOW_MS).toBe(200)
+  it('uses UNDO_GROUP_WINDOW_MS constant (500ms)', () => {
+    expect(UNDO_GROUP_WINDOW_MS).toBe(500)
   })
 })
 
@@ -512,7 +512,7 @@ describe('batch undo', () => {
     vi.clearAllMocks()
   })
 
-  it('groups consecutive ops within 200ms window', async () => {
+  it('groups consecutive ops within 500ms window', async () => {
     const t = '2024-01-01T00:00:00'
     mockedListPageHistory.mockResolvedValueOnce({
       items: [
@@ -539,11 +539,11 @@ describe('batch undo', () => {
     expect(pageState?.redoStack).toHaveLength(3)
   })
 
-  it('stops at group boundary (>200ms gap)', async () => {
+  it('stops at group boundary (>500ms gap)', async () => {
     const t = '2024-01-01T00:00:00'
     mockedListPageHistory.mockResolvedValueOnce({
       items: [
-        makeHistoryEntry({ seq: 3, created_at: `${t}.500Z` }), // 350ms gap to seq 2
+        makeHistoryEntry({ seq: 3, created_at: `${t}.800Z` }), // 650ms gap to seq 2
         makeHistoryEntry({ seq: 2, created_at: `${t}.150Z` }),
         makeHistoryEntry({ seq: 1, created_at: `${t}.000Z` }),
       ],
@@ -555,7 +555,7 @@ describe('batch undo', () => {
 
     await useUndoStore.getState().undo('page1')
 
-    // Only the first undo — the 350ms gap stops the batch
+    // Only the first undo — the 650ms gap stops the batch
     expect(mockedUndoPageOp).toHaveBeenCalledTimes(1)
     expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
   })
@@ -618,7 +618,7 @@ describe('batch undo', () => {
       has_more: false,
     })
 
-    // After filtering: [seq4(100ms), seq2(50ms), seq1(0ms)] — all within 200ms
+    // After filtering: [seq4(100ms), seq2(50ms), seq1(0ms)] — all within 500ms
     mockedUndoPageOp
       .mockResolvedValueOnce(makeUndoResult({ seq: 4, newSeq: 6 }))
       .mockResolvedValueOnce(makeUndoResult({ seq: 2, newSeq: 7 }))

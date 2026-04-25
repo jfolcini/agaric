@@ -11,7 +11,7 @@ Think Logseq or Notion, but:
 - **Local-first** — SQLite database on your filesystem, no server required
 - **Offline-first** — works without internet, syncs peer-to-peer over local WiFi
 - **Fast** — Rust backend, instant search via FTS5, sub-millisecond operations
-- **Private** — no telemetry, no cloud, filesystem-level encryption
+- **Private** — no cloud telemetry / no external analytics, no cloud, filesystem-level encryption (the local logger in `src/lib/logger.ts` writes errors to disk so the in-app `BugReportDialog` can attach them — nothing leaves your machine)
 
 ## Core Concepts
 

@@ -27,6 +27,10 @@ import { logger } from '../lib/logger'
  * CSS selectors for transient UI elements (popups, toolbars, pickers) that
  * should NOT cause the editor to unmount when they receive focus.
  * Add new entries here when introducing new popup-style UI.
+ *
+ * AGENTS.md: keep selectors here in sync when adding new editor-side overlays
+ * (suggestion popups, BlockContextMenu, BlockDatePicker, etc. — see
+ * "Floating UI lifecycle logging" in AGENTS.md).
  */
 export const EDITOR_PORTAL_SELECTORS = [
   '.suggestion-popup',

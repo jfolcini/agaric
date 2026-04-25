@@ -20,8 +20,20 @@ export type { OpRef, UndoResult }
 
 export const MAX_REDO_STACK = 100
 
-/** Time window (ms) within which consecutive same-device ops are grouped for batch undo. */
-export const UNDO_GROUP_WINDOW_MS = 200
+/**
+ * Time window (ms) within which consecutive same-device ops are grouped for
+ * batch undo.
+ *
+ * MAINT-105: bumped from 200 ms → 500 ms. The original 200 ms window was
+ * sized for the in-memory recurrence-op burst (8-10 ops fired
+ * back-to-back). Under realistic load — slow disks, larger transactions,
+ * mobile/Android backends — those bursts can stretch past 200 ms and the
+ * grouping silently breaks, leaving the user with one Ctrl+Z per op
+ * instead of one Ctrl+Z per logical action. 500 ms is still well under
+ * any plausible "two intentional user actions" gap and gives the burst
+ * room to land as a single group.
+ */
+export const UNDO_GROUP_WINDOW_MS = 500
 
 /**
  * Returns true if two ISO-8601 timestamps are within UNDO_GROUP_WINDOW_MS
