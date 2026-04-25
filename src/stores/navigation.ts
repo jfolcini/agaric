@@ -157,7 +157,13 @@ export const useNavigationStore = create<NavigationStore>()(
         const pageStack = selectPageStack(state)
         const top = pageStack[pageStack.length - 1]
         if (top?.pageId === pageId) {
-          set({ selectedBlockId: blockId ?? null })
+          // The page is already at the top of the stack, but the user may
+          // have switched away to another view (Pages, Tags, Journal, …)
+          // in the meantime. Ensure `currentView` flips back to
+          // `page-editor` so clicking the same page in the browser
+          // actually re-renders it instead of leaving the user stranded
+          // on the previous view.
+          set({ currentView: 'page-editor', selectedBlockId: blockId ?? null })
           return
         }
 

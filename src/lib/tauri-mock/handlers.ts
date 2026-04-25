@@ -140,6 +140,56 @@ export const HANDLERS: Record<string, Handler> = {
     return row
   },
 
+  // ---------------------------------------------------------------------------
+  // Spaces — FEAT-3 Phase 1 / Phase 2
+  // ---------------------------------------------------------------------------
+
+  // A mock vault always exposes a single canonical "Personal" space — the
+  // matching id used across the unit tests in `App.test.tsx`,
+  // `PageHeader.test.tsx`, etc. This keeps the space store hydrated and
+  // `currentSpaceId` non-null so page-creation flows (Ctrl+N, the
+  // PageBrowser input, the `[[` picker) don't bail out at the
+  // `if (!isReady || currentSpaceId == null) return` guard in `App.tsx`.
+  list_spaces: () => [{ id: 'SPACE_PERSONAL', name: 'Personal' }],
+
+  // FEAT-3 Phase 2 atomic page-creation IPC. Accepts `parentId` (null for a
+  // top-level page), `content`, and `spaceId`. Returns the new page's ULID
+  // as a plain string — `bindings.ts` documents this departure from the
+  // BlockRow shape used by `create_block`.
+  create_page_in_space: (args) => {
+    const a = args as Record<string, unknown>
+    const id = fakeId()
+    const parentId = (a['parentId'] as string | null) ?? null
+    const siblings = [...blocks.values()].filter(
+      (b) => b['parent_id'] === parentId && !b['deleted_at'],
+    )
+    const position = siblings.length
+    const row = {
+      id,
+      block_type: 'page',
+      content: (a['content'] as string) ?? null,
+      parent_id: parentId,
+      page_id: id,
+      position,
+      deleted_at: null,
+      is_conflict: false,
+      conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+    }
+    blocks.set(id, row)
+    pushOp('create_block', {
+      block_id: id,
+      content: row.content,
+      parent_id: parentId,
+      block_type: 'page',
+      position,
+    })
+    return id
+  },
+
   edit_block: (args) => {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)

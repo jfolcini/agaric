@@ -2,8 +2,11 @@ import { expect, test } from './helpers'
 
 test.describe('Smoke tests', () => {
   test('app loads and shows Agaric branding', async ({ page }) => {
+    // FEAT-3 Phase 1 deliberately removed the sidebar "Agaric" wordmark —
+    // app identity now lives in the window title (set in `index.html`)
+    // plus the favicon. Assert the title rather than searching the body.
     await page.goto('/')
-    await expect(page.getByText('Agaric', { exact: true })).toBeVisible()
+    await expect(page).toHaveTitle('Agaric')
   })
 
   test('sidebar has all expected nav items', async ({ page }) => {

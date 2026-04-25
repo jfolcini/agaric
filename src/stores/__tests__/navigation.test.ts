@@ -268,6 +268,27 @@ describe('useNavigationStore', () => {
       expect(state.selectedBlockId).toBe('BLOCK_X')
     })
 
+    it('navigating to the page already at the top of the stack flips currentView back to page-editor', () => {
+      const { navigateToPage, setView } = useNavigationStore.getState()
+
+      // Open Page 1 → user is on the editor.
+      navigateToPage('P1', 'Page 1')
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+
+      // User clicks the "Pages" sidebar button. The active tab still has
+      // P1 at the top of its stack, but currentView is now 'pages'.
+      setView('pages')
+      expect(useNavigationStore.getState().currentView).toBe('pages')
+
+      // Clicking the same page in the browser must bring the user back to
+      // the page editor — otherwise the click looks like a no-op.
+      navigateToPage('P1', 'Page 1')
+
+      const state = useNavigationStore.getState()
+      expect(state.currentView).toBe('page-editor')
+      expect(selectPageStack(state)).toHaveLength(1)
+    })
+
     it('updates the active tab label to the top page title', () => {
       useNavigationStore.getState().navigateToPage('P1', 'My Page')
 
