@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-58 open items.
+52 open items.
 
-Previously resolved: 407+ items across 149 sessions.
+Previously resolved: 413+ items across 149 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -54,16 +54,13 @@ Previously resolved: 407+ items across 149 sessions.
 | TEST-10 | TEST | `useBlockResolve.test.ts` uses sticky `mockResolvedValue` 50× and never `mockResolvedValueOnce` — call-ordering bugs go undetected | S |
 | TEST-11 | TEST | 7 E2E specs use CSS-class selectors (23 instances total) instead of `data-testid` per the documented selector convention | M |
 | UX-257 | UX | Breadcrumb bar (zoom + page header) doesn't read as a breadcrumb, is oversized, and styling is inconsistent across the two surfaces | M |
-| UX-258 | UX | DailyView / DaySection don't scroll to `selectedBlockId` on mount when navigating into a date-titled page (`TODO(UX-242)` in `src/stores/navigation.ts`) | S |
 | UX-259 | UX | `ConfirmDialog` `autoFocus` lands on the destructive action button — Enter on a destructive confirm is a footgun | S |
 | UX-260 | UX | Discoverability sweep for keyboard shortcuts and gestures (sidebar swipe, journal nav, undo tiers, Shift+Click range, properties drawer shortcut, Ctrl+F, KeyboardShortcuts→Settings link) | M |
-| UX-261 | UX | `PageTreeItem` delete button is `opacity-0` until hover — invisible to keyboard users on `:focus-visible` | S |
 | UX-262 | UX | `TabBar` close button is a `<button>` nested inside a `role="menuitemradio"` div — nested-interactive a11y violation | S |
 | UX-263 | UX | Pairing flow polish (countdown SR announcements, ordinal labels, address/rename validation, mid-pair close guard, countdown pause while typing) | M |
 | UX-264 | UX | Sync error UX (no retry action on failure toast, no online/offline transition feedback, no batch progress, camera-permission denial leaves user stuck on QR mode) | M |
 | UX-265 | UX | Conflict UI improvements (Keep/Discard label clarity, sort/filter for large conflict sets, type-badge tooltips, missing-original-block fallback, large-diff handling) | M |
 | UX-266 | UX | Sync status visibility — sidebar-footer indicator missing when StatusPanel collapsed; "discovering" state visually identical to "pairing"; deleted-current-space silently switches without notification | S |
-| UX-267 | UX | Unpair confirmation dialog doesn't explain that ops are retained locally — users fear data loss | S |
 | UX-268 | UX | Touch-target / mobile sizing fixes across Agenda + Search (DuePanelFilters toggle missing min-h + aria-label, AgendaSortGroup buttons missing min-w, SourcePageFilter button responsiveness, BacklinkFilterBuilder add-filter row mobile layout) | S |
 | UX-269 | UX | `SearchPanel` consolidation — switch custom load-more to shared `LoadMoreButton`, fix aria-live placement, debounce visual feedback, CJK notice placement, alias-overlay positioning, results-count announcement | M |
 | UX-270 | UX | `GraphView` a11y + filter persistence — bare `overflow-y-auto` → `ScrollArea`, redundant aria-label on labelled checkboxes, `role="img"` on interactive SVG, filter state reset on every navigation | M |
@@ -76,11 +73,8 @@ Previously resolved: 407+ items across 149 sessions.
 | UX-277 | UX | `BugReportDialog` polish — uses native `<input type="checkbox">` instead of design-system `Checkbox`, no success toast after submit, no log-content preview before submit | S |
 | UX-278 | UX | `WelcomeModal` — sample page content hardcoded English; feature list uses `<div>` instead of `<ul>/<li>` semantics | S |
 | UX-279 | UX | `FeatureErrorBoundary` (section-level errors) lacks "Report bug" affordance — only the global `ErrorBoundary` has it | M |
-| UX-280 | UX | Attachments / Image / PDF polish — `PdfViewerDialog` lacks keyboard page-nav shortcuts; `ImageResizeToolbar` buttons lack `aria-pressed` | S |
 | UX-281 | UX | Suggestion list & roving editor polish — category headers use plain `<div>` (need `role="heading"`); markdown serializer warns on unknown inline nodes but strips them silently to user; gutter-button tooltips invisible on touch | S |
 | UX-282 | UX | `src/lib/announcer.ts` exists with `announce.*` i18n keys but is invoked from very few places — paid-for accessibility utility is largely unused | M |
-| UX-283 | UX | Templates / Data settings polish — `TemplatesView` lacks empty state when search yields no results; `DataSettingsTab` import has no per-file progress indicator | S |
-| UX-284 | UX | `RecentPagesStrip` and `SpaceSwitcher` discoverability — focus marker on chips relies only on ring; "Manage spaces" disabled tooltip may not trigger on touch | S |
 | PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S |
 | PUB-3 | PUB | Employer IP clearance before public release | S |
 | PUB-5 | PUB | Tauri updater endpoint points to a GitHub org/repo that does not yet exist | S |
@@ -1082,35 +1076,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 
 **Cost:** M — single focused refactor session. Two callers, one new primitive, one coordinated test pass. No protocol, schema, store, or sync-protocol changes; stays firmly inside AGENTS.md "Architectural Stability" guardrails.
 
-### UX-258 — DailyView / DaySection don't scroll to `selectedBlockId` on mount when navigating into a date-titled page
-
-**Problem:** `src/stores/navigation.ts:140-147` carries a `TODO(UX-242)` marker. When the user navigates to a date-titled page (`YYYY-MM-DD`) — via `PageBrowser`, `BlockListItem` breadcrumb, `SearchPanel`, `TagFilterPanel`, `TemplatesView`, a graph node click, or a `PageLink` chip — `navigateToPage(pageId, title, blockId?)` correctly routes into the journal view via `useJournalStore.navigateToDate(parsedDate, 'daily')` *and* persists the target `selectedBlockId` on the navigation store. But `DailyView` / `DaySection` don't currently read that field on mount, so the user lands on the right day but at the top of it, and has to scroll/search to find the specific block they were trying to reach. For ordinary same-page navigation the equivalent scroll-into-view behaviour already exists (see `scrollFocusedBlockIntoView` in `src/hooks/useBlockKeyboardHandlers.ts`, UX-241); only the date-routed branch is missing it.
-
-**Why it matters:** Search results, breadcrumbs, and graph node clicks promise "take me to *that* block." For non-date-titled pages they deliver. For date-titled pages they currently land the user on the day with no scroll-to-block, which silently degrades the navigation contract for a sizeable subset of pages (every journal day, every page named `YYYY-MM-DD`). The parent UX-242 (date-routing on title-match navigation) shipped in session 437, but this final scroll-to-block slice was deliberately deferred and never picked up.
-
-**Scope:** thread `selectedBlockId` from `useNavigationStore` into `DailyView` / `DaySection` and trigger a single `requestAnimationFrame` → `document.querySelector('[data-block-id="${id}"]')?.scrollIntoView({ block: 'nearest' })` after first paint when present, plus restore focus to that block via the existing `useBlockStore.setFocused` so keyboard navigation stays coherent. Mirror the pattern already used by `scrollFocusedBlockIntoView` (UX-241) and the post-drag focus restoration. Clear `selectedBlockId` after the scroll fires (one-shot semantics — the user re-arming a navigation should re-scroll, but a re-render of the same view should not).
-
-**Acceptance:**
-
-- Navigating to a date-titled page with a non-null `selectedBlockId` lands the user with that block in view (`scrollIntoView({ block: 'nearest' })`) and focused.
-- Missing-block / null-`selectedBlockId` / non-date page paths unchanged (regression guard tests).
-- Scroll fires exactly once per arming — re-renders of the same view with the same `selectedBlockId` do not re-trigger.
-- The `TODO(UX-242)` comment in `src/stores/navigation.ts` is removed; the inline note documenting the deferred follow-up goes with it.
-- New test cases in `src/components/__tests__/DailyView.test.tsx` (or `DaySection.test.tsx`) cover the happy path + missing-DOM-node + null-id fallthrough + one-shot semantics.
-
-**Files touched (expected):**
-
-- **Edit:** `src/components/DailyView.tsx` and/or `src/components/DaySection.tsx` — read `selectedBlockId` from `useNavigationStore`, add the `useEffect` that schedules `requestAnimationFrame` → `scrollIntoView` + focus, then clears the id.
-- **Edit:** `src/stores/navigation.ts` — remove the `TODO(UX-242)` comment block; optional new `consumeSelectedBlockId()` helper if the one-shot clear belongs in the store rather than the component.
-- **Tests:** new section/file covering the four cases above.
-- **No** backend changes. **No** new IPC commands. **No** new keyboard shortcuts. **No** schema or op-log changes.
-
-**Verification:** `npx vitest run`, `prek run --all-files`. Optionally one e2e probe in an existing journal-navigation spec to assert the scroll fires when clicking a search result whose source block lives in a date-titled page.
-
-**Cost:** S — small wiring change touching DailyView / DaySection + one new test section. No invariant impact, no new abstractions.
-
-**Status:** Open — explicit follow-up filed by UX-242 (session 437); the parent UX-242 (date-routing on title-match navigation) shipped without this final scroll-to-block slice.
-
 ### UX-259 — `ConfirmDialog` `autoFocus` lands on the destructive action button
 
 **Problem:** `src/components/ConfirmDialog.tsx:75-86` always sets `autoFocus` on the `<AlertDialogAction>` regardless of variant. For dialogs raised with `actionVariant="destructive"` (purge selected, batch revert, restore-to-here, unpair, compact ops, conflict batch keep/discard) the dialog opens with focus already on the red action button — a reflex Enter confirms the destructive action without ever moving focus.
@@ -1148,16 +1113,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Cost:** M — many small surfaces but each fix is XS.
 **Risk:** S — additive UI, no behaviour change.
 **Impact:** L — flips a large amount of latent capability into discoverable capability.
-
-### UX-261 — `PageTreeItem` delete button is `opacity-0` until hover — invisible to keyboard users
-
-**Problem:** `src/components/PageTreeItem.tsx:58-71` styles the delete button as `opacity-0 group-hover:opacity-100`, with a touch override (`[@media(pointer:coarse)]:opacity-100`) but no `focus-visible` override. Keyboard users tab onto the button, the button is announced via aria-label, but it is invisible — they cannot see what they're about to delete or which row currently owns focus. Violates WCAG 2.1 SC 2.4.7 (Focus Visible).
-
-**Fix:** add `focus-visible:opacity-100` (and ideally `peer-focus-visible:` on the button so the row also shows focus state). Alternatively remove the `opacity-0` rule and accept always-visible delete buttons.
-
-**Cost:** S.
-**Risk:** S.
-**Impact:** M — fixes a real keyboard-a11y hole on the page tree, one of the highest-traffic surfaces.
 
 ### UX-262 — `TabBar` close button nested inside `role="menuitemradio"` — nested-interactive a11y violation
 
@@ -1224,16 +1179,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Cost:** S.
 **Risk:** S — small additive UI.
 **Impact:** M — makes sync state and space changes glanceable.
-
-### UX-267 — Unpair confirmation dialog doesn't explain that ops are retained locally
-
-**Problem:** `src/components/UnpairConfirmDialog.tsx:32-34` confirmation copy says only "You will need to pair again to sync." It doesn't clarify the threat-model-correct behaviour: the operation log is retained locally and on the peer, no notes are deleted, and re-pairing later resumes sync from where it left off. Users routinely fear data loss and back out of legitimate unpairs.
-
-**Fix:** update the i18n string to: "This removes the pairing. Your notes and sync history remain on this device. You can pair again later to resume syncing." Aligns with AGENTS.md threat model (single-user, multi-device).
-
-**Cost:** S — XS, single i18n string.
-**Risk:** S.
-**Impact:** L — reduces user anxiety and cuts a real "I'll back out instead" friction point.
 
 ### UX-268 — Touch-target / mobile sizing fixes across Agenda + Search
 
@@ -1403,17 +1348,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Risk:** M.
 **Impact:** M.
 
-### UX-280 — Attachments / Image / PDF polish
-
-**Problem:**
-
-- `src/components/PdfViewerDialog.tsx:31-250` — Prev/Next buttons but no keyboard shortcuts (Arrow Left/Right, PageUp/PageDown). Add a `useEffect` with the dialog as the focus root.
-- `src/components/ImageResizeToolbar.tsx:51-65` — preset buttons change variant based on `currentWidth` but no `aria-pressed`. Add `aria-pressed={currentWidth === preset.value}`.
-
-**Cost:** S.
-**Risk:** S.
-**Impact:** S.
-
 ### UX-281 — Suggestion list & roving editor polish
 
 **Problem:**
@@ -1435,41 +1369,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Cost:** M — broad sweep.
 **Risk:** S — additive.
 **Impact:** L — completes a documented a11y commitment that is currently fictional in most flows.
-
-### UX-283 — Templates / Data settings polish
-
-**Problem:**
-
-- `src/components/TemplatesView.tsx:35-245` — when the search filter yields zero matches, the list is silently empty; users may think there are no templates at all. Add an `EmptyState` with `t('templates.noSearchResults')` when `filtered.length === 0 && search.length > 0`.
-- `src/components/DataSettingsTab.tsx:28-71` — multi-file imports show only a single spinner; no per-file progress. Render "Importing file 2 of 5: document.md" during the loop.
-
-**Cost:** S.
-**Risk:** S.
-**Impact:** S.
-
-### UX-284 — `RecentPagesStrip` and `SpaceSwitcher` discoverability
-
-**Problem:**
-
-- `src/components/RecentPagesStrip.tsx:65-80` — supports arrow-key navigation (UX-256) but the focused chip relies entirely on the `Button` ring; consider also a subtle background tint to make the focus location more obvious.
-- `src/components/SpaceSwitcher.tsx:79-100` — disabled "Manage spaces…" entry has a tooltip on hover, but tooltips don't fire on touch. Add a small info icon (`Info` from lucide) next to the text so the tooltip target is also visible to mobile users.
-
-**Cost:** S.
-**Risk:** S.
-**Impact:** S.
-
----
-
-## PUB — Public-release / pre-publish decisions
-
-> **Every item in this section was gated on explicit user approval.**
-> Decisions are now recorded inline under each item. Items marked **DECIDED**
-> are ready for implementation in a future publish-prep session. Items marked
-> **DEFERRED** remain on hold until the triggering condition (usually a firm
-> publish target + timing) is met; agents must not revisit those during
-> routine REVIEW-LATER sweeps. No additional user approval is required to
-> implement a DECIDED item, but the implementation itself must still follow
-> the standard PLAN → BUILD → REVIEW → MERGE → COMMIT → LOG pipeline.
 
 ### PUB-2 — Git author email across all history is corporate (`javier.folcini@avature.net`)
 
