@@ -514,7 +514,6 @@ export function SearchPanel(): React.ReactElement {
               disabled={loadingResultId === aliasMatch.id}
               showSpinner={loadingResultId === aliasMatch.id}
               contentClassName="line-clamp-2"
-              highlightText={debouncedQuery}
             />
             <span className="absolute top-1 right-2 text-xs text-muted-foreground">
               {t('search.aliasMatch', { alias: aliasQuery })}
@@ -551,7 +550,6 @@ export function SearchPanel(): React.ReactElement {
                   disabled={loadingResultId === block.id}
                   showSpinner={loadingResultId === block.id}
                   contentClassName="line-clamp-2"
-                  highlightText={debouncedQuery}
                 >
                   {block.page_id && pageTitles.get(block.page_id) && (
                     <p className="text-xs text-muted-foreground mt-1">

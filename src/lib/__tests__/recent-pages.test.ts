@@ -52,6 +52,35 @@ describe('recent-pages', () => {
       localStorage.setItem(STORAGE_KEY, 'null')
       expect(getRecentPages()).toEqual([])
     })
+
+    it('drops entries missing required fields', () => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify([
+          { id: 'A', title: 'X', visitedAt: '2026-01-01' },
+          { id: 'B' },
+          { title: 'Y', visitedAt: '2026' },
+        ]),
+      )
+      expect(getRecentPages()).toEqual([{ id: 'A', title: 'X', visitedAt: '2026-01-01' }])
+    })
+
+    it('drops entries with wrong field types', () => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify([
+          { id: 'A', title: 'X', visitedAt: '2026-01-01' },
+          { id: 123, title: 'Y', visitedAt: '2026' },
+          { id: 'B', title: null, visitedAt: '2026' },
+        ]),
+      )
+      expect(getRecentPages()).toEqual([{ id: 'A', title: 'X', visitedAt: '2026-01-01' }])
+    })
+
+    it('returns empty array when all entries are malformed', () => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([{}, { bogus: true }, null, 'string']))
+      expect(getRecentPages()).toEqual([])
+    })
   })
 
   describe('addRecentPage', () => {

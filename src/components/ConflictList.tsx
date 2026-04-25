@@ -138,8 +138,13 @@ export function ConflictList(): React.ReactElement {
         if (cancelled) fn()
         else unlisten = fn
       })
-      .catch(() => {
-        // Not in Tauri context — no-op
+      .catch((err: unknown) => {
+        logger.warn(
+          'ConflictList',
+          'sync:complete listener unavailable (likely no Tauri context)',
+          undefined,
+          err,
+        )
       })
 
     return () => {

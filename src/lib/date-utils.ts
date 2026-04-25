@@ -60,7 +60,7 @@ export function formatWeekRange(d: Date): string {
 }
 
 /** Short month names for compact date display. */
-const MONTH_SHORT = [
+export const MONTH_SHORT = [
   'Jan',
   'Feb',
   'Mar',

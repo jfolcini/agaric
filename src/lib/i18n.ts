@@ -959,6 +959,7 @@ const resources = {
       // Backlink filter
       'backlink.searchTextRequired': 'Search text is required',
       'backlink.propertyKeyRequired': 'Property key is required',
+      'backlink.propertyNotFound': 'No blocks have property "{{key}}"',
       'backlink.invalidNumber': 'Invalid number',
       'backlink.dateValueRequired': 'Date value is required',
       'backlink.dateRangeRequired': 'At least one date boundary is required',

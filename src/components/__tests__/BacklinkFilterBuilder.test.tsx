@@ -289,6 +289,35 @@ describe('BacklinkFilterBuilder', () => {
       expect(onFiltersChange).not.toHaveBeenCalled()
     })
 
+    it('shows i18n toast error when property is not found in propertyKeys', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      // Start with no propertyKeys so the SearchInput renders, allowing free-form input
+      const { rerender } = renderBuilder({ onFiltersChange, propertyKeys: [] })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
+
+      // Type an unknown key into the free-form SearchInput
+      await user.type(screen.getByLabelText('Property key'), 'unknownKey')
+
+      // Re-render with a non-empty propertyKeys list that does NOT include 'unknownKey'.
+      // The form's propKey state persists across the re-render; the validator's
+      // propertyKeys snapshot now flags 'unknownKey' as not present.
+      rerender(
+        <BacklinkFilterBuilder
+          {...defaultProps}
+          onFiltersChange={onFiltersChange}
+          propertyKeys={['knownKey']}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(toast.error).toHaveBeenCalledWith('No blocks have property "unknownKey"')
+      expect(onFiltersChange).not.toHaveBeenCalled()
+    })
+
     it('adds a PropertyNum filter', async () => {
       const user = userEvent.setup()
       const onFiltersChange = vi.fn()

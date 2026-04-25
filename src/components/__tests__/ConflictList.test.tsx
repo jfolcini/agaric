@@ -29,6 +29,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { ulidToDate } from '@/lib/format'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { emptyPage, makeConflict } from '../../__tests__/fixtures'
 import { announce } from '../../lib/announcer'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
@@ -51,6 +52,15 @@ vi.mock('../../hooks/useRichContentCallbacks', () => ({
 
 vi.mock('../../lib/announcer', () => ({
   announce: vi.fn(),
+}))
+
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
 }))
 
 const mockUnlisten = vi.fn()
@@ -124,6 +134,23 @@ describe('ConflictList', () => {
         limit: 50,
       })
     })
+  })
+
+  it('logs a warning when the sync:complete listener cannot be installed', async () => {
+    mockListen.mockRejectedValueOnce(new Error('not in tauri'))
+    mockInvokeByCommand({ get_conflicts: emptyPage })
+
+    render(<ConflictList />)
+
+    await waitFor(() => {
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(1)
+    })
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      'ConflictList',
+      expect.stringContaining('sync:complete'),
+      undefined,
+      expect.any(Error),
+    )
   })
 
   it('shows loading skeleton with aria-busy during initial load', () => {
