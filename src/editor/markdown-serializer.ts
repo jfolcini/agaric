@@ -348,7 +348,12 @@ function serializeHeading(node: HeadingNode): string {
 function serializeCodeBlock(node: CodeBlockNode): string {
   const code = node.content?.[0]?.text ?? ''
   const lang = node.attrs?.language ?? ''
-  return `\`\`\`${lang}\n${code}\n\`\`\``
+  // CommonMark: pick a fence longer than the longest run of backticks in the
+  // code, so the closing fence cannot collide with content. Default to 3.
+  const runs = code.match(/`+/g)
+  const longest = runs ? Math.max(...runs.map((r) => r.length)) : 0
+  const fence = '`'.repeat(Math.max(3, longest + 1))
+  return `${fence}${lang}\n${code}\n${fence}`
 }
 
 function serializeBlockquote(node: BlockquoteNode): string {
@@ -645,15 +650,27 @@ interface BlockParseResult {
   readonly consumed: number
 }
 
-/** Fenced code block: ```[lang]\n ... \n``` */
+/**
+ * Fenced code block. CommonMark variable-length fence: opening fence is a run
+ * of 3+ backticks optionally followed by an info string (the language). The
+ * info string may not contain backticks (CommonMark §4.5). The closing fence
+ * is a line containing only a run of backticks at least as long as the
+ * opening, optionally followed by trailing whitespace.
+ */
 export function parseCodeBlock(lines: readonly string[], i: number): BlockParseResult | null {
   const line = lines[i] as string
-  if (!line.startsWith('```')) return null
-  const rawLang = line.slice(3).trim() || null
+  // Opening fence: leading run of 3+ backticks, then an info string with no
+  // backticks. Rejects e.g. "x```" (non-backtick before fence) and "``` ```"
+  // (info string containing backticks).
+  const openMatch = line.match(/^(`{3,})([^`]*)$/)
+  if (!openMatch) return null
+  const fenceLen = (openMatch[1] as string).length
+  const rawLang = (openMatch[2] as string).trim() || null
   const language = rawLang && /^[a-zA-Z0-9_+\-#.]+$/.test(rawLang) ? rawLang : null
+  const closeRe = new RegExp(`^\`{${fenceLen},}\\s*$`)
   const codeLines: string[] = []
   let j = i + 1 // skip opening fence
-  while (j < lines.length && !lines[j]?.startsWith('```')) {
+  while (j < lines.length && !closeRe.test(lines[j] as string)) {
     codeLines.push(lines[j] as string)
     j++
   }

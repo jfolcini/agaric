@@ -9,7 +9,7 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import { parse, serialize } from '../markdown-serializer'
-import type { DocNode, InlineNode, ParagraphNode, PMMark, TextNode } from '../types'
+import type { CodeBlockNode, DocNode, InlineNode, ParagraphNode, PMMark, TextNode } from '../types'
 
 // -- Configuration ------------------------------------------------------------
 
@@ -92,6 +92,68 @@ const arbParagraph: fc.Arbitrary<ParagraphNode> = fc
 const arbDoc: fc.Arbitrary<DocNode> = fc
   .array(arbParagraph, { minLength: 1, maxLength: 3 })
   .map((content) => ({ type: 'doc' as const, content }))
+
+/**
+ * Arbitrary content for a code block. Deliberately mixes plain text with runs
+ * of backticks of various lengths (3, 4, 5+) at arbitrary positions, including
+ * stand-alone fence-shaped lines like "```", "````python", "```\n```". This
+ * exercises the variable-length CommonMark fence logic in
+ * serializeCodeBlock / parseCodeBlock (BUG-1).
+ */
+const arbCodeBlockContent: fc.Arbitrary<string> = fc
+  .array(
+    fc.oneof(
+      // Plain text line (no backticks) — keeps content readable
+      fc
+        .array(fc.constantFrom(...'abcXY 012'.split('')), { minLength: 0, maxLength: 8 })
+        .map((chars) => chars.join('')),
+      // A line that is exactly a backtick fence of length 3-6, optionally with
+      // a fake info string. These are the adversarial inputs for BUG-1.
+      fc
+        .tuple(
+          fc.integer({ min: 3, max: 6 }),
+          fc.constantFrom('', 'js', 'python', 'markdown', 'sh'),
+        )
+        .map(([n, lang]) => `${'`'.repeat(n)}${lang}`),
+      // A short string with embedded backtick runs (1-7 backticks anywhere)
+      fc
+        .array(
+          fc.oneof(
+            fc.constantFrom('a', 'b', ' ', 'x'),
+            fc.integer({ min: 1, max: 7 }).map((n) => '`'.repeat(n)),
+          ),
+          { minLength: 0, maxLength: 5 },
+        )
+        .map((parts) => parts.join('')),
+    ),
+    { minLength: 0, maxLength: 6 },
+  )
+  .map((lines) => lines.join('\n'))
+
+/** A code block with random content and an optional language. */
+const arbCodeBlock: fc.Arbitrary<CodeBlockNode> = fc
+  .tuple(
+    arbCodeBlockContent,
+    fc.option(fc.constantFrom('js', 'python', 'rust', 'markdown'), { nil: undefined }),
+  )
+  .map(([code, language]) => {
+    if (code.length === 0) {
+      return language
+        ? { type: 'codeBlock' as const, attrs: { language } }
+        : { type: 'codeBlock' as const }
+    }
+    if (language) {
+      return {
+        type: 'codeBlock' as const,
+        attrs: { language },
+        content: [{ type: 'text' as const, text: code }] as const,
+      }
+    }
+    return {
+      type: 'codeBlock' as const,
+      content: [{ type: 'text' as const, text: code }] as const,
+    }
+  })
 
 /**
  * Arbitrary string that exercises the parser — a mix of markdown-significant
@@ -451,6 +513,46 @@ describe('property: structural invariants', () => {
         const newlineCount = (md.match(/\n/g) ?? []).length
         // Should be paragraphs - 1 (join with \n)
         expect(newlineCount).toBe(d.content.length - 1)
+      }),
+      { numRuns: NUM_RUNS },
+    )
+  })
+})
+
+// -- code block fence variable-length (BUG-1) ---------------------------------
+
+describe('property: code block round-trip handles backtick content (BUG-1)', () => {
+  it('serialize(parse(serialize(codeBlock))) is a fixed point — no truncation', () => {
+    fc.assert(
+      fc.property(arbCodeBlock, (block) => {
+        const md = serialize({ type: 'doc', content: [block] })
+        const reparsed = parse(md)
+        // The reparsed doc must contain exactly one block — the original code
+        // block (i.e. the closing fence wasn't matched against an internal line).
+        expect(reparsed.content).toHaveLength(1)
+        expect(reparsed.content?.[0]).toEqual(block)
+        // And the round-trip must be idempotent.
+        expect(serialize(reparsed)).toBe(md)
+      }),
+      { numRuns: NUM_RUNS },
+    )
+  })
+
+  it('emitted fence is always longer than the longest backtick run in content', () => {
+    fc.assert(
+      fc.property(arbCodeBlock, (block) => {
+        const md = serialize({ type: 'doc', content: [block] })
+        // The emitted markdown begins with a run of backticks (the opening fence)
+        const fenceMatch = md.match(/^(`+)/)
+        expect(fenceMatch).not.toBeNull()
+        const fenceLen = (fenceMatch as RegExpMatchArray)[0].length
+        expect(fenceLen).toBeGreaterThanOrEqual(3)
+        // No backtick run inside the content may be >= the fence length
+        const code = block.content?.[0]?.text ?? ''
+        const runs = code.match(/`+/g) ?? []
+        for (const r of runs) {
+          expect(r.length).toBeLessThan(fenceLen)
+        }
       }),
       { numRuns: NUM_RUNS },
     )

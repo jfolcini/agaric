@@ -313,4 +313,181 @@ describe('useLinkPreview', () => {
     expect(result.current.anchorRect).not.toBeNull()
     expect(result.current.isLoading).toBe(true)
   })
+
+  // ── Keyboard / focus support (UX-273) ──────────────────────────────
+
+  it('updates state when focusin fires on .external-link element', () => {
+    const dom = makeContainer()
+    const link = createExternalLink()
+    dom.appendChild(link)
+
+    const { result } = renderHook(() => useLinkPreview(dom))
+
+    act(() => {
+      link.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    })
+
+    expect(result.current.url).toBe('https://example.com')
+    expect(result.current.anchorRect).not.toBeNull()
+    expect(result.current.isLoading).toBe(true)
+  })
+
+  it('clears state on focusout', () => {
+    const dom = makeContainer()
+    const link = createExternalLink()
+    dom.appendChild(link)
+
+    const { result } = renderHook(() => useLinkPreview(dom))
+
+    act(() => {
+      link.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    })
+    expect(result.current.url).toBe('https://example.com')
+
+    act(() => {
+      link.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+
+    expect(result.current.url).toBeNull()
+    expect(result.current.metadata).toBeNull()
+    expect(result.current.anchorRect).toBeNull()
+    expect(result.current.isLoading).toBe(false)
+  })
+
+  it('does not fire focusin handler for non-link elements', () => {
+    const dom = makeContainer()
+    const span = document.createElement('span')
+    span.textContent = 'not a link'
+    dom.appendChild(span)
+
+    const { result } = renderHook(() => useLinkPreview(dom))
+
+    act(() => {
+      span.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    })
+
+    expect(result.current.url).toBeNull()
+    expect(mockGetLinkMetadata).not.toHaveBeenCalled()
+  })
+
+  it('focus then blur runs the same metadata-fetch path as hover', async () => {
+    mockGetLinkMetadata.mockResolvedValue(SAMPLE_METADATA)
+
+    const dom = makeContainer()
+    const link = createExternalLink()
+    dom.appendChild(link)
+
+    const { result } = renderHook(() => useLinkPreview(dom))
+
+    act(() => {
+      link.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200)
+    })
+
+    expect(mockGetLinkMetadata).toHaveBeenCalledWith('https://example.com')
+    expect(result.current.metadata).toEqual(SAMPLE_METADATA)
+    expect(result.current.isLoading).toBe(false)
+  })
+
+  it('Escape dismisses the preview when one is shown', () => {
+    const dom = makeContainer()
+    const link = createExternalLink()
+    dom.appendChild(link)
+
+    const { result } = renderHook(() => useLinkPreview(dom))
+
+    act(() => {
+      link.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    })
+    expect(result.current.url).toBe('https://example.com')
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+
+    expect(result.current.url).toBeNull()
+    expect(result.current.anchorRect).toBeNull()
+    expect(result.current.isLoading).toBe(false)
+  })
+
+  it('Escape with defaultPrevented=true does NOT dismiss the preview (additive behavior)', () => {
+    const dom = makeContainer()
+    const link = createExternalLink()
+    dom.appendChild(link)
+
+    const { result } = renderHook(() => useLinkPreview(dom))
+
+    act(() => {
+      link.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    })
+    expect(result.current.url).toBe('https://example.com')
+
+    // Simulate another handler consuming the Escape first
+    act(() => {
+      const ev = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      ev.preventDefault()
+      window.dispatchEvent(ev)
+    })
+
+    // Preview should still be visible
+    expect(result.current.url).toBe('https://example.com')
+  })
+
+  it('Escape is a no-op when no preview is currently shown', () => {
+    const dom = makeContainer()
+    const link = createExternalLink()
+    dom.appendChild(link)
+
+    const { result } = renderHook(() => useLinkPreview(dom))
+
+    // No preview shown — pressing Escape should not throw or change state
+    expect(() => {
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+    }).not.toThrow()
+
+    expect(result.current.url).toBeNull()
+  })
+
+  it('keeps mouse hover behavior intact alongside focus support', () => {
+    const dom = makeContainer()
+    const link = createExternalLink()
+    dom.appendChild(link)
+
+    const { result } = renderHook(() => useLinkPreview(dom))
+
+    // Hover still works
+    act(() => {
+      link.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
+    })
+    expect(result.current.url).toBe('https://example.com')
+
+    act(() => {
+      link.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }))
+    })
+    expect(result.current.url).toBeNull()
+  })
+
+  it('removes focus and keydown listeners on unmount', () => {
+    const dom = makeContainer()
+    const link = createExternalLink()
+    dom.appendChild(link)
+
+    const removeContainerSpy = vi.spyOn(dom, 'removeEventListener')
+    const removeWindowSpy = vi.spyOn(window, 'removeEventListener')
+
+    const { unmount } = renderHook(() => useLinkPreview(dom))
+    unmount()
+
+    expect(removeContainerSpy).toHaveBeenCalledWith('focusin', expect.any(Function))
+    expect(removeContainerSpy).toHaveBeenCalledWith('focusout', expect.any(Function))
+    expect(removeWindowSpy).toHaveBeenCalledWith('keydown', expect.any(Function))
+
+    removeContainerSpy.mockRestore()
+    removeWindowSpy.mockRestore()
+  })
 })

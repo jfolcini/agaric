@@ -1461,6 +1461,93 @@ describe('code blocks', () => {
       expect((block as { attrs?: { language?: string } }).attrs?.language).toBe(lang)
     }
   })
+
+  // -- BUG-1: variable-length CommonMark fences ------------------------------
+
+  it('serializes with a longer fence when content contains a triple-backtick line', () => {
+    // Code about Markdown — content has a nested ```javascript fence
+    const inner = '```javascript\nfoo()\n```'
+    const md = serialize(doc(codeBlock(inner)))
+    // Outer fence must be 4+ backticks so it cannot collide with the inner ```
+    expect(md.startsWith('````')).toBe(true)
+    expect(md.endsWith('````')).toBe(true)
+    // Round-trip preserves the exact content
+    expect(parse(md)).toEqual(doc(codeBlock(inner)))
+  })
+
+  it('round-trips a code block whose content is a Markdown snippet about Markdown', () => {
+    const inner = '```javascript\nfoo()\n```'
+    const block = doc(codeBlock(inner))
+    expect(parse(serialize(block))).toEqual(block)
+  })
+
+  it('round-trips a code block containing a shell heredoc with a triple-backtick line', () => {
+    const inner = 'cat <<EOF\nfoo\n```\nbar\nEOF'
+    const block = doc(codeBlock(inner))
+    expect(parse(serialize(block))).toEqual(block)
+  })
+
+  it('round-trips a code block containing an LLM transcript with fenced examples', () => {
+    const inner = "Here's the code:\n```python\nprint(1)\n```\nThat works."
+    const block = doc(codeBlock(inner))
+    expect(parse(serialize(block))).toEqual(block)
+  })
+
+  it('grows the fence to 5+ backticks when content contains a 4-backtick line', () => {
+    const inner = '````\nfour-tick fence inside\n````'
+    const md = serialize(doc(codeBlock(inner)))
+    expect(md.startsWith('`````')).toBe(true)
+    expect(md.endsWith('`````')).toBe(true)
+    expect(parse(md)).toEqual(doc(codeBlock(inner)))
+  })
+
+  it('uses fence length 4 when content is just three backticks alone on a line', () => {
+    const inner = '```'
+    const md = serialize(doc(codeBlock(inner)))
+    expect(md).toBe('````\n```\n````')
+    expect(parse(md)).toEqual(doc(codeBlock(inner)))
+  })
+
+  it('keeps fence at 3 for empty code blocks (longest run is 0)', () => {
+    expect(serialize(doc(codeBlock('')))).toBe('```\n\n```')
+  })
+
+  it('preserves language tag when fence is longer than 3', () => {
+    const inner = '```\nfoo\n```'
+    const md = serialize(doc(codeBlock(inner, 'markdown')))
+    expect(md.startsWith('````markdown\n')).toBe(true)
+    const reparsed = parse(md)
+    const block = reparsed.content?.[0]
+    expect(block?.type).toBe('codeBlock')
+    expect((block as { attrs?: { language?: string } }).attrs?.language).toBe('markdown')
+    expect((block as { content?: readonly { text: string }[] }).content?.[0]?.text).toBe(inner)
+  })
+
+  it('parser closes a 4-tick fence on a 4+-tick line, not a 3-tick line', () => {
+    const md = '````\n```\nstill inside\n````'
+    const result = parse(md)
+    expect(result.content).toHaveLength(1)
+    const block = result.content?.[0]
+    expect(block?.type).toBe('codeBlock')
+    expect((block as { content?: readonly { text: string }[] }).content?.[0]?.text).toBe(
+      '```\nstill inside',
+    )
+  })
+
+  it('rejects opening "fence" with non-backtick characters before the backticks', () => {
+    // "x```" is not a fence — should be parsed as a paragraph, not a code block
+    const md = 'x```\ncontent\n```'
+    const result = parse(md)
+    // First block must not be a codeBlock
+    expect(result.content?.[0]?.type).not.toBe('codeBlock')
+  })
+
+  it('rejects opening fence whose info string contains backticks', () => {
+    // CommonMark §4.5: backtick fence info string may not contain backticks
+    const md = '``` ```\ncontent'
+    const result = parse(md)
+    expect(result.content?.[0]?.type).not.toBe('codeBlock')
+  })
 })
 
 // -- hardening: link scan depth -----------------------------------------------

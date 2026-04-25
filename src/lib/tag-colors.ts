@@ -1,10 +1,21 @@
 /**
  * Tag colors — localStorage-backed map of tag ID → CSS color string.
  *
- * Stores a JSON object under the `tag-colors` key for fast rendering.
- * Also persists to block properties via `setProperty()` for cross-device sync.
+ * Stores a JSON object under the `tag-colors` localStorage key for fast
+ * rendering. **Storage is device-local only** — no IPC, no `setProperty()`
+ * call, no block-property write. Multi-device users will see different colors
+ * for the same tag on different devices, and a fresh install starts with an
+ * empty palette.
  *
- * Pattern follows starred-pages.ts.
+ * Pattern follows starred-pages.ts (also device-local).
+ *
+ * Future work (out of scope here): cross-device sync could be added by
+ * mirroring the chosen color to a `tag_color` block property via the existing
+ * properties extension point, with a one-time migration of existing
+ * localStorage entries on first run. See REVIEW-LATER.md (MAINT-101) for the
+ * design discussion. Do not reintroduce a "syncs via setProperty" claim in
+ * this comment without also wiring the call — `tag-colors.test.ts` guards
+ * against that drift.
  */
 
 const STORAGE_KEY = 'tag-colors'

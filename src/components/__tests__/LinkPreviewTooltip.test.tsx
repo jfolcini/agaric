@@ -251,6 +251,53 @@ describe('LinkPreviewTooltip', () => {
     warnSpy.mockRestore()
   })
 
+  // ── Keyboard / focus support (UX-273) ──────────────────────────────
+  // The hook is mocked in this file, so these tests verify that the tooltip
+  // renders the same presentational output regardless of whether the hook
+  // state was triggered by hover (pointerenter) or focus (focusin). The
+  // event-handling itself is exercised in src/hooks/__tests__/useLinkPreview.test.ts.
+
+  it('renders the tooltip the same way when state was driven by focus rather than hover', () => {
+    mockUseLinkPreview.mockReturnValue({
+      url: 'https://example.com',
+      metadata: SAMPLE_METADATA,
+      anchorRect: SAMPLE_RECT,
+      isLoading: false,
+    })
+
+    render(<LinkPreviewTooltip container={makeContainer()} />)
+
+    const tooltip = screen.getByTestId('link-preview-tooltip')
+    expect(tooltip).toBeInTheDocument()
+    expect(tooltip).toHaveAttribute('role', 'tooltip')
+    expect(tooltip).toHaveTextContent('Example Site')
+  })
+
+  it('returns null after focus state has been cleared (focus then blur regression)', () => {
+    // First render: focused
+    mockUseLinkPreview.mockReturnValue({
+      url: 'https://example.com',
+      metadata: SAMPLE_METADATA,
+      anchorRect: SAMPLE_RECT,
+      isLoading: false,
+    })
+
+    const { rerender, container } = render(<LinkPreviewTooltip container={makeContainer()} />)
+    expect(screen.getByTestId('link-preview-tooltip')).toBeInTheDocument()
+
+    // Re-render after focusout / Escape clears the hook state
+    mockUseLinkPreview.mockReturnValue({
+      url: null,
+      metadata: null,
+      anchorRect: null,
+      isLoading: false,
+    })
+
+    rerender(<LinkPreviewTooltip container={makeContainer()} />)
+
+    expect(container.innerHTML).toBe('')
+  })
+
   describe('a11y', () => {
     it('passes axe audit with metadata', async () => {
       mockUseLinkPreview.mockReturnValue({

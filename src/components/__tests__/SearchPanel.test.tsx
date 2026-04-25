@@ -1739,4 +1739,189 @@ describe('SearchPanel', () => {
       })
     })
   })
+
+  // =========================================================================
+  // UX-269: SearchPanel consolidation (6 sub-fixes)
+  // =========================================================================
+  describe('UX-269 consolidation', () => {
+    // Sub-fix 1: Switch to shared LoadMoreButton (aria-busy when loading).
+    it('uses the shared LoadMoreButton with aria-busy when fetching more', async () => {
+      const user = userEvent.setup()
+
+      const page1 = {
+        items: [makeSearchResult({ id: 'B1', content: 'first' })],
+        next_cursor: 'cursor_1',
+        has_more: true,
+      }
+      mockedInvoke.mockResolvedValueOnce(page1)
+
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      typeAndSubmit(input, 'pageload')
+
+      const loadMoreBtn = await screen.findByRole('button', { name: /Load more/i })
+
+      // Idle state: aria-busy should be 'false' (LoadMoreButton primitive sets it).
+      expect(loadMoreBtn).toHaveAttribute('aria-busy', 'false')
+
+      // Stall the next fetch so the button stays in loading state.
+      mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+      await user.click(loadMoreBtn)
+
+      // Loading state: aria-busy must flip to 'true'.
+      await waitFor(() => {
+        expect(loadMoreBtn).toHaveAttribute('aria-busy', 'true')
+      })
+      // The shared primitive renders its identifying spinner testid.
+      expect(loadMoreBtn.querySelector('[data-testid="loader-spinner"]')).not.toBeNull()
+    })
+
+    // Sub-fix 2: aria-live on a separate status div above the listbox,
+    // NOT wrapping the listbox.
+    it('puts aria-live on a separate status div, not wrapping the listbox', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makeSearchResult({ id: 'B1', content: 'live region result' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      typeAndSubmit(input, 'live')
+
+      const listbox = await screen.findByRole('listbox')
+      // The listbox itself must not be (or be wrapped by) an aria-live region.
+      expect(listbox).not.toHaveAttribute('aria-live')
+      expect(listbox.closest('[aria-live]')).toBeNull()
+
+      // A separate status div with aria-live="polite" exists.
+      const status = screen.getByTestId('search-results-status')
+      expect(status).toHaveAttribute('aria-live', 'polite')
+      expect(status).toHaveAttribute('role', 'status')
+      // Status must be a sibling of (not contain) the listbox.
+      expect(status.contains(listbox)).toBe(false)
+    })
+
+    // Sub-fix 3: Distinct typing vs searching indicators.
+    it('shows a typing indicator while debouncing and a Searching label while fetching', async () => {
+      vi.useFakeTimers()
+
+      // Stall the fetch so we observe the searching state.
+      mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+
+      render(<SearchPanel />)
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+
+      // While debounce is pending → typing indicator, NOT searching.
+      fireEvent.change(input, { target: { value: 'hello' } })
+      expect(screen.getByTestId('search-typing-indicator')).toBeInTheDocument()
+      expect(screen.getByTestId('search-typing-indicator')).toHaveTextContent(t('search.typing'))
+      expect(screen.queryByTestId('search-fetching-indicator')).not.toBeInTheDocument()
+
+      // Advance past 300ms debounce → fetching kicks off.
+      await act(async () => {
+        vi.advanceTimersByTime(300)
+      })
+
+      // Now the fetching indicator with Searching label shows; typing is gone.
+      const fetching = screen.getByTestId('search-fetching-indicator')
+      expect(fetching).toBeInTheDocument()
+      expect(fetching).toHaveTextContent(t('search.searching'))
+      expect(screen.queryByTestId('search-typing-indicator')).not.toBeInTheDocument()
+    })
+
+    // Sub-fix 4: CJK notice sits directly below the search input (above
+    // the filter chip bar) so CJK users see it before scanning results.
+    it('places the CJK notice directly below the input, above the filter chip bar', () => {
+      render(<SearchPanel />)
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      fireEvent.change(input, { target: { value: '你好' } })
+
+      const cjk = screen.getByTestId('cjk-notice')
+      const chipBar = screen.getByTestId('filter-chip-bar')
+      expect(cjk).toBeInTheDocument()
+
+      // DOM order: cjk-notice precedes filter-chip-bar.
+      const position = cjk.compareDocumentPosition(chipBar)
+      // DOCUMENT_POSITION_FOLLOWING (4) means chipBar follows cjk.
+      // biome-ignore lint/suspicious/noBitwiseOperators: standard DOM API
+      expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    })
+
+    // Sub-fix 5: Alias-match overlay is rendered inside the ResultCard
+    // (via the children slot) and not absolutely positioned.
+    it('renders the alias-match label inside the ResultCard, not as an absolute overlay', async () => {
+      // The alias-resolution effect re-runs when `results` reference changes
+      // after the search completes — use a persistent mock so both calls
+      // resolve to the alias hit.
+      vi.mocked(resolvePageByAlias).mockResolvedValue(['ALIASPAGE', null])
+      const aliasBlock = {
+        id: 'ALIASPAGE',
+        block_type: 'page',
+        content: 'Aliased Page',
+        parent_id: null,
+        page_id: null,
+        position: 0,
+        deleted_at: null,
+        is_conflict: false,
+      }
+      // search_blocks (empty), then get_block resolves the alias hit on
+      // every effect re-run.
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'search_blocks') return emptyPage
+        if (cmd === 'get_block') return aliasBlock
+        if (cmd === 'batch_resolve') return []
+        return emptyPage
+      })
+
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      typeAndSubmit(input, 'shortname')
+
+      const aliasContainer = await screen.findByTestId('alias-match')
+      const aliasLabel = await screen.findByTestId('alias-match-label')
+
+      // Label sits inside the ResultCard's CardButton (not an absolute sibling).
+      const card = aliasContainer.querySelector('button')
+      expect(card).not.toBeNull()
+      expect(card?.contains(aliasLabel)).toBe(true)
+
+      // No absolute positioning class on the alias label or its parent inside the container.
+      expect(aliasLabel.className).not.toMatch(/\babsolute\b/)
+      expect(aliasContainer.querySelector('.absolute')).toBeNull()
+    })
+
+    // Sub-fix 6: Results count is rendered inside an aria-live="polite"
+    // status region (the same one from sub-fix 2).
+    it('announces the results count via the aria-live status region', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makeSearchResult({ id: 'B1', content: 'one' }),
+          makeSearchResult({ id: 'B2', content: 'two' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      typeAndSubmit(input, 'count')
+
+      const status = await screen.findByTestId('search-results-status')
+      expect(status).toHaveAttribute('aria-live', 'polite')
+      expect(status).toHaveAttribute('role', 'status')
+
+      await waitFor(() => {
+        expect(status).toHaveTextContent(t('search.resultsCount', { count: 2 }))
+      })
+
+      // The visible count node is a child of the status region.
+      const count = screen.getByTestId('search-results-count')
+      expect(status.contains(count)).toBe(true)
+    })
+  })
 })
