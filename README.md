@@ -1,3 +1,5 @@
+![Agaric logo](src-tauri/icons/128x128.png)
+
 # Agaric
 
 A local-first, block-based note-taking app for **Linux** (primary), **Windows**, **macOS**, and **Android**. Inspired by Org-mode and Logseq — journal-first, with powerful tagging and emergent structure. No cloud, no accounts. Your data lives on your machine, syncs over local WiFi.
