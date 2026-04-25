@@ -285,4 +285,4 @@ jobs:
           name: agaric-android-aarch64-unsigned
           path: src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 90

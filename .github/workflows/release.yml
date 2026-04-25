@@ -233,3 +233,119 @@ jobs:
           fi
           echo "Uploading (clobber) ${appimages[0]} to release ${GITHUB_REF_NAME}"
           gh release upload "${GITHUB_REF_NAME}" "${appimages[0]}" --clobber
+
+  # ---------------------------------------------------------------------------
+  # Android — separate job because tauri-action@v0 has no Android support.
+  # Mirrors the structure of ci.yml's `android-build` (same scaffold-reset
+  # + override-restore + patch-android-build + aarch64 release build), but
+  # uploads the resulting unsigned APK to the GitHub Release as a permanent
+  # asset (instead of as a 90-day workflow artifact). The desktop matrix
+  # above creates the draft release first via tauri-action; we attach the
+  # APK to that same release with `gh release upload`.
+  # ---------------------------------------------------------------------------
+  android-build-and-release:
+    needs: [validate, build-and-release]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >
+            platforms;android-36
+            build-tools;36.0.0
+            ndk;27.2.12479018
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        # tauri-build validates `externalBin` paths on every cargo
+        # invocation. Android builds don't ship the sidecar (see
+        # tauri.android.conf.json override), but the host-triple
+        # placeholder must exist so `cargo tauri android init` /
+        # `build` can proceed past validation.
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --locked
+
+      - name: Initialize Tauri Android project
+        # Same scaffold-reset dance as ci.yml's android-build: stash the
+        # tracked overrides under src-tauri/gen/android/, wipe the dir,
+        # let Tauri regenerate from scratch, then restore the overrides
+        # on top so our CAMERA / Wi-Fi-multicast / FileProvider /
+        # network_security_config customisations survive.
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OVERRIDES="$(mktemp -d)"
+          if [ -d src-tauri/gen/android ]; then
+            while IFS= read -r f; do
+              rel="${f#src-tauri/gen/android/}"
+              mkdir -p "$OVERRIDES/$(dirname "$rel")"
+              cp "$f" "$OVERRIDES/$rel"
+            done < <(git ls-files src-tauri/gen/android)
+            rm -rf src-tauri/gen/android
+          fi
+
+          cargo tauri android init
+
+          if find "$OVERRIDES" -mindepth 1 -print -quit | grep -q .; then
+            cp -R "$OVERRIDES/." src-tauri/gen/android/
+          fi
+          rm -rf "$OVERRIDES"
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+
+      - name: Apply platform-baseline overrides (minSdk 30, jvmTarget 17)
+        run: bash scripts/patch-android-build.sh
+
+      - name: Build Android APK (aarch64 release, unsigned)
+        run: cargo tauri android build --target aarch64
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+
+      - name: Upload Android APK to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
+          if [ ! -f "$src" ]; then
+            echo "ERROR: expected APK not found at $src" >&2
+            exit 1
+          fi
+          # Rename so the asset name on the Release is descriptive (the
+          # raw "app-universal-release-unsigned.apk" hides the version
+          # and platform). gh release upload uses the basename of the
+          # source path as the asset name.
+          dest="agaric-${GITHUB_REF_NAME}-android-aarch64-unsigned.apk"
+          cp "$src" "$dest"
+          echo "Uploading (clobber) $dest to release ${GITHUB_REF_NAME}"
+          gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
