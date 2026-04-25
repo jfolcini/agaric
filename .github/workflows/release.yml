@@ -75,6 +75,21 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Make the cross-compile target visible to the
+          # `beforeBuildCommand` hook (`scripts/prepare-external-bins.mjs`).
+          # tauri-action passes `--target` to `cargo tauri build`, but
+          # Tauri's beforeBuildCommand environment does not expose
+          # `TAURI_ENV_TARGET_TRIPLE` until cargo's build-script phase, so
+          # without this env var the script falls back to the host triple
+          # and stages the externalBin placeholder under the wrong name.
+          # On the macOS arm64 runner cross-building x86_64-apple-darwin,
+          # that produced "resource path
+          # `binaries/agaric-mcp-x86_64-apple-darwin` doesn't exist" and
+          # broke every x86_64 release. Setting CARGO_BUILD_TARGET makes
+          # both cargo and the script agree on the same triple and the
+          # same `target/<triple>/release/` output directory, even on
+          # native-target builds where it is a no-op.
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
           # PUB-5: Uncomment once signing keys are generated and pubkey is set in tauri.conf.json
           # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -101,16 +116,23 @@ jobs:
       # script fail (rather than warn-and-continue) if the tool is missing, so
       # a broken upstream cache blocks the release instead of silently shipping
       # the un-repacked AppImage.
+      # tauri-action passes `--target` so the bundle output lives under
+      # `src-tauri/target/<triple>/release/bundle/...`, not the unprefixed
+      # `src-tauri/target/release/bundle/...` we'd see on a no-target build.
+      # Every step below has to use the triple-prefixed path or it sees an
+      # empty bundle directory and fails.
       - name: Snapshot pre-fix AppImage size
         if: matrix.platform == 'ubuntu-24.04'
         id: prefix_size
+        env:
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
-          appimages=(src-tauri/target/release/bundle/appimage/Agaric_*_amd64.AppImage)
+          appimages=("$BUNDLE_DIR"/Agaric_*_amd64.AppImage)
           if [ ${#appimages[@]} -eq 0 ]; then
-            echo "ERROR: No pre-fix Agaric_*_amd64.AppImage found in src-tauri/target/release/bundle/appimage/" >&2
+            echo "ERROR: No pre-fix Agaric_*_amd64.AppImage found in $BUNDLE_DIR" >&2
             exit 1
           fi
           size=$(stat -c %s "${appimages[0]}")
@@ -122,16 +144,21 @@ jobs:
         if: matrix.platform == 'ubuntu-24.04'
         env:
           FIX_APPIMAGE_STRICT: '1'
-        run: bash scripts/fix-appimage-icons.sh
+        run: |
+          # Pass the triple-prefixed AppDir explicitly; the script's default
+          # only works for a no-target host build.
+          bash scripts/fix-appimage-icons.sh \
+            "src-tauri/target/${{ matrix.target }}/release/bundle/appimage/Agaric.AppDir"
 
       - name: Verify repacked AppImage
         if: matrix.platform == 'ubuntu-24.04'
         env:
           PRE_FIX_SIZE: ${{ steps.prefix_size.outputs.size }}
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
         shell: bash
         run: |
           set -euo pipefail
-          APPDIR="src-tauri/target/release/bundle/appimage/Agaric.AppDir"
+          APPDIR="$BUNDLE_DIR/Agaric.AppDir"
 
           # 1. .DirIcon must be a relative symlink to Agaric.png.
           if [ ! -L "$APPDIR/.DirIcon" ]; then
@@ -164,7 +191,7 @@ jobs:
           # pre-fix one (a repack smaller than the original almost always means
           # linuxdeploy-plugin-appimage silently produced a stub).
           shopt -s nullglob
-          appimages=(src-tauri/target/release/bundle/appimage/Agaric_*_amd64.AppImage)
+          appimages=("$BUNDLE_DIR"/Agaric_*_amd64.AppImage)
           if [ ${#appimages[@]} -eq 0 ]; then
             echo "ERROR: No repacked Agaric_*_amd64.AppImage found" >&2
             exit 1
@@ -181,11 +208,12 @@ jobs:
         if: matrix.platform == 'ubuntu-24.04'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
-          appimages=(src-tauri/target/release/bundle/appimage/Agaric_*_amd64.AppImage)
+          appimages=("$BUNDLE_DIR"/Agaric_*_amd64.AppImage)
           if [ ${#appimages[@]} -eq 0 ]; then
             echo "ERROR: No repacked AppImage to upload" >&2
             exit 1

@@ -36,17 +36,41 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SRC_TAURI = join(REPO_ROOT, 'src-tauri')
 const BINARIES_DIR = join(SRC_TAURI, 'binaries')
 
-function detectTargetTriple() {
-  if (process.env.TAURI_TARGET_TRIPLE) return process.env.TAURI_TARGET_TRIPLE
-  if (process.env.CARGO_BUILD_TARGET) return process.env.CARGO_BUILD_TARGET
+function detectHostTriple() {
   const out = execSync('rustc -vV', { encoding: 'utf8' })
   const line = out.split('\n').find((l) => l.startsWith('host:'))
   if (!line) throw new Error(`prepare-external-bins: could not parse rustc host from:\n${out}`)
   return line.split(':')[1].trim()
 }
 
-function buildMcp() {
-  const result = spawnSync('cargo', ['build', '--bin', 'agaric-mcp', '--release', '--locked'], {
+function detectTargetTriple(hostTriple) {
+  // Priority order:
+  //   1. TAURI_ENV_TARGET_TRIPLE — Tauri 2 cargo env (set by tauri-build on
+  //      `cargo build`, may also be set in beforeBuildCommand by some flows).
+  //   2. TAURI_TARGET_TRIPLE — kept for back-compat with Tauri 1 / older
+  //      callers.
+  //   3. CARGO_BUILD_TARGET — the standard cargo env var. CI sets this for
+  //      cross-compile builds (release.yml's macos x86_64 target on an
+  //      arm64 runner) so that this script and `cargo` both agree on the
+  //      output path under `target/<triple>/release/`.
+  //   4. Host triple from `rustc -vV` (local dev, no override).
+  return (
+    process.env.TAURI_ENV_TARGET_TRIPLE ||
+    process.env.TAURI_TARGET_TRIPLE ||
+    process.env.CARGO_BUILD_TARGET ||
+    hostTriple
+  )
+}
+
+function buildMcp(targetOverride) {
+  const args = ['build', '--bin', 'agaric-mcp', '--release', '--locked']
+  // For cross-compilation we have to be explicit; CARGO_BUILD_TARGET in env
+  // is also respected by cargo, but passing --target makes it deterministic
+  // even if the env var is stripped along the way.
+  if (targetOverride) {
+    args.push('--target', targetOverride)
+  }
+  const result = spawnSync('cargo', args, {
     cwd: SRC_TAURI,
     stdio: 'inherit',
   })
@@ -68,11 +92,22 @@ function ensurePlaceholder(dstBinary) {
 function main() {
   const placeholderOnly = process.argv.includes('--placeholder-only')
 
-  const triple = detectTargetTriple()
+  const hostTriple = detectHostTriple()
+  const triple = detectTargetTriple(hostTriple)
+  const isCrossCompile = triple !== hostTriple
   const isWin = triple.includes('windows')
   const ext = isWin ? '.exe' : ''
 
-  const srcBinary = join(SRC_TAURI, 'target', 'release', `agaric-mcp${ext}`)
+  // Cargo puts output in `target/<triple>/release/` whenever a target is
+  // selected — either via `--target` (which we pass on cross-compile) or
+  // via `CARGO_BUILD_TARGET` in env (which CI sets even for native builds
+  // so the path layout is uniform across the matrix).
+  const cargoOutputDir =
+    isCrossCompile || process.env.CARGO_BUILD_TARGET
+      ? join(SRC_TAURI, 'target', triple, 'release')
+      : join(SRC_TAURI, 'target', 'release')
+
+  const srcBinary = join(cargoOutputDir, `agaric-mcp${ext}`)
   const dstBinary = join(BINARIES_DIR, `agaric-mcp-${triple}${ext}`)
 
   // Always make sure a file exists at the externalBin path. Without this,
@@ -87,7 +122,7 @@ function main() {
 
   // Build agaric-mcp for release (the placeholder makes this pass). Cargo's
   // own incremental cache short-circuits when nothing has changed.
-  buildMcp()
+  buildMcp(isCrossCompile ? triple : null)
 
   if (!existsSync(srcBinary)) {
     throw new Error(`prepare-external-bins: expected ${srcBinary} after build, but it is missing`)
