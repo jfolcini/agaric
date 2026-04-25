@@ -112,8 +112,15 @@ vi.mock('../PageLink', () => ({
   ),
 }))
 
+vi.mock('../../lib/announcer', () => ({
+  announce: vi.fn(),
+}))
+
 import { toast } from 'sonner'
+import { announce } from '../../lib/announcer'
 import { BlockListItem, type BlockListItemProps } from '../BlockListItem'
+
+const mockedAnnounce = vi.mocked(announce)
 
 function defaultProps(overrides: Partial<BlockListItemProps> = {}): BlockListItemProps {
   return {
@@ -785,6 +792,31 @@ describe('BlockListItem — handleDateSelect', () => {
     expect(mockGetBlock).not.toHaveBeenCalled()
     expect(mockSetDueDate).not.toHaveBeenCalled()
     expect(mockSetScheduledDate).not.toHaveBeenCalled()
+  })
+
+  // UX-282: screen-reader announcement after successful date pick
+  it('announces task rescheduled after successful date pick', async () => {
+    mockGetBlock.mockResolvedValue({
+      id: 'block-1',
+      due_date: '2025-01-01',
+      scheduled_date: null,
+    })
+    mockSetDueDate.mockResolvedValue({})
+
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ blockId: 'block-1' })} />
+      </ul>,
+    )
+
+    expect(mockCalendarOnSelect).toBeDefined()
+    await waitFor(async () => {
+      ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 0, 20))
+    })
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Task rescheduled to 2025-01-20')
+    })
   })
 })
 

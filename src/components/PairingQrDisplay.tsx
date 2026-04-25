@@ -20,6 +20,12 @@ export interface PairingQrDisplayProps {
   error: string | null
   onRetry: () => void
   retryBtnRef: React.RefObject<HTMLButtonElement | null>
+  /**
+   * UX-263: When true, render an inline "Paused while typing…" indicator
+   * next to the countdown so the user knows the timer isn't ticking
+   * while they enter the passphrase.
+   */
+  pausedByTyping?: boolean
 }
 
 export function PairingQrDisplay({
@@ -31,6 +37,7 @@ export function PairingQrDisplay({
   error,
   onRetry,
   retryBtnRef,
+  pausedByTyping = false,
 }: PairingQrDisplayProps): React.ReactElement {
   const { t } = useTranslation()
 
@@ -53,10 +60,18 @@ export function PairingQrDisplay({
           {passphrase}
         </p>
         <p className="text-xs text-muted-foreground mt-1">{t('pairing.scanOrEnterInstruction')}</p>
-        {/* #294: Countdown timer */}
+        {/* #294: Countdown timer.
+            UX-263: When pausedByTyping is true, append an inline indicator so
+            the user understands why the timer isn't ticking. The span sits
+            inside the same paragraph to avoid a row-level layout shift. */}
         {countdownDisplay && (
           <p className="pairing-countdown text-xs text-muted-foreground mt-1" aria-hidden="true">
             {t('pairing.sessionExpiresIn')} {countdownDisplay}
+            {pausedByTyping && (
+              <span className="pairing-countdown-paused ml-2 italic">
+                {t('pairing.countdownPaused')}
+              </span>
+            )}
           </p>
         )}
         {/* #424: SR-only countdown — announces at key intervals only */}

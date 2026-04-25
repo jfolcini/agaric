@@ -1035,4 +1035,186 @@ describe('PairingDialog', () => {
     // No close-guard dialog should appear.
     expect(screen.queryByText('Cancel pairing?')).not.toBeInTheDocument()
   })
+
+  // -----------------------------------------------------------------------
+  // UX-263: Pause the countdown while the user is typing the passphrase so
+  // a tick boundary doesn't expire the session mid-handshake. Auto-resumes
+  // on blur or after 5s of keystroke idleness.
+  // -----------------------------------------------------------------------
+  it('pauses the countdown while the user is typing in a passphrase input (UX-263)', async () => {
+    vi.useFakeTimers()
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+      cancel_pairing: undefined,
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+    // Flush init promises under fake timers.
+    await act(async () => {
+      await vi.runAllTimersAsync()
+    })
+
+    // Countdown starts at the full 5:00 window.
+    expect(screen.getByText(/Session expires in 5:00/)).toBeInTheDocument()
+
+    const inputs = screen.getAllByRole('textbox')
+
+    // Trigger a keystroke — flips pausedByTyping=true via onTypingStateChange.
+    await act(async () => {
+      fireEvent.change(inputs[0] as HTMLElement, { target: { value: 'a' } })
+    })
+
+    // Advance 2 seconds — the interval fires twice but the pausedRef gate
+    // makes both ticks skip setCountdown, so the displayed value is unchanged.
+    await act(async () => {
+      vi.advanceTimersByTime(2_000)
+    })
+
+    expect(screen.getByText(/Session expires in 5:00/)).toBeInTheDocument()
+
+    vi.useRealTimers()
+  })
+
+  it('resumes the countdown when the passphrase input is blurred (UX-263)', async () => {
+    vi.useFakeTimers()
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+      cancel_pairing: undefined,
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+    await act(async () => {
+      await vi.runAllTimersAsync()
+    })
+
+    const inputs = screen.getAllByRole('textbox')
+
+    // Pause via typing, confirm it actually paused.
+    await act(async () => {
+      fireEvent.change(inputs[0] as HTMLElement, { target: { value: 'a' } })
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(2_000)
+    })
+    expect(screen.getByText(/Session expires in 5:00/)).toBeInTheDocument()
+
+    // Blur — pausedByTyping flips back to false synchronously.
+    await act(async () => {
+      fireEvent.blur(inputs[0] as HTMLElement)
+    })
+
+    // After blur, the next 2s of ticks must decrement the countdown.
+    await act(async () => {
+      vi.advanceTimersByTime(2_000)
+    })
+
+    expect(screen.queryByText(/Session expires in 5:00/)).not.toBeInTheDocument()
+    expect(screen.getByText(/Session expires in 4:58/)).toBeInTheDocument()
+
+    vi.useRealTimers()
+  })
+
+  it('auto-resumes the countdown after 5s of idle keystrokes (UX-263)', async () => {
+    vi.useFakeTimers()
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+      cancel_pairing: undefined,
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+    await act(async () => {
+      await vi.runAllTimersAsync()
+    })
+
+    const inputs = screen.getAllByRole('textbox')
+
+    // Type once, then go idle — the 5s debounce should fire, flipping
+    // pausedByTyping back to false, and subsequent ticks must decrement.
+    await act(async () => {
+      fireEvent.change(inputs[0] as HTMLElement, { target: { value: 'a' } })
+    })
+
+    // Advance 6 seconds: 5s for the debounce + at least one resumed tick.
+    await act(async () => {
+      vi.advanceTimersByTime(6_000)
+    })
+
+    // The countdown must have resumed — it is no longer pinned at 5:00.
+    expect(screen.queryByText(/Session expires in 5:00/)).not.toBeInTheDocument()
+    // And the paused indicator must be gone.
+    expect(screen.queryByText(/Paused while typing/i)).not.toBeInTheDocument()
+
+    vi.useRealTimers()
+  })
+
+  it('shows "Paused while typing…" indicator while typing (UX-263)', async () => {
+    vi.useFakeTimers()
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+      cancel_pairing: undefined,
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+    await act(async () => {
+      await vi.runAllTimersAsync()
+    })
+
+    // Indicator absent at rest.
+    expect(screen.queryByText(/Paused while typing/i)).not.toBeInTheDocument()
+
+    const inputs = screen.getAllByRole('textbox')
+
+    await act(async () => {
+      fireEvent.change(inputs[0] as HTMLElement, { target: { value: 'a' } })
+    })
+
+    // Indicator present once typing flips pausedByTyping=true.
+    expect(screen.getByText(/Paused while typing/i)).toBeInTheDocument()
+
+    vi.useRealTimers()
+  })
+
+  it('announces countdown pause and resume so SR users hear the state change (UX-263)', async () => {
+    vi.useFakeTimers()
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+      cancel_pairing: undefined,
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+    await act(async () => {
+      await vi.runAllTimersAsync()
+    })
+
+    const announceMock = vi.mocked(announce)
+    announceMock.mockClear()
+
+    const inputs = screen.getAllByRole('textbox')
+
+    // Typing → pause announce.
+    await act(async () => {
+      fireEvent.change(inputs[0] as HTMLElement, { target: { value: 'a' } })
+    })
+    expect(announceMock).toHaveBeenCalledWith('Pairing countdown paused while typing')
+
+    announceMock.mockClear()
+
+    // Blur → resume announce.
+    await act(async () => {
+      fireEvent.blur(inputs[0] as HTMLElement)
+    })
+    expect(announceMock).toHaveBeenCalledWith('Pairing countdown resumed')
+
+    vi.useRealTimers()
+  })
 })

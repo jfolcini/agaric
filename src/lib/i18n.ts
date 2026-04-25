@@ -137,6 +137,8 @@ const resources = {
       'announce.pairingCountdown': 'Pairing session expires in {{seconds}} seconds',
       'announce.pairingCountdownMinute': 'Pairing session expires in 1 minute',
       'announce.pairingExpired': 'Pairing session expired',
+      'announce.pairingCountdownPaused': 'Pairing countdown paused while typing',
+      'announce.pairingCountdownResumed': 'Pairing countdown resumed',
       // Announcements — undo/redo
       'announce.undone': 'Undone',
       'announce.undoFailed': 'Undo failed',
@@ -164,6 +166,30 @@ const resources = {
       'announce.restoreToHereSucceeded_one': 'Restored {{count}} operation',
       'announce.restoreToHereSucceeded_other': 'Restored {{count}} operations',
       'announce.restoreToHereFailed': 'Restore failed',
+      // Announcements — sync events (UX-282)
+      'announce.syncStarted': 'Sync started',
+      'announce.syncCompleted': 'Sync completed',
+      'announce.syncFailed': 'Sync failed',
+      'announce.syncOpsReceived_one': '{{count}} operation received from sync',
+      'announce.syncOpsReceived_other': '{{count}} operations received from sync',
+      'announce.syncCompletedWithConflicts': 'Sync completed with conflicts',
+      // Announcements — agenda reschedule / date chip (UX-282)
+      'announce.taskRescheduled': 'Task rescheduled to {{date}}',
+      'announce.rescheduleFailed': 'Reschedule failed',
+      'announce.dateUpdated': 'Date updated to {{date}}',
+      'announce.dateCleared': 'Date cleared',
+      // Announcements — page header actions (UX-282)
+      'announce.pageRenamed': 'Page renamed',
+      'announce.pageRenameFailed': 'Page rename failed',
+      'announce.pageDeleted': 'Page deleted',
+      'announce.pageDeleteFailed': 'Page delete failed',
+      'announce.pageMoved': 'Page moved',
+      'announce.pageMoveFailed': 'Page move failed',
+      'announce.aliasAdded': 'Alias added',
+      'announce.aliasRemoved': 'Alias removed',
+      'announce.aliasFailed': 'Alias update failed',
+      'announce.exported': 'Page exported to clipboard',
+      'announce.exportFailed': 'Export failed',
 
       // Formatting toolbar
       'toolbar.bold': 'Bold',
@@ -762,6 +788,18 @@ const resources = {
       'propertiesView.optionsLockedTooltip':
         'The TODO state cycle is fixed at TODO → DOING → DONE → CANCELLED. Options cannot be edited.',
       'properties.deleteDefinition': 'Delete property {{key}}',
+      // UX-272 — properties drawer / picker polish
+      'properties.refPickerEmptyTitle': 'No pages found',
+      'properties.refPickerEmptyDescription': 'Try a different search term.',
+      'properties.createNewPageAction': 'Create new page "{{name}}"',
+      'properties.loadingPropertiesTitle': 'Loading properties\u2026',
+      'properties.loadingPropertiesDisabled': 'Properties loading\u2026',
+      'properties.optionsCount_one': '{{count}} option',
+      'properties.optionsCount_other': '{{count}} options',
+      'properties.createNewTypeHint': '(text)',
+      'properties.moveOptionUp': 'Move option {{option}} up',
+      'properties.moveOptionDown': 'Move option {{option}} down',
+      'properties.savingRefValue': 'Saving\u2026',
 
       // Task states (aria-labels)
       'settings.removeState': 'Remove state {{state}}',
@@ -1128,6 +1166,8 @@ const resources = {
         'Pairing is in progress. Closing this dialog will cancel the handshake and the other device will need to start over.',
       'pairing.confirmCloseAction': 'Cancel pairing',
       'pairing.confirmCloseKeep': 'Keep pairing',
+      // UX-263: Countdown pause indicator while user is typing the passphrase
+      'pairing.countdownPaused': 'Paused while typing\u2026',
 
       // Tag filter
       'tagFilter.title': 'Tag Filter',

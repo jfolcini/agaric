@@ -13,6 +13,7 @@ import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import { getBlock, setDueDate, setScheduledDate } from '../../lib/tauri'
@@ -77,8 +78,10 @@ export function RescheduleDropZone({
           await setDueDate(blockId, dateStr)
         }
         toast.success(t('journal.rescheduled', { date: dateStr }))
+        announce(t('announce.taskRescheduled', { date: dateStr }))
       } catch {
         toast.error(t('journal.rescheduleFailed'))
+        announce(t('announce.rescheduleFailed'))
       }
     },
     [dateStr, t],

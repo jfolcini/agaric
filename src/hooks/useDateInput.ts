@@ -10,8 +10,11 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { parseDate } from '@/lib/parse-date'
+
+/** Delay (ms) before NL date parsing fires while typing. */
+const NL_PARSE_DEBOUNCE_MS = 300
 
 export interface UseDateInputOptions {
   /** Initial value for the date input (e.g. from a prop). Synced on change. */
@@ -42,31 +45,60 @@ export function useDateInput({
   const [dateInput, setDateInput] = useState(initialValue)
   const [datePreview, setDatePreview] = useState<string | null>(null)
   const [dateError, setDateError] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const cancelPendingParse = useCallback(() => {
+    if (debounceRef.current !== null) {
+      clearTimeout(debounceRef.current)
+      debounceRef.current = null
+    }
+  }, [])
 
   // Re-sync when the external value changes (e.g. prop updated by parent)
   useEffect(() => {
     setDateInput(initialValue)
     setDatePreview(null)
     setDateError(false)
-  }, [initialValue])
+    cancelPendingParse()
+  }, [initialValue, cancelPendingParse])
 
-  const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value
-    setDateInput(raw)
-    setDateError(false)
-    const trimmed = raw.trim()
-    if (!trimmed) {
-      setDatePreview(null)
-      return
-    }
-    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-      setDatePreview(trimmed)
-    } else {
-      setDatePreview(parseDate(trimmed))
+  // Cancel pending parse on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current !== null) clearTimeout(debounceRef.current)
     }
   }, [])
 
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const raw = e.target.value
+      setDateInput(raw)
+      setDateError(false)
+      cancelPendingParse()
+      const trimmed = raw.trim()
+      if (!trimmed) {
+        setDatePreview(null)
+        return
+      }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        // ISO is synchronous and reliable
+        setDatePreview(trimmed)
+        return
+      }
+      // Debounce NL parse — only set datePreview when parsing succeeds, so
+      // partial keystrokes (e.g. "tomo" on the way to "tomorrow") do not
+      // briefly flash a null preview or stale "could not parse" hints.
+      debounceRef.current = setTimeout(() => {
+        debounceRef.current = null
+        const parsed = parseDate(trimmed)
+        if (parsed) setDatePreview(parsed)
+      }, NL_PARSE_DEBOUNCE_MS)
+    },
+    [cancelPendingParse],
+  )
+
   const handleBlur = useCallback(() => {
+    cancelPendingParse()
     const trimmed = dateInput.trim()
     setDatePreview(null)
     setDateError(false)
@@ -85,7 +117,7 @@ export function useDateInput({
     } else {
       setDateError(true)
     }
-  }, [dateInput, onSave])
+  }, [dateInput, onSave, cancelPendingParse])
 
   return { dateInput, setDateInput, datePreview, dateError, handleChange, handleBlur }
 }

@@ -18,7 +18,8 @@
  */
 
 import { act, renderHook } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { parseDate } from '../../lib/parse-date'
 import { useDateInput } from '../useDateInput'
 
 // Mock parseDate to make tests deterministic
@@ -32,9 +33,23 @@ vi.mock('../../lib/parse-date', () => ({
   }),
 }))
 
+const mockedParseDate = vi.mocked(parseDate)
+
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.useFakeTimers()
 })
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+/** Flush the 300ms debounce inside an act() block. */
+function flushDebounce() {
+  act(() => {
+    vi.advanceTimersByTime(301)
+  })
+}
 
 function makeChangeEvent(value: string) {
   return { target: { value } } as React.ChangeEvent<HTMLInputElement>
@@ -83,36 +98,78 @@ describe('useDateInput handleChange', () => {
     expect(result.current.datePreview).toBe('2025-04-15')
   })
 
-  it('sets datePreview for NL dates via parseDate', () => {
+  it('sets datePreview for NL dates via parseDate (after debounce)', () => {
     const { result } = renderHook(() => useDateInput())
 
     act(() => {
       result.current.handleChange(makeChangeEvent('tomorrow'))
     })
 
+    // Debounced — no preview yet
+    expect(result.current.datePreview).toBeNull()
+    expect(mockedParseDate).not.toHaveBeenCalled()
+
+    flushDebounce()
+
+    expect(mockedParseDate).toHaveBeenCalledWith('tomorrow')
     expect(result.current.datePreview).toBe('2025-07-02')
   })
 
-  it('sets datePreview to null for unparseable input', () => {
+  it('does not call parseDate within 300ms of typing (debounce)', () => {
+    const { result } = renderHook(() => useDateInput())
+
+    act(() => {
+      result.current.handleChange(makeChangeEvent('tomo'))
+    })
+    act(() => {
+      vi.advanceTimersByTime(100)
+    })
+    act(() => {
+      result.current.handleChange(makeChangeEvent('tomor'))
+    })
+    act(() => {
+      vi.advanceTimersByTime(100)
+    })
+    act(() => {
+      result.current.handleChange(makeChangeEvent('tomorrow'))
+    })
+
+    // Only 200ms total elapsed — no parse should have fired yet
+    expect(mockedParseDate).not.toHaveBeenCalled()
+
+    flushDebounce()
+
+    // Single parse call after debounce settles, on the final value
+    expect(mockedParseDate).toHaveBeenCalledTimes(1)
+    expect(mockedParseDate).toHaveBeenCalledWith('tomorrow')
+    expect(result.current.datePreview).toBe('2025-07-02')
+  })
+
+  it('keeps preview null for unparseable input (no stale errors during typing)', () => {
     const { result } = renderHook(() => useDateInput())
 
     act(() => {
       result.current.handleChange(makeChangeEvent('not a date'))
     })
 
+    flushDebounce()
+
+    // Parse failed — datePreview is not updated (stays null), no error flag
     expect(result.current.datePreview).toBeNull()
+    expect(result.current.dateError).toBe(false)
   })
 
   it('clears datePreview when input is empty', () => {
     const { result } = renderHook(() => useDateInput())
 
-    // First set a value
+    // First set a value (debounced)
     act(() => {
       result.current.handleChange(makeChangeEvent('tomorrow'))
     })
+    flushDebounce()
     expect(result.current.datePreview).toBe('2025-07-02')
 
-    // Then clear
+    // Then clear — preview clears synchronously
     act(() => {
       result.current.handleChange(makeChangeEvent(''))
     })
@@ -201,6 +258,7 @@ describe('useDateInput handleBlur', () => {
     act(() => {
       result.current.handleChange(makeChangeEvent('tomorrow'))
     })
+    flushDebounce()
     expect(result.current.datePreview).toBe('2025-07-02')
 
     act(() => {

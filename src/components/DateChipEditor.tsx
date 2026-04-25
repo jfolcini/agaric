@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { announce } from '@/lib/announcer'
 import { formatDate } from '@/lib/date-utils'
 import { setDueDate, setScheduledDate } from '@/lib/tauri'
 import { useDateInput } from '../hooks/useDateInput'
@@ -52,9 +53,11 @@ export function DateChipEditor({
           await setScheduledDate(blockId, newDate)
         }
         toast.success(newDate ? t('dateChip.dateUpdated') : t('dateChip.dateCleared'))
+        announce(newDate ? t('announce.dateUpdated', { date: newDate }) : t('announce.dateCleared'))
         onSuccess?.()
       } catch {
         toast.error(t('dateChip.updateFailed'))
+        announce(t('announce.rescheduleFailed'))
       }
     },
     [blockId, dateType, onSuccess, t],

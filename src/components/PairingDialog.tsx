@@ -62,6 +62,11 @@ export function PairingDialog({
   const [entryMode, setEntryMode] = useState<'manual' | 'scan'>('manual')
   // UX-263: Guard against accidentally closing the dialog mid-handshake.
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false)
+  // UX-263: Pause the countdown while the user is mid-keystroke in the
+  // passphrase inputs so an in-flight handshake doesn't fail to a tick
+  // boundary. PairingEntryForm enforces a 5s idle debounce so an idle
+  // user with focus can't keep this true forever.
+  const [pausedByTyping, setPausedByTyping] = useState(false)
 
   const { t } = useTranslation()
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -138,12 +143,24 @@ export function PairingDialog({
     }
   }, [open, init, t])
 
-  // Countdown timer (#294) — only re-run effect when active/inactive changes
+  // Countdown timer (#294) — only re-run effect when active/inactive changes.
+  // UX-263: Read the pause flag through a ref inside the interval so flipping
+  // pausedByTyping does NOT tear down and recreate the interval (which would
+  // also reset its 1s phase and skew the displayed countdown). The interval
+  // simply skips the decrement while paused.
+  //
+  // The ref is written synchronously in handleTypingStateChange (below) — not
+  // via a useEffect that mirrors the state — because under fake timers a
+  // burst of timer callbacks (e.g. interval tick + debounce expiry) runs
+  // back-to-back before React commits, so a deferred ref-sync would still
+  // see the stale value at the next tick.
   const countdownActive = countdown !== null && countdown > 0
+  const pausedByTypingRef = useRef(false)
   useEffect(() => {
     if (!countdownActive) return
 
     const interval = setInterval(() => {
+      if (pausedByTypingRef.current) return
       setCountdown((prev) => {
         if (prev === null || prev <= 1) {
           clearInterval(interval)
@@ -155,6 +172,25 @@ export function PairingDialog({
 
     return () => clearInterval(interval)
   }, [countdownActive])
+
+  // UX-263: Single setter that updates both the ref (read by the interval)
+  // and the state (drives the "Paused while typing…" indicator render).
+  // Announces the pause / resume transition so screen-reader users — who
+  // can't see the inline "Paused while typing…" indicator (it sits inside
+  // an aria-hidden countdown <p>) — still hear the state change.
+  const handleTypingStateChange = useCallback(
+    (isTyping: boolean) => {
+      const wasPaused = pausedByTypingRef.current
+      pausedByTypingRef.current = isTyping
+      setPausedByTyping(isTyping)
+      if (isTyping && !wasPaused) {
+        announce(t('announce.pairingCountdownPaused'))
+      } else if (!isTyping && wasPaused) {
+        announce(t('announce.pairingCountdownResumed'))
+      }
+    },
+    [t],
+  )
 
   // UX-263: Announce countdown crossings at SR-relevant thresholds only.
   // We deliberately avoid announcing every tick — only the meaningful
@@ -293,10 +329,13 @@ export function PairingDialog({
     setError(null)
     setCountdown(null)
     setEntryMode('manual')
+    // UX-263: Clear any stale paused state (ref + render state) so a
+    // future re-open starts fresh.
+    handleTypingStateChange(false)
     onOpenChange(false)
     // #288: Return focus to trigger element
     triggerRef?.current?.focus()
-  }, [onOpenChange, triggerRef])
+  }, [onOpenChange, triggerRef, handleTypingStateChange])
 
   const handleUnpair = useCallback(async (peerId: string) => {
     try {
@@ -401,6 +440,7 @@ export function PairingDialog({
                     error={error}
                     onRetry={() => init()}
                     retryBtnRef={retryBtnRef}
+                    pausedByTyping={pausedByTyping}
                   />
 
                   <PairingEntryForm
@@ -415,6 +455,7 @@ export function PairingDialog({
                     onPair={handlePair}
                     pairLoading={pairLoading}
                     isExpired={isExpired}
+                    onTypingStateChange={handleTypingStateChange}
                   />
                 </>
               )}

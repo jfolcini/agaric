@@ -205,6 +205,49 @@ describe('TagFilterPanel', () => {
     ).not.toBeInTheDocument()
   })
 
+  // UX-272 sub-fix 2 — each AND/OR/NOT button must surface its tooltip so
+  // the chosen variant isn't the only thing distinguishing them visually.
+  it('exposes a tooltip on each AND/OR/NOT mode button', async () => {
+    render(<TagFilterPanel />)
+
+    const andBtn = screen.getByRole('button', { name: /^AND$/i })
+    const orBtn = screen.getByRole('button', { name: /^OR$/i })
+    const notBtn = screen.getByRole('button', { name: /^NOT$/i })
+
+    expect(andBtn).toBeInTheDocument()
+    expect(orBtn).toBeInTheDocument()
+    expect(notBtn).toBeInTheDocument()
+
+    await user.hover(andBtn)
+    await waitFor(
+      async () => {
+        const matches = await screen.findAllByText(t('tagFilter.andModeTooltip'))
+        expect(matches.length).toBeGreaterThanOrEqual(1)
+      },
+      { timeout: 3000 },
+    )
+    await user.unhover(andBtn)
+
+    await user.hover(orBtn)
+    await waitFor(
+      async () => {
+        const matches = await screen.findAllByText(t('tagFilter.orModeTooltip'))
+        expect(matches.length).toBeGreaterThanOrEqual(1)
+      },
+      { timeout: 3000 },
+    )
+    await user.unhover(orBtn)
+
+    await user.hover(notBtn)
+    await waitFor(
+      async () => {
+        const matches = await screen.findAllByText(t('tagFilter.notModeTooltip'))
+        expect(matches.length).toBeGreaterThanOrEqual(1)
+      },
+      { timeout: 3000 },
+    )
+  })
+
   it('toggles AND/OR/NOT mode', async () => {
     render(<TagFilterPanel />)
 

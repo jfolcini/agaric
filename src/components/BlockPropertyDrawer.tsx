@@ -43,6 +43,7 @@ import {
 import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
 import { AddPropertyPopover } from './AddPropertyPopover'
 import { BuiltinDateFields } from './BuiltinDateFields'
+import { LoadingSkeleton } from './LoadingSkeleton'
 import { PropertyRowEditor } from './PropertyRowEditor'
 
 export interface BlockPropertyDrawerProps {
@@ -247,7 +248,12 @@ export function BlockPropertyDrawer({
             )}
 
             {loading ? (
-              <p className="text-sm text-muted-foreground">{t('property.loading')}</p>
+              <LoadingSkeleton
+                count={3}
+                height="h-7"
+                aria-label={t('properties.loadingPropertiesTitle')}
+                data-testid="block-property-drawer-loading"
+              />
             ) : properties.length === 0 && !hasBuiltinDates ? (
               <p className="text-sm text-muted-foreground">{t('property.noProperties')}</p>
             ) : (
@@ -297,10 +303,14 @@ export function BlockPropertyDrawer({
                 )
               })
             )}
-            {/* Add property from definitions */}
-            {!loading && (
-              <AddPropertyPopover definitions={availableDefs} onAdd={handleAddFromDef} />
-            )}
+            {/* Add property from definitions — shown during load with a
+                tooltip-explained disabled state so the layout doesn't jump. */}
+            <AddPropertyPopover
+              definitions={availableDefs}
+              onAdd={handleAddFromDef}
+              disabled={loading}
+              disabledTooltip={t('properties.loadingPropertiesDisabled')}
+            />
           </div>
         </ScrollArea>
       </SheetContent>

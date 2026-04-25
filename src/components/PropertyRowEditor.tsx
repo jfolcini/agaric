@@ -9,7 +9,7 @@
  * Extracted from PagePropertyTable for reuse.
  */
 
-import { Lock, Pencil, Plus, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, FileSearch, Lock, Pencil, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -25,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
@@ -35,6 +36,34 @@ import { setPriorityLevels } from '../lib/priority-levels'
 import type { BlockRow, PropertyDefinition, PropertyRow } from '../lib/tauri'
 import { listBlocks, setProperty, updatePropertyDefOptions } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
+import { EmptyState } from './EmptyState'
+
+/**
+ * Extract the canonical string value for the current property, picking the
+ * first non-null typed slot. Lifted out of the component body so the main
+ * function stays under Biome's cognitive-complexity budget.
+ */
+function readCurrentValue(prop: PropertyRow): string {
+  if (prop.value_ref != null) return prop.value_ref
+  if (prop.value_text != null) return prop.value_text
+  if (prop.value_num != null) return String(prop.value_num)
+  if (prop.value_date != null) return prop.value_date
+  return ''
+}
+
+/**
+ * Parse the JSON-encoded `options` field from a select-type property def.
+ * Returns an empty array on missing / malformed JSON / non-array payloads.
+ */
+function parseSelectOptions(def: PropertyDefinition | undefined): string[] {
+  if (def?.value_type !== 'select' || !def.options) return []
+  try {
+    const parsed = JSON.parse(def.options)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
 
 export interface PropertyRowEditorProps {
   blockId: string
@@ -45,8 +74,15 @@ export interface PropertyRowEditorProps {
   onDefUpdated?: (updatedDef: PropertyDefinition) => void
   /** Called after a ref property value is saved (page selected via picker). */
   onRefSaved?: () => void
+  /**
+   * UX-272 — when provided, the ref-picker empty state offers a "Create new
+   * page" affordance. The parent wires this to its create-page flow (the
+   * editor needs the active space ID, which it does not have access to).
+   */
+  onCreateNewPage?: ((title: string) => void | Promise<void>) | undefined
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: orchestrates 5 property types (text/number/date/ref/select) with per-type editors, validation, and three popovers; splitting the JSX into sub-components would push state + callbacks through prop chains for marginal benefit. Score 28 vs default 25.
 export function PropertyRowEditor({
   blockId,
   prop,
@@ -55,18 +91,13 @@ export function PropertyRowEditor({
   onDelete,
   onDefUpdated,
   onRefSaved,
+  onCreateNewPage,
 }: PropertyRowEditorProps) {
   const { t } = useTranslation()
   const valueType = def?.value_type ?? 'text'
   const resolveTitle = useResolveStore((s) => s.resolveTitle)
 
-  const currentValue = (() => {
-    if (prop.value_ref != null) return prop.value_ref
-    if (prop.value_text != null) return prop.value_text
-    if (prop.value_num != null) return String(prop.value_num)
-    if (prop.value_date != null) return prop.value_date
-    return ''
-  })()
+  const currentValue = readCurrentValue(prop)
 
   const [localValue, setLocalValue] = useState(currentValue)
 
@@ -122,15 +153,7 @@ export function PropertyRowEditor({
     [onSave],
   )
 
-  const selectOptions: string[] = (() => {
-    if (valueType !== 'select' || !def?.options) return []
-    try {
-      const parsed = JSON.parse(def.options)
-      return Array.isArray(parsed) ? parsed : []
-    } catch {
-      return []
-    }
-  })()
+  const selectOptions = parseSelectOptions(def)
 
   // --- Edit select options popover state ---
   const [editOptionsOpen, setEditOptionsOpen] = useState(false)
@@ -147,12 +170,29 @@ export function PropertyRowEditor({
     setEditingOptions((prev) => prev.filter((o) => o !== opt))
   }, [])
 
+  const handleMoveOption = useCallback((opt: string, direction: 'up' | 'down') => {
+    setEditingOptions((prev) => {
+      const idx = prev.indexOf(opt)
+      if (idx === -1) return prev
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1
+      if (targetIdx < 0 || targetIdx >= prev.length) return prev
+      const next = [...prev]
+      const tmp = next[idx] as string
+      next[idx] = next[targetIdx] as string
+      next[targetIdx] = tmp
+      return next
+    })
+  }, [])
+
   const handleAddOption = useCallback(() => {
     const trimmed = newOptionInput.trim()
     if (!trimmed) return
     setEditingOptions((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]))
     setNewOptionInput('')
   }, [newOptionInput])
+
+  const newOptionTrimmed = newOptionInput.trim()
+  const canAddOption = newOptionTrimmed.length > 0
 
   const handleSaveOptions = useCallback(async () => {
     if (!def) return
@@ -183,6 +223,8 @@ export function PropertyRowEditor({
   const [refPickerOpen, setRefPickerOpen] = useState(false)
   const [refPages, setRefPages] = useState<BlockRow[]>([])
   const [refSearch, setRefSearch] = useState('')
+  /** UX-272 sub-fix 8 — id of the page currently being saved, or null. */
+  const [savingRefPageId, setSavingRefPageId] = useState<string | null>(null)
 
   const handleOpenRefPicker = useCallback(() => {
     setRefSearch('')
@@ -204,9 +246,13 @@ export function PropertyRowEditor({
 
   const handleSelectRefPage = useCallback(
     async (page: BlockRow) => {
+      // UX-272 sub-fix 8 — show a Spinner gated on the same Promise as the
+      // save so it never sticks if the IPC call rejects.
+      setSavingRefPageId(page.id)
       try {
         await setProperty({ blockId, key: prop.key, valueRef: page.id })
         onRefSaved?.()
+        setRefPickerOpen(false)
       } catch (err) {
         logger.error(
           'PropertyRowEditor',
@@ -218,11 +264,30 @@ export function PropertyRowEditor({
           err,
         )
         toast.error(t('pageProperty.saveFailed'))
+      } finally {
+        setSavingRefPageId(null)
       }
-      setRefPickerOpen(false)
     },
     [blockId, prop.key, onRefSaved, t],
   )
+
+  const handleCreateNewPage = useCallback(async () => {
+    if (!onCreateNewPage) return
+    const title = refSearch.trim()
+    if (!title) return
+    try {
+      await onCreateNewPage(title)
+      setRefPickerOpen(false)
+    } catch (err) {
+      logger.error(
+        'PropertyRowEditor',
+        'Failed to create page from ref picker',
+        { blockId, key: prop.key, title },
+        err,
+      )
+      toast.error(t('pageProperty.saveFailed'))
+    }
+  }, [onCreateNewPage, refSearch, blockId, prop.key, t])
 
   const refDisplayTitle =
     valueType === 'ref' && prop.value_ref ? resolveTitle(prop.value_ref) : null
@@ -263,20 +328,45 @@ export function PropertyRowEditor({
               <ScrollArea className="max-h-48">
                 <div className="flex flex-col gap-0.5">
                   {filteredRefPages.length === 0 ? (
-                    <div className="px-2 py-1 text-xs text-muted-foreground">
-                      {t('block.noPagesFound')}
-                    </div>
+                    <EmptyState
+                      icon={FileSearch}
+                      message={t('properties.refPickerEmptyTitle')}
+                      description={t('properties.refPickerEmptyDescription')}
+                      compact
+                      action={
+                        onCreateNewPage && refSearch.trim() ? (
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            className="mt-2 gap-1 text-muted-foreground"
+                            onClick={handleCreateNewPage}
+                            data-testid="ref-picker-create-page"
+                          >
+                            <Plus className="h-3 w-3" />
+                            {t('properties.createNewPageAction', { name: refSearch.trim() })}
+                          </Button>
+                        ) : undefined
+                      }
+                    />
                   ) : (
-                    filteredRefPages.map((page) => (
-                      <button
-                        key={page.id}
-                        type="button"
-                        className="rounded px-2 py-1 text-left text-xs transition-colors hover:bg-accent truncate"
-                        onClick={() => handleSelectRefPage(page)}
-                      >
-                        {page.content || t('block.untitled')}
-                      </button>
-                    ))
+                    filteredRefPages.map((page) => {
+                      const saving = savingRefPageId === page.id
+                      return (
+                        <button
+                          key={page.id}
+                          type="button"
+                          className="rounded px-2 py-1 text-left text-xs transition-colors hover:bg-accent truncate flex items-center gap-1.5 disabled:opacity-60"
+                          onClick={() => handleSelectRefPage(page)}
+                          disabled={savingRefPageId !== null}
+                          aria-busy={saving}
+                        >
+                          {saving && (
+                            <Spinner size="sm" aria-label={t('properties.savingRefValue')} />
+                          )}
+                          <span className="truncate">{page.content || t('block.untitled')}</span>
+                        </button>
+                      )
+                    })
                   )}
                 </div>
               </ScrollArea>
@@ -352,14 +442,45 @@ export function PropertyRowEditor({
             className="w-56 space-y-2 p-3 max-w-[calc(100vw-2rem)]"
             aria-label={t('pageProperty.editOptionsLabel', { key: prop.key })}
           >
+            <div
+              className="flex items-center justify-between"
+              data-testid={`options-editor-header-${prop.key}`}
+            >
+              <span className="text-xs font-medium text-muted-foreground">
+                {t('pageProperty.editOptionsLabel', { key: prop.key })}
+              </span>
+              <Badge variant="outline" className="text-[10px]" data-testid="options-count-badge">
+                {t('properties.optionsCount', { count: editingOptions.length })}
+              </Badge>
+            </div>
             <ScrollArea className="max-h-32">
               <div className="space-y-1">
-                {editingOptions.map((opt) => (
+                {editingOptions.map((opt, idx) => (
                   <div
                     key={opt}
                     className="flex items-center justify-between gap-1 rounded px-1 py-0.5 text-sm hover:bg-accent"
                   >
-                    <span className="truncate">{opt}</span>
+                    <span className="truncate flex-1">{opt}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="shrink-0 text-muted-foreground"
+                      onClick={() => handleMoveOption(opt, 'up')}
+                      disabled={idx === 0}
+                      aria-label={t('properties.moveOptionUp', { option: opt })}
+                    >
+                      <ArrowUp className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="shrink-0 text-muted-foreground"
+                      onClick={() => handleMoveOption(opt, 'down')}
+                      disabled={idx === editingOptions.length - 1}
+                      aria-label={t('properties.moveOptionDown', { option: opt })}
+                    >
+                      <ArrowDown className="h-3 w-3" />
+                    </Button>
                     <button
                       type="button"
                       className="shrink-0 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
@@ -390,6 +511,7 @@ export function PropertyRowEditor({
                 variant="ghost"
                 size="xs"
                 onClick={handleAddOption}
+                disabled={!canAddOption}
                 aria-label={t('pageProperty.addOptionLabel')}
               >
                 <Plus className="h-3 w-3" />

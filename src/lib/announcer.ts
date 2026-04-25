@@ -60,7 +60,7 @@ export function announce(message: string): void {
  * DOM node and the last-announced cache so tests are isolated from each other.
  */
 export function __resetAnnouncerForTests(): void {
-  if (el && el.parentNode) el.parentNode.removeChild(el)
+  if (el?.parentNode) el.parentNode.removeChild(el)
   el = null
   lastMessage = null
   lastAnnouncedAt = 0
