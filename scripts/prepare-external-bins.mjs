@@ -96,6 +96,17 @@ function main() {
   const triple = detectTargetTriple(hostTriple)
   const isCrossCompile = triple !== hostTriple
   const isWin = triple.includes('windows')
+  // Android Tauri builds do NOT ship the agaric-mcp sidecar — the MCP
+  // server is desktop-only. Cross-compiling agaric-mcp to a *-linux-android
+  // triple would require the Android NDK clang to be wired through cc-rs
+  // (CC_<triple> + CXX_<triple> + AR_<triple> env vars). Tauri's Android
+  // build pipeline sets up that toolchain for the main app crate via its
+  // own gradle-driven cargo invocation, but `beforeBuildCommand` runs in
+  // a plain shell *before* that, so cc-rs sees no NDK clang and fails.
+  // Skip the real build (the host-triple placeholder is already in place
+  // from the CI's --placeholder-only step, and Android doesn't bundle the
+  // sidecar anyway).
+  const isAndroid = triple.includes('android')
   const ext = isWin ? '.exe' : ''
 
   // Cargo puts output in `target/<triple>/release/` whenever a target is
@@ -117,6 +128,13 @@ function main() {
 
   if (placeholderOnly) {
     console.log('prepare-external-bins: --placeholder-only, skipping build + copy')
+    return
+  }
+
+  if (isAndroid) {
+    console.log(
+      `prepare-external-bins: ${triple} — Android does not ship agaric-mcp sidecar, skipping build + copy`,
+    )
     return
   }
 
