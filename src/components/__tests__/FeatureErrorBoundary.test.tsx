@@ -6,24 +6,29 @@
  *  - Shows fallback UI when child throws
  *  - Shows section name in error message
  *  - Retry button resets error state and re-renders children
+ *  - Report bug button dispatches `BUG_REPORT_EVENT` with the captured
+ *    error message + stack (UX-279)
  *  - a11y compliance on fallback UI
  */
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { BUG_REPORT_EVENT, type BugReportEventDetail } from '../../lib/bug-report-events'
 import { FeatureErrorBoundary } from '../FeatureErrorBoundary'
 
 /** A helper component that throws on command. */
 let shouldThrow = false
+let thrownError: Error = new Error('Boom!')
 function Bomb() {
-  if (shouldThrow) throw new Error('Boom!')
+  if (shouldThrow) throw thrownError
   return <div data-testid="child">OK</div>
 }
 
 beforeEach(() => {
   shouldThrow = false
+  thrownError = new Error('Boom!')
   vi.restoreAllMocks()
 })
 
@@ -102,6 +107,82 @@ describe('FeatureErrorBoundary', () => {
     expect(screen.getByText('OK')).toBeInTheDocument()
     // Error UI should be gone
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  describe('Report bug button (UX-279)', () => {
+    const listener = vi.fn<(e: Event) => void>()
+
+    beforeEach(() => {
+      window.addEventListener(BUG_REPORT_EVENT, listener)
+    })
+
+    afterEach(() => {
+      window.removeEventListener(BUG_REPORT_EVENT, listener)
+      listener.mockReset()
+    })
+
+    it('renders the Report bug button alongside Retry when crashed', () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      shouldThrow = true
+
+      render(
+        <FeatureErrorBoundary name="Journal">
+          <Bomb />
+        </FeatureErrorBoundary>,
+      )
+
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Report this crash' })).toBeInTheDocument()
+    })
+
+    it('dispatches BUG_REPORT_EVENT with the error message + stack on click', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const user = userEvent.setup()
+
+      shouldThrow = true
+      thrownError = new Error('section kaboom')
+      thrownError.stack = 'Error: section kaboom\n    at Bomb (file.tsx:1:1)'
+
+      render(
+        <FeatureErrorBoundary name="Journal">
+          <Bomb />
+        </FeatureErrorBoundary>,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Report this crash' }))
+
+      expect(listener).toHaveBeenCalledTimes(1)
+      const event = listener.mock.calls[0]?.[0] as CustomEvent<BugReportEventDetail>
+      expect(event.detail).toEqual({
+        message: 'section kaboom',
+        stack: 'Error: section kaboom\n    at Bomb (file.tsx:1:1)',
+      })
+    })
+
+    it('omits stack from the dispatch detail when the error has no stack', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const user = userEvent.setup()
+
+      shouldThrow = true
+      thrownError = new Error('stackless')
+      // jsdom always populates `stack`, so blank it deliberately to model
+      // the no-stack branch in `handleReportBug` (exactOptionalPropertyTypes
+      // disallows `= undefined` for string fields, so delete it).
+      delete thrownError.stack
+
+      render(
+        <FeatureErrorBoundary name="Journal">
+          <Bomb />
+        </FeatureErrorBoundary>,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Report this crash' }))
+
+      expect(listener).toHaveBeenCalledTimes(1)
+      const event = listener.mock.calls[0]?.[0] as CustomEvent<BugReportEventDetail>
+      expect(event.detail).toEqual({ message: 'stackless' })
+      expect(event.detail.stack).toBeUndefined()
+    })
   })
 
   it('has no a11y violations in fallback UI', async () => {

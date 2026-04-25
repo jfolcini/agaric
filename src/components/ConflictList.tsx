@@ -524,6 +524,7 @@ export function ConflictList(): React.ReactElement {
         onAction={() => {
           if (confirmKeepBlock) handleKeep(confirmKeepBlock)
         }}
+        actionVariant="destructive"
         className="conflict-keep-confirm"
         contentTestId="conflict-keep-confirm"
         cancelTestId="conflict-keep-no"
@@ -562,6 +563,7 @@ export function ConflictList(): React.ReactElement {
             if (discardBlock) handleDiscard(discardBlock)
           }
         }}
+        actionVariant="destructive"
         className="conflict-discard-confirm"
         contentTestId="conflict-discard-confirm"
         cancelTestId="conflict-discard-no"
@@ -588,6 +590,7 @@ export function ConflictList(): React.ReactElement {
         actionLabel={
           batchAction === 'keep' ? t('conflict.batchKeepAction') : t('conflict.batchDiscardAction')
         }
+        actionVariant="destructive"
         onAction={handleBatchConfirm}
         className="conflict-batch-confirm"
       />

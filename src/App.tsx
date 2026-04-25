@@ -23,6 +23,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { BootGate } from './components/BootGate'
+import { BugReportDialog } from './components/BugReportDialog'
 import { FeatureErrorBoundary } from './components/FeatureErrorBoundary'
 import { GlobalDateControls, JournalControls, JournalPage } from './components/JournalPage'
 import { LoadingSkeleton } from './components/LoadingSkeleton'
@@ -59,6 +60,7 @@ import { useSyncTrigger } from './hooks/useSyncTrigger'
 import { useTheme } from './hooks/useTheme'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
 import { announce } from './lib/announcer'
+import { BUG_REPORT_EVENT, type BugReportEventDetail } from './lib/bug-report-events'
 import { formatRelativeTime } from './lib/format-relative-time'
 import { matchesShortcutBinding } from './lib/keyboard-config'
 import { logger } from './lib/logger'
@@ -508,6 +510,13 @@ function App() {
   const isOnline = useOnlineStatus()
   const isMobile = useIsMobile()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  // UX-279: top-level BugReportDialog mount that listens for the
+  // `BUG_REPORT_EVENT` global event from `FeatureErrorBoundary`. The
+  // section-level boundary can't open the dialog directly because it lives
+  // inside the crashed subtree — a global event lets it bubble to the
+  // shell without prop-drilling.
+  const [bugReportOpen, setBugReportOpen] = useState<boolean>(false)
+  const [bugReportPrefill, setBugReportPrefill] = useState<BugReportEventDetail | null>(null)
   const mainContentRef = useRef<HTMLDivElement | null>(null)
 
   // The main content scroller is a `ScrollArea`; `mainContentRef` points at
@@ -632,6 +641,22 @@ function App() {
     })
     return () => cancelAnimationFrame(id)
   }, [currentView])
+
+  // ── Bug-report event listener (UX-279) ────────────────────────────
+  // FeatureErrorBoundary dispatches `BUG_REPORT_EVENT` from its "Report
+  // bug" button. The boundary is inside the crashed subtree and can't
+  // open a dialog itself, so the App shell mounts a top-level
+  // BugReportDialog and opens it here with the event detail pre-filled.
+  useEffect(() => {
+    function handleReportBug(e: Event) {
+      const detail = (e as CustomEvent<BugReportEventDetail>).detail
+      if (detail == null) return
+      setBugReportPrefill(detail)
+      setBugReportOpen(true)
+    }
+    window.addEventListener(BUG_REPORT_EVENT, handleReportBug)
+    return () => window.removeEventListener(BUG_REPORT_EVENT, handleReportBug)
+  }, [])
 
   // ── Op-level undo/redo shortcuts (Ctrl+Z / Ctrl+Y) ─────────────────
   useUndoShortcuts()
@@ -1077,6 +1102,25 @@ function App() {
         <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
         <WelcomeModal />
       </Suspense>
+      {/*
+       * UX-279: top-level BugReportDialog driven by `BUG_REPORT_EVENT`.
+       * `initialTitle` / `initialDescription` are conditionally spread so
+       * the dialog only sees them once a prefill payload exists, keeping
+       * `exactOptionalPropertyTypes` happy.
+       */}
+      <BugReportDialog
+        open={bugReportOpen}
+        onOpenChange={(open) => {
+          setBugReportOpen(open)
+          if (!open) setBugReportPrefill(null)
+        }}
+        {...(bugReportPrefill != null
+          ? {
+              initialTitle: bugReportPrefill.message,
+              initialDescription: bugReportPrefill.stack ?? '',
+            }
+          : {})}
+      />
       <Toaster position="bottom-right" richColors closeButton />
     </BootGate>
   )

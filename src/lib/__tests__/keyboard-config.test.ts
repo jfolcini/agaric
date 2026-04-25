@@ -34,12 +34,17 @@ beforeEach(() => {
 describe('keyboard-config', () => {
   it('DEFAULT_SHORTCUTS has entries', () => {
     expect(DEFAULT_SHORTCUTS.length).toBeGreaterThan(0)
-    // Verify every entry has required fields
+    // Verify every entry has required fields with the expected shape
     for (const s of DEFAULT_SHORTCUTS) {
-      expect(s.id).toBeTruthy()
-      expect(s.keys).toBeTruthy()
-      expect(s.category).toBeTruthy()
-      expect(s.description).toBeTruthy()
+      // ids are camelCase identifiers (e.g. 'prevBlock', 'priority1')
+      expect(s.id).toMatch(/^[a-z][a-zA-Z0-9]*$/)
+      // keys are human-readable bindings (e.g. 'Ctrl + Shift + E', 'Escape')
+      expect(s.keys).toMatch(/\S/)
+      // category is always under the 'keyboard.category.' namespace
+      expect(s.category).toMatch(/^keyboard\.category\./)
+      // description is a dotted i18n key; most start with 'keyboard.', a few
+      // (graph zoom shortcuts) live under 'graph.' — both are valid namespaces.
+      expect(s.description).toMatch(/^[a-z][a-zA-Z0-9]*\.[a-zA-Z][a-zA-Z0-9]*$/)
     }
   })
 

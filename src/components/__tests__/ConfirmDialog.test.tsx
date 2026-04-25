@@ -7,6 +7,8 @@
  *  - Loading state shows spinner and disables buttons
  *  - Children slot renders extra content
  *  - a11y compliance (axe audit)
+ *  - UX-259: destructive variant flips initial focus to Cancel so a reflex
+ *    Enter on open dismisses the dialog instead of confirming.
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
@@ -242,6 +244,74 @@ describe('ConfirmDialog', () => {
     await waitFor(async () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // ─── UX-259: destructive variant safety ─────────────────────────────────────
+
+  describe('destructive variant (UX-259)', () => {
+    it('focuses the Cancel button on open (not the Action button)', () => {
+      render(<ConfirmDialog {...defaultProps} actionVariant="destructive" />)
+
+      const actionBtn = screen.getByRole('button', { name: /Confirm/ })
+      const cancelBtn = screen.getByRole('button', { name: /Cancel/ })
+
+      expect(cancelBtn).toHaveFocus()
+      expect(actionBtn).not.toHaveFocus()
+    })
+
+    it('reflex Enter on open closes the dialog WITHOUT firing onAction', async () => {
+      const user = userEvent.setup()
+      const onAction = vi.fn()
+      const onOpenChange = vi.fn()
+
+      render(
+        <ConfirmDialog
+          {...defaultProps}
+          actionVariant="destructive"
+          onAction={onAction}
+          onOpenChange={onOpenChange}
+        />,
+      )
+
+      // Cancel is auto-focused for destructive — Enter activates Cancel, not Action.
+      await user.keyboard('{Enter}')
+
+      expect(onAction).not.toHaveBeenCalled()
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    it('clicking action button still fires onAction (destructive variant)', async () => {
+      const user = userEvent.setup()
+      const onAction = vi.fn()
+
+      render(<ConfirmDialog {...defaultProps} actionVariant="destructive" onAction={onAction} />)
+
+      await user.click(screen.getByRole('button', { name: /Confirm/ }))
+      expect(onAction).toHaveBeenCalledTimes(1)
+    })
+
+    it('non-destructive variant retains action-button focus and immediate Enter confirm', async () => {
+      const user = userEvent.setup()
+      const onAction = vi.fn()
+
+      // Default variant — no actionVariant set.
+      render(<ConfirmDialog {...defaultProps} onAction={onAction} />)
+
+      const actionBtn = screen.getByRole('button', { name: /Confirm/ })
+      expect(actionBtn).toHaveFocus()
+
+      await user.keyboard('{Enter}')
+      expect(onAction).toHaveBeenCalledTimes(1)
+    })
+
+    it('has no a11y violations in destructive variant', async () => {
+      const { container } = render(<ConfirmDialog {...defaultProps} actionVariant="destructive" />)
+
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
     })
   })
 })

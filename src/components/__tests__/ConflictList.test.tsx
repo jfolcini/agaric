@@ -907,7 +907,7 @@ describe('ConflictList', () => {
     })
     const { container } = render(<ConflictList />)
     await waitFor(() => {
-      expect(container.querySelector('.conflict-type-badge')).toBeTruthy()
+      expect(container.querySelector('.conflict-type-badge')).toBeInTheDocument()
     })
     const badge = container.querySelector('.conflict-type-badge')
     expect(badge?.textContent).toBe('Property')
@@ -950,7 +950,7 @@ describe('ConflictList', () => {
     })
     const { container } = render(<ConflictList />)
     await waitFor(() => {
-      expect(container.querySelector('.conflict-type-badge')).toBeTruthy()
+      expect(container.querySelector('.conflict-type-badge')).toBeInTheDocument()
     })
     const badge = container.querySelector('.conflict-type-badge')
     expect(badge?.textContent).toBe('Move')
@@ -972,7 +972,7 @@ describe('ConflictList', () => {
 
     // Source ID should be truncated and shown
     const sourceId = container.querySelector('.conflict-source-id')
-    expect(sourceId).toBeTruthy()
+    expect(sourceId).toBeInTheDocument()
     expect(sourceId?.textContent).toContain('ID:')
     expect(sourceId?.textContent).toContain('CONFLICT-ID-...')
   })
@@ -995,7 +995,7 @@ describe('ConflictList', () => {
 
     // Timestamp should be displayed and should not be "Unknown"
     const timestamp = container.querySelector('.conflict-timestamp')
-    expect(timestamp).toBeTruthy()
+    expect(timestamp).toBeInTheDocument()
     expect(timestamp?.textContent).not.toBe('')
     expect(timestamp?.textContent).not.toBe('Unknown')
     // Should show something like "1h ago"
@@ -1016,7 +1016,7 @@ describe('ConflictList', () => {
     await screen.findByText('conflict text')
 
     const timestamp = container.querySelector('.conflict-timestamp')
-    expect(timestamp).toBeTruthy()
+    expect(timestamp).toBeInTheDocument()
     expect(timestamp?.textContent).toBe('Unknown')
   })
 
@@ -1033,7 +1033,7 @@ describe('ConflictList', () => {
     await screen.findByText('conflict content')
 
     const typeBadge = container.querySelector('.conflict-type-badge')
-    expect(typeBadge).toBeTruthy()
+    expect(typeBadge).toBeInTheDocument()
     expect(typeBadge?.className).toContain('bg-conflict-text')
     expect(typeBadge?.className).toContain('text-conflict-text-foreground')
   })
@@ -1316,7 +1316,7 @@ describe('ConflictList', () => {
     await screen.findByText('conflict text')
 
     const typeBadge = container.querySelector('.conflict-type-badge')
-    expect(typeBadge).toBeTruthy()
+    expect(typeBadge).toBeInTheDocument()
     expect(typeBadge?.getAttribute('aria-label')).toBe(t('conflict.typeText'))
   })
 
@@ -1367,7 +1367,7 @@ describe('ConflictList', () => {
 
     // Simulate the sync:complete event by invoking the captured listener callback
     const listenerCall = mockListen.mock.calls.find(([event]) => event === 'sync:complete')
-    expect(listenerCall).toBeTruthy()
+    expect(listenerCall).toBeDefined()
     const callback = listenerCall?.[1]
     callback({ payload: { ops_received: 3, ops_sent: 0 } })
 
@@ -1442,7 +1442,7 @@ describe('ConflictList', () => {
 
     // Dialog should show content preview
     const dialog = document.querySelector('.conflict-keep-confirm')
-    expect(dialog).toBeTruthy()
+    expect(dialog).toBeInTheDocument()
     expect(dialog?.textContent).toContain('incoming changes')
     expect(dialog?.textContent).toContain('original content')
   })
@@ -1501,7 +1501,7 @@ describe('ConflictList', () => {
 
     // Dialog should show content preview
     const dialog = document.querySelector('.conflict-discard-confirm')
-    expect(dialog).toBeTruthy()
+    expect(dialog).toBeInTheDocument()
     expect(dialog?.textContent).toContain('conflict to discard')
   })
 
@@ -1603,7 +1603,7 @@ describe('ConflictList', () => {
     // Extract and invoke the retry action
     const successCalls = vi.mocked(toast.success).mock.calls
     const retryCall = successCalls.find(([msg]) => msg === t('conflict.updateSuccessDeleteFailed'))
-    expect(retryCall).toBeTruthy()
+    expect(retryCall).toBeDefined()
     // biome-ignore lint/suspicious/noExplicitAny: test mock extraction
     const retryAction = (retryCall?.[1] as any).action
     retryAction.onClick()
@@ -1652,7 +1652,7 @@ describe('ConflictList', () => {
     // Extract and invoke the undo action
     const successCalls = vi.mocked(toast.success).mock.calls
     const undoCall = successCalls.find(([msg]) => msg === t('conflict.keptSelectedVersion'))
-    expect(undoCall).toBeTruthy()
+    expect(undoCall).toBeDefined()
     // biome-ignore lint/suspicious/noExplicitAny: test mock extraction
     const undoAction = (undoCall?.[1] as any).action
     undoAction.onClick()
@@ -1710,7 +1710,7 @@ describe('ConflictList', () => {
     // Extract and invoke the undo action
     const successCalls = vi.mocked(toast.success).mock.calls
     const undoCall = successCalls.find(([msg]) => msg === t('conflict.conflictDiscarded'))
-    expect(undoCall).toBeTruthy()
+    expect(undoCall).toBeDefined()
     // biome-ignore lint/suspicious/noExplicitAny: test mock extraction
     const undoAction = (undoCall?.[1] as any).action
     undoAction.onClick()
@@ -1773,7 +1773,7 @@ describe('ConflictList', () => {
     const { container } = render(<ConflictList />)
 
     await waitFor(() => {
-      expect(container.querySelector('.conflict-property-diff')).toBeTruthy()
+      expect(container.querySelector('.conflict-property-diff')).toBeInTheDocument()
     })
 
     expect(screen.getByText(t('conflict.propertyChanges'))).toBeInTheDocument()
@@ -1828,7 +1828,7 @@ describe('ConflictList', () => {
     const { container } = render(<ConflictList />)
 
     await waitFor(() => {
-      expect(container.querySelector('.conflict-move-diff')).toBeTruthy()
+      expect(container.querySelector('.conflict-move-diff')).toBeInTheDocument()
     })
 
     expect(screen.getByText(t('conflict.moveConflictHeader'))).toBeInTheDocument()
@@ -2635,6 +2635,137 @@ describe('ConflictList', () => {
 
     const listbox = screen.getByRole('listbox', { name: t('conflicts.listLabel') })
     expect(listbox).toBeInTheDocument()
+  })
+
+  // UX-259: destructive batch dialogs must not confirm on a reflex Enter.
+  it('UX-259: reflex Enter on batch keep dialog does NOT call edit_block/delete_block', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeConflict({ id: 'C1', content: 'conflict 1' }),
+        makeConflict({ id: 'C2', content: 'conflict 2' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({
+      get_conflicts: page,
+      get_block: originalBlock,
+    })
+
+    render(<ConflictList />)
+    await screen.findByText('conflict 1')
+
+    // Select both conflicts.
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
+
+    // Open the destructive "Keep all" batch dialog.
+    await user.click(screen.getByRole('button', { name: /Keep all/i }))
+    expect(screen.getByText(t('conflict.keepAllSelectedTitle'))).toBeInTheDocument()
+
+    // Cancel is auto-focused for destructive — reflex Enter dismisses.
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => {
+      expect(screen.queryByText(t('conflict.keepAllSelectedTitle'))).not.toBeInTheDocument()
+    })
+
+    // No batch mutations should have fired.
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'edit_block')).toHaveLength(0)
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block')).toHaveLength(0)
+  })
+
+  it('UX-259: reflex Enter on batch discard dialog does NOT call delete_block', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeConflict({ id: 'C1', content: 'conflict 1' }),
+        makeConflict({ id: 'C2', content: 'conflict 2' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({
+      get_conflicts: page,
+      get_block: originalBlock,
+    })
+
+    render(<ConflictList />)
+    await screen.findByText('conflict 1')
+
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
+
+    // Open the destructive "Discard all" batch dialog.
+    await user.click(screen.getByRole('button', { name: /Discard all/i }))
+    expect(screen.getByText(t('conflict.discardAllSelectedTitle'))).toBeInTheDocument()
+
+    // Cancel is auto-focused for destructive — reflex Enter dismisses.
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => {
+      expect(screen.queryByText(t('conflict.discardAllSelectedTitle'))).not.toBeInTheDocument()
+    })
+
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block')).toHaveLength(0)
+  })
+
+  // UX-259: single-conflict destructive dialogs must also not confirm on a
+  // reflex Enter — Keep replaces the original block with the conflict copy
+  // (data loss), Discard permanently deletes the conflict block.
+  it('UX-259: reflex Enter on single-conflict Keep dialog does NOT call edit_block/delete_block', async () => {
+    const user = userEvent.setup()
+    mockInvokeByCommand({
+      get_conflicts: {
+        items: [makeConflict({ id: 'C1', content: 'conflict text' })],
+        next_cursor: null,
+        has_more: false,
+      },
+      get_block: originalBlock,
+    })
+
+    render(<ConflictList />)
+    const keepBtn = await screen.findByRole('button', { name: /Keep/i })
+    await user.click(keepBtn)
+    expect(screen.getByText(t('conflict.keepIncomingTitle'))).toBeInTheDocument()
+
+    // Cancel is auto-focused for destructive — reflex Enter dismisses.
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => {
+      expect(screen.queryByText(t('conflict.keepIncomingTitle'))).not.toBeInTheDocument()
+    })
+
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'edit_block')).toHaveLength(0)
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block')).toHaveLength(0)
+  })
+
+  it('UX-259: reflex Enter on single-conflict Discard dialog does NOT call delete_block', async () => {
+    const user = userEvent.setup()
+    mockInvokeByCommand({
+      get_conflicts: {
+        items: [makeConflict({ id: 'C1', content: 'to discard' })],
+        next_cursor: null,
+        has_more: false,
+      },
+      get_block: originalBlock,
+    })
+
+    render(<ConflictList />)
+    const discardBtn = await screen.findByRole('button', { name: /Discard conflict for block/i })
+    await user.click(discardBtn)
+    expect(screen.getByText(t('conflict.discardTitle'))).toBeInTheDocument()
+
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => {
+      expect(screen.queryByText(t('conflict.discardTitle'))).not.toBeInTheDocument()
+    })
+
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block')).toHaveLength(0)
   })
 
   // UX-198: the conflict-list toolbar header used to sit inside a

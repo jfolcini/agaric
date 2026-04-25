@@ -610,6 +610,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         description={t('pageBrowser.deleteDescription', { name: deleteTarget?.name })}
         cancelLabel={t('pageBrowser.cancel')}
         actionLabel={t('pageBrowser.delete')}
+        actionVariant="destructive"
         onAction={handleConfirmDelete}
       />
     </div>

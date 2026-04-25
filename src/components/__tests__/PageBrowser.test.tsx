@@ -230,13 +230,13 @@ describe('PageBrowser', () => {
 
       // The page row should have a group class with both a select button and a trash button
       const pageRow = screen.getByText('My Page').closest('.group') as HTMLElement
-      expect(pageRow).toBeTruthy()
+      expect(pageRow).toBeInTheDocument()
       // There should be at least 2 buttons: page select and trash
       const allButtons = pageRow.querySelectorAll('button')
       expect(allButtons.length).toBeGreaterThanOrEqual(2)
       // The trash button has an aria-label
       const trashBtn = findTrashButton(pageRow)
-      expect(trashBtn).toBeTruthy()
+      expect(trashBtn).toBeInTheDocument()
     })
 
     it('shows AlertDialog when trash icon is clicked', async () => {
@@ -952,6 +952,41 @@ describe('PageBrowser', () => {
       expect(screen.getByRole('button', { name: /^Delete$/i })).toBeInTheDocument()
     })
 
+    // UX-259: Delete is destructive — Cancel must be auto-focused so reflex
+    // Enter dismisses instead of permanently deleting the page. We assert
+    // focus state + no-mutation rather than dialog dismissal alone, because
+    // jsdom's autoFocus + Radix focus-trap timing can lag the Enter event.
+    it('UX-259: reflex Enter on delete dialog does NOT call trash_page', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'work/project-a' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('project-a')
+
+      const deleteBtn = screen.getByRole('button', { name: 'Delete work/project-a' })
+      await user.click(deleteBtn)
+      expect(await screen.findByText(/Delete page\?/i)).toBeInTheDocument()
+
+      // Wait for Cancel to receive focus (autoFocus is applied in a
+      // post-mount effect by Radix).
+      const cancelBtn = screen.getByRole('button', { name: /Cancel/i })
+      await waitFor(() => {
+        expect(cancelBtn).toHaveFocus()
+      })
+
+      // Reflex Enter on the focused Cancel button must NOT trigger the
+      // destructive action.
+      await user.keyboard('{Enter}')
+
+      // No mutation IPC should have fired.
+      expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'trash_page')).toHaveLength(0)
+      expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_page')).toHaveLength(0)
+    })
+
     it('tree leaf items render with a file icon', async () => {
       mockedInvoke.mockResolvedValueOnce({
         items: [makePage({ id: 'P1', content: 'work/project-a' })],
@@ -966,7 +1001,7 @@ describe('PageBrowser', () => {
       // The leaf item should contain an SVG icon (FileText from lucide-react)
       const leafButton = screen.getByText('project-a').closest('button') as HTMLElement
       const svg = leafButton.querySelector('svg')
-      expect(svg).toBeTruthy()
+      expect(svg).toBeInTheDocument()
       expect(svg?.classList.contains('h-4')).toBe(true)
       expect(svg?.classList.contains('w-4')).toBe(true)
     })
@@ -1620,7 +1655,7 @@ describe('PageBrowser', () => {
       const createUnderBtn = screen.getAllByRole('button', {
         name: /create page under/i,
       })[0]
-      expect(createUnderBtn).toBeTruthy()
+      expect(createUnderBtn).toBeInTheDocument()
 
       // Switch to fake timers after DOM is ready. This avoids deadlocks in
       // async waitFor helpers under fake timers.

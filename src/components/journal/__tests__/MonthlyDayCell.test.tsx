@@ -158,8 +158,8 @@ describe('MonthlyDayCell', () => {
     // low-lightness fill tokens (bg-date-due, bg-date-scheduled).
     const dueDot = container.querySelector('.bg-date-due-foreground')
     const schedDot = container.querySelector('.bg-date-scheduled-foreground')
-    expect(dueDot).not.toBeNull()
-    expect(schedDot).not.toBeNull()
+    expect(dueDot).toBeInTheDocument()
+    expect(schedDot).toBeInTheDocument()
 
     // The faint pill-background tokens must NOT be used for dots.
     expect(container.querySelector('.bg-date-due:not(.bg-date-due-foreground)')).toBeNull()

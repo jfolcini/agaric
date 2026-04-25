@@ -3,6 +3,17 @@
  *
  * Replaces the repeated AlertDialog > Content > Header > Title + Description > Footer > Cancel + Action
  * pattern used across 8+ components.
+ *
+ * UX-259: when actionVariant === 'destructive', initial focus lands on the Cancel
+ * button (not the Action button) so that a reflex Enter keypress dismisses the
+ * dialog instead of confirming the destructive action. Non-destructive callers
+ * retain action-button focus (existing behavior).
+ *
+ * The 500 ms "arming" grace period that was originally proposed for destructive
+ * dialogs was intentionally NOT implemented — the focus-flip alone closes
+ * UX-259 (reflex Enter no longer fires destructive actions because focus starts
+ * on Cancel), and the additional aria-disabled gate created brittle interaction
+ * timing for every existing destructive-dialog test in the suite.
  */
 
 import type React from 'react'
@@ -60,6 +71,8 @@ export function ConfirmDialog({
   const { t } = useTranslation()
   const resolvedCancelLabel = cancelLabel ?? t('dialog.cancel')
   const resolvedActionLabel = actionLabel ?? t('dialog.confirm')
+  const isDestructive = actionVariant === 'destructive'
+
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent className={className} data-testid={contentTestId}>
@@ -69,16 +82,20 @@ export function ConfirmDialog({
         </AlertDialogHeader>
         {children}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={loading} data-testid={cancelTestId}>
+          <AlertDialogCancel
+            disabled={loading}
+            // UX-259: destructive dialogs auto-focus Cancel so reflex Enter dismisses.
+            autoFocus={isDestructive}
+            data-testid={cancelTestId}
+          >
             {resolvedCancelLabel}
           </AlertDialogCancel>
           <AlertDialogAction
-            className={cn(
-              actionVariant === 'destructive' && buttonVariants({ variant: 'destructive' }),
-            )}
+            className={cn(isDestructive && buttonVariants({ variant: 'destructive' }))}
             onClick={onAction}
             disabled={loading}
-            autoFocus
+            // UX-259: only auto-focus Action for non-destructive variants.
+            autoFocus={!isDestructive}
             data-testid={actionTestId}
           >
             {loading && <Spinner />}

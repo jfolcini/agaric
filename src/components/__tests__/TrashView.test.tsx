@@ -177,6 +177,30 @@ describe('TrashView', () => {
     expect(screen.queryByText('Permanently delete?')).not.toBeInTheDocument()
   })
 
+  // UX-259: destructive dialogs must not confirm on a reflex Enter on open.
+  it('UX-259: reflex Enter on purge dialog dismisses without calling purgeBlock', async () => {
+    const user = userEvent.setup()
+    const block = makeBlock('B1', 'to purge', '2025-01-15T00:00:00Z')
+    mockListAndResolve([block])
+
+    render(<TrashView />)
+
+    // Open the destructive purge confirmation.
+    const purgeBtn = await screen.findByRole('button', { name: /^Purge$/i })
+    await user.click(purgeBtn)
+    expect(screen.getByText('Permanently delete?')).toBeInTheDocument()
+
+    // Cancel is auto-focused for destructive — reflex Enter dismisses.
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => {
+      expect(screen.queryByText('Permanently delete?')).not.toBeInTheDocument()
+    })
+
+    // purge_block MUST NOT have been called.
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'purge_block')).toHaveLength(0)
+  })
+
   it('pressing Escape dismisses the purge confirmation', async () => {
     const user = userEvent.setup()
     const block = makeBlock('B1', 'to purge', '2025-01-15T00:00:00Z')
