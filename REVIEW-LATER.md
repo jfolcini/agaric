@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-48 open items.
+43 open items.
 
-Previously resolved: 417+ items across 149 sessions.
+Previously resolved: 422+ items across 149 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -56,8 +56,6 @@ Previously resolved: 417+ items across 149 sessions.
 | UX-263 | UX | Pairing flow polish (countdown SR announcements, ordinal labels, address/rename validation, mid-pair close guard, countdown pause while typing) | M |
 | UX-264 | UX | Sync error UX (no retry action on failure toast, no online/offline transition feedback, no batch progress, camera-permission denial leaves user stuck on QR mode) | M |
 | UX-265 | UX | Conflict UI improvements (Keep/Discard label clarity, sort/filter for large conflict sets, type-badge tooltips, missing-original-block fallback, large-diff handling) | M |
-| UX-266 | UX | Sync status visibility — sidebar-footer indicator missing when StatusPanel collapsed; "discovering" state visually identical to "pairing"; deleted-current-space silently switches without notification | S |
-| UX-268 | UX | Touch-target / mobile sizing fixes across Agenda + Search (DuePanelFilters toggle missing min-h + aria-label, AgendaSortGroup buttons missing min-w, SourcePageFilter button responsiveness, BacklinkFilterBuilder add-filter row mobile layout) | S |
 | UX-269 | UX | `SearchPanel` consolidation — switch custom load-more to shared `LoadMoreButton`, fix aria-live placement, debounce visual feedback, CJK notice placement, alias-overlay positioning, results-count announcement | M |
 | UX-270 | UX | `GraphView` a11y + filter persistence — bare `overflow-y-auto` → `ScrollArea`, redundant aria-label on labelled checkboxes, `role="img"` on interactive SVG, filter state reset on every navigation | M |
 | UX-271 | UX | Backlinks linked-vs-unlinked distinction missing in `BacklinkGroupRenderer`; `LinkedReferences` lacks active-filter count badge; tag-search popover scroll handling unclear | S |
@@ -65,9 +63,8 @@ Previously resolved: 417+ items across 149 sessions.
 | UX-273 | UX | Inline link UX — `LinkPreviewTooltip` only fires on hover (no keyboard activation); suggestion popups don't handle viewport edges on mobile | M |
 | UX-274 | UX | Agenda views — `DateChipEditor` parse error not shown on input itself; `QueryResult` error has no retry; `RescheduleDropZone` has no keyboard alternative; per-group collapse not persisted; empty-filter validation silent; `DuePanel` projected entries skipped by keyboard nav; `QueryBuilderModal` accepts unknown property keys | M |
 | UX-275 | UX | History view UX gaps — Restore-to-here wording, non-reversible icon a11y, missing inline filter clear, DiffDisplay hunk navigation, descendant-count badge wrap, batch keyboard shortcuts, restore-action missing undo toast, checkbox row-click ambiguity, generic error banner, no batch-restore confirmation | M |
-| UX-276 | UX | Settings — active tab resets on navigation; no URL-based deep-link to specific settings sections | S |
-| UX-277 | UX | `BugReportDialog` polish — uses native `<input type="checkbox">` instead of design-system `Checkbox`, no success toast after submit, no log-content preview before submit | S |
-| UX-278 | UX | `WelcomeModal` — sample page content hardcoded English; feature list uses `<div>` instead of `<ul>/<li>` semantics | S |
+| UX-276 | UX | Settings — no URL-based deep-link to specific settings sections (tab persistence shipped; URL deep-link still pending) | S |
+| UX-277 | UX | `BugReportDialog` log-content preview before submit (Checkbox primitive swap + success toast shipped; log preview pending — may be superseded by H-9c) | M |
 | UX-279 | UX | `FeatureErrorBoundary` (section-level errors) lacks "Report bug" affordance — only the global `ErrorBoundary` has it | M |
 | UX-281 | UX | Suggestion list & roving editor polish — category headers use plain `<div>` (need `role="heading"`); markdown serializer warns on unknown inline nodes but strips them silently to user; gutter-button tooltips invisible on touch | S |
 | UX-282 | UX | `src/lib/announcer.ts` exists with `announce.*` i18n keys but is invoked from very few places — paid-for accessibility utility is largely unused | M |
@@ -1085,32 +1082,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Risk:** S — additive.
 **Impact:** M — improves usability of an inherently stressful flow.
 
-### UX-266 — Sync status visibility & space-deletion notification
-
-**Problem:**
-
-- `src/components/StatusPanel.tsx:219-295` — sync status is only visible when the StatusPanel card is expanded. When collapsed (the common case), users have no glanceable signal of sync state. The sidebar footer has a "Sync" button but no status indicator.
-- `src/stores/sync.ts:11` — `discovering` and `pairing` use the same amber dot (`syncStateDotClasses` in `StatusPanel.tsx:67-82`) and the only differentiator is a text label some users won't read. Either combine into a "Connecting…" state or add per-state icons (checkmark / spinner / X / dash) so the dot carries non-color signal in addition to the existing text.
-- `src/stores/space.ts:45-52` — when the current space is deleted on another device, the store silently falls back to the first available space. Users can be confused why they're "in a different space". Add a one-shot toast: "Your active space was deleted on another device. Switched to {{space}}."
-
-**Cost:** S.
-**Risk:** S — small additive UI.
-**Impact:** M — makes sync state and space changes glanceable.
-
-### UX-268 — Touch-target / mobile sizing fixes across Agenda + Search
-
-**Problem:** A focused review found four real touch-sizing gaps (after filtering out earlier false positives that had already been handled by the `touch-target` utility / Button `size="sm"`):
-
-- `src/components/DuePanelFilters.tsx:74-93` — "Hide before scheduled" toggle uses `text-xs px-1.5 py-0.5` with no `[@media(pointer:coarse)]:min-h-[44px]` and only `title` + `aria-pressed` (no `aria-label`). Add both.
-- `src/components/AgendaSortGroupControls.tsx:49-60` — sort/group buttons have `min-h-[44px]` on touch but no `min-w` constraint, producing tall narrow buttons with awkward aspect ratios. Add `[@media(pointer:coarse)]:min-w-[44px]`.
-- `src/components/DuePanelFilters.tsx:55-72` — filter pills similarly missing `min-w` on touch.
-- `src/components/SourcePageFilter.tsx:119-130` — uses `size="sm"` (h-8 base) plus `min-h-[44px]` on touch; verify the override actually fires (`min-*` doesn't override fixed height when both are set). Likely safer to switch to `size="icon"` or to `h-7 w-7 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11`.
-- `src/components/BacklinkFilterBuilder.tsx:336-346` — add-filter row switches to `flex-col` on touch but child inputs still have fixed widths (`w-24`, `w-40`); add `[@media(pointer:coarse)]:w-full` on the children.
-
-**Cost:** S — bundle of XS items.
-**Risk:** S — pure CSS.
-**Impact:** M — fixes a handful of real one-handed mobile-tap frustrations.
-
 ### UX-269 — `SearchPanel` consolidation
 
 **Problem:** SearchPanel hand-rolls several primitives the design system already provides:
@@ -1219,41 +1190,23 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Risk:** S.
 **Impact:** M.
 
-### UX-276 — Settings: tab persistence + URL deep-link support
+### UX-276 — Settings: URL deep-link support
 
-**Problem:**
-
-- `src/components/SettingsView.tsx:128` — `activeTab` is `useState<SettingsTab>('general')`; navigating away and back resets to General. The font-size pref already uses localStorage (line 149); follow the same pattern.
-- `src/components/SettingsView.tsx:126-178` — no URL-based deep-link to a specific tab. Power users and support flows can't share `…?settings=keyboard` links. Sync `activeTab` with a query param via `useNavigationStore` (or a thin wrapper).
+**Problem:** `src/components/SettingsView.tsx` has no URL-based deep-link to a specific tab. Power users and support flows can't share `…?settings=keyboard` links. Sync `activeTab` with a query param via `useNavigationStore` (or a thin wrapper).
 
 **Cost:** S.
-**Risk:** M (deep-link path) — needs coordination with the navigation store.
+**Risk:** M — needs coordination with the navigation store.
 **Impact:** M.
 
-### UX-277 — `BugReportDialog` polish
+### UX-277 — `BugReportDialog` log-content preview before submit
 
-**Problem:**
+**Problem:** `src/components/BugReportDialog.tsx` lists filenames + sizes for attached logs but offers no preview of contents. Users cannot verify what data they're submitting before the report leaves the device. Add a per-entry "Preview" button that shows the first 500 chars in a modal.
 
-- `src/components/BugReportDialog.tsx:319-332` — uses a native `<input type="checkbox">` instead of the design-system `Checkbox` (`src/components/ui/checkbox.tsx`). Inconsistent focus styling.
-- `src/components/BugReportDialog.tsx:170-192` — successful submit closes the dialog and opens the GitHub issue URL but shows no toast. Add `toast.success(t('bugReport.submitted'))`.
-- `src/components/BugReportDialog.tsx:283-315` — logs section lists filenames + sizes but offers no preview of contents. Users cannot verify what data they're submitting. Add a per-entry "Preview" button that shows the first 500 chars in a modal.
+**Note:** May be superseded by **H-9c** (`bug_report_preview()` Tauri command + dialog rendering of the redacted bundle). When H-9c lands, drop this UX-277 entry.
 
-**Cost:** S — for items 1+2; M if log preview is included.
+**Cost:** M.
 **Risk:** S.
-**Impact:** M — improves transparency and design-system parity.
-
-### UX-278 — `WelcomeModal` i18n + semantic markup
-
-**Problem:**
-
-- `src/components/WelcomeModal.tsx:59-103` — onboarding sample-page content ("Getting Started", "Welcome to Agaric! This is a local-first note-taking app.", "Quick Tips") is hardcoded English. Non-English users see UI chrome localised but onboarding content in English.
-- `src/components/WelcomeModal.tsx:158-169` — feature list uses `<div>` per item; should be `<ul role="list">` + `<li>` for proper SR semantics.
-
-**Fix:** lift sample content into i18n keys (or document explicitly in REVIEW-LATER that English samples are an intentional learning-aid choice). Wrap the feature list in `<ul>`.
-
-**Cost:** S.
-**Risk:** S.
-**Impact:** S.
+**Impact:** M — improves transparency before submit.
 
 ### UX-279 — `FeatureErrorBoundary` lacks "Report bug" affordance
 
