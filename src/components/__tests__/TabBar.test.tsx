@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -758,6 +758,186 @@ describe('TabBar', () => {
       const activeTab = tabs[0] as HTMLElement
       expect(activeTab).toHaveAttribute('aria-haspopup', 'menu')
       expect(activeTab).toHaveAttribute('aria-expanded', 'false')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // UX-262 dropdown a11y — flatten nested interactive (close button no longer
+  // nested inside role="menuitemradio")
+  // ---------------------------------------------------------------------------
+  describe('UX-262 dropdown a11y — flat menu items', () => {
+    function setupThreeTabs(activeTabIndex = 1) {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+          { id: '2', pageStack: [{ pageId: 'P3', title: 'Page 3' }], label: 'Page 3' },
+        ],
+        activeTabIndex,
+      })
+    }
+
+    async function openDropdown(): Promise<{ menu: HTMLElement; container: HTMLElement }> {
+      const user = userEvent.setup()
+      const { container } = render(<TabBar />)
+      // The active tab title is the dropdown trigger. Use the tablist-scoped
+      // role query to disambiguate from the menu copy that appears later.
+      const tabs = within(screen.getByRole('tablist')).getAllByRole('tab')
+      const activeTab = tabs.find((tab) => tab.getAttribute('aria-selected') === 'true')
+      await user.click(activeTab as HTMLElement)
+      const menu = await screen.findByRole('menu')
+      return { menu, container }
+    }
+
+    it('close affordance is no longer a <button> nested inside role="menuitemradio"', async () => {
+      setupThreeTabs(1)
+      await openDropdown()
+
+      // The activate items still carry role="menuitemradio".
+      const activateItems = screen.getAllByRole('menuitemradio')
+      expect(activateItems).toHaveLength(3)
+      // None of them contains a nested <button> — that was the UX-262 violation.
+      for (const item of activateItems) {
+        expect(item.querySelector('button')).toBeNull()
+      }
+
+      // The close affordances are present as siblings (role="menuitem"),
+      // not as descendants of any menuitemradio.
+      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
+      expect(closeItems.length).toBe(3)
+      const expectedLabels = [
+        t('tabs.closeTab', { label: 'Page 1' }),
+        t('tabs.closeTab', { label: 'Page 2' }),
+        t('tabs.closeTab', { label: 'Page 3' }),
+      ]
+      closeItems.forEach((closeItem, i) => {
+        // Sibling, not descendant of menuitemradio.
+        expect(closeItem.closest('[role="menuitemradio"]')).toBeNull()
+        expect(closeItem.getAttribute('role')).toBe('menuitem')
+        // Icon-only → must carry an aria-label per the design-system rule.
+        expect(closeItem.getAttribute('aria-label')).toBe(expectedLabels[i])
+      })
+    })
+
+    it('has no a11y violations while the dropdown is open', async () => {
+      setupThreeTabs(1)
+      const { menu } = await openDropdown()
+
+      // Scope axe to the open menu's portal subtree — Radix mounts on body.
+      await waitFor(
+        async () => {
+          const results = await axe(menu)
+          expect(results).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
+    })
+
+    it("seeds focus on the active tab's activate item when the dropdown opens", async () => {
+      setupThreeTabs(1)
+      await openDropdown()
+
+      // index 1 is the active tab → activate item at index 2 of the doubled
+      // roving list, but the second menuitemradio (i=1) is what receives focus.
+      const activateItems = screen.getAllByRole('menuitemradio')
+      await waitFor(() => {
+        expect(activateItems[1]).toHaveFocus()
+      })
+    })
+
+    it('ArrowDown moves focus from an activate item to its sibling close item', async () => {
+      setupThreeTabs(0)
+      await openDropdown()
+
+      const activateItems = screen.getAllByRole('menuitemradio')
+      // Initial focus is on the active tab (index 0) activate item.
+      await waitFor(() => {
+        expect(activateItems[0]).toHaveFocus()
+      })
+
+      // ArrowDown advances to the close menuitem of the SAME row.
+      const user = userEvent.setup()
+      await user.keyboard('{ArrowDown}')
+
+      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
+      await waitFor(() => {
+        expect(closeItems[0]).toHaveFocus()
+      })
+    })
+
+    it("ArrowDown from a close item advances to the next row's activate item", async () => {
+      setupThreeTabs(0)
+      await openDropdown()
+
+      const user = userEvent.setup()
+      // activate-0 → close-0 → activate-1
+      await user.keyboard('{ArrowDown}{ArrowDown}')
+
+      const activateItems = screen.getAllByRole('menuitemradio')
+      await waitFor(() => {
+        expect(activateItems[1]).toHaveFocus()
+      })
+    })
+
+    it('ArrowUp from the first activate item wraps to the last close item', async () => {
+      setupThreeTabs(0)
+      await openDropdown()
+
+      const user = userEvent.setup()
+      await user.keyboard('{ArrowUp}')
+
+      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
+      await waitFor(() => {
+        expect(closeItems[closeItems.length - 1]).toHaveFocus()
+      })
+    })
+
+    it('Enter on a focused close item closes that tab and keeps the menu open', async () => {
+      setupThreeTabs(0)
+      await openDropdown()
+
+      const user = userEvent.setup()
+      // Focus is on activate-0. ArrowDown → close-0. Enter → closeTab(0).
+      await user.keyboard('{ArrowDown}')
+      await user.keyboard('{Enter}')
+
+      const state = useNavigationStore.getState()
+      expect(state.tabs).toHaveLength(2)
+      expect(state.tabs.map((tab) => tab.label)).toEqual(['Page 2', 'Page 3'])
+      // Menu is still open after the close — user can keep pruning.
+      expect(screen.getByRole('menu')).toBeInTheDocument()
+    })
+
+    it('Escape with focus on a close item still closes the dropdown', async () => {
+      setupThreeTabs(1)
+      await openDropdown()
+
+      const user = userEvent.setup()
+      // activate-1 (active tab seed) → ArrowDown → close-1.
+      await user.keyboard('{ArrowDown}')
+      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
+      await waitFor(() => {
+        expect(closeItems[1]).toHaveFocus()
+      })
+
+      await user.keyboard('{Escape}')
+
+      await waitForMenuClosed()
+    })
+
+    it('clicking the close item closes the right tab (data-tab-dropdown-close still works)', async () => {
+      setupThreeTabs(1)
+      await openDropdown()
+
+      const user = userEvent.setup()
+      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
+      // Close index 2 → "Page 3"
+      await user.click(closeItems[2] as HTMLElement)
+
+      const state = useNavigationStore.getState()
+      expect(state.tabs).toHaveLength(2)
+      expect(state.tabs.map((tab) => tab.label)).toEqual(['Page 1', 'Page 2'])
     })
   })
 })

@@ -2009,4 +2009,92 @@ describe('App', () => {
       })
     })
   })
+
+  // UX-279: shell-level BugReportDialog mount that listens for the
+  // `BUG_REPORT_EVENT` global event from FeatureErrorBoundary's "Report
+  // bug" button. The dialog must open with the supplied detail
+  // (message → initialTitle, stack → initialDescription) pre-filled.
+  describe('UX-279 — bug-report event listener', () => {
+    const sampleMetadata = {
+      app_version: '0.1.0',
+      os: 'linux',
+      arch: 'x86_64',
+      device_id: 'DEV-XYZ',
+      recent_errors: [],
+    }
+
+    beforeEach(() => {
+      // Override the default mock so `collect_bug_report_metadata`
+      // resolves with a stable payload (otherwise BugReportDialog logs
+      // a warning and keeps the form blank, which obscures the prefill
+      // assertion below). Everything else keeps the empty-page default.
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+        if (cmd === 'collect_bug_report_metadata') return sampleMetadata
+        if (cmd === 'read_logs_for_report') return []
+        return emptyPage
+      })
+    })
+
+    it('does not render the BugReportDialog by default', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      // The shell-level dialog stays closed until the event fires.
+      expect(screen.queryByRole('dialog', { name: t('bugReport.title') })).not.toBeInTheDocument()
+    })
+
+    it('opens the BugReportDialog with prefilled message + stack on agaric:report-bug', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent('agaric:report-bug', {
+            detail: { message: 'view crashed', stack: 'at Bomb (file.tsx:1:1)' },
+          }),
+        )
+      })
+
+      // Dialog opens with the prefilled values applied to the form.
+      const titleInput = (await screen.findByLabelText(
+        t('bugReport.fieldTitleLabel'),
+      )) as HTMLInputElement
+      expect(titleInput.value).toBe('view crashed')
+
+      const descInput = screen.getByLabelText(
+        t('bugReport.fieldDescriptionLabel'),
+      ) as HTMLTextAreaElement
+      expect(descInput.value).toBe('at Bomb (file.tsx:1:1)')
+    })
+
+    it('opens with empty description when the event detail has no stack', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent('agaric:report-bug', {
+            detail: { message: 'no-stack crash' },
+          }),
+        )
+      })
+
+      const titleInput = (await screen.findByLabelText(
+        t('bugReport.fieldTitleLabel'),
+      )) as HTMLInputElement
+      expect(titleInput.value).toBe('no-stack crash')
+
+      const descInput = screen.getByLabelText(
+        t('bugReport.fieldDescriptionLabel'),
+      ) as HTMLTextAreaElement
+      expect(descInput.value).toBe('')
+    })
+  })
 })

@@ -1689,7 +1689,7 @@ describe('SearchPanel', () => {
       const { container } = render(<SearchPanel />)
 
       const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
-      expect(skeletons.length).toBeGreaterThan(0)
+      expect(skeletons).toHaveLength(3)
       expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
       // The search form must NOT render while the skeleton is up —
       // otherwise a quick keystroke would fire `searchBlocks` with a

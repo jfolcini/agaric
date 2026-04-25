@@ -228,6 +228,33 @@ describe('CompactionCard', () => {
     })
   })
 
+  // UX-259: destructive dialogs must not compact on a reflex Enter on open.
+  it('UX-259: reflex Enter on compact confirm dialog dismisses without calling compactOpLog', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce(defaultStatus)
+
+    render(<CompactionCard />)
+
+    await user.click(screen.getByText('Op Log Compaction'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
+    })
+
+    // Open the destructive confirm dialog.
+    await user.click(screen.getByRole('button', { name: /Compact Now/i }))
+    expect(screen.getByText('Compact Op Log?')).toBeInTheDocument()
+
+    // Cancel is auto-focused — reflex Enter dismisses without firing the action.
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => {
+      expect(screen.queryByText('Compact Op Log?')).not.toBeInTheDocument()
+    })
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('compact_op_log_cmd', expect.anything())
+  })
+
   it('cancel button closes confirm dialog without compacting', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockResolvedValueOnce(defaultStatus)

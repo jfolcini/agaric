@@ -24,6 +24,13 @@
  *
  * The close area is a `<span>` (not a `<button>`) to avoid nested-interactive
  * a11y violations inside `role="tab"`. Close also available via Ctrl+W.
+ *
+ * UX-262: inside the active-tab dropdown, each row is split into TWO sibling
+ * menu items — `role="menuitemradio"` (activate) + `role="menuitem"` (close) —
+ * wrapped in a `role="none"` flex container. This keeps the close affordance
+ * out of the activate item's interactive subtree (no nested `<button>` inside
+ * `role="menuitemradio"`) while still letting screen-reader users reach both
+ * actions via ArrowDown/ArrowUp on a single roving tabindex.
  */
 
 import { Check, ChevronDown, X } from 'lucide-react'
@@ -49,6 +56,12 @@ export function TabBar(): React.ReactElement | null {
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
   const keyNavRef = useRef(false)
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  // UX-262: dropdown rows are flattened into TWO sibling menu items each
+  // (activate + close) so the close affordance is no longer a `<button>`
+  // nested inside `role="menuitemradio"`. We rove a single tabindex across
+  // the doubled item list — even indices = activate, odd = close.
+  const dropdownItemRefs = useRef<(HTMLDivElement | null)[]>([])
+  const [dropdownFocusedIndex, setDropdownFocusedIndex] = useState(0)
   const isMobile = useIsMobile()
 
   const { handleKeyDown: handleListKeyDown } = useListKeyboardNavigation({
@@ -65,6 +78,23 @@ export function TabBar(): React.ReactElement | null {
       keyNavRef.current = false
     }
   }, [activeTabIndex])
+
+  // UX-262: when the dropdown opens, seed the roving focus on the active
+  // tab's activate item (even index = i*2). Closing the dropdown is a no-op
+  // — the next open re-seeds.
+  useEffect(() => {
+    if (dropdownOpen) {
+      setDropdownFocusedIndex(activeTabIndex * 2)
+    }
+  }, [dropdownOpen, activeTabIndex])
+
+  // UX-262: keep DOM focus in sync with the roving index whenever it
+  // advances. Radix Popover focuses the content element on open; this
+  // effect overrides that to land focus on the seeded menu item.
+  useEffect(() => {
+    if (!dropdownOpen) return
+    dropdownItemRefs.current[dropdownFocusedIndex]?.focus()
+  }, [dropdownOpen, dropdownFocusedIndex])
 
   // FEAT-7 scope item 6: TabBar is desktop-only. Mobile users navigate via
   // sidebar + breadcrumbs; the `openInNewTab` IPC surface collapses to a
@@ -129,6 +159,27 @@ export function TabBar(): React.ReactElement | null {
   function tabClassName(i: number): string {
     if (i !== activeTabIndex) return inactiveClass
     return currentView === 'page-editor' ? activeInEditorClass : activeOutsideEditorClass
+  }
+
+  // UX-262: ArrowDown / ArrowUp / Home / End rove focus across the doubled
+  // item list (activate-1, close-1, activate-2, close-2, …). Wrap at both
+  // ends so keyboard users can cycle without leaving the menu.
+  function handleDropdownKeyDown(e: React.KeyboardEvent): void {
+    const total = tabs.length * 2
+    if (total === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setDropdownFocusedIndex((prev) => (prev + 1) % total)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setDropdownFocusedIndex((prev) => (prev - 1 + total) % total)
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      setDropdownFocusedIndex(0)
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      setDropdownFocusedIndex(total - 1)
+    }
   }
 
   return (
@@ -212,51 +263,79 @@ export function TabBar(): React.ReactElement | null {
             className="w-64 p-1 max-w-[calc(100vw-2rem)]"
             role="menu"
             aria-label={t('tabs.tabList')}
+            onKeyDown={handleDropdownKeyDown}
           >
             {tabs.map((tab, i) => {
               const isActive = i === activeTabIndex
+              const displayTitle = tab.label || t('tabs.untitled')
+              const activateIdx = i * 2
+              const closeIdx = i * 2 + 1
               return (
+                // UX-262: each row is a presentational flex container with
+                // TWO sibling menu items inside — neither nests the other.
+                // role="none" tells AT to treat the wrapper as transparent,
+                // so role="menu" still sees only direct menuitem* children.
                 <div
                   key={tab.id}
-                  role="menuitemradio"
-                  aria-checked={isActive}
+                  role="none"
+                  className="flex w-full items-center gap-1 rounded hover:bg-accent data-[state=checked]:bg-accent/60"
                   data-state={isActive ? 'checked' : 'unchecked'}
-                  tabIndex={-1}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent cursor-pointer data-[state=checked]:bg-accent/60 touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
-                  onClick={() => {
-                    switchTab(i)
-                    setDropdownOpen(false)
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
+                >
+                  <div
+                    ref={(el) => {
+                      dropdownItemRefs.current[activateIdx] = el
+                    }}
+                    role="menuitemradio"
+                    aria-checked={isActive}
+                    data-state={isActive ? 'checked' : 'unchecked'}
+                    tabIndex={dropdownFocusedIndex === activateIdx ? 0 : -1}
+                    className="flex flex-1 items-center gap-2 rounded px-2 py-1.5 text-left text-sm cursor-pointer touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+                    onClick={() => {
                       switchTab(i)
                       setDropdownOpen(false)
-                    }
-                  }}
-                >
-                  <span
-                    className="inline-flex size-4 shrink-0 items-center justify-center"
-                    aria-hidden="true"
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        switchTab(i)
+                        setDropdownOpen(false)
+                      }
+                    }}
                   >
-                    {isActive ? <Check className="size-3" /> : null}
-                  </span>
-                  <span className="flex-1 truncate">{tab.label || t('tabs.untitled')}</span>
-                  <button
-                    type="button"
+                    <span
+                      className="inline-flex size-4 shrink-0 items-center justify-center"
+                      aria-hidden="true"
+                    >
+                      {isActive ? <Check className="size-3" /> : null}
+                    </span>
+                    <span className="flex-1 truncate">{displayTitle}</span>
+                  </div>
+                  <div
+                    ref={(el) => {
+                      dropdownItemRefs.current[closeIdx] = el
+                    }}
+                    role="menuitem"
                     data-tab-dropdown-close=""
-                    className="ml-auto inline-flex rounded-sm p-0.5 hover:bg-destructive/20 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
-                    aria-label={t('tabs.closeTab', { label: tab.label || t('tabs.untitled') })}
+                    tabIndex={dropdownFocusedIndex === closeIdx ? 0 : -1}
+                    aria-label={t('tabs.closeTab', { label: displayTitle })}
+                    className="mr-1 inline-flex shrink-0 items-center justify-center rounded-sm p-1 hover:bg-destructive/20 cursor-pointer [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
                     onClick={(e) => {
-                      // Keep the dropdown open when the close button fires —
+                      // Keep the dropdown open when the close item fires —
                       // the user likely wants to prune several tabs in a row.
                       e.stopPropagation()
                       e.preventDefault()
                       closeTab(i)
                     }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        closeTab(i)
+                      }
+                    }}
                   >
                     <X className="size-3" />
-                  </button>
+                  </div>
                 </div>
               )
             })}

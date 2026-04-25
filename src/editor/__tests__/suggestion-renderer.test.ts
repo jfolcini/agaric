@@ -141,7 +141,7 @@ describe('createSuggestionRenderer', () => {
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
+    expect(popup).toBeInTheDocument()
     expect(popup.getAttribute('role')).toBe('region')
 
     renderer.onExit()
@@ -165,7 +165,7 @@ describe('createSuggestionRenderer', () => {
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
+    expect(popup).toBeInTheDocument()
     expect(popup.getAttribute('aria-label')).toBe('Tags')
 
     renderer.onExit()
@@ -189,7 +189,7 @@ describe('createSuggestionRenderer', () => {
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
+    expect(popup).toBeInTheDocument()
     expect(popup.getAttribute('aria-label')).toBe('Suggestions')
 
     renderer.onExit()
@@ -222,7 +222,7 @@ describe('positioning', () => {
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
+    expect(popup).toBeInTheDocument()
     // Before positioning settles, popup should be off-screen
     expect(popup.style.position).toBe('fixed')
     expect(popup.style.left).toBe('-9999px')
@@ -260,7 +260,7 @@ describe('positioning', () => {
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
+    expect(popup).toBeInTheDocument()
 
     await vi.waitFor(() => {
       expect(popup.style.left).toBe('50px')
@@ -288,7 +288,7 @@ describe('positioning', () => {
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
+    expect(popup).toBeInTheDocument()
 
     await vi.waitFor(() => {
       expect(popup.style.position).toBe('fixed')
@@ -356,7 +356,7 @@ describe('positioning', () => {
       // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
     } as any)
 
-    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
     renderer.onExit()
     expect(document.querySelector('.suggestion-popup')).toBeNull()
   })
@@ -443,7 +443,7 @@ describe('positioning', () => {
 
     // Popup is created but stays at off-screen position (updatePosition early return)
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
+    expect(popup).toBeInTheDocument()
     expect(popup.style.position).toBe('fixed')
     expect(popup.style.left).toBe('-9999px')
 
@@ -480,7 +480,7 @@ describe('positioning', () => {
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
+    expect(popup).toBeInTheDocument()
     // Should use coordsAtPos result (150), NOT clientRect left/right (50/70)
 
     await vi.waitFor(() => {
@@ -524,7 +524,7 @@ describe('positioning', () => {
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
+    expect(popup).toBeInTheDocument()
 
     await vi.waitFor(() => {
       expect(popup.style.left).toBe('50px')
@@ -561,7 +561,7 @@ describe('positioning', () => {
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
+    expect(popup).toBeInTheDocument()
 
     await vi.waitFor(() => {
       expect(popup.style.left).toBe('80px')
@@ -590,7 +590,7 @@ describe('positioning', () => {
 
     // Popup is created but stays at off-screen position (updatePosition early return)
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
+    expect(popup).toBeInTheDocument()
     expect(popup.style.position).toBe('fixed')
     expect(popup.style.left).toBe('-9999px')
 
@@ -644,7 +644,7 @@ describe('outside-click dismissal', () => {
     const renderer = createSuggestionRenderer()
     renderer.onStart(makeProps())
 
-    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
 
     // Dispatch pointerdown on body (outside the popup)
     const event = new PointerEvent('pointerdown', { bubbles: true })
@@ -658,13 +658,13 @@ describe('outside-click dismissal', () => {
     renderer.onStart(makeProps())
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
+    expect(popup).toBeInTheDocument()
 
     // Dispatch pointerdown on the popup itself (inside click)
     const event = new PointerEvent('pointerdown', { bubbles: true })
     popup.dispatchEvent(event)
 
-    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
   })
 
   it('keeps popup open when pointerdown fires on a child of the popup', () => {
@@ -673,12 +673,12 @@ describe('outside-click dismissal', () => {
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
     const child = popup.querySelector('div') // ReactRenderer element
-    expect(child).toBeTruthy()
+    expect(child).toBeInTheDocument()
 
     const event = new PointerEvent('pointerdown', { bubbles: true })
     child?.dispatchEvent(event)
 
-    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
   })
 
   it('removes the pointerdown listener on onExit', () => {
@@ -712,7 +712,7 @@ describe('outside-click dismissal', () => {
 
     // Cycle 2: open again, should work normally
     renderer.onStart(makeProps())
-    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
 
     // Close via onExit
     renderer.onExit()
@@ -720,7 +720,7 @@ describe('outside-click dismissal', () => {
 
     // Cycle 3: open and outside-click again
     renderer.onStart(makeProps())
-    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     expect(document.querySelector('.suggestion-popup')).toBeNull()
   })
@@ -745,7 +745,7 @@ describe('outside-click dismissal', () => {
     renderer.onStart(makeProps())
 
     removeSpy.mockClear()
-    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
 
     const result = renderer.onKeyDown({
       event: new KeyboardEvent('keydown', { key: 'Escape' }),
@@ -772,7 +772,7 @@ describe('outside-click dismissal', () => {
 
     // Cycle 2: open again, outside-click should still work
     renderer.onStart(makeProps())
-    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     expect(document.querySelector('.suggestion-popup')).toBeNull()
   })
@@ -791,7 +791,7 @@ describe('outside-click dismissal', () => {
     props.editor = mockEditor
     renderer.onStart(props)
 
-    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
 
     removeSpy.mockClear()
 
@@ -879,13 +879,13 @@ describe('outside-click deferred registration (BUG-2)', () => {
     renderer.onStart(makeProps())
 
     // Popup exists but rAF hasn't fired yet — listener not registered
-    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
 
     // Simulate an outside pointerdown before the frame fires
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
 
     // Popup should still be there — the listener wasn't active yet
-    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
 
     // Cleanup
     flushRaf()
@@ -899,7 +899,7 @@ describe('outside-click deferred registration (BUG-2)', () => {
     // Flush rAF to register the listener
     flushRaf()
 
-    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
 
     // Now an outside click should dismiss
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
@@ -936,7 +936,7 @@ describe('outside-click deferred registration (BUG-2)', () => {
     // Cycle 2: start again
     renderer.onStart(makeProps())
     flushRaf()
-    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
 
     // Outside click should still work after the rapid cycle
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))

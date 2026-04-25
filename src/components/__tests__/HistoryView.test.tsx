@@ -1273,4 +1273,77 @@ describe('HistoryView', () => {
       expect(sticky).toBeNull()
     })
   })
+
+  // UX-259: destructive dialogs must not confirm on a reflex Enter.
+  // Note: HistoryView has a document-level Enter shortcut that opens the
+  // revert dialog when selection is non-empty. To avoid contaminating the
+  // assertion with that pre-existing handler, we verify focus state and
+  // confirm the destructive callback is NOT fired (the core UX-259 contract).
+  describe('UX-259: destructive dialog reflex-Enter safety', () => {
+    it('revert dialog auto-focuses Cancel and reflex Enter does not call revertOps', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+      await screen.findByText('item 1')
+
+      // Select first row.
+      const checkboxes = screen.getAllByRole('checkbox')
+      await user.click(checkboxes[0] as HTMLElement)
+
+      // Open the revert confirmation dialog.
+      await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+      expect(screen.getByText(t('history.revertTitle', { count: 1 }))).toBeInTheDocument()
+
+      // Cancel is auto-focused (UX-259), NOT the destructive Revert button.
+      const cancelBtn = screen.getByRole('button', { name: /Cancel/i })
+      const revertBtn = screen.getByRole('button', { name: /^Revert$/ })
+      expect(cancelBtn).toHaveFocus()
+      expect(revertBtn).not.toHaveFocus()
+
+      // Reflex Enter does NOT fire the destructive revertOps.
+      await user.keyboard('{Enter}')
+      expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'revert_ops')).toHaveLength(0)
+    })
+
+    it('restore-to-here dialog auto-focuses Cancel; reflex Enter dismisses without calling restorePageToOp', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+      await screen.findByText('item 1')
+
+      // Open the restore confirmation dialog.
+      await user.click(screen.getByRole('button', { name: /Restore to this point/i }))
+      expect(screen.getByText(/Restore to/)).toBeInTheDocument()
+
+      // Cancel is auto-focused (UX-259), NOT the destructive Restore button.
+      const cancelBtn = screen.getByRole('button', { name: /Cancel/i })
+      const restoreBtn = screen.getByRole('button', { name: /^Restore$/ })
+      expect(cancelBtn).toHaveFocus()
+      expect(restoreBtn).not.toHaveFocus()
+
+      // Reflex Enter dismisses the dialog (Cancel is focused) — no document-level
+      // Enter handler interferes here because there is no selection.
+      await user.keyboard('{Enter}')
+
+      await waitFor(() => {
+        expect(screen.queryByText(/Restore to/)).not.toBeInTheDocument()
+      })
+
+      expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'restore_page_to_op')).toHaveLength(
+        0,
+      )
+    })
+  })
 })

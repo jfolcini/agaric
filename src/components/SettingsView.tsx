@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { type ThemePreference, useTheme } from '@/hooks/useTheme'
+import { getSettingsTabFromUrl, setSettingsTabInUrl } from '@/lib/url-state'
 import { cn } from '@/lib/utils'
 import { AgentAccessSettingsTab } from './AgentAccessSettingsTab'
 import { BugReportDialog } from './BugReportDialog'
@@ -80,11 +81,19 @@ const TAB_IDS: SettingsTab[] = [
 const ACTIVE_TAB_KEY = 'agaric-settings-active-tab'
 
 /**
- * Load the persisted active tab. Validates the stored value against the
- * `SettingsTab` union so a removed/renamed tab can't leave the panel in an
- * inconsistent state — fall back to `'general'` instead.
+ * Load the active tab. Resolution order (UX-276):
+ *   1. `?settings=<tab>` query param — enables shareable deep links.
+ *   2. localStorage (`agaric-settings-active-tab`) — restores the user's
+ *      last-visited tab across navigations within the app.
+ *   3. `'general'` fallback.
+ *
+ * All three layers validate against the `SettingsTab` union so a
+ * removed/renamed tab or a hand-crafted URL can't leave the panel in an
+ * inconsistent state.
  */
 function readActiveTab(): SettingsTab {
+  const fromUrl = getSettingsTabFromUrl(TAB_IDS as readonly string[])
+  if (fromUrl !== null) return fromUrl as SettingsTab
   try {
     const stored = localStorage.getItem(ACTIVE_TAB_KEY)
     if (stored !== null && (TAB_IDS as readonly string[]).includes(stored)) {
@@ -157,13 +166,29 @@ export function SettingsView(): React.ReactElement {
   // Persist active tab so navigating away and back restores the user's place
   // (UX-276). Validation happens on read in `readActiveTab` — stored values
   // that no longer match a known tab fall back to `'general'`.
+  //
+  // We also mirror the active tab into the URL query string (`?settings=…`)
+  // via `replaceState` so support / users can share deep links to a
+  // specific tab. localStorage covers cross-window restoration; the URL
+  // covers per-window deep links.
   useEffect(() => {
     try {
       localStorage.setItem(ACTIVE_TAB_KEY, activeTab)
     } catch {
       // localStorage unavailable
     }
+    setSettingsTabInUrl(activeTab)
   }, [activeTab])
+
+  // When SettingsView unmounts (user navigates away from Settings) clear
+  // the `?settings=…` query param so the URL no longer claims the user is
+  // on a specific Settings tab. Without this, the param would linger and
+  // a refresh would yank the user back into Settings unexpectedly.
+  useEffect(() => {
+    return () => {
+      setSettingsTabInUrl(null)
+    }
+  }, [])
 
   const handleThemeChange = useCallback(
     (value: string) => {

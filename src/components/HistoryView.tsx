@@ -379,6 +379,7 @@ export function HistoryView(): React.ReactElement {
         description={t('history.revertDescription', { count: selected.size })}
         cancelLabel={t('history.cancelButton')}
         actionLabel={t('history.revertButton')}
+        actionVariant="destructive"
         onAction={handleRevert}
         loading={reverting}
       />

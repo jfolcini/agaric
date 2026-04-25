@@ -47,4 +47,19 @@ describe('UnpairConfirmDialog', () => {
     const results = await axe(document.body)
     expect(results).toHaveNoViolations()
   })
+
+  // UX-259: destructive callers must NOT confirm on a reflex Enter keypress.
+  it('reflex Enter on open closes the dialog WITHOUT firing onConfirm (UX-259)', async () => {
+    const user = userEvent.setup()
+    const onConfirm = vi.fn()
+    const onOpenChange = vi.fn()
+
+    render(<UnpairConfirmDialog open={true} onOpenChange={onOpenChange} onConfirm={onConfirm} />)
+
+    // Cancel is auto-focused for destructive dialogs — Enter activates Cancel.
+    await user.keyboard('{Enter}')
+
+    expect(onConfirm).not.toHaveBeenCalled()
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
 })

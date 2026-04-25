@@ -2792,7 +2792,8 @@ describe('JournalPage', () => {
 
       await waitFor(() => {
         const dueDots = document.querySelectorAll('.bg-date-due-foreground')
-        expect(dueDots.length).toBeGreaterThan(0)
+        // 1 dot under today's calendar cell + 1 dot in the legend = 2
+        expect(dueDots).toHaveLength(2)
       })
     })
 
@@ -2819,7 +2820,8 @@ describe('JournalPage', () => {
 
       await waitFor(() => {
         const scheduledDots = document.querySelectorAll('.bg-date-scheduled-foreground')
-        expect(scheduledDots.length).toBeGreaterThan(0)
+        // 1 dot under today's calendar cell + 1 dot in the legend = 2
+        expect(scheduledDots).toHaveLength(2)
       })
     })
 
@@ -2846,7 +2848,8 @@ describe('JournalPage', () => {
 
       await waitFor(() => {
         const propDots = document.querySelectorAll('.bg-date-property-foreground')
-        expect(propDots.length).toBeGreaterThan(0)
+        // 1 dot under today's calendar cell + 1 dot in the legend = 2
+        expect(propDots).toHaveLength(2)
       })
     })
 
@@ -2881,9 +2884,10 @@ describe('JournalPage', () => {
         const dueDots = document.querySelectorAll('.bg-date-due-foreground')
         const scheduledDots = document.querySelectorAll('.bg-date-scheduled-foreground')
         const propDots = document.querySelectorAll('.bg-date-property-foreground')
-        expect(dueDots.length).toBeGreaterThan(0)
-        expect(scheduledDots.length).toBeGreaterThan(0)
-        expect(propDots.length).toBeGreaterThan(0)
+        // Each: 1 dot under today's calendar cell + 1 dot in the legend = 2
+        expect(dueDots).toHaveLength(2)
+        expect(scheduledDots).toHaveLength(2)
+        expect(propDots).toHaveLength(2)
       })
     })
   })

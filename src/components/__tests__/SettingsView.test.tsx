@@ -91,6 +91,10 @@ beforeEach(() => {
   localStorage.removeItem('agaric-settings-active-tab')
   for (const cls of ALL_THEME_CLASSES) document.documentElement.classList.remove(cls)
   document.documentElement.style.removeProperty('--agaric-font-size')
+  // UX-276: ensure URL state from a previous test doesn't leak in via the
+  // `?settings=…` deep-link param (each test that needs a specific URL
+  // sets it explicitly).
+  window.history.replaceState(null, '', '/')
 })
 
 describe('SettingsView', () => {
@@ -435,6 +439,104 @@ describe('SettingsView', () => {
       const generalTab = screen.getByRole('tab', { name: t('settings.tabGeneral') })
       expect(generalTab).toHaveAttribute('aria-selected', 'true')
       expect(screen.getByTestId('deadline-warning-section')).toBeInTheDocument()
+    })
+  })
+
+  // ── UX-276: URL deep-link support ─────────────────────────────────
+
+  describe('URL deep-link support (UX-276)', () => {
+    it('initialises the active tab from the ?settings= query param', async () => {
+      window.history.replaceState(null, '', '/?settings=keyboard')
+      render(<SettingsView />)
+
+      const keyboardTab = screen.getByRole('tab', { name: t('settings.tabKeyboard') })
+      expect(keyboardTab).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByTestId('keyboard-settings-tab')).toBeInTheDocument()
+    })
+
+    it('URL value takes precedence over localStorage', () => {
+      localStorage.setItem('agaric-settings-active-tab', 'sync')
+      window.history.replaceState(null, '', '/?settings=keyboard')
+      render(<SettingsView />)
+
+      const keyboardTab = screen.getByRole('tab', { name: t('settings.tabKeyboard') })
+      expect(keyboardTab).toHaveAttribute('aria-selected', 'true')
+    })
+
+    it('falls back to localStorage when the URL value is invalid', () => {
+      localStorage.setItem('agaric-settings-active-tab', 'sync')
+      window.history.replaceState(null, '', '/?settings=not-a-real-tab')
+      render(<SettingsView />)
+
+      const syncTab = screen.getByRole('tab', { name: t('settings.tabSync') })
+      expect(syncTab).toHaveAttribute('aria-selected', 'true')
+    })
+
+    it('falls back to general when both URL and localStorage are invalid', () => {
+      localStorage.setItem('agaric-settings-active-tab', 'still-not-real')
+      window.history.replaceState(null, '', '/?settings=garbage')
+      render(<SettingsView />)
+
+      const generalTab = screen.getByRole('tab', { name: t('settings.tabGeneral') })
+      expect(generalTab).toHaveAttribute('aria-selected', 'true')
+    })
+
+    it('switching tabs writes the new value into the URL via replaceState', async () => {
+      const user = userEvent.setup()
+      const initialHistoryLength = window.history.length
+      render(<SettingsView />)
+
+      // Initial render mirrors the default tab into the URL.
+      await waitFor(() => {
+        expect(window.location.search).toBe('?settings=general')
+      })
+
+      const propertiesTab = screen.getByRole('tab', { name: t('settings.tabProperties') })
+      await user.click(propertiesTab)
+
+      await waitFor(() => {
+        expect(window.location.search).toBe('?settings=properties')
+      })
+
+      const syncTab = screen.getByRole('tab', { name: t('settings.tabSync') })
+      await user.click(syncTab)
+
+      await waitFor(() => {
+        expect(window.location.search).toBe('?settings=sync')
+      })
+
+      // History length should not grow — every tab click is a replaceState,
+      // never a pushState. Otherwise the user has to mash Back N times to
+      // escape Settings.
+      expect(window.history.length).toBe(initialHistoryLength)
+    })
+
+    it('removes the ?settings= query param on unmount', () => {
+      window.history.replaceState(null, '', '/?settings=keyboard&foo=bar')
+      const { unmount } = render(<SettingsView />)
+
+      // While mounted the param is still there.
+      expect(new URLSearchParams(window.location.search).get('settings')).toBe('keyboard')
+
+      unmount()
+
+      const params = new URLSearchParams(window.location.search)
+      expect(params.has('settings')).toBe(false)
+      // Other params are preserved.
+      expect(params.get('foo')).toBe('bar')
+    })
+
+    it('has no a11y violations when initialised from a URL deep link', async () => {
+      window.history.replaceState(null, '', '/?settings=keyboard')
+      const { container } = render(<SettingsView />)
+
+      await waitFor(
+        async () => {
+          const results = await axe(container)
+          expect(results).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
     })
   })
 
