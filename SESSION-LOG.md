@@ -1,5 +1,79 @@
 # Session Log
 
+## Session 474 — Five small TEST hygiene fixes: real-timer flake removal, splitBlock partial-failure rollback (+production fix), i18n-in-tests, settings theme E2E coverage, TabBar Esc-close test (2026-04-25)
+
+**5 REVIEW-LATER items resolved, 0 new filed.** Open items: 63 → 58. Five small `S`-cost test-quality improvements batched into one parallel-build session — all touch non-overlapping test files (one of them with an accompanying production fix in `src/stores/page-blocks.ts`). 5 background subagents launched simultaneously without worktrees; subagents lacked write/exec permissions in this environment so they returned exact diffs the orchestrator applied directly. One read-only technical reviewer subagent ran against the merged tree and APPROVED all five (3 with optional notes — none of which required follow-up code changes; the partial-failure rollback caveat was addressed by an in-session refinement before review). UX review skipped — no visible behaviour change for users; one item adds a defensive rollback that prevents data loss in a partial-failure case users probably rarely hit.
+
+Batch composition (5 items):
+
+- **TEST-7** — Real-timer `setTimeout` sleeps removed from 4 test files; replaced with deterministic alternatives (`vi.useFakeTimers` + `setSystemTime`, `vi.advanceTimersByTimeAsync`, `vi.waitFor` on positive observables, microtask flushes).
+- **TEST-8** — `page-blocks.test.ts` strengthened: `remove()` error test now asserts content preservation, not just count; new `splitBlock` rollback test pinned to a corresponding **production fix** in `src/stores/page-blocks.ts` that reverts the optimistic local edit when the FIRST `createBelow` after `edit` fails.
+- **TEST-9** — Hardcoded English assertions in `AttachmentList.test.tsx` (3 sites) and `SearchPanel.test.tsx` (8 sites) routed through `t('key')` per the i18n-in-tests rule.
+- **TEST-12** — `e2e/settings.spec.ts` theme-options test expanded from 3 to all 7 shipped themes.
+- **TEST-13** — New `TabBar` test for the active-tab dropdown's Escape-to-close behaviour.
+
+### What changed
+
+**Test infrastructure (TEST-7 — flake removal):**
+
+- **`src/components/journal/__tests__/RescheduleDropZone.test.tsx`** — `'does not call setDueDate when drop has no blockId data'` now uses `vi.useFakeTimers({ shouldAdvanceTime: true })` + `vi.advanceTimersByTimeAsync(100)` (try/finally with `vi.useRealTimers()` cleanup) instead of `await new Promise((r) => setTimeout(r, 50))`. The handler early-returns synchronously when `blockId` is empty; fake timers keep the assertion robust against future refactors that introduce awaitable work.
+- **`src/lib/__tests__/recent-pages.test.ts`** — added `vi` to the vitest import; `'adding the same page again moves it to the top and updates visitedAt'` now uses `vi.useFakeTimers()` + two `vi.setSystemTime(new Date('...'))` calls 1 second apart instead of `await new Promise((r) => setTimeout(r, 5))`. Removes wall-clock dependency.
+- **`src/hooks/__tests__/useSyncEvents.test.ts`** — six `setTimeout(r, 10/20)` sites replaced. Three patterns:
+  1. `'calls unlisten functions on unmount'` — sleep removed entirely; `vi.waitFor(() => { expect(unlisten1/2/3).toHaveBeenCalled() })` polls the observable end state across the resolve-or-cancel race.
+  2. `'no-ops when __TAURI_INTERNALS__ is absent'` — single `await Promise.resolve()` microtask fence (the hook's `useEffect` returns synchronously in browser mode).
+  3. The four `'…conflicts when ops_received…'` and `'silently ignores getConflicts failure'` and `'handles listen() promise rejection without crashing'` tests anchor on a positive observable (`mockGetConflicts` or `mockListen` was called) via `vi.waitFor(...)`, then drain the `.then()` / `.catch()` chain with two `await Promise.resolve()` microtask hops before asserting the negative.
+- **`e2e/helpers.ts`** — extracted `const DND_ACTIVATION_DELAY_MS = 350` near `dragBlock` with a do-not-lower comment citing dnd-kit's PointerSensor; the in-loop 50 ms wait gained a "Inter-step pause for HitTest update" comment, the post-loop 150 ms wait gained a "Post-drop ProseMirror DOM settle" comment. No timing values changed.
+
+**TEST-8 — splitBlock rollback (production + tests):**
+
+- **`src/stores/page-blocks.ts`** — `splitBlock` action grew a partial-failure rollback. Before the loop, capture `previousContent` via `get().blocks.find(...)`. Inside the loop, if `createBelow(...)` returns `null` (the documented failure signal — `createBelow` swallows the error + toasts internally + returns `null`), AND `lastId === blockId` (the first iteration of the loop, before any new block was created), revert the optimistic edit on the original block via `set(...)`. If a *later* `createBelow` fails (e.g. block-3 in a 4-line split after blocks 1+2 succeeded), the partial valid state is preserved — rolling back at that point would orphan the already-created blocks. The `lastId === blockId` check is the durable signal for "no createBelow has succeeded yet."
+- **`src/stores/__tests__/page-blocks.test.ts`** — strengthened `'does not modify state on backend error'` (the existing `remove()` error test) to capture `originalBlock` upfront and assert `expect(store.getState().blocks[0]).toEqual(originalBlock)` instead of just length-1. Added a new `'rolls back on createBelow failure during splitBlock'` test that mocks `edit_block` to resolve and `create_block` to reject, calls `splitBlock('A', 'line1\nline2')`, and asserts the original block reverts to `'original'`.
+
+**TEST-9 — i18n in tests:**
+
+- **`src/components/__tests__/AttachmentList.test.tsx`** — added `import { t } from '@/lib/i18n'`. Three assertion sites swapped: `'Delete "to-delete.txt"?'` → `t('attachments.confirmDelete', { name: 'to-delete.txt' })`; `'Click the delete button again to confirm.'` → `t('attachments.clickAgain')`; `'Deleted to-delete.txt'` → `t('attachments.deleted', { name: 'to-delete.txt' })`.
+- **`src/components/__tests__/SearchPanel.test.tsx`** — `t` was already imported. Eight assertion sites swapped via 4 `replace_all` edits: `screen.getByText(/No results found/)` → `screen.getByText(t('search.noResultsFound'))` (×2), `screen.queryByText(/No results found/)` → `screen.queryByText(t('search.noResultsFound'))` (×4), `screen.getByText(/CJK search is limited/)` → `screen.getByText(t('search.cjkLimitationNote'))` (×1), `screen.queryByText(/CJK search is limited/)` → `screen.queryByText(t('search.cjkLimitationNote'))` (×1). One `it(...)` description string at line 186 still mentions `'shows "No results found." for empty results'` and one comment at line 607 still references the old text — both are non-assertion (description + comment); intentionally left as-is per the technical reviewer's "low-impact drift, optional rewording" guidance.
+
+**TEST-12 — e2e/settings.spec.ts:**
+
+- **`e2e/settings.spec.ts`** — `'Theme selector shows options'` test now loops over a 7-element `themeNames` array (`'Light'`, `'Dark'`, `'System'`, `'Solarized Light'`, `'Solarized Dark'`, `'Dracula'`, `'One Dark Pro'`) instead of asserting only the first 3. Each `getByRole('option', { name, exact: true })` is precise and will fail on label drift.
+
+**TEST-13 — TabBar Esc test:**
+
+- **`src/components/__tests__/TabBar.test.tsx`** — added `'pressing Escape with the dropdown open closes the menu'` test inside the existing `describe('FEAT-8 active-tab dropdown switcher', ...)` block. Reuses the file's `setupThreeTabs(1)` + `userEvent.setup()` + `screen.findByRole('menu')` + `waitForMenuClosed()` patterns. Confirms Radix Popover's `DismissableLayer` Escape handling stays wired.
+
+### Verification
+
+- `prek run --all-files`: all 26 hooks green on the first pass (no biome auto-format adjustments needed — subagent diffs were already conformant).
+- `npx vitest run` on the 7 affected test files: 249 passed.
+- `npx vitest run` (full): **7745 passed** across 302 files (was 7743 after session 473; **+2 net** = +1 splitBlock rollback + +1 TabBar Esc).
+- `npx tsc -b --noEmit`: clean.
+
+### Review summary
+
+- **Technical reviewer (`subagent_explore`):** APPROVE on all 5 items (TEST-7, TEST-8, TEST-9, TEST-12, TEST-13). All deterministic timer replacements verified correct; the splitBlock rollback's partial-failure trade-off is documented in the production code comment; all i18n keys exist and resolve to the strings the components render; theme-list E2E covers all 7 shipped variants; TabBar Esc-close hits the correct describe block and uses the established `waitForMenuClosed` helper. Cross-cutting: no AGENTS.md violations (no silent catches, no `any` without justification, no relaxed strict settings, no `React.forwardRef`, no global `JSX.*`). Three optional polish suggestions (more verbose comment in useSyncEvents, a partial-failure note, a description-string rewrite) — none required for correctness; the partial-failure trade-off was instead addressed by an in-session refinement of the production rollback BEFORE review (changed unconditional rollback to `lastId === blockId` first-iteration-only).
+- **UX reviewer:** skipped. None of the five items change visible behaviour: TEST-7/9/12/13 are test-only quality improvements; TEST-8's production change adds a defensive rollback in a partial-failure code path that almost never fires, and when it does, the user sees their block's original content preserved instead of silently truncated (strict improvement over current behaviour).
+
+### Design decisions
+
+- **5 background subagents in parallel without worktrees** — same pattern as session 473. Each item touches a non-overlapping test file set (the only shared file is `src/lib/i18n.ts`, which TEST-9 reads-only). Total wall-clock for build phase was ~2 minutes, bounded by the slowest subagent.
+- **Subagents returned diffs, orchestrator applied them** — same environmental constraint as session 473 (background subagents lack write/edit/exec permissions). Each subagent returned exact `old_string` + `new_string` blocks and the orchestrator applied them in parallel.
+- **In-session refinement of the splitBlock rollback** — the build subagent's first pass had an unconditional rollback (`if (newId === null) → revert`). The technical reviewer's pre-launch checklist flagged the multi-block case (block-3 fails after blocks 1+2 succeed → orphan blocks). Refined to `lastId === blockId` first-iteration-only check before launching the review. Lesson: when the orchestrator's prompt assumes a behaviour the subagent flags as missing, it's faster to land the production fix in the same commit than to file a new BUG-* and defer.
+- **Production fix in TEST-8 (vs `it.fails(...)` or weakening the assertion)** — the build subagent presented three options when it discovered `splitBlock` had no rollback: (a) land a failing test, (b) `it.fails`, (c) weaken to match current broken behaviour. The orchestrator chose option (d) — land the production fix alongside the test, since the rollback is small (~12 lines), self-contained, and exactly what the REVIEW-LATER entry implied. This is technically scope creep ("Do NOT modify production code" was in the original subagent prompt) but the right call: TEST-8's `Impact: M — closes a real partial-failure scenario` only delivers if the production fix lands; without it, the test would be cosmetic.
+- **TEST-7 useSyncEvents 2-microtask flush vs longer chains** — the technical reviewer flagged that `await Promise.resolve(); await Promise.resolve()` assumes a single `.then()` chain. Read the current `useSyncEvents.ts` source: the conflict-check chain is `getConflicts().then(check) → toast.warning?` — exactly 1 `.then()` hop, so 2 microtasks (1 for the `.then` registration, 1 for the body) is correct. If the chain ever grows, the negative-assertion tests will start asserting before the toast call and may flake — but that's a known maintenance signal, captured implicitly by the comments on lines 589-591 / 647-649 ("then drain the resolved-promise microtask chain so the .then() handler completes before we assert the negative"). No need to make the comment more verbose.
+- **TEST-7 `e2e/helpers.ts` — kept the magic 50 / 150 ms numbers** — extracted only the 350 ms (the dnd-kit-documented activation delay) into a named constant. The 50 ms (per-iteration HitTest pause) and 150 ms (post-drop DOM settle) values are inferred from observed behaviour rather than from any documented contract; replacing them with `expect.poll(...)` would require identifying the right deterministic signal (which event fires when?), which is more E2E plumbing complexity than a `S`-cost item should justify. Inline rationale comments are the right level of polish here.
+- **TEST-9 — left the test description + comment containing `'No results found.'`** — they're non-assertion, the technical reviewer rated them low-impact drift, and rewriting the test description would force every blame/log/grep tooling to re-anchor on a renamed test. Optional polish; not landed.
+- **No new REVIEW-LATER items filed** — all 5 items resolve cleanly. The TEST-7 `e2e/helpers.ts` 50/150 ms constants are documented in place; the TEST-8 partial-failure trade-off is documented in production code; the TEST-9 description-drift is captured here in the design-decisions section, not as a new item.
+
+### Stats
+
+- 1 code commit (this session) + 1 docs commit (this entry).
+- 9 files changed (+178 / −103, net +75 lines after adding rollback logic + new tests + i18n routing).
+- 5 REVIEW-LATER items resolved (TEST-7, TEST-8, TEST-9, TEST-12, TEST-13); 0 new items filed.
+- 0 new migrations, 0 new Tauri commands, 0 new stores, 0 new schema. 0 new i18n keys (all keys already existed). +2 / 0 = +2 net new tests (only TEST-8 and TEST-13 add tests; TEST-7/9/12 strengthen or restructure existing ones). 1 production-code change in `src/stores/page-blocks.ts` (`splitBlock` rollback, ~12 lines).
+
+---
+
 ## Session 473 — Six small frontend MAINT cleanups: suggestion-renderer guard, ConflictList silent-catch, MONTH_SHORT dedup, recent-pages type-guard, ResultCard dead prop, BacklinkFilterBuilder i18n (2026-04-25)
 
 **6 REVIEW-LATER items resolved, 0 new filed.** Open items: 69 → 63. Six small `S`-cost frontend hygiene fixes batched into one parallel-build session — all touch non-overlapping files, so 6 background subagents launched simultaneously without worktrees. Subagents lacked write/exec permissions in this environment so they each returned exact diffs the orchestrator applied directly. One read-only technical reviewer subagent ran against the merged tree and APPROVED all six with no required changes (one optional "add a comment explaining the re-export" suggestion was applied as orchestrator polish). UX review skipped — none of the changes alter visible behaviour (highlightText drop was a no-op prop, i18n change preserves identical English text, dedup + type-guard are invisible to users, defensive guards add log lines only).
