@@ -187,7 +187,12 @@ jobs:
           fi
 
           # 3. agaric.png must be at least 128×128 (128 / 256 / 512 accepted).
-          info="$(file "$APPDIR/agaric.png")"
+          # `agaric.png` is a relative symlink that fix-appimage-icons.sh
+          # points at usr/share/icons/hicolor/256x256/apps/agaric.png, so
+          # `file` without `-L` reports "symbolic link to ..." instead of
+          # the resolved PNG dimensions. `file -L` (capital L) follows the
+          # symlink and reports the target's PNG image header.
+          info="$(file -L "$APPDIR/agaric.png")"
           echo "agaric.png: $info"
           if ! echo "$info" | grep -Eq '(128 x 128|256 x 256|512 x 512)'; then
             echo "ERROR: agaric.png is not ≥128×128 (got: $info)" >&2
