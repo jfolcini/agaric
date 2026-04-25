@@ -1,5 +1,80 @@
 # Session Log
 
+## Session 473 — Six small frontend MAINT cleanups: suggestion-renderer guard, ConflictList silent-catch, MONTH_SHORT dedup, recent-pages type-guard, ResultCard dead prop, BacklinkFilterBuilder i18n (2026-04-25)
+
+**6 REVIEW-LATER items resolved, 0 new filed.** Open items: 69 → 63. Six small `S`-cost frontend hygiene fixes batched into one parallel-build session — all touch non-overlapping files, so 6 background subagents launched simultaneously without worktrees. Subagents lacked write/exec permissions in this environment so they each returned exact diffs the orchestrator applied directly. One read-only technical reviewer subagent ran against the merged tree and APPROVED all six with no required changes (one optional "add a comment explaining the re-export" suggestion was applied as orchestrator polish). UX review skipped — none of the changes alter visible behaviour (highlightText drop was a no-op prop, i18n change preserves identical English text, dedup + type-guard are invisible to users, defensive guards add log lines only).
+
+Batch composition (6 items):
+
+- **MAINT-92** — `suggestion-renderer` outside-click handler now guards `editorRef.view.isDestroyed` before dispatching the exit meta to a stale view.
+- **MAINT-93** — Replaces the only truly-silent `.catch(() => {})` in `src/` (`ConflictList` `sync:complete` listener install) with `logger.warn`.
+- **MAINT-94** — `MONTH_SHORT` 12-element array deduplicated to a single source in `src/lib/date-utils.ts`; removed local copies from `agenda-sort.ts` and `BlockInlineControls.tsx`.
+- **MAINT-95** — `recent-pages.ts` `getRecentPages()` now filters via an `isRecentPage` type-guard instead of casting the parsed JSON directly to `RecentPage[]`.
+- **MAINT-102** — Drops the unused `highlightText?: string` prop from `ResultCard`; cleans both `SearchPanel` call sites; removes the FEATURE-MAP.md bullet that falsely claimed query-term highlighting in result cards.
+- **MAINT-104** — Hardcoded English `\`No blocks have property "${trimmedKey}"\`` swapped for `t('backlink.propertyNotFound', { key: trimmedKey })` with a new i18next key.
+
+### What changed
+
+**Frontend (production):**
+
+- **`src/editor/suggestion-renderer.ts`** — outside-click handler's `editorRef && pluginKey` block grew an `if (editorRef.view.isDestroyed)` short-circuit that logs a warn and skips dispatch; the existing try/catch around `editorRef.view.dispatch(tr)` is preserved on the live-view branch. Cleanup paths (`cleanupListener()` → `renderer?.destroy()` → `popup?.remove()`) still execute regardless of dispatch outcome.
+- **`src/components/ConflictList.tsx`** — `.catch(() => { /* Not in Tauri context — no-op */ })` → `.catch((err: unknown) => { logger.warn('ConflictList', 'sync:complete listener unavailable (likely no Tauri context)', undefined, err) })`. `logger` was already imported.
+- **`src/lib/date-utils.ts`** — `const MONTH_SHORT` → `export const MONTH_SHORT`. No behavioural change.
+- **`src/lib/agenda-sort.ts`** — local `MONTH_SHORT` array (15 lines) deleted; new `import { MONTH_SHORT } from './date-utils'` at the top. `formatGroupDate()` unchanged.
+- **`src/components/BlockInlineControls.tsx`** — local `MONTH_SHORT` (14 lines) and local `formatCompactDate` (11 lines) deleted; new `import { formatCompactDate, MONTH_SHORT } from '../lib/date-utils'` plus `export { formatCompactDate, MONTH_SHORT }` re-export so the existing `BlockInlineControls.test.tsx` imports keep working unchanged. Inline comment documents why the re-export exists.
+- **`src/lib/recent-pages.ts`** — new `isRecentPage(item: unknown): item is RecentPage` type-guard helper (uses bracket-notation field access for TS strict-index-signature compatibility) replaces the unsafe `return parsed as RecentPage[]` cast with `return parsed.filter(isRecentPage)`. Outer `try/catch` for malformed JSON unchanged.
+- **`src/components/ResultCard.tsx`** — `highlightText?: string` field + 6-line JSDoc removed from `ResultCardProps`. Function body unchanged (it never destructured the prop).
+- **`src/components/SearchPanel.tsx`** — `highlightText={debouncedQuery}` removed from both `<ResultCard>` call sites (alias-match and main results loop). `debouncedQuery` is still used elsewhere in the file.
+- **`src/components/BacklinkFilterBuilder.tsx`** — line 140 hardcoded English error string swapped for `t('backlink.propertyNotFound', { key: trimmedKey })`. `t` was already in scope as a function parameter.
+- **`src/lib/i18n.ts`** — new key `'backlink.propertyNotFound': 'No blocks have property "{{key}}"'` inserted right after `'backlink.propertyKeyRequired'`. Single `en` locale block; no parallel-locale drift to track.
+- **`FEATURE-MAP.md`** — line 38 bullet `- Query term highlighting in result cards (via HighlightMatch)` removed (was a documentation drift — the prop has been a no-op since shipping).
+
+**Tests:**
+
+- **`src/editor/__tests__/suggestion-renderer.test.ts`** — +1 test: outside click while `editor.view.isDestroyed === true` skips `view.dispatch` but still cleans up popup, listener, and renderer. Uses a real `PluginKey` instance to mirror the production `pluginKey` arg, plus a minimal mock editor. New `import { PluginKey } from '@tiptap/pm/state'`.
+- **`src/components/__tests__/ConflictList.test.tsx`** — +1 test: when `mockListen` rejects, `vi.mocked(logger.warn)` is called once with `'ConflictList'` + a message containing `'sync:complete'` + an `expect.any(Error)`. New `vi.mock('@/lib/logger', ...)` block plus `import { logger }`.
+- **`src/lib/__tests__/date-utils.test.ts`** — +3 trivial tests for `MONTH_SHORT` (length 12, starts `'Jan'`, ends `'Dec'`); the equivalent tests in `BlockInlineControls.test.tsx` keep passing through the re-export.
+- **`src/lib/__tests__/recent-pages.test.ts`** — +3 tests covering the type-guard's rejection paths: missing fields, wrong field types, all-malformed entries.
+- **`src/components/__tests__/ResultCard.test.tsx`** — −1 test (`'does not crash when highlightText is provided'`) plus the matching JSDoc bullet at line 13.
+- **`src/components/__tests__/BacklinkFilterBuilder.test.tsx`** — +1 test: re-renders the builder with `propertyKeys=[]` → user types `unknownKey` → `rerender` with `propertyKeys=['knownKey']` → asserts `toast.error` is called with the resolved English string.
+
+### Verification
+
+- `prek run --all-files`: all 26 hooks green after one biome auto-format pass on `src/lib/recent-pages.ts` (multi-line conditional return) + one biome auto-format pass on `src/editor/suggestion-renderer.ts` (single-line `logger.warn` collapse).
+- `npx vitest run` (full): **7743 passed** across 302 files (was 7729 after session 472; **+14 net** = +1 suggestion-renderer + +1 ConflictList + +3 date-utils MONTH_SHORT + +3 recent-pages + +1 BacklinkFilterBuilder + +5 from intervening commits, −1 ResultCard).
+- `npx tsc -b --noEmit`: clean.
+- `grep -rn highlightText src/`: empty.
+- `grep -rn 'No blocks have property' src/`: only the test's resolved-string assertion + the i18n key (correct).
+- `grep -rn 'MONTH_SHORT\s*=\s*\[' src/`: only `src/lib/date-utils.ts:63` (single source of truth).
+
+### Review summary
+
+- **Technical reviewer (`subagent_explore`):** APPROVE on all 6 items. Verified each fix matches the REVIEW-LATER spec, test coverage hits both happy and error/branch paths, no AGENTS.md violations (no silent catches, no `any` without `biome-ignore` justification, no relaxed strict settings, no `React.forwardRef`, semantic logger calls, type-guard uses bracket notation for strict-index-signature compliance). Cross-cutting: all new tests use specific assertions (`toHaveBeenCalledWith`, `toBe(...)`, `toEqual([...])`) — no weak `toBeTruthy()` / `toHaveBeenCalled()` matchers. One optional recommendation (add a one-line comment on the re-export in `BlockInlineControls.tsx` explaining the back-compat intent) was applied as orchestrator polish.
+- **UX reviewer:** skipped. None of the six items change visible behaviour: `highlightText` was a documented-as-no-op prop, the i18n swap preserves identical English text, the MONTH_SHORT dedup is mechanical, the recent-pages type-guard rejects only entries that were already invisible bugs, the suggestion-renderer guard adds a log line on a stale-view code path that user pathways shouldn't reach in practice, and the ConflictList silent-catch fix adds a warn log line in non-Tauri contexts (browser dev server / tests).
+
+### Design decisions
+
+- **6 background subagents in parallel without worktrees** — each item touches a non-overlapping file set, so the cold-compile cost of `git worktree add` was unjustified. The orchestrator launched all 6 build subagents in a single batch and pre-read REVIEW-LATER section boundaries while they ran; total wall-clock for build phase was bounded by the slowest single subagent (~2 min) rather than 6× sequential.
+- **Subagents returned diffs, orchestrator applied them** — every background subagent in this environment lacked `edit` / `write` / `exec`-with-side-effects permissions and reported "requires permission that cannot be granted in a subagent." Each subagent returned exact `old_string` / `new_string` blocks plus line numbers, and the orchestrator applied them in parallel `edit` tool calls. This is a higher-friction pattern than letting subagents write directly, but the diffs were precise enough that no rework was needed; only one biome-format pass was required after the merge.
+- **Re-export in `BlockInlineControls.tsx`** — chosen over the alternative ("update every test import to point at `date-utils`") because:
+  1. The existing `BlockInlineControls.test.tsx` imports both names from `BlockInlineControls`, and rewriting those imports would have ballooned the diff for zero behavioural change.
+  2. There may be other downstream consumers in the wider repo (or in user-facing extensions later) that depend on the public surface; preserving it costs one named re-export line.
+  3. The new test in `date-utils.test.ts` provides direct coverage of `MONTH_SHORT` against the new source-of-truth module, so the duplication is purely for back-compat and not a coverage gap.
+- **Bracket-notation field access in `isRecentPage`** — TypeScript strict mode (`noUncheckedIndexedAccess` family) flags `.id` access on `Record<string, unknown>` with `error TS4111: Property 'id' comes from an index signature, so it must be accessed with ['id']`. Bracket notation is the idiomatic way to satisfy the compiler here without weakening any tsconfig setting.
+- **MAINT-94 step 1 only, not step 2** — the optional second step (replace static `MONTH_SHORT` with `Intl.DateTimeFormat(locale, { month: 'short' })` for proper locale support) was an `M`-cost task per the REVIEW-LATER entry. Out of scope for this batch; if filed again as a follow-up it would belong in a localization sweep rather than a mechanical-DRY batch.
+- **MAINT-102 drop path, not implement path** — the REVIEW-LATER entry offered both: drop the prop or wire HighlightMatch into ResultCard. The drop path is honest (rich content already takes priority over plain-text highlighting; HighlightMatch lives in PageBrowser/PageTreeItem where it's actively used) and small. The implement path would have required ResultCard to accept and propagate `highlightText` through the rich-content renderer, which is more architectural change than a `S`-cost item should justify.
+- **`vi.mocked(logger.warn)` in `ConflictList.test.tsx`, `mockListen.mockRejectedValueOnce(...)` matching the file's existing style** — the test uses the local convention (`mockListen.mockRejectedValueOnce`) for the listener mock and `vi.mocked(...)` for the new logger mock, because `logger` is mocked at the module level via `vi.mock('@/lib/logger', ...)` while `listen` is mocked through a wrapper function. Following the file's existing patterns.
+- **No worktrees + no `prek` inside subagents** — per PROMPT.md "Subagent verification scope," each subagent verified its own work with vitest only; the orchestrator ran `prek run --all-files` once after merging. Two biome-format passes were the only adjustments needed; no clippy / nextest / specta drift.
+
+### Stats
+
+- 1 code commit (this session) + 1 docs commit (this entry).
+- 18 files changed (+174 / −183, net −9 lines after deleting 39 lines of duplicated `MONTH_SHORT` + dead `highlightText` machinery).
+- 6 REVIEW-LATER items resolved (MAINT-92, MAINT-93, MAINT-94, MAINT-95, MAINT-102, MAINT-104); 0 new items filed.
+- 0 new migrations, 0 new Tauri commands, 0 new stores, 0 new schema. 1 new i18n key (`backlink.propertyNotFound`). +9 / −1 = +8 net new tests. 1 type-guard helper. 1 re-export.
+
+---
+
 ## Session 472 — FEAT-3 Phase 2 shipped: list/search scoping + create-in-space + Move-to-space + link-picker scoping (2026-04-23)
 
 **0 REVIEW-LATER items resolved; FEAT-3 advanced Phase 1 → Phase 2 shipped** (still IN PROGRESS; Phases 3–6 remaining). Open-items count unchanged at 12. This phase makes the sidebar `SpaceSwitcher` from Phase 1 actually DO something: the Pages view, Search, link picker, and all new-page-creation callsites now honour the active space, and a "Move to space" action lands in the PageHeader kebab. The initial build subagent hit a connection error mid-run after completing the backend and partial frontend; a follow-up subagent finished the frontend + fixed 91 broken tests from the IPC-shape change. Two parallel reviewers (technical + UX). Technical APPROVE WITH NOTES — two P1 test-coverage gaps verified (zero `Some(space_id)` tests, zero `create_page_in_space` tests). UX APPROVE WITH NOTES — zero P1, two P2s both reviewers flagged independently (pagesList cache leak + silent link-picker scoping) + one P3 (long space names in Move sub-menu). A focused test-fill subagent closed the two P1s (+17 tests) and applied the P2-1 cache fix; the orchestrator applied the P3-1 CSS fix directly before commit. One code commit (`2b6e986`), one docs commit (this entry).
