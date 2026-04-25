@@ -1,4 +1,6 @@
-![Agaric logo](src-tauri/icons/128x128.png)
+<p align="center">
+  <img src="src-tauri/icons/128x128.png" alt="Agaric logo" width="128" height="128">
+</p>
 
 # Agaric
 
