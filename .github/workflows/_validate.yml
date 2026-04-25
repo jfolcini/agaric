@@ -67,12 +67,16 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
-      - name: Install cargo plugins used by prek hooks (cargo-deny, cargo-machete, sqruff)
+      - name: Install cargo plugins used by prek hooks + sqlx-cli for offline-cache check
         # First run is slow; subsequent runs use the cached ~/.cargo/bin/.
+        # sqlx-cli is built with `--no-default-features --features sqlite`
+        # to skip Postgres / MySQL drivers the project doesn't use, which
+        # would otherwise pull libpq / libmysqlclient and slow the build.
         run: |
           if ! command -v cargo-deny >/dev/null; then cargo install --locked cargo-deny; fi
           if ! command -v cargo-machete >/dev/null; then cargo install --locked cargo-machete; fi
           if ! command -v sqruff >/dev/null; then cargo install --locked sqruff; fi
+          if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
 
       - name: Install prek
         # prek is a Rust reimplementation of pre-commit. Source-of-truth for
