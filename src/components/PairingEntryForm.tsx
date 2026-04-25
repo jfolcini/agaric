@@ -9,10 +9,11 @@
 
 import { Camera } from 'lucide-react'
 import type React from 'react'
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useId } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
 
@@ -47,6 +48,8 @@ export function PairingEntryForm({
   isExpired,
 }: PairingEntryFormProps): React.ReactElement {
   const { t } = useTranslation()
+  // UX-263: Stable id prefix so visible ordinal Labels can htmlFor each input.
+  const inputIdPrefix = useId()
 
   return (
     <>
@@ -81,20 +84,35 @@ export function PairingEntryForm({
       {/* Conditional: manual word inputs or QR scanner */}
       {entryMode === 'manual' ? (
         <div className="pairing-word-inputs grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-          {(['first', 'second', 'third', 'fourth'] as const).map((slot, i) => (
-            <Input
-              key={slot}
-              value={words[i]}
-              onChange={(e) => onWordChange(i, e.target.value)}
-              onKeyDown={(e) => onWordKeyDown(i, e)}
-              placeholder={t('pairing.wordPlaceholder', {
-                ordinal: ['1st', '2nd', '3rd', '4th'][i],
-              })}
-              aria-label={t('pairing.wordLabel', { num: i + 1 })}
-              className="text-center touch-target"
-              disabled={pairLoading || isExpired}
-            />
-          ))}
+          {(['first', 'second', 'third', 'fourth'] as const).map((slot, i) => {
+            const ordinal = ['1st', '2nd', '3rd', '4th'][i] as string
+            const inputId = `${inputIdPrefix}-pairing-word-${i}`
+            return (
+              // UX-263: Each word slot gets a visible ordinal Label so users
+              // can confirm which position they're typing into without
+              // relying on placeholders alone.
+              <div key={slot} className="pairing-word-slot flex flex-col gap-1">
+                <Label
+                  htmlFor={inputId}
+                  size="sm"
+                  muted={false}
+                  className="pairing-word-label text-foreground"
+                >
+                  {t('pairing.entryFormWord', { ordinal })}
+                </Label>
+                <Input
+                  id={inputId}
+                  value={words[i]}
+                  onChange={(e) => onWordChange(i, e.target.value)}
+                  onKeyDown={(e) => onWordKeyDown(i, e)}
+                  placeholder={t('pairing.wordPlaceholder', { ordinal })}
+                  aria-label={t('pairing.wordLabel', { num: i + 1 })}
+                  className="text-center touch-target"
+                  disabled={pairLoading || isExpired}
+                />
+              </div>
+            )
+          })}
         </div>
       ) : (
         <div className="pairing-qr-scanner mb-4">

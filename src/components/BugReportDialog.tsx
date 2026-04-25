@@ -42,6 +42,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { buildGitHubIssueUrl, formatReportBody } from '@/lib/bug-report'
 import { bugReportZipFilename, buildReportZip } from '@/lib/bug-report-zip'
+import { writeText } from '@/lib/clipboard'
 import { BUG_TRACKER } from '@/lib/config'
 import { downloadBlob } from '@/lib/export-graph'
 import { logger } from '@/lib/logger'
@@ -159,7 +160,7 @@ export function BugReportDialog({
         toast.error(t('bugReport.copyFailed'))
         return
       }
-      await navigator.clipboard.writeText(body)
+      await writeText(body)
       toast.success(t('bugReport.copied'))
     } catch (err) {
       logger.warn(MODULE, 'clipboard write failed', undefined, err)

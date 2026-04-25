@@ -56,7 +56,6 @@ describe('dispatchBugReport', () => {
   it('is a no-op when window is undefined (SSR safety)', () => {
     const originalWindow = globalThis.window
     // jsdom provides `window`; simulate SSR by deleting the global.
-    // biome-ignore lint/performance/noDelete: explicit SSR simulation
     delete (globalThis as { window?: Window }).window
 
     expect(() => dispatchBugReport({ message: 'ssr' })).not.toThrow()

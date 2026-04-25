@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
+import { writeText } from '@/lib/clipboard'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { useBlockTags } from '../hooks/useBlockTags'
@@ -235,7 +236,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const handleExport = useCallback(async () => {
     try {
       const markdown = await exportPageMarkdown(pageId)
-      await navigator.clipboard.writeText(markdown)
+      await writeText(markdown)
       toast.success(t('pageHeader.exportCopied'))
     } catch (err) {
       logger.error('PageHeader', 'Failed to export page markdown', { pageId }, err)
@@ -251,7 +252,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         e.preventDefault()
         exportPageMarkdown(pageId)
           .then(async (markdown) => {
-            await navigator.clipboard.writeText(markdown)
+            await writeText(markdown)
             toast.success(t('pageHeader.exportCopied'))
           })
           .catch((err: unknown) => {

@@ -222,4 +222,32 @@ describe('PairingEntryForm', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  // UX-263: visible ordinal labels above each word input
+  it('renders a visible ordinal Label above each word input', () => {
+    const { container } = render(<PairingEntryForm {...defaultProps} />)
+
+    const labels = container.querySelectorAll('.pairing-word-label')
+    expect(labels.length).toBe(4)
+    expect(labels[0]?.textContent).toBe('1st word')
+    expect(labels[1]?.textContent).toBe('2nd word')
+    expect(labels[2]?.textContent).toBe('3rd word')
+    expect(labels[3]?.textContent).toBe('4th word')
+  })
+
+  it('associates each ordinal Label with its input via htmlFor / id (UX-263)', () => {
+    const { container } = render(<PairingEntryForm {...defaultProps} />)
+
+    const labels = container.querySelectorAll('label.pairing-word-label')
+    const inputs = container.querySelectorAll('.pairing-word-inputs input')
+    expect(labels.length).toBe(4)
+    expect(inputs.length).toBe(4)
+    for (let i = 0; i < 4; i++) {
+      const labelFor = labels[i]?.getAttribute('for')
+      const inputId = inputs[i]?.getAttribute('id')
+      expect(labelFor).toBeTruthy()
+      expect(inputId).toBeTruthy()
+      expect(labelFor).toBe(inputId)
+    }
+  })
 })

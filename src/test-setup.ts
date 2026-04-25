@@ -139,6 +139,15 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
 
+// Shared mock for `@tauri-apps/plugin-clipboard-manager` — `src/lib/clipboard.ts`
+// dynamically imports this; without a global mock, jsdom-running tests would
+// load the real plugin and try to talk IPC. Tests that need to assert on
+// clipboard interactions either mock `@/lib/clipboard` directly per-file or
+// override `vi.mocked(writeText)` from this module.
+vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({
+  writeText: vi.fn().mockResolvedValue(undefined),
+}))
+
 // Shared mock for `sonner` — consolidates the `toast` + `Toaster` stubs used
 // by ~55 component/hook tests. Per-file `vi.mock('sonner', ...)` overrides
 // still work for tests that need custom capture variables.

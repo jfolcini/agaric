@@ -41,6 +41,10 @@ vi.mock('../../hooks/useRichContentCallbacks', () => ({
   useTagClickHandler: vi.fn(() => vi.fn()),
 }))
 
+vi.mock('../../lib/announcer', () => ({
+  announce: vi.fn(),
+}))
+
 const mockedInvoke = vi.mocked(invoke)
 
 function makeBlock(id: string, content: string, deletedAt: string, parentId: string | null = null) {
@@ -1454,5 +1458,114 @@ describe('TrashView', () => {
     // List still renders, no badge.
     await screen.findByText('root')
     expect(screen.queryByTestId('trash-item-batch-count')).not.toBeInTheDocument()
+  })
+})
+
+describe('TrashView screen reader announcements (UX-282)', () => {
+  it('announces batch restore count after Restore selected', async () => {
+    const { announce } = await import('../../lib/announcer')
+    const mockedAnnounce = vi.mocked(announce)
+    const user = userEvent.setup()
+    const blocks = [
+      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+    ]
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_block') return { block_id: 'XX', restored_count: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 1')
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: /Restore selected/i }))
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('2 blocks restored from trash')
+    })
+  })
+
+  it('announces batch purge count after confirmation', async () => {
+    const { announce } = await import('../../lib/announcer')
+    const mockedAnnounce = vi.mocked(announce)
+    const user = userEvent.setup()
+    const blocks = [
+      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+    ]
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_block') return { block_id: 'XX', purged_count: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 1')
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: /Purge selected/i }))
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('2 blocks permanently deleted')
+    })
+  })
+
+  it('announces trash emptied count on Empty Trash success', async () => {
+    const { announce } = await import('../../lib/announcer')
+    const mockedAnnounce = vi.mocked(announce)
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          next_cursor: null,
+          has_more: false,
+        }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_all_deleted') return { affected_count: 5 }
+      return undefined
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-empty-trash-btn'))
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Trash emptied — 5 items permanently deleted')
+    })
+  })
+
+  it('announces failure when empty trash backend rejects', async () => {
+    const { announce } = await import('../../lib/announcer')
+    const mockedAnnounce = vi.mocked(announce)
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          next_cursor: null,
+          has_more: false,
+        }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_all_deleted') throw new Error('DB error')
+      return undefined
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-empty-trash-btn'))
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Empty trash failed')
+    })
   })
 })

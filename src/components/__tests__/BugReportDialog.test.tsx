@@ -17,6 +17,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { writeText } from '@/lib/clipboard'
 import { t } from '../../lib/i18n'
 import { BugReportDialog } from '../BugReportDialog'
 
@@ -35,6 +36,13 @@ const downloadBlobMock = vi.fn<(blob: Blob, filename: string) => void>()
 vi.mock('@/lib/export-graph', () => ({
   downloadBlob: (blob: Blob, name: string) => downloadBlobMock(blob, name),
 }))
+
+// Mock the clipboard wrapper so the Copy button path does not depend on
+// `@tauri-apps/plugin-clipboard-manager` IPC or jsdom's `navigator.clipboard`.
+vi.mock('@/lib/clipboard', () => ({
+  writeText: vi.fn().mockResolvedValue(undefined),
+}))
+const mockedWriteText = vi.mocked(writeText)
 
 const sampleMetadata = {
   app_version: '0.1.0',
@@ -58,12 +66,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   openUrlMock.mockResolvedValue(undefined)
   setupDefaultIpcMocks()
-
-  // jsdom does not implement clipboard; stub it per-test.
-  Object.defineProperty(navigator, 'clipboard', {
-    configurable: true,
-    value: { writeText: vi.fn().mockResolvedValue(undefined) },
-  })
+  // Re-arm the wrapper mock — `vi.clearAllMocks()` clears the default
+  // resolution installed at module load.
+  mockedWriteText.mockResolvedValue(undefined)
 })
 
 describe('BugReportDialog', () => {
@@ -193,11 +198,6 @@ describe('BugReportDialog', () => {
 
   it('Copy button writes the report body to the clipboard', async () => {
     const user = userEvent.setup()
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    })
 
     render(<BugReportDialog open={true} onOpenChange={() => {}} />)
 
@@ -207,9 +207,9 @@ describe('BugReportDialog', () => {
     await user.click(copyBtn)
 
     await waitFor(() => {
-      expect(writeText).toHaveBeenCalled()
+      expect(mockedWriteText).toHaveBeenCalled()
     })
-    const firstCall = writeText.mock.calls[0]
+    const firstCall = mockedWriteText.mock.calls[0]
     expect(firstCall).toBeDefined()
     expect(firstCall?.[0]).toContain('## Description')
     expect(mockedToastSuccess).toHaveBeenCalledWith(t('bugReport.copied'))

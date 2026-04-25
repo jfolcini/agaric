@@ -31,6 +31,7 @@ import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { writeText } from '../lib/clipboard'
 import { logger } from '../lib/logger'
 import { cn } from '../lib/utils'
 
@@ -321,7 +322,7 @@ export function BlockContextMenu({
         icon: <Copy className="h-3.5 w-3.5" />,
         action: async () => {
           try {
-            await navigator.clipboard.writeText(linkUrl)
+            await writeText(linkUrl)
             toast.success(t('contextMenu.urlCopied'))
           } catch (err) {
             logger.error(

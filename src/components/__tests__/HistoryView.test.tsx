@@ -33,6 +33,10 @@ vi.mock('../CompactionCard', () => ({
   CompactionCard: () => null,
 }))
 
+vi.mock('../../lib/announcer', () => ({
+  announce: vi.fn(),
+}))
+
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
@@ -1344,6 +1348,62 @@ describe('HistoryView', () => {
       expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'restore_page_to_op')).toHaveLength(
         0,
       )
+    })
+  })
+})
+
+describe('HistoryView screen reader announcements (UX-282)', () => {
+  it('announces ops reverted count after batch revert', async () => {
+    const { announce } = await import('../../lib/announcer')
+    const mockedAnnounce = vi.mocked(announce)
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'a' }),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'b' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // initial load
+      .mockResolvedValueOnce([]) // revertOps
+      .mockResolvedValueOnce(emptyPage) // reload after revert
+
+    render(<HistoryView />)
+    await screen.findByText('a')
+
+    await user.keyboard('{Control>}a{/Control}')
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('2 operations reverted')
+    })
+  })
+
+  it('announces "Revert failed" when revert backend rejects', async () => {
+    const { announce } = await import('../../lib/announcer')
+    const mockedAnnounce = vi.mocked(announce)
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'a' })],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // initial load
+      .mockRejectedValueOnce(new Error('revert failed')) // revertOps throws
+
+    render(<HistoryView />)
+    await screen.findByText('a')
+
+    await user.keyboard('{Control>}a{/Control}')
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Revert failed')
     })
   })
 })
