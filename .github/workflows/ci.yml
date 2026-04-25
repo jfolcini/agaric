@@ -1,8 +1,12 @@
 name: CI
 
 on:
+  # Run validation + per-platform builds on every push to any branch. Tag
+  # pushes are handled by release.yml (which also runs the full validation
+  # via the shared _validate.yml callable).
   push:
-    branches: [main]
+    branches: ['**']
+    tags-ignore: ['**']
   pull_request:
     branches: [main]
 
@@ -11,129 +15,19 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Lint, format, test (Linux only — these checks are platform-agnostic)
+  # Lint, format, audit, type-check, test — the same checks `prek run
+  # --all-files` runs locally, plus the full test/E2E/bundle smoke suites.
+  # Source of truth: prek.toml.
   # ---------------------------------------------------------------------------
-  check:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            pkg-config
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Prepare externalBin placeholder (FEAT-4f)
-        # Tauri's build.rs validates externalBin paths on every `cargo`
-        # invocation — clippy, nextest, deny, machete all trigger it. Create
-        # an empty placeholder early so the Rust steps can run without
-        # paying for the stub compilation yet.
-        run: node scripts/prepare-external-bins.mjs --placeholder-only
-
-      - name: Biome check
-        run: npx biome check .
-
-      - name: TypeScript check
-        run: npx tsc -b --noEmit
-
-      - name: Cargo fmt
-        working-directory: src-tauri
-        run: cargo fmt --check
-
-      - name: Cargo clippy
-        working-directory: src-tauri
-        run: cargo clippy -- -D warnings
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Cargo test (nextest)
-        working-directory: src-tauri
-        run: cargo nextest run --profile ci
-
-      - name: Vitest
-        run: npm test
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
-
-      - name: Playwright E2E tests
-        id: playwright
-        run: npx playwright test
-
-      - name: Upload Playwright report (on failure)
-        if: failure() && steps.playwright.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 14
-          if-no-files-found: ignore
-
-      - name: sqlx offline cache check
-        working-directory: src-tauri
-        run: cargo sqlx prepare --check
-
-      - name: npm audit (security)
-        run: npx better-npm-audit audit
-
-      - name: License check (npm)
-        run: npx license-checker --onlyAllow 'MIT;ISC;Apache-2.0;BSD-3-Clause;BSD-2-Clause;MPL-2.0;MIT-0;CC0-1.0;Python-2.0;BlueOak-1.0.0;CC-BY-3.0;CC-BY-4.0;0BSD' --excludePackages 'agaric@0.1.0' --production
-
-      - name: Depcheck (unused npm deps)
-        run: npx depcheck --ignores='tailwindcss,@vitest/coverage-v8,better-npm-audit,depcheck,license-checker'
-
-      - name: Cargo deny (advisories + licenses)
-        working-directory: src-tauri
-        run: cargo deny check
-
-      - name: Cargo machete (unused Rust deps)
-        working-directory: src-tauri
-        run: cargo machete
-
-      - name: Build agaric-mcp stub binary (FEAT-4f)
-        # Smoke-check that the `agaric-mcp` sidecar still compiles on every CI
-        # run and lands at the externalBin path Tauri's bundler expects. The
-        # full desktop bundle (which ships the same binary next to the main
-        # app) is exercised in the `build` matrix below.
-        run: node scripts/prepare-external-bins.mjs
-
-      - name: Verify agaric-mcp smoke (--version)
-        run: src-tauri/target/release/agaric-mcp --version
-
-      - name: Verify externalBin artifact exists
-        run: test -x src-tauri/binaries/agaric-mcp-x86_64-unknown-linux-gnu
+  validate:
+    uses: ./.github/workflows/_validate.yml
 
   # ---------------------------------------------------------------------------
   # Desktop build matrix — Linux (.deb, .AppImage), Windows (.msi, .nsis),
   # macOS (.dmg, .app). Ensures the app compiles and bundles on all platforms.
   # ---------------------------------------------------------------------------
   build:
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -250,6 +144,7 @@ jobs:
             src-tauri/target/release/bundle/macos/*.app
 
   android-build:
+    needs: validate
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

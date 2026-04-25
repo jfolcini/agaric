@@ -1,0 +1,125 @@
+name: Validate (prek-equivalent)
+
+# Reusable workflow that runs the same checks as `prek run --all-files`
+# locally, plus the full vitest + cargo nextest + Playwright suites and the
+# externalBin / sqlx-offline-cache smoke checks.
+#
+# Invoked by ci.yml (every push/PR) and release.yml (every tag).
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks (run via prek) inspects git history, so we need the
+          # full commit graph rather than the default shallow checkout.
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Cache `~/.cargo/bin/` so cargo-installed plugins (prek, sqruff,
+          # cargo-deny, cargo-machete, cargo-nextest) persist across runs.
+          cache-bin: 'true'
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        # Tauri's build.rs validates externalBin paths on every cargo
+        # invocation — clippy, nextest, deny, machete all trigger it.
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Install cargo plugins used by prek hooks (cargo-deny, cargo-machete, sqruff)
+        # First run is slow; subsequent runs use the cached ~/.cargo/bin/.
+        run: |
+          if ! command -v cargo-deny >/dev/null; then cargo install --locked cargo-deny; fi
+          if ! command -v cargo-machete >/dev/null; then cargo install --locked cargo-machete; fi
+          if ! command -v sqruff >/dev/null; then cargo install --locked sqruff; fi
+
+      - name: Install prek
+        # prek is a Rust reimplementation of pre-commit. Source-of-truth for
+        # the checks lives in prek.toml.
+        run: |
+          if ! command -v prek >/dev/null; then cargo install --locked prek; fi
+
+      - name: Run prek (same as `prek run --all-files` locally)
+        env:
+          # `no-commit-to-branch` is a pre-push guard for local dev only.
+          # `vitest` and `cargo-test` here run only the related test subset
+          # (`scripts/test-related-*.sh`); the full suites run as separate
+          # steps below so a CI run never silently misses tests outside the
+          # diff window.
+          SKIP: no-commit-to-branch,vitest,cargo-test
+        run: prek run --all-files
+
+      - name: Cargo test (nextest, full suite)
+        working-directory: src-tauri
+        run: cargo nextest run --profile ci
+
+      - name: Vitest (full suite)
+        run: npm test
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright E2E tests
+        id: playwright
+        run: npx playwright test
+
+      - name: Upload Playwright report (on failure)
+        if: failure() && steps.playwright.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: sqlx offline cache check
+        working-directory: src-tauri
+        run: cargo sqlx prepare --check
+
+      - name: Build agaric-mcp stub binary (FEAT-4f)
+        # Smoke-check that the `agaric-mcp` sidecar still compiles and lands
+        # at the externalBin path Tauri's bundler expects.
+        run: node scripts/prepare-external-bins.mjs
+
+      - name: Verify agaric-mcp smoke (--version)
+        run: src-tauri/target/release/agaric-mcp --version
+
+      - name: Verify externalBin artifact exists
+        run: test -x src-tauri/binaries/agaric-mcp-x86_64-unknown-linux-gnu

@@ -12,7 +12,13 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Run the same validation as `prek run --all-files` locally before letting
+  # the release matrix build any artifacts. Source of truth: prek.toml.
+  validate:
+    uses: ./.github/workflows/_validate.yml
+
   build-and-release:
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
