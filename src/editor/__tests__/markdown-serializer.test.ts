@@ -322,6 +322,28 @@ describe('serialize', () => {
         ),
       ).toBe('| A\\|B |\n| --- |\n| 1\\|2 |')
     })
+
+    // Defence-in-depth check: a literal backslash followed by a pipe in
+    // a cell must round-trip correctly. `escapeText` (via
+    // `serializeParagraph`) escapes the backslash to `\\` first, then
+    // the table serializer escapes the pipe to `\|`, producing `\\\|`
+    // in the output stream — which markdown parses as "escaped
+    // backslash + escaped pipe" = the original `\|`. This test pins
+    // the behaviour so the table-cell pipe escape stays correct under
+    // any future churn in `escapeText`. Closes a CodeQL
+    // `js/incomplete-sanitization` false-positive concern.
+    it('survives backslash + pipe in table cells without breaking the column separator', () => {
+      expect(
+        serialize(
+          doc(
+            table(
+              tableRow(tableHeader(paragraph(text('A\\B')))),
+              tableRow(tableCell(paragraph(text('C\\|D')))),
+            ),
+          ),
+        ),
+      ).toBe('| A\\\\B |\n| --- |\n| C\\\\\\|D |')
+    })
   })
 
   describe('escaping', () => {

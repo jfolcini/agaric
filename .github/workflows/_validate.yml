@@ -9,6 +9,12 @@ name: Validate (prek-equivalent)
 on:
   workflow_call:
 
+# Read-only by default. The job only checks out the code, runs prek + the
+# full test suites, and uploads the playwright report on failure (which
+# uses its own scoped token via actions/upload-artifact).
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 

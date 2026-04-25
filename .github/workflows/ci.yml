@@ -10,6 +10,14 @@ on:
   pull_request:
     branches: [main]
 
+# Default to read-only for the workflow's GITHUB_TOKEN. Individual jobs do
+# not need to write back to the repo (artifact uploads use separate scopes
+# inside `actions/upload-artifact`), so the principle-of-least-privilege
+# applies. Release-time write access lives in `release.yml`, which is
+# triggered separately by tag pushes.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 

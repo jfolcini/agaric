@@ -350,6 +350,13 @@ function serializeTable(node: TableNode): string {
     const cells: string[] = []
     if (row.content) {
       for (const cell of row.content) {
+        // `serializeParagraph` already routes text through `escapeText`,
+        // which converts every literal `\` into `\\` before we see it
+        // here. The only table-specific work left is escaping `|`, the
+        // column separator. CodeQL's `js/incomplete-sanitization` flags
+        // the bare `replace(/\|/g, '\\|')` because it cannot see across
+        // the function boundary into `escapeText`; the alert is a known
+        // false positive and is dismissed in the code-scanning UI.
         const text =
           cell.content && cell.content.length > 0
             ? serializeParagraph(cell.content[0] as ParagraphNode).replace(/\|/g, '\\|')

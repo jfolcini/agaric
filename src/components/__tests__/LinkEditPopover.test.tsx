@@ -161,6 +161,30 @@ describe('normalizeUrl', () => {
     expect(normalizeUrl('data:text/html,<script>alert(1)</script>')).toBe('')
     expect(normalizeUrl('DATA:text/html,test')).toBe('')
   })
+
+  // Hardening for CodeQL `js/incomplete-url-scheme-check`: the original
+  // denylist only covered `javascript:` + `data:`. The full list now
+  // includes `vbscript:`, `file:`, `blob:`, `about:` — schemes that
+  // could execute script, open local files, or surface native pages
+  // when the link is opened from a Tauri renderer.
+  it('blocks vbscript: URLs (legacy IE XSS vector)', () => {
+    expect(normalizeUrl('vbscript:msgbox(1)')).toBe('')
+    expect(normalizeUrl('VBScript:Execute("...")')).toBe('')
+  })
+
+  it('blocks file: URLs (would open host filesystem)', () => {
+    expect(normalizeUrl('file:///etc/passwd')).toBe('')
+    expect(normalizeUrl('FILE:///c:/Windows/System32')).toBe('')
+  })
+
+  it('blocks blob: URLs (can leak local data)', () => {
+    expect(normalizeUrl('blob:https://example.com/abc-def')).toBe('')
+  })
+
+  it('blocks about: URLs (browser-internal pages)', () => {
+    expect(normalizeUrl('about:blank')).toBe('')
+    expect(normalizeUrl('About:config')).toBe('')
+  })
 })
 
 // ── LinkEditPopover component ────────────────────────────────────────────
