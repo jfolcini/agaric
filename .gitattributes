@@ -1,0 +1,12 @@
+# GitHub Linguist overrides.
+#
+# Linguist's default "skip minified files" matcher is `\.min\.(js|css)$` — it
+# does NOT match `.min.mjs`, so the vendored pdf.js worker (~1.2 MB) is
+# otherwise counted as authored JavaScript and skews the language stats away
+# from "this is a TypeScript + Rust project".
+public/pdf.worker.min.mjs linguist-vendored
+
+# Build / pre-commit tooling, not application code. Authored as small ESM
+# Node scripts because pulling in tsx/ts-node for ~100-line utilities would
+# be heavier than the scripts themselves.
+scripts/*.mjs linguist-vendored
