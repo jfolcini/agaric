@@ -1,5 +1,93 @@
 # Session Log
 
+## Session 477 — Five small UX a11y / discoverability fixes: sync visibility, touch sizing, settings tab persistence, BugReport Checkbox primitive + success toast, WelcomeModal i18n + semantic markup (UX-266 / UX-268 / UX-276 partial / UX-277 partial / UX-278) (2026-04-25)
+
+**3 REVIEW-LATER items resolved (UX-266, UX-268, UX-278) + 2 partial closures (UX-276, UX-277 — both narrowed in-place to the remaining sub-items).** Open items: 48 → 43. Mixed-domain `S`-cost frontend UX batch: sync visibility (sidebar dot + per-state icons + space-deletion toast), touch-target sizing across Agenda + Search filters, Settings tab persistence to localStorage, BugReport native checkbox swap to a new design-system primitive (+ success toast), and WelcomeModal sample-content i18n + `<ul role="list">` semantic markup. Five build subagents launched in parallel; the UX-277 subagent was interrupted mid-flight when the user shifted focus to a release-CI fix, then re-launched with the same scope to complete the batch. Two read-only review subagents (technical + UX) ran in parallel against the merged tree and APPROVED all five items.
+
+Batch composition (5 items, 2 partial):
+
+- **UX-266** — three sync-visibility sub-fixes:
+  - `App.tsx` sidebar-footer Sync button gained a small `data-sync-state` dot via the existing `syncDotClass(syncState, hasPeers)` helper, so users have a glanceable signal even when the StatusPanel is collapsed.
+  - `StatusPanel.tsx` introduces a `SyncStateIcon` component rendering a per-state lucide icon next to the existing dot+label: `Search` (discovering), `Link2` (pairing), `RefreshCw animate-spin` (syncing), `AlertCircle text-destructive` (error/offline), `CheckCircle2` (idle). All `aria-hidden`; the existing text label remains the SR source of truth.
+  - `stores/space.ts` fires `toast.warning(t('space.activeDeletedNotification', { space }))` when the active space is deleted on another device and the store falls back to a different space. Guards: `prevCurrent !== null && nextCurrent !== null && prevCurrent !== nextCurrent` (no first-boot noise, no firing when the active space is preserved or when no spaces remain).
+
+- **UX-268** — touch-target / mobile sizing sweep across Agenda + Search filters (CSS-only):
+  - `DuePanelFilters.tsx`: filter pills + hide-before-scheduled toggle gained `[@media(pointer:coarse)]:min-h-[44px]` + `min-w-[44px]`; toggle also gained an `aria-label`.
+  - `AgendaSortGroupControls.tsx`: sort/group trigger buttons gained `[@media(pointer:coarse)]:min-w-[44px]`.
+  - `SourcePageFilter.tsx`: dropped `size="sm"` (h-8 base conflicted with `min-h-[44px]`), use explicit `h-7 w-7 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11`.
+  - `BacklinkFilterBuilder.tsx`: NO change needed (already covered by an earlier commit).
+
+- **UX-276 (partial)** — `SettingsView.tsx` `activeTab` now persists to localStorage (`agaric-settings-active-tab`) following the font-size pref pattern. Validates loaded value against `TAB_IDS` union; falls back to `'general'` if the persisted value is unrecognized (defensive against tab renames/removals). URL deep-link is intentionally out of scope (M risk via navigation-store coordination); UX-276 stays in REVIEW-LATER with the title narrowed to "URL deep-link support" only.
+
+- **UX-277 (partial)** — `BugReportDialog.tsx` two of three sub-fixes:
+  - Native `<input type="checkbox">` swapped for a NEW design-system `Checkbox` primitive at `src/components/ui/checkbox.tsx`. The primitive didn't exist before; the build subagent created it following the established `ui/switch.tsx` pattern (Radix-based, CVA + `cn()`, semantic tokens, focus-visible ring `ring-[3px] ring-ring/50`, touch sizing via `[@media(pointer:coarse)]:size-5`, `data-slot="checkbox"`).
+  - Successful submit now fires `toast.success(t('bugReport.submitted'))` after `openUrl(issueUrl)` and before `onOpenChange(false)`.
+  - Item 3 (log-content preview before submit) deferred to M-cost — UX-277 stays in REVIEW-LATER with that scope only, with a cross-reference to H-9c (`bug_report_preview()` Tauri command) which may supersede it.
+
+- **UX-278** — `WelcomeModal.tsx` two sub-fixes:
+  - 8 hardcoded English strings (sample page contents `Getting Started` + `Quick Tips` + 6 instructional bullets) lifted into `welcome.sample*` i18n keys. The `createSamplePages` factory now takes `(t: TFunction)` and threads it through. Tests updated to assert against `i18n.t('key')` rather than hardcoded English so locale changes can't silently break the assertion.
+  - Feature list `<div>` per item → `<ul role="list">` + `<li>`. The explicit `role="list"` is necessary because Tailwind's `list-style: none` strips the implicit list role under Safari + VoiceOver — which is the exact SR-semantics regression UX-278 is fixing. Justified `biome-ignore lint/a11y/noRedundantRoles` with a comment citing the Safari bug.
+
+### What changed
+
+**Frontend (production):**
+
+- **`src/App.tsx`** — sidebar-footer Sync button gained a `<span>` with `data-testid="sync-button-status-dot"` + `data-sync-state`, classed via the existing local `syncDotClass(syncState, hasPeers)` helper (which uses `bg-sync-{idle,active}` semantic tokens). `aria-hidden`.
+- **`src/components/StatusPanel.tsx`** — new `SyncStateIcon({ state })` component (h-3 w-3, `aria-hidden`, per-state lucide icon with `data-testid="sync-state-icon-{state}"`). Rendered between the existing dot and text label inside `sync-panel-details`.
+- **`src/stores/space.ts`** — added `toast.warning` import + i18n.t call inside `refreshAvailableSpaces` after the `set(...)` when the active space changes mid-session.
+- **`src/lib/i18n.ts`** — new key `space.activeDeletedNotification` with `{{space}}` interpolation; new key `bugReport.submitted`; 8 new `welcome.sample*` keys.
+- **`src/components/DuePanelFilters.tsx`** — filter pill className + hide-before-scheduled toggle className gained the coarse-pointer min-w/min-h; toggle gained `aria-label={...}` using the existing visible-text translation keys (sibling to `title=`) to keep existing test name-matchers stable.
+- **`src/components/AgendaSortGroupControls.tsx`** — sort/group trigger className gained `[@media(pointer:coarse)]:min-w-[44px]`.
+- **`src/components/SourcePageFilter.tsx`** — `<Button size="sm" />` → `<Button />` (default size), explicit `h-7 w-7 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11`.
+- **`src/components/SettingsView.tsx`** — new `ACTIVE_TAB_KEY = 'agaric-settings-active-tab'` constant + `readActiveTab()` helper (validates against `TAB_IDS as readonly string[]`); `useState<SettingsTab>('general')` → `useState<SettingsTab>(readActiveTab)`; new `useEffect(() => localStorage.setItem(ACTIVE_TAB_KEY, activeTab), [activeTab])` with try/catch.
+- **`src/components/BugReportDialog.tsx`** — `<input type="checkbox">` → `<Checkbox checked={confirmed} onCheckedChange={(v) => { if (typeof v === 'boolean') setConfirmed(v) }} id="bug-report-confirm" />` (preserves the existing `<Label htmlFor>` linkage). After `openUrl(issueUrl)` and before `onOpenChange(false)`, fires `toast.success(t('bugReport.submitted'))`.
+- **`src/components/ui/checkbox.tsx`** — NEW design-system primitive. Radix-based wrapper around `CheckboxPrimitive.Root` with CVA-style `cn()` composition, semantic tokens (`border-input`, `bg-background`, `bg-primary`, `text-primary-foreground`), focus ring `focus-visible:ring-[3px] focus-visible:ring-ring/50`, touch sizing `[@media(pointer:coarse)]:size-5`, `data-slot="checkbox"`. Lucide `Check` indicator with `strokeWidth={3}` for visual clarity.
+- **`src/components/WelcomeModal.tsx`** — `createSamplePages` now takes `(t: TFunction)` and uses `t('welcome.sample*')` for every block content. Feature list `<div>` per item → `<ul role="list">` + `<li>`, with a justified `biome-ignore lint/a11y/noRedundantRoles` comment citing the Safari `list-style: none` SR-stripping bug.
+
+**Tests:**
+
+- **`src/components/__tests__/App.test.tsx`** — +3 tests for sidebar Sync button status dot (idle/no-peers → muted, syncing+peers → active, error → destructive).
+- **`src/components/__tests__/StatusPanel.test.tsx`** — +5 tests for `SyncStateIcon` per-state rendering (discovering, pairing, idle, error, syncing animate-spin).
+- **`src/stores/__tests__/space.test.ts`** — +4 tests for the active-space-deleted toast (fires on mid-session deletion, skips on first boot, skips when active space preserved, skips when no fallback).
+- **`src/components/__tests__/DuePanelFilters.test.tsx`** — +2 tests asserting the new touch-sizing classes on pills + the toggle.
+- **`src/components/__tests__/AgendaSortGroupControls.test.tsx`** — +1 test asserting touch-sizing on both triggers.
+- **`src/components/__tests__/SourcePageFilter.test.tsx`** — +1 test asserting the explicit h-7/w-7 + coarse-pointer h-11/w-11 sizing classes.
+- **`src/components/__tests__/SettingsView.test.tsx`** — +3 tests for tab persistence (load persisted tab, write on switch, fall back to `'general'` on invalid).
+- **`src/components/__tests__/BugReportDialog.test.tsx`** — +1 test asserting the rendered checkbox is the design-system primitive (`data-slot="checkbox"`, not native `<input>`); existing test extended to assert `toast.success(t('bugReport.submitted'))`.
+- **`src/components/__tests__/WelcomeModal.test.tsx`** — +2 tests for the i18n-lifted sample content (asserts via `i18n.t(...)`) and the semantic `<ul>`/`<li>` structure.
+
+### Verification
+
+- `prek run --all-files`: all 26 hooks green after two biome auto-format passes (`src/stores/space.ts` line-collapse + `src/components/StatusPanel.tsx` JSX prop wrap).
+- `npx vitest run` (full): **7799 passed** across 304 files (was 7777 after session 476; **+22 net** = +3 App sidebar dot + +5 StatusPanel icons + +4 space toast + +4 touch-sizing + +3 settings persistence + +1 BugReport checkbox + +1 BugReport toast + +2 WelcomeModal — minus a couple of test-count adjustments).
+- `npx tsc -b --noEmit`: clean.
+- Two parallel review subagents (technical + UX): APPROVE on all 5 items. The technical reviewer flagged the new `ui/checkbox.tsx` primitive as following the `ui/switch.tsx` pattern correctly and noted the Safari `list-style: none` justification on the `biome-ignore` directive is exactly the right pattern. The UX reviewer noted the `Search` and `Link2` icon choices are well-considered (vs. `Wifi` or generic chains), the space-deletion toast tone (`toast.warning`) is appropriate, and the dropped `size="sm"` on `SourcePageFilter` is the correct fix for the height-conflict bug.
+
+### Review summary
+
+- **Technical reviewer (`subagent_explore`):** APPROVE on all 5. Verified `syncDotClass()` helper integration, `aria-hidden` on every new icon, space-deletion guard logic (no first-boot false positives), 44 px touch targets across all coarse-pointer classes, localStorage persistence pattern matches the font-size pref exactly, the new `ui/checkbox.tsx` primitive follows the `ui/switch.tsx` template (Radix + CVA + semantic tokens + focus ring), the `biome-ignore` on the WelcomeModal `<ul role="list">` carries a clear justification per AGENTS.md. Three optional recommendations (add a `ui/checkbox.test.tsx` primitive test, monitor Checkbox 20 px coarse-pointer size if mobile becomes a primary surface, document the Safari list-role bug centrally) — none required.
+- **UX reviewer (`subagent_explore`):** APPROVE on all 5. The sidebar dot at 10 px is small but adequate for a secondary indicator; semantic color tokens give good contrast across all 7 themes. Per-state icons (`Search` for discovering, `Link2` for pairing) are intuitive and well-chosen vs. alternatives like `Wifi` or generic chain icons. Space-deletion toast copy ("Switched to {{space}}") is clear; `toast.warning` tone is appropriate for "you got moved without doing anything". Touch targets correctly meet WCAG 2.5.5 on coarse-pointer; desktop UX unaffected. Tab persistence is preference-based (correct for current scope; URL deep-link is the future feature). Checkbox focus ring is balanced against the 4 px primitive size. WelcomeModal i18n preserves Markdown syntax markers in the lifted strings, so non-English users still see the syntax-teaching value. Five P2/P3 polish recommendations for future consideration (toast action button, tooltip explanations, Checkbox touch sizing if mobile becomes primary, URL deep-link follow-up, i18n quality monitoring).
+
+### Design decisions
+
+- **5 build subagents in parallel + 2 review subagents in parallel** — same pattern as sessions 473-476. Each item touched non-overlapping component files except `i18n.ts` (shared by UX-266 + UX-277 + UX-278, applied sequentially without conflict).
+- **UX-277 mid-flight interrupt and resume** — when the user shifted focus to fix a release-CI failure (Android x86_64 cross-compile + Linux AppImage verify, both blocking 0.1.6), the orchestrator stashed the in-flight UX batch (UX-266/268/276/278 already applied; UX-277 still building), pushed the release fix as 0.1.7, and on user request resumed the UX batch by restoring the stash and re-launching the UX-277 subagent. The re-launched subagent ran in foreground (`is_background=false`) so the orchestrator could observe completion immediately. Lesson: the `git stash push -u` workflow is the right tool for inter-batch context switches; never rely on the in-progress diff to be safe across a context shift.
+- **New `ui/checkbox.tsx` primitive (UX-277)** — the build subagent's prompt assumed the primitive existed (it didn't). Per AGENTS.md "If nothing exists — create the reusable abstraction first … then use it" the subagent created it following the `ui/switch.tsx` template. This is the right call: a) the project's design-system convention requires it, b) the work is in scope for UX-277 (the spec said "swap to design-system Checkbox"), c) every future "needs a checkbox" component now has one to import. Cost: ~30 lines of new code + the integration into BugReportDialog. Out-of-scope: a dedicated `ui/checkbox.test.tsx` primitive test file (the consuming-component test in BugReportDialog covers the surface adequately for this batch; can be filed as a future T1-style test if needed).
+- **Safari `list-style: none` SR-stripping bug (UX-278)** — Tailwind's `list-none` utility removes `list-style-type`, which under Safari + VoiceOver also strips the implicit list role. Adding explicit `role="list"` to a `<ul>` triggers biome's `noRedundantRoles` lint, but the role is *not* redundant under that browser/SR pair. The `biome-ignore` directive is justified with a clear comment citing the bug; this is exactly the AGENTS.md-blessed pattern for linter suppression.
+- **`BacklinkFilterBuilder.tsx` already had the touch-sizing fixes** — UX-268 listed it as one of 5 sub-fixes, but a `grep` of the file showed all 8 fixed-width children plus the Apply/Cancel buttons already carried `[@media(pointer:coarse)]:w-full`. No diff needed; documented in the build subagent's report so the next reviewer doesn't waste time looking for the change.
+- **UX-276 partial closure** — `activeTab` localStorage persistence is the small half (~30 minutes); URL deep-link via `useNavigationStore` coordination is the M-risk half (would touch the navigation store). The user's "S-cost batch" framing argues for shipping the small half, narrowing the REVIEW-LATER entry to the remaining scope, and keeping it open. Title and table row updated in-place from "tab persistence + URL deep-link support" to "URL deep-link support".
+- **UX-277 partial closure** — items 1 + 2 (Checkbox swap + success toast) are S; item 3 (log preview) is M. Same pragmatism: ship the S-cost half, narrow the entry. The H-9c finding (`bug_report_preview()` Tauri command) explicitly notes it may supersede the log-preview half of UX-277, so the narrowed entry now cross-references H-9c.
+- **No new keyboard shortcuts, no new commands, no schema changes, no op types** — all 5 items are pure UI/UX surface-level work, consistent with the AGENTS.md "architectural stability" guidance.
+
+### Stats
+
+- 1 code commit (this session) + 1 docs commit (this entry).
+- ~17 files modified + 1 new file (`src/components/ui/checkbox.tsx`).
+- 3 REVIEW-LATER items fully resolved (UX-266, UX-268, UX-278) + 2 partial closures (UX-276, UX-277 — both narrowed in-place).
+- 0 new migrations, 0 new Tauri commands, 0 new stores, 0 new schema. 1 new design-system UI primitive (`ui/checkbox.tsx`). 10 new i18n keys (1 space + 1 bugReport + 8 welcome). 1 new localStorage key (`agaric-settings-active-tab`). +22 net new tests across 9 test files.
+
+---
+
 ## Session 476 — Doc drift sweep + E2E helper extraction + 5 misc consistency cleanups + 3 ui-primitive test files (MAINT-97 / MAINT-98 / MAINT-100 / MAINT-105 + TEST-1 partial) (2026-04-25)
 
 **4 REVIEW-LATER items resolved (MAINT-97, MAINT-98, MAINT-100, MAINT-105) + TEST-1 partial closure (3 of 6 sub-items shipped, 3 deferred).** Open items: 52 → 48. Mixed-domain `S`-cost batch: doc-only drift sweep across 7 files, E2E helper extraction + portal-helper documentation, 5 small code consistency cleanups, and 3 new ui-primitive test files. Four background subagents launched in parallel; three had write permissions and applied their diffs directly, one returned diffs the orchestrator applied. One read-only technical reviewer subagent caught a critical doc drift (UX.md still said `UNDO_GROUP_WINDOW_MS = 200` after the code bumped to 500) — the orchestrator fixed it before commit. UX review was unnecessary (no user-visible change beyond doc/test additions and a constant bump that was user-authored).
