@@ -101,7 +101,16 @@ jobs:
       - name: Verify agaric-mcp inside .deb
         if: matrix.label == 'linux'
         run: |
-          deb=$(ls src-tauri/target/release/bundle/deb/*.deb | head -n 1)
+          # Use a glob (instead of `ls | head -n 1`) so shellcheck SC2012 is happy
+          # and filenames with spaces / newlines parse correctly. Bundle dir
+          # only contains a single .deb per build but still — defensive.
+          shopt -s nullglob
+          debs=(src-tauri/target/release/bundle/deb/*.deb)
+          if [ ${#debs[@]} -eq 0 ]; then
+            echo "ERROR: no .deb produced in src-tauri/target/release/bundle/deb/" >&2
+            exit 1
+          fi
+          deb="${debs[0]}"
           echo "Inspecting $deb"
           dpkg-deb -c "$deb" | grep -E '(^|/)agaric-mcp( |$)'
 

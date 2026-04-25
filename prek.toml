@@ -23,6 +23,17 @@ hooks = [
     { id = "gitleaks" },
 ]
 
+# GitHub Actions workflow lint (catches missing `permissions:` blocks,
+# bad uses syntax, deprecated set-output usage, etc.). Closes the
+# `actions/missing-workflow-permissions` class of CodeQL findings
+# locally instead of letting them surface on push.
+[[repos]]
+repo = "https://github.com/rhysd/actionlint"
+rev = "v1.7.12"
+hooks = [
+    { id = "actionlint" },
+]
+
 # Biome: lint + format for JS/TS
 [[repos]]
 repo = "local"
@@ -81,6 +92,39 @@ entry = "scripts/test-related-ts.sh"
 language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]
+
+# Tauri-mock parity: ensures every IPC command emitted from
+# `src/lib/bindings.ts` (the auto-generated tauri-specta surface) has a
+# handler in the in-browser tauri mock at `src/lib/tauri-mock/handlers.ts`.
+# Catches the FEAT-3 Phase 2 class of bug where a new backend command
+# ships without a mock entry; e2e flows then silently get `null` and
+# fail in unrelated places. Allowlist for genuinely-not-mockable
+# commands (OAuth, OS sockets) lives inside the script.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "tauri-mock-parity"
+name = "tauri-mock parity"
+entry = "node scripts/check-tauri-mock-parity.mjs"
+language = "system"
+pass_filenames = false
+files = "^src/lib/(bindings\\.ts|tauri-mock/handlers\\.ts)$"
+
+# Tracked-file Markdown link integrity. Verifies that every relative
+# `](path.md)` link in tracked Markdown files points to a file that's
+# also tracked by git. Lychee can't catch this locally because an
+# untracked working-tree copy of the target shadows the gap; CI's
+# fresh checkout sees the real state. This script asks
+# `git ls-files`, matching CI semantics.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "md-link-targets"
+name = "markdown link targets are tracked"
+entry = "node scripts/check-md-link-targets.mjs"
+language = "system"
+pass_filenames = false
+types = ["markdown"]
 
 # JS: better-npm-audit (security advisories)
 [[repos]]
@@ -216,3 +260,40 @@ entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo machete'"
 language = "system"
 pass_filenames = false
 files = "^src-tauri/Cargo\\.(toml|lock)$"
+
+# ─── pre-push only ────────────────────────────────────────────────
+#
+# Hooks below run only on `git push`, not on every `git commit`. They
+# trade per-commit speed for the kind of full-suite / compile-required
+# coverage that's worth running before changes leave the local machine.
+
+# `cargo sqlx prepare --check` verifies that the committed `.sqlx/`
+# offline cache is in sync with every `query!()` call in the source.
+# Drift surfaces as a CI failure today; running it on push lets the
+# author fix it (`cargo sqlx prepare`) before the remote run.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "sqlx-prepare-check"
+name = "sqlx prepare --check"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo sqlx prepare --check'"
+language = "system"
+pass_filenames = false
+files = "^src-tauri/(src/.*\\.rs|migrations/.*\\.sql|Cargo\\.(toml|lock))$"
+stages = ["pre-push"]
+
+# Full Playwright suite. The `vitest` hook above runs related-only
+# tests for fast per-commit feedback; this hook runs the full e2e
+# matrix on push so integration regressions (smoke-test rot,
+# cross-view navigation bugs, IPC-mock drift) get caught before
+# they reach CI. Adds ≈80s to `git push` on a clean cache.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "playwright"
+name = "playwright (full e2e suite)"
+entry = "npx playwright test"
+language = "system"
+pass_filenames = false
+types_or = ["ts", "tsx"]
+stages = ["pre-push"]
