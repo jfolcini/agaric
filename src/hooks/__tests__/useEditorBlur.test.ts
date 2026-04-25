@@ -649,6 +649,273 @@ describe('useEditorBlur', () => {
     })
   })
 
+  // -- Step 4b portal scan walk (parameterized over every selector) -------
+
+  describe('Step 4b portal-scan walk over EDITOR_PORTAL_SELECTORS', () => {
+    /**
+     * Helper that exercises Step 4a (relatedTarget inside a portal) for a
+     * given selector value: builds an element matching `selector` (using a
+     * class for `.x` and an attribute for `[data-x]`), focuses an inner
+     * button, and asserts the hook treats it as "stay in editor".
+     */
+    function buildPortalElement(selector: string): HTMLElement {
+      const portal = document.createElement('div')
+      if (selector.startsWith('.')) {
+        portal.classList.add(selector.slice(1))
+      } else if (selector.startsWith('[') && selector.endsWith(']')) {
+        // Strip surrounding brackets, then split on `=` for attr=value (we
+        // currently only ship presence-style selectors like
+        // `[data-editor-portal]`, so the value branch stays defensive).
+        const inner = selector.slice(1, -1)
+        const [attr, value] = inner.split('=')
+        portal.setAttribute(attr ?? 'data-x', value ?? '')
+      } else {
+        throw new Error(`unsupported selector shape in test: ${selector}`)
+      }
+      return portal
+    }
+
+    it.each(
+      EDITOR_PORTAL_SELECTORS,
+    )('Step 4a: relatedTarget inside `%s` keeps editor mounted', (selector) => {
+      const mockUnmount = vi.fn<() => string | null>(() => 'changed')
+      const mockEdit = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: vi.fn(),
+        }),
+      )
+
+      const portal = buildPortalElement(selector)
+      const inner = document.createElement('button')
+      portal.appendChild(inner)
+      document.body.appendChild(portal)
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent(inner))
+      })
+
+      expect(mockUnmount).not.toHaveBeenCalled()
+      expect(mockEdit).not.toHaveBeenCalled()
+    })
+
+    it.each(
+      EDITOR_PORTAL_SELECTORS,
+    )('Step 4b: visible `%s` outside the wrapper keeps editor mounted', (selector) => {
+      const mockUnmount = vi.fn<() => string | null>(() => 'changed')
+      const mockEdit = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: vi.fn(),
+        }),
+      )
+
+      const wrapper = document.createElement('section')
+      wrapper.setAttribute('data-testid', 'editor-wrapper')
+      document.body.appendChild(wrapper)
+
+      const portal = buildPortalElement(selector)
+      ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
+      document.body.appendChild(portal)
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent(null, wrapper))
+      })
+
+      expect(mockUnmount).not.toHaveBeenCalled()
+      expect(mockEdit).not.toHaveBeenCalled()
+    })
+
+    it('falls back to offsetParent when checkVisibility is not available', () => {
+      const mockUnmount = vi.fn<() => string | null>(() => 'changed')
+      const mockEdit = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: vi.fn(),
+        }),
+      )
+
+      const wrapper = document.createElement('section')
+      wrapper.setAttribute('data-testid', 'editor-wrapper')
+      document.body.appendChild(wrapper)
+
+      // No checkVisibility on the portal — the scan must fall back to
+      // offsetParent. We stub a non-null offsetParent to simulate a visible
+      // popup in older browsers / non-spec'd environments.
+      const portal = document.createElement('div')
+      portal.setAttribute('data-editor-portal', '')
+      Object.defineProperty(portal, 'offsetParent', {
+        configurable: true,
+        get: () => document.body,
+      })
+      document.body.appendChild(portal)
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent(null, wrapper))
+      })
+
+      expect(mockUnmount).not.toHaveBeenCalled()
+      expect(mockEdit).not.toHaveBeenCalled()
+    })
+
+    it('treats checkVisibility=false (offsetParent=null fallback) as not blocking save', () => {
+      const mockUnmount = vi.fn<() => string | null>(() => 'changed')
+      const mockEdit = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: vi.fn(),
+        }),
+      )
+
+      const wrapper = document.createElement('section')
+      wrapper.setAttribute('data-testid', 'editor-wrapper')
+      document.body.appendChild(wrapper)
+
+      // Portal element exists but is hidden — neither path should treat it
+      // as visible, so the editor proceeds to save.
+      const portal = document.createElement('div')
+      portal.setAttribute('data-editor-portal', '')
+      ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => false
+      Object.defineProperty(portal, 'offsetParent', {
+        configurable: true,
+        get: () => null,
+      })
+      document.body.appendChild(portal)
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent(null, wrapper))
+      })
+
+      expect(mockUnmount).toHaveBeenCalledOnce()
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'changed')
+    })
+
+    it('skips portals nested inside the wrapper even when visible (B-56 invariant)', () => {
+      const mockUnmount = vi.fn<() => string | null>(() => 'changed')
+      const mockEdit = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: vi.fn(),
+        }),
+      )
+
+      const wrapper = document.createElement('section')
+      wrapper.setAttribute('data-testid', 'editor-wrapper')
+      document.body.appendChild(wrapper)
+
+      // Place a portal-ish element INSIDE the wrapper. Even though the
+      // selector matches and it is visible, Step 4b skips elements
+      // contained by the wrapper (e.currentTarget).
+      const portal = document.createElement('div')
+      portal.classList.add('formatting-toolbar')
+      ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
+      wrapper.appendChild(portal)
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent(null, wrapper))
+      })
+
+      expect(mockUnmount).toHaveBeenCalledOnce()
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'changed')
+    })
+
+    it('Step 4a takes precedence over Step 4b when relatedTarget matches', () => {
+      // If both signals fire, the hook bails on Step 4a and never reaches
+      // Step 4b's DOM scan. We assert the early bail by leaving Step 4b's
+      // condition unsatisfiable and confirming no save happens.
+      const mockUnmount = vi.fn<() => string | null>(() => 'changed')
+      const mockEdit = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: vi.fn(),
+        }),
+      )
+
+      const wrapper = document.createElement('section')
+      wrapper.setAttribute('data-testid', 'editor-wrapper')
+      document.body.appendChild(wrapper)
+
+      const popup = document.createElement('div')
+      popup.classList.add('block-context-menu')
+      const inner = document.createElement('button')
+      popup.appendChild(inner)
+      document.body.appendChild(popup)
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent(inner, wrapper))
+      })
+
+      expect(mockUnmount).not.toHaveBeenCalled()
+      expect(mockEdit).not.toHaveBeenCalled()
+    })
+  })
+
   // -- B-56: internal vs external portals ---------------------------------
 
   describe('B-56: internal vs external portals', () => {

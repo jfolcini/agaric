@@ -252,7 +252,7 @@ describe('resolve callbacks react to store version changes', () => {
 
 describe('searchTags', () => {
   it('calls listTagsByPrefix and maps results to PickerItem[]', async () => {
-    mockedListTagsByPrefix.mockResolvedValue([
+    mockedListTagsByPrefix.mockResolvedValueOnce([
       { tag_id: 'T1', name: 'project', usage_count: 5, updated_at: '2024-01-01' },
       { tag_id: 'T2', name: 'priority', usage_count: 3, updated_at: '2024-01-02' },
     ])
@@ -278,7 +278,7 @@ describe('searchTags', () => {
   })
 
   it('returns only "Create new tag" option when no tags match', async () => {
-    mockedListTagsByPrefix.mockResolvedValue([])
+    mockedListTagsByPrefix.mockResolvedValueOnce([])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -291,7 +291,7 @@ describe('searchTags', () => {
   })
 
   it('populates the resolve cache with fetched tags', async () => {
-    mockedListTagsByPrefix.mockResolvedValue([
+    mockedListTagsByPrefix.mockResolvedValueOnce([
       { tag_id: 'T10', name: 'important', usage_count: 2, updated_at: '2024-01-01' },
       { tag_id: 'T11', name: 'urgent', usage_count: 1, updated_at: '2024-01-02' },
     ])
@@ -309,7 +309,7 @@ describe('searchTags', () => {
   })
 
   it('does not call batchSet when no tags match', async () => {
-    mockedListTagsByPrefix.mockResolvedValue([])
+    mockedListTagsByPrefix.mockResolvedValueOnce([])
 
     const initialVersion = useResolveStore.getState().version
 
@@ -324,7 +324,7 @@ describe('searchTags', () => {
   })
 
   it('does NOT append "Create new tag" when exact match exists (case-insensitive)', async () => {
-    mockedListTagsByPrefix.mockResolvedValue([
+    mockedListTagsByPrefix.mockResolvedValueOnce([
       { tag_id: 'T20', name: 'project', usage_count: 5, updated_at: '2024-01-01' },
     ])
 
@@ -340,7 +340,7 @@ describe('searchTags', () => {
   })
 
   it('does NOT append "Create new tag" for empty query', async () => {
-    mockedListTagsByPrefix.mockResolvedValue([
+    mockedListTagsByPrefix.mockResolvedValueOnce([
       { tag_id: 'T30', name: 'any-tag', usage_count: 1, updated_at: '2024-01-01' },
     ])
 
@@ -356,7 +356,7 @@ describe('searchTags', () => {
   })
 
   it('preserves original casing in "Create new tag" label', async () => {
-    mockedListTagsByPrefix.mockResolvedValue([])
+    mockedListTagsByPrefix.mockResolvedValueOnce([])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -370,7 +370,7 @@ describe('searchTags', () => {
   })
 
   it('strips trailing ] from tag query', async () => {
-    mockedListTagsByPrefix.mockResolvedValue([
+    mockedListTagsByPrefix.mockResolvedValueOnce([
       { tag_id: 'T40', name: 'todo', usage_count: 2, updated_at: '2024-01-01' },
     ])
 
@@ -393,7 +393,7 @@ describe('searchTags', () => {
 
 describe('onCreateTag', () => {
   it('calls createBlock with tag type and content', async () => {
-    mockedCreateBlock.mockResolvedValue({
+    mockedCreateBlock.mockResolvedValueOnce({
       id: 'NEW_TAG_1',
       block_type: 'tag',
       content: 'urgent',
@@ -424,7 +424,7 @@ describe('onCreateTag', () => {
   })
 
   it('updates the resolve store with the new tag', async () => {
-    mockedCreateBlock.mockResolvedValue({
+    mockedCreateBlock.mockResolvedValueOnce({
       id: 'NEW_TAG_2',
       block_type: 'tag',
       content: 'important',
@@ -451,7 +451,7 @@ describe('onCreateTag', () => {
   })
 
   it('returns the new block id', async () => {
-    mockedCreateBlock.mockResolvedValue({
+    mockedCreateBlock.mockResolvedValueOnce({
       id: 'TAG_RETURNED_ID',
       block_type: 'tag',
       content: 'test',
@@ -521,7 +521,7 @@ describe('searchPages — short query (<=2 chars)', () => {
   })
 
   it('falls back to listBlocks when pagesListRef is empty', async () => {
-    mockedListBlocks.mockResolvedValue({
+    mockedListBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'P10',
@@ -578,7 +578,7 @@ describe('searchPages — short query (<=2 chars)', () => {
   })
 
   it('populates pagesListRef cache after listBlocks fallback', async () => {
-    mockedListBlocks.mockResolvedValue({
+    mockedListBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'P20',
@@ -610,7 +610,7 @@ describe('searchPages — short query (<=2 chars)', () => {
   })
 
   it('handles null content as "Untitled"', async () => {
-    mockedListBlocks.mockResolvedValue({
+    mockedListBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'P30',
@@ -692,7 +692,7 @@ describe('searchPages — short query (<=2 chars)', () => {
 
 describe('searchPages — long query (>2 chars)', () => {
   it('uses searchBlocks FTS and filters to pages', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'F1',
@@ -765,7 +765,7 @@ describe('searchPages — long query (>2 chars)', () => {
   })
 
   it('supplements from pagesListRef when FTS returns few results', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'F10',
@@ -831,7 +831,7 @@ describe('searchPages — long query (>2 chars)', () => {
       page_id: null,
     }))
 
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: ftsPages,
       next_cursor: null,
       has_more: false,
@@ -857,7 +857,7 @@ describe('searchPages — long query (>2 chars)', () => {
   })
 
   it('does NOT supplement when pagesListRef is empty', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'F20',
@@ -893,7 +893,7 @@ describe('searchPages — long query (>2 chars)', () => {
   })
 
   it('handles null content as "Untitled" in FTS results', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'F30',
@@ -1032,7 +1032,7 @@ describe('searchPages — "Create new" option', () => {
   })
 
   it('preserves original query trim in "Create new" label (not lowercased)', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
       has_more: false,
@@ -1054,7 +1054,7 @@ describe('searchPages — "Create new" option', () => {
   })
 
   it('appends "Create new" for long query when no exact match in FTS results', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'F40',
@@ -1089,7 +1089,7 @@ describe('searchPages — "Create new" option', () => {
   })
 
   it('does NOT append "Create new" when FTS result exactly matches (uses matches as allSource when pagesListRef empty)', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'F50',
@@ -1128,7 +1128,7 @@ describe('searchPages — "Create new" option', () => {
 
 describe('searchPages — trailing bracket stripping (#586)', () => {
   it('strips trailing ]] from query so [[text]] resolves to "text"', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'P2',
@@ -1168,7 +1168,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
   })
 
   it('strips single trailing ] from query', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'P1',
@@ -1207,7 +1207,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
   })
 
   it('"Create new" label strips trailing ]] too', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
       has_more: false,
@@ -1245,7 +1245,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
   })
 
   it('works correctly for long queries (>2 chars) with trailing ]]', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'F60',
@@ -1289,7 +1289,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
 
 describe('onCreatePage', () => {
   it('calls createPageInSpace with content and current space id', async () => {
-    mockedCreatePageInSpace.mockResolvedValue('NEW_PAGE_1')
+    mockedCreatePageInSpace.mockResolvedValueOnce('NEW_PAGE_1')
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1309,7 +1309,7 @@ describe('onCreatePage', () => {
   })
 
   it('updates the resolve store with the new page', async () => {
-    mockedCreatePageInSpace.mockResolvedValue('NEW_PAGE_2')
+    mockedCreatePageInSpace.mockResolvedValueOnce('NEW_PAGE_2')
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1322,7 +1322,7 @@ describe('onCreatePage', () => {
   })
 
   it('appends the new page to pagesListRef', async () => {
-    mockedCreatePageInSpace.mockResolvedValue('NEW_PAGE_3')
+    mockedCreatePageInSpace.mockResolvedValueOnce('NEW_PAGE_3')
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1342,7 +1342,7 @@ describe('onCreatePage', () => {
   })
 
   it('returns the new block id', async () => {
-    mockedCreatePageInSpace.mockResolvedValue('RETURNED_ID')
+    mockedCreatePageInSpace.mockResolvedValueOnce('RETURNED_ID')
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1444,14 +1444,14 @@ describe('pagesListRef', () => {
 describe('searchPages — alias matching via resolvePageByAlias', () => {
   it('searchPages matches alias via resolvePageByAlias', async () => {
     // FTS returns no direct matches
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
       has_more: false,
     })
 
     // Alias lookup finds a page
-    mockedResolvePageByAlias.mockResolvedValue(['ALIAS_PAGE_1', 'Daily Notes'])
+    mockedResolvePageByAlias.mockResolvedValueOnce(['ALIAS_PAGE_1', 'Daily Notes'])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1473,7 +1473,7 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
 
   it('searchPages skips alias when already in results', async () => {
     // FTS already has the page
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'ALIAS_PAGE_2',
@@ -1496,7 +1496,7 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
     })
 
     // Alias also resolves to the same page
-    mockedResolvePageByAlias.mockResolvedValue(['ALIAS_PAGE_2', 'Weekly Review'])
+    mockedResolvePageByAlias.mockResolvedValueOnce(['ALIAS_PAGE_2', 'Weekly Review'])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1514,7 +1514,7 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
   })
 
   it('searchPages ignores alias lookup failure silently', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
       has_more: false,
@@ -1536,13 +1536,13 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
   })
 
   it('searchPages handles null alias title as "Untitled"', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
       has_more: false,
     })
 
-    mockedResolvePageByAlias.mockResolvedValue(['ALIAS_PAGE_3', null])
+    mockedResolvePageByAlias.mockResolvedValueOnce(['ALIAS_PAGE_3', null])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1587,7 +1587,7 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
 
 describe('searchPages — strategy priority ordering (MAINT-61)', () => {
   it('orders results: alias first, then FTS matches, then create last', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'FTS_HIT_1',
@@ -1623,7 +1623,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
       next_cursor: null,
       has_more: false,
     })
-    mockedResolvePageByAlias.mockResolvedValue(['ALIAS_ONLY', 'Aliased Page'])
+    mockedResolvePageByAlias.mockResolvedValueOnce(['ALIAS_ONLY', 'Aliased Page'])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1645,7 +1645,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
   })
 
   it('orders results: alias first, then cache matches, then create last (short query)', async () => {
-    mockedResolvePageByAlias.mockResolvedValue(['ALIAS_SHORT', 'Alias Target'])
+    mockedResolvePageByAlias.mockResolvedValueOnce(['ALIAS_SHORT', 'Alias Target'])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1672,7 +1672,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
   })
 
   it('populates resolve cache for all non-create matches (excluding alias id when already present)', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'CACHE_POP_1',
@@ -1693,7 +1693,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
       next_cursor: null,
       has_more: false,
     })
-    mockedResolvePageByAlias.mockResolvedValue(null)
+    mockedResolvePageByAlias.mockResolvedValueOnce(null)
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1735,7 +1735,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
 
   it('long-query strategy caps total (FTS + cache supplement) at 20', async () => {
     // FTS returns 2 pages (< 5 so supplementation kicks in)
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: Array.from({ length: 2 }, (_, i) => ({
         id: `FTS_CAP_${i}`,
         block_type: 'page' as const,
@@ -1780,7 +1780,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
 
   it('preserves alias priority even when FTS strategy runs', async () => {
     // FTS returns a result; alias must still be prepended first
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'FTS_BEHIND',
@@ -1801,7 +1801,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
       next_cursor: null,
       has_more: false,
     })
-    mockedResolvePageByAlias.mockResolvedValue(['ALIAS_FIRST', 'Canonical Page'])
+    mockedResolvePageByAlias.mockResolvedValueOnce(['ALIAS_FIRST', 'Canonical Page'])
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1821,7 +1821,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
 
 describe('searchTags — icons (UX-65)', () => {
   it('includes icon in tag picker items', async () => {
-    mockedListTagsByPrefix.mockResolvedValue([
+    mockedListTagsByPrefix.mockResolvedValueOnce([
       { tag_id: 'T100', name: 'work', usage_count: 1, updated_at: '2024-01-01' },
     ])
 
@@ -1893,7 +1893,7 @@ describe('searchPages — icons and breadcrumbs (UX-65)', () => {
   })
 
   it('adds breadcrumb for namespaced pages via FTS (long query)', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'FNS1',
@@ -1931,7 +1931,7 @@ describe('searchPages — icons and breadcrumbs (UX-65)', () => {
 
 describe('searchBlockRefs — icons (UX-65)', () => {
   it('includes icon in block ref picker items', async () => {
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'BR1',
@@ -1968,7 +1968,7 @@ describe('searchBlockRefs — icons (UX-65)', () => {
     // Pre-populate the resolve cache with a parent page
     useResolveStore.getState().set('PARENT_PAGE', 'My Page Title', false)
 
-    mockedSearchBlocks.mockResolvedValue({
+    mockedSearchBlocks.mockResolvedValueOnce({
       items: [
         {
           id: 'BR2',
@@ -2006,7 +2006,7 @@ describe('searchBlockRefs — icons (UX-65)', () => {
 
 describe('searchTags — fuzzy matching (UX-68)', () => {
   it('matches tags via fuzzy matching, not just substring', async () => {
-    mockedListTagsByPrefix.mockResolvedValue([
+    mockedListTagsByPrefix.mockResolvedValueOnce([
       { tag_id: 'TF1', name: 'quick-notes', usage_count: 1, updated_at: '2024-01-01' },
       { tag_id: 'TF2', name: 'quarterly', usage_count: 1, updated_at: '2024-01-01' },
       { tag_id: 'TF3', name: 'unrelated', usage_count: 1, updated_at: '2024-01-01' },

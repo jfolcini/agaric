@@ -24,6 +24,13 @@ export interface BacklinkGroupRendererProps {
   resolveBlockTitle: (id: string) => string
   resolveBlockStatus: (id: string) => 'active' | 'deleted'
   resolveTagName: (id: string) => string
+  /**
+   * UX-271: Marks the section as showing "Linked" (`[[ref]]`) or "Unlinked"
+   * (mention without link) backlinks. When provided, a small badge is
+   * rendered above the group list so users can tell the two sections apart
+   * at a glance. Optional to keep this component reusable.
+   */
+  linkType?: 'linked' | 'unlinked'
 }
 
 export function BacklinkGroupRenderer({
@@ -36,51 +43,64 @@ export function BacklinkGroupRenderer({
   resolveBlockTitle,
   resolveBlockStatus,
   resolveTagName,
+  linkType,
 }: BacklinkGroupRendererProps): React.ReactElement {
   const { t } = useTranslation()
   const onTagClick = useTagClickHandler()
 
   return (
-    <CollapsibleGroupList
-      groups={groups}
-      expandedGroups={expandedGroups}
-      onToggleGroup={onToggleGroup}
-      untitledLabel={t('references.untitled')}
-      groupClassName="linked-references-group"
-      headerClassName="linked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors"
-      listClassName="linked-references-blocks ml-4 mt-1 space-y-1"
-      listAriaLabel={(title) => t('references.backlinksFrom', { title })}
-      {...(onNavigateToPage && {
-        onPageTitleClick: (pageId: string, title: string) => onNavigateToPage(pageId, title),
-      })}
-      renderBlock={(block, _group) => (
-        <li
-          key={block.id}
-          className="linked-reference-item flex flex-wrap items-center gap-3 border-b py-1.5 px-2 last:border-b-0 cursor-pointer hover:bg-muted/50"
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
-          tabIndex={0}
-          onClick={() => handleBlockClick(block)}
-          onKeyDown={(e) => handleBlockKeyDown(e, block)}
-        >
-          <Badge variant="secondary" className="linked-reference-item-type shrink-0">
-            {block.block_type}
+    <>
+      {linkType && (
+        <div className="flex justify-end px-2 pb-1">
+          <Badge
+            variant="outline"
+            className="linked-references-link-type-badge text-[10px] font-normal text-muted-foreground"
+          >
+            {linkType === 'linked' ? t('references.linkedBadge') : t('references.unlinkedBadge')}
           </Badge>
-          <span className="linked-reference-item-text text-sm flex-1 truncate">
-            {block.content
-              ? renderRichContent(block.content, {
-                  interactive: true,
-                  onTagClick,
-                  resolveBlockTitle,
-                  resolveTagName,
-                  resolveBlockStatus,
-                })
-              : t('references.empty')}
-          </span>
-          <span className="linked-reference-item-id text-xs text-muted-foreground font-mono">
-            {block.id.slice(0, 8)}...
-          </span>
-        </li>
+        </div>
       )}
-    />
+      <CollapsibleGroupList
+        groups={groups}
+        expandedGroups={expandedGroups}
+        onToggleGroup={onToggleGroup}
+        untitledLabel={t('references.untitled')}
+        groupClassName="linked-references-group"
+        headerClassName="linked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors"
+        listClassName="linked-references-blocks ml-4 mt-1 space-y-1"
+        listAriaLabel={(title) => t('references.backlinksFrom', { title })}
+        {...(onNavigateToPage && {
+          onPageTitleClick: (pageId: string, title: string) => onNavigateToPage(pageId, title),
+        })}
+        renderBlock={(block, _group) => (
+          <li
+            key={block.id}
+            className="linked-reference-item flex flex-wrap items-center gap-3 border-b py-1.5 px-2 last:border-b-0 cursor-pointer hover:bg-muted/50"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
+            tabIndex={0}
+            onClick={() => handleBlockClick(block)}
+            onKeyDown={(e) => handleBlockKeyDown(e, block)}
+          >
+            <Badge variant="secondary" className="linked-reference-item-type shrink-0">
+              {block.block_type}
+            </Badge>
+            <span className="linked-reference-item-text text-sm flex-1 truncate">
+              {block.content
+                ? renderRichContent(block.content, {
+                    interactive: true,
+                    onTagClick,
+                    resolveBlockTitle,
+                    resolveTagName,
+                    resolveBlockStatus,
+                  })
+                : t('references.empty')}
+            </span>
+            <span className="linked-reference-item-id text-xs text-muted-foreground font-mono">
+              {block.id.slice(0, 8)}...
+            </span>
+          </li>
+        )}
+      />
+    </>
   )
 }

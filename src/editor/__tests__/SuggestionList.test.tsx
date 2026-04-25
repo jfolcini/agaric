@@ -408,6 +408,58 @@ describe('SuggestionList', () => {
     expect(categoryHeaders[1]).toHaveTextContent('Dates')
   })
 
+  it('category headers render as <h3> elements with implicit level=3 (UX-281)', () => {
+    const command = vi.fn()
+    const items: PickerItem[] = [
+      { id: '1', label: 'TODO', category: 'slashCommand.categories.tasks' },
+      { id: '2', label: 'DATE', category: 'slashCommand.categories.dates' },
+    ]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    const headings = screen.getAllByRole('heading', { level: 3 })
+    expect(headings).toHaveLength(2)
+    expect(headings[0]).toHaveTextContent('Tasks')
+    expect(headings[1]).toHaveTextContent('Dates')
+
+    // Headings must be real <h3> elements (not divs with role="heading"),
+    // and must not be focusable: keyboard nav only iterates the interactive
+    // `role="option"` items.
+    for (const heading of headings) {
+      expect(heading.tagName).toBe('H3')
+      expect(heading).not.toHaveAttribute('tabindex')
+    }
+  })
+
+  it('keyboard nav skips category headers and only iterates option items (UX-281)', () => {
+    const ref = createRef<SuggestionListRef>()
+    const command = vi.fn()
+    const items: PickerItem[] = [
+      { id: '1', label: 'TODO', category: 'slashCommand.categories.tasks' },
+      { id: '2', label: 'DATE', category: 'slashCommand.categories.dates' },
+    ]
+
+    render(<SuggestionList ref={ref} items={items} command={command} />)
+
+    // First option selected by default; ArrowDown moves directly to the second
+    // option, never lingering on the heading between groups.
+    expect(screen.getByText('TODO')).toHaveAttribute('aria-selected', 'true')
+
+    act(() => {
+      ref.current?.onKeyDown({ event: makeKeyEvent('ArrowDown') })
+    })
+
+    expect(screen.getByText('DATE')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('TODO')).toHaveAttribute('aria-selected', 'false')
+
+    // Wrap back to first — still skipping headings.
+    act(() => {
+      ref.current?.onKeyDown({ event: makeKeyEvent('ArrowDown') })
+    })
+
+    expect(screen.getByText('TODO')).toHaveAttribute('aria-selected', 'true')
+  })
+
   it('renders icons inline before item labels (UX-50)', () => {
     const command = vi.fn()
     const MockIcon = ({ className }: { className?: string | undefined }) => (

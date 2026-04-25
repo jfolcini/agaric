@@ -9,6 +9,8 @@
  * Zero external dependencies. O(n) in both directions.
  */
 
+import { toast } from 'sonner'
+import { t } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type {
   BlockLevelNode,
@@ -44,6 +46,42 @@ const CALLOUT_RE = /^\[!(\w+)\]\s?(.*)/i
 const MAX_PARSE_DEPTH = 10
 
 // -- Serialize (PM doc → Markdown) --------------------------------------------
+
+/**
+ * Module-scoped set of node types we've already toasted about this session.
+ *
+ * The serializer can be called many times per second on a typical doc; if 100
+ * unknown nodes appear we don't want to spam 100 toasts. This Set rate-limits
+ * to one toast per `type` per session (process lifetime).
+ *
+ * `logger.warn` is still emitted on every occurrence — only the user-facing
+ * toast is rate-limited.
+ *
+ * Exported as `__resetUnknownNodeToastsForTests` so tests can reset between
+ * cases. Not part of the public API.
+ */
+const toastedUnknownTypes = new Set<string>()
+
+/** @internal — for tests only */
+export function __resetUnknownNodeToastsForTests(): void {
+  toastedUnknownTypes.clear()
+}
+
+function notifyUnknownNodeType(type: string): void {
+  if (toastedUnknownTypes.has(type)) return
+  toastedUnknownTypes.add(type)
+  // The serializer is browser-only; sonner is mocked under vitest via the
+  // global `vi.mock('sonner')` in `src/test-setup.ts`. A direct import is
+  // safe and matches the rest of the codebase.
+  try {
+    toast.warning(t('editor.unknownNodeType', { type }))
+  } catch (err) {
+    // Defensive: if the toast layer is unavailable for any reason we still
+    // want the serializer to succeed. The `logger.warn` already records the
+    // dropped content for diagnostics.
+    logger.warn('serializer', 'failed to surface unknown-node toast', { type }, err)
+  }
+}
 
 function escapeText(s: string): string {
   let out = ''
@@ -247,6 +285,7 @@ function serializeInlineChild(child: InlineNode, activeMarks: Set<string>): stri
   if (child.type === 'hardBreak') return serializeInlineAtom('\n', activeMarks)
   const unknown = child as { type: string }
   logger.warn('serializer', `unknown inline node type: "${unknown.type}" — stripped`)
+  notifyUnknownNodeType(unknown.type)
   return serializeInlineAtom('', activeMarks)
 }
 
@@ -404,10 +443,9 @@ export function serialize(doc: DocNode): string {
       if (node.type === 'table') return serializeTable(node)
       if (node.type === 'orderedList') return serializeOrderedList(node)
       if (node.type === 'horizontalRule') return serializeHorizontalRule(node)
-      logger.warn(
-        'serializer',
-        `unknown top-level node type: "${(node as { type: string }).type}" — stripped`,
-      )
+      const unknownType = (node as { type: string }).type
+      logger.warn('serializer', `unknown top-level node type: "${unknownType}" — stripped`)
+      notifyUnknownNodeType(unknownType)
       return ''
     })
     .join('\n')

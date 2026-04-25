@@ -11,6 +11,7 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -316,6 +317,15 @@ export function UnlinkedReferences({
             </TooltipContent>
           </Tooltip>
         )}
+        {!collapsed && showAdvancedFilters && filters.length > 0 && (
+          <Badge
+            variant="secondary"
+            className="unlinked-references-filter-count shrink-0 h-5 min-w-5 px-1.5 text-[10px]"
+            aria-label={t('references.filtersAppliedAriaLabel', { count: filters.length })}
+          >
+            {t('references.filtersAppliedBadge', { count: filters.length })}
+          </Badge>
+        )}
       </div>
 
       {showAdvancedFilters && !collapsed && (
@@ -351,6 +361,12 @@ export function UnlinkedReferences({
           >
             {() => (
               <>
+                {/* Linked-vs-Unlinked distinction badge (UX-271) */}
+                <div className="unlinked-references-link-type-badge flex justify-end px-2 pb-1">
+                  <Badge variant="outline" className="text-muted-foreground">
+                    {t('references.unlinkedBadge')}
+                  </Badge>
+                </div>
                 {/* Group list */}
                 {/* biome-ignore lint/a11y/useSemanticElements: keyboard nav container wrapping BacklinkGroupRenderer */}
                 <div

@@ -56,6 +56,9 @@ vi.mock('../BacklinkFilterBuilder', () => ({
       >
         Apply Tag Filter
       </button>
+      <button type="button" data-testid="test-clear-filters" onClick={() => onFiltersChange([])}>
+        Clear Filters
+      </button>
       <button
         type="button"
         data-testid="test-apply-sort"
@@ -1176,5 +1179,130 @@ describe('UnlinkedReferences', () => {
     // Filter toggle keeps shrink-0 so it never collapses to zero width.
     const filterButton = screen.getByRole('button', { name: /show filters/i })
     expect(filterButton).toHaveClass('shrink-0')
+  })
+
+  // ---------------------------------------------------------------------------
+  // UX-271: "Unlinked" section badge + active-filter count badge
+  // ---------------------------------------------------------------------------
+
+  it('renders "Unlinked" section badge once expanded (UX-271)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    const { container } = renderUnlinkedReferences({
+      pageId: 'PAGE1',
+      pageTitle: 'My Page',
+    })
+
+    // Collapsed by default — badge not visible.
+    expect(container.querySelector('.unlinked-references-link-type-badge')).toBeNull()
+
+    // Expand to reveal results and the badge.
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('mention text')
+
+    const badge = container.querySelector('.unlinked-references-link-type-badge')
+    expect(badge).not.toBeNull()
+    expect(badge).toHaveTextContent('Unlinked')
+  })
+
+  it('does not render filter count badge when no filters are active (UX-271)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    const { container } = renderUnlinkedReferences({
+      pageId: 'PAGE1',
+      pageTitle: 'My Page',
+    })
+
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('mention text')
+
+    // Open advanced filters but apply no filter.
+    await user.click(screen.getByRole('button', { name: /show filters/i }))
+    expect(container.querySelector('.unlinked-references-filter-count')).toBeNull()
+  })
+
+  it('renders filter count badge with active filter count (UX-271)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    const { container } = renderUnlinkedReferences({
+      pageId: 'PAGE1',
+      pageTitle: 'My Page',
+    })
+
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('mention text')
+
+    // Open advanced filters and apply a filter via the mock.
+    await user.click(screen.getByRole('button', { name: /show filters/i }))
+    await user.click(screen.getByTestId('test-apply-tag-filter'))
+
+    const badge = await waitFor(() => {
+      const el = container.querySelector('.unlinked-references-filter-count')
+      if (!el) throw new Error('badge not found yet')
+      return el
+    })
+    expect(badge).toHaveTextContent('1')
+    expect(badge).toHaveAttribute('aria-label', '1 filter applied')
+  })
+
+  it('hides filter count badge after filters are cleared (UX-271)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    const { container } = renderUnlinkedReferences({
+      pageId: 'PAGE1',
+      pageTitle: 'My Page',
+    })
+
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('mention text')
+
+    await user.click(screen.getByRole('button', { name: /show filters/i }))
+    await user.click(screen.getByTestId('test-apply-tag-filter'))
+
+    await waitFor(() => {
+      expect(container.querySelector('.unlinked-references-filter-count')).not.toBeNull()
+    })
+
+    await user.click(screen.getByTestId('test-clear-filters'))
+
+    await waitFor(() => {
+      expect(container.querySelector('.unlinked-references-filter-count')).toBeNull()
+    })
   })
 })

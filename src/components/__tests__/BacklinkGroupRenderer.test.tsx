@@ -329,6 +329,67 @@ describe('BacklinkGroupRenderer', () => {
     })
   })
 
+  // UX-271: linkType prop renders a "Linked" / "Unlinked" badge so users can
+  // tell the two backlink sections apart at a glance.
+  describe('linkType badge (UX-271)', () => {
+    it('renders "Linked" badge when linkType="linked"', () => {
+      const groups = [makeGroup('P1', 'Page', [makeBlock({ id: 'B1', content: 'block' })])]
+
+      render(
+        <BacklinkGroupRenderer
+          groups={groups}
+          expandedGroups={{ P1: true }}
+          onToggleGroup={vi.fn()}
+          handleBlockClick={vi.fn()}
+          handleBlockKeyDown={vi.fn()}
+          linkType="linked"
+          {...defaultResolvers}
+        />,
+      )
+
+      expect(screen.getByText('Linked')).toBeInTheDocument()
+      expect(screen.queryByText('Unlinked')).not.toBeInTheDocument()
+    })
+
+    it('renders "Unlinked" badge when linkType="unlinked"', () => {
+      const groups = [makeGroup('P1', 'Page', [makeBlock({ id: 'B1', content: 'block' })])]
+
+      render(
+        <BacklinkGroupRenderer
+          groups={groups}
+          expandedGroups={{ P1: true }}
+          onToggleGroup={vi.fn()}
+          handleBlockClick={vi.fn()}
+          handleBlockKeyDown={vi.fn()}
+          linkType="unlinked"
+          {...defaultResolvers}
+        />,
+      )
+
+      expect(screen.getByText('Unlinked')).toBeInTheDocument()
+      expect(screen.queryByText('Linked')).not.toBeInTheDocument()
+    })
+
+    it('does not render any link-type badge when linkType is omitted', () => {
+      const groups = [makeGroup('P1', 'Page', [makeBlock({ id: 'B1', content: 'block' })])]
+
+      const { container } = render(
+        <BacklinkGroupRenderer
+          groups={groups}
+          expandedGroups={{ P1: true }}
+          onToggleGroup={vi.fn()}
+          handleBlockClick={vi.fn()}
+          handleBlockKeyDown={vi.fn()}
+          {...defaultResolvers}
+        />,
+      )
+
+      expect(screen.queryByText('Linked')).not.toBeInTheDocument()
+      expect(screen.queryByText('Unlinked')).not.toBeInTheDocument()
+      expect(container.querySelector('.linked-references-link-type-badge')).toBeNull()
+    })
+  })
+
   /*
    * BacklinkGroupRenderer is purely presentational — it contains no invoke
    * calls and no async work. Error-path tests below cover synchronous render

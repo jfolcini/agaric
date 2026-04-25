@@ -208,6 +208,125 @@ describe('PageBlockStore', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // loadSubtree MAX_SUBTREE_BLOCKS recursion cap
+  // ---------------------------------------------------------------------------
+  describe('load — MAX_SUBTREE_BLOCKS recursion cap', () => {
+    // The cap exists in `loadSubtree()` (`src/stores/page-blocks.ts`) to
+    // prevent runaway recursion if the database is corrupted into a cycle
+    // or a pathologically wide tree. The constant is internal (2000), so
+    // these tests exercise the contract: the recursion terminates and the
+    // total invoke / block count stays bounded even when the backend would
+    // happily keep returning children.
+
+    it('skips recursing into children when a single response saturates the cap', async () => {
+      // 2000 blocks is the documented internal cap. Returning exactly 2000
+      // at the root makes the cap-after-fetch branch trigger immediately —
+      // no listBlocks call should be made for any child.
+      const items = Array.from({ length: 2000 }, (_, i) =>
+        makeBlock({
+          id: `B${String(i).padStart(4, '0')}`,
+          parent_id: 'PAGE_1',
+          position: i,
+        }),
+      )
+      mockedInvoke.mockResolvedValueOnce({
+        items,
+        next_cursor: null,
+        has_more: false,
+      })
+
+      await store.getState().load()
+
+      // Exactly one invoke: the root listBlocks call. No grandchild fan-out.
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'list_blocks',
+        expect.objectContaining({ parentId: 'PAGE_1' }),
+      )
+      // The full batch survives — the cap stops recursion, not the page load.
+      expect(store.getState().blocks).toHaveLength(2000)
+      expect(store.getState().loading).toBe(false)
+    })
+
+    it('terminates recursion in a deep wide tree without exceeding the cap budget', async () => {
+      // Every listBlocks call returns 500 children, all of which would have
+      // children themselves. Without `MAX_SUBTREE_BLOCKS`, the breadth-first
+      // Promise.all expansion would scale as branching * branching * … per
+      // depth level. With the cap the cap-before-fetch and cap-after-fetch
+      // branches throttle the recursion to a small constant multiple of
+      // (cap / batch).
+      let callCount = 0
+      mockedInvoke.mockImplementation(async () => {
+        callCount++
+        return {
+          items: Array.from({ length: 500 }, (_, i) =>
+            makeBlock({ id: `B${callCount}-${i}`, parent_id: 'PAGE_1' }),
+          ),
+          next_cursor: null,
+          has_more: false,
+        }
+      })
+
+      await store.getState().load()
+
+      // 5s vitest default catches a hang. The cap keeps total invokes
+      // sub-linear in depth: cap=2000, batch=500 ⇒ ≤ ~4 levels recurse,
+      // each a 500-fan-out ⇒ a few thousand calls absolute ceiling. Without
+      // the cap we'd see millions.
+      expect(callCount).toBeLessThan(2500)
+      expect(store.getState().loading).toBe(false)
+    })
+
+    it('blocks recursion into grandchildren once the cap is reached', async () => {
+      // Level 0: 1500 blocks (count = 1500, still under cap).
+      // Level 1: each of the 1500 children fetches 600 blocks. The first
+      //   child to resume pushes count to 2100 ≥ cap, so the cap-after
+      //   branch returns without scheduling grandchildren. Subsequent
+      //   children also return without recursing. Net: ZERO level-2 calls.
+      let level1Calls = 0
+      let level2Calls = 0
+      mockedInvoke.mockImplementation(async (_cmd, args) => {
+        const parentId = (args as { parentId?: string } | undefined)?.parentId ?? ''
+        if (parentId === 'PAGE_1') {
+          return {
+            items: Array.from({ length: 1500 }, (_, i) =>
+              makeBlock({
+                id: `R${String(i).padStart(4, '0')}`,
+                parent_id: 'PAGE_1',
+              }),
+            ),
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (parentId.startsWith('R')) {
+          level1Calls++
+          return {
+            items: Array.from({ length: 600 }, (_, i) => makeBlock({ id: `C-${parentId}-${i}` })),
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (parentId.startsWith('C-')) {
+          level2Calls++
+        }
+        return { items: [], next_cursor: null, has_more: false }
+      })
+
+      await store.getState().load()
+
+      // Level-1 calls are scheduled before count crosses the cap (cap-before
+      // sees count=1500), so they all fetch — that's the natural Promise.all
+      // breadth-first behaviour. The cap's job is to stop the *next* level.
+      expect(level1Calls).toBe(1500)
+      // Level-2 grandchildren would only be scheduled if a level-1 call
+      // recursed past the cap-after check. The cap prevents that entirely.
+      expect(level2Calls).toBe(0)
+      expect(store.getState().loading).toBe(false)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // createBelow
   // ---------------------------------------------------------------------------
   describe('createBelow', () => {
