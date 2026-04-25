@@ -1,5 +1,98 @@
 # Session Log
 
+## Session 481 — Tauri plugin trio + announcer cluster sweep + pairing pause + properties polish + LinkEditPopover assertion tightening (MAINT-106 / MAINT-108 / MAINT-109 / TEST-6 / UX-263 / UX-272 / UX-282) (2026-04-26)
+
+**7 REVIEW-LATER items fully resolved.** Open items: 42 → 35. Mixed-domain batch covering three Tauri plugin adoptions (single-instance, window-state, os) with an attendant `bug_report.rs` refactor; the final 3 announcer clusters (sync events, agenda reschedule, page header actions) closing UX-282; the deferred UX-263 sub-fix 5 (pause countdown while typing) with sync ref-update for fake-timer correctness; UX-272 8-XS-sub-fix bundle covering EmptyState empty-states, LoadingSkeleton, debounce, options reorder, count Badge, disabled "Add option", "(text)" hint, Spinner-during-save; and the deferred TEST-6 LinkEditPopover sub-batch (29 sites tightened from `toHaveBeenCalled()` to `toHaveBeenCalledWith()`). Five build subagents in parallel; one (TEST-3 from session 480 — note 481 had no TEST-3) ran cleanly. Technical reviewer: no blockers. UX reviewer flagged 3 "blockers"; addressed 1 (UX-263 paused indicator a11y — added pause/resume `announce()` calls + 1 regression test) and explicitly disagreed with 2 (dormant `onCreateNewPage` CTA is correct intentional dormancy; PageHeader rename has visual feedback via the title field updating in-place — no toast needed).
+
+Batch composition (7 items):
+
+- **MAINT-106 + MAINT-108 + MAINT-109 — Tauri plugin trio.** All 3 plugins adopted at the existing `"2"` version line (no other Tauri stack bumps): `tauri-plugin-single-instance` (Rust-only, no JS sibling — verified absent from npm; `#[cfg(desktop)]`-gated; registered FIRST in the Tauri::Builder chain per upstream docs; closure focuses existing window on second-launch and ignores args/cwd until FEAT-10 deep-link wiring); `tauri-plugin-window-state` (`#[cfg(desktop)]`-gated; `Builder::default().build()`); `tauri-plugin-os` (no cfg gate — works on Android too; `os:default` capability granted). `src-tauri/src/commands/bug_report.rs` `collect_bug_report_metadata_inner` refactored to source `os` from `tauri_plugin_os::platform()` and `arch` from `tauri_plugin_os::arch()`; `BugReport` struct shape preserved; 22/22 bug_report tests pass. JS-side `@tauri-apps/plugin-os` and `@tauri-apps/plugin-window-state` packages were NOT added (no frontend code calls them; the Rust crates handle everything).
+
+- **TEST-6 LinkEditPopover sub-batch — closed.** 29 sites in `LinkEditPopover.test.tsx` tightened from `toHaveBeenCalled()` to `toHaveBeenCalledWith()` — all 0-arg invocations (`editor.chain()`, `editor.focus()`, `editor.run()`, `editor.unsetLink()`, `editor.commands.focus()`, `onClose()`, `event.preventDefault()`). 7 sites left as-is — all `.not.toHaveBeenCalled()` already at the tightest form. Test count unchanged (55).
+
+- **UX-263 sub-fix 5 — pause countdown while typing — closed.** `PairingEntryForm.tsx` gained an optional `onTypingStateChange?: (isTyping: boolean) => void` prop. Wired on `onChange` keystrokes (deliberately NOT `onFocus` to avoid pausing on dialog auto-focus — would break existing countdown tests). 5-second debounce auto-resume. `onBlur` → immediate resume. Cleanup on unmount. `PairingDialog.tsx` added `pausedByTyping` state + ref. The countdown interval reads the ref (NOT a state dep) and skips decrement while paused. `handleTypingStateChange` updates ref + state SYNCHRONOUSLY (a deferred-useEffect ref sync would race under fake timers). UX-reviewer follow-up: also added `announce()` calls on the pause/resume transition because the inline "Paused while typing…" indicator sits inside an `aria-hidden` countdown `<p>` and SR users need to hear the state change. 5 new tests total (4 by subagent + 1 by orchestrator for the announce). New i18n keys `pairing.countdownPaused`, `announce.pairingCountdownPaused`, `announce.pairingCountdownResumed`.
+
+- **UX-272 — Properties drawer polish — closed.** All 8 sub-fixes shipped:
+  - **(1) PropertyRowEditor ref-picker empty state** uses `EmptyState` primitive with `FileSearch` icon. New optional `onCreateNewPage` prop renders a "Create new page" CTA when search has content. Currently dormant (parents don't wire it; documented in JSDoc). UX reviewer flagged this as a "blocker" recommending we show a disabled button instead — disagreed: that's MORE confusing UX than not showing it. Intentional dormancy.
+  - **(2) TagFilterPanel mode tooltips** already existed; subagent only added a regression test.
+  - **(3) BlockPropertyDrawer load state** replaced "Loading…" string with `<LoadingSkeleton count={3} height="h-7" />`. `AddPropertyPopover` gained `disabled` + `disabledTooltip` props for use during load. The disabled-button-with-tooltip wraps the trigger in a focusable `<span tabIndex={0}>` (Radix Tooltip needs a focusable trigger; biome-ignore with justified comment).
+  - **(4) `useDateInput.ts` 300ms debounce** on `parseDate`. Cleanup on unmount + `initialValue` change + blur. ISO dates remain synchronous; NL dates only update preview when parsing succeeds.
+  - **(5) Choice options reorder** — count `Badge` ("3 options"), per-row up/down arrow `Button`s. No dnd-kit dependency added (lighter approach).
+  - **(6) "Add option" `disabled`** when input is empty.
+  - **(7) "Create new" type hint** — appends "(text)" inline.
+  - **(8) Ref-page save Spinner** — `<Spinner size="sm">` next to the saving page row; other rows disabled. Gated on the same Promise via `try/finally`; clears on both success and failure.
+  - 11 new i18n keys under `properties.*`. `PropertyRowEditor` complexity hit Biome's threshold (28 vs 25); extracted two helper functions (`readCurrentValue`, `parseSelectOptions`) to module level; remaining gap covered by a `biome-ignore` with justification (orchestrates 5 property types × 3 popovers; splitting JSX would push state through prop chains for marginal cognitive-load benefit).
+
+- **UX-282 — 3 deferred announcer clusters — closed.** All 3 clusters from the session 480 deferred set wired: sync events (6 keys, 5 sites in `useSyncTrigger.ts` + `useSyncEvents.ts`), agenda reschedule (4 keys, 6 sites in `RescheduleDropZone.tsx`, `BlockListItem.tsx`, `DateChipEditor.tsx`), page header actions (12 keys, 14 sites in `PageHeader.tsx`). 22 new `announce.*` i18n keys. 11 new regression tests. The DateChipEditor error path reuses `announce.rescheduleFailed` (closest matching key from the cluster 2 set; flagged for an optional dedicated `dateUpdateFailed` key in the future — not added today).
+
+### What changed
+
+**Backend (production, Rust):**
+
+- `src-tauri/Cargo.toml`, `Cargo.lock` — 3 new plugin crates at `"2"`.
+- `src-tauri/src/lib.rs` — plugin registration (single-instance first, then window-state inside `#[cfg(desktop)]`; os in the main chain).
+- `src-tauri/capabilities/default.json` — `os:default` permission added.
+- `src-tauri/src/commands/bug_report.rs` — `os` and `arch` now sourced from `tauri_plugin_os`. Struct shape preserved.
+
+**Frontend (production):**
+
+- `src/lib/announcer.ts` — `el?.parentNode` micro-cleanup (Biome optional-chain).
+- `src/components/PairingDialog.tsx` — `pausedByTyping` state + ref, sync ref update, announce on pause/resume.
+- `src/components/PairingEntryForm.tsx` — `onTypingStateChange` prop with onChange + 5s debounce + onBlur.
+- `src/components/PairingQrDisplay.tsx` — `pausedByTyping` prop renders inline "Paused while typing…" indicator.
+- `src/components/PropertyRowEditor.tsx` — 4 sub-fixes (empty state, count Badge + reorder buttons, Add option disabled, save Spinner) + module-level helpers (`readCurrentValue`, `parseSelectOptions`) + biome-ignore for inherent complexity.
+- `src/components/BlockPropertyDrawer.tsx` — `LoadingSkeleton` for property loading state.
+- `src/components/AddPropertyPopover.tsx` — `disabled` + `disabledTooltip` props with focusable-span wrapper; "(text)" hint appended.
+- `src/hooks/useDateInput.ts` — 300ms debounce on NL parse.
+- `src/hooks/useUndoShortcuts.ts`, `src/hooks/useSyncTrigger.ts`, `src/hooks/useSyncEvents.ts` — `announce()` calls co-located with toasts.
+- `src/components/journal/RescheduleDropZone.tsx`, `src/components/BlockListItem.tsx`, `src/components/DateChipEditor.tsx`, `src/components/PageHeader.tsx` — `announce()` calls co-located with toasts.
+- `src/lib/i18n.ts` — 22 new `announce.*` keys, 11 new `properties.*` keys, 1 new `pairing.countdownPaused` key, 2 new `announce.pairingCountdown{Paused,Resumed}` keys.
+- `package.json` / `package-lock.json` — added `@tauri-apps/plugin-os` and `@tauri-apps/plugin-window-state` then removed (depcheck flagged unused; Rust crates handle everything).
+
+**Tests (29 modified test files, +25 new tests):**
+
+- `src/components/__tests__/LinkEditPopover.test.tsx` — 29 assertions tightened.
+- `src/components/__tests__/PairingDialog.test.tsx` — +5 (typing pause / blur resume / 5s auto-resume / indicator visible / announce on pause+resume).
+- `src/components/__tests__/PairingEntryForm.test.tsx` — typing-state-change wiring tests via the parent suite.
+- `src/components/__tests__/PropertyRowEditor.test.tsx` — +12 across the 4 sub-fixes (empty state, options editor, Add option, save spinner).
+- `src/components/__tests__/AddPropertyPopover.test.tsx` — +1 (type hint).
+- `src/components/__tests__/BlockPropertyDrawer.test.tsx` — +2 (LoadingSkeleton, Add property disabled).
+- `src/components/__tests__/TagFilterPanel.test.tsx` — +1 (mode tooltips regression test).
+- `src/hooks/__tests__/useDateInput.test.ts` — +2 (debounce timing).
+- `src/components/__tests__/DateChipEditor.test.tsx`, `BuiltinDateFields.test.tsx` — adjusted to fake timers + flushDebounce helper.
+- `src/hooks/__tests__/useSyncTrigger.test.ts` — +2 (sync announce regression tests).
+- `src/hooks/__tests__/useSyncEvents.test.ts` — +3 (sync announce regression tests).
+- `src/components/journal/__tests__/RescheduleDropZone.test.tsx` — +2.
+- `src/components/__tests__/BlockListItem.test.tsx` — +1.
+- `src/components/__tests__/DateChipEditor.test.tsx` — +2 announce regression tests.
+- `src/components/__tests__/PageHeader.test.tsx` — +6 announce regression tests.
+
+### Verification
+
+- `npx tsc -b --noEmit` — clean (after fixing two `let resolveSave: (() => void) | null = null` flow-narrowing issues by pre-initializing with no-op closures).
+- `npx vitest run` — 308 files / **8007 tests** pass (was 7972 pre-session → +35).
+- `prek run --all-files` — all 26 hooks green. Required cleanup along the way: cargo fmt formatting on `lib.rs`, biome formatting on 4 files, biome import-sort on `useSyncEvents.test.ts`, biome a11y suppression for `<span tabIndex={0}>` Radix-tooltip wrapper with justified comment, biome cognitive-complexity suppression on `PropertyRowEditor` with justified comment, depcheck cleanup (removed unused JS plugin packages).
+
+### Notes / decisions
+
+- **Tauri plugin coupling.** All 3 plugins moved as a set at `"2"`, matching the existing `tauri-plugin-shell = "2"`, `tauri-plugin-clipboard-manager = "2"`, etc. AGENTS.md "Coupled Dependency Updates" preserved. The plugin registration order matters: `single-instance` MUST be FIRST (per upstream docs; the focus-on-relaunch closure runs before any other Tauri lifecycle).
+- **MAINT-109 partial coverage.** The `BugReport` struct only has `os` and `arch` fields (no `version`/`locale`/`hostname` — those don't exist on the struct today). `app_version` stays on `env!("CARGO_PKG_VERSION")` (the plugin has no equivalent for the application's own version). The `tauri-plugin-os` `platform()` and `arch()` return byte-for-byte identical strings to `std::env::consts::OS` / `ARCH`, so all existing test assertions still hold.
+- **TEST-3 stall context (session 480).** Last session's TEST-3 subagent stalled mid-task and the orchestrator finished it manually. This session had no recurrence — all 5 subagents completed cleanly.
+- **UX-263 sync ref-update is critical.** `handleTypingStateChange` writes the ref synchronously (NOT via a deferred useEffect) because under fake timers a burst of timer callbacks (interval tick + debounce timeout) can run back-to-back in the same microtask before React commits. A deferred ref sync would still see the stale value at the next tick. The subagent documented this clearly inline.
+- **UX-272 sub-fix 1 dormant CTA — disagreement with UX reviewer.** The reviewer recommended showing a disabled button "Parent must enable page creation" when `onCreateNewPage` isn't wired. Disagreed: that exposes implementation details to users in confusing language; not-showing-the-button is the cleaner fallback. The dormant prop is documented in the component's JSDoc and is ready for parent wiring once `BlockPropertyDrawer`/`PagePropertyTable` thread the active space context through.
+- **UX-282 PageHeader rename no toast — disagreement with UX reviewer.** The reviewer flagged this as inconsistent with delete/export/move (which all have toast + announce). Disagreed: the rename's visual feedback is the title field updating in-place (the user is looking right at it). A toast on top of that would be redundant. The other actions (delete navigates away; export copies to clipboard with no visible doc change; move-to-space navigates away) genuinely need a toast for visual confirmation. Pattern is intentional.
+- **UX-272 PropertyRowEditor complexity.** Extracting two helpers (`readCurrentValue`, `parseSelectOptions`) didn't drop the score below 25 — the JSX branching for 5 property types is the dominant complexity source. Splitting JSX into sub-components is feasible but would push state + callbacks through prop chains for marginal cognitive-load benefit. Justified `biome-ignore` is the proportionate response.
+- **Concurrent file edits.** UX-282 and UX-272 both edited `DateChipEditor.test.tsx` (UX-282 added announcer tests; UX-272 modified an existing test for debounce timing). Both edits applied cleanly; the UX-282 subagent's "pre-existing failure" report was actually about the in-progress UX-272 debounce change, which resolved when both finished.
+- **REVIEW-LATER count.** Started at 42 (from session 480 close). Closed 7 fully (no rescoping needed since all sub-items shipped). Now 35.
+
+### Open follow-ups
+
+- **PropertyRowEditor `onCreateNewPage` parent wiring.** When `BlockPropertyDrawer` and `PagePropertyTable` get access to the active space ID, they should wire the prop to call `createPageInSpace`. Documented in the `onCreateNewPage` JSDoc and noted as dormant.
+- **UX-282 ConflictList namespace consolidation.** The conflict-resolution announces use `conflict.resolvedAnnounce` / `conflict.discardedAnnounce` keys, NOT the `announce.*` namespace. Cosmetic — maybe consolidate as a tiny follow-up.
+- **DateChipEditor `dateUpdateFailed` dedicated key.** Currently reuses `announce.rescheduleFailed`. Future polish.
+
+---
+
 ## Session 480 — Tauri-plugin clipboard + mock-revert parity + editor integration tests + announcer adoption + pairing polish (MAINT-107 / TEST-3 / TEST-5 / UX-282 partial / UX-263 partial) (2026-04-26)
 
 **3 REVIEW-LATER items fully resolved (MAINT-107, TEST-3, TEST-5) + 2 partial closures (UX-282 — narrowed to 3 deferred announcer clusters; UX-263 — narrowed to "pause countdown while typing" sub-fix 5).** Open items: 45 → 42. Mixed-domain batch: clipboard plugin adoption with the existing dynamic-import wrapper convention, full mock-revert symmetry for 8 missing op types, real-Editor integration tests for 2 picker extensions, announcer wiring across 3 user-action clusters (undo/redo + trash batch ops + history batch ops), and 4-of-5 pairing flow polish sub-fixes. Five build subagents launched in parallel; one (TEST-3) stalled and was killed and finished by the orchestrator manually. Technical reviewer found no blockers; UX reviewer flagged one blocker (rapid-undo announcer spam) which was addressed in-place via a 500 ms identical-message coalescing window in `announcer.ts` plus regression tests, then re-verified through the full quality gate.

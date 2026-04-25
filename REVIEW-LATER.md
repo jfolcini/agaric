@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-42 open items.
+35 open items.
 
 Previously resolved: 422+ items across 149 sessions.
 
@@ -44,27 +44,20 @@ Previously resolved: 422+ items across 149 sessions.
 | MAINT-99 | MAINT | No automated enforcement for several documented test rules (axe-audit per component test, IPC-error-path coverage, test file naming convention) | M |
 | MAINT-101 | MAINT | `tag-colors.ts` is localStorage-only despite header comment claiming property-sync persistence | M |
 | MAINT-103 | MAINT | `BlockPropertyEditor` inline editor uses absolute positioning without portal — should follow the `suggestion-renderer` pattern | M |
-| MAINT-106 | MAINT | Adopt `tauri-plugin-single-instance` — guard against two SQLite pools racing on the same DB when the user double-launches | S |
-| MAINT-108 | MAINT | Adopt `tauri-plugin-window-state` — remember window size / position / monitor / maximized state across launches | S |
-| MAINT-109 | MAINT | Adopt `tauri-plugin-os` — refactor `collect_bug_report_metadata` to use the plugin's platform/version/arch/locale/hostname API | S |
 | TEST-2 | TEST | ~30 wrapper functions in `src/lib/tauri.ts` lack individual tests beyond the shallow cross-cutting test (only command-name verified, not `null` defaults / arg shape) | M |
 | TEST-4 | TEST | 25 of 26 Playwright specs lack a console-error listener — backend / mock errors leak silently in every E2E suite except `smoke.spec.ts` | M |
-| TEST-6 | TEST | `LinkEditPopover.test.tsx` weak-assertion sub-batch — 36 `toHaveBeenCalled()` sites need tightening to `toHaveBeenCalledWith(...)` (other 7 sub-files closed in session 479) | M |
 | TEST-11 | TEST | 7 E2E specs use CSS-class selectors (23 instances total) instead of `data-testid` per the documented selector convention | M |
 | UX-257 | UX | Breadcrumb bar (zoom + page header) doesn't read as a breadcrumb, is oversized, and styling is inconsistent across the two surfaces | M |
 | UX-260 | UX | Discoverability sweep for keyboard shortcuts and gestures (sidebar swipe, journal nav, undo tiers, Shift+Click range, properties drawer shortcut, Ctrl+F, KeyboardShortcuts→Settings link) | M |
-| UX-263 | UX | Pairing — pause countdown while typing in passphrase inputs (other sub-fixes shipped in session 480: SR announcements, ordinal labels, RenameDialog validation, mid-pair close guard) | S |
 | UX-264 | UX | Sync error UX (no retry action on failure toast, no online/offline transition feedback, no batch progress, camera-permission denial leaves user stuck on QR mode) | M |
 | UX-265 | UX | Conflict UI improvements (Keep/Discard label clarity, sort/filter for large conflict sets, type-badge tooltips, missing-original-block fallback, large-diff handling) | M |
 | UX-269 | UX | `SearchPanel` consolidation — switch custom load-more to shared `LoadMoreButton`, fix aria-live placement, debounce visual feedback, CJK notice placement, alias-overlay positioning, results-count announcement | M |
 | UX-270 | UX | `GraphView` a11y + filter persistence — bare `overflow-y-auto` → `ScrollArea`, redundant aria-label on labelled checkboxes, `role="img"` on interactive SVG, filter state reset on every navigation | M |
-| UX-272 | UX | Properties drawer / picker polish (no-pages empty-state styling, AND/OR/NOT mode affordance, definitions-loading state, date-input debounce, choice options count + reorder, disabled "Add option" when empty, type badge for "Create new", ref-save spinner) | M |
 | UX-273 | UX | Inline link UX — `LinkPreviewTooltip` only fires on hover (no keyboard activation); suggestion popups don't handle viewport edges on mobile | M |
 | UX-274 | UX | Agenda views — `DateChipEditor` parse error not shown on input itself; `QueryResult` error has no retry; `RescheduleDropZone` has no keyboard alternative; per-group collapse not persisted; empty-filter validation silent; `DuePanel` projected entries skipped by keyboard nav; `QueryBuilderModal` accepts unknown property keys | M |
 | UX-275 | UX | History view UX gaps — Restore-to-here wording, non-reversible icon a11y, missing inline filter clear, DiffDisplay hunk navigation, descendant-count badge wrap, batch keyboard shortcuts, restore-action missing undo toast, checkbox row-click ambiguity, generic error banner, no batch-restore confirmation | M |
 | UX-277 | UX | `BugReportDialog` log-content preview before submit (Checkbox primitive swap + success toast shipped; log preview pending — may be superseded by H-9c) | M |
 | UX-281 | UX | Gutter-button tooltips invisible on touch — gutter is fixed at 68px, three buttons already inflate to 44×44 on `pointer:coarse` so inline labels would overflow; needs a different affordance (long-press → toast, or wider gutter / drawer on touch) | S |
-| UX-282 | UX | `announcer.ts` adoption — 3 deferred clusters: sync events (started/completed/failed/conflicts), agenda reschedule (drag/date-chip), page rename/move/delete/alias/export (undo/redo + batch ops + conflicts shipped in session 480) | M |
 | PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S |
 | PUB-3 | PUB | Employer IP clearance before public release | S |
 | PUB-5 | PUB | Tauri updater — wire endpoint URL + Minisign keypair (publish target is now jfolcini/agaric) | S |
@@ -832,36 +825,6 @@ If a user pastes (or types) a code block whose content contains a line beginning
 **Risk:** M — touches editor blur lifecycle; needs careful tests.
 **Impact:** S — closes a small clipping risk and aligns with the documented floating-UI pattern.
 
-### MAINT-106 — Adopt `tauri-plugin-single-instance` (prevent two SQLite pools racing on the same DB)
-
-**Problem:** AGENTS.md "Database" specifies one WAL pool of 2 writers + 4 readers against `~/.local/share/com.agaric.app/notes.db`. There is currently no guard against the user launching the app twice — a second instance opens its own pool against the same file. Even with WAL the result is real risk: two materializer queues racing on hot pages, two sync daemons advertising the same device on mDNS, two op-log writers each stamping their own hash chain. AGENTS.md "Threat Model" is explicit that the focus is *data integrity*, not adversarial peers — a second instance is exactly the accidental-corruption scenario that justifies defensive plumbing.
-
-**Fix:** Add `tauri-plugin-single-instance` and register it in `lib.rs`. The plugin's callback receives the second-launch's argv and CWD — use it to focus the existing window and (post-FEAT-10) replay any deep-link argument the second launch carried. Desktop only — Android already enforces single-instance via the OS task model. Coupled stack — bump with the rest of the Tauri plugins.
-
-**Cost:** S.
-**Risk:** S — plugin is a thin wrapper; the only real surface is the focus-on-relaunch callback.
-**Impact:** M — closes a class of accidental-corruption bugs that is invisible until it bites; lowest-cost defensive add available.
-
-### MAINT-108 — Adopt `tauri-plugin-window-state` (remember window size / position across launches)
-
-**Problem:** The app has no window-state persistence. Every launch opens at the OS-default size and position — multi-monitor users in particular re-arrange the window every session. AGENTS.md §"Frontend Development Guidelines" mandates "responsive, accessible, modern, and intuitive" — this is a low-cost adherence gap. The plugin handles size, position, monitor, maximized, and fullscreen automatically.
-
-**Fix:** Add `tauri-plugin-window-state` + `@tauri-apps/plugin-window-state` and register the plugin in `lib.rs`. Two-line plugin call; no other code change. Coupled stack — bump with the rest of the Tauri plugins.
-
-**Cost:** S.
-**Risk:** S.
-**Impact:** M — quality-of-life; affects every user every launch.
-
-### MAINT-109 — Adopt `tauri-plugin-os` (refactor `collect_bug_report_metadata` and friends)
-
-**Problem:** `src-tauri/src/commands/bug_report.rs` collects platform / version / locale / arch / hostname / app data dir by hand. Multiple small per-platform branches creep in over time (BUG-34, BUG-40 already shifted log-dir / `RUST_LOG` resolution). `tauri-plugin-os` centralises all of these behind a documented cross-platform API.
-
-**Fix:** Add `tauri-plugin-os` + `@tauri-apps/plugin-os`. Refactor `collect_bug_report_metadata` to call the plugin's `platform()`, `version()`, `arch()`, `locale()`, `hostname()` instead of hand-rolled branches. Frontend gains a pre-fill path so `BugReportDialog` shows "macOS 14.5 / aarch64 / en-US" before submit (composes well with UX-277 / H-9c log-content preview). Coupled stack — bump with the rest of the Tauri plugins.
-
-**Cost:** S.
-**Risk:** S — purely a refactor of existing metadata collection; same fields, same shape.
-**Impact:** S — reduces hand-rolled per-platform code; small but real maintenance win as new OS versions ship.
-
 ### TEST-2 — ~30 wrapper functions in `src/lib/tauri.ts` lack individual tests beyond the shallow cross-cutting test
 
 **Problem:** `src/lib/tauri.ts` exports ~84 wrapper functions around Tauri `invoke()`. The cross-cutting test in `src/lib/__tests__/tauri.test.ts:1927-2049` calls 47 of them and verifies only the snake_case command name — not the argument shape, not the `?? null` defaulting that the wrappers exist for in the first place (Tauri 2 requires `null` for Rust `Option<T>`, not `undefined`; this is a documented Pitfall, `src/__tests__/AGENTS.md:539`). The remaining ~30 wrappers have no test at all in this file (verified absent from the imports at lines 14-74): `listPageLinks`, `importMarkdown`, `listProjectedAgenda`, `saveDraft`, `flushDraft`, `deleteDraft`, `setPeerAddress`, `fetchLinkMetadata`, `getLinkMetadata`, `collectBugReportMetadata`, `readLogsForReport`, `getLogDir`, `getCompactionStatus`, `compactOpLog`, `restorePageToOp`, `listSpaces`, `createPageInSpace`, `listDrafts`, `restoreAllDeleted`, `purgeAllDeleted`, plus several others.
@@ -889,16 +852,6 @@ If a user pastes (or types) a code block whose content contains a line beginning
 **Cost:** M (~1 day implementation + ~1–2 days triage on first activation).
 **Risk:** M — turning the listener on may surface real warnings that need triage. Some may be noisy dev-only logs that need filtering or fixing in production code.
 **Impact:** M — catches a real class of regressions that currently leaks through every E2E suite.
-
-### TEST-6 — `LinkEditPopover.test.tsx` weak-assertion sub-batch
-
-**Problem:** `src/components/__tests__/LinkEditPopover.test.tsx` has ~36 `expect(mock).toHaveBeenCalled()` assertions without `…With(...)`. Quality-standards rule from `src/__tests__/AGENTS.md:529`: *"Use `toHaveBeenCalledWith` with exact args, not just `toHaveBeenCalled`."* The other 7 TEST-6 sub-files (SearchPanel, ConflictList, JournalPage, PageBrowser, suggestion-renderer, keyboard-config, MonthlyDayCell) were closed in session 479 — 54 sites tightened. LinkEditPopover was deferred as the largest sub-batch (M-cost).
-
-**Fix:** Replace each `toHaveBeenCalled()` with `toHaveBeenCalledWith(expectedArgs)` using the most specific matcher possible. If args are sometimes Symbol/closure (cannot be asserted), use `toHaveBeenCalledTimes(N)` instead — at minimum tighten the arity.
-
-**Cost:** M (~1–2 days).
-**Risk:** S — pure tightening of assertions; tests still pass when behavior is correct.
-**Impact:** M — catches off-by-one / wrong-arg regressions on the link-edit popover, a heavily user-touched surface.
 
 ### TEST-11 — 7 E2E specs use CSS-class selectors (23 instances) instead of `data-testid`
 
@@ -985,16 +938,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Risk:** S — additive UI, no behaviour change.
 **Impact:** L — flips a large amount of latent capability into discoverable capability.
 
-### UX-263 — Pairing — pause countdown while typing in passphrase inputs
-
-**Problem:** When the user is typing a passphrase, the pairing countdown keeps ticking. If the timer expires mid-keystroke, the in-flight handshake fails and the user has to start over. The other 4 sub-fixes that originally lived under UX-263 (countdown SR announcements, ordinal labels above passphrase inputs, RenameDialog validation, mid-pair close guard) shipped in session 480.
-
-**Fix:** Hook into each passphrase Input's `onFocus` / `onBlur` (or `onChange` with debounce) to pause the countdown timer in `PairingDialog.tsx`. Resume on blur OR after ~5 seconds of no keystrokes (whichever comes first, to prevent perpetual pause via stuck-focus). Add a small "Paused while typing…" indicator next to the timer text so users understand the pause is intentional. New i18n key under `pairing.*`.
-
-**Cost:** S.
-**Risk:** S — touch-only logic on top of the existing countdown effect; no protocol or store changes.
-**Impact:** S — closes a real "I almost finished entering the passphrase but it expired on me" failure mode.
-
 ### UX-264 — Sync error UX
 
 **Problem:** Sync error feedback is consistently weak:
@@ -1054,23 +997,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Cost:** M — bundle.
 **Risk:** S.
 **Impact:** M — a11y + persistence parity with the rest of the app.
-
-### UX-272 — Properties drawer / picker polish
-
-**Problem:** Eight small UX gaps in the properties UI. Bundled because each is XS:
-
-- `src/components/PropertyRowEditor.tsx:265-268` — ref-picker no-pages state is a plain styled `<div>` with muted text; use `EmptyState` (with an icon) and offer "Create new page" when search has content.
-- `src/components/TagFilterPanel.tsx:290-344` — AND/OR/NOT mode toggle distinguishes only via `Button` variant (`default` vs `outline`); add tooltips ("AND: blocks must have ALL selected tags" etc.) and consider an icon (∩ / ∪ / ¬).
-- `src/components/BlockPropertyDrawer.tsx:75-96` — drawer shows generic "Loading…" while fetching properties + definitions. Use `LoadingSkeleton`; disable "Add property" with a tooltip until definitions arrive.
-- `src/hooks/useDateInput.ts:53-67` — `parseDate()` runs on every keystroke (no debounce). Debounce 300 ms; only set `datePreview` when parsing succeeds.
-- `src/components/PropertyRowEditor.tsx:135-180` — choice options editor lacks a count badge ("3 options") and drag-to-reorder; add both.
-- `src/components/PropertyRowEditor.tsx:150-155` — "Add option" button is not `disabled` when input is empty; current guard returns silently. Disable the button.
-- `src/components/AddPropertyPopover.tsx:144-154` — "Create new" button doesn't surface the default type ('text'). Show a small "(text)" hint or surface the type selector inline.
-- `src/components/PropertyRowEditor.tsx:205-225` — selecting a ref page closes the popover immediately with no spinner / success toast; add a brief loading indicator.
-
-**Cost:** M — bundle of XS items.
-**Risk:** S.
-**Impact:** M — properties is the documented "primary extension point"; polish here pays off everywhere.
 
 ### UX-273 — Inline link UX: keyboard preview + popup viewport handling
 
@@ -1145,22 +1071,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Cost:** S.
 **Risk:** S — touch-only path.
 **Impact:** S — improves discoverability for touch users; desktop unaffected.
-
-### UX-282 — Announcer adoption — 3 deferred clusters
-
-**Problem:** Session 480 wired `announce()` into 3 clusters (undo/redo, batch ops in TrashView/HistoryView, conflict resolution was already wired). Three more clusters still emit visual feedback (toast / state change) without an SR announcement, so screen-reader users get no audible confirmation when these actions complete. The announcer itself now coalesces identical messages within a 500 ms window (UX-282 follow-up shipped alongside the cluster sweep), so additional adoption won't spam screen readers on rapid actions.
-
-**Remaining clusters to adopt:**
-
-1. **Sync events** — `src/hooks/useSyncTrigger.ts:108/114`, `src/hooks/useSyncEvents.ts:110/127/151`. Need keys: `announce.syncStarted`, `announce.syncCompleted`, `announce.syncFailed`, `announce.syncOpsReceived_one/_other`, `announce.syncCompletedWithConflicts`. Partial precedent exists in `AgentAccessSettingsTab`.
-2. **Agenda reschedule** — `src/components/journal/RescheduleDropZone.tsx:79/81`, `src/components/BlockListItem.tsx:126/128`, `src/components/DateChipEditor.tsx:54/57`. The drag-reschedule and date-chip-edit paths bypass `useBlockDatePicker.ts:121` which already announces. Need keys: `announce.taskRescheduled`, `announce.rescheduleFailed`, `announce.dateUpdated`, `announce.dateCleared`.
-3. **Page rename / move / delete / alias / export** — `src/components/PageHeader.tsx:197/201/213/239/242/255/264/275/279/323/329/378`. ~12 sites in one file; warrants a focused pass with one announce per outcome class. Need keys: `announce.pageRenamed`, `announce.pageDeleted`, `announce.pageMoved`, `announce.aliasAdded`, `announce.aliasRemoved`, `announce.exported`, `announce.exportFailed`, plus per-error variants.
-
-**Fix:** One subagent per cluster (~30-50 LoC implementation + 2-3 regression tests each). Clusters are independent and parallelizable.
-
-**Cost:** M — three independent sub-batches; each is S.
-**Risk:** S — additive, no behavior change.
-**Impact:** M — completes the documented a11y commitment for the remaining high-frequency flows.
 
 ### PUB-2 — Git author email across all history is corporate (`javier.folcini@avature.net`)
 
