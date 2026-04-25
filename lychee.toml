@@ -1,9 +1,28 @@
 # Lychee config for broken-link checking in markdown docs.
 # Only true false positives / placeholder URLs belong here.
 
-# Do not fail on transient network errors (timeouts, DNS), only on actual 4xx/5xx.
-# Accept common rate-limit codes on well-known hosts.
-accept = ["200..=299", "301", "302", "307", "308", "403", "429"]
+# Do not fail on transient network errors (timeouts, DNS) or transient
+# upstream-server errors. Accept common rate-limit codes on well-known
+# hosts (GitHub returns 429 under bursty unauthenticated traffic, and
+# 5xx — most often 502 Bad Gateway, occasionally 503/504 — when their
+# edge has a hiccup mid-run, which has now broken validate twice in a
+# row on links to https://github.com/jfolcini/agaric/issues).
+#
+# We intentionally do NOT accept 4xx other than 403/429 — a real 404 on
+# a doc link is the failure mode this hook exists to catch.
+accept = [
+    "200..=299",
+    "301",
+    "302",
+    "307",
+    "308",
+    "403",
+    "429",
+    "500",
+    "502",
+    "503",
+    "504",
+]
 
 # Skip the request if the URL matches any of these patterns.
 exclude = [
