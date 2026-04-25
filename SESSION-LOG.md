@@ -1,5 +1,79 @@
 # Session Log
 
+## Session 482 — Markdown serializer triple-backtick fences + inline link UX + SearchPanel consolidation + tauri.ts wrapper tests + tag-colors doc fix (BUG-1 / MAINT-101 / TEST-2 / UX-269 / UX-273) (2026-04-27)
+
+**5 REVIEW-LATER items fully resolved.** Open items: 35 → 30. Mixed batch covering: a CommonMark-correct variable-length code-fence implementation in the Markdown serializer/parser (closes BUG-1, the long-standing silent-data-loss-on-roundtrip bug); 6 SearchPanel consolidation sub-fixes (LoadMoreButton primitive, separated aria-live region, distinct typing/searching indicators, CJK notice repositioned, alias label moved into ResultCard children, results-count announcement); inline link UX (keyboard focus → preview + Esc dismiss + mobile-pointer size middleware in suggestion-renderer); 25 new tauri.ts wrapper test blocks closing TEST-2; and the doc-only path of MAINT-101 with a regression-guard test asserting `tag-colors.ts` never calls `invoke()`. Five build subagents in parallel; technical and UX reviewers both approved with no blockers (UX reviewer raised 2 low-priority polish recommendations — "Typing…" indicator visibility and zero-results announcement — both deferred as enhancements, not defects).
+
+Batch composition (5 items):
+
+- **BUG-1** — Markdown round-trip splits code blocks with internal triple-backtick lines. Fix: CommonMark §4.5 variable-length fences. `serializeCodeBlock` now emits `'`'.repeat(max(3, longestBacktickRun + 1))` so the fence is always longer than any backtick run in the content. `parseCodeBlock` captures the opening fence length via `/^(\`{3,})([^`]*)$/` and matches a closing fence of `>= that length` via `/^\`{N,}\\s*$/`. Tilde fences (`~~~`) intentionally NOT supported (existing parser never did either; out-of-scope here). 11 example tests (Markdown-about-Markdown, shell heredoc with internal `'```'` line, LLM-transcript with embedded fences, edge cases for fence lengths 3/4/5+, language preservation, malformed-opening rejection) + 2 property tests (round-trip fixed point + fence-length invariant under fence-shaped arbitrary inputs). 347 → 360 tests.
+
+- **MAINT-101** — `tag-colors.ts` doc-only fix. The header comment falsely claimed cross-device sync via `setProperty()` while the implementation is localStorage-only. Rewrote the comment to honestly describe device-local behavior, including a "future work" note pointing to the M-cost sync option for whoever picks it up later. Storage key verified as `'tag-colors'` (subagent caught a brief inaccuracy in the brief and corrected). NEW `src/lib/__tests__/tag-colors.test.ts` (16 tests) — happy-path round-trips, JSON corruption tolerance (invalid JSON, non-object, non-string values), and a `device-local only (MAINT-101 regression guard)` describe block asserting `setTagColor`/`clearTagColor`/`getTagColor`/`getTagColors` never call Tauri `invoke()`. No production behavior change.
+
+- **TEST-2** — 25 new wrapper test blocks in `src/lib/__tests__/tauri.test.ts`. 101 → 140 tests (+39). Each follows the existing `createBlock` template: command-name match, args-shape match, optional-args-default-to-`null`. Wrappers covered (re-grepped against `tauri.ts`): `restoreAllDeleted`, `purgeAllDeleted`, `trashDescendantCounts`, `listProjectedAgenda`, `listPageLinks`, `restorePageToOp`, `setPeerAddress`, `listAttachments`, `addAttachment`, `deleteAttachment`, `importMarkdown`, `saveDraft`, `flushDraft`, `deleteDraft`, `listDrafts`, `logFrontend`, `getLogDir`, `getCompactionStatus`, `compactOpLog` (Rust name `compact_op_log_cmd` — JS-name divergence verified), `fetchLinkMetadata`, `getLinkMetadata`, `collectBugReportMetadata`, `readLogsForReport`, `listSpaces`, `createPageInSpace`. The pre-existing cross-cutting test (47 enumerated wrappers) was left untouched.
+
+- **UX-269** — SearchPanel consolidation, all 6 sub-fixes shipped:
+  - **(1) LoadMoreButton primitive** replaces hand-rolled "Load more" button. `<LoadMoreButton hasMore={hasMore} loading={searchLoading} onLoadMore={loadMore} />`. Inherits `aria-busy`, `Spinner`, and `aria-label` from the primitive.
+  - **(2) aria-live moved off the listbox** onto a separate sibling `<div role="status" aria-live="polite" aria-atomic="true">` ABOVE the listbox. Screen readers no longer hear the listbox re-announced on result changes; only the count.
+  - **(3) Distinct typing vs searching indicators** — `data-testid="search-typing-indicator"` (subtle "Typing…" text-only when debounce is pending) vs `data-testid="search-fetching-indicator"` (Spinner + "Searching…" when fetch is in flight). Mutually exclusive — `searchLoading` wins on the race.
+  - **(4) CJK limitation notice** moved from below the filter chip bar to directly below the input form (where the user's eyes actually are when the limitation matters).
+  - **(5) Alias-match overlay** removed `className="relative"` wrapper and absolute positioning. Alias label now passed as `children` to `ResultCard` (rendered as `<p class="text-xs text-muted-foreground mt-1">` via the existing children slot).
+  - **(6) Results count** moved into the aria-live status region — a single element does double duty (visible + announced). Removed the duplicate visual-only count below the listbox.
+  - 2 new i18n keys: `search.typing`, `search.searching`. Subagent noted `search.loadingMessage` and `search.loadMoreButton` are now unreferenced (left in i18n.ts; depcheck would flag them as dead but they're not — multiple consumers may use them).
+  - 6 new regression tests in `SearchPanel.test.tsx`. `ResultCard.tsx` not modified.
+
+- **UX-273** — Inline link UX (2 sub-fixes):
+  - **(1) `LinkPreviewTooltip` keyboard activation** — `useLinkPreview` extended with `focusin`/`focusout` handlers (bubble phase since these events bubble natively, unlike pointerenter/leave). Window-level keydown handler dismisses preview on Escape, gated on `activeUrlRef !== null && !event.defaultPrevented` so it never stomps on existing Esc consumers (suggestion popups, ProseMirror modals). Mouse hover behavior preserved. No new keyboard shortcut binding (chose the simpler "rely on focus-show" path; existing 150ms cache debounce handles rapid keyboard navigation through link lists). 11 new tests.
+  - **(2) `suggestion-renderer` viewport handling on mobile** — `(pointer: coarse)` detected via `window.matchMedia` inside `updatePosition`. On coarse: `flip()` and `shift()` use `padding: 16` (vs. desktop `8`); `size()` middleware caps `maxHeight` at `min(availableHeight, innerHeight * 0.6)` with `overflowY: auto`. Desktop unchanged (8 padding, no size). 4 new tests. Test mock for `@floating-ui/dom` extended to include `size`.
+  - `LinkPreviewTooltip.tsx` itself unchanged — the rendering is identical for hover-driven and focus-driven state; the hook owns dismissal.
+
+### What changed
+
+**Frontend (production):**
+
+- `src/editor/markdown-serializer.ts` — `serializeCodeBlock` + `parseCodeBlock` use variable-length fences per CommonMark §4.5.
+- `src/lib/tag-colors.ts` — header comment rewritten (no behavior change).
+- `src/components/SearchPanel.tsx` — 6 UX-269 sub-fixes: LoadMoreButton primitive, aria-live restructure, distinct loading indicators, CJK notice repositioned, alias label as ResultCard children, results-count in status region.
+- `src/hooks/useLinkPreview.ts` — focusin/focusout handlers + window-level Esc handler with `defaultPrevented` gating + logger.warn desync guards.
+- `src/editor/suggestion-renderer.ts` — `pointer:coarse` branch with size() middleware.
+- `src/lib/i18n.ts` — 2 new keys (`search.typing`, `search.searching`).
+
+**Tests:**
+
+- NEW `src/lib/__tests__/tag-colors.test.ts` — 16 tests (regression-guard included).
+- `src/lib/__tests__/tauri.test.ts` — 25 new describe blocks, +39 tests.
+- `src/editor/__tests__/markdown-serializer.test.ts` — +11 example tests.
+- `src/editor/__tests__/markdown-serializer.property.test.ts` — extended `arbCodeBlock` arbitrary + 2 property tests.
+- `src/components/__tests__/SearchPanel.test.tsx` — +6 UX-269 regression tests.
+- `src/components/__tests__/LinkPreviewTooltip.test.tsx` — +2 focus-driven tests.
+- `src/hooks/__tests__/useLinkPreview.test.ts` — +9 focus/blur/Esc tests.
+- `src/editor/__tests__/suggestion-renderer.test.ts` — +4 viewport-handling tests.
+
+### Verification
+
+- `npx tsc -b --noEmit` — clean (after fixing one TS narrowing issue: `resolvePageByAlias` mock was using `[string, number]` but the signature is `[string, string | null]`; corrected to `['ALIASPAGE', null]`).
+- `npx vitest run` — 309 files / **8096 tests** pass (was 8007 → +89).
+- `prek run --all-files` — all 26 hooks green. Cleanups along the way: biome formatting on 4 files; one TS error fixed by changing a mock value to match the actual wrapper signature.
+
+### Notes / decisions
+
+- **BUG-1 fence lengths.** CommonMark §4.5 specifies that the closing fence must be at least as long as the opening, and the info string must not contain backticks. The new opening regex `/^(\`{3,})([^`]*)$/` enforces both invariants. Existing test `'invalid code block language is sanitized to null'` still passes because the chars stripped by language validation are not backticks.
+- **MAINT-101 path choice.** Picked the doc-only path (S-cost). The sync option (M-cost) would require a property-key decision, a one-time migration of existing localStorage entries, and conflict-resolution semantics for two devices changing the same tag's color simultaneously. Out of scope; documented in REVIEW-LATER.md (item now closed) and the new header comment for whoever picks it up.
+- **TEST-2 wrapper count.** Brief listed ~30; actual coverage was 25 fresh wrappers (the brief's list overlapped with already-tested wrappers). Subagent re-grepped `tauri.ts` for `^export (async )?function`, cross-referenced against the existing test file, and added blocks for everything not yet covered.
+- **UX-269 unused i18n keys.** `search.loadingMessage` and `search.loadMoreButton` are no longer referenced anywhere. Left in `i18n.ts` to avoid scope creep — depcheck/knip would surface them eventually if truly dead.
+- **UX-273 Esc gating.** Used `!event.defaultPrevented` (the standard mechanism for "I handled this event"). A handler that uses `stopPropagation()` instead of `preventDefault()` would still allow the preview to dismiss — acceptable because preventDefault is the canonical signal in keyboard event handling. Tests cover both paths.
+- **UX reviewer recommendations (deferred).** "Typing…" indicator could be more discoverable (subtle text vs. obvious indicator) — current `text-xs text-muted-foreground` matches existing secondary-info patterns; deferred as polish. Zero-results announcement to screen readers — current EmptyState provides clear visual feedback; aria-live silence on 0 results is a valid choice per WCAG; deferred as enhancement.
+
+### Open follow-ups
+
+- **MAINT-101 sync option.** Whenever cross-device tag-color sync becomes a priority, the new header comment + future-work note point to the existing properties extension point. Estimated cost: M.
+- **TEST-2 cross-cutting test extension.** The existing 47-wrapper enumeration test could be extended to include the 25 newly-tested wrappers — but the cross-cutting test serves a different purpose (wrapper presence) and the new individual tests cover the args-shape and null-defaulting concerns more thoroughly. Optional consolidation.
+- **UX-269 unused i18n keys cleanup.** `search.loadingMessage`, `search.loadMoreButton` — drop in a later docs-cleanup pass if depcheck/knip confirms nobody else uses them.
+- **UX-273 keyboard shortcut for explicit preview** (e.g., `Ctrl+Shift+P`-style) — not implemented; subagent noted the binding is already taken by `openPropertiesDrawer` and the focus-show path is sufficient for the keyboard-a11y use case.
+- **BUG-1 tilde fences.** `~~~` code fences are CommonMark-spec-valid but neither the existing parser nor the existing serializer ever supported them. Adding tilde support is a separate scope; not on any agent's plate.
+
+---
+
 ## Session 481 — Tauri plugin trio + announcer cluster sweep + pairing pause + properties polish + LinkEditPopover assertion tightening (MAINT-106 / MAINT-108 / MAINT-109 / TEST-6 / UX-263 / UX-272 / UX-282) (2026-04-26)
 
 **7 REVIEW-LATER items fully resolved.** Open items: 42 → 35. Mixed-domain batch covering three Tauri plugin adoptions (single-instance, window-state, os) with an attendant `bug_report.rs` refactor; the final 3 announcer clusters (sync events, agenda reschedule, page header actions) closing UX-282; the deferred UX-263 sub-fix 5 (pause countdown while typing) with sync ref-update for fake-timer correctness; UX-272 8-XS-sub-fix bundle covering EmptyState empty-states, LoadingSkeleton, debounce, options reorder, count Badge, disabled "Add option", "(text)" hint, Spinner-during-save; and the deferred TEST-6 LinkEditPopover sub-batch (29 sites tightened from `toHaveBeenCalled()` to `toHaveBeenCalledWith()`). Five build subagents in parallel; one (TEST-3 from session 480 — note 481 had no TEST-3) ran cleanly. Technical reviewer: no blockers. UX reviewer flagged 3 "blockers"; addressed 1 (UX-263 paused indicator a11y — added pause/resume `announce()` calls + 1 regression test) and explicitly disagreed with 2 (dormant `onCreateNewPage` CTA is correct intentional dormancy; PageHeader rename has visual feedback via the title field updating in-place — no toast needed).

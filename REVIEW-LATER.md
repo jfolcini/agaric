@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-35 open items.
+30 open items.
 
 Previously resolved: 422+ items across 149 sessions.
 
@@ -39,21 +39,16 @@ Previously resolved: 422+ items across 149 sessions.
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
-| BUG-1 | BUG | Markdown serializer/parser round-trip splits code blocks whose content contains a line starting with three backticks | M |
 | MAINT-96 | MAINT | Decompose `AgentAccessSettingsTab.tsx` (910 lines) and extract inline `AddFilterRow` from `BacklinkFilterBuilder.tsx` (lines 234–553) | M |
 | MAINT-99 | MAINT | No automated enforcement for several documented test rules (axe-audit per component test, IPC-error-path coverage, test file naming convention) | M |
-| MAINT-101 | MAINT | `tag-colors.ts` is localStorage-only despite header comment claiming property-sync persistence | M |
 | MAINT-103 | MAINT | `BlockPropertyEditor` inline editor uses absolute positioning without portal — should follow the `suggestion-renderer` pattern | M |
-| TEST-2 | TEST | ~30 wrapper functions in `src/lib/tauri.ts` lack individual tests beyond the shallow cross-cutting test (only command-name verified, not `null` defaults / arg shape) | M |
 | TEST-4 | TEST | 25 of 26 Playwright specs lack a console-error listener — backend / mock errors leak silently in every E2E suite except `smoke.spec.ts` | M |
 | TEST-11 | TEST | 7 E2E specs use CSS-class selectors (23 instances total) instead of `data-testid` per the documented selector convention | M |
 | UX-257 | UX | Breadcrumb bar (zoom + page header) doesn't read as a breadcrumb, is oversized, and styling is inconsistent across the two surfaces | M |
 | UX-260 | UX | Discoverability sweep for keyboard shortcuts and gestures (sidebar swipe, journal nav, undo tiers, Shift+Click range, properties drawer shortcut, Ctrl+F, KeyboardShortcuts→Settings link) | M |
 | UX-264 | UX | Sync error UX (no retry action on failure toast, no online/offline transition feedback, no batch progress, camera-permission denial leaves user stuck on QR mode) | M |
 | UX-265 | UX | Conflict UI improvements (Keep/Discard label clarity, sort/filter for large conflict sets, type-badge tooltips, missing-original-block fallback, large-diff handling) | M |
-| UX-269 | UX | `SearchPanel` consolidation — switch custom load-more to shared `LoadMoreButton`, fix aria-live placement, debounce visual feedback, CJK notice placement, alias-overlay positioning, results-count announcement | M |
 | UX-270 | UX | `GraphView` a11y + filter persistence — bare `overflow-y-auto` → `ScrollArea`, redundant aria-label on labelled checkboxes, `role="img"` on interactive SVG, filter state reset on every navigation | M |
-| UX-273 | UX | Inline link UX — `LinkPreviewTooltip` only fires on hover (no keyboard activation); suggestion popups don't handle viewport edges on mobile | M |
 | UX-274 | UX | Agenda views — `DateChipEditor` parse error not shown on input itself; `QueryResult` error has no retry; `RescheduleDropZone` has no keyboard alternative; per-group collapse not persisted; empty-filter validation silent; `DuePanel` projected entries skipped by keyboard nav; `QueryBuilderModal` accepts unknown property keys | M |
 | UX-275 | UX | History view UX gaps — Restore-to-here wording, non-reversible icon a11y, missing inline filter clear, DiffDisplay hunk navigation, descendant-count badge wrap, batch keyboard shortcuts, restore-action missing undo toast, checkbox row-click ambiguity, generic error banner, no batch-restore confirmation | M |
 | UX-277 | UX | `BugReportDialog` log-content preview before submit (Checkbox primitive swap + success toast shipped; log preview pending — may be superseded by H-9c) | M |
@@ -742,30 +737,6 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 
 ## BUG — Correctness items surfaced during review
 
-### BUG-1 — Markdown round-trip splits code blocks whose content contains a line starting with three backticks
-
-**Problem:** The Markdown serializer always emits the literal three-backtick fence and the parser closes on the first line that starts with three backticks:
-
-- Serializer: `src/editor/markdown-serializer.ts:309-313` — `serializeCodeBlock` returns `` `\`\`\`${lang}\n${code}\n\`\`\`` `` regardless of what's in `code`.
-- Parser: `src/editor/markdown-serializer.ts:610-622` — `parseCodeBlock` does `if (!line.startsWith('```')) return null` for the opening fence and `while (j < lines.length && !lines[j]?.startsWith('```'))` for the closing fence.
-
-If a user pastes (or types) a code block whose content contains a line beginning with three backticks (e.g. a Markdown snippet about Markdown, a shell `cat <<EOF` heredoc, an LLM transcript), the round-trip via Markdown export → import will close the code block at that internal line. The remainder of the original code becomes plain Markdown.
-
-**Why it matters:** The TipTap document state is unaffected, so this only bites on Markdown export/re-import (and any future "Markdown copy/paste through clipboard" path). It is uncommon but not exotic — anyone who keeps notes about CommonMark, agentic prompts, or shell heredocs can trip it. The property test suite (`markdown-serializer.property.test.ts`) does not generate triple-backtick content inside code blocks, so the case is not currently covered.
-
-**Fix (CommonMark-standard):** dynamic fence length. Count the longest run of backticks in `code`; emit a fence whose length is `max(3, longest_run + 1)`. Update the parser to record the opening fence length and only close on a line whose run of backticks is `>=` that length, with no other non-whitespace content. Existing single-backtick inline code is unaffected (different production).
-
-**Test plan:**
-- Add property-test arbitraries that include `'\n```\n'`, `'\n````\n'`, and `'~~~~'` substrings in `arbCodeBlock`.
-- Add example tests for the three real-world patterns: Markdown about Markdown, heredoc body, and an LLM transcript with embedded code fences.
-- Verify no regressions in the existing structural-equality and round-trip property tests.
-
-**Cost:** M
-**Risk:** M — parser-grammar change; must verify all shipped Markdown export/import paths and the property tests still hold under the wider arbitrary.
-**Impact:** M — prevents silent data loss on round-trip in the (rare) cases where it triggers.
-
----
-
 ## MAINT — Tooling / dev-experience maintenance / code quality
 
 ### MAINT-96 — Decompose `AgentAccessSettingsTab.tsx` (910 lines) and extract inline `AddFilterRow` from `BacklinkFilterBuilder.tsx`
@@ -805,16 +776,6 @@ If a user pastes (or types) a code block whose content contains a line beginning
 **Risk:** S — purely additive lint hooks. May surface a small number of pre-existing violations that need cleanup before the hook turns green; expect 1–2 hours of fix-up per hook on first activation.
 **Impact:** M — closes the gap between documented and actual conventions; reduces reviewer-time spent catching the same anti-patterns over and over.
 
-### MAINT-101 — `src/lib/tag-colors.ts` is localStorage-only despite header comment claiming property-sync persistence
-
-**Problem:** `src/lib/tag-colors.ts:1-58` has a header comment that claims tag colours "Also persist to block properties via `setProperty()` for cross-device sync"; the implementation is localStorage-only. Tag colours are device-local and never reach the op log, so two devices can show the same tag in different colours forever.
-
-**Decision required:** either honour the comment (wire colours through a `tag_color` property on the tag's page block, fall back to localStorage as a cache — purely additive, uses the existing properties extension point per AGENTS.md "Architectural Stability") or honour the code (drop the property-sync claim from the comment, document tag colours as device-local). The current state is a contract bug: code and comment disagree.
-
-**Cost:** M (sync option) / S (doc-only option).
-**Risk:** S.
-**Impact:** M (sync option) — multi-device users see the same palette / S (doc-only).
-
 ### MAINT-103 — `BlockPropertyEditor` inline editor uses absolute positioning without portal
 
 **Problem:** `src/components/BlockPropertyEditor.tsx:40-44` renders the inline edit popup with a plain `<div className="absolute z-50 ...">`. If the surrounding row is inside a scroll container with `overflow: hidden`, the popup gets clipped. Every other floating UI in the editor (suggestion popups, `BlockContextMenu`, `BlockDatePicker`) goes through `createPortal()` + `@floating-ui/dom` per AGENTS.md "Floating UI lifecycle logging".
@@ -824,18 +785,6 @@ If a user pastes (or types) a code block whose content contains a line beginning
 **Cost:** M.
 **Risk:** M — touches editor blur lifecycle; needs careful tests.
 **Impact:** S — closes a small clipping risk and aligns with the documented floating-UI pattern.
-
-### TEST-2 — ~30 wrapper functions in `src/lib/tauri.ts` lack individual tests beyond the shallow cross-cutting test
-
-**Problem:** `src/lib/tauri.ts` exports ~84 wrapper functions around Tauri `invoke()`. The cross-cutting test in `src/lib/__tests__/tauri.test.ts:1927-2049` calls 47 of them and verifies only the snake_case command name — not the argument shape, not the `?? null` defaulting that the wrappers exist for in the first place (Tauri 2 requires `null` for Rust `Option<T>`, not `undefined`; this is a documented Pitfall, `src/__tests__/AGENTS.md:539`). The remaining ~30 wrappers have no test at all in this file (verified absent from the imports at lines 14-74): `listPageLinks`, `importMarkdown`, `listProjectedAgenda`, `saveDraft`, `flushDraft`, `deleteDraft`, `setPeerAddress`, `fetchLinkMetadata`, `getLinkMetadata`, `collectBugReportMetadata`, `readLogsForReport`, `getLogDir`, `getCompactionStatus`, `compactOpLog`, `restorePageToOp`, `listSpaces`, `createPageInSpace`, `listDrafts`, `restoreAllDeleted`, `purgeAllDeleted`, plus several others.
-
-**Why it matters:** The wrappers are where the `null`-vs-`undefined` defaulting happens. A regression there silently corrupts every IPC call to that command — backend deserializes the wrong field as `Some(undefined)` (which JSON-serializes to absent), which Rust then sees as `None`, producing wrong results without any error. Caught only by integration / E2E tests if at all.
-
-**Fix:** Use the existing `createBlock` test (`src/lib/__tests__/tauri.test.ts:86-139`) as the template. One `describe` per wrapper with three `it`s: (i) command name matches snake_case; (ii) all args present with sample values produce the exact `invoke` call argument shape via `toHaveBeenCalledWith({ ... })`; (iii) optional / nullable args default to `null` (not `undefined`) when the caller passes `undefined`. Pattern is mechanical — can be partially scaffolded by reading the wrapper signatures and emitting boilerplate.
-
-**Cost:** M (~1–2 days for ~30 wrappers, mostly mechanical).
-**Risk:** S — additive tests; no production-code change.
-**Impact:** M — closes a real correctness gap on every IPC boundary that's currently unverified.
 
 ### TEST-4 — 25 of 26 Playwright specs lack a console-error listener
 
@@ -967,23 +916,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Risk:** S — additive.
 **Impact:** M — improves usability of an inherently stressful flow.
 
-### UX-269 — `SearchPanel` consolidation
-
-**Problem:** SearchPanel hand-rolls several primitives the design system already provides:
-
-- `src/components/SearchPanel.tsx:577-587` — custom "Load more" button instead of the shared `LoadMoreButton`; missing `aria-busy={searchLoading}`.
-- `src/components/SearchPanel.tsx:504-575` — `aria-live="polite"` wraps the interactive `role="listbox"`, so SR users may hear the entire region re-announced on result changes. Move `aria-live` to a separate status `<div>` above the list.
-- `src/components/SearchPanel.tsx:193-217, 384` — spinner shows when `typing` OR `searchLoading`; users don't know if they're waiting on debounce or fetch. Show distinct labels.
-- `src/components/SearchPanel.tsx:470-475` — CJK limitation notice appears below the min-char hint and above results; users searching with CJK input often don't see it. Move closer to the input or fold into the empty state.
-- `src/components/SearchPanel.tsx:509-523` — alias-match overlay label is positioned absolutely and may overlap content on narrow viewports. Move into the `ResultCard` as a subtitle or below the card.
-- `src/components/SearchPanel.tsx:570-574` — results count is rendered visually but not announced. Wrap in `aria-live="polite"` (separate region from the listbox).
-
-**Fix:** rewire to use `<LoadMoreButton hasMore={hasMore} loading={searchLoading} onLoadMore={loadMore} />` and refactor the live-region structure.
-
-**Cost:** M.
-**Risk:** S — design-system migration.
-**Impact:** M — consistency + a11y.
-
 ### UX-270 — `GraphView` a11y + filter persistence
 
 **Problem:**
@@ -997,17 +929,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Cost:** M — bundle.
 **Risk:** S.
 **Impact:** M — a11y + persistence parity with the rest of the app.
-
-### UX-273 — Inline link UX: keyboard preview + popup viewport handling
-
-**Problem:**
-
-- `src/components/LinkPreviewTooltip.tsx:1-118` — tooltip only fires on `mouseover`/`mouseout`; not accessible to keyboard-only users. Extend `useLinkPreview` to detect focus on external links and show on focus; add a keyboard shortcut to preview the focused link; ensure Esc dismisses.
-- `src/editor/suggestion-renderer.ts:53-56` — `computePosition` middleware uses `padding: 8` for `flip()` and `shift()`. On mobile narrow viewports the popup can still clip near the bottom. Increase padding to 16 on `pointer:coarse` and add `size()` middleware to cap popup height at 60vh on mobile.
-
-**Cost:** M.
-**Risk:** M — link preview spans hover + focus state machines.
-**Impact:** M — closes a real keyboard-a11y gap and a real mobile clipping issue.
 
 ### UX-274 — Agenda views: error retry, parse feedback, persistence, keyboard nav
 
