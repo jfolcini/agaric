@@ -1642,3 +1642,639 @@ The `agaric-app` GitHub org does not necessarily exist, the public release repo 
 **Cost:** S — ~30 min once the contact is picked.
 **Decision:** Defer alongside PUB-5 — revisit when the publish target + timing is concrete.
 **Status:** DEFERRED — revisit with PUB-5.
+
+---
+
+## Backend Code Review (Confirmed Findings) — Appended 2026-04-25
+
+> Output of a deep, two-pass parallel backend code review covering all of
+> `src-tauri/src/` (~128k LOC, 192 files). Pass 1: 10 domain reviewers.
+> Pass 2: 10 independent validators that cross-checked every finding
+> against the actual code. Hallucinations / out-of-scope claims dropped.
+> Severities reflect Pass-2 corrections.
+>
+> All entries below are CONFIRMED issues. Already-tracked items
+> (PERF-19, PERF-20, PERF-23) are referenced but not duplicated.
+>
+> Source artifacts: `/tmp/agaric-review/pass1/` (raw findings),
+> `/tmp/agaric-review/pass2/` (validator verdicts),
+> `/tmp/agaric-review/FINAL-CONSOLIDATED.md` (full report).
+
+**Scope:** All Rust backend code in `src-tauri/src/` (~128k LOC, 192 files, 35 migrations).
+**Method:** 10 parallel domain reviewers (Pass 1) + 10 independent validators (Pass 2) cross-checking every finding against the actual code, with hallucinations / out-of-scope claims dropped and over-stated severities corrected.
+
+> Threat model reminder (AGENTS.md): Agaric is a single-user, multi-device, local-network-only app. Findings recommending hardening against adversarial sync peers were rejected as out-of-scope. Findings about data integrity, accidental corruption, and robustness against the user's own buggy peer software ARE in scope.
+
+---
+
+## Executive Summary
+
+| Metric | Count |
+|---|---|
+| Raw Pass 1 findings | 348 |
+| Dropped (hallucinated / out-of-scope / duplicate / wontfix-intentional) | 12 |
+| Severity-downgraded by Pass 2 | 49 |
+| Already-tracked in REVIEW-LATER (PERF-19, PERF-20, PERF-23) | 3 |
+| Net findings in this report | 333 |
+| **Critical** | **3** |
+| **High** | **17** |
+| **Medium** | **62** |
+| **Low** | **126** |
+| **Info / nits** | **125** |
+
+### Top-5 highest-priority items (Impact ÷ Cost)
+
+1. **C-2** — Materializer drops permanent ApplyOp failures after 1 in-memory retry; op_log diverges from materialized state with no boot-time replay (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/materializer/consumer.rs" />).
+2. **C-1** — `gcal_push::connector::run_task_loop` is a non-functional stub never wired up; the entire FEAT-5e push pipeline is dead code (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/gcal_push/connector.rs" />).
+3. **C-3** — `delete_attachment` never unlinks the file on disk + the `DeleteAttachment` payload drops `fs_path`, so files become unrecoverable after compaction (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/attachments.rs" />).
+4. **H-1** — Pairing passphrase is never cryptographically verified; `confirm_pairing_inner` accepts any string (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/sync_cmds.rs" />).
+5. **H-2** — `mcp_set_enabled(false)` does not close the accept loop; new connections accepted until app restart (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/mcp.rs" />).
+
+### Findings by Domain × Severity
+
+| Domain | Crit | High | Med | Low | Info |
+|---|---|---|---|---|---|
+| Core data layer | 0 | 1 | 6 | 9 | 11 |
+| Materializer | 1 | 2 | 6 | 8 | 4 |
+| Cache + Pagination | 0 | 1 | 6 | 12 | 6 |
+| Commands (CRUD) | 0 | 2 | 8 | 10 | 13 |
+| Commands (System) | 1 | 2 | 13 | 13 | 6 |
+| Sync stack | 0 | 4 | 17 | 25 | 5 |
+| Search & Links | 0 | 4 | 4 | 16 | 19 |
+| Lifecycle / Snapshots | 0 | 0 | 18 | 16 | 8 |
+| MCP | 0 | 1 | 6 | 12 | 8 |
+| GCal / Spaces / Drafts | 1 | 0 | 9 | 11 | 9 |
+
+(Numbers approximate; some findings span domains and are listed under the primary one.)
+
+### Already tracked (NOT re-reported)
+
+- **PERF-19** — Backlink pagination cursor uses linear scan for non-Created sorts. Confirmed still applicable.
+- **PERF-20** — Backlink filter resolver `try_join_all` has no concurrency cap. Pass 2 confirmed **3 sites, not 2** as REVIEW-LATER.md claims — recommend updating that entry.
+- **PERF-23** — `read_attachment_file` buffers whole file before chunked send. Confirmed unchanged.
+
+### Patterns / Themes (cross-cutting systemic issues)
+
+1. **CQRS write path bypassed in several places.** `set_page_aliases_inner` (commands/pages.rs), `page_aliases` mutation, `update_last_address` (peer_refs.rs), and a handful of cache rebuilds write derived state without an op-log append. These create silent divergence between op_log and materialized tables.
+2. **Atomicity gaps in multi-op user actions.** `set_todo_state` + recurrence sibling, `set_page_aliases`, `flush_draft` + `prev_edit` read, `disconnect_gcal` (3 writes), `create_snapshot` (INSERT pending then UPDATE complete), `restore_page_to_op` (read outside write tx) — none use a single `BEGIN IMMEDIATE` even though all are "either both happen or neither" scenarios.
+3. **Backpressure silent-drops are wider than documented.** `try_enqueue_background` Full-arm doesn't increment `bg_dropped`; `apply_snapshot` cache-rebuild fan-outs use the same path; `enqueue_full_cache_rebuild` partial-success is invisible. Pass 2 downgraded the severity to Medium but the systemic pattern stands.
+4. **Recursive CTE invariants (is_conflict = 0 + depth < 100) are inconsistent.** Production paths in `tag_inheritance` and `pagination::children` are correct; `move_block_inner` cycle CTE, `cascade_soft_delete`, the `tag_query` and `backlink::resolve_root_pages` CTE oracles, and `reindex_block_links` all miss one or both predicates.
+5. **Split-pool invariant violated in 5+ places.** `*_split` cache variants (tags, pages, projected_agenda, page_ids), `materializer::sweep_once`, `fetch_link_metadata` (uses WritePool for read-heavy work), and a handful of background tasks ignore the read pool entirely.
+6. **Doc / code drift across AGENTS.md, ARCHITECTURE.md, and REVIEW-LATER.md.** AppError variants (11 vs 12 with Gcal); `find_lca` 10000-iter cap claim has no implementation; FTS tokenizer doc says unicode61 but code uses trigram; ARCHITECTURE.md §15 says DB/IO/JSON errors are sanitized but 5 command files skip the helper; REVIEW-LATER PERF-20 site count wrong; ARCHITECTURE.md doesn't mention MCP at all.
+7. **Sync hash chain identity is non-cryptographic.** Per `compute_op_hash`, the digest covers `device_id|seq|parent_seqs|op_type|payload` but **not** `prev_hash`. Pass 2 downgraded "data integrity" framing — within the single-user threat model the chain is a deterministic fingerprint, not a Merkle commitment. Filed as a documentation gap.
+8. **OAuth & filesystem secret hygiene is good but not perfect.** SecretString redaction tested, keychain-only storage; minor leakage paths exist via classify_refresh_error formatting upstream Display, JWT id_token signature unverified, and partial token leakage on serde error. Bug-report redaction allow-list only catches `$HOME` + local `device_id` — leaks GCal email, peer device IDs.
+
+### Quick wins (Cost = S, Impact ≥ Medium, Risk ≤ Medium)
+
+| ID | Title | Why |
+|---|---|---|
+| **C-3** | Unlink attachment file on `delete_attachment` | One-line fix; unrecoverable file leak |
+| **H-1** | Validate pairing passphrase against `pairing_state` slot | Pairing security; passphrase machinery is currently dead |
+| **H-2** | Make `mcp_set_enabled(false)` close the listener | Toggle works as-advertised |
+| **H-3** | Fix `create_page_in_space` bypass in journal/templates/`create_block` | "Nothing outside of spaces" invariant |
+| **H-7** | Add `is_conflict = 0` + `depth < 100` to `move_block_inner` cycle CTE | One-line SQL change; data integrity |
+| **M-3** | `set_page_aliases_inner` wrap in BEGIN IMMEDIATE | One-line atomicity fix |
+| **M-4** | `journal::resolve_or_create_journal_page` wrap in BEGIN IMMEDIATE | TOCTOU dup-page fix |
+| **M-7** | `set_priority_inner` honor user-extended priority options (1..10 not 1..3) | One-line; matches ARCHITECTURE.md §20 (UX-201b) |
+| **M-23** | `MAX_BLOCK_DEPTH` enforced in `create_block_in_tx`, not just `move_block` | One-line guard, prevents bypass |
+| **M-32** | `start_sync_inner` move `record_success` to AFTER actual sync | One-line fix; backoff pre-wipe bug |
+
+---
+
+## CRITICAL findings (3)
+
+### C-1 — `gcal_push::connector::run_task_loop` is a non-functional stub never invoked from production
+- **Domain:** GCal
+- **Location:** `src-tauri/src/gcal_push/connector.rs` (run_task_loop / run_cycle); see also `src-tauri/src/lib.rs` boot-spawn calls
+- **What:** The production task-loop never calls `run_cycle`. The whole FEAT-5e push pipeline ships as dead code; tests pass because they exercise `run_cycle` directly.
+- **Why it matters:** Users who connect GCal see "connected" but no events ever reach the calendar. Silent feature breakage.
+- **Cost:** S–M
+- **Risk:** Low (re-wiring an already-tested cycle into the spawned loop)
+- **Impact:** High (the only thing FEAT-5 ships)
+- **Recommendation:** Wire the existing tested `run_cycle` into the spawned task loop with the documented poll/backoff cadence; add a smoke test that exercises the spawn path.
+- **Pass-1 source:** 10-gcal-spaces-misc / F1
+
+### C-2 — Foreground `ApplyOp` / `BatchApplyOps` permanent failures lose state with no retry
+- **Domain:** Materializer
+- **Location:** `src-tauri/src/materializer/consumer.rs:177-179`; `src-tauri/src/materializer/retry_queue.rs:59-72`; `src-tauri/src/recovery/boot.rs:43-126`
+- **What:** After a single 100ms in-memory retry, `ApplyOp`/`BatchApplyOps` failures only bump `fg_errors` and the task is dropped. `RetryKind::from_task` excludes both task types, so the persistent retry queue is bypassed. There is no boot-time op-log replay path — `recover_at_boot` only handles drafts and pending snapshots.
+- **Why it matters:** Op log is durable but materialized core tables silently diverge from it. Data correctness depends entirely on every apply succeeding within ~100ms; a transient FK violation, lock contention, or disk hiccup leaves the user with phantom blocks. There is no automatic remediation.
+- **Cost:** M–L
+- **Risk:** Medium (retry semantics need to be idempotent end-to-end)
+- **Impact:** High (data integrity)
+- **Recommendation:** Either persist `ApplyOp`/`BatchApplyOps` failures to a retry queue with capped attempts and dead-letter logging, or implement a boot-time op-log replay that re-applies any unmaterialized ops. The "rebuild from op log" approach is the cleanest given CQRS.
+- **Pass-1 source:** 02-materializer / F1 (verdict: CONFIRMED at Critical)
+
+### C-3 — `delete_attachment` leaks the on-disk file forever; non-reversible op drops `fs_path`
+- **Domain:** Commands / Attachments
+- **Location:** `src-tauri/src/commands/attachments.rs:138-179` (`delete_attachment_inner`); `src-tauri/src/materializer/handlers.rs:508-514`
+- **What:** `delete_attachment_inner` runs an op-log append + `DELETE FROM attachments` inside one IMMEDIATE tx but never calls `remove_file`. The materializer handler is also pure SQL. The `DeleteAttachment` op payload drops `fs_path`; combined with the op being non-reversible and the materializer's `cleanup_orphaned_attachments` being an explicit no-op, the file is unrecoverable + untrackable after compaction.
+- **Why it matters:** Permanent storage leak and impossible to garbage-collect even with a full vault scan because the op log no longer remembers the path.
+- **Cost:** S
+- **Risk:** Low (only adds an `fs::remove_file` call inside the tx + carries `fs_path` in the op payload)
+- **Impact:** High (storage, future portability, backup correctness)
+- **Recommendation:** Carry `fs_path` in the `DeleteAttachment` payload (op log evolution: extending an existing payload is fine within the architectural-stability rule); call `fs::remove_file` after the DB delete; implement `cleanup_orphaned_attachments` to reconcile FS vs DB.
+- **Pass-1 source:** 05-commands-system / F1
+
+---
+
+## HIGH findings (17)
+
+### H-1 — Pairing passphrase is never cryptographically verified
+- **Domain:** Sync / Commands
+- **Location:** `src-tauri/src/commands/sync_cmds.rs::confirm_pairing_inner`; `src-tauri/src/pairing.rs::verify_device_exchange` (dead code); ARCHITECTURE.md §18 line ~1737 says "Validate passphrase"
+- **What:** `confirm_pairing_inner` does not validate the supplied passphrase against the active `pairing_state` slot. Any string succeeds. The entire `PairingMessage` + `verify_device_exchange` machinery is dead code.
+- **Why it matters:** Even within the single-user threat model, pairing-time MITM detection is the one place where adversarial input matters because the user has typed the passphrase from a trusted out-of-band channel. A bug here defeats the only check that confirms "this peer is the device that scanned my QR".
+- **Cost:** S
+- **Risk:** Medium (must keep pairing UX intact while fixing)
+- **Impact:** High
+- **Recommendation:** Wire `confirm_pairing_inner` to `pairing.rs::verify_device_exchange` against the active `pairing_state` slot; add a test that asserts a wrong passphrase fails.
+- **Pass-1 source:** 06-sync / F1; 05-commands-system / F16 (downgraded to Medium by Pass 2 commands-system but kept High by sync reviewer; we keep High).
+
+### H-2 — `mcp_set_enabled(false)` does not stop the accept loop
+- **Domain:** MCP / Commands
+- **Location:** `src-tauri/src/commands/mcp.rs::mcp_set_enabled`; `src-tauri/src/mcp/server.rs` accept loop
+- **What:** `notify_waiters()` is one-shot and edge-triggered. New connections after the disable register a fresh waiter and proceed normally; the listener stays open until app restart.
+- **Why it matters:** Toggle does not actually disable the surface. Users who flip the switch off still expose MCP RW tools to local clients.
+- **Cost:** S
+- **Risk:** Low
+- **Impact:** High (user trust in toggle)
+- **Recommendation:** Replace one-shot `Notify` with an `AtomicBool` checked in the accept loop AND drop the listener bind on disable. Add an integration test asserting that a connection attempt after `set_enabled(false)` fails.
+- **Pass-1 source:** 09-mcp / F2; 05-commands-system / F21
+
+### H-3 — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated daily
+- **Domain:** Spaces / Commands
+- **Location:** `src/components/JournalPage.tsx:170` (frontend); `src/components/TemplatesView.tsx:77` (frontend); `src-tauri/src/commands/journal.rs::resolve_or_create_journal_page`; `src-tauri/src/commands/blocks/crud.rs::create_block` (accepts `block_type='page'` with no space enforcement)
+- **What:** Bootstrap migrates only existing-at-first-boot pages. New daily journal pages, template pages, and direct `create_block` IPC calls produce pages with no `space` property. FEAT-3 Phase 1 documentation claims atomicity via `create_page_in_space` but the IPC backend doesn't enforce it.
+- **Why it matters:** Cross-space leak. Every new journal page after install is invisible to space-scoped queries. The "Personal/Work" partition silently degrades over time.
+- **Cost:** M
+- **Risk:** Medium (changes IPC contract for `create_block`)
+- **Impact:** High (FEAT-3 correctness)
+- **Recommendation:** Either reject `block_type='page'` from `create_block` (force callers through `create_page_in_space`) or have `create_block_in_tx` set the `space` property atomically when the type is `page`. Update journal/templates frontend callsites to use `create_page_in_space`. Add a property test: every block of type `page` has a non-null `space` property.
+- **Pass-1 source:** 10-gcal-spaces-misc / F4, F5, F26; cross-references 04-commands-crud / F5
+
+### H-4 — `set_todo_state_inner` runs the state change, timestamp writes, and recurrence sibling creation across separate transactions
+- **Domain:** Commands / Recurrence
+- **Location:** `src-tauri/src/commands/properties.rs::set_todo_state_inner`; cross-ref `recurrence::handle_recurrence`
+- **What:** State change → property writes (`created_at` / `completed_at`) → recurrence-sibling creation are all separate ops with no enclosing `BEGIN IMMEDIATE`.
+- **Why it matters:** A crash mid-sequence on a recurring task can leave a `done` state with no completed-at timestamp and no next-occurrence sibling. The user is silently "stuck" on a task whose recurrence never advances.
+- **Cost:** M
+- **Risk:** Medium (recurrence handler signature change)
+- **Impact:** High
+- **Recommendation:** Wrap the entire state transition + property writes + recurrence sibling creation in a single `BEGIN IMMEDIATE` via a new `set_todo_state_in_tx`. The recurrence handler already uses `_in_tx` variants — exposes them.
+- **Pass-1 source:** 04-commands-crud / F2
+
+### H-5 — Parallel block_id groups can violate parent→child FK ordering during BatchApplyOps
+- **Domain:** Materializer
+- **Location:** `src-tauri/src/materializer/consumer.rs` (JoinSet group dispatch)
+- **What:** The foreground consumer parallelizes independent block_id groups via JoinSet, but a CreateBlock cascade (parent then immediate child) split across two groups can apply child before parent. SQLite FK error on apply.
+- **Why it matters:** Producible during normal sync replay (parent op + child op in a single batch). Currently masked because production retries within 100ms.
+- **Cost:** M
+- **Risk:** Medium (group-key needs to encode lineage, not just block_id)
+- **Impact:** High
+- **Recommendation:** Group by root-of-op (use `parent_id` chain, fall back to block_id when no parent_id) so cascading parent/child stays serialized. Pass 2 noted that the pass-1 reviewer's "PRAGMA defer_foreign_keys" suggestion does NOT fix this because each `apply_op` opens its own tx; need a new grouping key.
+- **Pass-1 source:** 02-materializer / F2
+
+### H-6 — `BatchApplyOps` grouping uses only the first record's block_id
+- **Domain:** Materializer
+- **Location:** `src-tauri/src/materializer/dedup.rs`
+- **What:** A `BatchApplyOps` containing N ops over different block_ids is grouped solely by `records[0].block_id`. Other records' block_ids are not represented in the dispatch key.
+- **Why it matters:** Two batches whose first records collide but whose remaining records target different blocks can serialize in unintended ways; conversely, two batches whose first records differ but whose remaining records collide can run in parallel and step on each other.
+- **Cost:** M
+- **Risk:** Medium
+- **Impact:** High
+- **Recommendation:** Either split BatchApplyOps into per-block-id sub-batches at dispatch time, or compute a multi-key grouping (HashSet of all block_ids; serialize batches whose key sets overlap). Pass 2 confirmed the pass-1 "return None" remediation does NOT serialize because the None bucket still races with other groups via JoinSet.
+- **Pass-1 source:** 02-materializer / F3
+
+### H-7 — `move_block_inner` cycle-detection CTE missing `is_conflict = 0` and `depth < 100`
+- **Domain:** Commands / CRUD
+- **Location:** `src-tauri/src/commands/blocks/move_ops.rs::move_block_inner`
+- **What:** The recursive cycle-detection CTE has neither the conflict filter nor the depth bound, contradicting AGENTS.md invariant #9.
+- **Why it matters:** Conflict copies leak into the cycle check (false positives blocking a legitimate move); a corrupted parent_id chain runs unbounded recursion.
+- **Cost:** S (one SQL line)
+- **Risk:** Low
+- **Impact:** High (data correctness + DoS-against-self)
+- **Recommendation:** Add `AND is_conflict = 0 AND depth < 100` to the recursive member.
+- **Pass-1 source:** 04-commands-crud / F1
+
+### H-8 — `list_agenda_range` cursor encodes `b.due_date`/`b.scheduled_date`, not `ac.date`
+- **Domain:** Cache + Pagination
+- **Location:** `src-tauri/src/pagination/agenda.rs::list_agenda_range`
+- **What:** The cursor encodes block-column dates instead of the `agenda_cache.date` actually used for sort. When an agenda entry's date comes from a property or tag source, the cursor doesn't match what the next page filters on.
+- **Why it matters:** Duplicates and skips in agenda pagination — user sees double-counted or missing items at page boundaries. Hard-to-reproduce because it depends on which date source was authoritative for that row.
+- **Cost:** S
+- **Risk:** Low (cursor change is backward-incompatible; add a version byte)
+- **Impact:** High
+- **Recommendation:** Encode `ac.date` in the cursor; bump cursor version field.
+- **Pass-1 source:** 03-cache-pagination / F1
+
+### H-9 — Bug-report redaction allow-list misses GCal email, peer device IDs, and any other PII
+- **Domain:** Commands / System
+- **Location:** `src-tauri/src/commands/bug_report.rs`
+- **What:** Redaction only scrubs `$HOME` + local `device_id`. GCal account email (in error logs), peer device IDs (in sync error context), any property value with PII pass through verbatim into the ZIP destined for GitHub.
+- **Why it matters:** Bug reports cross the trust boundary the feature exists to police — the GitHub repo is public.
+- **Cost:** M
+- **Risk:** Medium (false positives in redaction can hide real bugs)
+- **Impact:** High
+- **Recommendation:** Replace allow-list scrub with a deny-list-of-tokens approach plus an "are you sure" UI that shows the user the redacted preview. At minimum, add GCal email, peer device IDs, and a `username@example.com`-style regex sweep.
+- **Pass-1 source:** 05-commands-system / F5
+
+### H-10 — `Created { Desc }` cursor pagination silently empty past page 1
+- **Domain:** Search & Links
+- **Location:** `src-tauri/src/backlink/query.rs::eval_backlink_query`
+- **What:** Uses `binary_search_by` on a descending slice — returns `Err(0)` for any cursor target greater than first element, producing empty page.
+- **Why it matters:** Backlink browsing in Created-Desc mode loses everything past the first page. User-visible.
+- **Cost:** S
+- **Risk:** Low
+- **Impact:** High
+- **Recommendation:** Use `partition_point` or invert the comparator to handle descending slices; add a regression test.
+- **Pass-1 source:** 07-search-links / F3
+
+### H-11 — Backlink grouped query: `total_count` / `filtered_count` drift for orphan source blocks
+- **Domain:** Search & Links
+- **Location:** `src-tauri/src/backlink/query.rs::eval_backlink_query_grouped`
+- **What:** Self-reference filtering happens after the IN-clause fetch; `total_count` set from pre-filter length so it reports more results than the user actually sees, and orphan source blocks (no resolvable page) inflate the count further.
+- **Why it matters:** UI badge shows "23 backlinks" but only 19 render. AGENTS.md "Backend Patterns" #4 explicitly mandates post-filter count.
+- **Cost:** S
+- **Risk:** Low
+- **Impact:** High
+- **Recommendation:** Compute `total_count` after self-reference + orphan filtering.
+- **Pass-1 source:** 07-search-links / F4
+
+### H-12 — `flush_draft` bypasses `MAX_CONTENT_LENGTH` and never validates target block exists
+- **Domain:** Drafts / Commands
+- **Location:** `src-tauri/src/commands/drafts.rs::flush_draft_inner`
+- **What:** Two issues conflate: oversized content and orphan target. `flush_draft` doesn't check the 256 KB cap and doesn't verify the target block_id exists; combined with the missing FK on `block_drafts.block_id` (see L-37), a stale draft can flush an `edit_block` op pointing nowhere.
+- **Why it matters:** A single user action lets oversized or orphan ops enter the append-only log. Op log is supposed to be the source of truth — invalid entries persist forever.
+- **Cost:** S–M
+- **Risk:** Medium (drafts crashing on flush is bad UX)
+- **Impact:** High
+- **Recommendation:** Validate target exists + size cap inside `flush_draft_inner`. Also reconsider the missing FK (see L-37).
+- **Pass-1 source:** 10-gcal-spaces-misc / F6, F7
+
+### H-13 — `Op-log immutability has zero database-level enforcement
+- **Domain:** Core
+- **Location:** `src-tauri/src/op_log.rs:1199-1247` (test that documents the lack of enforcement)
+- **What:** Bare UPDATE/DELETE against `op_log` succeed; only the materializer convention prevents mutation. The existing test `op_log_update_not_blocked_by_schema` documents this explicitly.
+- **Why it matters:** AGENTS.md invariant #1 ("Op log is strictly append-only — never mutate, never delete (except compaction)") is enforced by convention only. A future bug or third-party tool can violate it without the DB protesting.
+- **Cost:** M
+- **Risk:** Medium (compaction needs a way through)
+- **Impact:** High (this is invariant #1)
+- **Recommendation:** Add `BEFORE UPDATE`/`BEFORE DELETE` triggers on `op_log` that allow only the compaction path (e.g., gated by a session-scoped `PRAGMA application_id` or a transaction-attached audit row). Document the bypass.
+- **Pass-1 source:** 01-core-data / F2
+
+### H-14 — `apply_remote_ops` silently drops fork ops via `INSERT OR IGNORE`
+- **Domain:** Sync
+- **Location:** `src-tauri/src/sync_protocol/operations.rs::apply_remote_ops`
+- **What:** When a peer sends an op with the same `(device_id, seq)` but a different hash (a fork), `INSERT OR IGNORE` accepts the first one wins; the divergent op is silently dropped with no log, metric, or surfaced fork detection.
+- **Why it matters:** Forks are the canary for a serious bug (clock skew, device-id collision, replay loop). Silent dropping makes them invisible to the user and to the test suite.
+- **Cost:** S–M
+- **Risk:** Low
+- **Impact:** High (data integrity observability)
+- **Recommendation:** Detect `(device_id, seq)` collision before INSERT; on hash mismatch, log + emit a sync warning event + persist a fork record for diagnostics.
+- **Pass-1 source:** 06-sync / F4
+
+### H-15 — `fetch_link_metadata` uses the WritePool for a mostly-read operation
+- **Domain:** Commands / Link metadata
+- **Location:** `src-tauri/src/commands/link_metadata.rs::fetch_link_metadata`
+- **What:** Inverse of the split-pool pattern: a network-bound, read-heavy command holds the WritePool while doing HTTP. Blocks all writes.
+- **Why it matters:** Page render that triggers metadata fetch can stall every other write in the app for the duration of the HTTP request.
+- **Cost:** S
+- **Risk:** Low
+- **Impact:** High (UX latency)
+- **Recommendation:** Take the read pool for the read-existing path; only acquire the writer for the final upsert.
+- **Pass-1 source:** 05-commands-system / F27
+
+### H-16 — `Clock::today()` returns UTC, not local
+- **Domain:** GCal / Recurrence
+- **Location:** `src-tauri/src/gcal_push/clock.rs::today`; second site in `clamp_to_window`
+- **What:** Window filtering and dirty-set clamping use UTC date; user-visible "today" silently shifts ±1 day across time zones.
+- **Why it matters:** Agenda-day push to GCal goes to the wrong calendar day for users near 00:00 local. Recurrence checks against "today" misfire.
+- **Cost:** S
+- **Risk:** Low
+- **Impact:** High
+- **Recommendation:** Use `chrono::Local::now().date_naive()`; thread a `TimeZone` reference if Android needs explicit zone handling.
+- **Pass-1 source:** 10-gcal-spaces-misc / F3, F22
+
+### H-17 — `recurrence::handle_recurrence` reads counters BEFORE `BEGIN IMMEDIATE` (TOCTOU)
+- **Domain:** Recurrence
+- **Location:** `src-tauri/src/recurrence/handle.rs::handle_recurrence`
+- **What:** Reads `repeat-count` and `repeat-seq` outside the write transaction; concurrent state transitions race the increment.
+- **Why it matters:** Two clicks of "done" on a recurring task can both create a sibling (duplicate next-occurrence) or skip the increment.
+- **Cost:** S
+- **Risk:** Low
+- **Impact:** High
+- **Recommendation:** Move the counter reads inside the `BEGIN IMMEDIATE` block.
+- **Pass-1 source:** 08-lifecycle-snapshots / F19
+
+---
+
+## MEDIUM findings (62)
+
+(Each entry: short title • location • why it matters • cost / risk / impact • recommendation)
+
+### Core data layer
+
+- **M-1 — `attachment_id: String` bypasses ULID uppercase normalisation.** `op.rs:189-203`. Defense-in-depth gap; relies on `BlockId::new()` always emitting uppercase. Cost S / Risk Low / Impact Medium. Use `BlockId` newtype in `AddAttachmentPayload`. (01 / F1, downgraded High→Medium)
+- **M-2 — `AppError::{Database,Io,Json}` Serialize forwards raw inner messages to FE.** `error.rs:135-161`. Doc/code drift vs ARCHITECTURE.md §15. Cost S. Wrap with `sanitize_internal_error` or remove the §15 claim. (01 / F3)
+- **M-3 — AGENTS.md says 11 AppError variants; code has 12 (`Gcal`).** Cost S. Update AGENTS.md after explicit user approval per its own self-rule. (01 / F4)
+- **M-4 — `find_lca` has no max-iteration cap despite ARCHITECTURE.md claiming "10000-iter cap".** Doc/code drift. Cost S–M. Either add the cap or update the doc. (01 / F5)
+- **M-5 — `dag::insert_remote_op` doesn't check `parent_seqs` references.** `dag.rs`. A peer can submit an op whose parent_seqs reference unknown ops; we accept it. Cost M. Validate references against `op_log` before insert. (01 / F11)
+- **M-6 — `cleanup_orphaned_attachments` is a TODO in production.** `materializer/handlers.rs`. Combined with C-3, no GC path. Cost M. Implement orphan reconciliation on boot. (02 / F12)
+
+### Materializer
+
+- **M-7 — Background backpressure silently drops cache-rebuild fan-outs.** `materializer/coordinator.rs::try_enqueue_background`. Documented as "silent drop on backpressure" (AGENTS.md:176) but the consequences are wider than the doc admits. Cost M / Risk Medium / Impact Medium. Either track + replay, or document the eventual-consistency window. (02 / F4, downgraded High→Medium)
+- **M-8 — `try_enqueue_background` Full-arm doesn't increment `bg_dropped`.** Same file. Metric lies under load. Cost S. Increment in the Full arm. (02 / F5, downgraded High→Medium)
+- **M-9 — Doc drift: backoff timings 50/100ms in ARCHITECTURE.md vs 150/300ms in code.** Cost S. Update doc. (02 / F6)
+- **M-10 — `BatchApplyOps` retry clones entire `Vec<OpRecord>` even on first-attempt success.** Cost S. Clone only when about to retry. (02 / F7)
+- **M-11 — `dispatch_background_or_warn` swallows serde errors with no seq/device_id context.** Cost S. Log seq/device_id alongside error. (02 / F8)
+- **M-12 — In-flight tokio tasks not cancelled at shutdown.** `materializer/coordinator.rs::shutdown`. Cost S–M. Cancel JoinSet via `abort_all()`. (02 / F9)
+- **M-13 — `metrics_snapshot_task` resets `*_high_water` every 5 min, breaking `StatusInfo` semantics.** Cost S. Don't reset; expose a separate "current" gauge. (02 / F13)
+
+### Cache + Pagination
+
+- **M-14 — `reindex_block_links` doesn't filter `is_conflict = 0`.** `cache/block_links.rs`. Conflict copies leak into `block_links` and surface in `list_backlinks`. Cost S / Risk Low / Impact Medium. Add the filter. (03 / F2)
+- **M-15 — `rebuild_all_caches` orders agenda before page_id rebuild; agenda's template-page filter reads `b.page_id` so stale `page_id` corrupts agenda.** Cost S. Reorder. (03 / F3)
+- **M-16 — `trash_descendant_counts` joins on `deleted_at` only, no ancestry constraint.** `cache/trash.rs` (or pagination). Two unrelated batches with the same timestamp inflate each other's descendant counts. Cost S. Add ancestor predicate. (03 / F4)
+- **M-17 — Four `*_split` variants ignore the `read_pool`.** tags, pages, projected_agenda, page_ids — all run reads on the writer pool. Cost S. Thread the read pool. (03 / F5)
+- **M-18 — Per-row INSERT/UPDATE/DELETE loops in agenda diff and projected-agenda rebuild.** Cost M. Multi-row chunked inserts (MAX_SQL_PARAMS). (03 / F6)
+- **M-19 — Unbounded `Vec` materialization on full-vault scans.** Cost M. Stream via cursor or chunk. (03 / F7)
+
+### Commands (CRUD)
+
+- **M-20 — `set_priority_inner` hardcodes `1|2|3`, ignores user-extended `priority` options.** Contradicts ARCHITECTURE.md §20 (UX-201b). Cost S. Read options from `property_definitions`. (04 / F3)
+- **M-21 — `set_page_aliases_inner` not wrapped in a transaction.** DELETE-then-loop-INSERT against bare pool. Crash mid-call leaves half-applied alias set. Cost S. Wrap in BEGIN IMMEDIATE. (04 / F4)
+- **M-22 — `resolve_or_create_journal_page` TOCTOU duplicates journal pages.** Cost S. SELECT-then-INSERT inside a single tx with UNIQUE constraint or ON CONFLICT DO NOTHING. (04 / F5)
+- **M-23 — `flush_draft_inner` reads `prev_edit` outside the flush tx.** Cost S. Move the read inside. (04 / F6)
+- **M-24 — `count_agenda_batch_inner` uses runtime-built dynamic SQL** (rather than `query_as!`). Cost M. Replace with statically-known queries per knob. (04 / F8)
+- **M-25 — `list_projected_agenda_inner` returns hard-capped `Vec<>`, no cursor.** Cost M. Convert to cursor pagination. (04 / F9)
+- **M-26 — `delete_property_def_inner` orphans `block_properties` rows.** Cost M. Either prevent deletion if rows exist or cascade. (04 / F12)
+- **M-27 — `export_page_markdown_inner` does full-table scan of all tag and page blocks on every export.** Cost S. Restrict scan to referenced IDs. (04 / F14)
+
+### Commands (System)
+
+- **M-28 — `attachments.deleted_at` is dead code; soft-delete schema vs hard-delete handler.** Cost S. Drop column or implement soft-delete. Needs user approval per Architectural Stability rule. (05 / F2)
+- **M-29 — `add_attachment_inner` doesn't verify file exists on disk.** Cost S. Stat the file before op-log append. (05 / F3)
+- **M-30 — No uniqueness on `attachments.fs_path`; duplicate adds collide silently.** Cost S. Add UNIQUE constraint. Needs user approval per Architectural Stability rule. (05 / F4)
+- **M-31 — `recent_errors_from_log_dir` reads entire log file with no size cap.** Cost S. Cap read at N MB. (05 / F6)
+- **M-32 — `start_sync_inner` records success BEFORE any sync.** Pre-wipes scheduler backoff on every click. Cost S / Risk Low / Impact Medium. Move record_success to after sync completion. (05 / F17, downgraded High→Medium; cross-ref 06 / F41)
+- **M-33 — `start_sync_inner`'s peer lock guard is dropped before the daemon syncs.** Cost S. Hold the guard across the daemon call. (05 / F18; cross-ref 06 / F42)
+- **M-34 — `start_pairing_inner` builds QR with `host=0.0.0.0, port=0`.** Cost S. Carry real bind address. (05 / F19; cross-ref 06 / F2)
+- **M-35 — `set_peer_address_inner` rejects hostnames despite "host:port" wording.** Cost S. Accept hostnames; document. (05 / F20)
+- **M-36 — `disconnect_gcal_inner` aborts on transient keyring failure even when local cleanup is doable.** Cost S. Retry/best-effort the keyring; always run local cleanup. (05 / F12)
+- **M-37 — `disconnect_gcal_inner` is not transactional across its three writes.** Cost S. Wrap. (05 / F13)
+- **M-38 — `compact_op_log_cmd_inner` accepts `retention_days = 0`.** Cost S. Reject or document min. (05 / F11)
+- **M-39 — `log_frontend` has no input-size bounds.** Cost S. Cap message size. (05 / F24)
+- **M-40 — `log_frontend` has no `inner_*` helper and no tests.** Cost S. Refactor + tests. (05 / F25)
+
+### Sync stack
+
+- **M-41 — Hash chain identity is `device_id|seq|parent_seqs|op_type|payload`, NOT including `prev_hash`.** `hash.rs::compute_op_hash`. Pass 2 confirmed but downgraded — within single-user threat model the chain is a deterministic fingerprint, not a Merkle commitment. Doc/code drift to fix. Cost S (doc) or L (real fix needs migration; needs user approval). Impact Medium. Update ARCHITECTURE.md to be truthful about the structure. (06 / F3)
+- **M-42 — Inconsistent error handling in `apply_remote_ops`.** Some paths log and continue, others abort. Cost S. Document and unify. (06 / F5)
+- **M-43 — Property LWW idempotency guard reads latest local op, not materialized property value.** Cost S. Read from materialized state. (06 / F6)
+- **M-44 — Same idempotency-guard problem for move LWW.** Cost S. Same fix. (06 / F7)
+- **M-45 — `SyncDaemon::shutdown` AtomicBool is set but never read.** Cost S. Read the flag in the loop. (06 / F8)
+- **M-46 — `try_sync_with_peer` drops the cancel flag after each peer.** Cost S. Hold across the loop. (06 / F9)
+- **M-47 — File transfer phase ignores cancel flag entirely.** Cost S. Thread cancel into recv loop. (06 / F10)
+- **M-48 — `find_missing_attachments` only checks file presence, not size or hash.** Cost S. Stat-and-hash. (06 / F13)
+- **M-49 — `find_missing_attachments` performs blocking sync I/O.** Cost S. tokio::fs::metadata. (06 / F14)
+- **M-50 — `request_and_receive_files` ACKs `FileReceived` even after hash mismatch / write failure.** Cost S. Send `FileReceiveFailed` instead. (06 / F15)
+- **M-51 — Both file send and receive buffer the entire file in memory.** Cost M. Stream chunks. (06 / F16)
+- **M-52 — `request_and_receive_files` doesn't cross-check `FileOffer.size_bytes` against `attachments.size_bytes`.** Cost S. Add assertion. (06 / F17)
+- **M-53 — `SyncServer` accept loop swallows errors silently with no backoff.** Cost S. Log + backoff. (06 / F18)
+- **M-54 — `sync_cert.rs::get_or_create_sync_cert` is not atomic across `.pem` and `.hash`.** Cost S. Use NamedTempFile::persist. (06 / F20)
+- **M-55 — `sync_cert.rs` doesn't fsync parent dir after creating files.** Cost S. fsync(dir). (06 / F21)
+- **M-56 — `connect_to_peer` does not bind TLS handshake to expected device's CN.** Cost S. Verify CN against peer record. (06 / F35)
+- **M-57 — `connect_to_peer` blocks rustls handshake on `std::sync::Mutex`.** Cost S. Use tokio::sync::Mutex. (06 / F36)
+- **M-58 — `try_offer_snapshot_catchup` always offers latest snapshot regardless of peer state.** Cost S. Compare peer last-seq before offering. (06 / F38)
+
+### Search & Links
+
+- **M-59 — Tag-query CTE oracle missing `depth < 100`.** `tag_query/resolve.rs:179-235`. Cost S (oracle is `#[cfg(test)]` only). Add the bound to the oracle. (07 / F1)
+- **M-60 — Backlink `resolve_root_pages_cte` oracle missing depth bound and `is_conflict = 0`.** `backlink/query.rs:259-301`. Cost S. Add. (07 / F2)
+- **M-61 — `strip_for_fts` (async) doesn't filter `is_conflict = 0` for tag/page references.** Cost S. Add filter. (07 / F5)
+- **M-62 — `eval_unlinked_references` truncates without `ORDER BY` — non-deterministic cursor.** Cost S. Add ORDER BY. (07 / F8)
+
+### Lifecycle / Snapshots / Merge / Recurrence
+
+- **M-63 — Reverse `find_prior_text` / `find_prior_position` ignore indexed `block_id` column.** Cost S. Add `WHERE block_id = ?`. (08 / F1)
+- **M-64 — `reverse_set_property` / `reverse_delete_property` use `json_extract` for both block_id and key (no index).** Cost S. Restructure to use indexed columns. (08 / F2)
+- **M-65 — ARCHITECTURE.md says draft recovery uses `>=` but code uses `>`.** Cost S. Fix doc. (08 / F5)
+- **M-66 — `apply_snapshot` drops `block_drafts` without surfacing potentially unflushed work.** Cost S. Warn + log on drop. (08 / F6)
+- **M-67 — `apply_snapshot` cache-rebuild tasks use `try_enqueue_background` (silent drop).** Cross-ref M-7. Cost S. Use blocking enqueue or queue restart marker. (08 / F7)
+- **M-68 — `cleanup_old_snapshots` deletes ALL rows when zero complete snapshots exist.** Cost S. Guard against empty-set delete. (08 / F9)
+- **M-69 — `create_snapshot` is NOT atomic between INSERT(pending) and UPDATE(complete).** Cost S. Single tx. (08 / F10)
+- **M-70 — `apply_snapshot` does not anchor the post-snapshot hash chain.** Cost M. Set the next hash anchor in the same tx. (08 / F11)
+- **M-71 — `compute_reverse(restore_block)` translates back to bare delete_block** (loses metadata). Cost S. Carry source ref. (08 / F12)
+- **M-72 — `merge_text` no-LCA fallback walks ONE side only.** Cost S. Walk both sides. (08 / F13)
+- **M-73 — `merge_block` orchestrator does not call `resolve_property_conflict`.** Property conflicts not resolved during block merge. Cost S. Wire the call. (08 / F14)
+- **M-74 — `create_conflict_copy` does not copy `block_links`.** Conflict block has no links until reindex. Cost S. Copy links. (08 / F15)
+- **M-75 — `create_conflict_copy` copies tags from soft-deleted rows too.** Cost S. Filter on `deleted_at IS NULL`. (08 / F16)
+- **M-76 — `create_conflict_copy` does not validate the parent block is still alive.** Cost S. Validate. (08 / F17)
+- **M-77 — `recurrence::handle_recurrence` swallows property-set errors silently.** Cost S. Propagate. (08 / F20)
+- **M-78 — Recurrence sibling `position = original_position + 1` can collide with siblings.** Cost S. Use `MAX(position) + 1` within parent. (08 / F22)
+- **M-79 — `recurrence::parser::shift_date` accepts negative intervals (`-1d`).** Cost S. Reject. (08 / F23)
+- **M-80 — Recurrence parser doesn't support `+Ny` (years).** Cost S. Add. (08 / F24)
+- **M-81 — `cascade_soft_delete` ignores conflict copies — orphaned.** Cost S. Include `is_conflict = 1` rows in cascade. (08 / F27)
+
+### MCP
+
+- **M-82 — `journal_for_date` writes through the read pool with `query_only = ON`.** `mcp/tools_ro.rs::journal_for_date`. Production fails; tests pass because they use `init_pool` not `init_pools`. Cost S / Risk Low / Impact Medium. Move the write to RW pool, expose via `tools_rw.rs`. (09 / F1)
+- **M-83 — Windows RW server's accept loop hard-codes `MCP_RO_PIPE_PATH`.** Cost S. Branch on RO/RW. (09 / F3)
+- **M-84 — `journal_for_date` is on the RO server but writes to op_log.** RO/RW boundary violation. Cost S. Move to RW. (09 / F4)
+- **M-85 — `list_tags` / `list_property_defs` / `get_agenda` lack cursor pagination.** Cost M. Add cursor + bounded responses. (09 / F5)
+- **M-86 — Server pinned to MCP `"2024-11-05"` but emits `structuredContent` (a 2025-06-18 feature).** Doc/code drift. Cost S. Either update protocol version or drop the feature. (09 / F26)
+
+### GCal / Spaces / Drafts
+
+- **M-87 — `force_resync` clears the dirty set instead of dispatching.** Cost S. Dispatch instead. (10 / F2)
+- **M-88 — PKCE verifier cache grows unbounded.** `gcal_push/oauth.rs`. Cost S. Add TTL + cap. (10 / F8)
+- **M-89 — `recover_calendar_gone` is two writes outside a transaction.** Cost S. Wrap. (10 / F10)
+- **M-90 — `is_space` typed as `text`, equality on literal `"true"`.** Type mismatch / brittle. Cost S. Use `value_bool` or normalize. (10 / F12)
+- **M-91 — `create_page_in_space_inner` does not require parent and child to share space.** Cross-space leak vector. Cost S. Validate. (10 / F13)
+- **M-92 — `bootstrap_spaces` migration does N round-trips per page.** Cost S. Single chunked UPDATE. (10 / F14)
+- **M-93 — `block_drafts` has no FK to `blocks`.** Cross-ref H-12. Cost S. Add FK + cascade rule (or document why omitted). Needs user approval. (10 / F18)
+- **M-94 — JWT `id_token` signature not verified.** Cost M. Verify against Google JWKS or document why we skip it. (10 / F19)
+- **M-95 — `recover_calendar_gone` does not also clear `oauth_account_email`.** Cost S. Add. (10 / F23)
+
+---
+
+## LOW findings (126 — abbreviated)
+
+> Locations and pass-1 source provided for each. Severity = Low after Pass-2 corrections. Cost = S unless noted.
+
+### Core (9)
+- L-1 `extract_block_id_from_payload` swallows malformed JSON (01/F6, downgraded Med→Low)
+- L-2 Boot path `unwrap_or(0)` on DB count errors (01/F7, downgraded Med→Low)
+- L-3 `BlockId::from_trusted` Unicode `to_uppercase()` vs `Deserialize` `to_ascii_uppercase()` divergence (01/F8)
+- L-4 `compute_op_hash` null-byte invariant is `debug_assert!`-only (01/F9, downgraded Med→Low)
+- L-5 `append_local_op_in_tx` requires BEGIN IMMEDIATE but enforces nothing (01/F10, downgraded)
+- L-6 `validate_set_property` accepts empty strings (01/F12)
+- L-7 Slow-acquire helpers used in only 2 modules (01/F13)
+- L-8 Legacy `init_pool` skips `PRAGMA optimize` (01/F14)
+- L-9 `import.rs` YAML frontmatter terminator is `\n---` only (01/F15)
+
+### Materializer (8)
+- L-10 Foreground barrier wraps a synchronous `notify_one()` in `tokio::spawn` (02/F14)
+- L-11 `record_failure` does SELECT-then-INSERT instead of one UPSERT (02/F15)
+- L-12 `fg_full_waits` increment via TOCTOU read of `tx.capacity()` (02/F17)
+- L-13 `dedup` parses the same payload JSON multiple times per drain (02/F18)
+- L-14 `handle_foreground_task` silently drops unexpected variants (02/F19)
+- L-15 Tests cover happy paths well, several risk areas uncovered (02/F20)
+- L-16 Foreground retry: ordering of error log vs retry attempt (02/F21)
+- L-17 `dispatch_op` enqueues fg+bg out-of-order (02/F10, downgraded Med→Low — production never calls it)
+
+### Cache + Pagination (12)
+- L-18 Cursor lacks version field (03/F8)
+- L-19 `rebuild_all_caches` called only from tests (03/F10)
+- L-20 agenda/backlink joins lack defensive `b.is_conflict = 0` (03/F11)
+- L-21 `list_block_history c.seq.unwrap_or(0)` sentinel (03/F12)
+- L-22 `list_page_history __all__` branch uses dynamic `query_as` (03/F13)
+- L-23 `query_by_property` accepts both value_text and value_date (03/F14)
+- L-24 `block_links` per-target DELETE/INSERT loop (03/F15)
+- L-25 `rebuild_agenda_cache_split_impl` releases read snapshot before writing (03/F16)
+- L-26 `projected_agenda` uses `chrono::Local::now()` (timezone correctness) (03/F17)
+- L-27 Agenda SQL duplicated between single-pool and split (03/F19)
+- L-28 Missing CTE oracle for `rebuild_page_ids` (03/F20)
+- L-29 `query_by_property` 4 column-precedence is undocumented (03 / new in summary)
+
+### Commands CRUD (10)
+- L-30 `import_markdown_inner` swallows per-block errors inside one tx without savepoints (04/F7, downgraded Med→Low)
+- L-31 `restore_page_to_op_inner` reads `ops_after` outside the write transaction (04/F11)
+- L-32 `update_property_def_options_inner` doesn't validate dependent rows (04/F13)
+- L-33 Tauri-emit error silently dropped via `let _ = app.emit(...)` (04/F15)
+- L-34 `add_tag_inner` allows self-tag (block_id == tag_id) (04/F19)
+- L-35 `dispatch_background_for_page_create` re-reads ops it could have threaded through (04/F25)
+- L-36 `purge_all_deleted_inner` synchronous fs-deletion on command thread (04/F28)
+- L-37 `MAX_BLOCK_DEPTH` enforced in `move_block_inner` but NOT in `create_block_in_tx` (04/F30) — could be Medium; bypass via repeated creates
+- L-38 `set_priority` Tauri wrapper does NOT emit `EVENT_PROPERTY_CHANGED` (04/F32)
+- L-39 `compute_edit_diff_inner` propagates `serde_json::from_str` errors via `?` (opaque error) (04/F34)
+
+### Commands System (13)
+- L-40 `extract_recent_errors` substring match `" ERROR " || " WARN "` is fragile (05/F7)
+- L-41 `home_dir_string()` only checks `$HOME`, silently no-ops on Windows (05/F8)
+- L-42 `compact_op_log_cmd_inner` reports stale `ops_deleted` count (05/F9, downgraded High→Med then to Low for display-only)
+- L-43 Compaction wrapper tx is misleading; the comment is factually wrong (05/F10, downgraded Med→Low)
+- L-44 `get_gcal_status_inner` lets keyring transient errors break the Settings tab (05/F14)
+- L-45 `GcalStatus.enabled` and `GcalStatus.connected` are duplicate fields (05/F15)
+- L-46 MCP toggle is racy: marker write + `is_running()` + `spawn` are non-atomic (05/F22, downgraded Med→Low)
+- L-47 MCP RO and RW marker logic is duplicated; helpers exist to consolidate (05/F23)
+- L-48 Sanitization drift: ARCHITECTURE.md §15 mandates it; five command files skip it (05/F26, downgraded High→Low — UX consistency, not security per the helper's own docstring)
+- L-49 `set_gcal_window_days_inner` has unreachable fallback noise (05/F28)
+- L-50 `update_peer_name` and `set_peer_address` Tauri wrappers lack `cfg(not(tarpaulin_include))` (05/F29)
+- L-51 `mcp_disconnect_all` doc says it returns "the connection count" but signature returns `()` (05/F30)
+- L-52 `read_logs_for_report_inner` skips silently on per-file errors (05/F31)
+- L-53 `cancel_pairing` clears pairing slot whether or not a session exists (05/F32)
+- L-54 `redact_log` preserves cap on bytes but doesn't bound total file output (05/F34)
+- L-55 `redact_log` newline split-and-rejoin is O(n²) in the worst case (05/F35)
+
+### Sync (25)
+- L-56..L-80: peer_locks unbounded growth (F23); record_failure deterministic doubling vs jittered next_retry_at (F24, downgraded); first record_failure jumps to ~2s (F25); pairing_qr_payload missing version field (F27); build_salt no delimiter (F28); daemon_loop Branch B sequential peers (F29); always uses `peer.addresses.first()` (F30); mDNS ServiceRemoved ignored (F31); recv_timeout 30s vs handle_message 120s (F32); SnapshotAccept/Reject silent Ok(None) (F33); error format dumps multi-MB binary (F34); mDNS announces on every interface (F37); try_receive_snapshot_catchup skips peer_refs when device_id empty (F39); SnapshotReceiver allocates single `Vec<u8>` up to 256 MB (F40); apply_remote_ops enqueues a single BatchApplyOps task (F43); compute_ops_to_send doesn't deterministically order across devices (F44); pending_ops_to_send kept alive whole session (F45); SyncOrchestrator (responder) doesn't enforce expected_remote_id (F46); test gaps: chaos / partial-transfer recovery (F47); fork-detection (F48, downgraded — overlap with H-14); snapshot transfer cancellation (F50); dormant-waiter race (F51); peer_tuples Vec built every 30s (F52); is_complete only checks Complete (F53); OpTransfer and OpRecord structurally identical (F54); MdnsService::shutdown consumes self (F55).
+
+### Search & Links (16)
+- L-81 `eval_unlinked_references` page-title query lacks `is_conflict = 0` (07/F10)
+- L-82 `eval_backlink_query_grouped` IN-clause unbounded — SQLite var-limit risk (07/F11)
+- L-83 `eval_backlink_query` IN-clause unbounded (07/F12)
+- L-84 `BacklinkFilter::SourcePage` IN-clauses unbounded for `included` / `excluded` (07/F13)
+- L-85 `tag_query::resolve_expr` And/Or sequential while `BacklinkFilter::And/Or` are concurrent (07/F14)
+- L-86 `update_last_address` silently succeeds when peer doesn't exist (07/F17)
+- L-87 `update_last_address` uses raw `sqlx::query` instead of `query!` macro (07/F18)
+- L-88 Doc comment says "INSERT OR REPLACE"; code uses `ON CONFLICT … DO UPDATE` (07/F19)
+- L-89 `update_device_name` inconsistent error format (07/F20)
+- L-90 `read_body_limited` reads entire response into memory before truncating (07/F21)
+- L-91 `truncate_str` truncates by bytes despite `max_chars` parameter name (07/F22)
+- L-92 Tag-rename FTS reindex: unbounded `unique_ids` inside one big tx (07/F23)
+- L-93 `rebuild_all_split` does N inserts in single tx with no chunking (07/F24)
+- L-94 `rebuild_all_split` race window: incremental updates between read and write are wiped (07/F25)
+- L-95 `eval_backlink_query` doesn't filter self-references (07/F34)
+- L-96 `extract_origin` / `extract_domain` strip neither URL credentials nor fragments (07/F30)
+
+### Lifecycle (16)
+- L-97 `reverse_delete_attachment` uses json_extract on attachment_id with no covering index (08/F3)
+- L-98 Reverse ops compare timestamps lexicographically (08/F4, OVERSTATED → kept Low for sort-stability gap; framing tightened by Pass 2)
+- L-99 Recurrence `repeat-seq` increments only when `repeat-count` is set (08/F21)
+- L-100 Recurrence reference-date check uses lexicographic comparison (08/F25)
+- L-101 `cascade_soft_delete` uses zero `tracing` — no observability into cascades (08/F26)
+- L-102 `restore_block` does not bound `deleted_at_ref` — wrong-token call is a silent no-op (08/F28)
+- L-103 `recover_at_boot` runs against the live pool with no mutex / lock (08/F29)
+- L-104 Boot recovery batch query has no upper bound on draft count (08/F30)
+- L-105 `apply_snapshot` keeps every restored row in memory at once (08/F31)
+- L-106 `up_to_hash` is computed by wall-clock ordering, not hash chain (08/F33)
+- L-107 Soft-delete `restore_block` IMMEDIATE tx is overkill for a single UPDATE (08/F34)
+- L-108 Test gap: no oracle test that conflict copies survive their source's compaction (08/F35)
+- L-109 Test gap: no test asserting compaction preserves snapshot atomicity on injected error (08/F37)
+- L-110 Test gap: recurrence has no test for DST transitions (08/F38)
+- L-111 Test gap: no test for `apply_snapshot` rolling back if a chunk fails mid-loop (08/F39)
+- L-112 `merge_text` does not log line/character offset of detected conflicts (08/F40)
+
+### MCP (12)
+- L-113 In-flight tool calls are abandoned mid-transaction on `disconnect_all` (09/F6, partial)
+- L-114 `LAST_APPEND` only retains the last op_ref (09/F7)
+- L-115 Snapshot test count for `list_property_defs` is brittle (19 hard-coded) (09/F8)
+- L-116 `wrap_tool_result_error` is dead code (09/F9)
+- L-117 `task_running` flag is one-shot (09/F10)
+- L-118 TOCTOU race on rapid `mcp_set_enabled` toggling (09/F11)
+- L-119 Schema `minimum`/`maximum` are advisory; server silently `clamp`s (09/F12)
+- L-120 `disconnect_signal` is edge-triggered; doc could be clearer (09/F14)
+- L-121 ULID arguments not normalized to uppercase (09/F15, downgraded Med→Low)
+- L-122 `set_property` exactly-one-value validation duplicated at MCP boundary (09/F16)
+- L-123 `parse_args` error message includes raw `serde_json` text (09/F17)
+- L-124 No MCP-level concurrent-write stress test (09/F18)
+
+### GCal / Spaces / Drafts (11)
+- L-125 `InstantBucket::take()` holds bucket mutex during sleep (10/F11)
+- L-126 `bootstrap_spaces` uses `from_trusted` for hand-typed ULID constants (10/F15)
+- L-127 `gcal_push/mod.rs` re-exports every internal module as fully `pub` (10/F16)
+- L-128 `digest::truncate_with_overflow_suffix` is O(N²) (10/F17)
+- L-129 `classify_refresh_error` formats upstream `Display` directly — partial token leak risk (10/F20)
+- L-130 `serde_json::from_str` error may leak partial token (10/F21)
+- L-131 `delete_calendar` API path does not URL-encode `calendar_id` (10/F24)
+- L-132 `claim_lease` does 4 round-trips, could be 2 (10/F25)
+- L-133 `space` invariant relies on bootstrap migration but never re-runs (10/F26)
+- L-134 `dispatch_background_for_page_create` is best-effort and silent (10/F27)
+- L-135 Drafts have no GC beyond crash recovery (10/F30)
+
+---
+
+## INFO / nits (125 — listed by domain, locations + pass-1 source)
+
+### Core (11)
+01/F16 OpType `#[non_exhaustive]` ; 01/F17 `find_lca` N+1 SELECTs ; 01/F18 `get_or_create_device_id` non-atomic write ; 01/F19 `cleanup_old_log_files` regex ; 01/F20 "DAG" naming vs tree structure ; 01/F21 `build_log_directives` test gap ; 01/F22 command list duplicated between `run()` and `specta_builder()` ; 01/F23 op-log read helpers take generic SqlitePool ; 01/F24 `has_merge_for_heads` substring match on parent_seqs fragile ; 01/F25 `import.rs` `:: ` property delimiter too permissive ; 01/F26 hand-written format! for parent_seqs JSON.
+
+### Materializer (4)
+02/F16 `sweep_once` uses single pool ; 02/F22 `pending_count` reachable from cargo tests despite `pub` ; 02/F23 `MaterializeTask::Clone` overlap with F7.
+
+### Cache (6)
+03/F9, F18, F21, F22, F23, F24, F25 — doc clarity nits, MAX_SQL_PARAMS local, weak `> 0` assertions in tests.
+
+### Commands CRUD (13)
+04/F10 LIMIT 1 OFFSET ?2 ; F16 ULID block_id not normalised at SQL boundary ; F17 doc/code drift CQRS ; F18 `page_aliases` mutated outside op log (Info — Ad-hoc but design-relevant) ; F20 `list_blocks_inner` silently drops `space_id` on agenda/tag paths ; F21 `validate_date_format` accepts impossible dates (Feb 30) ; F22 unbounded Vec returns on list_property_keys / list_tags_* ; F23 two ISO-date validators coexist ; F24 same-millisecond cascade collision (downgraded) ; F26 `apply_reverse_in_tx` asymmetric `rows_affected` ; F29 `usize::try_from(cnt).unwrap_or(0)` for SQL COUNT(*) ; F31 `get_page_inner` hardcodes `NULL_POSITION_SENTINEL = i64::MAX` ; F33 missing test coverage for conflict-aware cycle CTE.
+
+### Commands System (6)
+05/F33 PERF-23 confirmation (already tracked) ; minor doc nits across files.
+
+### Sync (5)
+06/F8/F33/F34/F53/F54/F55 — doc / clone-shape / type-equivalence nits.
+
+### Search & Links (19)
+07/F6 (FTS tokenizer doc unicode61 vs trigram), F7 short-token ; F9 magic LIMIT 10001 ; F26 informational ; F27 oracle test gap (depth/conflict ancestor cases) ; F28 FTS sync test gap (rename-then-purge) ; F29 short-token dead arm in OR query ; F31 extract_meta_refresh_url quote stripping ; F32 BacklinkFilter::BlockType loads all blocks of type ; F33 tags_cache JOIN doesn't filter conflict tag rows ; F35 Cursor constructor verbosity ; F36 grouped query group ordering ignores cross-group user sort ; F37 unlinked_references cursor uses page_id (cross-ref F8) ; F38 eval_tag_query final SELECT lacks defensive is_conflict = 0 ; F39 paginated path correct, bug isolated ; F42 parse_title HTML-entity double-decode (PARTIAL) ; F43 `ms_to_ulid_prefix.unwrap()` lacks SAFETY comment ; F44 missing test for Created Desc + cursor ; F45 Cursor rank/position/deleted_at/seq fields part of encoded payload.
+
+### Lifecycle (8)
+08/F18 merge_text iteration cap AND visited-set (defense in depth, doc-only) ; F32 create_snapshot rejects empty op_log with AppError::Snapshot ; F36 oracle parity for compute_reverse(create_block) (downgraded) ; F41 MergeOutcome::ConflictCopy.original_kept_ours dead in field ; F42 recovery::cache_refresh always rebuilds tags+pages even for non-tag/page edits ; F8 (HALLUCINATED — DROPPED) ; doc nits.
+
+### MCP (8)
+09/F19 serve_pipe shutdown bug ; F20 second-instance race guard ; F21 unknown notifications swallowed at debug ; F22 ARCHITECTURE.md doesn't mention MCP ; F23 REVIEW-LATER.md says "8 read tools" then "9" ; F24 tool_response_get_agenda.snap pins empty agenda ; F25 ConnectionState has no Send test ; F27 no multi-byte UTF-8 boundary test for 200-char clip ; F29 stub-binary integration test is `#[ignore]`.
+
+### GCal / Spaces (9)
+10/F9 BlockId::from_trusted Unicode to_uppercase (cross-ref L-3) ; F28 bootstrap_spaces doesn't validate device_id shape ; F29 fill_full_window silently no-ops on `window_days <= 0` ; doc nits.
+
+---
+
+## Closing notes
+
+- The Pass-1 reviewers were unusually accurate: across 348 findings, only 2 outright hallucinations and 5 out-of-scope claims. Severity inflation was the dominant correction (49 downgrades).
+- The `sanitize_internal_error` doc/code drift in particular is a recurring pattern: ARCHITECTURE.md §15 over-claims; five command files actually skip the helper. Pass 2 was right to downgrade this from "Security/High" to "Docs/Low" — the helper's own docstring says it's UX-only.
+- The most consequential pattern is the **ApplyOp permanent-failure black hole** (C-2). Fixing it likely doesn't require new schema — a boot-time replay path against `op_log` would close the loop within the existing CQRS model — but it's the single most impactful change available.
+- **GCal connector dead code (C-1)** is fixable in a single afternoon if the `run_cycle` is genuinely correct (Pass 2 confirmed it is, per its tests). The fix is wiring, not redesign.
+- Fixing **C-3 (attachment file leak)**, **H-1 (pairing passphrase)**, **H-2 (MCP toggle)**, and **H-3 (create_page_in_space bypass)** together would close the four most user-visible behavioral defects in the codebase. None require architectural change beyond one carrying `fs_path` in `DeleteAttachment` (op log payload extension, allowed under Architectural Stability).
