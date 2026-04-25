@@ -23,7 +23,11 @@ Previously resolved: 396+ items across 149 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
-| FEAT-3 | FEAT | Spaces — Phases 1 + 2 shipped (model + bootstrap + switcher + list/search scoping + create-in-space + Move + link picker); Phases 3–6 remaining (per-space tabs + recent, agenda/graph/backlinks scoping, per-space journal, polish) | L |
+| FEAT-3 | FEAT | Spaces — parent / umbrella (Phases 1 + 2 shipped; Phases 3–6 split into FEAT-3p3..FEAT-3p6) | S |
+| FEAT-3p3 | FEAT | Spaces Phase 3: per-space tabs + per-space recent pages (`tabsBySpace` + `recentPagesBySpace` refactor) | M |
+| FEAT-3p4 | FEAT | Spaces Phase 4: agenda / graph / backlinks / tags / properties scoping (largest remaining slice) | L |
+| FEAT-3p5 | FEAT | Spaces Phase 5: per-space journal (J1) + per-space journal templates | M |
+| FEAT-3p6 | FEAT | Spaces Phase 6: polish (keyboard shortcuts, space management UI, brand identity, collapsed-icon indicator) | M |
 | FEAT-4 | FEAT | Agent access: expose notes to external agents via an MCP server — parent / umbrella | L |
 | FEAT-4i | FEAT | MCP v3 — Mobile (HTTPS/LAN via mTLS reuse from `sync_cert.rs`, agent-pairing flow) — DEFERRED pending v2 | L |
 | FEAT-4k | FEAT | MCP activity feed shows the bare tool name as the entry summary; per-tool privacy-safe summaries pending (`TODO(FEAT-4h-followup)` in `src-tauri/src/mcp/server.rs`) | S |
@@ -204,9 +208,87 @@ Fresh installs and upgrades both run a boot-time Rust bootstrap (`src-tauri/src/
 - **First-boot UI:** LoadingSkeleton on space-scoped panels until `useSpaceStore.isReady === true`.
 - **Search operator:** the switcher is the only scoping surface — no `space:<name>` operator.
 
-**Cost:** L — 4 remaining phases (3–6), each a focused session with a mandatory review subagent per AGENTS.md. Phase 4 (agenda/graph/backlinks/tags/properties scoping) is the largest single slice remaining.
+**Cost:** S — this umbrella entry is now a tracker only. Each remaining phase is filed as its own item: FEAT-3p3 (tabs/recent), FEAT-3p4 (agenda/graph/backlinks), FEAT-3p5 (journal), FEAT-3p6 (polish). Schedule via the per-phase items, not this umbrella.
 
-**Status:** IN PROGRESS — Phases 1 + 2 shipped. Phases 3–6 remaining, schedulable in any order consistent with the DAG (Phase 3 is per-space tabs/recent; Phase 4 is agenda/graph/backlinks; Phase 5 is journal; Phase 6 is polish + management UI + the two Phase 1 UX follow-ups above).
+**Status:** IN PROGRESS — Phases 1 + 2 shipped. Remaining work tracked under FEAT-3p3 / FEAT-3p4 / FEAT-3p5 / FEAT-3p6.
+
+### FEAT-3p3 — Spaces Phase 3: per-space tabs + per-space recent pages
+
+**Problem:** `useNavigationStore.tabs` and `useRecentPagesStore.recentPages` are still global. Switching space does not swap the tab set or the recent strip, so cross-space context bleeds through the navigation surface (visible in TabBar + RecentPagesStrip + the sidebar tab dropdown).
+
+**Scope (one focused session — both refactors must land together):**
+
+- `useNavigationStore`: `tabs: Tab[]` → `tabsBySpace: Record<SpaceId, Tab[]>`, `activeTabIndex: number` → `activeTabIndexBySpace: Record<SpaceId, number>`. Every action (`navigateToPage`, `goBack`, `openInNewTab`, `closeTab`, `switchTab`, `selectPageStack`) reads/writes the current space's slice. Persistence `partialize` serializes the full map; on rehydrate, if the persisted `currentSpaceId` no longer resolves, fall back to the first existing space.
+- `useRecentPagesStore`: `recentPages: string[]` → `recentPagesBySpace: Record<SpaceId, string[]>`. Same dedup + MRU rules per-space. Switching space swaps the strip. Visits never cross space boundaries.
+- One-line swaps in `TabBar.tsx`, `RecentPagesStrip.tsx`, the active-tab dropdown switcher, and `keyboard-config.ts` (selectors / data sources only — DOM and styling stay).
+- FEAT-7 autohide guard preserved: tab bar hides when the current space has ≤1 tab.
+- Space deletion requires closing/reassigning all tabs in that space (Phase 6 closes the loop on the deletion UI; this phase ensures the data-shape supports it).
+
+**Testing (per AGENTS.md):**
+- Persistence round-trip for `tabsBySpace` and `recentPagesBySpace`.
+- Rehydrate with a stale `currentSpaceId` — falls back cleanly.
+- Per-space dedup invariants (property test): `recentPagesBySpace[s]` is dedup'd per-space; entries never duplicate the page in another space's list.
+- Cross-space tab-open never affects another space's tab list.
+
+**Cost:** M — single focused session.
+**Status:** Open. Schedulable any time after FEAT-3 Phases 1 + 2 (already shipped).
+
+### FEAT-3p4 — Spaces Phase 4: agenda / graph / backlinks / tags / properties scoping
+
+**Problem:** The remaining query commands still surface cross-space results. `list_undated_tasks`, `list_projected_agenda`, `query_by_tags`, `query_by_property`, `list_page_links`, `get_backlinks`, `list_backlinks_grouped`, `query_backlinks_filtered`, `count_agenda_batch`, `count_agenda_batch_by_source` all need `space_id: Option<String>` threaded through, with the `?N IS NULL OR COALESCE(b.page_id, b.id) IN (...)` filter pattern established in FEAT-3 Phase 2.
+
+**Backend scope:**
+- Thread `space_id` through every command in the list above. Reuse the `space_filter_clause!` macro and the FEAT-3 helper that resolves content blocks to their page ancestor via the `page_id` column + `space` ref property.
+- `AgendaQuery` struct already bundles the three agenda knobs to keep `list_blocks` under the tauri-specta 10-arg limit; reuse the same struct shape for the new agenda commands if any cross the limit.
+- For each command: happy path, cross-space exclusion, nonexistent `space_id` returns empty, exact-count assertions (`assert_eq!`, never `>=`).
+- Property test (`fast-check`): for any two non-empty spaces, their result sets are disjoint and their union equals the full non-space result set.
+
+**Frontend scope:**
+- Migrate every callsite of the listed commands to pass `currentSpaceId`: `useBlockTags`, `agenda-filters`, `GraphView.helpers`, `export-graph`, backlinks views, `TrashView`, `useResolveStore.preload()`, template helpers, property UI.
+- Status-bar chip showing the active space name (follows existing sync-status chip pattern).
+- Optional polish (P2 from UX review): a subtle "Pages in &lt;SpaceName&gt;" header on the link-picker suggestions so the current-space scoping isn't silent.
+
+**Recursive CTE invariants preserved:** `list_children`, cascade ops unchanged. Space is a query-time filter, not a structural partition. `is_conflict = 0` + `depth < 100` invariants stay where they are.
+
+**Cost:** L — biggest remaining FEAT-3 slice (10+ commands × backend + 7+ frontend areas + property tests). Realistic estimate: 1–2 focused sessions.
+**Status:** Open. Depends on FEAT-3 Phases 1 + 2 (shipped). Independent of FEAT-3p3, FEAT-3p5, FEAT-3p6.
+
+### FEAT-3p5 — Spaces Phase 5: per-space journal (J1) + per-space journal templates
+
+**Problem:** `commands/journal.rs::resolve_or_create_journal_page` still finds journal pages by `title = YYYY-MM-DD` only. With multiple spaces, two devices in different spaces both create a "today's journal" page that collides on title and (if hash-equal) on materialized state. Per the locked-in J1 decision: each space owns its own daily note.
+
+**Scope:**
+- `commands/journal.rs::resolve_or_create_journal_page` daily-page lookup changes from "find page where `title = YYYY-MM-DD`" to "find page where `title = YYYY-MM-DD` AND `space = current`".
+- Atomic-creation path: when creating today's journal page, set its `space` property in the same `BEGIN IMMEDIATE` transaction. Routes through `create_page_in_space` (this phase formalizes the route; H-3 from the backend review tracks the bypass cleanup).
+- Per-space journal templates via a `journal_template` property on each space block. No new schema — properties extension point.
+- Frontend: `JournalPage`'s 4 internal `createBlock({blockType: 'page'})` callsites route through `createPageInSpace`. (H-3a/H-3b cover the broader bypass cleanup; this phase covers the specific journal callsites.)
+
+**Testing:**
+- Journal per-space lookup, including the transition from "no journal today" to "journal created in current space".
+- Two spaces with the same date both have their own daily note; switching space swaps which one shows.
+- Journal template fetched per-space.
+
+**Cost:** M — single focused session.
+**Status:** Open. Depends on FEAT-3 Phases 1 + 2 (shipped). Couples loosely with H-3a / H-3b (backend `create_block` IPC enforcement) — recommend landing H-3a first, then this.
+
+### FEAT-3p6 — Spaces Phase 6: polish (keyboard shortcuts, management UI, brand identity, collapsed-icon indicator)
+
+**Problem:** The locked-in Phase 6 polish items have not landed: keyboard shortcuts to switch / cycle spaces, the space management UI (rename, delete-only-if-empty), and the two Phase 1 UX follow-ups about brand identity and collapsed-sidebar discoverability.
+
+**Scope:**
+- Keyboard shortcuts in `keyboard-config.ts`: `switchSpace` (default Ctrl+Shift+S, opens a `SearchablePopover` to jump by name) and `cycleSpace` (default Ctrl+Alt+S, rotates through spaces).
+- Space management UI: rename, delete (delete button DISABLED until the space is empty — no soft-delete, no reassign-on-delete flow per user decision), optional space icon/color, onboarding for second space.
+- Brand identity restoration in the sidebar (tooltip, persistent footer chip, or similar — window title + favicon currently carry the identity alone).
+- Collapsed-icon-sidebar space indicator (e.g. 32px circle with the first letter of the space name + tooltip) so users can see and switch spaces without expanding the sidebar.
+
+**Testing:**
+- Shortcut handler registered and callable; cycle wraps.
+- Delete button disabled state: hover tooltip explains why; switches to enabled when the space is empty; confirmation dialog on enable+click.
+- Rename round-trips through the property write.
+- a11y: every new control has `aria-label`, focus-visible ring, touch-target compliance per AGENTS.md frontend guidelines.
+
+**Cost:** M — single focused session.
+**Status:** Open. Depends on FEAT-3 Phases 1 + 2 (shipped). Independent of FEAT-3p3 / FEAT-3p4 / FEAT-3p5 — schedulable any time.
 
 ### FEAT-4 — Agent access: expose notes to external agents via an MCP server
 
@@ -1754,27 +1836,76 @@ The `agaric-app` GitHub org does not necessarily exist, the public release repo 
 - **Recommendation:** Wire the existing tested `run_cycle` into the spawned task loop with the documented poll/backoff cadence; add a smoke test that exercises the spawn path.
 - **Pass-1 source:** 10-gcal-spaces-misc / F1
 
-### C-2 — Foreground `ApplyOp` / `BatchApplyOps` permanent failures lose state with no retry
+### C-2 — Foreground `ApplyOp` / `BatchApplyOps` permanent failures lose state with no retry (parent — split into C-2a, C-2b)
 - **Domain:** Materializer
 - **Location:** `src-tauri/src/materializer/consumer.rs:177-179`; `src-tauri/src/materializer/retry_queue.rs:59-72`; `src-tauri/src/recovery/boot.rs:43-126`
 - **What:** After a single 100ms in-memory retry, `ApplyOp`/`BatchApplyOps` failures only bump `fg_errors` and the task is dropped. `RetryKind::from_task` excludes both task types, so the persistent retry queue is bypassed. There is no boot-time op-log replay path — `recover_at_boot` only handles drafts and pending snapshots.
 - **Why it matters:** Op log is durable but materialized core tables silently diverge from it. Data correctness depends entirely on every apply succeeding within ~100ms; a transient FK violation, lock contention, or disk hiccup leaves the user with phantom blocks. There is no automatic remediation.
-- **Cost:** M–L
-- **Risk:** Medium (retry semantics need to be idempotent end-to-end)
-- **Impact:** High (data integrity)
-- **Recommendation:** Either persist `ApplyOp`/`BatchApplyOps` failures to a retry queue with capped attempts and dead-letter logging, or implement a boot-time op-log replay that re-applies any unmaterialized ops. The "rebuild from op log" approach is the cleanest given CQRS.
+- **Cost:** L (combined) — split into C-2a (S, defense-in-depth detection) + C-2b (M-L, the actual replay path). C-2a should land first; C-2b can be scheduled separately when the user is ready for the larger change.
 - **Pass-1 source:** 02-materializer / F1 (verdict: CONFIRMED at Critical)
 
-### C-3 — `delete_attachment` leaks the on-disk file forever; non-reversible op drops `fs_path`
+### C-2a — Detect & log materializer divergence (no semantic change)
+- **Domain:** Materializer
+- **Location:** `src-tauri/src/materializer/consumer.rs:177-179`; `src-tauri/src/materializer/metrics.rs`
+- **What:** When the foreground retry exhausts (`Ok(Err(_)) | Err(_)` after the 100ms attempt), log the failed task with `op_log` seq + device_id + payload type at warn level, increment a new `fg_apply_dropped` metric, and emit a Tauri event so the StatusInfo banner can surface "N ops failed to materialize" to the user. Does NOT change retry semantics — purely observability.
+- **Why it matters:** Until C-2b lands, divergence is invisible. C-2a makes it visible to the user and to the integration test harness so future regressions don't go unnoticed.
+- **Cost:** S
+- **Risk:** Low (additive logging + metric)
+- **Impact:** Medium (visibility, blocks C-2b reviewer being unable to verify "before/after" without it)
+- **Recommendation:** Land C-2a first as a defense-in-depth slice. Once we're confident in the divergence rate observed in the wild, decide whether to schedule C-2b.
+- **Status:** Open. No dependencies.
+
+### C-2b — Boot-time op-log replay path for unmaterialized ops
+- **Domain:** Materializer / Recovery
+- **Location:** `src-tauri/src/recovery/boot.rs:43-126`; `src-tauri/src/materializer/coordinator.rs`
+- **What:** On boot, identify ops whose materialized state is missing or stale (e.g., compare `op_log` max-seq vs each derived table's high-water mark) and re-enqueue them through the materializer foreground queue. Idempotent: every existing op handler is already idempotent or trivially convertible (the materializer ALREADY uses `INSERT OR IGNORE` / UPSERT on the convergence path).
+- **Why it matters:** This is the actual fix for C-2. With it, op log truly is the source of truth: even after a crash mid-apply or a transient FK contention drop, the next boot reconciles automatically.
+- **Cost:** M–L
+- **Risk:** Medium (idempotency must be verified end-to-end across every op handler; replay needs progress markers so a partial replay survives a second crash)
+- **Impact:** High (closes the last automatic-divergence gap in CQRS)
+- **Recommendation:** Build on the existing `recover_at_boot` infrastructure. Each derived table tracks a "materialized through seq N" cursor; the replay walks `op_log WHERE seq > cursor`. Add an integration test that injects ApplyOp failure mid-batch, restarts the pool, and asserts state convergence post-replay.
+- **Status:** Open. Depends on C-2a (need divergence visibility before changing retry semantics).
+
+### C-3 — `delete_attachment` leaks the on-disk file forever; non-reversible op drops `fs_path` (parent — split into C-3a, C-3b, C-3c)
 - **Domain:** Commands / Attachments
 - **Location:** `src-tauri/src/commands/attachments.rs:138-179` (`delete_attachment_inner`); `src-tauri/src/materializer/handlers.rs:508-514`
 - **What:** `delete_attachment_inner` runs an op-log append + `DELETE FROM attachments` inside one IMMEDIATE tx but never calls `remove_file`. The materializer handler is also pure SQL. The `DeleteAttachment` op payload drops `fs_path`; combined with the op being non-reversible and the materializer's `cleanup_orphaned_attachments` being an explicit no-op, the file is unrecoverable + untrackable after compaction.
 - **Why it matters:** Permanent storage leak and impossible to garbage-collect even with a full vault scan because the op log no longer remembers the path.
-- **Cost:** S
-- **Risk:** Low (only adds an `fs::remove_file` call inside the tx + carries `fs_path` in the op payload)
-- **Impact:** High (storage, future portability, backup correctness)
-- **Recommendation:** Carry `fs_path` in the `DeleteAttachment` payload (op log evolution: extending an existing payload is fine within the architectural-stability rule); call `fs::remove_file` after the DB delete; implement `cleanup_orphaned_attachments` to reconcile FS vs DB.
+- **Cost:** M (combined) — split into C-3a (S, payload extension), C-3b (S, fs unlink), C-3c (S–M, GC pass). C-3a + C-3b should land in the same session; C-3c can be a separate slice.
 - **Pass-1 source:** 05-commands-system / F1
+
+### C-3a — Extend `DeleteAttachment` payload to carry `fs_path`
+- **Domain:** Commands / Op log schema
+- **Location:** `src-tauri/src/op.rs` (`DeleteAttachmentPayload`); `src-tauri/src/commands/attachments.rs::delete_attachment_inner`
+- **What:** Add `fs_path: String` to the `DeleteAttachment` op payload. Serialize/deserialize forward-compatibly (skip on missing during deserialization for backwards compat with existing op-log entries written before this change).
+- **Why it matters:** Without `fs_path` in the payload, no GC pass can correlate op-log delete events with on-disk files. This is the prerequisite for C-3b and C-3c.
+- **Cost:** S
+- **Risk:** Low — extending an existing op payload (additive field, default on missing). Per AGENTS.md "Architectural Stability": op-payload extension is allowed within the existing op-type and DOES NOT require user approval.
+- **Impact:** Medium (unblocks C-3b + C-3c)
+- **Recommendation:** Add the field, regenerate `.sqlx/` cache, run `cargo sqlx prepare`, snapshot test the new payload shape. Update `commands/attachments.rs::delete_attachment_inner` to populate the field from the just-fetched attachment row.
+- **Status:** Open. No dependencies.
+
+### C-3b — Call `fs::remove_file` inside `delete_attachment_inner`
+- **Domain:** Commands / Attachments
+- **Location:** `src-tauri/src/commands/attachments.rs::delete_attachment_inner`
+- **What:** After the DB delete inside the existing IMMEDIATE tx, call `tokio::fs::remove_file(fs_path)`. If the file is already missing (e.g. user deleted it manually), log at info level and continue — do not fail the command. If the remove fails for another reason (e.g. permission denied), log at warn level and continue — the op-log entry is still authoritative; C-3c will GC the orphan.
+- **Why it matters:** Closes the immediate leak for new deletes. Existing leaked files (pre-this-change) are recovered by C-3c.
+- **Cost:** S
+- **Risk:** Low — `remove_file` failures are non-fatal and logged; no FK or schema impact.
+- **Impact:** High — closes the leak going forward.
+- **Recommendation:** Land in the same session as C-3a. Add a Rust test that verifies the file is removed on success and that a missing-file scenario logs but does not error.
+- **Status:** Open. Depends on C-3a (needs `fs_path` in the payload to be reliable across compaction).
+
+### C-3c — Implement `cleanup_orphaned_attachments` (FS ↔ DB reconciliation)
+- **Domain:** Materializer / Lifecycle
+- **Location:** `src-tauri/src/materializer/handlers.rs::cleanup_orphaned_attachments`
+- **What:** Replace the no-op TODO with a real GC pass: scan the attachments directory, list every file, query `attachments.fs_path` for matches, and remove files that are not referenced. Schedule the pass at boot and after compaction. Bound the scan with a directory-listing chunk size so vaults with many files do not block.
+- **Why it matters:** Recovers files leaked before C-3a/C-3b shipped; provides ongoing defense-in-depth for any future code path that drops `fs_path` from a payload.
+- **Cost:** S–M
+- **Risk:** Medium — accidental deletion of a still-referenced file would be data loss. Test exhaustively.
+- **Impact:** Medium — recovers space; defense in depth for future bugs.
+- **Recommendation:** Add an exhaustive test set (file referenced + not referenced + referenced by an op that compacted out + referenced by the upcoming compaction). Consider a "dry-run" mode that logs what would be deleted before enabling actual deletion in production.
+- **Status:** Open. Depends on C-3a + C-3b having shipped (so the ongoing path is correct before retroactive GC runs).
 
 ---
 
@@ -1802,16 +1933,46 @@ The `agaric-app` GitHub org does not necessarily exist, the public release repo 
 - **Recommendation:** Replace one-shot `Notify` with an `AtomicBool` checked in the accept loop AND drop the listener bind on disable. Add an integration test asserting that a connection attempt after `set_enabled(false)` fails.
 - **Pass-1 source:** 09-mcp / F2; 05-commands-system / F21
 
-### H-3 — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated daily
+### H-3 — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated daily (parent — split into H-3a, H-3b, H-3c)
 - **Domain:** Spaces / Commands
 - **Location:** `src/components/JournalPage.tsx:170` (frontend); `src/components/TemplatesView.tsx:77` (frontend); `src-tauri/src/commands/journal.rs::resolve_or_create_journal_page`; `src-tauri/src/commands/blocks/crud.rs::create_block` (accepts `block_type='page'` with no space enforcement)
 - **What:** Bootstrap migrates only existing-at-first-boot pages. New daily journal pages, template pages, and direct `create_block` IPC calls produce pages with no `space` property. FEAT-3 Phase 1 documentation claims atomicity via `create_page_in_space` but the IPC backend doesn't enforce it.
 - **Why it matters:** Cross-space leak. Every new journal page after install is invisible to space-scoped queries. The "Personal/Work" partition silently degrades over time.
-- **Cost:** M
-- **Risk:** Medium (changes IPC contract for `create_block`)
-- **Impact:** High (FEAT-3 correctness)
-- **Recommendation:** Either reject `block_type='page'` from `create_block` (force callers through `create_page_in_space`) or have `create_block_in_tx` set the `space` property atomically when the type is `page`. Update journal/templates frontend callsites to use `create_page_in_space`. Add a property test: every block of type `page` has a non-null `space` property.
+- **Cost:** M (combined) — split into H-3a (S–M, backend enforcement), H-3b (S, frontend callsites), H-3c (S, property test). Recommend H-3a → H-3b → H-3c in one session.
 - **Pass-1 source:** 10-gcal-spaces-misc / F4, F5, F26; cross-references 04-commands-crud / F5
+
+### H-3a — Backend `create_block` IPC: enforce space property atomicity for `block_type='page'`
+- **Domain:** Spaces / Commands
+- **Location:** `src-tauri/src/commands/blocks/crud.rs::create_block_in_tx`
+- **What:** Choose ONE of two enforcement options and implement it: (a) reject `block_type='page'` from `create_block_in_tx` and return an error pointing the caller at `create_page_in_space`; (b) accept `block_type='page'` with a required `space_id` parameter and set the `space` property atomically inside the existing tx when the type is `page`. Option (b) is more defensive (callers can't forget to migrate) but changes the IPC contract for callers that don't yet pass `space_id`. Recommend option (b) with `space_id: Option<String>` defaulting to current-space if None — which keeps the IPC contract additive.
+- **Why it matters:** This is the structural fix. Without backend enforcement, every new feature added by future sessions that calls `create_block({blockType: 'page'})` re-introduces the bug.
+- **Cost:** S–M
+- **Risk:** Medium — IPC contract change for `create_block`. Existing frontend callsites must continue to work; H-3b migrates them. Coordinate frontend-backend in a single session if option (b) is chosen with a new required arg.
+- **Impact:** High
+- **Recommendation:** Implement option (b) with `space_id: Option<String>`. Inside the tx: when `block_type == "page"` and `space_id` is None, fall back to the current default space (the resolver already exists in `commands/spaces.rs`). When non-None, set the `space` property in the same tx. Add tests: page creation with explicit space, page creation with None (defaults), non-page creation ignores `space_id`.
+- **Status:** Open. Should land before H-3b. Couples loosely with FEAT-3p5 (per-space journal) — ideally land H-3a first, then FEAT-3p5 builds on it.
+
+### H-3b — Frontend journal/templates/`createBlock` callsites switch to `create_page_in_space` / `createPageInSpace`
+- **Domain:** Frontend / Spaces
+- **Location:** `src/components/JournalPage.tsx:170`; `src/components/TemplatesView.tsx:77`; any other callsites flagged by grep `createBlock\(\{[^)]*blockType:\s*['"]page`
+- **What:** Replace direct `createBlock({blockType: 'page'})` calls with `createPageInSpace(currentSpaceId, …)`. Update JournalPage's 4 internal page-creation callsites (also referenced in FEAT-3p5). Add a Biome lint or test guard preventing future regressions if feasible (e.g., a vitest unit test that greps the source for the forbidden pattern).
+- **Why it matters:** Closes the frontend half of H-3. With H-3a's backend enforcement, this is belt-and-suspenders, but the explicit calls also clarify intent for readers.
+- **Cost:** S
+- **Risk:** Low — purely additive on the frontend (uses an already-existing wrapper).
+- **Impact:** High (combined with H-3a) — together they close the bypass.
+- **Recommendation:** Land in the same session as H-3a. Update component tests where they assert on `createBlock` mock calls.
+- **Status:** Open. Depends on H-3a (backend must accept the new shape first).
+
+### H-3c — Property test: every page block has a non-null `space` property
+- **Domain:** Tests / Spaces
+- **Location:** `src-tauri/src/commands/spaces.rs` tests; `src-tauri/src/integration_tests.rs` (or a new spaces-invariant test file)
+- **What:** Add a property test (`fast-check` / `proptest`) that, after any sequence of valid command operations, asserts: for every block where `block_type = 'page' AND id NOT IN (seeded_space_ulids)`, the `space` property is non-null. Run on a few thousand random op sequences.
+- **Why it matters:** Catches future regressions from any new op-handler or command path that creates page blocks. Makes "nothing outside of spaces" a machine-checkable invariant.
+- **Cost:** S
+- **Risk:** Low (test-only).
+- **Impact:** Medium — guards the structural invariant going forward.
+- **Recommendation:** Use the existing fast-check / proptest harness. Generator: random sequences of CreateBlock + SetProperty + DeleteBlock for varying block types and content. Assert the invariant after each materialization step.
+- **Status:** Open. Depends on H-3a + H-3b (the invariant must already hold before the property test will pass).
 
 ### H-4 — `set_todo_state_inner` runs the state change, timestamp writes, and recurrence sibling creation across separate transactions
 - **Domain:** Commands / Recurrence
@@ -1868,16 +2029,46 @@ The `agaric-app` GitHub org does not necessarily exist, the public release repo 
 - **Recommendation:** Encode `ac.date` in the cursor; bump cursor version field.
 - **Pass-1 source:** 03-cache-pagination / F1
 
-### H-9 — Bug-report redaction allow-list misses GCal email, peer device IDs, and any other PII
+### H-9 — Bug-report redaction allow-list misses GCal email, peer device IDs, and any other PII (parent — split into H-9a, H-9b, H-9c)
 - **Domain:** Commands / System
 - **Location:** `src-tauri/src/commands/bug_report.rs`
 - **What:** Redaction only scrubs `$HOME` + local `device_id`. GCal account email (in error logs), peer device IDs (in sync error context), any property value with PII pass through verbatim into the ZIP destined for GitHub.
 - **Why it matters:** Bug reports cross the trust boundary the feature exists to police — the GitHub repo is public.
-- **Cost:** M
-- **Risk:** Medium (false positives in redaction can hide real bugs)
-- **Impact:** High
-- **Recommendation:** Replace allow-list scrub with a deny-list-of-tokens approach plus an "are you sure" UI that shows the user the redacted preview. At minimum, add GCal email, peer device IDs, and a `username@example.com`-style regex sweep.
+- **Cost:** L (combined) — split into H-9a (S, targeted scrubs — covers the user-visible regression today), H-9b (M, generic redaction architecture), H-9c (M, preview UI). H-9a is the immediate priority; H-9b + H-9c can be scheduled separately.
 - **Pass-1 source:** 05-commands-system / F5
+
+### H-9a — Bug-report: add specific scrubs for GCal email, peer device IDs, and email regex
+- **Domain:** Commands / System
+- **Location:** `src-tauri/src/commands/bug_report.rs::redact_log` (and similar redact helpers)
+- **What:** Extend the existing `$HOME` + `device_id` allow-list with three additional scrubs: (1) GCal account email (`oauth_account_email` from the keyring or in-memory state at redact time), (2) every known peer device ID (from `peer_refs` table at redact time), (3) a generic `[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}` email regex as a catch-all. Existing tests for redaction continue to pass; add three new ones.
+- **Why it matters:** Closes the immediate user-facing leak today. Cheap, low-risk, doesn't require redesign.
+- **Cost:** S
+- **Risk:** Low
+- **Impact:** High (closes the most likely PII leak vectors)
+- **Recommendation:** Land first. The list of "known peer device IDs" comes from a single `SELECT device_id FROM peer_refs` at redact time — no architecture change.
+- **Status:** Open. No dependencies.
+
+### H-9b — Bug-report: replace allow-list with deny-list-of-tokens architecture
+- **Domain:** Commands / System
+- **Location:** `src-tauri/src/commands/bug_report.rs`
+- **What:** Refactor the redact pipeline from "scrub these specific values" to "include only these specific token classes" (e.g. ULIDs, op_log seqs, error type names, file:line refs, well-known tracing field keys). Anything outside the safe-token set is replaced with `[REDACTED]`. Conservative-by-default: a property value that doesn't fit a known type gets redacted.
+- **Why it matters:** Makes the redaction posture future-proof — every new field added to a log line is redacted by default rather than leaked by default.
+- **Cost:** M
+- **Risk:** Medium (false positives can make logs hard to read; need careful tuning of the safe-token set)
+- **Impact:** High
+- **Recommendation:** Build on top of H-9a. Use the existing `tracing` JSON output as the input format; the safe-token set lives in a single constant array in `bug_report.rs`. Add a property test that no value outside the safe set survives the pipeline.
+- **Status:** Open. Should land after H-9a (which covers the immediate regression).
+
+### H-9c — Bug-report: "are you sure" UI showing the redacted preview before submit
+- **Domain:** Frontend / Commands
+- **Location:** `src/components/BugReportDialog.tsx`; `src-tauri/src/commands/bug_report.rs` (preview command)
+- **What:** Before the report ZIP is finalized for upload (or download to disk), show the user the redacted contents in a scrollable diff-style preview with a "Submit" button gated on the user's confirmation. Also expose a checkbox "I have reviewed the redacted output" required to enable Submit.
+- **Why it matters:** Defense-in-depth. Even with H-9a + H-9b, the user is the last line of defense for "did this leak my company email, my client name, my password I accidentally typed into a note?". The preview surfaces what's actually being sent.
+- **Cost:** M
+- **Risk:** Low (additive UI, no data path change)
+- **Impact:** High (user trust in the bug-report feature)
+- **Recommendation:** Tauri command `bug_report_preview()` returns the same redacted bundle as the existing submit, but does not upload. The dialog renders it via the existing `ScrollArea` + diff viewer primitives. Cross-references UX-277 (`BugReportDialog` polish — adding "no log-content preview before submit" was already filed there at S cost; this finding promotes it to H-9c with a richer scope).
+- **Status:** Open. Independent of H-9a / H-9b. May supersede the "no log-content preview" item in UX-277 — when H-9c lands, drop the preview bullet from UX-277.
 
 ### H-10 — `Created { Desc }` cursor pagination silently empty past page 1
 - **Domain:** Search & Links
@@ -1901,16 +2092,35 @@ The `agaric-app` GitHub org does not necessarily exist, the public release repo 
 - **Recommendation:** Compute `total_count` after self-reference + orphan filtering.
 - **Pass-1 source:** 07-search-links / F4
 
-### H-12 — `flush_draft` bypasses `MAX_CONTENT_LENGTH` and never validates target block exists
+### H-12 — `flush_draft` bypasses `MAX_CONTENT_LENGTH` and never validates target block exists (parent — split into H-12a, H-12b)
 - **Domain:** Drafts / Commands
 - **Location:** `src-tauri/src/commands/drafts.rs::flush_draft_inner`
-- **What:** Two issues conflate: oversized content and orphan target. `flush_draft` doesn't check the 256 KB cap and doesn't verify the target block_id exists; combined with the missing FK on `block_drafts.block_id` (see L-37), a stale draft can flush an `edit_block` op pointing nowhere.
+- **What:** Two issues conflate: oversized content and orphan target. `flush_draft` doesn't check the 256 KB cap and doesn't verify the target block_id exists; combined with the missing FK on `block_drafts.block_id` (see M-93), a stale draft can flush an `edit_block` op pointing nowhere.
 - **Why it matters:** A single user action lets oversized or orphan ops enter the append-only log. Op log is supposed to be the source of truth — invalid entries persist forever.
-- **Cost:** S–M
-- **Risk:** Medium (drafts crashing on flush is bad UX)
-- **Impact:** High
-- **Recommendation:** Validate target exists + size cap inside `flush_draft_inner`. Also reconsider the missing FK (see L-37).
+- **Cost:** M (combined) — split into H-12a (S, validate target) + H-12b (S, enforce size cap). Land both in one session.
 - **Pass-1 source:** 10-gcal-spaces-misc / F6, F7
+
+### H-12a — `flush_draft_inner`: validate target block exists before op-log append
+- **Domain:** Drafts / Commands
+- **Location:** `src-tauri/src/commands/drafts.rs::flush_draft_inner`
+- **What:** Before constructing and appending the `EditBlock` op, verify the target block_id is present in `blocks` AND `deleted_at IS NULL`. If absent, drop the draft (with a warn log + tracing event) instead of writing the orphan op. Run inside the existing tx so the check and the append are atomic.
+- **Why it matters:** Closes the orphan-op leak vector: stale drafts (e.g., user deleted the block on another device, then this device's connector flushed an old draft) no longer pollute the op log.
+- **Cost:** S
+- **Risk:** Low — strictly defensive; refusing to flush an orphan is the correct behavior.
+- **Impact:** High
+- **Recommendation:** Use `query_scalar!` for the existence check inside the same `BEGIN IMMEDIATE` tx. Drop the draft row if the target is missing — same UX as a successful flush that produces no observable change.
+- **Status:** Open. Independent of H-12b.
+
+### H-12b — `flush_draft_inner`: enforce `MAX_CONTENT_LENGTH` (256 KB)
+- **Domain:** Drafts / Commands
+- **Location:** `src-tauri/src/commands/drafts.rs::flush_draft_inner`
+- **What:** Before constructing the `EditBlock` op, check that the draft content's UTF-8 byte length does not exceed `MAX_CONTENT_LENGTH` (the same constant the regular edit path enforces). If exceeded, return an error to the user and KEEP the draft (so the user can edit it down) — DO NOT silently truncate.
+- **Why it matters:** Closes the oversized-op leak vector. Op log integrity preserved.
+- **Cost:** S
+- **Risk:** Low
+- **Impact:** High
+- **Recommendation:** Reuse the existing `MAX_CONTENT_LENGTH` constant. The same UX as the regular edit path: a clear error, the draft survives, the user can decide how to shrink it. Add a test asserting that a 257 KB draft errors out and stays unflushed.
+- **Status:** Open. Independent of H-12a.
 
 ### H-13 — `Op-log immutability has zero database-level enforcement
 - **Domain:** Core
