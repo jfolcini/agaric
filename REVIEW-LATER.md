@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-39 open items.
+47 open items.
 
 Previously resolved: 422+ items across 149 sessions.
 
@@ -32,6 +32,10 @@ Previously resolved: 422+ items across 149 sessions.
 | FEAT-4i | FEAT | MCP v3 — Mobile (HTTPS/LAN via mTLS reuse from `sync_cert.rs`, agent-pairing flow) — DEFERRED pending v2 | L |
 | FEAT-5 | FEAT | Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar) — parent / umbrella | L |
 | FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L |
+| FEAT-10 | FEAT | Adopt `tauri-plugin-deep-link` — Android OAuth callback (unblocks FEAT-5g), `agaric://` URLs, OS-level settings deep-link (composes with UX-276) | M |
+| FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L |
+| FEAT-12 | FEAT | Adopt `tauri-plugin-global-shortcut` — desktop-wide quick-capture hotkey into today's journal | M |
+| FEAT-13 | FEAT | Adopt `tauri-plugin-autostart` — launch on login so sync daemon, agenda, and notifier are warm at boot (desktop only) | S |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
@@ -40,6 +44,10 @@ Previously resolved: 422+ items across 149 sessions.
 | MAINT-99 | MAINT | No automated enforcement for several documented test rules (axe-audit per component test, IPC-error-path coverage, test file naming convention) | M |
 | MAINT-101 | MAINT | `tag-colors.ts` is localStorage-only despite header comment claiming property-sync persistence | M |
 | MAINT-103 | MAINT | `BlockPropertyEditor` inline editor uses absolute positioning without portal — should follow the `suggestion-renderer` pattern | M |
+| MAINT-106 | MAINT | Adopt `tauri-plugin-single-instance` — guard against two SQLite pools racing on the same DB when the user double-launches | S |
+| MAINT-107 | MAINT | Replace `navigator.clipboard.writeText` (5 call-sites) with `tauri-plugin-clipboard-manager` for cross-platform reliability | S |
+| MAINT-108 | MAINT | Adopt `tauri-plugin-window-state` — remember window size / position / monitor / maximized state across launches | S |
+| MAINT-109 | MAINT | Adopt `tauri-plugin-os` — refactor `collect_bug_report_metadata` to use the plugin's platform/version/arch/locale/hostname API | S |
 | TEST-2 | TEST | ~30 wrapper functions in `src/lib/tauri.ts` lack individual tests beyond the shallow cross-cutting test (only command-name verified, not `null` defaults / arg shape) | M |
 | TEST-3 | TEST | Browser/E2E `tauri-mock` `revert.ts` only handles 5 of 13 reversible op types — undo/redo for property/tag/state ops is a silent no-op in mock; can't be E2E-tested | M |
 | TEST-4 | TEST | 25 of 26 Playwright specs lack a console-error listener — backend / mock errors leak silently in every E2E suite except `smoke.spec.ts` | M |
@@ -638,6 +646,50 @@ Part of the FEAT-5 family. **Not scheduled.** Blocked on explicit design-review 
 
 **Status:** DEFERRED. Do NOT start without an explicit design-review session that resolves the four questions above.
 
+### FEAT-10 — Adopt `tauri-plugin-deep-link` (Android OAuth + `agaric://` URLs + settings deep-link)
+
+**Problem:** Three otherwise-unrelated needs all converge on OS-level URL routing:
+
+1. **Android OAuth (FEAT-5g blocker).** REVIEW-LATER FEAT-5g lists `tauri-plugin-oauth`'s loopback HTTP listener as the open Android question — Android sandboxes inbound TCP listeners. The Custom-Tabs + PKCE + App-Link flow that every other Android app uses needs an OS deep-link callback (`agaric://oauth/callback`) that only `tauri-plugin-deep-link` provides cleanly.
+2. **External agent / automation surface.** FEAT-4 (MCP) and the agenda views would benefit from `agaric://block/<ULID>` and `agaric://page/<ULID>` URIs callable from outside the app — terminal scripts, OS notifications, Spotlight/Files context-menu items.
+3. **Settings deep-link (UX-276).** UX-276 is currently scoped to in-app `?settings=keyboard` query params via `useNavigationStore`. Once the OS scheme is registered, `agaric://settings/keyboard` extends the same deep-link path to OS-level shortcuts and shared support links.
+
+**Fix:** Register the `agaric` scheme via `tauri-plugin-deep-link`. Backend: capture inbound deep-links in `lib.rs` setup, dispatch to a small router (`src-tauri/src/deeplink/mod.rs`) that maps schemes to existing commands (`get_block`, navigate-to-page, set-settings-tab). Frontend: a `useDeepLinkRouter` hook that listens on the `deep-link://new-url` event and feeds the navigation / settings stores. Coupled stack (AGENTS.md §"Coupled Dependency Updates") — bump in lockstep with the rest of the Tauri plugin set.
+
+**Cost:** M.
+**Risk:** M — adds an OS-level entry point; needs careful scheme-registration tests on each platform (Linux .desktop, macOS Info.plist, Windows registry, Android intent filter).
+**Impact:** L on Android (unblocks FEAT-5g), M on desktop (UX-276 + automation surface).
+
+### FEAT-11 — Adopt `tauri-plugin-notification` (OS notifications for due tasks / scheduled events)
+
+**Problem:** The app has agenda + due dates + scheduled dates + repeat properties + projected agenda + the Google Calendar push connector (FEAT-5), but zero OS-level notification path. A user with "buy groceries — DUE 09:00" cannot be notified by the OS unless the GCal push has already fired and their calendar app shows it. Org-mode / Logseq users expect "10 minutes before scheduled" and "due now" to surface as native notifications.
+
+**Fix:** Adopt `@tauri-apps/plugin-notification` + `tauri-plugin-notification`. New backend module `src-tauri/src/notifier/mod.rs` schedules notifications based on `due_date` + `scheduled_date` + property events from the materializer (analogous to `gcal_push::DirtyEvent`). Reuses the existing `agenda_view` queries to find blocks within the next-24h window on boot and on every materialize commit. Frontend: a Settings tab toggle + per-property filter. Mobile permissions: request `POST_NOTIFICATIONS` on Android 13+ via the plugin's permission API. Coupled stack — bump with the rest of the Tauri plugins.
+
+**Cost:** L — design (which events fire? how to dedupe? snooze semantics?), backend scheduler (~6 files), one Settings sub-tab, mobile permission flow, ~25 tests.
+**Risk:** M — wrong-time notifications and notification spam are both real failure modes; needs careful dedupe and "do not re-fire on materialize replay" guard.
+**Impact:** L — closes a recognised feature gap with Org-mode / Logseq parity; especially valuable on mobile where the user is unlikely to have the app foregrounded when a task is due.
+
+### FEAT-12 — Adopt `tauri-plugin-global-shortcut` (quick capture)
+
+**Problem:** "Press a global hotkey from anywhere → drop a line into the inbox / today's journal" is a canonical feature for Org-mode and Logseq users. Currently the app has no global capture path: the user must focus the window, navigate to the journal, click a block, and type. This is the friction that drives "I gave up on note-taking" stories.
+
+**Fix:** Adopt `@tauri-apps/plugin-global-shortcut` + `tauri-plugin-global-shortcut`. A new "Quick capture" Settings sub-tab with a single shortcut binding (default Ctrl+Alt+N on Linux/Windows, Cmd+Option+N on macOS, configurable). The shortcut focuses the window if hidden, opens a small modal `<QuickCaptureDialog />` (reuse `ui/dialog.tsx`), captures one block of input + optional tags, dispatches `create_block` against today's journal page, and closes. Desktop only (Android / iOS have no global-shortcut concept). Coupled stack — bump with the rest of the Tauri plugins.
+
+**Cost:** M.
+**Risk:** M — global shortcuts collide with OS shortcuts on a per-OS basis; the binding UI must surface conflicts gracefully.
+**Impact:** M — new user-facing capability; the kind of feature returning Org-mode users immediately ask for.
+
+### FEAT-13 — Adopt `tauri-plugin-autostart` (launch on login)
+
+**Problem:** The sync daemon, agenda, and (post-FEAT-11) notifier all benefit from being live whenever the user is logged in, not just when they remember to launch the app. Currently the app must be manually started after every reboot, which means missed notifications, stale agenda, and a sync-window gap between login and first launch.
+
+**Fix:** Adopt `tauri-plugin-autostart` + `@tauri-apps/plugin-autostart`. Settings → General gains a "Launch on login" toggle. Desktop only — Android handles this via foreground service / WorkManager (covered under FEAT-5g for the GCal connector). Coupled stack — bump with the rest of the Tauri plugins.
+
+**Cost:** S.
+**Risk:** S — plugin handles per-OS plumbing (XDG autostart `.desktop`, macOS `LaunchAgents`, Windows registry).
+**Impact:** M — quality-of-life; only fully meaningful once FEAT-11 (notifications) ships.
+
 ---
 
 ## PERF — Performance items
@@ -785,6 +837,54 @@ If a user pastes (or types) a code block whose content contains a line beginning
 **Cost:** M.
 **Risk:** M — touches editor blur lifecycle; needs careful tests.
 **Impact:** S — closes a small clipping risk and aligns with the documented floating-UI pattern.
+
+### MAINT-106 — Adopt `tauri-plugin-single-instance` (prevent two SQLite pools racing on the same DB)
+
+**Problem:** AGENTS.md "Database" specifies one WAL pool of 2 writers + 4 readers against `~/.local/share/com.agaric.app/notes.db`. There is currently no guard against the user launching the app twice — a second instance opens its own pool against the same file. Even with WAL the result is real risk: two materializer queues racing on hot pages, two sync daemons advertising the same device on mDNS, two op-log writers each stamping their own hash chain. AGENTS.md "Threat Model" is explicit that the focus is *data integrity*, not adversarial peers — a second instance is exactly the accidental-corruption scenario that justifies defensive plumbing.
+
+**Fix:** Add `tauri-plugin-single-instance` and register it in `lib.rs`. The plugin's callback receives the second-launch's argv and CWD — use it to focus the existing window and (post-FEAT-10) replay any deep-link argument the second launch carried. Desktop only — Android already enforces single-instance via the OS task model. Coupled stack — bump with the rest of the Tauri plugins.
+
+**Cost:** S.
+**Risk:** S — plugin is a thin wrapper; the only real surface is the focus-on-relaunch callback.
+**Impact:** M — closes a class of accidental-corruption bugs that is invisible until it bites; lowest-cost defensive add available.
+
+### MAINT-107 — Replace `navigator.clipboard.writeText` with `tauri-plugin-clipboard-manager`
+
+**Problem:** Five user-facing copy paths use `navigator.clipboard.writeText` directly:
+
+- `src/components/PageHeader.tsx:238, 254` (export page markdown)
+- `src/components/BugReportDialog.tsx:158, 162`
+- `src/components/AgentAccessSettingsTab.tsx:494`
+- `src/components/BlockContextMenu.tsx:324`
+- `src/components/DeviceManagement.tsx:221`
+
+The browser API works in WebKitGTK / WebView2 / Android WebView most of the time, but it is gated on secure-context + user-gesture in ways that vary per WebView, fails silently outside `https://` contexts on some Linux distros, and is the documented source of "copy didn't work" bug reports across other Tauri apps. The Tauri plugin gives a deterministic same-API one-liner that goes through the OS clipboard.
+
+**Fix:** Add `@tauri-apps/plugin-clipboard-manager` + `tauri-plugin-clipboard-manager`, expose a tiny wrapper `src/lib/clipboard.ts` (mirroring `src/lib/open-url.ts` and `src/lib/relaunch-app.ts`), replace the 5 call-sites. Add a vitest mock in the test setup (parity with the existing `@tauri-apps/plugin-shell` mock). Coupled stack — bump with the rest of the Tauri plugins.
+
+**Cost:** S.
+**Risk:** S — five mechanical site replacements + one new wrapper + one new mock.
+**Impact:** M — closes the recurring "copy didn't work on Linux Wayland / Android WebView" failure mode that is silent today.
+
+### MAINT-108 — Adopt `tauri-plugin-window-state` (remember window size / position across launches)
+
+**Problem:** The app has no window-state persistence. Every launch opens at the OS-default size and position — multi-monitor users in particular re-arrange the window every session. AGENTS.md §"Frontend Development Guidelines" mandates "responsive, accessible, modern, and intuitive" — this is a low-cost adherence gap. The plugin handles size, position, monitor, maximized, and fullscreen automatically.
+
+**Fix:** Add `tauri-plugin-window-state` + `@tauri-apps/plugin-window-state` and register the plugin in `lib.rs`. Two-line plugin call; no other code change. Coupled stack — bump with the rest of the Tauri plugins.
+
+**Cost:** S.
+**Risk:** S.
+**Impact:** M — quality-of-life; affects every user every launch.
+
+### MAINT-109 — Adopt `tauri-plugin-os` (refactor `collect_bug_report_metadata` and friends)
+
+**Problem:** `src-tauri/src/commands/bug_report.rs` collects platform / version / locale / arch / hostname / app data dir by hand. Multiple small per-platform branches creep in over time (BUG-34, BUG-40 already shifted log-dir / `RUST_LOG` resolution). `tauri-plugin-os` centralises all of these behind a documented cross-platform API.
+
+**Fix:** Add `tauri-plugin-os` + `@tauri-apps/plugin-os`. Refactor `collect_bug_report_metadata` to call the plugin's `platform()`, `version()`, `arch()`, `locale()`, `hostname()` instead of hand-rolled branches. Frontend gains a pre-fill path so `BugReportDialog` shows "macOS 14.5 / aarch64 / en-US" before submit (composes well with UX-277 / H-9c log-content preview). Coupled stack — bump with the rest of the Tauri plugins.
+
+**Cost:** S.
+**Risk:** S — purely a refactor of existing metadata collection; same fields, same shape.
+**Impact:** S — reduces hand-rolled per-platform code; small but real maintenance win as new OS versions ship.
 
 ### TEST-2 — ~30 wrapper functions in `src/lib/tauri.ts` lack individual tests beyond the shallow cross-cutting test
 
