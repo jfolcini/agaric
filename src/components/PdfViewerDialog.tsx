@@ -172,6 +172,47 @@ export function PdfViewerDialog({
     if (currentPage < numPages) goToPage(currentPage + 1)
   }, [currentPage, numPages, goToPage])
 
+  /** Keyboard shortcuts for page navigation while the dialog is open. */
+  useEffect(() => {
+    if (!open || numPages === 0) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip if a modifier key is held (avoids hijacking browser/OS shortcuts)
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+
+      // Defensive: don't trigger when focus is in an input/textarea/contenteditable
+      const target = e.target as HTMLElement | null
+      if (target) {
+        const tag = target.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
+      }
+
+      switch (e.key) {
+        case 'ArrowLeft':
+        case 'PageUp':
+          e.preventDefault()
+          goToPrev()
+          break
+        case 'ArrowRight':
+        case 'PageDown':
+          e.preventDefault()
+          goToNext()
+          break
+        case 'Home':
+          e.preventDefault()
+          goToPage(1)
+          break
+        case 'End':
+          e.preventDefault()
+          goToPage(numPages)
+          break
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [open, numPages, goToPrev, goToNext, goToPage])
+
   /** Re-render the current page when the container resizes. */
   useEffect(() => {
     const container = containerRef.current

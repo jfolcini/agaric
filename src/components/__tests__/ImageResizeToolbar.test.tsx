@@ -64,6 +64,29 @@ describe('ImageResizeToolbar', () => {
     expect(btn25).toBeInTheDocument()
   })
 
+  it('preset matching currentWidth has aria-pressed="true"; others "false" (UX-280)', () => {
+    render(<ImageResizeToolbar blockId="B1" currentWidth="50" onWidthChange={vi.fn()} />)
+
+    expect(screen.getByTestId('image-resize-25')).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByTestId('image-resize-50')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('image-resize-75')).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByTestId('image-resize-100')).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('aria-pressed updates when currentWidth changes (UX-280)', () => {
+    const { rerender } = render(
+      <ImageResizeToolbar blockId="B1" currentWidth="25" onWidthChange={vi.fn()} />,
+    )
+
+    expect(screen.getByTestId('image-resize-25')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('image-resize-100')).toHaveAttribute('aria-pressed', 'false')
+
+    rerender(<ImageResizeToolbar blockId="B1" currentWidth="100" onWidthChange={vi.fn()} />)
+
+    expect(screen.getByTestId('image-resize-25')).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByTestId('image-resize-100')).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('has role="toolbar" with aria-label', () => {
     render(<ImageResizeToolbar blockId="B1" currentWidth="100" onWidthChange={vi.fn()} />)
 

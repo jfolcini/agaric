@@ -19,7 +19,7 @@ describe('UnpairConfirmDialog', () => {
     expect(screen.getByText('Unpair device?')).toBeInTheDocument()
     expect(
       screen.getByText(
-        'This will remove the pairing with the paired device. You will need to pair again to sync.',
+        'This removes the pairing. Your notes and sync history remain on this device. You can pair again later to resume syncing.',
       ),
     ).toBeInTheDocument()
   })

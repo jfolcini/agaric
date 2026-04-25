@@ -85,6 +85,16 @@ export function SpaceSwitcher(): React.JSX.Element {
                * accessibility tree while `data-[disabled]` suppresses
                * the hover highlight.
                */}
+              {/*
+               * UX-284: the tooltip on this disabled entry never fires
+               * on touch — Radix only opens it on hover/focus. Append a
+               * small "(ⓘ)" affordance to the label so mobile users
+               * still see a visible "there is more context here" hint.
+               * The U+24D8 codepoint is text-only, which keeps the
+               * SelectItem's native-`<option>` test mock happy; the
+               * tooltip's `space.manageComingSoon` string remains the
+               * accessible source of truth (this is decorative).
+               */}
               <span>
                 <SelectItem
                   value={MANAGE_SENTINEL}
@@ -92,7 +102,7 @@ export function SpaceSwitcher(): React.JSX.Element {
                   aria-disabled="true"
                   className="text-muted-foreground"
                 >
-                  {t('space.manage')}
+                  {t('space.manage')} ⓘ
                 </SelectItem>
               </span>
             </TooltipTrigger>

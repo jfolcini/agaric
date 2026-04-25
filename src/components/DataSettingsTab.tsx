@@ -23,6 +23,11 @@ export function DataSettingsTab(): React.ReactElement {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
+  // UX-283: per-file progress for multi-file imports — shows
+  // "Importing file 2 of 5: document.md" while the loop runs.
+  const [currentFileIndex, setCurrentFileIndex] = useState<number | null>(null)
+  const [currentFileName, setCurrentFileName] = useState('')
+  const [totalFiles, setTotalFiles] = useState(0)
   const [exporting, setExporting] = useState(false)
 
   const handleFileImport = useCallback(
@@ -32,13 +37,17 @@ export function DataSettingsTab(): React.ReactElement {
 
       setImporting(true)
       setImportResult(null)
+      const fileArray = Array.from(files)
+      setTotalFiles(fileArray.length)
 
       let totalBlocks = 0
       let totalProps = 0
       const allWarnings: string[] = []
       let lastTitle = ''
 
-      for (const file of Array.from(files)) {
+      for (const [i, file] of fileArray.entries()) {
+        setCurrentFileIndex(i + 1)
+        setCurrentFileName(file.name)
         try {
           const content = await file.text()
           const result = await importMarkdown(content, file.name)
@@ -53,11 +62,14 @@ export function DataSettingsTab(): React.ReactElement {
       }
 
       setImportResult({
-        page_title: files.length === 1 ? lastTitle : `${files.length} files`,
+        page_title: fileArray.length === 1 ? lastTitle : `${fileArray.length} files`,
         blocks_created: totalBlocks,
         properties_set: totalProps,
         warnings: allWarnings,
       })
+      setCurrentFileIndex(null)
+      setCurrentFileName('')
+      setTotalFiles(0)
       setImporting(false)
 
       if (totalBlocks > 0) {
@@ -119,6 +131,19 @@ export function DataSettingsTab(): React.ReactElement {
               {importing ? t('data.importingMessage') : t('data.importButton')}
             </Button>
           </div>
+          {currentFileIndex !== null && (
+            <p
+              className="text-xs text-muted-foreground mt-2"
+              data-testid="import-progress"
+              aria-live="polite"
+            >
+              {t('data.importingProgress', {
+                index: currentFileIndex,
+                total: totalFiles,
+                name: currentFileName,
+              })}
+            </p>
+          )}
           {importResult && (
             <div className="import-result mt-3 text-xs space-y-1" data-testid="import-result">
               <p className="text-status-done-foreground">
