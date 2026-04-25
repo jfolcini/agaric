@@ -91,7 +91,13 @@ jobs:
         run: cargo install tauri-cli --locked
 
       - name: Build Tauri app
-        run: cargo tauri build
+        # `-v` raises tauri-bundler's log level so the real stdout/stderr
+        # of linuxdeploy / candle / light / codesign is captured in CI
+        # logs. Without it, every bundling failure surfaces only the
+        # generic `failed to run <tool>` wrapper from `output_ok()` in
+        # tauri-bundler, with no underlying error text. See the
+        # equivalent comment in release.yml.
+        run: cargo tauri build -v
 
       - name: Fix AppImage icon symlinks
         if: matrix.label == 'linux'
