@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-47 open items.
+49 open items.
 
 Previously resolved: 422+ items across 149 sessions.
 
@@ -74,12 +74,13 @@ Previously resolved: 422+ items across 149 sessions.
 | UX-282 | UX | `src/lib/announcer.ts` exists with `announce.*` i18n keys but is invoked from very few places — paid-for accessibility utility is largely unused | M |
 | PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S |
 | PUB-3 | PUB | Employer IP clearance before public release | S |
-| PUB-5 | PUB | Tauri updater endpoint points to a GitHub org/repo that does not yet exist | S |
+| PUB-5 | PUB | Tauri updater — wire endpoint URL + Minisign keypair (publish target is now jfolcini/agaric) | S |
 | PUB-7 | PUB | Missing `SECURITY.md` — private-disclosure contact pending publish target | S |
+| PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S |
+| PUB-9 | PUB | Windows code signing — apply for SignPath Foundation OSS sponsorship, then provision 2 GH Actions secrets (signtool wiring already shipped) | M |
 
-> **All remaining `PUB-*` items are DEFERRED until the publish target + timing is locked in.**
-> See the PUB section below for per-item details and the section preamble for
-> how agents should treat each status.
+> **`PUB-*` statuses are heterogeneous now that the publish target is concrete (`github.com/jfolcini/agaric`).**
+> PUB-5 / PUB-8 are ACTIONABLE; PUB-9 is BLOCKED on SignPath Foundation approval; PUB-2 / PUB-3 / PUB-7 remain DEFERRED on the identity / employer-IP / disclosure-contact decisions. See each item's detail section below for the per-item status line and concrete next steps.
 
 ---
 
@@ -1305,9 +1306,9 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Decision:** Defer — user-only legal task. Agent does nothing and does not revisit this item during routine sweeps. Will be marked cleared (and the item removed) only when the user explicitly states "PUB-3 is cleared".
 **Status:** DEFERRED — user task, not agent-actionable.
 
-### PUB-5 — Tauri updater endpoint points to a GitHub org/repo that does not yet exist
+### PUB-5 — Tauri updater endpoint + Minisign keypair not yet wired
 
-**Problem:** `src-tauri/tauri.conf.json:27-33` has:
+**Problem:** `src-tauri/tauri.conf.json:30` still points at a placeholder URL:
 ```json
 "updater": {
   "endpoints": [
@@ -1316,16 +1317,24 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
   "pubkey": ""
 }
 ```
-The `agaric-app` GitHub org does not necessarily exist, the public release repo is not yet created, and `pubkey` is empty (the `TAURI_SIGNING_PRIVATE_KEY` in `.github/workflows/release.yml` is commented out with a TODO). On a tagged release today, the updater URL would 404 and signing would be unconfigured. Before any public release binary is built, this needs to match real infrastructure.
+On a tagged release today the updater would 404 (the `agaric-app/org-mode-for-the-rest-of-us` repo doesn't exist) and signing is unconfigured (`pubkey` empty, `TAURI_SIGNING_PRIVATE_KEY` block in `.github/workflows/release.yml:93-95` commented out).
 
-**Options:**
-1. **Before publishing:** create the GitHub org/repo, generate Tauri signing keys (`cargo tauri signer generate`), upload the public key to `pubkey`, store the private key in GitHub Secrets as `TAURI_SIGNING_PRIVATE_KEY` (+ password), and uncomment the two lines in `release.yml`.
-2. **Disable the updater entirely** for the first public release. Remove the `updater` block from `tauri.conf.json` and the `tauri-plugin-updater` dependency from `src-tauri/Cargo.toml` until the infrastructure is in place.
-3. **Change the endpoint** to the actual publish target (e.g., `github.com/<final-org>/<final-repo>/releases/...`) once it is known.
+**Update — publish target is now concrete:** the public repo lives at `github.com/jfolcini/agaric`. The endpoint URL just needs to match. The PUB-2 identity decision (corporate-email-in-history) can still move under that path independently — the updater URL only needs to track wherever the release repo is at any given time. Per-platform code signing (PUB-8 Android, PUB-9 Windows) is orthogonal: those sign the OS-installable bundles for Gatekeeper / SmartScreen / Play Protect, while this signs the auto-update payload chain.
 
-**Cost:** S (per option)
-**Decision:** Defer — the publish target is not yet locked in. Revisit together with PUB-2 and PUB-7 when a publish plan is concrete. No changes to `tauri.conf.json`, `Cargo.toml`, or `release.yml` until then.
-**Status:** DEFERRED — revisit when the publish target/timing is decided.
+**Concrete remaining work:**
+1. **Pick the endpoint URL.** Default: `https://github.com/jfolcini/agaric/releases/latest/download/latest.json`. If PUB-2 ever moves the repo under an org, the URL moves too.
+2. **Generate the Minisign keypair** (`cargo tauri signer generate -w ~/.tauri/agaric.key`). Back up the private key offline — losing it means future updaters can't verify against the deployed pubkey, breaking the auto-update chain for installed users.
+3. **Paste the public key** into `tauri.conf.json` `updater.pubkey`.
+4. **Add two GH Actions secrets** at `Settings → Secrets and variables → Actions`:
+   - `TAURI_SIGNING_PRIVATE_KEY` — contents of the generated `.key` file
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the passphrase used at generation time
+5. **Uncomment** the two `TAURI_SIGNING_PRIVATE_KEY*` env lines in `release.yml:93-95` (just under the `# PUB-5: Uncomment …` comment).
+6. **Tag a release** to verify: tauri-action will produce `*.sig` files alongside each bundle (`.dmg.sig`, `.AppImage.sig`, `.msi.sig`, etc.), which the in-app updater fetches and verifies against the embedded pubkey.
+
+**Alternative (skip the updater):** if you don't want auto-update at all, remove the `updater` block from `tauri.conf.json` and the `tauri-plugin-updater` dependency from `src-tauri/Cargo.toml`. Users would update by manually downloading new releases.
+
+**Cost:** S (~30 min once the keypair + URL are decided).
+**Status:** ACTIONABLE — publish target resolved; remaining work is mechanical (keypair generation + URL edit + 2 secrets + 2 uncommented lines).
 
 ### PUB-7 — Missing `SECURITY.md` — private-disclosure contact pending publish target
 
@@ -1340,6 +1349,52 @@ The `agaric-app` GitHub org does not necessarily exist, the public release repo 
 **Cost:** S — ~30 min once the contact is picked.
 **Decision:** Defer alongside PUB-5 — revisit when the publish target + timing is concrete.
 **Status:** DEFERRED — revisit with PUB-5.
+
+### PUB-8 — Android release keystore + 4 GH Actions secrets
+
+**Problem:** `release.yml`'s `android-build-and-release` job already contains the full apksigner pipeline (zipalign + apksigner sign + apksigner verify + `gh release upload`), gated on a `ANDROID_KEYSTORE_BASE64` secret. Without the keystore + secrets the job uploads `agaric-<tag>-android-aarch64-unsigned.apk` (works on personal devices, but Play Protect warns and the APK can never be updated by a release-keystore-signed APK without uninstalling and losing data). The local `agaric-release.apk` previously in repo root was debug-keystore-signed and has the same dead-end property.
+
+**Concrete remaining work:**
+1. **Generate a release keystore** (one-time, locally):
+   ```bash
+   keytool -genkeypair -v \
+     -keystore ~/agaric-release.jks \
+     -alias agaric \
+     -keyalg RSA -keysize 4096 -validity 10000 \
+     -storetype PKCS12
+   ```
+   Pick stable CN/OU/O/L/ST/C — these are visible in Android Settings → Apps → Agaric → Advanced → "App signed by".
+2. **Back up `agaric-release.jks` offline** (not in the repo, not in the GH secret, not in any cloud-synced folder you might lose). Lose this key and you lose the ability to ship updates that overwrite installed apps — Android refuses signature changes on upgrade. The base64 in the GH secret is *not* a backup; secrets are write-only after creation.
+3. **Add 4 GH Actions secrets** at `Settings → Secrets and variables → Actions`:
+   - `ANDROID_KEYSTORE_BASE64` ← `base64 -w0 ~/agaric-release.jks`
+   - `ANDROID_KEYSTORE_PASSWORD` ← the store password from step 1
+   - `ANDROID_KEY_ALIAS` ← `agaric` (or whatever alias you chose)
+   - `ANDROID_KEY_PASSWORD` ← the key password from step 1
+4. **Tag a release.** Next `git push --tags` produces `agaric-<tag>-android-aarch64.apk` (no `-unsigned` suffix) on the GitHub Release.
+
+Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Builds"). If you ever want to ship via Play Store later, this same key becomes the **upload key** under Play App Signing — Google holds the actual app signing key in that flow.
+
+**Cost:** S (~15 min once you've decided what to use as DN).
+**Status:** ACTIONABLE — pure operations, no design decision pending.
+
+### PUB-9 — Windows code signing — apply for SignPath OSS sponsorship + provision 2 secrets
+
+**Problem:** `release.yml`'s `Sign Windows bundles` step already contains the full signtool pipeline (decode .pfx, find highest-version signtool.exe in the Windows SDK, `signtool sign /fd SHA256 /t timestamp.digicert.com`, `signtool verify /pa`, `gh release upload --clobber`), gated on a `WINDOWS_CERTIFICATE_BASE64` secret. Without the cert + secrets the .msi / .exe ship unsigned and Windows SmartScreen shows "Windows protected your PC" on every install for the first ~3000 users until reputation builds (or never, for low-volume distributions).
+
+**Decision: pursue SignPath Foundation OSS sponsorship** (free signing-as-a-service for qualifying open-source projects) rather than a paid OV/EV cert (~USD 200–400/year, EV requires hardware tokens that don't work in CI without extra plumbing).
+
+**Concrete remaining work:**
+1. **Apply** for the SignPath Foundation OSS sponsorship (search "SignPath Foundation" — the landing page URL has shifted historically and link checkers flag it as a network error in some configurations). Submit project repo URL + license + brief description. Approval typically takes 1–4 weeks.
+2. **Once approved:** SignPath provides an organization-scoped API token. The simplest integration uses SignPath's GitHub Action (`signpath/github-action-submit-signing-request`), which would replace our current self-hosted signtool step. Two ways to integrate:
+   - **Replace** the existing `Sign Windows bundles` step with the SignPath action — they sign in their cloud, return the signed artifact, we upload it. Cleanest, but couples to SignPath's service.
+   - **Keep** the current signtool step + populate `WINDOWS_CERTIFICATE_BASE64` from a SignPath-issued cert. Less common — most SignPath users use the action — but possible for ad-hoc certs.
+3. **Provision the relevant secrets** (depends on the integration path chosen above).
+4. **Tag a release** to verify SmartScreen no longer warns: install the signed .msi on a clean Windows 10/11 VM, observe the "Verified publisher" line in the UAC prompt.
+
+If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS status, etc.), the fallback is a paid Sectigo/DigiCert OV cert — see `BUILD.md` → "Windows code signing" for the procurement path.
+
+**Cost:** M — actual setup is ~30 min, but the SignPath approval cycle is the bottleneck (1–4 weeks of waiting).
+**Status:** BLOCKED on SignPath Foundation approval.
 
 ---
 
