@@ -1,0 +1,112 @@
+name: Bug report
+description: Something is broken in Agaric. File it here.
+title: 'bug: '
+labels: ['bug', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug.
+
+        - Security issue? **Do not file here.** See [SECURITY.md](https://github.com/jfolcini/agaric/blob/main/SECURITY.md) for the private reporting channel.
+        - Question or how-to? Open a draft PR with `[WIP]` in the title (Discussions are not enabled on this repo).
+
+  - type: checkboxes
+    id: prereqs
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched [open and closed issues](https://github.com/jfolcini/agaric/issues?q=is%3Aissue) and could not find a duplicate.
+          required: true
+        - label: I checked [`REVIEW-LATER.md`](https://github.com/jfolcini/agaric/blob/main/REVIEW-LATER.md) and could not find this item already triaged there.
+          required: true
+        - label: I am running the latest tagged release on `main`, or I have included the exact commit SHA below.
+          required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One sentence describing what is wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Step-by-step. Include the starting state (empty journal? imported notes? specific tag set?) — tag-routing and pagination bugs in particular depend on the data shape.
+      placeholder: |
+        1. Open the journal page for today.
+        2. Type `[[` to open the block-link picker.
+        3. Press `Tab` while the picker is open.
+        4. Observe …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Include exact error text, screenshots, or a short recording if it's a UI bug.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Agaric version
+      description: Tag (e.g. `0.1.6`) or commit SHA (`git rev-parse --short HEAD`).
+      placeholder: '0.1.6'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux (.deb / .rpm install)
+        - Linux (.AppImage)
+        - Linux (`cargo tauri dev`)
+        - macOS (.dmg / .app install)
+        - macOS (`cargo tauri dev`)
+        - Windows (.msi / .nsis install)
+        - Windows (`cargo tauri dev`)
+        - Android (release APK)
+        - Android (debug APK)
+        - Other / multiple
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS version
+      placeholder: 'Ubuntu 24.04.1 LTS / Windows 11 23H2 / macOS 15.7 / Android 14 on Pixel 7'
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        If the bug is reproducible, run with logging enabled and paste the relevant lines.
+        - Linux/macOS dev: `RUST_LOG=info cargo tauri dev`
+        - Installed app: `Settings → Developer → Show logs` (or `~/.local/share/com.agaric.app/logs/`)
+        Please redact any personal note content.
+      render: shell
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Workarounds, related issues, suspected root cause — optional.

@@ -1,0 +1,18 @@
+# Disable the "Open a blank issue" link so every report goes through the
+# Bug / Feature templates above. Drive-by support requests, security
+# findings, and how-tos all have dedicated channels — listing them
+# explicitly here keeps the New-Issue page self-documenting.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/jfolcini/agaric/security/advisories/new
+    about: Please do **not** file a public issue. Use a private GitHub Security Advisory or the email channel documented in SECURITY.md.
+
+  - name: Build / setup help
+    url: https://github.com/jfolcini/agaric/blob/main/BUILD.md
+    about: Prerequisites, platform-specific instructions, Android signing, CI pipeline, and troubleshooting live in BUILD.md. Open a bug report only if the documented setup is genuinely broken.
+
+  - name: Architectural / "should I change this?" question
+    url: https://github.com/jfolcini/agaric/blob/main/AGENTS.md#architectural-stability
+    about: Read the Architectural Stability section first. If you still need to discuss a structural change, open a draft PR titled `[WIP] discuss …` so the conversation lives next to the diff.

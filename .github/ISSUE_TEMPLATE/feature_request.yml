@@ -1,0 +1,83 @@
+name: Feature request
+description: Suggest a new capability or improvement.
+title: 'feat: '
+labels: ['feature', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please skim:
+
+        - [`AGENTS.md` § Architectural Stability](https://github.com/jfolcini/agaric/blob/main/AGENTS.md#architectural-stability) — the project deliberately avoids new schema, op types, stores, materializer queues, or sync message types. Most features should be expressible within existing abstractions (the properties system is the primary extension point).
+        - [`REVIEW-LATER.md`](https://github.com/jfolcini/agaric/blob/main/REVIEW-LATER.md) — your idea may already be in the backlog.
+        - [`FEATURE-MAP.md`](https://github.com/jfolcini/agaric/blob/main/FEATURE-MAP.md) — current capability inventory.
+
+  - type: checkboxes
+    id: prereqs
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched [open and closed issues](https://github.com/jfolcini/agaric/issues?q=is%3Aissue) and could not find a duplicate.
+          required: true
+        - label: I checked `REVIEW-LATER.md` and `FEATURE-MAP.md` for an existing entry.
+          required: true
+        - label: This proposal does **not** require introducing a new schema migration, op type, Zustand store, materializer queue, or sync message type — or, if it does, I am opening this issue specifically to discuss whether such a change is justified.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user-facing problem is this solving? What is the user trying to do today, and where do they get stuck?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: |
+        Sketch the smallest change that fixes the problem. Prefer:
+        - a new slash command, picker entry, or filter dimension over a new view;
+        - a new property definition (text / number / date / ref) over a new column on `blocks`;
+        - extending an existing store over creating a new one;
+        - extending the existing serializer/materializer over adding a new pipeline.
+
+        If the smallest change still requires structural work, say so explicitly and explain why nothing smaller can deliver the user value.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Smaller / different approaches that didn't quite work, and why.
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Rough scope
+      description: Cost key matches `REVIEW-LATER.md` — S = <2 h, M = 2–8 h, L = 8 h+.
+      options:
+        - 'S — under 2 hours'
+        - 'M — 2 to 8 hours'
+        - 'L — 8 hours or more'
+        - 'Not sure'
+    validations:
+      required: true
+
+  - type: textarea
+    id: ux
+    attributes:
+      label: User-facing surface
+      description: |
+        If this is a UI feature, sketch the new behaviour. Reference existing
+        components / shared hooks where applicable. New primitives should
+        follow the CVA + Radix + `cn()` conventions in
+        [`AGENTS.md` § Frontend Development Guidelines](https://github.com/jfolcini/agaric/blob/main/AGENTS.md#frontend-development-guidelines).
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Related issues, prior art in other tools (Logseq / Obsidian / Org-mode equivalents are welcome), open questions.
