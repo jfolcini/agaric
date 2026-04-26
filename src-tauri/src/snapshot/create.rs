@@ -318,7 +318,17 @@ pub async fn get_latest_snapshot(pool: &SqlitePool) -> Result<Option<(String, Ve
 /// Delete old complete snapshots, keeping only the `keep` most recent.
 /// Also deletes any lingering 'pending' snapshots (crash leftovers).
 /// Returns the number of deleted rows.
+///
+/// M-68: `keep == 0` is treated as a no-op (returns `Ok(0)` without
+/// touching the table). SQLite evaluates `x NOT IN (empty subquery)`
+/// as TRUE, so naively passing `LIMIT 0` to the subquery would delete
+/// every row, including completes — almost certainly not what any
+/// caller wants. Callers that genuinely need to clear all snapshots
+/// must do so explicitly.
 pub async fn cleanup_old_snapshots(pool: &SqlitePool, keep: usize) -> Result<u64, AppError> {
+    if keep == 0 {
+        return Ok(0);
+    }
     // keep is a small configuration value (typically < 100); safe to cast
     #[allow(clippy::cast_possible_wrap)]
     let keep_i64 = keep as i64;

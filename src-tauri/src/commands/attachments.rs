@@ -1,8 +1,11 @@
 //! Attachments command handlers.
 
+use std::path::Path;
+
 use sqlx::SqlitePool;
 use tracing::instrument;
 
+use tauri::Manager;
 use tauri::State;
 
 use crate::db::{ReadPool, WritePool};
@@ -23,16 +26,28 @@ use super::*;
 /// an `AddAttachment` op, inserts into the `attachments` table, and dispatches
 /// background cache tasks.
 ///
+/// M-29: also stat-checks the file at `app_data_dir.join(&fs_path)` inside
+/// the IMMEDIATE transaction so a row is never committed without the
+/// underlying bytes on disk. The frontend writes the bytes via
+/// `@tauri-apps/plugin-fs` *before* invoking this command; if that write
+/// failed silently or the path drifted, the metadata lookup surfaces the
+/// problem as `AppError::Io` instead of leaving the sync layer to report
+/// `MissingAttachment` later.
+///
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
 /// - [`AppError::Validation`] — size exceeds 50 MB or MIME type not allowed
+/// - [`AppError::Io`] — `fs_path` does not resolve to a file under
+///   `app_data_dir` (or `metadata.len()` disagrees with `size_bytes` in
+///   debug builds)
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(pool, device_id, materializer, fs_path), err)]
+#[instrument(skip(pool, device_id, materializer, app_data_dir, fs_path), err)]
 pub async fn add_attachment_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
+    app_data_dir: &Path,
     block_id: String,
     filename: String,
     mime_type: String,
@@ -91,6 +106,24 @@ pub async fn add_attachment_inner(
             "block '{block_id}' (not found or deleted)"
         )));
     }
+
+    // M-29: confirm the file really exists on disk before committing
+    // the row. The frontend writes bytes via `@tauri-apps/plugin-fs`
+    // *before* invoking `add_attachment`; without this guard, a silent
+    // FS-write failure leaves the DB row pointing at a non-existent
+    // file and the sync layer eventually reports `MissingAttachment`.
+    // Doing this inside the IMMEDIATE tx keeps it TOCTOU-safe relative
+    // to the row insert.
+    let full_path = app_data_dir.join(&fs_path);
+    let metadata = std::fs::metadata(&full_path)?;
+    debug_assert_eq!(
+        i64::try_from(metadata.len()).unwrap_or(i64::MAX),
+        size_bytes,
+        "attachment fs metadata size ({}) does not match declared size_bytes ({}) for {}",
+        metadata.len(),
+        size_bytes,
+        full_path.display(),
+    );
 
     // Append to op_log within transaction
     let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
@@ -209,6 +242,7 @@ pub async fn list_attachments_inner(
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
 pub async fn add_attachment(
+    app: tauri::AppHandle,
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
@@ -218,10 +252,15 @@ pub async fn add_attachment(
     size_bytes: i64,
     fs_path: String,
 ) -> Result<AttachmentRow, AppError> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
     add_attachment_inner(
         &pool.0,
         device_id.as_str(),
         &materializer,
+        &app_data_dir,
         block_id,
         filename,
         mime_type,

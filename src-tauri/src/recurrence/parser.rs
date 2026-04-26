@@ -48,6 +48,13 @@ pub(crate) fn shift_date_once(
             }
             let (num_str, unit) = num_unit.split_at(num_unit.len() - 1);
             let n: i64 = num_str.parse().ok()?;
+            // M-79: Org-mode recurrence semantics never go backwards (and
+            // a zero interval would either no-op or, in `++` mode, loop
+            // until the safety limit). Reject negative and zero counts at
+            // parse time.
+            if n <= 0 {
+                return None;
+            }
             match unit {
                 "d" => base + chrono::Duration::days(n),
                 "w" => base + chrono::Duration::days(n * 7),

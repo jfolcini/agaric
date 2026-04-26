@@ -120,16 +120,92 @@ pub fn decrypt_message(key: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>, App
 // QR Code Payload & SVG Generation
 // ---------------------------------------------------------------------------
 
+/// L-59: current pairing QR payload schema version. Increment whenever
+/// the JSON shape changes in a way that would confuse older joiners.
+pub const PAIRING_QR_VERSION: u32 = 1;
+
 /// Build the JSON payload for a pairing QR code.
 ///
-/// Returns: `{"passphrase":"w1 w2 w3 w4","host":"...","port":12345}`
+/// Returns: `{"v":1,"passphrase":"w1 w2 w3 w4","host":"...","port":12345}`.
+///
+/// L-59: the leading `"v"` field tags the schema version so the joining
+/// device fails fast on a payload it cannot parse — a stale QR or an
+/// unrecognised future shape — rather than silently dropping fields.
 pub fn pairing_qr_payload(passphrase: &str, host: &str, port: u16) -> String {
     serde_json::json!({
+        "v": PAIRING_QR_VERSION,
         "passphrase": passphrase,
         "host": host,
         "port": port,
     })
     .to_string()
+}
+
+/// Decoded payload extracted from a pairing QR code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairingQrPayload {
+    pub passphrase: String,
+    pub host: String,
+    pub port: u16,
+}
+
+/// L-59: parse a pairing QR JSON payload, validating its schema version.
+///
+/// Returns [`AppError::InvalidOperation`] tagged with
+/// `pairing_qr.unsupported_version` when `v` is missing or not equal to
+/// [`PAIRING_QR_VERSION`], so the joining device can surface a
+/// "regenerate the QR on the host device" message rather than silently
+/// dropping fields the parser does not understand.
+pub fn parse_pairing_qr(json: &str) -> Result<PairingQrPayload, AppError> {
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+        AppError::InvalidOperation(format!("[pairing] invalid pairing QR JSON: {e}"))
+    })?;
+
+    let object = value.as_object().ok_or_else(|| {
+        AppError::InvalidOperation("[pairing] pairing QR payload must be a JSON object".into())
+    })?;
+
+    // Version gate: missing or unrecognised `v` is a fatal error so we
+    // never half-parse a future schema.
+    let version = object
+        .get("v")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| AppError::InvalidOperation("pairing_qr.unsupported_version".into()))?;
+    if version != u64::from(PAIRING_QR_VERSION) {
+        return Err(AppError::InvalidOperation(
+            "pairing_qr.unsupported_version".into(),
+        ));
+    }
+
+    let passphrase = object
+        .get("passphrase")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            AppError::InvalidOperation("[pairing] pairing QR missing 'passphrase' field".into())
+        })?
+        .to_string();
+    let host = object
+        .get("host")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            AppError::InvalidOperation("[pairing] pairing QR missing 'host' field".into())
+        })?
+        .to_string();
+    let port = object
+        .get("port")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|p| u16::try_from(p).ok())
+        .ok_or_else(|| {
+            AppError::InvalidOperation(
+                "[pairing] pairing QR missing or invalid 'port' field".into(),
+            )
+        })?;
+
+    Ok(PairingQrPayload {
+        passphrase,
+        host,
+        port,
+    })
 }
 
 /// Render `data` as a QR code and return the SVG markup.
@@ -368,9 +444,87 @@ mod tests {
         let payload = pairing_qr_payload("alpha bravo charlie delta", "192.168.1.42", 12345);
         let parsed: serde_json::Value =
             serde_json::from_str(&payload).expect("payload must be valid JSON");
+        // L-59: payload must declare its schema version explicitly.
+        assert_eq!(parsed["v"], 1, "L-59: payload must include \"v\":1");
         assert_eq!(parsed["passphrase"], "alpha bravo charlie delta");
         assert_eq!(parsed["host"], "192.168.1.42");
         assert_eq!(parsed["port"], 12345);
+    }
+
+    /// L-59: encoded payload must always include `"v":1`, even when host
+    /// / port carry placeholder values.
+    #[test]
+    fn pairing_qr_payload_includes_version_field() {
+        let payload = pairing_qr_payload("a b c d", "0.0.0.0", 0);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&payload).expect("payload must be valid JSON");
+        assert_eq!(
+            parsed["v"], 1,
+            "L-59: every QR payload — even sentinel host/port — must carry the version"
+        );
+        assert_eq!(parsed["v"].as_u64(), Some(u64::from(PAIRING_QR_VERSION)));
+    }
+
+    /// L-59: `parse_pairing_qr` must accept the encoder's own output —
+    /// round-trip safety is the primary contract.
+    #[test]
+    fn parse_pairing_qr_round_trips_encoded_payload() {
+        let payload = pairing_qr_payload("alpha bravo charlie delta", "10.0.0.5", 8443);
+        let decoded =
+            parse_pairing_qr(&payload).expect("encoded payload must round-trip through parser");
+        assert_eq!(decoded.passphrase, "alpha bravo charlie delta");
+        assert_eq!(decoded.host, "10.0.0.5");
+        assert_eq!(decoded.port, 8443);
+    }
+
+    /// L-59: a payload missing `v` must be rejected with the
+    /// `pairing_qr.unsupported_version` tag so the joiner can show a
+    /// version-mismatch message instead of silently parsing unknown
+    /// fields.
+    #[test]
+    fn parse_pairing_qr_rejects_missing_version() {
+        let payload = serde_json::json!({
+            "passphrase": "a b c d",
+            "host": "10.0.0.5",
+            "port": 8443,
+        })
+        .to_string();
+        let err =
+            parse_pairing_qr(&payload).expect_err("missing 'v' must surface as version error");
+        match err {
+            AppError::InvalidOperation(msg) => {
+                assert_eq!(
+                    msg, "pairing_qr.unsupported_version",
+                    "L-59: error tag must be pairing_qr.unsupported_version, got {msg}"
+                );
+            }
+            other => panic!("expected InvalidOperation, got {other:?}"),
+        }
+    }
+
+    /// L-59: an unknown future `"v":2` must be rejected with the same
+    /// `pairing_qr.unsupported_version` tag, matching the missing-version
+    /// case above.
+    #[test]
+    fn parse_pairing_qr_rejects_unknown_version() {
+        let payload = serde_json::json!({
+            "v": 2,
+            "passphrase": "a b c d",
+            "host": "10.0.0.5",
+            "port": 8443,
+        })
+        .to_string();
+        let err =
+            parse_pairing_qr(&payload).expect_err("unknown 'v':2 must surface as version error");
+        match err {
+            AppError::InvalidOperation(msg) => {
+                assert_eq!(
+                    msg, "pairing_qr.unsupported_version",
+                    "L-59: error tag must be pairing_qr.unsupported_version, got {msg}"
+                );
+            }
+            other => panic!("expected InvalidOperation, got {other:?}"),
+        }
     }
 
     #[test]

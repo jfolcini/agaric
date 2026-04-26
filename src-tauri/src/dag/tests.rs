@@ -168,6 +168,80 @@ async fn insert_remote_op_with_parent_seqs() {
     assert_eq!(fetched.parent_seqs, parent_seqs);
 }
 
+/// M-5: an op whose `parent_seqs` references a `(device_id, seq)` that
+/// has not yet landed in the op_log must be rejected with
+/// `AppError::InvalidOperation("dag.parent_seqs.unresolved")`.
+///
+/// Without the check, the dangling parent silently lands on disk and
+/// later DAG walks (`find_lca`, history reconstruction) surface as
+/// inscrutable `NotFound` errors.  Fail fast on insert instead.
+#[tokio::test]
+async fn insert_remote_op_rejects_unresolved_parent_seqs() {
+    let (pool, _dir) = test_pool().await;
+
+    // No prior op exists — `(remote-dev, 99)` does not resolve.
+    let parent_seqs = Some(r#"[["remote-dev",99]]"#.to_owned());
+    let record = make_remote_record(
+        "remote-dev",
+        1,
+        parent_seqs,
+        "edit_block",
+        r#"{"block_id":"B1","to_text":"orphan","prev_edit":["remote-dev",99]}"#,
+    );
+
+    let err = insert_remote_op(&pool, &record).await;
+    assert!(
+        err.is_err(),
+        "op with unresolved parent_seqs must be rejected"
+    );
+    let msg = err.unwrap_err().to_string();
+    assert!(
+        msg.contains("dag.parent_seqs.unresolved"),
+        "expected dag.parent_seqs.unresolved error, got: {msg}"
+    );
+
+    // Confirm nothing was inserted.
+    let fetched = get_op_by_seq(&pool, "remote-dev", 1).await;
+    assert!(
+        matches!(fetched, Err(AppError::NotFound(_))),
+        "rejected op must not land in op_log"
+    );
+}
+
+/// M-5: an op whose `parent_seqs` lists multiple parents must reject
+/// when *any* parent is unresolved, even if some parents do exist.
+#[tokio::test]
+async fn insert_remote_op_rejects_partial_unresolved_parent_seqs() {
+    let (pool, _dir) = test_pool().await;
+
+    // Land one parent into op_log.
+    let r1 = make_remote_record(
+        "remote-dev",
+        1,
+        None,
+        "create_block",
+        r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"v1"}"#,
+    );
+    insert_remote_op(&pool, &r1).await.unwrap();
+
+    // Reference both the resolved parent and a missing one.
+    let parent_seqs = Some(r#"[["remote-dev",1],["other-dev",42]]"#.to_owned());
+    let record = make_remote_record(
+        "remote-dev",
+        2,
+        parent_seqs,
+        "edit_block",
+        r#"{"block_id":"B1","to_text":"merged","prev_edit":["remote-dev",1]}"#,
+    );
+
+    let err = insert_remote_op(&pool, &record).await;
+    assert!(err.is_err(), "partial-unresolved must reject");
+    assert!(err
+        .unwrap_err()
+        .to_string()
+        .contains("dag.parent_seqs.unresolved"));
+}
+
 // =====================================================================
 // 2. append_merge_op
 // =====================================================================
@@ -500,6 +574,75 @@ async fn find_lca_op_b_is_create_block() {
         .await
         .unwrap();
     assert_eq!(lca, Some((DEV_A.to_owned(), 1)));
+}
+
+/// M-4: a chain longer than `MAX_LCA_STEPS` (10,000) must trip the
+/// step-cap and return `AppError::InvalidOperation` with a clear
+/// message — even when the chain is *acyclic* and would otherwise walk
+/// to completion.  Without the cap, a corrupted op log with a
+/// pathologically long chain can issue an unbounded number of
+/// `get_op_by_seq` writer-pool acquires.
+///
+/// Built via raw SQL inside a single transaction so the 10,001 inserts
+/// take ~hundreds of ms instead of tens of seconds.
+#[tokio::test]
+async fn find_lca_chain_exceeds_max_steps_returns_error() {
+    let (pool, _dir) = test_pool().await;
+
+    // (A,1) create_block plus (A,2)..(A,10001) edit_block ops, each
+    // pointing one step back.  Chain depth = 10001 → 10000 prev_edit
+    // edges.  With the cap configured as `>=` against MAX_LCA_STEPS =
+    // 10_000, the 10000th edge walked trips the limit.
+    let mut tx = pool.begin().await.unwrap();
+
+    let create_payload =
+        r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"v0"}"#;
+    sqlx::query(
+        "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+         VALUES (?, 1, NULL, ?, 'create_block', ?, ?)",
+    )
+    .bind(DEV_A)
+    .bind("hash_create_1")
+    .bind(create_payload)
+    .bind(FIXED_TS)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+
+    for seq in 2_i64..=10_001 {
+        let prev = seq - 1;
+        let payload =
+            format!(r#"{{"block_id":"B1","to_text":"v{seq}","prev_edit":["device-A",{prev}]}}"#);
+        let hash = format!("hash_edit_{seq:06}");
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES (?, ?, NULL, ?, 'edit_block', ?, ?)",
+        )
+        .bind(DEV_A)
+        .bind(seq)
+        .bind(&hash)
+        .bind(&payload)
+        .bind(FIXED_TS)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+
+    tx.commit().await.unwrap();
+
+    // find_lca(head, head) walks chain A entirely before checking op_b
+    // against the visited set, so the long-chain walk is exercised
+    // before any short-circuit.  The cap fires once steps_a >= 10_000.
+    let result = find_lca(&pool, &(DEV_A.into(), 10_001), &(DEV_A.into(), 10_001)).await;
+    assert!(
+        result.is_err(),
+        "10001-deep chain must trip the find_lca step cap, got: {result:?}"
+    );
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("exceeded max steps"),
+        "error must mention exceeded max steps, got: {msg}"
+    );
 }
 
 // =====================================================================

@@ -2288,6 +2288,200 @@ fn format_peer_address_uses_first_address_when_multiple() {
 }
 
 // ======================================================================
+// L-62 — format_peer_addresses (multi-address try-all)
+// ======================================================================
+
+/// L-62: empty address list ⇒ empty `Vec` (callers can `.is_empty()`).
+#[test]
+fn format_peer_addresses_returns_empty_when_no_addresses() {
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "DEV".into(),
+        addresses: vec![],
+        port: 9443,
+    };
+    assert!(
+        format_peer_addresses(&peer).is_empty(),
+        "L-62: empty address list must return empty Vec"
+    );
+}
+
+/// L-62: when mDNS announces IPv6 link-local before IPv4, the formatter
+/// reorders so IPv4 is tried first — that is the whole point of the
+/// fix per REVIEW-LATER.md.
+#[test]
+fn format_peer_addresses_prefers_ipv4_over_ipv6_link_local() {
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "DEV".into(),
+        addresses: vec![
+            // IPv6 link-local listed first in the mDNS announcement.
+            "fe80::1".parse().unwrap(),
+            "192.168.1.10".parse().unwrap(),
+        ],
+        port: 8080,
+    };
+    let result = format_peer_addresses(&peer);
+    assert_eq!(
+        result,
+        vec![
+            "192.168.1.10:8080".to_string(),
+            "[fe80::1]:8080".to_string()
+        ],
+        "L-62: IPv4 must be tried before IPv6 link-local"
+    );
+}
+
+/// L-62: IPv6 unicast non-link-local sits between IPv4 and link-local.
+#[test]
+fn format_peer_addresses_orders_ipv4_then_ipv6_global_then_linklocal() {
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "DEV".into(),
+        addresses: vec![
+            "fe80::1".parse().unwrap(),
+            "2001:db8::1".parse().unwrap(),
+            "10.0.0.5".parse().unwrap(),
+        ],
+        port: 9443,
+    };
+    let result = format_peer_addresses(&peer);
+    assert_eq!(
+        result,
+        vec![
+            "10.0.0.5:9443".to_string(),
+            "[2001:db8::1]:9443".to_string(),
+            "[fe80::1]:9443".to_string(),
+        ],
+        "L-62: priority order is IPv4 → IPv6 unicast → IPv6 link-local"
+    );
+}
+
+/// L-62: within a single tier, the original mDNS order must be preserved
+/// — important so a deterministic announcement produces a deterministic
+/// connection sequence.
+#[test]
+fn format_peer_addresses_preserves_within_tier_order() {
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "DEV".into(),
+        addresses: vec![
+            "192.168.1.20".parse().unwrap(),
+            "192.168.1.10".parse().unwrap(),
+        ],
+        port: 8080,
+    };
+    let result = format_peer_addresses(&peer);
+    assert_eq!(
+        result,
+        vec![
+            "192.168.1.20:8080".to_string(),
+            "192.168.1.10:8080".to_string()
+        ],
+        "L-62: announcement order preserved within each priority tier"
+    );
+}
+
+// ======================================================================
+// L-63 — ServiceRemoved eviction
+// ======================================================================
+
+/// L-63: `process_service_removed` drops the entry from the discovered
+/// HashMap immediately and reports `true` so the caller can branch on
+/// whether anything actually changed.
+#[test]
+fn process_service_removed_drops_entry() {
+    let mut discovered = HashMap::new();
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "REMOVED_PEER".into(),
+        addresses: vec!["192.168.1.20".parse().unwrap()],
+        port: 9443,
+    };
+    discovered.insert(
+        "REMOVED_PEER".to_string(),
+        (peer, tokio::time::Instant::now()),
+    );
+    assert!(
+        discovered.contains_key("REMOVED_PEER"),
+        "fixture: discovered map starts with the peer present"
+    );
+
+    let removed = process_service_removed("REMOVED_PEER", "LOCAL", &mut discovered);
+
+    assert!(removed, "L-63: must report the entry as removed");
+    assert!(
+        !discovered.contains_key("REMOVED_PEER"),
+        "L-63: discovered map must drop the peer immediately on ServiceRemoved"
+    );
+}
+
+/// L-63: a `ServiceRemoved` for a peer we never saw is a no-op.
+#[test]
+fn process_service_removed_ignores_unknown_peer() {
+    let mut discovered = HashMap::new();
+    let removed = process_service_removed("NEVER_SEEN", "LOCAL", &mut discovered);
+    assert!(!removed, "L-63: removal of unknown peer must report false");
+    assert!(
+        discovered.is_empty(),
+        "L-63: discovered map must remain empty"
+    );
+}
+
+/// L-63: a removal of the local device must not touch the map (we never
+/// insert ourselves in the discovered HashMap to begin with).
+#[test]
+fn process_service_removed_ignores_self() {
+    let mut discovered = HashMap::new();
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "OTHER_PEER".into(),
+        addresses: vec!["192.168.1.20".parse().unwrap()],
+        port: 9443,
+    };
+    discovered.insert(
+        "OTHER_PEER".to_string(),
+        (peer, tokio::time::Instant::now()),
+    );
+
+    let removed = process_service_removed("LOCAL_DEV", "LOCAL_DEV", &mut discovered);
+
+    assert!(!removed, "L-63: self-removal must be a no-op");
+    assert!(
+        discovered.contains_key("OTHER_PEER"),
+        "L-63: peers belonging to other devices must not be touched"
+    );
+}
+
+/// L-63: a `ServiceRemoved` event flowing through `process_discovery_event`
+/// must remove the peer from the discovered HashMap and return `None`
+/// (no peer to sync with — eviction is the side effect).
+#[test]
+fn process_discovery_event_evicts_on_service_removed() {
+    let mut discovered = HashMap::new();
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "REMOVED".into(),
+        addresses: vec!["192.168.1.42".parse().unwrap()],
+        port: 9443,
+    };
+    discovered.insert("REMOVED".to_string(), (peer, tokio::time::Instant::now()));
+
+    let event = mdns_sd::ServiceEvent::ServiceRemoved(
+        sync_net::MDNS_SERVICE_TYPE.to_string(),
+        format!(
+            "{name}_REMOVED.{ty}",
+            name = sync_net::MDNS_SERVICE_NAME,
+            ty = sync_net::MDNS_SERVICE_TYPE,
+        ),
+    );
+
+    let result = process_discovery_event(event, "LOCAL", &mut discovered, &[]);
+
+    assert!(
+        result.is_none(),
+        "L-63: ServiceRemoved must not return a peer to sync with"
+    );
+    assert!(
+        !discovered.contains_key("REMOVED"),
+        "L-63: discovered HashMap must no longer contain the removed peer"
+    );
+}
+
+// ======================================================================
 // T-16e — get_peer_cert_hash tests
 // ======================================================================
 

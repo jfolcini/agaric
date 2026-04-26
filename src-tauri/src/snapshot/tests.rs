@@ -1995,7 +1995,10 @@ async fn cleanup_old_snapshots_mixed_pending_and_complete() {
 }
 
 #[tokio::test]
-async fn cleanup_old_snapshots_with_zero_keep_deletes_all() {
+async fn cleanup_old_snapshots_with_zero_keep_is_noop() {
+    // M-68 regression: a naive `LIMIT 0` on the subquery would cause
+    // SQLite's `NOT IN (empty)` to evaluate TRUE for every row, deleting
+    // every complete snapshot. The function now short-circuits on keep==0.
     let (pool, _dir) = test_pool().await;
     let dev = "test-device";
 
@@ -2019,15 +2022,18 @@ async fn cleanup_old_snapshots_with_zero_keep_deletes_all() {
             .unwrap();
     assert_eq!(before, 3, "should have 3 complete snapshots before cleanup");
 
-    // Cleanup with keep=0 should delete all
+    // Cleanup with keep=0 should be a no-op (NOT delete everything).
     let deleted = cleanup_old_snapshots(&pool, 0).await.unwrap();
-    assert_eq!(deleted, 3, "keep=0 should delete all 3 snapshots");
+    assert_eq!(deleted, 0, "keep=0 must be a no-op, not a TRUNCATE");
 
     let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(remaining, 0, "no snapshots should remain after keep=0");
+    assert_eq!(
+        remaining, 3,
+        "all 3 complete snapshots must survive keep=0 cleanup"
+    );
 }
 
 #[tokio::test]

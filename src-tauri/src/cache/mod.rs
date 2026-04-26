@@ -89,7 +89,9 @@ pub use tags::{rebuild_tags_cache, rebuild_tags_cache_split};
 // rebuild_all_caches — convenience wrapper
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
 use crate::error::AppError;
+#[cfg(test)]
 use sqlx::SqlitePool;
 
 /// Rebuilds all read-path caches in sequence.
@@ -118,6 +120,13 @@ use sqlx::SqlitePool;
 /// UNIONs `block_tag_refs` into the count — populating the inline-ref
 /// rows first lets the tags-cache rebuild observe them on the same
 /// invocation.
+///
+/// Test-only (L-19): production paths (snapshot restore, materializer)
+/// enqueue individual `MaterializeTask::Rebuild*` variants per cache
+/// rather than calling this convenience wrapper. Gating it behind
+/// `#[cfg(test)]` keeps the test ergonomics while preventing accidental
+/// production use that would bypass the materializer queue.
+#[cfg(test)]
 pub async fn rebuild_all_caches(pool: &SqlitePool) -> Result<(), AppError> {
     rebuild_page_ids(pool).await?;
     rebuild_block_tag_refs_cache(pool).await?;

@@ -127,6 +127,30 @@ fn seeded_ulids_are_distinct() {
     );
 }
 
+#[test]
+fn seeded_ulids_validate_via_bootstrap_constructor() {
+    // L-126 regression: `bootstrap_spaces` now validates the seeded ULID
+    // constants via `BlockId::from_string` (instead of the no-validation
+    // `BlockId::from_trusted` shortcut). This test reproduces the exact
+    // call path from `bootstrap.rs::ensure_space_block` so a future typo
+    // (Crockford-banned `I`/`L`/`O`/`U`, or wrong length) will fail here
+    // before it reaches the seeded migration on a real device.
+    let personal = BlockId::from_string(SPACE_PERSONAL_ULID)
+        .expect("SPACE_PERSONAL_ULID must validate via BlockId::from_string");
+    assert_eq!(
+        personal.as_str(),
+        SPACE_PERSONAL_ULID,
+        "round-trip through from_string must preserve the canonical form"
+    );
+    let work = BlockId::from_string(SPACE_WORK_ULID)
+        .expect("SPACE_WORK_ULID must validate via BlockId::from_string");
+    assert_eq!(
+        work.as_str(),
+        SPACE_WORK_ULID,
+        "round-trip through from_string must preserve the canonical form"
+    );
+}
+
 #[tokio::test]
 async fn bootstrap_on_fresh_db_creates_two_spaces_and_no_other_state() {
     let (pool, _dir) = test_pool().await;

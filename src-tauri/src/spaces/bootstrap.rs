@@ -128,8 +128,16 @@ async fn ensure_space_block(
         return Ok(false);
     }
 
+    // L-126: Use the validating constructor for hand-typed ULID
+    // constants. `from_trusted` is reserved for IDs that already came
+    // from a prior `BlockId::new()`; the seeded space ULIDs are
+    // hand-typed string literals and a banned Crockford char (`I`,
+    // `L`, `O`, `U`) would only be caught by the
+    // `seeded_ulids_parse_as_valid_ulids` test in `spaces/tests.rs`.
+    // The `expect` here is load-bearing — it is the runtime safety net.
     let payload = OpPayload::CreateBlock(CreateBlockPayload {
-        block_id: BlockId::from_trusted(block_id),
+        block_id: BlockId::from_string(block_id)
+            .expect("seeded space ULID constants must validate as Crockford base32"),
         block_type: "page".into(),
         parent_id: None,
         position: Some(1),

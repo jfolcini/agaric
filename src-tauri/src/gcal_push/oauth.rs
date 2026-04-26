@@ -47,6 +47,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -220,6 +221,17 @@ impl From<AppError> for FetchError {
 // OAuthClient
 // ---------------------------------------------------------------------------
 
+/// Maximum number of pending PKCE verifiers retained in memory.
+/// M-88: Bounds the cache so cancelled OAuth flows (user opens the
+/// browser, closes the tab) cannot grow it without limit. When the
+/// cache is full the oldest entry is evicted.
+pub(crate) const PKCE_CACHE_CAPACITY: usize = 16;
+
+/// Time-to-live for a cached PKCE verifier.
+/// M-88: Matches the OAuth challenge lifetime — entries older than
+/// this are considered abandoned and swept on every cache touch.
+pub(crate) const PKCE_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
+
 /// Stateless-looking wrapper around the `oauth2` crate's typestated
 /// `BasicClient`.  Instances are cheap to construct and `Send + Sync`
 /// — the only internal state is the PKCE verifier cache, which lives
@@ -230,11 +242,43 @@ pub struct OAuthClient {
     token_url: String,
     redirect_url: String,
     scopes: Vec<String>,
-    pkce_cache: Mutex<HashMap<String, PkceCodeVerifier>>,
+    /// PKCE verifier cache.
+    ///
+    /// M-88: Each entry is `(verifier, inserted_at)`. The cache is
+    /// bounded ([`PKCE_CACHE_CAPACITY`]) and TTL-aware
+    /// ([`PKCE_CACHE_TTL`]); both limits are enforced on every
+    /// `begin_authorize` and `exchange_code` call.
+    pkce_cache: Mutex<HashMap<String, (PkceCodeVerifier, Instant)>>,
     /// oauth2 v5 pairs with `reqwest ^0.12`; the app's top-level
     /// `reqwest = "0.13.2"` resolves separately.  See the comment in
     /// `Cargo.toml` (FEAT-5b block) for the coupled-stack rationale.
     http_client: oauth2::reqwest::Client,
+}
+
+/// Drop entries whose insertion time is older than [`PKCE_CACHE_TTL`].
+fn purge_expired(cache: &mut HashMap<String, (PkceCodeVerifier, Instant)>, now: Instant) {
+    cache.retain(|_, (_, inserted_at)| now.duration_since(*inserted_at) < PKCE_CACHE_TTL);
+}
+
+/// Evict the oldest entry until `cache.len() < capacity`. Used after a
+/// purge to keep the absolute size below [`PKCE_CACHE_CAPACITY`] even
+/// when every entry is fresh.
+fn evict_oldest_until_under(
+    cache: &mut HashMap<String, (PkceCodeVerifier, Instant)>,
+    capacity: usize,
+) {
+    while cache.len() >= capacity {
+        // Find the oldest entry's key. Cheap because the cache is
+        // already bounded to ~16 entries.
+        let Some(oldest_key) = cache
+            .iter()
+            .min_by_key(|(_, (_, t))| *t)
+            .map(|(k, _)| k.clone())
+        else {
+            break;
+        };
+        cache.remove(&oldest_key);
+    }
 }
 
 impl fmt::Debug for OAuthClient {
@@ -361,10 +405,22 @@ impl OAuthClient {
 
         // Stash the verifier so exchange_code can recover it by CSRF
         // state.  Mutex is taken briefly and never across an await.
-        self.pkce_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(state_str.clone(), verifier);
+        //
+        // M-88: bound the cache before inserting:
+        //   1. drop entries older than `PKCE_CACHE_TTL` (cancelled flows),
+        //   2. if still at capacity, evict the oldest entry until under.
+        // Both passes run on every insert so a flood of cancelled flows
+        // can't grow the cache past `PKCE_CACHE_CAPACITY`.
+        {
+            let mut cache = self
+                .pkce_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let now = Instant::now();
+            purge_expired(&mut cache, now);
+            evict_oldest_until_under(&mut cache, PKCE_CACHE_CAPACITY);
+            cache.insert(state_str.clone(), (verifier, now));
+        }
 
         Ok(AuthorizeUrl {
             url: url.to_string(),
@@ -389,12 +445,20 @@ impl OAuthClient {
         code: String,
         state: String,
     ) -> Result<(Token, Option<String>), AppError> {
-        let verifier = self
-            .pkce_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&state)
-            .ok_or_else(|| AppError::Validation("oauth.invalid_state".to_owned()))?;
+        // M-88: sweep expired entries before recovering the verifier so
+        // a stale verifier (older than `PKCE_CACHE_TTL`) is rejected as
+        // `invalid_state` rather than silently honoured.
+        let verifier = {
+            let mut cache = self
+                .pkce_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            purge_expired(&mut cache, Instant::now());
+            cache
+                .remove(&state)
+                .map(|(v, _)| v)
+                .ok_or_else(|| AppError::Validation("oauth.invalid_state".to_owned()))?
+        };
 
         let client = self.build_client()?;
         let response = client
@@ -932,6 +996,90 @@ mod tests {
                 .len(),
             2,
             "both verifiers must be cached"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pkce_cache_is_bounded_under_burst_of_cancelled_flows() {
+        // M-88 regression: cancelled OAuth flows (user opens browser,
+        // closes the tab) leave verifiers in the cache forever. The
+        // bounded cache must keep the in-memory state below
+        // `PKCE_CACHE_CAPACITY` even under a 100-flow burst.
+        let mock = MockServer::start().await;
+        let client = build_client(&mock).await;
+
+        for _ in 0..100 {
+            client.begin_authorize().unwrap();
+        }
+
+        let len = client
+            .pkce_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len();
+        assert!(
+            len <= PKCE_CACHE_CAPACITY,
+            "cache must stay below PKCE_CACHE_CAPACITY ({PKCE_CACHE_CAPACITY}) under burst; got {len}",
+        );
+    }
+
+    #[test]
+    fn purge_expired_drops_entries_older_than_ttl() {
+        // M-88 regression: TTL-based eviction must drop verifiers whose
+        // insertion time is older than `PKCE_CACHE_TTL`. Constructed
+        // entirely with synthetic `Instant` values so the test does
+        // not block on real wall-clock time.
+        let mut cache: HashMap<String, (PkceCodeVerifier, Instant)> = HashMap::new();
+        let now = Instant::now();
+        // Fresh entry — must survive.
+        cache.insert(
+            "fresh".into(),
+            (PkceCodeVerifier::new("v_fresh".into()), now),
+        );
+        // Stale entry — TTL + a healthy margin in the past.
+        cache.insert(
+            "stale".into(),
+            (
+                PkceCodeVerifier::new("v_stale".into()),
+                now.checked_sub(PKCE_CACHE_TTL + Duration::from_secs(1))
+                    .expect("Instant arithmetic must not underflow on supported platforms"),
+            ),
+        );
+
+        purge_expired(&mut cache, now);
+
+        assert!(cache.contains_key("fresh"), "fresh entry must survive");
+        assert!(!cache.contains_key("stale"), "stale entry must be purged");
+    }
+
+    #[test]
+    fn evict_oldest_until_under_caps_at_capacity() {
+        // M-88: secondary defence — if every entry is fresh (TTL hasn't
+        // elapsed yet) the cache must still evict the oldest one to stay
+        // under `PKCE_CACHE_CAPACITY`.
+        let mut cache: HashMap<String, (PkceCodeVerifier, Instant)> = HashMap::new();
+        let base = Instant::now();
+        for i in 0..PKCE_CACHE_CAPACITY {
+            // Each entry inserted ~i seconds before "now"; entry 0 is oldest.
+            let t = base
+                .checked_sub(Duration::from_secs(
+                    (PKCE_CACHE_CAPACITY - i).try_into().unwrap(),
+                ))
+                .unwrap_or(base);
+            cache.insert(format!("k{i}"), (PkceCodeVerifier::new(format!("v{i}")), t));
+        }
+        assert_eq!(cache.len(), PKCE_CACHE_CAPACITY);
+
+        evict_oldest_until_under(&mut cache, PKCE_CACHE_CAPACITY);
+
+        assert!(
+            cache.len() < PKCE_CACHE_CAPACITY,
+            "cache must end strictly below capacity, got {}",
+            cache.len()
+        );
+        assert!(
+            !cache.contains_key("k0"),
+            "the oldest entry (k0) must be the one evicted"
         );
     }
 

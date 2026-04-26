@@ -233,6 +233,35 @@ fn shift_date_once_months_extreme_negative_returns_none() {
     );
 }
 
+#[test]
+fn shift_date_rejects_negative_intervals() {
+    // M-79 regression: Org-mode recurrence never goes backwards. A typo or
+    // paste like `-1d` / `-3w` / `-2m` would silently set the next-occurrence
+    // to a date in the past; reject at parse time so the caller (and the
+    // user) sees the rule was not honored.
+    for rule in ["-1d", "-1w", "-1m", "-3w", "-2m", "-7d"] {
+        assert_eq!(
+            shift_date("2025-06-15", rule),
+            None,
+            "negative interval {rule} must be rejected"
+        );
+    }
+}
+
+#[test]
+fn shift_date_rejects_zero_intervals() {
+    // M-79 regression: a zero interval is also nonsense — `+0d` would no-op
+    // (sibling has the same date as the original) and `++0w` would loop
+    // until the 10_000-iteration safety limit.
+    for rule in ["0d", "0w", "0m", "+0d", "+0w", "+0m"] {
+        assert_eq!(
+            shift_date("2025-06-15", rule),
+            None,
+            "zero interval {rule} must be rejected"
+        );
+    }
+}
+
 // ==================================================================
 // T-36: handle_recurrence() dedicated integration tests
 // ==================================================================
@@ -712,6 +741,142 @@ async fn handle_recurrence_sets_repeat_origin_on_sibling() {
         origin_prop.unwrap().value_ref.as_deref(),
         Some(block.id.as_str()),
         "repeat-origin should point to the original block"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_recurrence_sibling_position_does_not_collide() {
+    // M-78 regression: the new recurrence sibling's position must NOT
+    // collide with an existing sibling that already occupies
+    // `original.position + 1`. The sibling is appended past MAX(position)
+    // among living siblings so each sibling holds a unique slot.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create a parent page so the siblings have a shared parent.
+    let parent = create_block_inner(&pool, DEV, &mat, "page".into(), "parent".into(), None, None)
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // The recurring task — placed at position 1 under the parent.
+    // (positions are 1-based per `crud.rs::create_block_inner`.)
+    let recurring = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "recurring task".into(),
+        Some(parent.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Sibling A occupies position 2 — the slot the buggy code would re-use.
+    let sibling_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "neighbor A".into(),
+        Some(parent.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Sibling B occupies position 3 (the highest live MAX we expect to see).
+    let sibling_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "neighbor B".into(),
+        Some(parent.id.clone()),
+        Some(3),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Wire up the recurring task and trigger the recurrence flow.
+    set_todo_state_inner(&pool, DEV, &mat, recurring.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        recurring.id.clone(),
+        Some("2025-06-15".into()),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    set_repeat_property(&pool, &mat, &recurring.id, "daily").await;
+    mat.flush_background().await.unwrap();
+
+    set_todo_state_inner(&pool, DEV, &mat, recurring.id.clone(), Some("DONE".into()))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Find the new recurrence sibling (TODO under the same parent, distinct
+    // from the two pre-existing neighbors).
+    let rows: Vec<BlockRow> = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at,
+                  is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
+                  due_date, scheduled_date, page_id
+           FROM blocks
+           WHERE parent_id = ?
+             AND id NOT IN (?, ?, ?)
+             AND todo_state = 'TODO'
+             AND deleted_at IS NULL"#,
+        parent.id,
+        recurring.id,
+        sibling_a.id,
+        sibling_b.id,
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows.len(),
+        1,
+        "exactly one recurrence sibling should be created"
+    );
+    let new_sibling = &rows[0];
+
+    // The naive `original.position + 1` would yield 2, colliding with
+    // sibling A. Assert the new sibling's position is strictly greater
+    // than every live sibling currently occupying a non-sentinel slot.
+    let new_pos = new_sibling.position.expect("sibling has a position");
+    assert!(
+        new_pos > 3,
+        "new recurrence sibling position {new_pos} must be > MAX(existing siblings) (3); got collision"
+    );
+
+    // Sanity: every living sibling under the parent has a distinct position.
+    let positions: Vec<i64> =
+        sqlx::query_scalar("SELECT position FROM blocks WHERE parent_id = ? AND deleted_at IS NULL AND position IS NOT NULL")
+            .bind(&parent.id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let mut deduped = positions.clone();
+    deduped.sort_unstable();
+    deduped.dedup();
+    assert_eq!(
+        positions.len(),
+        deduped.len(),
+        "all living siblings must have distinct positions; got {positions:?}"
     );
 
     mat.shutdown();

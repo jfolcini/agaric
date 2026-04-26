@@ -24,10 +24,14 @@ pub struct QueueMetrics {
     pub bg_errors: AtomicU64,
     pub fg_panics: AtomicU64,
     pub bg_panics: AtomicU64,
-    /// Background tasks that exhausted all in-memory retries and were
-    /// either persisted to `materializer_retry_queue` (retryable per-block
-    /// tasks) or silently dropped (global rebuild tasks that are
-    /// re-dispatched elsewhere). See BUG-22.
+    /// Background tasks that exhausted all in-memory retries (per-block
+    /// tasks persisted to `materializer_retry_queue`, or global rebuilds
+    /// that are re-dispatched elsewhere — see BUG-22), **and** tasks
+    /// that `try_enqueue_background` had to shed under backpressure
+    /// because the bounded channel was full (M-7 / M-8). Both
+    /// drop-classes are aggregated here so a non-zero value is the
+    /// single observability signal that the materializer is silently
+    /// degrading cache freshness.
     pub bg_dropped: AtomicU64,
     /// Number of times `enqueue_foreground` had to await on a full
     /// channel. A non-zero value indicates foreground backpressure.

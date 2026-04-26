@@ -101,6 +101,32 @@ fn parse_title_decodes_html_entities() {
     );
 }
 
+/// I-Search-16: regression test pinning the current over-decoding of
+/// chained / double-escaped HTML entities.
+///
+/// The input `Tom &amp;lt; Jerry` is the HTML encoding of the literal
+/// four-character text `Tom &lt; Jerry` (i.e. the user wants the
+/// literal `&lt;` to render). A correct single-pass decoder would
+/// produce `Tom &lt; Jerry`. Our chained `replace` pipeline first
+/// rewrites `&amp;` → `&`, producing `Tom &lt; Jerry`, then re-scans
+/// and rewrites `&lt;` → `<`, collapsing the result to `Tom < Jerry`.
+///
+/// This test fails the moment we land a single-pass decoder
+/// (`html-escape` / `htmlescape` crate or a hand-rolled scanner), at
+/// which point the assertion should be updated to expect the correct
+/// `Tom &lt; Jerry`. See `decode_html_entities`'s docstring and
+/// REVIEW-LATER.md item I-Search-16.
+#[test]
+fn parse_title_chained_entity_known_limitation() {
+    let html = "<html><head><title>Tom &amp;lt; Jerry</title></head></html>";
+    assert_eq!(
+        parse_title(html),
+        Some("Tom < Jerry".to_string()),
+        "current chained-replace decoder over-decodes `&amp;lt;` to `<`; \
+         a single-pass decoder would yield `Tom &lt; Jerry` (I-Search-16)"
+    );
+}
+
 // ======================================================================
 // parse_favicon tests
 // ======================================================================

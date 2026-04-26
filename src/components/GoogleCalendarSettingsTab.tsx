@@ -331,7 +331,6 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
   }
 
   const effectiveStatus: GcalStatus = status ?? {
-    enabled: false,
     connected: false,
     account_email: null,
     calendar_id: null,

@@ -13,11 +13,9 @@
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 
+use crate::db::MAX_SQL_PARAMS;
 use crate::error::AppError;
 
-/// Maximum number of SQL bind parameters per statement for chunked
-/// multi-row INSERTs. Matches the snapshot restore convention.
-const MAX_SQL_PARAMS: usize = 999;
 /// block_tag_refs has 2 columns per row.
 const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
 

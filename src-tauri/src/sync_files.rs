@@ -174,6 +174,35 @@ async fn get_attachment_fs_path(
     Ok(row)
 }
 
+/// Metadata loaded from the `attachments` row when authorising an inbound
+/// `FileOffer` (M-50, M-52).
+struct AttachmentReceiveMeta {
+    fs_path: String,
+    /// Authoritative size from the local DB; an inbound `FileOffer` whose
+    /// `size_bytes` disagrees with this value must be rejected (M-52).
+    size_bytes: i64,
+}
+
+/// Look up the `fs_path` and `size_bytes` for a given attachment ID.
+///
+/// Combines what `get_attachment_fs_path` returns with the DB-side
+/// `size_bytes` so the receiver can cross-check `FileOffer.size_bytes`
+/// against the row before allocating any buffer (M-52).
+async fn get_attachment_receive_meta(
+    pool: &SqlitePool,
+    attachment_id: &str,
+) -> Result<Option<AttachmentReceiveMeta>, AppError> {
+    let row: Option<(String, i64)> =
+        sqlx::query_as("SELECT fs_path, size_bytes FROM attachments WHERE id = ?")
+            .bind(attachment_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.map(|(fs_path, size_bytes)| AttachmentReceiveMeta {
+        fs_path,
+        size_bytes,
+    }))
+}
+
 /// Read an attachment file from disk and compute its blake3 hash.
 ///
 /// Returns `(file_bytes, blake3_hex_hash)`.
@@ -360,6 +389,13 @@ pub async fn request_and_receive_files(
     .await?;
 
     // 3. Receive files until FileTransferComplete
+    //
+    // M-50: a `FileReceived` ACK is sent ONLY after the file has been
+    // hash-verified AND written to disk. Any failure on the offer (size
+    // disagreement with the DB row, hash mismatch, write failure)
+    // returns `Err` so the connection is closed and the daemon retries
+    // on the next sync cycle. Stats counters reflect actual receiver
+    // outcomes, never optimistic ACKs.
     loop {
         let msg: SyncMessage = conn.recv_json().await?;
         match msg {
@@ -368,8 +404,8 @@ pub async fn request_and_receive_files(
                 size_bytes,
                 blake3_hash,
             } => {
-                // Look up fs_path for this attachment
-                let Some(fs_path) = get_attachment_fs_path(pool, &attachment_id).await? else {
+                // Look up fs_path + DB size_bytes for this attachment
+                let Some(meta) = get_attachment_receive_meta(pool, &attachment_id).await? else {
                     tracing::warn!(
                         attachment_id,
                         "received file offer for unknown attachment, skipping binary data"
@@ -379,41 +415,58 @@ pub async fn request_and_receive_files(
                     continue;
                 };
 
+                // M-52: cross-check the offer's size_bytes against the
+                // authoritative DB row. A mismatch is a sender bug
+                // (`u32` truncation, wrong file picked up), so reject
+                // the offer without writing anything and return Err so
+                // the daemon retries.
+                let expected_size_u64 = u64::try_from(meta.size_bytes).unwrap_or(0);
+                if size_bytes != expected_size_u64 {
+                    tracing::error!(
+                        attachment_id,
+                        expected_size = meta.size_bytes,
+                        offered_size = size_bytes,
+                        "FileOffer size_bytes disagrees with attachments DB row, rejecting without ACK"
+                    );
+                    return Err(AppError::InvalidOperation(format!(
+                        "file_offer.size_mismatch: attachment {attachment_id} expected {} bytes, peer offered {size_bytes}",
+                        meta.size_bytes
+                    )));
+                }
+
                 // Receive binary data (may be chunked)
                 let data = receive_binary_data(conn, size_bytes).await?;
 
-                // Verify blake3 hash
+                // M-50: Verify blake3 hash. Mismatch ⇒ no ACK, return
+                // Err so the daemon closes the connection and retries.
                 let actual_hash = blake3::hash(&data).to_hex().to_string();
                 if actual_hash != blake3_hash {
-                    tracing::warn!(
+                    tracing::error!(
                         attachment_id,
                         expected = blake3_hash,
                         actual = actual_hash,
-                        "blake3 hash mismatch for received file, skipping"
+                        "blake3 hash mismatch for received file, rejecting without ACK"
                     );
-                    stats.skipped_hash_mismatch += 1;
-                    // Still send FileReceived to keep protocol in sync
-                    conn.send_json(&SyncMessage::FileReceived { attachment_id })
-                        .await?;
-                    continue;
+                    return Err(AppError::InvalidOperation(format!(
+                        "file_offer.hash_mismatch: attachment {attachment_id} expected {blake3_hash}, got {actual_hash}"
+                    )));
                 }
 
-                // Write file to disk
-                if let Err(e) = write_attachment_file(app_data_dir, &fs_path, &data) {
-                    tracing::warn!(
+                // M-50: Write file to disk. On failure, no ACK, return
+                // Err so the daemon retries the file later.
+                if let Err(e) = write_attachment_file(app_data_dir, &meta.fs_path, &data) {
+                    tracing::error!(
                         attachment_id,
                         error = %e,
-                        "failed to write attachment file"
+                        "failed to write attachment file, rejecting without ACK"
                     );
-                    // Still send FileReceived to keep protocol in sync
-                    conn.send_json(&SyncMessage::FileReceived { attachment_id })
-                        .await?;
-                    continue;
+                    return Err(e);
                 }
 
                 stats.files_received += 1;
                 stats.bytes_received += data.len() as u64;
 
+                // Only after successful write + hash verify do we ACK.
                 conn.send_json(&SyncMessage::FileReceived { attachment_id })
                     .await?;
             }
@@ -1141,8 +1194,11 @@ mod tests {
         server.shutdown().await;
     }
 
+    /// M-50: hash mismatch must NOT ACK and must surface an Err so the
+    /// daemon closes the connection and retries on the next cycle. The
+    /// receiver writes nothing to disk.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn protocol_hash_mismatch_skips_corrupt_file() {
+    async fn protocol_hash_mismatch_no_ack_returns_err() {
         let initiator_dir = TempDir::new().unwrap();
         let initiator_pool = init_pool(&initiator_dir.path().join("test.db"))
             .await
@@ -1162,7 +1218,9 @@ mod tests {
 
         let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
 
-        // Responder side: manually drive the protocol with a bad hash
+        // Responder side: manually drive the protocol with a bad hash and
+        // assert that no FileReceived ACK is delivered before the
+        // connection drops.
         let server_side = async move {
             // 1. Receive FileRequest
             let msg: SyncMessage = server_conn.recv_json().await.unwrap();
@@ -1186,20 +1244,18 @@ mod tests {
             // 3. Send binary data
             server_conn.send_binary(file_data).await.unwrap();
 
-            // 4. Receive FileReceived ack (sent to keep protocol in sync)
-            let ack: SyncMessage = server_conn.recv_json().await.unwrap();
-            match ack {
-                SyncMessage::FileReceived { attachment_id } => {
-                    assert_eq!(attachment_id, "ATT01");
-                }
-                other => panic!("expected FileReceived, got {other:?}"),
-            }
-
-            // 5. Send FileTransferComplete
-            server_conn
-                .send_json(&SyncMessage::FileTransferComplete)
-                .await
-                .unwrap();
+            // 4. Confirm we never receive a FileReceived ACK — the
+            //    receiver must drop the connection (or we'll time out).
+            let ack: Result<SyncMessage, _> = tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                server_conn.recv_json::<SyncMessage>(),
+            )
+            .await
+            .unwrap_or_else(|_| Err(AppError::InvalidOperation("recv_json timed out".into())));
+            assert!(
+                !matches!(ack, Ok(SyncMessage::FileReceived { .. })),
+                "M-50: receiver must NOT send FileReceived ACK on hash mismatch (got {ack:?})"
+            );
         };
 
         let (_, initiator_result) = tokio::join!(
@@ -1207,16 +1263,102 @@ mod tests {
             request_and_receive_files(&mut client_conn, &initiator_pool, initiator_dir.path(),),
         );
 
-        let stats = initiator_result.unwrap();
+        // M-50: receiver returns Err so the daemon's `try_sync_with_peer`
+        // records a failure and reconnects.
+        assert!(
+            initiator_result.is_err(),
+            "M-50: hash mismatch must surface as Err, got Ok"
+        );
 
-        // File must NOT have been written (hash mismatch)
+        // File must NOT have been written.
         assert!(
             !initiator_dir.path().join("attachments/photo.jpg").exists(),
             "corrupt file must not be written to disk"
         );
-        assert_eq!(stats.skipped_hash_mismatch, 1);
-        assert_eq!(stats.files_received, 0);
-        assert_eq!(stats.bytes_received, 0);
+
+        server.shutdown().await;
+    }
+
+    /// M-52: a `FileOffer` whose `size_bytes` disagrees with the local
+    /// `attachments.size_bytes` row must be rejected without an ACK.
+    /// The function returns `Err` and never reads the binary stream.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn protocol_size_mismatch_no_ack_returns_err() {
+        let initiator_dir = TempDir::new().unwrap();
+        let initiator_pool = init_pool(&initiator_dir.path().join("test.db"))
+            .await
+            .unwrap();
+
+        // Local DB says the attachment is 100 bytes — peer will lie and
+        // say 200 bytes (a sender-side bug — `u32` truncation regression).
+        let stored_size: i64 = 100;
+        insert_test_attachment(
+            &initiator_pool,
+            "ATT_SIZE",
+            "attachments/sizecheck.bin",
+            stored_size,
+        )
+        .await;
+
+        let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+
+        let server_side = async move {
+            let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+            match msg {
+                SyncMessage::FileRequest { attachment_ids } => {
+                    assert_eq!(attachment_ids, vec!["ATT_SIZE".to_string()]);
+                }
+                other => panic!("expected FileRequest, got {other:?}"),
+            }
+
+            // Lie about the size — DB has 100 bytes, peer claims 200.
+            // Hash is correct for the (truthful) bytes but it doesn't
+            // matter because the size check rejects the offer first.
+            let bytes = vec![0xAAu8; 200];
+            let hash = blake3::hash(&bytes).to_hex().to_string();
+            server_conn
+                .send_json(&SyncMessage::FileOffer {
+                    attachment_id: "ATT_SIZE".into(),
+                    size_bytes: 200,
+                    blake3_hash: hash,
+                })
+                .await
+                .unwrap();
+
+            // Confirm no ACK arrives — the receiver returns Err before
+            // touching the stream so the connection drops.
+            let ack: Result<SyncMessage, _> = tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                server_conn.recv_json::<SyncMessage>(),
+            )
+            .await
+            .unwrap_or_else(|_| Err(AppError::InvalidOperation("recv_json timed out".into())));
+            assert!(
+                !matches!(ack, Ok(SyncMessage::FileReceived { .. })),
+                "M-52: receiver must NOT send FileReceived ACK on size mismatch (got {ack:?})"
+            );
+        };
+
+        let (_, initiator_result) = tokio::join!(
+            server_side,
+            request_and_receive_files(&mut client_conn, &initiator_pool, initiator_dir.path(),),
+        );
+
+        let err = initiator_result.expect_err("M-52 must return Err on size mismatch");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("file_offer.size_mismatch"),
+            "M-52: error message should be tagged file_offer.size_mismatch, got {msg}"
+        );
+
+        // File must NOT have been written.
+        assert!(
+            !initiator_dir
+                .path()
+                .join("attachments/sizecheck.bin")
+                .exists(),
+            "rejected size-mismatched file must not be written to disk"
+        );
 
         server.shutdown().await;
     }
@@ -1888,6 +2030,7 @@ mod tests {
             &pool,
             "test-device",
             &mat,
+            dir.path(),
             "BLK_OK".to_string(),
             "evil.bin".to_string(),
             "application/octet-stream".to_string(),

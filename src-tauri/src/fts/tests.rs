@@ -1360,30 +1360,71 @@ fn sanitize_prevents_injection() {
     );
     assert_eq!(
         sanitize_fts_query("NEAR(a b)"),
-        "\"NEAR(a\" \"b)\"",
-        "NEAR operator should be quoted as literal"
+        "\"NEAR(a\"",
+        "NEAR operator should be quoted as literal; the trailing 2-char `b)` \
+         is dropped by the trigram length filter (I-Search-2)"
     );
 }
 
 #[test]
 fn sanitize_trailing_operator_quoted() {
-    // NOT at end without a following term → quoted as literal.
+    // NOT at end without a following term → not in operator position; survives
+    // the trigram length filter (3 chars) so it falls through to the literal
+    // quoted branch.
     assert_eq!(
         sanitize_fts_query("hello NOT"),
         "\"hello\" \"NOT\"",
-        "trailing NOT without operand should be quoted"
+        "trailing NOT without operand should be quoted (3-char minimum met)"
     );
-    // OR at end without a following term → quoted as literal.
+    // OR at end without a following term → not in operator position; the
+    // 2-char `OR` is now dropped by the trigram length filter (I-Search-2).
     assert_eq!(
         sanitize_fts_query("hello OR"),
-        "\"hello\" \"OR\"",
-        "trailing OR without operand should be quoted"
+        "\"hello\"",
+        "trailing OR without operand is dropped by the trigram length filter"
     );
-    // OR at start without a preceding term → quoted as literal.
+    // OR at start without a preceding term → not in operator position; the
+    // 2-char `OR` is dropped by the trigram length filter (I-Search-2).
     assert_eq!(
         sanitize_fts_query("OR hello"),
-        "\"OR\" \"hello\"",
-        "leading OR without left operand should be quoted"
+        "\"hello\"",
+        "leading OR without left operand is dropped by the trigram length filter"
+    );
+}
+
+#[test]
+fn sanitize_drops_sub_trigram_words() {
+    // I-Search-2: tokens shorter than the trigram tokenizer's 3-char
+    // minimum are dropped before the AND-join, except for the
+    // operator-keyword whitelist. `a` and `b` are dropped; `OR` survives
+    // because it is whitelisted, but with `a`/`b` gone the position-check
+    // still rejects it as an operator and it then fails the length filter
+    // → only `cat` survives.
+    assert_eq!(
+        sanitize_fts_query("a b OR cat"),
+        "\"cat\"",
+        "sub-trigram words (a, b) and operator-position-failing OR are all dropped"
+    );
+}
+
+#[test]
+fn sanitize_keeps_operators_when_position_valid() {
+    // Operator whitelist works in valid positions even when the surrounding
+    // operand is exactly 3 chars (the minimum).
+    assert_eq!(
+        sanitize_fts_query("cat OR dog"),
+        "\"cat\" OR \"dog\"",
+        "OR between two 3-char terms must be preserved as operator"
+    );
+    // 3-char operators (`AND`, `NOT`) survive the trigram length filter
+    // *even when the operator position-check rejects them* — they fall
+    // through to the literal-quoted branch on length alone. Only the
+    // 2-char `OR` is fully dropped when its operator position fails.
+    assert_eq!(
+        sanitize_fts_query("AND cat"),
+        "\"AND\" \"cat\"",
+        "leading AND without preceding output is rejected as operator but \
+         survives the trigram length filter (3 chars) → quoted as literal"
     );
 }
 

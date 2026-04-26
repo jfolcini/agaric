@@ -3838,6 +3838,109 @@ async fn bug20_set_priority_rejects_value_not_in_seeded_options() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn m20_set_priority_accepts_user_extended_options() {
+    // M-20 / ARCHITECTURE.md §20 (UX-201b): the priority property is a
+    // user-extensible select-type definition. Calling set_priority_inner
+    // with a value outside the seeded `["1","2","3"]` set must succeed
+    // when the user has extended the options to cover that value (e.g.
+    // an A/B/C scheme). The previous hardcoded `1|2|3` guard rejected
+    // this categorically; the fix relies on `set_property_in_tx` to
+    // validate against the live `property_definitions.options` row.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // User extends priority options via the existing update path.
+    update_property_def_options_inner(
+        &pool,
+        "priority".into(),
+        "[\"1\",\"2\",\"3\",\"A\",\"B\",\"C\"]".into(),
+    )
+    .await
+    .unwrap();
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "m20 extended".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Happy path: extended value "A" is now permitted.
+    let result = set_priority_inner(&pool, DEV, &mat, block.id.clone(), Some("A".into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        result.priority.as_deref(),
+        Some("A"),
+        "priority 'A' should be persisted after the user extends the options"
+    );
+
+    // Built-in seeded value still works alongside the extension.
+    set_priority_inner(&pool, DEV, &mat, block.id.clone(), Some("2".into()))
+        .await
+        .unwrap();
+
+    // Out-of-options value still rejected (BUG-20 options check inside
+    // set_property_in_tx).
+    let bad = set_priority_inner(&pool, DEV, &mat, block.id.clone(), Some("Z".into())).await;
+    assert!(
+        matches!(bad, Err(AppError::Validation(ref msg)) if msg.contains("Z") && msg.contains("allowed options")),
+        "value not in user-extended options must still be rejected, got: {bad:?}"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn m20_set_priority_fallback_when_definition_deleted() {
+    // M-20: if the `priority` property_definition row is deleted (so the
+    // BUG-20 options check inside `set_property_in_tx` finds no
+    // definition), `set_priority_inner` falls back to the built-in
+    // seeded options `["1","2","3"]` so the reserved-key contract
+    // remains enforced. Mirrors `bug20_todo_state_fallback_when_definition_deleted`.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    sqlx::query("DELETE FROM property_definitions WHERE key = 'priority'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "m20 fallback".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Happy path: "1" is in the built-in fallback.
+    set_priority_inner(&pool, DEV, &mat, block.id.clone(), Some("1".into()))
+        .await
+        .unwrap();
+
+    // Error path: "9" is rejected via fallback defaults.
+    let result = set_priority_inner(&pool, DEV, &mat, block.id.clone(), Some("9".into())).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("9") && msg.contains("allowed options")),
+        "without definition row, priority must fall back to built-in defaults and reject unknown values, got: {result:?}"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bug20_todo_state_fallback_when_definition_deleted() {
     // Fallback path: if the todo_state property_definition row is deleted,
     // set_todo_state_inner must still enforce the built-in defaults

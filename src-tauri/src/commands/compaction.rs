@@ -99,8 +99,15 @@ pub async fn get_compaction_status(
 
 /// Inner implementation for [`compact_op_log_cmd`], testable without Tauri state.
 ///
-/// Wraps the compaction in a `BEGIN IMMEDIATE` transaction to prevent
-/// interleaving with concurrent writers (REVIEW-LATER item from snapshot.rs).
+/// L-43: this function takes a `BEGIN IMMEDIATE` lock purely to perform
+/// a TOCTOU recount of eligible ops under the writer lock — it does
+/// **not** provide atomicity for the compaction itself.
+/// `snapshot::compact_op_log` (`snapshot/create.rs:243-295`) wraps its
+/// own write phase in `BEGIN IMMEDIATE`, so the actual delete is
+/// already atomic. The wrapper tx exists so we can serve the
+/// fast-path early-return when no ops match the cutoff and emit a
+/// `warn` log via `begin_immediate_logged` if writers are contending.
+/// See L-42 for the related "stale `ops_deleted`" follow-up.
 pub async fn compact_op_log_cmd_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -131,15 +138,30 @@ pub async fn compact_op_log_cmd_inner(
         });
     }
 
-    // Wrap in BEGIN IMMEDIATE for atomicity (the existing compact_op_log
-    // lacks explicit transaction wrapping — see REVIEW-LATER).
+    // L-43: this BEGIN IMMEDIATE is *not* providing atomicity for the
+    // compaction itself. `snapshot::compact_op_log`
+    // (`snapshot/create.rs:243-295`) already wraps its own write phase
+    // in BEGIN IMMEDIATE, so the inner call owns its tx end-to-end.
+    //
+    // What this wrapper tx is actually doing is a TOCTOU recount: it
+    // takes the writer lock, re-counts eligible ops under that lock,
+    // commits, and uses the recounted figure (`eligible_in_tx`) to drive
+    // the early-return path and — currently — the reported
+    // `ops_deleted` value. That second use is stale by the time
+    // `compact_op_log` runs (more ops can be appended between commit
+    // and the inner write phase, and the snapshot-frontier guard inside
+    // `compact_op_log` may also skip some); see L-42 for the proper fix
+    // (propagate the real `deleted_count` from `compact_op_log`). Do
+    // not assume this wrapper tx adds atomicity over the actual
+    // delete — it does not.
     //
     // MAINT-30: slow-acquire timed via `begin_immediate_logged` so a
-    // compaction that blocks on the write lock surfaces as a `warn` log
+    // recount that blocks on the write lock surfaces as a `warn` log
     // instead of disappearing into the 5s busy_timeout.
     let mut tx = crate::db::begin_immediate_logged(pool, "cmd_compact_op_log").await?;
 
-    // Recount inside the transaction to avoid TOCTOU
+    // Recount inside the transaction (TOCTOU recount, not atomicity —
+    // see comment above and L-42 / L-43 in REVIEW-LATER).
     let eligible_in_tx: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
         cutoff_str
@@ -155,15 +177,19 @@ pub async fn compact_op_log_cmd_inner(
         });
     }
 
-    // Release the IMMEDIATE transaction before calling compact_op_log,
-    // which manages its own internal queries. We verified eligibility;
-    // compact_op_log will re-verify and perform the actual work.
+    // Release the recount tx before calling `compact_op_log`. The inner
+    // function opens its own BEGIN IMMEDIATE for the actual delete, so
+    // holding ours longer would only serialise the writer lock for no
+    // gain. `compact_op_log` re-verifies eligibility under its own tx.
     tx.commit().await?;
 
     let snapshot_id = crate::snapshot::compact_op_log(pool, device_id, retention_days).await?;
 
     Ok(CompactionResult {
         snapshot_id,
+        // L-42: stale figure — `eligible_in_tx` is the recount taken
+        // before `compact_op_log` ran, not the actual delete count.
+        // Tracked separately; do not "fix" this here.
         ops_deleted: eligible_in_tx,
     })
 }

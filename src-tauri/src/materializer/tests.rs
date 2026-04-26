@@ -922,6 +922,80 @@ async fn try_enqueue_background_drops_when_full() {
         );
     }
 }
+
+/// M-7 / M-8: the `try_enqueue_background` Full-arm must increment
+/// `metrics.bg_dropped` so sustained backpressure is visible in
+/// `StatusInfo`.  Without the increment, dropped cache-rebuild
+/// fan-outs are an invisible degradation.
+///
+/// Single-threaded `#[tokio::test]` runtime guarantees the bg
+/// consumer cannot drain during the sync `try_send` loop, so the
+/// bounded channel fills at `BACKGROUND_CAPACITY` and every
+/// subsequent send lands in the Full arm.
+#[tokio::test]
+async fn try_enqueue_background_full_arm_increments_bg_dropped() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    // Channel capacity is 1024 — push more than that without yielding
+    // so the consumer never runs and the Full arm is exercised
+    // deterministically.  We push 2x capacity to give the increment
+    // ~1024 chances to fire.
+    for _ in 0..2048 {
+        // Each call returns `Ok(())` regardless of whether it landed
+        // or was shed — the helper preserves the `Ok` return for
+        // back-compat.  We assert via the metric instead.
+        let _ = mat.try_enqueue_background(MaterializeTask::RebuildTagsCache);
+    }
+
+    let dropped = mat.metrics().bg_dropped.load(AtomicOrdering::Relaxed);
+    assert!(
+        dropped > 0,
+        "bg_dropped must increment when try_enqueue_background sheds tasks under backpressure, got {dropped}"
+    );
+
+    // Stop the consumer cleanly so the test runtime can drain.
+    mat.shutdown();
+}
+
+/// M-7 / M-8: the cache-rebuild fan-out path
+/// (`enqueue_full_cache_rebuild`, used by `delete_block` /
+/// `restore_block` / `purge_block`) is the specific code path called
+/// out in the recommendation.  When the bg queue is saturated, every
+/// fan-out task shed by the helper must tick `bg_dropped` so the
+/// "agenda missing entries until something else is edited" symptom is
+/// observable.
+#[tokio::test]
+async fn enqueue_full_cache_rebuild_under_backpressure_increments_bg_dropped() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+
+    // Fill the bg queue to capacity first so the cache-rebuild fan-out
+    // arrives at a queue that is already full.
+    for _ in 0..2048 {
+        let _ = mat.try_enqueue_background(MaterializeTask::RebuildTagsCache);
+    }
+    let baseline = mat.metrics().bg_dropped.load(AtomicOrdering::Relaxed);
+    assert!(
+        baseline > 0,
+        "precondition: backpressure must already have ticked bg_dropped, got {baseline}"
+    );
+
+    // Drive a synthetic delete_block fan-out via the same dispatch entry
+    // point a real op uses.  The fan-out covers all 7 tasks in
+    // `FULL_CACHE_REBUILD_TASKS` plus a `RemoveFtsBlock` for the
+    // non-empty block_id — every one should be shed and counted because
+    // the queue is saturated.
+    let record = fake_op_record("delete_block", r#"{"block_id":"BLK-DEL"}"#);
+    let _ = mat.dispatch_background(&record);
+
+    let after = mat.metrics().bg_dropped.load(AtomicOrdering::Relaxed);
+    assert!(
+        after >= baseline + 7,
+        "the delete_block cache-rebuild fan-out must add at least 7 drops under saturation (baseline={baseline}, after={after})"
+    );
+
+    mat.shutdown();
+}
 #[tokio::test]
 async fn try_enqueue_after_shutdown_err() {
     let (pool, _dir) = test_pool().await;

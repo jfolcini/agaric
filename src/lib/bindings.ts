@@ -66,7 +66,16 @@ export const commands = {
 	setProperty: (blockId: string, key: string, valueText: string | null, valueNum: number | null, valueDate: string | null, valueRef: string | null) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_property", { blockId, key, valueText, valueNum, valueDate, valueRef })),
 	// Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
 	setTodoState: (blockId: string, state: string | null) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
-	// Tauri command: set priority on a block. Delegates to [`set_priority_inner`].
+	/**
+	 *  Tauri command: set priority on a block. Delegates to [`set_priority_inner`].
+	 *
+	 *  L-38: emits `EVENT_PROPERTY_CHANGED` after a successful set so the
+	 *  frontend property-change listener fires for priority updates (parity
+	 *  with `set_todo_state` / `set_due_date` / `set_scheduled_date` /
+	 *  `delete_property` / `set_property`). The emit uses the
+	 *  log-on-error pattern (mirror of L-33) so a transient emit failure
+	 *  does not propagate as a command error.
+	 */
 	setPriority: (blockId: string, level: string | null) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_priority", { blockId, level })),
 	// Tauri command: set due date on a block. Delegates to [`set_due_date_inner`].
 	setDueDate: (blockId: string, date: string | null) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_due_date", { blockId, date })),
@@ -204,6 +213,13 @@ export const commands = {
 	/**
 	 *  Log a frontend message to the backend's daily-rolling log file.
 	 *  Fire-and-forget — the frontend never awaits this.
+	 *
+	 *  M-39: every `String` / `Option<String>` field is truncated at entry
+	 *  to [`MAX_FRONTEND_LOG_FIELD_BYTES`] (64 KB) so a single oversized
+	 *  payload cannot stall the IPC thread or corrupt the daily log file.
+	 *  Truncation is unconditional — the FE rate-limiter is not in this
+	 *  trust scope (caller of `log_frontend` may be a panic handler that
+	 *  fires before the rate-limiter takes effect).
 	 */
 	logFrontend: (level: string, module: string, message: string, stack: string | null, context: string | null, data: string | null) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("log_frontend", { level, module, message, stack, context, data })),
 	/**
@@ -467,9 +483,15 @@ export type Draft = {
  *  the presence of an OAuth token in the keychain; `calendar_id` is
  *  only populated after the first push-cycle has created the
  *  dedicated calendar.
+ *
+ *  L-45: the previous shape carried both `enabled` and `connected`,
+ *  populated from the same expression. `connected` is the canonical
+ *  field consumed by the frontend (`GoogleCalendarSettingsTab.tsx`);
+ *  `enabled` was unused and has been removed to prevent FE/BE drift on
+ *  future refactors. If a separate "feature toggle" surface is ever
+ *  needed it should be a distinct field with its own provenance.
  */
 export type GcalStatus = {
-	enabled: boolean,
 	connected: boolean,
 	account_email: string | null,
 	calendar_id: string | null,
