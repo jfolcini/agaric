@@ -99,6 +99,37 @@ pub fn get_or_create_sync_cert(config_path: &Path, device_id: &str) -> Result<Sy
             hash_file.write_all(cert.cert_hash.as_bytes())?;
             hash_file.sync_all()?;
 
+            // M-55: POSIX only guarantees directory entries reach stable
+            // storage after `fsync(parent_dir_fd)`. Without this, a power
+            // loss could leave the `.pem` / `.hash` data persisted but the
+            // directory entries absent, causing the app to regenerate a
+            // fresh cert (new hash) on next launch and forcing all peers
+            // to re-pin via TOFU. Best-effort: log a warning on failure.
+            // Skipped on Windows — NTFS journals directory entries
+            // differently and `FlushFileBuffers` on a directory handle is
+            // not the equivalent operation.
+            #[cfg(unix)]
+            {
+                if let Some(parent) = pem_path.parent() {
+                    match std::fs::File::open(parent) {
+                        Ok(dir) => {
+                            if let Err(e) = dir.sync_all() {
+                                tracing::warn!(
+                                    "sync_cert: failed to fsync parent dir {}: {e}",
+                                    parent.display()
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "sync_cert: failed to open parent dir {} for fsync: {e}",
+                                parent.display()
+                            );
+                        }
+                    }
+                }
+            }
+
             Ok(SyncCert {
                 cert_pem,
                 key_pem,
@@ -454,5 +485,99 @@ mod tests {
         for (i, h) in hashes.iter().enumerate() {
             assert_eq!(h, first, "thread {i} hash should match first thread's hash");
         }
+    }
+}
+
+// ===========================================================================
+// M-55: parent directory fsync after cert + hash file creation
+// ===========================================================================
+
+#[cfg(test)]
+mod tests_m55 {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Sanity: happy path — both `.pem` and `.hash` exist after creation.
+    /// (Mirrors `tests::creates_cert_files_on_first_call` so M-55 has its
+    /// own minimal regression check at the bottom of the file.)
+    #[test]
+    fn get_or_create_sync_cert_creates_pem_and_hash() {
+        let dir = TempDir::new().unwrap();
+        let base = dir.path().join("sync-cert");
+
+        let cert = get_or_create_sync_cert(&base, "m55-device-happy").unwrap();
+
+        assert!(
+            base.with_extension("pem").exists(),
+            "PEM file must exist after get_or_create_sync_cert"
+        );
+        assert!(
+            base.with_extension("hash").exists(),
+            "hash file must exist after get_or_create_sync_cert"
+        );
+        assert_eq!(cert.cert_hash.len(), 64, "hash must be 64 hex chars");
+    }
+
+    /// On Unix, the parent-dir fsync added for M-55 must not break the
+    /// happy path: the function still returns Ok and both files are
+    /// visible from a freshly-opened handle (i.e. through the filesystem,
+    /// not via the writer's own file descriptor).
+    ///
+    /// On Windows the fsync block is `#[cfg(unix)]`-gated out, so this
+    /// test simply asserts the function still works (regression check for
+    /// the cfg-gating itself).
+    ///
+    /// We cannot deterministically test the actual fsync semantics
+    /// without a fault-injection layer; this test exists to guarantee the
+    /// new code path does not regress the function on either platform.
+    #[test]
+    fn m55_directory_fsync_unix_only() {
+        let dir = TempDir::new().unwrap();
+        let base = dir.path().join("sync-cert");
+
+        let result = get_or_create_sync_cert(&base, "m55-device-fsync");
+        assert!(
+            result.is_ok(),
+            "get_or_create_sync_cert must return Ok on this platform after M-55, got: {:?}",
+            result.as_ref().err()
+        );
+
+        let pem_path = base.with_extension("pem");
+        let hash_path = base.with_extension("hash");
+
+        // Open via fresh handles — exercises the directory entry lookup,
+        // which is what the parent-dir fsync is meant to make durable.
+        let pem_bytes = fs::read(&pem_path).expect("PEM must be readable via a fresh handle");
+        let hash_bytes = fs::read(&hash_path).expect("hash must be readable via a fresh handle");
+
+        assert!(!pem_bytes.is_empty(), "PEM file must not be empty");
+        assert_eq!(hash_bytes.len(), 64, "hash file must contain 64 hex chars");
+
+        // Sanity: subsequent call (which goes down the read_existing_cert
+        // path) must see the same files we just fsynced.
+        let again = get_or_create_sync_cert(&base, "m55-device-fsync").unwrap();
+        assert_eq!(
+            again.cert_hash,
+            String::from_utf8(hash_bytes).unwrap(),
+            "second call must read back the hash that was fsynced to disk"
+        );
+    }
+
+    /// The parent-dir fsync is best-effort: even when the parent
+    /// directory is somehow not openable for fsync (e.g. unusual perms),
+    /// the function as a whole must still return Ok because the file
+    /// data has already been fsynced. This test exercises the normal
+    /// path; the warn-and-continue branch is only reached on rare
+    /// platform-specific failures and is covered by inspection.
+    #[test]
+    fn m55_returns_ok_on_normal_filesystem() {
+        let dir = TempDir::new().unwrap();
+        let base = dir.path().join("nested").join("sync-cert");
+
+        // Nested parent must be created and then fsynced without error.
+        let cert = get_or_create_sync_cert(&base, "m55-device-nested").unwrap();
+        assert!(!cert.cert_pem.is_empty());
+        assert!(base.with_extension("pem").exists());
+        assert!(base.with_extension("hash").exists());
     }
 }
