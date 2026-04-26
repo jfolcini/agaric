@@ -210,15 +210,19 @@ async fn pairing_start_then_cancel_clears_session() {
     );
 }
 
+/// H-1 regression: `confirm_pairing_inner` must refuse to persist a peer
+/// when no pairing session is active. Before H-1 the function happily
+/// created a peer ref for any string and any caller; the post-H-1
+/// contract is that the joining device must produce the passphrase
+/// that was generated on the host side, which requires an active
+/// `pairing_state` slot to compare against.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn confirm_without_prior_start_still_creates_peer() {
+async fn confirm_without_prior_start_returns_no_active_session() {
     let (pool, _dir) = test_pool().await;
     let pairing = PairingState(Mutex::new(None));
     let scheduler = SyncScheduler::new();
 
-    // Confirm without starting — confirm_pairing_inner doesn't validate against
-    // a stored session; it creates a new one from the passphrase directly.
-    confirm_pairing_inner(
+    let result = confirm_pairing_inner(
         &pool,
         &pairing.0,
         &scheduler,
@@ -226,14 +230,17 @@ async fn confirm_without_prior_start_still_creates_peer() {
         "some random phrase".into(),
         "dev-remote".into(),
     )
-    .await
-    .unwrap();
+    .await;
+
+    assert!(
+        matches!(&result, Err(AppError::Validation(msg)) if msg == "pairing.no_active_session"),
+        "confirm without prior start must surface as Validation(\"pairing.no_active_session\"), got {result:?}"
+    );
 
     let peers = crate::commands::list_peer_refs_inner(&pool).await.unwrap();
-    assert_eq!(
-        peers.len(),
-        1,
-        "peer_ref should be created on confirm regardless of prior start"
+    assert!(
+        peers.is_empty(),
+        "no peer_ref must be created when no pairing is in flight"
     );
 }
 

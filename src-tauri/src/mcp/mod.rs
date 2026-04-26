@@ -46,17 +46,35 @@ use crate::materializer::Materializer;
 ///   and each spawned per-connection task `select!`s on it, returning
 ///   early when the signal fires. Subsequent connects succeed — the
 ///   signal only kicks in-flight connections, not the listener itself.
+///   The accept loop also wakes from this signal so [`shutdown`] can
+///   pull it out of `accept().await` and have it re-check [`enabled`].
 /// - `active_connections`: incremented by each per-connection task on
 ///   entry and decremented on exit via an RAII guard. `get_mcp_status`
 ///   reads this for the Settings activity-feed badge.
 /// - `task_running`: set `true` while the accept loop owns the socket.
 ///   `mcp_set_enabled` consults this to decide whether a re-spawn is
 ///   needed after the marker file is toggled on.
+/// - `enabled`: H-2 gate consulted by the accept loop on every iteration
+///   *and* immediately after each accepted socket. Set to `false` by
+///   [`shutdown`] (called from `mcp_set_enabled(false)`) to make the
+///   accept loop drop its listener and return cleanly. Reset to `true`
+///   by `spawn_*_task_with_registry` before each re-spawn so a fresh
+///   enable gets a fresh gate.
+///
+/// [`enabled`]: McpLifecycle#structfield.enabled
+/// [`shutdown`]: McpLifecycle::shutdown
 #[derive(Debug, Clone)]
 pub struct McpLifecycle {
     pub disconnect_signal: Arc<Notify>,
     pub active_connections: Arc<AtomicUsize>,
     pub task_running: Arc<std::sync::atomic::AtomicBool>,
+    /// H-2 gate consulted by the accept loop. Defaults to `true` so a
+    /// freshly-constructed lifecycle is ready to serve. `mcp_set_enabled(false)`
+    /// flips this to `false` via [`shutdown`](McpLifecycle::shutdown);
+    /// `spawn_*_task_with_registry` restores it to `true` before each
+    /// re-spawn so a previous shutdown does not leak across enable/
+    /// disable cycles.
+    pub enabled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl McpLifecycle {
@@ -65,6 +83,7 @@ impl McpLifecycle {
             disconnect_signal: Arc::new(Notify::new()),
             active_connections: Arc::new(AtomicUsize::new(0)),
             task_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         }
     }
 
@@ -79,10 +98,40 @@ impl McpLifecycle {
         self.task_running.load(Ordering::Acquire)
     }
 
+    /// `true` while the accept loop is gated open. Cleared by [`shutdown`]
+    /// and reset by `spawn_*_task_with_registry` on re-enable.
+    ///
+    /// [`shutdown`]: McpLifecycle::shutdown
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Acquire)
+    }
+
     /// Wake every in-flight connection task so each observes the signal
     /// via `select!` and drops its stream. Safe to call with no active
     /// connections (no-op).
     pub fn disconnect_all(&self) {
+        self.disconnect_signal.notify_waiters();
+    }
+
+    /// H-2: tear the accept loop down cleanly.
+    ///
+    /// Stores `false` into [`enabled`] so the loop's per-iteration gate
+    /// observes the disable, then fires `disconnect_signal.notify_waiters()`
+    /// so any task currently parked inside `listener.accept().await`
+    /// (or each per-connection handler's `select!`) wakes immediately.
+    /// On wake the loop re-checks the gate, drops the listener (the OS
+    /// port / socket file is released), and returns. The next
+    /// `mcp_set_enabled(true)` call sees `task_running == false` and
+    /// re-spawns a fresh task on a freshly-bound listener.
+    ///
+    /// Distinct from [`disconnect_all`](McpLifecycle::disconnect_all),
+    /// which only kicks in-flight connections without affecting the
+    /// listener — `mcp_disconnect_all` is a one-shot kill switch, not
+    /// a toggle.
+    ///
+    /// [`enabled`]: McpLifecycle#structfield.enabled
+    pub fn shutdown(&self) {
+        self.enabled.store(false, Ordering::Release);
         self.disconnect_signal.notify_waiters();
     }
 }
@@ -430,6 +479,14 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
 {
     let registry = std::sync::Arc::new(registry);
     tauri::async_runtime::spawn(async move {
+        // H-2: a previous disable cleared `enabled` to `false` and left
+        // it that way (so the prior accept loop observed the gate and
+        // exited). Reset before binding so the fresh accept loop is
+        // not torn down on its first iteration. Done before bind so a
+        // bind failure does not leave the gate stuck at `false`.
+        if let Some(ref lc) = lifecycle {
+            lc.enabled.store(true, std::sync::atomic::Ordering::Release);
+        }
         match bind_socket(&socket_path, "RO").await {
             Ok(socket) => {
                 if let Some(ref lc) = lifecycle {
@@ -517,6 +574,12 @@ pub fn spawn_mcp_rw_task_with_registry<R>(
 {
     let registry = std::sync::Arc::new(registry);
     tauri::async_runtime::spawn(async move {
+        // H-2: see RO spawn helper for the rationale — clear any stale
+        // `enabled = false` left over by a previous shutdown before
+        // binding the new listener.
+        if let Some(ref lc) = lifecycle {
+            lc.enabled.store(true, std::sync::atomic::Ordering::Release);
+        }
         match bind_socket(&socket_path, "RW").await {
             Ok(socket) => {
                 if let Some(ref lc) = lifecycle {

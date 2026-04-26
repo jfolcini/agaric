@@ -287,40 +287,65 @@ impl PairingSession {
 ///
 /// After passphrase confirmation, both peers exchange their device ID and
 /// TLS certificate hash so that each side can pin the other's identity.
+///
+/// H-1: each device-bearing variant also carries the supplied
+/// `passphrase` so [`verify_device_exchange`] can confirm the joining
+/// device typed the same passphrase that was generated on the host
+/// device. Before H-1 the passphrase was never compared and any string
+/// passed `confirm_pairing_inner`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PairingMessage {
-    /// Initiator sends their identity.
+    /// Initiator sends their identity + the passphrase they typed from
+    /// the QR display on the responder device.
     DeviceOffer {
         device_id: String,
         cert_hash: String,
+        passphrase: String,
     },
-    /// Responder confirms with their identity.
+    /// Responder confirms with their identity + the passphrase they
+    /// generated and showed in the QR.
     DeviceAccept {
         device_id: String,
         cert_hash: String,
+        passphrase: String,
     },
     /// Error during pairing.
     PairingError { message: String },
 }
 
-/// Extract and optionally verify the remote device info from a [`PairingMessage`].
+/// Extract and verify the remote device info from a [`PairingMessage`].
 ///
-/// If `expected_peer_id` is `Some`, the extracted `device_id` must match or
-/// an `AppError::InvalidOperation` is returned.  Returns `(device_id, cert_hash)`.
+/// Verification is layered:
+///
+/// - `expected_peer_id` (when `Some`): the message's `device_id` must
+///   match or `AppError::InvalidOperation` is returned.
+/// - `expected_passphrase` (when `Some`): H-1 — the message's
+///   `passphrase` must match the passphrase stored in the active
+///   `pairing_state` slot. A mismatch returns
+///   `AppError::Validation("pairing.passphrase.mismatch")`. This is
+///   the one place inside the local trust boundary where input from
+///   outside (the user typing what they read off the QR display) is
+///   checked, so the error is surfaced with a stable, machine-readable
+///   tag the frontend can match on.
+///
+/// Returns `(device_id, cert_hash)` on success.
 pub fn verify_device_exchange(
     msg: &PairingMessage,
     expected_peer_id: Option<&str>,
+    expected_passphrase: Option<&str>,
 ) -> Result<(String, String), crate::error::AppError> {
-    let (device_id, cert_hash) = match msg {
+    let (device_id, cert_hash, msg_passphrase) = match msg {
         PairingMessage::DeviceOffer {
             device_id,
             cert_hash,
+            passphrase,
         }
         | PairingMessage::DeviceAccept {
             device_id,
             cert_hash,
-        } => (device_id.clone(), cert_hash.clone()),
+            passphrase,
+        } => (device_id.clone(), cert_hash.clone(), passphrase.clone()),
         PairingMessage::PairingError { message } => {
             return Err(crate::error::AppError::InvalidOperation(format!(
                 "remote pairing error: {message}"
@@ -333,6 +358,18 @@ pub fn verify_device_exchange(
             return Err(crate::error::AppError::InvalidOperation(format!(
                 "device ID mismatch: expected {expected}, got {device_id}"
             )));
+        }
+    }
+
+    // H-1: passphrase comparison. AGENTS.md threat model treats sync
+    // peers as the user's own devices, so a constant-time compare is
+    // not required — a wrong passphrase is the user mistyping or
+    // scanning the wrong QR, not an adversary probing timing.
+    if let Some(expected_pass) = expected_passphrase {
+        if msg_passphrase != expected_pass {
+            return Err(crate::error::AppError::Validation(
+                "pairing.passphrase.mismatch".into(),
+            ));
         }
     }
 
@@ -657,6 +694,7 @@ mod tests {
         let msg = PairingMessage::DeviceOffer {
             device_id: "DEVICE01".to_string(),
             cert_hash: "abc123".to_string(),
+            passphrase: "alpha bravo charlie delta".to_string(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: PairingMessage = serde_json::from_str(&json).unwrap();
@@ -669,8 +707,9 @@ mod tests {
         let msg = PairingMessage::DeviceOffer {
             device_id: "DEV123".to_string(),
             cert_hash: "hash456".to_string(),
+            passphrase: "any phrase will do".to_string(),
         };
-        let (id, hash) = verify_device_exchange(&msg, Some("DEV123")).unwrap();
+        let (id, hash) = verify_device_exchange(&msg, Some("DEV123"), None).unwrap();
         assert_eq!(id, "DEV123");
         assert_eq!(hash, "hash456");
     }
@@ -680,8 +719,9 @@ mod tests {
         let msg = PairingMessage::DeviceAccept {
             device_id: "WRONG".to_string(),
             cert_hash: "hash".to_string(),
+            passphrase: "any phrase will do".to_string(),
         };
-        let err = verify_device_exchange(&msg, Some("EXPECTED")).unwrap_err();
+        let err = verify_device_exchange(&msg, Some("EXPECTED"), None).unwrap_err();
         assert!(err.to_string().contains("device ID mismatch"));
     }
 
@@ -690,8 +730,9 @@ mod tests {
         let msg = PairingMessage::DeviceOffer {
             device_id: "ANY".to_string(),
             cert_hash: "hash".to_string(),
+            passphrase: "any phrase will do".to_string(),
         };
-        assert!(verify_device_exchange(&msg, None).is_ok());
+        assert!(verify_device_exchange(&msg, None, None).is_ok());
     }
 
     #[test]
@@ -699,8 +740,58 @@ mod tests {
         let msg = PairingMessage::PairingError {
             message: "timeout".to_string(),
         };
-        let err = verify_device_exchange(&msg, None).unwrap_err();
+        let err = verify_device_exchange(&msg, None, None).unwrap_err();
         assert!(err.to_string().contains("remote pairing error"));
+    }
+
+    /// H-1: when `expected_passphrase` matches the message passphrase,
+    /// verification succeeds and returns the (device_id, cert_hash) pair.
+    #[test]
+    fn verify_device_exchange_accepts_matching_passphrase() {
+        let msg = PairingMessage::DeviceOffer {
+            device_id: "DEV1".to_string(),
+            cert_hash: "h".to_string(),
+            passphrase: "alpha bravo charlie delta".to_string(),
+        };
+        let (id, hash) = verify_device_exchange(&msg, None, Some("alpha bravo charlie delta"))
+            .expect("matching passphrase must succeed");
+        assert_eq!(id, "DEV1");
+        assert_eq!(hash, "h");
+    }
+
+    /// H-1: a passphrase mismatch must surface as
+    /// `AppError::Validation("pairing.passphrase.mismatch")` so the
+    /// frontend can match on the tag without parsing free-text.
+    #[test]
+    fn verify_device_exchange_rejects_passphrase_mismatch() {
+        let msg = PairingMessage::DeviceOffer {
+            device_id: "DEV1".to_string(),
+            cert_hash: "h".to_string(),
+            passphrase: "wrong wrong wrong wrong".to_string(),
+        };
+        let err = verify_device_exchange(&msg, None, Some("alpha bravo charlie delta"))
+            .expect_err("mismatched passphrase must fail");
+        match err {
+            AppError::Validation(msg) => assert_eq!(
+                msg, "pairing.passphrase.mismatch",
+                "H-1 error tag must be pairing.passphrase.mismatch"
+            ),
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    /// H-1: when `expected_passphrase` is `None`, the function must
+    /// not look at the message's passphrase at all — preserves the
+    /// pre-H-1 behaviour for callers that only need device_id checks.
+    #[test]
+    fn verify_device_exchange_skips_passphrase_check_when_none() {
+        let msg = PairingMessage::DeviceAccept {
+            device_id: "DEV1".to_string(),
+            cert_hash: "h".to_string(),
+            passphrase: "wrong wrong wrong wrong".to_string(),
+        };
+        verify_device_exchange(&msg, None, None)
+            .expect("no expected_passphrase => no passphrase check");
     }
 
     // ======================================================================

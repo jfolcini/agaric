@@ -2,6 +2,7 @@
 
 use sqlx::SqlitePool;
 use std::mem;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc;
@@ -250,6 +251,7 @@ pub(super) async fn run_background(
     shutdown_flag: Arc<AtomicBool>,
     metrics: Arc<QueueMetrics>,
     read_pool: Option<SqlitePool>,
+    app_data_dir: Arc<OnceLock<PathBuf>>,
 ) {
     loop {
         let Some(first) = rx.recv().await else {
@@ -292,8 +294,10 @@ pub(super) async fn run_background(
                 let task_clone = task.clone();
                 let pool_clone = pool.clone();
                 let rp_clone = rp_ref.cloned();
+                let app_data_dir_clone = app_data_dir.clone();
                 let result = tokio::task::spawn(async move {
-                    handle_background_task(&pool_clone, &task_clone, rp_clone.as_ref()).await
+                    let dir = app_data_dir_clone.get().map(PathBuf::as_path);
+                    handle_background_task(&pool_clone, &task_clone, rp_clone.as_ref(), dir).await
                 })
                 .await;
                 match &result {
@@ -310,9 +314,16 @@ pub(super) async fn run_background(
                             let retry_task = task.clone();
                             let pool_clone2 = pool.clone();
                             let rp_clone2 = rp_ref.cloned();
+                            let app_data_dir_clone2 = app_data_dir.clone();
                             let retry_result = tokio::task::spawn(async move {
-                                handle_background_task(&pool_clone2, &retry_task, rp_clone2.as_ref())
-                                    .await
+                                let dir = app_data_dir_clone2.get().map(PathBuf::as_path);
+                                handle_background_task(
+                                    &pool_clone2,
+                                    &retry_task,
+                                    rp_clone2.as_ref(),
+                                    dir,
+                                )
+                                .await
                             })
                             .await;
                             match &retry_result {

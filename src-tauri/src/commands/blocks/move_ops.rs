@@ -84,13 +84,19 @@ pub async fn move_block_inner(
         // recursive CTE. If block_id appears among the ancestors, reparenting
         // would create a cycle (e.g. moving A under its own grandchild C in
         // a chain A→B→C).
+        //
+        // Recursive member filters `is_conflict = 0` and bounds `depth < 100`
+        // (invariant #9). Without these, a conflict copy along the parent
+        // chain would falsely report a cycle, and a corrupted parent_id chain
+        // could run unbounded recursion. Same pattern as the depth-check CTE
+        // below.
         let cycle = sqlx::query!(
-            r#"WITH RECURSIVE ancestors(id) AS (
-                 SELECT parent_id FROM blocks WHERE id = ?
+            r#"WITH RECURSIVE ancestors(id, depth) AS (
+                 SELECT parent_id, 0 FROM blocks WHERE id = ?
                  UNION ALL
-                 SELECT b.parent_id FROM blocks b
+                 SELECT b.parent_id, a.depth + 1 FROM blocks b
                  INNER JOIN ancestors a ON b.id = a.id
-                 WHERE a.id IS NOT NULL
+                 WHERE a.id IS NOT NULL AND b.is_conflict = 0 AND a.depth < 100
              )
              SELECT 1 as "v: i32" FROM ancestors WHERE id = ?"#,
             pid,

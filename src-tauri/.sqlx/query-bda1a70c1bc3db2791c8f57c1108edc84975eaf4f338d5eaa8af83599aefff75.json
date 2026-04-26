@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 as \"v: i32\" FROM attachments WHERE fs_path = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "v: i32",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bda1a70c1bc3db2791c8f57c1108edc84975eaf4f338d5eaa8af83599aefff75"
+}

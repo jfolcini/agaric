@@ -540,6 +540,17 @@ pub fn run() {
                 pools.read.clone(),
                 lifecycle.clone(),
             );
+            // REVIEW-LATER C-3c — register `app_data_dir` so the
+            // `CleanupOrphanedAttachments` background task can locate
+            // the `attachments/` subtree.
+            //
+            // TODO: schedule `cleanup_orphaned_attachments` at boot
+            // and/or after compaction. Currently the only entry point
+            // is `MaterializeTask::CleanupOrphanedAttachments`, which
+            // is not yet enqueued from any production path; the GC
+            // function is implemented but dormant until a scheduler
+            // hooks it.
+            materializer.set_app_data_dir(app_data_dir.clone());
 
             // M-3: Rebuild FTS index at boot if the table is empty (post-migration 0006).
             let fts_count: i64 = tauri::async_runtime::block_on(

@@ -201,6 +201,136 @@ async fn sync_confirm_pairing_stores_peer_and_clears_session() {
     );
 }
 
+// ----------------------------------------------------------------------
+// H-1 — Pairing passphrase verification against the active slot
+// ----------------------------------------------------------------------
+//
+// `confirm_pairing_inner` must reject any passphrase that does not match
+// the active `pairing_state` slot. Before H-1 the function accepted any
+// string; the entire `PairingMessage` + `verify_device_exchange`
+// machinery in `pairing.rs` was dead code. These tests pin down the
+// post-H-1 contract:
+//
+// 1. Wrong passphrase → `Err(AppError::Validation(_))` tagged
+//    `pairing.passphrase.mismatch`.
+// 2. Correct passphrase → `Ok(())`, peer persisted, session cleared.
+// 3. No active slot → `Err(AppError::Validation(_))` tagged
+//    `pairing.no_active_session`.
+//
+// Per the threat model in AGENTS.md, the pairing passphrase is the one
+// place where input from outside the local trust boundary matters: the
+// user has typed it from the QR display on the source device, so a
+// mismatch means we are talking to the wrong peer.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn confirm_pairing_inner_rejects_wrong_passphrase() {
+    let (pool, _dir) = test_pool().await;
+    let pairing_state = Mutex::new(None);
+    let scheduler = SyncScheduler::new();
+
+    // Start pairing — generates a fresh passphrase stored in the slot.
+    let _info = start_pairing_inner(&pairing_state, "device-local").unwrap();
+
+    // Confirm with a deliberately-wrong passphrase. Use 4 words so the
+    // shape matches what a real user would type, ruling out any stray
+    // length/format check masking a real mismatch.
+    let result = confirm_pairing_inner(
+        &pool,
+        &pairing_state,
+        &scheduler,
+        "device-local",
+        "wrong wrong wrong wrong".into(),
+        "device-remote".into(),
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(ref msg)) if msg == "pairing.passphrase.mismatch"),
+        "wrong passphrase must surface as Validation(\"pairing.passphrase.mismatch\"), got {result:?}"
+    );
+
+    // Peer must NOT have been persisted.
+    let peer = peer_refs::get_peer_ref(&pool, "device-remote")
+        .await
+        .unwrap();
+    assert!(
+        peer.is_none(),
+        "peer ref must NOT be persisted after a passphrase mismatch"
+    );
+
+    // Pairing slot must remain populated so the user can retry without
+    // re-displaying the QR.
+    assert!(
+        pairing_state.lock().unwrap().is_some(),
+        "active pairing slot must survive a failed confirmation"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn confirm_pairing_inner_accepts_correct_passphrase() {
+    let (pool, _dir) = test_pool().await;
+    let pairing_state = Mutex::new(None);
+    let scheduler = SyncScheduler::new();
+
+    let info = start_pairing_inner(&pairing_state, "device-local").unwrap();
+
+    // Confirm with the exact passphrase from the active slot.
+    confirm_pairing_inner(
+        &pool,
+        &pairing_state,
+        &scheduler,
+        "device-local",
+        info.passphrase,
+        "device-remote".into(),
+    )
+    .await
+    .expect("correct passphrase must succeed");
+
+    let peer = peer_refs::get_peer_ref(&pool, "device-remote")
+        .await
+        .unwrap();
+    assert!(
+        peer.is_some(),
+        "peer ref must be persisted on successful confirmation"
+    );
+    assert!(
+        pairing_state.lock().unwrap().is_none(),
+        "active pairing slot must be cleared on successful confirmation"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn confirm_pairing_inner_errors_when_no_pairing_in_flight() {
+    let (pool, _dir) = test_pool().await;
+    // Empty slot — start_pairing_inner was never called.
+    let pairing_state = Mutex::new(None);
+    let scheduler = SyncScheduler::new();
+
+    let result = confirm_pairing_inner(
+        &pool,
+        &pairing_state,
+        &scheduler,
+        "device-local",
+        "any pass phrase here".into(),
+        "device-remote".into(),
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(ref msg)) if msg == "pairing.no_active_session"),
+        "missing slot must surface as Validation(\"pairing.no_active_session\"), got {result:?}"
+    );
+
+    // No peer should have been persisted.
+    let peer = peer_refs::get_peer_ref(&pool, "device-remote")
+        .await
+        .unwrap();
+    assert!(
+        peer.is_none(),
+        "peer ref must NOT be persisted when no pairing is in flight"
+    );
+}
+
 // ======================================================================
 // Sync — cancel_pairing (#275)
 // ======================================================================

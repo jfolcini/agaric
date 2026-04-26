@@ -1990,14 +1990,20 @@ async fn grouped_backlinks_orphan_blocks_excluded_from_groups() {
         resp.groups.is_empty(),
         "orphan content block with no page ancestor should be omitted from grouped results"
     );
-    // But total_count still counts them in the base set
+    // H-11: `total_count` and `filtered_count` are now computed *after*
+    // orphan + self-reference filtering — per AGENTS.md "Backend
+    // Patterns" #4, the count must match what the user actually sees.
+    // The previous expectation (`total_count == 1`, `filtered_count == 1`)
+    // pinned the old buggy behaviour where the UI badge claimed "1
+    // backlink" but the rendered group list was empty. With H-11 the
+    // post-filter counts agree with the rendered group total.
     assert_eq!(
-        resp.total_count, 1,
-        "orphan block is still in the base backlink set"
+        resp.total_count, 0,
+        "orphan block excluded from total_count (H-11)"
     );
     assert_eq!(
-        resp.filtered_count, 1,
-        "orphan block passes filters (no filters applied)"
+        resp.filtered_count, 0,
+        "orphan block excluded from filtered_count (H-11)"
     );
 }
 

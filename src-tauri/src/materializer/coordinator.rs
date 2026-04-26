@@ -10,6 +10,7 @@ use crate::error::AppError;
 use crate::gcal_push::connector::GcalConnectorHandle;
 use crate::lifecycle::LifecycleHooks;
 use sqlx::SqlitePool;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::{mpsc, Notify};
@@ -60,6 +61,18 @@ pub struct Materializer {
     /// handle (which the connector produces) — circular construction
     /// broken by a deferred setter.
     pub(super) gcal_handle: Arc<OnceLock<GcalConnectorHandle>>,
+    /// REVIEW-LATER C-3c — OS-correct app data directory used by the
+    /// `CleanupOrphanedAttachments` background task to walk the
+    /// `attachments/` subtree and reconcile orphaned files against
+    /// the `attachments` table.
+    ///
+    /// Mirrors the `gcal_handle` pattern: an empty `OnceLock` after
+    /// construction, populated by [`Self::set_app_data_dir`] from
+    /// `lib.rs` once `app.path().app_data_dir()` resolves. Tests that
+    /// do not exercise the GC path leave the field empty —
+    /// `cleanup_orphaned_attachments` short-circuits with a debug log
+    /// when the dir is not set.
+    pub(super) app_data_dir: Arc<OnceLock<PathBuf>>,
 }
 
 /// RAII guard that decrements
@@ -147,6 +160,7 @@ impl Materializer {
         let pending_block_count_refreshes = Arc::new(AtomicU32::new(0));
         let pending_block_count_refreshes_notify = Arc::new(Notify::new());
         let gcal_handle: Arc<OnceLock<GcalConnectorHandle>> = Arc::new(OnceLock::new());
+        let app_data_dir: Arc<OnceLock<PathBuf>> = Arc::new(OnceLock::new());
         {
             let p = write_pool.clone();
             let s = shutdown_flag.clone();
@@ -157,12 +171,14 @@ impl Materializer {
         {
             let s = shutdown_flag.clone();
             let m = metrics.clone();
+            let d = app_data_dir.clone();
             Self::spawn_task(consumer::run_background(
                 write_pool,
                 bg_rx,
                 s,
                 m,
                 read_pool_for_consumer,
+                d,
             ));
         }
         {
@@ -207,6 +223,7 @@ impl Materializer {
             pending_block_count_refreshes,
             pending_block_count_refreshes_notify,
             gcal_handle,
+            app_data_dir,
         }
     }
 
@@ -222,6 +239,24 @@ impl Materializer {
     pub fn set_gcal_handle(&self, handle: GcalConnectorHandle) {
         if self.gcal_handle.set(handle).is_err() {
             tracing::warn!("Materializer::set_gcal_handle called twice — ignoring later set",);
+        }
+    }
+
+    /// REVIEW-LATER C-3c — register the OS-correct app data directory
+    /// so the `CleanupOrphanedAttachments` background task can locate
+    /// the `attachments/` subtree at execution time.
+    ///
+    /// Called once from `lib.rs` setup after `app.path().app_data_dir()`
+    /// resolves. Subsequent calls are rejected (the `OnceLock`
+    /// semantics) and logged at warn level — this is a programmer
+    /// error, not a runtime recoverable case.
+    ///
+    /// When the dir is not set (typical in unit tests that construct
+    /// `Materializer::new(pool)` without wiring), the GC handler
+    /// short-circuits with a debug log instead of running.
+    pub fn set_app_data_dir(&self, dir: PathBuf) {
+        if self.app_data_dir.set(dir).is_err() {
+            tracing::warn!("Materializer::set_app_data_dir called twice — ignoring later set");
         }
     }
 
