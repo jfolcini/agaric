@@ -4,6 +4,7 @@ pub mod cache;
 pub mod commands;
 pub mod dag;
 pub mod db;
+pub mod deeplink;
 pub mod device;
 pub mod draft;
 pub mod error;
@@ -300,6 +301,8 @@ pub fn run() {
         // Spaces (FEAT-3 Phase 1 + Phase 2)
         commands::list_spaces,
         commands::create_page_in_space,
+        // Quick capture (FEAT-12) — desktop global-shortcut entry point
+        commands::quick_capture_block,
     ]);
 
     // `mut` is only consumed by the `#[cfg(desktop)]` / `#[cfg(not(mobile))]`
@@ -318,21 +321,42 @@ pub fn run() {
     // "Database").  Desktop-only — Android/iOS enforce single-instance
     // via the OS task model, so the plugin is gated behind `#[cfg(desktop)]`
     // (matching upstream's `desktop_only_plugin` posture).
+    //
+    // FEAT-10: on Linux + Windows, OS deep-link activations spawn a
+    // **new** Agaric process with the URL as a CLI argument; the
+    // single-instance handler is the only place we can intercept those
+    // args and forward them to the still-running primary instance.  We
+    // call `DeepLinkExt::deep_link().handle_cli_arguments(...)` which
+    // re-parses the args and emits the `deep-link://new-url` event into
+    // the primary instance's bus (where our `deeplink::register_deeplink_handlers`
+    // listener picks it up and routes to the typed events).
     #[cfg(desktop)]
     {
         tauri_builder =
-            tauri_builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            tauri_builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
                 use tauri::Manager;
-                let _ = args; // currently unused; deep-link handling lands in FEAT-10.
-                let _ = cwd;
+                use tauri_plugin_deep_link::DeepLinkExt;
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
+                // FEAT-10: forward the second instance's argv to the
+                // deep-link plugin running inside the primary instance.
+                // The plugin filters args by the configured schemes
+                // (`agaric` only, per `tauri.conf.json`) so non-deep-link
+                // CLI args are silently ignored.
+                app.deep_link().handle_cli_arguments(args.into_iter());
             }));
     }
 
     tauri_builder = tauri_builder
+        // FEAT-10: cross-platform deep-link routing for `agaric://` URLs.
+        // Required on desktop AND Android (Android OAuth via Custom-Tabs
+        // + PKCE + App-Link callback is the FEAT-5g unblocker).  See
+        // `src-tauri/src/deeplink/mod.rs` for the URL → typed-event
+        // router; `register_deeplink_handlers` is wired from the setup
+        // hook below.  No `#[cfg(desktop)]` gate on purpose.
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_process::init())
@@ -358,6 +382,39 @@ pub fn run() {
     #[cfg(desktop)]
     {
         tauri_builder = tauri_builder.plugin(tauri_plugin_window_state::Builder::default().build());
+    }
+
+    // FEAT-12: register `tauri-plugin-global-shortcut` so the JS API can
+    // bind / unbind the user-configured "quick capture" hotkey at runtime.
+    // The plugin doesn't need a fixed binding at registration time —
+    // bindings are registered/unregistered dynamically from the frontend
+    // (see `src/lib/tauri.ts` + `src/components/QuickCaptureDialog.tsx`).
+    // Desktop-only — Android / iOS have no global-shortcut concept, so
+    // the plugin is gated behind `#[cfg(desktop)]`.
+    #[cfg(desktop)]
+    {
+        tauri_builder = tauri_builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    }
+
+    // FEAT-13: launch-on-login support.  Wired up to the Settings →
+    // General → "Launch on login" toggle (frontend reads/writes via
+    // `@tauri-apps/plugin-autostart`'s `isEnabled` / `enable` /
+    // `disable` IPC).  The `MacosLauncher::LaunchAgent` variant tells
+    // the plugin to register the autostart entry as a `~/Library/
+    // LaunchAgents/<bundle-id>.plist` rather than the legacy AppleScript
+    // approach (matches upstream's recommended default).  The
+    // `--silent` arg is passed to the relaunched process so future
+    // FEAT-11 notifier / sync-daemon code can detect a "started at
+    // login" launch and avoid popping the main window to the front.
+    // Desktop-only — Android/iOS expose start-at-boot via the OS task
+    // model (foreground service / WorkManager / background fetch
+    // entitlements), not the autostart plugin.
+    #[cfg(desktop)]
+    {
+        tauri_builder = tauri_builder.plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--silent"]),
+        ));
     }
 
     // MAINT-16: tauri-plugin-updater is desktop-only and currently not wired up
@@ -415,6 +472,13 @@ pub fn run() {
             // Keep the non-blocking appender's worker guard alive for the
             // lifetime of the app so buffered writes are never lost.
             app.manage(LogGuard(log_guard));
+
+            // FEAT-10: install the deep-link router as early as possible
+            // so launch-time `agaric://…` URLs are routed once the rest of
+            // setup completes.  The frontend `useDeepLinkRouter` hook
+            // additionally calls `getCurrent()` on mount to backfill any
+            // event the listener missed before it was registered.
+            deeplink::register_deeplink_handlers(app.handle());
 
             // Initialize separated read/write pools
             let pools = tauri::async_runtime::block_on(db::init_pools(&db_path))?;
@@ -1106,6 +1170,8 @@ mod specta_tests {
             // Spaces (FEAT-3 Phase 1 + Phase 2)
             crate::commands::list_spaces,
             crate::commands::create_page_in_space,
+            // Quick capture (FEAT-12) — desktop global-shortcut entry point
+            crate::commands::quick_capture_block,
         ])
     }
 

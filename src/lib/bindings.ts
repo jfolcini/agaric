@@ -296,6 +296,11 @@ export const commands = {
 	 *  is durable before scheduling derived-state work.
 	 */
 	createPageInSpace: (parentId: string | null, content: string, spaceId: string) => typedError<string, AppErrorSchema>(__TAURI_INVOKE("create_page_in_space", { parentId, content, spaceId })),
+	/**
+	 *  Tauri command: quick-capture a single content block onto today's
+	 *  journal page. Delegates to [`quick_capture_block_inner`].
+	 */
+	quickCaptureBlock: (content: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("quick_capture_block", { content })),
 };
 
 /* Types */

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { logger } from './logger'
 
 export type {
   BacklinkFilter,
@@ -980,4 +981,190 @@ export function createPageInSpace(params: {
     content: params.content,
     spaceId: params.spaceId,
   })
+}
+
+// ---------------------------------------------------------------------------
+// Quick capture (FEAT-12)
+// ---------------------------------------------------------------------------
+
+/**
+ * FEAT-12: a coarse mobile-detect used to gate the global-shortcut JS API.
+ *
+ * `tauri-plugin-global-shortcut` is desktop-only — its native dependency
+ * (`global-hotkey` crate) compiles only on Linux/macOS/Windows, and the
+ * Rust-side registration in `src-tauri/src/lib.rs` is gated behind
+ * `#[cfg(desktop)]`. The matching JS API import would resolve at module
+ * load time on every platform; calling the underlying `invoke('plugin:…')`
+ * on Android / iOS would throw at runtime. Guard at the wrapper boundary
+ * so callers (Settings UI, App.tsx startup hook) get a no-op promise on
+ * mobile instead of an unhandled rejection.
+ *
+ * The detection mirrors `useIsMobile` (matchMedia / innerWidth) but is
+ * SSR-safe and does not depend on React state.
+ */
+function isMobilePlatform(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent ?? ''
+  return /Android|iPhone|iPad|iPod/i.test(ua)
+}
+
+/**
+ * FEAT-12: drop a single content block onto today's journal page.
+ *
+ * Resolves today's journal page on the backend (creating it if missing)
+ * and appends a content block as a child. Used by the global-shortcut
+ * quick-capture flow (`QuickCaptureDialog` → `quickCaptureBlock`).
+ */
+export function quickCaptureBlock(content: string): Promise<BlockRow> {
+  return invoke<BlockRow>('quick_capture_block', { content })
+}
+
+/**
+ * FEAT-12: register a global hotkey via `@tauri-apps/plugin-global-shortcut`.
+ *
+ * `accelerator` is the chord string (`'CommandOrControl+Alt+N'`) that the
+ * plugin recognises. `callback` fires once per press (we filter on
+ * `state === 'Pressed'` so users don't get double-fires on key release).
+ *
+ * **Desktop-only** — on mobile this resolves immediately without
+ * registering anything. The plugin's underlying `global-hotkey` crate
+ * does not compile for Android / iOS targets, and registration is
+ * `#[cfg(desktop)]`-gated in `src-tauri/src/lib.rs`. Throws on the
+ * desktop side if the chord conflicts with another app's binding —
+ * callers should surface that as a user-visible toast.
+ */
+export async function registerGlobalShortcut(
+  accelerator: string,
+  callback: () => void,
+): Promise<void> {
+  if (isMobilePlatform()) return
+  const { register } = await import('@tauri-apps/plugin-global-shortcut')
+  await register(accelerator, (event) => {
+    // The plugin emits both `Pressed` and `Released` — fire the user
+    // callback once per logical activation only.
+    if (event.state === 'Pressed') callback()
+  })
+}
+
+/**
+ * FEAT-12: unregister a previously-registered global hotkey.
+ *
+ * Desktop-only; a no-op on mobile (matches `registerGlobalShortcut`).
+ * Safe to call when the chord was never registered — the underlying
+ * plugin throws in that case, which we let propagate so callers can
+ * decide whether to log or swallow.
+ */
+export async function unregisterGlobalShortcut(accelerator: string): Promise<void> {
+  if (isMobilePlatform()) return
+  const { unregister } = await import('@tauri-apps/plugin-global-shortcut')
+  await unregister(accelerator)
+}
+
+/**
+ * FEAT-12: probe whether `accelerator` is currently registered by *this*
+ * application. Returns `false` for both "not registered by us" and
+ * "registered by another app" cases — the plugin can't distinguish OS-
+ * level conflicts from a clean unbound state.
+ *
+ * Desktop-only; resolves to `false` on mobile.
+ */
+export async function isGlobalShortcutRegistered(accelerator: string): Promise<boolean> {
+  if (isMobilePlatform()) return false
+  const { isRegistered } = await import('@tauri-apps/plugin-global-shortcut')
+  return isRegistered(accelerator)
+}
+
+// ---------------------------------------------------------------------------
+// Autostart (FEAT-13) — launch-on-login support
+// ---------------------------------------------------------------------------
+//
+// Thin wrappers around `@tauri-apps/plugin-autostart`'s three exports
+// (`enable`, `disable`, `isEnabled`).  Desktop-only — the Rust side
+// gates registration with `#[cfg(desktop)]` (see lib.rs FEAT-13 block),
+// so on Android / iOS the underlying IPC will reject with "command not
+// found".  Each wrapper uses a dynamic `import(...)` (matching the
+// `clipboard.ts` / `relaunch-app.ts` pattern) so a plain-browser dev
+// session without `__TAURI_INTERNALS__` can still resolve the module
+// and surface a clean error to the caller's catch block (no module-load
+// crash at app boot).
+//
+// Errors are propagated to the caller — the Settings UI uses the
+// rejection both to (a) hide the toggle row when the plugin / IPC is
+// unavailable and (b) surface a `toast.error` when a user-initiated
+// enable / disable round-trip fails.
+
+/**
+ * Return whether Agaric is currently registered to launch on login.
+ *
+ * Rejects when the plugin is unavailable (mobile build, browser dev
+ * fallback, IPC denied).  Callers that need a tri-state (enabled /
+ * disabled / unavailable) view should treat the rejection as the third
+ * state — see `SettingsView`'s general-tab autostart row.
+ */
+export async function isAutostartEnabled(): Promise<boolean> {
+  const { isEnabled } = await import('@tauri-apps/plugin-autostart')
+  return isEnabled()
+}
+
+/**
+ * Register Agaric to launch when the user signs into their computer.
+ *
+ * Rejects when the plugin is unavailable; the `SettingsView` toggle
+ * surfaces the failure via `toast.error(t('settings.autostart.toggleFailed'))`
+ * and reverts the optimistic UI update.
+ */
+export async function enableAutostart(): Promise<void> {
+  try {
+    const { enable } = await import('@tauri-apps/plugin-autostart')
+    await enable()
+  } catch (err) {
+    logger.warn('autostart', 'enable() failed or plugin unavailable', undefined, err)
+    throw err
+  }
+}
+
+/**
+ * Unregister Agaric from launching at login.
+ *
+ * Same error semantics as `enableAutostart` — the rejection is the
+ * caller's signal to revert its optimistic UI update and surface
+ * `t('settings.autostart.toggleFailed')`.
+ */
+export async function disableAutostart(): Promise<void> {
+  try {
+    const { disable } = await import('@tauri-apps/plugin-autostart')
+    await disable()
+  } catch (err) {
+    logger.warn('autostart', 'disable() failed or plugin unavailable', undefined, err)
+    throw err
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Deep-link plugin wrappers (FEAT-10)
+// ---------------------------------------------------------------------------
+//
+// `@tauri-apps/plugin-deep-link` exposes `getCurrent()` which returns the
+// URL(s) the OS used to launch the app (Linux / Windows / Android), or
+// `null` when the app was started normally.  Used by `useDeepLinkRouter`
+// on mount to backfill any deep-link the listener missed before
+// registration completed (Linux / Windows deliver the URL as a CLI arg
+// before the React tree mounts).  Dynamic-import keeps a plain-browser
+// dev session without `__TAURI_INTERNALS__` resolving cleanly.
+
+/**
+ * Return the URL(s) the OS used to open Agaric, or `null` if the app
+ * was launched normally (no deep link).  Resolves to `null` when the
+ * plugin is unavailable so callers can treat "no current URL" and
+ * "plugin missing" the same way (the listener still fires on
+ * subsequent activations).
+ */
+export async function getCurrentDeepLink(): Promise<string[] | null> {
+  try {
+    const { getCurrent } = await import('@tauri-apps/plugin-deep-link')
+    return await getCurrent()
+  } catch (err) {
+    logger.warn('deeplink', 'getCurrent() failed or plugin unavailable', undefined, err)
+    return null
+  }
 }

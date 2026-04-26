@@ -84,7 +84,10 @@ pub use history::{
     list_page_history_inner, redo_page_op, redo_page_op_inner, restore_page_to_op,
     restore_page_to_op_inner, revert_ops, revert_ops_inner, undo_page_op, undo_page_op_inner,
 };
-pub use journal::{journal_for_date_inner, navigate_journal_inner, today_journal_inner};
+pub use journal::{
+    journal_for_date_inner, navigate_journal_inner, quick_capture_block, quick_capture_block_inner,
+    today_journal_inner,
+};
 pub use link_metadata::{
     fetch_link_metadata, fetch_link_metadata_inner, get_link_metadata, get_link_metadata_inner,
 };
@@ -175,6 +178,8 @@ pub use history::{
     __specta__fn__restore_page_to_op, __specta__fn__revert_ops, __specta__fn__undo_page_op,
 };
 #[doc(hidden)]
+pub use journal::__specta__fn__quick_capture_block;
+#[doc(hidden)]
 pub use link_metadata::{__specta__fn__fetch_link_metadata, __specta__fn__get_link_metadata};
 #[doc(hidden)]
 pub use logging::{__specta__fn__get_log_dir, __specta__fn__log_frontend};
@@ -253,6 +258,8 @@ pub use history::{
     __cmd__compute_edit_diff, __cmd__list_page_history, __cmd__redo_page_op,
     __cmd__restore_page_to_op, __cmd__revert_ops, __cmd__undo_page_op,
 };
+#[doc(hidden)]
+pub use journal::__cmd__quick_capture_block;
 #[doc(hidden)]
 pub use link_metadata::{__cmd__fetch_link_metadata, __cmd__get_link_metadata};
 #[doc(hidden)]

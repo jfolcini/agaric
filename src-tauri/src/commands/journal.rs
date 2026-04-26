@@ -2,12 +2,16 @@
 
 use chrono::NaiveDate;
 use sqlx::SqlitePool;
+use tauri::State;
 use tracing::instrument;
 
+use crate::db::WritePool;
+use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::pagination::BlockRow;
 
+use super::sanitize_internal_error;
 use super::*;
 
 /// Open today's journal page, creating it if it does not exist.
@@ -118,4 +122,60 @@ async fn resolve_or_create_journal_page(
         None,
     )
     .await
+}
+
+/// FEAT-12 — Quick-capture a single content block onto today's journal page.
+///
+/// Resolves today's journal page (creating it if it doesn't exist via
+/// [`today_journal_inner`]) and then appends a new `content` block as a
+/// child of that page. Used by the global-shortcut quick-capture flow:
+/// the user fires the OS hotkey from anywhere, types into a small modal,
+/// and the captured line lands at the bottom of today's journal — no
+/// navigation, no clicks.
+///
+/// Calling this twice on the same day appends two distinct blocks (matches
+/// the existing `create_block` semantic). The function is idempotent at
+/// the journal-page level — only the first call on a given day creates
+/// the page; subsequent calls reuse it.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — `content` exceeds the per-block size cap
+///   enforced by [`create_block_inner`].
+/// - Other [`AppError`] variants propagated from
+///   [`today_journal_inner`] / [`create_block_inner`] (e.g. DB I/O).
+#[instrument(skip(pool, device_id, materializer, content), err)]
+pub async fn quick_capture_block_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    content: String,
+) -> Result<BlockRow, AppError> {
+    let page = today_journal_inner(pool, device_id, materializer).await?;
+    create_block_inner(
+        pool,
+        device_id,
+        materializer,
+        "content".into(),
+        content,
+        Some(page.id),
+        None,
+    )
+    .await
+}
+
+/// Tauri command: quick-capture a single content block onto today's
+/// journal page. Delegates to [`quick_capture_block_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn quick_capture_block(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    content: String,
+) -> Result<BlockRow, AppError> {
+    quick_capture_block_inner(&pool.0, device_id.as_str(), &materializer, content)
+        .await
+        .map_err(sanitize_internal_error)
 }
