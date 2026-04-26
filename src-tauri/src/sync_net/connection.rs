@@ -340,6 +340,100 @@ mod describe_message_tests {
         let s = describe_message(&msg);
         assert!(s.starts_with("Ping"), "ping must start with Ping, got: {s}");
     }
+
+    /// I-Sync-2 (R1 follow-up): pin the multi-byte UTF-8 boundary
+    /// invariant on the text-preview path. The implementation uses
+    /// `text.chars().take(TEXT_PREVIEW_CHARS).collect()` which iterates
+    /// Unicode scalar values (never bytes), so a mid-codepoint split is
+    /// structurally impossible. This test locks that invariant in:
+    /// 79 ASCII chars + 1 four-byte emoji = exactly 80 chars / 83 bytes,
+    /// landing the emoji at the precise preview boundary.
+    #[test]
+    fn text_with_emoji_at_preview_boundary_does_not_split_codepoint() {
+        let text = "a".repeat(79) + "🎉";
+        assert_eq!(
+            text.chars().count(),
+            80,
+            "test setup: text must be exactly 80 chars (TEXT_PREVIEW_CHARS)",
+        );
+        assert_eq!(
+            text.len(),
+            79 + 4,
+            "test setup: text must be 83 bytes (79 ASCII + 1 four-byte emoji)",
+        );
+
+        // Must not panic, and must produce a valid String.
+        let s = describe_message(&Message::Text(text.into()));
+
+        // Every Rust `String` is valid UTF-8; pinning the byte-boundary
+        // invariant defensively in case the helper ever changes.
+        assert!(
+            s.is_char_boundary(s.len()),
+            "rendered description must end on a char boundary, got: {s}",
+        );
+
+        // n_chars == TEXT_PREVIEW_CHARS, so the truncation branch is
+        // *not* taken — the rendered description must not end with the
+        // ellipsis marker that signals an over-cap preview.
+        assert!(
+            !s.ends_with("…)"),
+            "exact-boundary text must not include the truncation marker, got: {s}",
+        );
+
+        // The emoji must appear in full (chars().take(80) cannot split a
+        // Unicode scalar value mid-codepoint).
+        assert!(
+            s.contains("🎉"),
+            "emoji at the exact preview boundary must appear in full, got: {s}",
+        );
+        assert!(
+            s.contains("Text(<80 chars>"),
+            "char-count prefix must report 80, got: {s}",
+        );
+    }
+
+    /// I-Sync-2 (R1 follow-up): all-emoji text >> preview cap. The
+    /// output must end on a char boundary (no mid-codepoint split) and
+    /// must contain exactly TEXT_PREVIEW_CHARS (80) emoji in the
+    /// preview body — i.e. the cap is enforced in *characters*, not
+    /// bytes.
+    #[test]
+    fn text_with_all_emoji_clipped_at_preview_chars() {
+        let text: String = "🎉".repeat(200);
+        assert_eq!(
+            text.chars().count(),
+            200,
+            "test setup: 200 emoji repeats should be 200 chars",
+        );
+        assert_eq!(text.len(), 200 * 4, "test setup: each emoji is 4 bytes",);
+
+        let s = describe_message(&Message::Text(text.into()));
+
+        assert!(
+            s.is_char_boundary(s.len()),
+            "rendered description must end on a char boundary, got: {s}",
+        );
+
+        // n_chars > TEXT_PREVIEW_CHARS, so truncation marker is present.
+        assert!(
+            s.ends_with("…)"),
+            "long all-emoji text must end with truncation marker, got: {s}",
+        );
+
+        assert!(
+            s.contains("Text(<200 chars>"),
+            "char-count prefix must report 200, got: {s}",
+        );
+
+        // The preview body must hold exactly TEXT_PREVIEW_CHARS = 80
+        // emoji — the cap is character-based, not byte-based.
+        let emoji_count = s.matches('🎉').count();
+        assert_eq!(
+            emoji_count, 80,
+            "preview must contain exactly 80 emoji (the configured char cap), \
+             got {emoji_count} in: {s}",
+        );
+    }
 }
 
 /// Create an in-memory WebSocket pair for testing sync protocol flows.

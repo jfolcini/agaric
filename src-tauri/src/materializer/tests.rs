@@ -279,35 +279,48 @@ async fn wait_for_pending_block_count_refreshes_drains_inflight_refreshes() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn wait_for_pending_block_count_refreshes_returns_after_tasks_already_finished() {
     let (pool, _dir) = test_pool().await;
     insert_block_direct(&pool, "PCR_DONE", "content", "done").await;
     let mat = Materializer::new(pool.clone());
     mat.wait_for_initial_block_count_cache().await;
 
-    // Trigger a refresh and yield aggressively to let it complete
-    // before we attach the waiter. On a single-threaded runtime a
-    // bounded number of yields is enough for the short SELECT COUNT(*)
-    // path; we loop until the counter observably hits zero or we
-    // exceed a safety bound.
+    // Trigger a refresh and wait deterministically for the spawned
+    // task to drain the counter to zero before attaching the waiter.
+    //
+    // Earlier revisions of this test polled `yield_now()` up to 1_000
+    // times. That worked on an idle single-threaded runtime where each
+    // yield was effectively one poll of the spawned future, but it
+    // flaked under CI load: `sqlx::query_scalar(...).fetch_one(&pool)`
+    // suspends across multiple polls (pool acquire → SQLite IO →
+    // result decode), and on a busy single-thread executor 1_000
+    // yields was not always enough to drive that to completion before
+    // the hard `assert_eq!(counter, 0)` precondition fired.
+    //
+    // The fix: run on a `multi_thread` runtime so the spawned refresh
+    // can execute on a worker thread independently of the main test
+    // task, and poll with `tokio::time::sleep(1ms)` against a generous
+    // 5 s deadline. The deadline is purely a panic-instead-of-hang
+    // safety net — on a healthy runtime the SELECT COUNT(*) returns
+    // in microseconds and the loop exits within the first iteration.
     mat.refresh_block_count_cache();
-    for _ in 0..1_000 {
-        if mat
-            .pending_block_count_refreshes
-            .load(AtomicOrdering::Acquire)
-            == 0
-        {
-            break;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while mat
+        .pending_block_count_refreshes
+        .load(AtomicOrdering::Acquire)
+        != 0
+    {
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "test precondition: refresh did not drain the counter within 5s \
+                 (last value: {})",
+                mat.pending_block_count_refreshes
+                    .load(AtomicOrdering::Acquire)
+            );
         }
-        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
     }
-    assert_eq!(
-        mat.pending_block_count_refreshes
-            .load(AtomicOrdering::Acquire),
-        0,
-        "test precondition: task should have completed after 1_000 yields"
-    );
 
     // Now attach the waiter AFTER the notify has already fired.
     // The double-checked pattern in the helper must observe the zero

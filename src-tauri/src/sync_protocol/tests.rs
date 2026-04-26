@@ -1725,6 +1725,172 @@ async fn apply_remote_ops_rejects_batch_when_middle_op_payload_malformed() {
 }
 
 // ======================================================================
+// M-42 (R1 follow-up) — apply_remote_ops rejects entire batch when the
+// FIRST op has a malformed payload; none of the trailing valid ops land.
+// Pins the position-independent rejection invariant at the head of the
+// batch (companion to the middle- and last-position tests).
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_remote_ops_rejects_batch_when_first_op_payload_malformed() {
+    // Create three ops on a "remote" database so they have valid hashes.
+    let (remote_pool, _remote_dir) = test_pool().await;
+    let op1 = append_local_op_at(
+        &remote_pool,
+        "remote-dev",
+        test_create_payload("BLK1"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+    let op2 = append_local_op_at(
+        &remote_pool,
+        "remote-dev",
+        test_create_payload("BLK2"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+    let op3 = append_local_op_at(
+        &remote_pool,
+        "remote-dev",
+        test_create_payload("BLK3"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    let t2: OpTransfer = op2.into();
+    let t3: OpTransfer = op3.into();
+
+    // Replace op1 (the FIRST op) with one that has a malformed JSON payload
+    // but a hash that matches the malformed payload (so it passes hash
+    // verification yet still must be rejected as malformed JSON).
+    let malformed_payload = "{\"this\": \"is not closed";
+    let first_bad = OpTransfer {
+        device_id: op1.device_id.clone(),
+        seq: op1.seq,
+        parent_seqs: op1.parent_seqs.clone(),
+        hash: crate::hash::compute_op_hash(
+            &op1.device_id,
+            op1.seq,
+            op1.parent_seqs.as_deref(),
+            &op1.op_type,
+            malformed_payload,
+        ),
+        op_type: op1.op_type.clone(),
+        payload: malformed_payload.into(),
+        created_at: op1.created_at.clone(),
+    };
+
+    let (local_pool, _local_dir) = test_pool().await;
+    let materializer = Materializer::new(local_pool.clone());
+
+    let result = apply_remote_ops(&local_pool, &materializer, vec![first_bad, t2, t3]).await;
+
+    let err = result.expect_err("batch with first malformed op must be rejected");
+    assert!(
+        err.to_string().contains("invalid JSON payload"),
+        "error must mention invalid JSON payload, got: {err}"
+    );
+
+    // None of the three ops should have landed in op_log.
+    let ops_in_local = crate::op_log::get_ops_since(&local_pool, "remote-dev", 0)
+        .await
+        .unwrap();
+    assert!(
+        ops_in_local.is_empty(),
+        "no ops from a rejected batch should be in op_log — found {} ops",
+        ops_in_local.len()
+    );
+
+    materializer.shutdown();
+}
+
+// ======================================================================
+// M-42 (R1 follow-up) — apply_remote_ops rejects entire batch when the
+// LAST op has a malformed payload; none of the leading valid ops land.
+// Pins the position-independent rejection invariant at the tail of the
+// batch (companion to the first- and middle-position tests).
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_remote_ops_rejects_batch_when_last_op_payload_malformed() {
+    // Create three ops on a "remote" database so they have valid hashes.
+    let (remote_pool, _remote_dir) = test_pool().await;
+    let op1 = append_local_op_at(
+        &remote_pool,
+        "remote-dev",
+        test_create_payload("BLK1"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+    let op2 = append_local_op_at(
+        &remote_pool,
+        "remote-dev",
+        test_create_payload("BLK2"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+    let op3 = append_local_op_at(
+        &remote_pool,
+        "remote-dev",
+        test_create_payload("BLK3"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    let t1: OpTransfer = op1.into();
+    let t2: OpTransfer = op2.into();
+
+    // Replace op3 (the LAST op) with one that has a malformed JSON payload
+    // but a hash that matches the malformed payload (so it passes hash
+    // verification yet still must be rejected as malformed JSON).
+    let malformed_payload = "{\"this\": \"is not closed";
+    let last_bad = OpTransfer {
+        device_id: op3.device_id.clone(),
+        seq: op3.seq,
+        parent_seqs: op3.parent_seqs.clone(),
+        hash: crate::hash::compute_op_hash(
+            &op3.device_id,
+            op3.seq,
+            op3.parent_seqs.as_deref(),
+            &op3.op_type,
+            malformed_payload,
+        ),
+        op_type: op3.op_type.clone(),
+        payload: malformed_payload.into(),
+        created_at: op3.created_at.clone(),
+    };
+
+    let (local_pool, _local_dir) = test_pool().await;
+    let materializer = Materializer::new(local_pool.clone());
+
+    let result = apply_remote_ops(&local_pool, &materializer, vec![t1, t2, last_bad]).await;
+
+    let err = result.expect_err("batch with last malformed op must be rejected");
+    assert!(
+        err.to_string().contains("invalid JSON payload"),
+        "error must mention invalid JSON payload, got: {err}"
+    );
+
+    // None of the three ops should have landed in op_log.
+    let ops_in_local = crate::op_log::get_ops_since(&local_pool, "remote-dev", 0)
+        .await
+        .unwrap();
+    assert!(
+        ops_in_local.is_empty(),
+        "no ops from a rejected batch should be in op_log — found {} ops",
+        ops_in_local.len()
+    );
+
+    materializer.shutdown();
+}
+
+// ======================================================================
 // #614 — orchestrator rejects HeadExchange with unexpected peer device_id
 // ======================================================================
 
