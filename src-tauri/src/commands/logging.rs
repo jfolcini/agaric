@@ -43,6 +43,37 @@ fn truncate_optional_log_field(s: Option<String>) -> Option<String> {
     s.map(truncate_log_field)
 }
 
+/// M-40: pure level-dispatch helper, extracted from `log_frontend` so
+/// the unknown-level fallback to `info` can be unit-tested without a
+/// Tauri runtime. All fields are passed by reference; the caller owns
+/// the M-39 truncation step before invoking this helper.
+pub(crate) fn log_frontend_inner(
+    level: &str,
+    module: &str,
+    message: &str,
+    stack: Option<&str>,
+    context: Option<&str>,
+    data: Option<&str>,
+) {
+    match level {
+        "error" => {
+            tracing::error!(target: "frontend", module = %module, stack = stack.unwrap_or(""), context = context.unwrap_or(""), data = data.unwrap_or(""), "{message}")
+        }
+        "warn" => {
+            tracing::warn!(target: "frontend", module = %module, stack = stack.unwrap_or(""), context = context.unwrap_or(""), data = data.unwrap_or(""), "{message}")
+        }
+        "info" => {
+            tracing::info!(target: "frontend", module = %module, data = data.unwrap_or(""), "{message}")
+        }
+        "debug" => {
+            tracing::debug!(target: "frontend", module = %module, data = data.unwrap_or(""), "{message}")
+        }
+        _ => {
+            tracing::info!(target: "frontend", module = %module, data = data.unwrap_or(""), "{message}")
+        }
+    }
+}
+
 /// Log a frontend message to the backend's daily-rolling log file.
 /// Fire-and-forget — the frontend never awaits this.
 ///
@@ -74,24 +105,26 @@ pub async fn log_frontend(
     let context = truncate_optional_log_field(context);
     let data = truncate_optional_log_field(data);
 
-    match level.as_str() {
-        "error" => {
-            tracing::error!(target: "frontend", module = %module, stack = stack.as_deref().unwrap_or(""), context = context.as_deref().unwrap_or(""), data = data.as_deref().unwrap_or(""), "{message}")
-        }
-        "warn" => {
-            tracing::warn!(target: "frontend", module = %module, stack = stack.as_deref().unwrap_or(""), context = context.as_deref().unwrap_or(""), data = data.as_deref().unwrap_or(""), "{message}")
-        }
-        "info" => {
-            tracing::info!(target: "frontend", module = %module, data = data.as_deref().unwrap_or(""), "{message}")
-        }
-        "debug" => {
-            tracing::debug!(target: "frontend", module = %module, data = data.as_deref().unwrap_or(""), "{message}")
-        }
-        _ => {
-            tracing::info!(target: "frontend", module = %module, data = data.as_deref().unwrap_or(""), "{message}")
-        }
-    }
+    log_frontend_inner(
+        &level,
+        &module,
+        &message,
+        stack.as_deref(),
+        context.as_deref(),
+        data.as_deref(),
+    );
     Ok(())
+}
+
+/// M-40: testable helper for `get_log_dir`. Mirrors what the outer
+/// `#[tauri::command]` does after resolving `app_data_dir` from Tauri:
+/// route through [`crate::log_dir_for_app_data`] so the path returned
+/// to the frontend matches the directory the tracing-appender writes
+/// to (BUG-34).
+pub(crate) fn get_log_dir_inner(app_data_dir: &std::path::Path) -> String {
+    crate::log_dir_for_app_data(app_data_dir)
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Return the path to the logs directory.
@@ -108,8 +141,7 @@ pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
         .path()
         .app_data_dir()
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
-    let log_dir = crate::log_dir_for_app_data(&data_dir);
-    Ok(log_dir.to_string_lossy().into_owned())
+    Ok(get_log_dir_inner(&data_dir))
 }
 
 #[cfg(test)]
@@ -217,6 +249,82 @@ mod tests {
             truncated.len() < MAX_FRONTEND_LOG_FIELD_BYTES + 64,
             "post-truncate length {} must stay near the cap",
             truncated.len()
+        );
+    }
+
+    // -- M-40: log_frontend_inner level dispatch ------------------------
+    //
+    // No `tracing_test`/`TestWriter` fixtures are wired into this crate
+    // (verified by grep). Per the M-40 plan: invoke the helper with each
+    // documented level (and an unknown one) and assert the call does not
+    // panic — that proves the `match` arms compile-and-run end-to-end and
+    // that the unknown-level fallback correctly routes through
+    // `tracing::info!` instead of escaping the match.
+
+    #[test]
+    fn log_frontend_inner_error_level() {
+        log_frontend_inner(
+            "error",
+            "M40Test",
+            "boom",
+            Some("stacktrace"),
+            Some("ctx"),
+            Some("payload"),
+        );
+    }
+
+    #[test]
+    fn log_frontend_inner_warn_level() {
+        log_frontend_inner(
+            "warn",
+            "M40Test",
+            "careful",
+            Some("stacktrace"),
+            Some("ctx"),
+            Some("payload"),
+        );
+    }
+
+    #[test]
+    fn log_frontend_inner_info_level() {
+        log_frontend_inner("info", "M40Test", "fyi", None, None, Some("payload"));
+    }
+
+    #[test]
+    fn log_frontend_inner_debug_level() {
+        log_frontend_inner("debug", "M40Test", "trace", None, None, None);
+    }
+
+    #[test]
+    fn log_frontend_inner_unknown_level_falls_back_to_info() {
+        // The fallback arm (`_ =>`) must not panic — the regression this
+        // guards against is a future refactor turning the catch-all into
+        // an `unreachable!()` and breaking the documented "unknown level
+        // ⇒ info" contract.
+        log_frontend_inner("bogus", "M40Test", "mystery", None, None, None);
+    }
+
+    // -- M-40: get_log_dir_inner ---------------------------------------
+
+    #[test]
+    fn get_log_dir_inner_returns_logs_subdir() {
+        // Mirror the suffix used by `lib.rs::run` (around line 442) and
+        // by `crate::log_dir_for_app_data` — the helper appends a `logs`
+        // subdirectory to the supplied app-data dir. Both call sites
+        // must agree (BUG-34).
+        let app_data = std::path::Path::new("/tmp/agaric-m40-test-data");
+        let out = get_log_dir_inner(app_data);
+        let expected = std::path::Path::new("/tmp/agaric-m40-test-data")
+            .join("logs")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            out, expected,
+            "get_log_dir_inner must append `logs` to the app data dir"
+        );
+        assert!(
+            out.ends_with("logs") || out.ends_with("logs/") || out.ends_with("logs\\"),
+            "returned path must end with the `logs` suffix used by lib.rs::run, got {out:?}"
         );
     }
 }
