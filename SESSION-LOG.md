@@ -1,5 +1,75 @@
 # Session Log
 
+## Session 485 — Internal-quality + UX bundle: e2e console-error watcher + component decomposition + 3 new prek hooks + breadcrumb primitive + discoverability sweep (TEST-4 / MAINT-96 / MAINT-99 partial / UX-257 / UX-260) (2026-04-25)
+
+**4 REVIEW-LATER items fully resolved + 1 partially advanced.** Open items: 22 → 18. Mixed batch covering: every Playwright spec now asserts no console errors automatically (TEST-4); two oversized frontend files decomposed into focused sub-components (MAINT-96); the three easy `prek` hooks for documented test rules landed (MAINT-99 — IPC-error-path + snapshot-redaction deferred per the original spec); a unified `Breadcrumb` design-system primitive consolidates the previously-disjoint zoom and namespace breadcrumbs (UX-257); and 6 of 7 discoverability-sweep sub-fixes shipped (UX-260, sub-fix 5 was already implemented). Five build subagents in parallel; UX-260's subagent stalled and the orchestrator took over manually; both reviewers approved with one BLOCKER (pre-existing typo, fixed) and a handful of MEDIUM findings addressed before commit.
+
+Batch composition (5 items planned; 4 fully closed + MAINT-99 reduced to its remaining two hooks):
+
+- **TEST-4** — Playwright console-error watcher. New helpers in `e2e/helpers.ts`:
+  - `registerConsoleErrorWatcher(page)` registers `page.on('console', ...)` (filtered to `msg.type() === 'error'`) and `page.on('pageerror', ...)`. Per-page errors stored in a `WeakMap<Page, string[]>` so test isolation is automatic. Idempotent — safe to call twice on the same `Page`.
+  - `getConsoleErrors(page)` returns the live array (mutating it clears the buffer; opt-out for deliberate-error specs).
+  - `clearConsoleErrors(page)` for explicit clearing.
+  - `expectNoConsoleErrors(page)` asserts the buffer is empty with a readable failure message that lists every captured error.
+  - The watcher registration is wired into the existing global `test.beforeEach` BEFORE the mock-reset `page.evaluate` so even pre-navigation activity is captured. A new global `test.afterEach` runs `expectNoConsoleErrors(page)` so every spec inherits the assertion for free.
+  - 2 conservative whitelist patterns (favicon 404, "Failed to load resource") inherited verbatim from the original `smoke.spec.ts:42-44` filter, each documented inline with rationale.
+  - Spot-check on `e2e/smoke.spec.ts` (3 tests) + `e2e/inner-links.spec.ts` (22 tests) — 25/25 passed, 0 console errors surfaced.
+
+- **MAINT-96** — Component decomposition. Pure extraction with NO behavioural change. Two independent sites:
+  - **`AgentAccessSettingsTab.tsx`** went 910 → 292 lines. Extracted to `src/components/agent-access/{McpStatusSection.tsx,ActivityFeed.tsx,SessionRevertControls.tsx}` plus a new `src/hooks/useMcpActivityFeed.ts` hook. The extraction preserves every `data-testid`, every i18n key, and every `logger.error('AgentAccessSettingsTab', ...)` source string (so the existing test contract still holds). 55/55 `AgentAccessSettingsTab.test.tsx` tests pass without modification.
+  - **`BacklinkFilterBuilder.tsx`** went 757 → 218 lines. The inline `AddFilterRow` sub-component (lines 234-553) extracted to `src/components/backlink-filter/AddFilterRow.tsx` along with all category-specific build helpers (`buildTypeFilter`, `buildStatusFilter`, `buildPropertyFilter`, …). 71/71 `BacklinkFilterBuilder.test.tsx` tests pass without modification.
+
+- **MAINT-99 (partial)** — Three new `prek` hooks (the easy three; IPC-error-path and snapshot-redaction deferred per the original spec):
+  - `axe-presence` — `scripts/check-axe-presence.sh`, scoped to `src/components/__tests__/*.test.tsx`. Fails if any file lacks an `axe(...)` call. Surfaced 0 violations on first activation — all 135 component test files already include an axe audit.
+  - `test-file-naming` — `scripts/check-test-file-naming.sh`, walks `src/` and `e2e/` for misplaced suffixes (`.spec.tsx` under `src/`, `.test.ts` under `e2e/`, doubled-suffix files). 0 violations.
+  - `agents-md-count-tables` — `scripts/check-agents-md-counts.mjs`, parses `AGENTS.md` test counts (`<N>+ tests`) and `<N> files` directory entries from `src/__tests__/AGENTS.md`, asserts each is within ±50% of actual. Tolerance documented inline. 0 violations (largest measured drift: `lib/__tests__` at +9.5%, well inside threshold).
+  - All 3 hooks were synthetically tripped to confirm they fail correctly.
+  - REVIEW-LATER MAINT-99 entry rewritten to track only the two remaining hooks (IPC error-path coverage, snapshot redaction) with the design approach for each.
+
+- **UX-257** — Breadcrumb consolidation. New `src/components/ui/breadcrumb.tsx` (391 lines) primitive at the `ui/` layer. Both `BlockZoomBar.tsx` (147 → 105 lines) and `PageHeader.tsx`'s namespace breadcrumb (lines 519-549 → 520-542) now consume the primitive.
+  - Container: `<nav role="navigation">` outer + `<div role="toolbar">` inner. The orchestrator's first attempt used `<ol role="toolbar">` per the spec; that triggered an `axe` `listitem` rule violation (using `role="toolbar"` strips the implicit `list` role), so the implementation switched to a `<div role="toolbar">` matching the existing `BlockZoomBar` pattern that previously passed axe. Documented inline.
+  - Items: clickable `<button>` with `text-muted-foreground hover:text-foreground transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50`. Final item is a non-clickable `<span aria-current="location">` with `text-foreground font-medium`.
+  - Separators: `ChevronRight` at `h-3 w-3 text-muted-foreground/50`. Canonical glyph for ALL breadcrumb separators in the app (replacing the slash separators that used to appear in `PageHeader`'s namespace breadcrumb).
+  - Truncation: `max-w-[160px]` intermediate, `max-w-[320px]` final, `truncate` everywhere.
+  - Overflow: when items > 5, middle crumbs collapse into a Radix `Popover` keyed by a `MoreHorizontal` icon. Layout becomes `[item₀] › […] › [itemₙ₋₂] › [itemₙ₋₁]` — head + ellipsis popover + last 2.
+  - Keyboard nav: ArrowLeft/Right + Home/End at the toolbar level (UX-215). Moved out of `BlockZoomBar` and into the primitive.
+  - Touch: `[@media(pointer:coarse)]:py-2` on the toolbar for the 44px hit area, NOT on individual crumbs (matches AGENTS.md mandate without per-crumb height bloat).
+  - `BlockZoomBar` no longer renders `renderRichContent` inside crumbs — replaced with `stripBreadcrumbMarkup()` that resolves `[[ULID]]` / `((ULID))` via `resolveBlockTitle` (with truncated-id fallback when the cache is cold) and strips `#`, `**`, `__`, `~~`, `==`, leading `>` markers. The "giant coloured pills inside the nav bar" problem is gone.
+  - `PageHeader` namespace breadcrumb's slash separators replaced with chevrons; per-crumb `touch-target` removed (the primitive handles 44px via `pointer:coarse` padding).
+  - 34 new tests in `src/components/ui/__tests__/breadcrumb.test.tsx` covering render, aria-label, chevron-only separators, `aria-current="location"`, clickable vs non-clickable, truncation, overflow popover (>5 trigger, exactly-5 doesn't), keyboard nav, `dataAttributes` forwarding, axe a11y. `BlockZoomBar.test.tsx` and `PageHeader.test.tsx` updated to assert the new DOM (no nested chip elements inside `[data-zoom-crumb]`, chevron separators present).
+
+- **UX-260 (manual takeover after subagent stall)** — Discoverability sweep. 6 of 7 sub-fixes shipped:
+  - **(1)** Mobile sidebar swipe hint (`src/components/ui/sidebar.tsx`): a `pointer-events-none fixed left-0 inset-y-0 z-40 hidden w-[3px] bg-foreground/10 [@media(pointer:coarse)]:block` div rendered by `SidebarProvider` only when `isMobile && !openMobile`. The `z-40` (raised from `z-10` after the UX reviewer flagged potential z-index conflicts with overlays) ensures the hint stays visible behind transient modals.
+  - **(2)** Journal nav shortcut tooltips (`src/components/JournalPage.tsx`): prev/next/today buttons each wrapped in a `Tooltip` whose `TooltipContent` shows the label plus a `<kbd className="ml-1 text-xs">Alt+←</kbd>` (or `Alt+→` / `Alt+T`). Discoverable on hover; doesn't change the button itself.
+  - **(3)** Tier-aware undo tooltip (`src/components/PageHeaderMenu.tsx`): the existing `Tooltip` body is now two-line — primary label + shortcut on top, then `text-[10px] opacity-80` tip "Outside an editor: undoes the last page operation" sourced from the new `t('undo.tipPage')` key. (Reviewer iteration: the wording was rephrased from "No editor focus — …" to "Outside an editor: …" to read more naturally.) Companion key `t('undo.tipEditor')` exists for callers that may want the symmetric "Inside an editor: …" copy.
+  - **(4)** Shared `BatchActionToolbar` Shift+Click hint (`src/components/BatchActionToolbar.tsx`): default `ml-auto hidden text-xs text-muted-foreground sm:inline` span rendering `t('list.rangeSelectHint')` ("Tip: Shift+click to select a range"). Hidden on mobile because the gesture is desktop-only. New `suppressRangeSelectHint?: boolean` prop opts out — used by `HistorySelectionToolbar` (already has its own `history.keyboardHint`) and `TrashView` (shipped its own `trash.batchHint` in session 483). `ConflictBatchToolbar` gets the new hint by default; `ConflictList` does use `useListMultiSelect` (line 45) so the gesture works there.
+  - **(5)** Properties drawer keyboard binding — NO CODE CHANGES NEEDED. The binding `openPropertiesDrawer` already exists in `keyboard-config.ts:114` and `KeyboardShortcuts.tsx` builds its panel from `getCurrentShortcuts()`, so the shortcut is already surfaced. There is no gutter property button to attach a tooltip to. Documented this in the session log and skipped.
+  - **(6)** SearchPanel header comment (`src/components/SearchPanel.tsx`): one-line JSDoc addendum referencing the `App.tsx` Ctrl+F dispatch chain at line 712.
+  - **(7)** "Customize shortcuts" footer button (`src/components/KeyboardShortcuts.tsx`): new `<SheetFooter className="border-t">` with a `Button variant="outline" size="sm"` + `Settings` icon. Click closes the sheet, sets `localStorage.agaric-settings-active-tab = 'keyboard'` (try/catch for private mode), then `useNavigationStore.getState().setView('settings')`. New i18n key `keyboard.customizeButton` ("Customize shortcuts").
+
+**Quality gate:** `npx tsc -b` clean. `npm test` → 310 files / 8237 tests passed. `cargo nextest run` → 2721 tests passed (2 skipped). `npx playwright test e2e/smoke.spec.ts e2e/inner-links.spec.ts` → 25 passed (TEST-4 console-watcher active). `prek run --all-files` → all 29 hooks green (now including the 3 new MAINT-99 hooks).
+
+**Reviewer findings (5 actionable, all addressed):**
+
+- *Technical reviewer (BLOCKER):* `PageHeaderMenu.tsx:132` called `getShortcutKeys('redoLastPageOp')` but the canonical shortcut id is `redoLastUndoneOp`. Pre-existing bug from commit `18041e7b` (2026-04-16) — `getShortcutKeys()` silently returns `''` for unknown IDs, so the redo tooltip rendered without a chord. Fixed.
+- *Technical reviewer (HIGH):* The extracted `ActivityFeed` / `useMcpActivityFeed` files still log under the source name `'AgentAccessSettingsTab'`. Intentional — MAINT-96 is a pure extraction and the existing test contract pins the logger source string. Documented in the session log; not changed.
+- *UX reviewer (MEDIUM):* `undo.tipPage` copy "No editor focus — undoes the last page operation" reads awkwardly. Rephrased to "Outside an editor: undoes the last page operation". Companion `undo.tipEditor` key updated symmetrically.
+- *UX reviewer (MEDIUM):* The new `BatchActionToolbar` hint applies to `ConflictBatchToolbar` by default. Verified `ConflictList` does support Shift+Click range-select via `useListMultiSelect` (line 45) — leaving the default behaviour. The reviewer's concern was based on the assumption that conflicts don't support the gesture; they do.
+- *UX reviewer (LOW):* Sidebar swipe-hint `z-10` may be obscured by overlays. Raised to `z-40`.
+- *UX reviewer (LOW):* Journal nav tooltip `<kbd>` had `opacity-80`, reducing contrast against the tooltip background. Removed the opacity attribute.
+- *UX reviewer (LOW / NIT):* Three tooltip / contrast / chevron-opacity items deferred — not introduced by this batch (chevron 50% opacity is from the existing design tokens), edge cases that would need real-device testing, or out of scope.
+
+**Reviewer findings deferred:**
+
+- HIGH (logger source): preserving `'AgentAccessSettingsTab'` in extracted files is the correct call for a pure-extraction refactor (MAINT-96 spec) and matches the existing test contract.
+- MEDIUM (SSR check on `localStorage.setItem`): not applicable — Tauri is a client-only runtime, no SSR.
+- LOW (overflow-popover screen reader double-announcement; tooltip `<div>` paragraph announcement; chevron 50% opacity contrast): all need real-device / real-AT testing to confirm; tracked as open observations rather than fixes.
+
+**Architectural notes:**
+- Touched 5 production components (`AgentAccessSettingsTab`, `BacklinkFilterBuilder`, `BlockZoomBar`, `PageHeader`, plus the smaller UX-260 surfaces) without changing any AGENTS.md invariants. New extracted files use the existing folder conventions (kebab-case directories, `useFooBar` hooks). The new `Breadcrumb` primitive lives in `src/components/ui/` per the documented component hierarchy.
+- One new shared hook: `useMcpActivityFeed`. One new shared primitive: `Breadcrumb`. Both added to FEATURE-MAP.md.
+- 3 new `prek` hooks (`axe-presence`, `test-file-naming`, `agents-md-count-tables`) make the documented test conventions enforced rather than aspirational.
+
 ## Session 484 — Frontend UX bundle: graph a11y + agenda polish + history/trash residue + bug-report log preview + gutter overflow on touch (UX-270 / UX-274 / UX-275 / UX-277 / UX-281) (2026-04-25)
 
 **5 REVIEW-LATER items fully resolved.** Open items: 27 → 22. All-frontend cluster touching graph, agenda, history/trash, bug-report and gutter — five non-overlapping subagents in parallel, all returned green, both reviewers run in parallel afterwards. Tech reviewer: clean. UX reviewer raised 15 findings (mostly LOW/MEDIUM); 5 actionable findings addressed (Retry button busy state, "Hunk N of M" → "N of M changes", property-key warning copy "is not a known property" → "is not yet defined on this device", AlertCircle icon prefix on DateChipEditor parse-error, refactor TrashView keyboard-handler past Biome cognitive-complexity ceiling).

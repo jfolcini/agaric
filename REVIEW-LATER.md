@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-22 open items.
+18 open items.
 
 Previously resolved: 422+ items across 149 sessions.
 
@@ -39,12 +39,8 @@ Previously resolved: 422+ items across 149 sessions.
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
-| MAINT-96 | MAINT | Decompose `AgentAccessSettingsTab.tsx` (910 lines) and extract inline `AddFilterRow` from `BacklinkFilterBuilder.tsx` (lines 234–553) | M |
-| MAINT-99 | MAINT | No automated enforcement for several documented test rules (axe-audit per component test, IPC-error-path coverage, test file naming convention) | M |
+| MAINT-99 | MAINT | Two remaining `prek` hooks deferred from session 485: IPC error-path coverage + snapshot redaction. (Easy three — axe-presence, test-file-naming, agents-md-count-tables — shipped.) | M |
 | MAINT-103 | MAINT | `BlockPropertyEditor` inline editor uses absolute positioning without portal — should follow the `suggestion-renderer` pattern | M |
-| TEST-4 | TEST | 25 of 26 Playwright specs lack a console-error listener — backend / mock errors leak silently in every E2E suite except `smoke.spec.ts` | M |
-| UX-257 | UX | Breadcrumb bar (zoom + page header) doesn't read as a breadcrumb, is oversized, and styling is inconsistent across the two surfaces | M |
-| UX-260 | UX | Discoverability sweep for keyboard shortcuts and gestures (sidebar swipe, journal nav, undo tiers, Shift+Click range, properties drawer shortcut, Ctrl+F, KeyboardShortcuts→Settings link) | M |
 | PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S |
 | PUB-3 | PUB | Employer IP clearance before public release | S |
 | PUB-5 | PUB | Tauri updater — wire endpoint URL + Minisign keypair (publish target is now jfolcini/agaric) | S |
@@ -731,42 +727,20 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 
 ## MAINT — Tooling / dev-experience maintenance / code quality
 
-### MAINT-96 — Decompose `AgentAccessSettingsTab.tsx` (910 lines) and extract inline `AddFilterRow` from `BacklinkFilterBuilder.tsx`
+### MAINT-99 — Two remaining `prek` hooks for documented test rules
 
-**Problem:** AGENTS.md "Component decomposition" treats files >500 lines as candidates for extraction. A repo-wide line-count audit produced 12 frontend files over the threshold; most are acceptable as-is (cohesive primitives like `ui/sidebar.tsx` at 1042, or files already heavily decomposed via hooks like `BlockTree.tsx` at 868 and `JournalPage.tsx` at 646). Two specific cases are worth picking up because the extraction is mechanical and the maintenance cost of *not* doing them is real:
+**Status:** session 485 shipped the easy three (`axe-presence`, `test-file-naming`, `agents-md-count-tables` — all under `scripts/check-*` + `prek.toml`). Two remaining rules need careful pattern design and were deliberately deferred:
 
-1. **`src/components/AgentAccessSettingsTab.tsx` (910 lines).** Mixes RO/RW toggle logic, the activity feed renderer, per-entry undo buttons, per-session bulk revert, and device-info fetching in one file. Suggested split:
-   - `src/components/agent-access/McpStatusSection.tsx` — RO/RW toggle + status indicator.
-   - `src/components/agent-access/ActivityFeed.tsx` — feed renderer + per-entry undo.
-   - `src/components/agent-access/SessionRevertControls.tsx` — bulk revert UX.
-   - `src/hooks/useMcpActivityFeed.ts` — `listen()` subscription, page state, fetch on mount.
-   Re-export the top-level component from the existing path for backward compatibility.
+| Rule | Doc | Approach |
+|------|-----|----------|
+| Every component that calls `invoke` has at least one error-path test (mocked rejection) | `AGENTS.md:198` | Scan `*.test.tsx` files using `vi.mocked(invoke)` for at least one `mockRejectedValueOnce` per importer of `tauri.ts`. Pair component → tests via grep import graph or co-located `__tests__` convention. |
+| Snapshot tests must redact ULIDs / timestamps / hashes / cursors | `src-tauri/tests/AGENTS.md:284-313` | Parse `.snap` files for raw 26-char Crockford / 64-char hex / ISO-8601 patterns. Whitelist intentional sentinels via comment markers if needed. |
 
-2. **`src/components/BacklinkFilterBuilder.tsx` (757 lines), specifically the inline `AddFilterRow` sub-component at lines 234–553** — that's a self-contained 320-line sub-component defined inline. Extract to `src/components/backlink-filter/AddFilterRow.tsx` with no other behavioural change. The remaining ~440 lines of `BacklinkFilterBuilder.tsx` would then be at the threshold — acceptable.
+**Fix:** Each hook follows the existing `repo = "local"` + `language = "system"` pattern. Both are tractable but require ~half a day each to design + tune to avoid false positives.
 
-**Out of scope (deliberately):** `BlockTree.tsx`, `JournalPage.tsx`, `RichContentRenderer.tsx`, `PageBrowser.tsx`, `ConflictList.tsx`, `SearchPanel.tsx`, `PageHeader.tsx`, `ui/sidebar.tsx`, `markdown-serializer.ts`, `GoogleCalendarSettingsTab.tsx`. These are >500 lines but are already well-structured. Decomposing them is taste, not a maintenance win.
-
-**Cost:** M (each of the two sites — independent and parallelisable).
-**Risk:** M — both files have substantial test surfaces (component tests + axe). After extraction, full vitest run + axe pass required.
-**Impact:** S–M — pure maintainability; no functional change, no UX change.
-
-### MAINT-99 — No automated enforcement for several documented test rules
-
-**Problem:** Several rules in the test-convention docs have no automated enforcement and rely on manual review. Each one is easy to add as a `prek` hook; together they make the documented conventions binding instead of aspirational.
-
-| Rule | Doc | Currently enforced by | Gap |
-|------|-----|------------------------|-----|
-| Every `src/components/__tests__/*.test.tsx` includes at least one `axe(...)` call | `src/__tests__/AGENTS.md:227` | Manual review | Easy: grep-based `prek` hook |
-| Every component that calls `invoke` has at least one error-path test (mocked rejection) | `AGENTS.md:198` | Manual review | Tractable: scan test files using `vi.mocked(invoke)` for at least one `mockRejectedValueOnce` |
-| Test file naming: `.test.ts` / `.test.tsx` for Vitest, `.spec.ts` for Playwright | `src/__tests__/AGENTS.md:81` | Manual review | Easy: `find` + assertions |
-| Snapshot tests must redact ULIDs / timestamps / hashes / cursors | `src-tauri/tests/AGENTS.md:284-313` | Manual review | Tractable: parse `.snap` files for raw 26-char Crockford / 64-char hex / ISO-8601 patterns |
-| Test-file count tables in AGENTS.md docs match reality (see MAINT-97) | — | Nothing | Easy: tiny grep + comparator |
-
-**Fix:** Add one `prek` hook per rule under the existing `[[repos]]` section in `prek.toml`. Pattern lives next to `no-hsl-rgb-var-wrap` and `tauri-mock-parity` (both already grep-based). Each hook runs only on the relevant `types_or` to keep CI fast. Start with the easy three (axe-presence, file-naming, count-tables); the IPC-error-path and snapshot-redaction hooks need careful pattern design and can land in a follow-up.
-
-**Cost:** M (~1 day for the three easy hooks; ~half day each for the harder two).
-**Risk:** S — purely additive lint hooks. May surface a small number of pre-existing violations that need cleanup before the hook turns green; expect 1–2 hours of fix-up per hook on first activation.
-**Impact:** M — closes the gap between documented and actual conventions; reduces reviewer-time spent catching the same anti-patterns over and over.
+**Cost:** S–M (~half a day each).
+**Risk:** S — purely additive lint hooks. Some triage expected on first activation.
+**Impact:** M — completes the test-convention enforcement coverage.
 
 ### MAINT-103 — `BlockPropertyEditor` inline editor uses absolute positioning without portal
 
@@ -777,89 +751,6 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 **Cost:** M.
 **Risk:** M — touches editor blur lifecycle; needs careful tests.
 **Impact:** S — closes a small clipping risk and aligns with the documented floating-UI pattern.
-
-### TEST-4 — 25 of 26 Playwright specs lack a console-error listener
-
-**Problem:** `grep "page.on('console" e2e/*.spec.ts` returns one match: `e2e/smoke.spec.ts:31`. The other 25 specs run without any check that the page emitted a console error. Backend errors that reach the browser console (mock failures returning unexpected shapes, IPC handler crashes, React error-boundary fall-throughs, unhandled promise rejections, dev-time warnings escaping to prod) currently pass the suite silently for every feature except smoke.
-
-**Why it matters:** This is the cheapest way to catch a class of regressions that doesn't surface as a failed assertion — code throws, the UI degrades silently, the test still clicks the next button. The smoke test already proves the pattern works (it filters favicon noise and asserts `expect(realErrors).toEqual([])`).
-
-**Fix:**
-
-1. Add an `expectNoConsoleErrors(page)` helper to `e2e/helpers.ts` that registers `page.on('console', ...)` with the same favicon filter as `smoke.spec.ts`, returns a function the test can call in `afterEach` to assert the captured-error array is empty. Register the listener BEFORE `page.goto()` so pre-load errors are captured.
-2. Wire the helper into the existing `test.beforeEach` block in `e2e/helpers.ts` (lines 30-50, the mock-reset hook) so every spec gets it for free.
-3. Run the suite once; expect 1–2 days of triage to fix or whitelist legitimate warnings that surface. Whitelisting should be the exception, not the rule.
-
-**Cost:** M (~1 day implementation + ~1–2 days triage on first activation).
-**Risk:** M — turning the listener on may surface real warnings that need triage. Some may be noisy dev-only logs that need filtering or fixing in production code.
-**Impact:** M — catches a real class of regressions that currently leaks through every E2E suite.
-
-### UX-257 — Breadcrumb bar doesn't read as a breadcrumb, is oversized, and styling is inconsistent across the two surfaces
-
-**Problem:** Two breadcrumb-like surfaces exist in the app; neither reads as "the standard breadcrumb pattern" at a glance, and they don't match each other.
-
-1. **Block-zoom breadcrumb** (`src/components/BlockZoomBar.tsx`) — the bar rendered at the top of the page area when a block is zoomed. Structure: `[Home icon] › [crumb] › [crumb] › [current]` with `ChevronRight` separators. The chevron separator is correct, but each crumb currently:
-   - Calls `renderRichContent(item.content, ...)` inside the `<button>`, so any resolved tags, block refs, or external-link chips embedded in the block's title are drawn **at full size** — identical scale to the main editor's chips. A crumb for a block titled "Read [[Handbook]] #urgent" renders two full coloured pills inside the breadcrumb button.
-   - Uses `text-sm` + `py-1.5` padding, which combined with embedded chips produces a bar that is visually taller and heavier than its role (passive "you are here" wayfinding) justifies.
-   - Caps each crumb at `max-w-[200px]`, but the bar itself has no compact height budget — it grows with content. The outer `ScrollArea` wrapper hides horizontal overflow but the scrollbar track still steals vertical space.
-2. **Page-title namespace breadcrumb** (`src/components/PageHeader.tsx:503-530`) — rendered under the page title for pages whose title contains `/` (namespaced pages). Structure: `[ancestor] / [ancestor] / [current]`. Uses **slash** separators (not chevrons), `text-xs`, and `touch-target` on every crumb button, which imposes a 44px minimum hit-height on touch devices. Visually disjoint from the zoom bar a few px above it.
-
-Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; the other uses `/` slashes + plain text at `text-xs` with 44px touch targets. Users don't recognise either as a breadcrumb on first glance and the two don't look like they belong to the same product.
-
-**Why it matters:** Breadcrumbs are a passive wayfinding surface — their job is "you are at A › B › C" with minimal chrome. Both current implementations draw too much attention (via inline chips or slash-divider inconsistency), and neither matches the density of the rest of the app's nav chrome (tab bar, status chip, filter-pill row). It is also an accessibility / touch-ergonomics mismatch: the page-header namespace crumb forces 44px rows while the zoom bar does not.
-
-**Design direction (consolidate, compact, consistent):**
-
-1. **Single design-system primitive.** Add `src/components/ui/breadcrumb.tsx` at the `ui/` layer (per AGENTS.md "Component hierarchy" — UI primitives live here). Export `Breadcrumb`, `BreadcrumbItem`, `BreadcrumbSeparator`, `BreadcrumbHome`. Follow the same CVA + `cn()` patterns as `Button` / `Badge`. Both `BlockZoomBar` and `PageHeader`'s namespace breadcrumb consume this primitive. Slash separators in `PageHeader` go away — chevrons everywhere. One glyph, one type scale, one hit-area rule.
-2. **Plain text inside crumbs — no inline chips.** Do not render `renderRichContent` inside a breadcrumb item. Resolve the block's title to a plain string (via `resolveBlockTitle` from `useRichContentCallbacks`, or a lightweight mark-stripper) and render that. Inline `#tag` / `[[ref]]` chips belong in content, not in nav chrome. This removes the "giant coloured pills inside the nav bar" problem at its root and is the single biggest visual win.
-3. **Tight vertical budget.** Breadcrumb bar is a single line at ~24–28px tall (`h-7` max). Typography: `text-xs` + `py-1` + `gap-1`. No `touch-target` on individual crumbs — the 44px hit area (AGENTS.md mandatory pattern on touch) comes from the chevron+label combined tap region via `[@media(pointer:coarse)]` padding on the primitive itself, not by stretching every visible crumb to 44px. This matches the density of the tab bar, sync-status chip, and filter-pill row elsewhere in the app.
-4. **Glyph consistency.** `ChevronRight` at `h-3 w-3 text-muted-foreground/50` (already the `BlockZoomBar` value) becomes the canonical breadcrumb separator. `Home` at `h-3.5 w-3.5` for the root. No emoji, no `>>`, no `/`. The user asks the bar to *read* as a breadcrumb — that means one chevron per level, not a rendered string separator.
-5. **Truncation / overflow strategy.** Per-crumb `max-w-[160px] truncate` for intermediate crumbs; the final crumb (`aria-current="location"`) gets more room (`max-w-[320px]`) because it's the anchor the user is scanning for. On narrow viewports, collapse middle crumbs into a `…` overflow popover (Radix `Popover` — reuse `ui/popover.tsx`, never build a custom dropdown per AGENTS.md) rather than allowing the bar to scroll horizontally. The current `ScrollArea` wrapping the whole bar can be removed once overflow is handled by the ellipsis affordance.
-6. **Active-step treatment.** Final crumb: `text-foreground font-medium`, `aria-current="location"`, not clickable (already the `BlockZoomBar` pattern — preserve it). Intermediate crumbs: `text-muted-foreground hover:text-foreground transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50` — mirrors `Button` focus pattern from the design system.
-7. **Tokens, not raw colours.** Use `--muted-foreground` and `--foreground` semantic tokens from `src/index.css`. No hardcoded Tailwind colour classes (AGENTS.md anti-pattern).
-
-**A11y invariants to preserve:**
-
-- `role="toolbar"` + arrow-key / Home / End navigation on the container (UX-215 — already implemented in `BlockZoomBar`). Move into the primitive so both callers benefit.
-- `aria-current="location"` on the last crumb.
-- `aria-label` from i18n keys (`blockZoom.breadcrumbs`, `pageHeader.breadcrumbLabel`) — no hardcoded English.
-- `axe(container)` test on the primitive and on both callers.
-
-**Files touched (expected):**
-
-- **New:** `src/components/ui/breadcrumb.tsx` + `src/components/ui/__tests__/breadcrumb.test.tsx` (render + keyboard nav + truncation + overflow popover + a11y).
-- **Refactor:** `src/components/BlockZoomBar.tsx` → consume the primitive; drop the inline `renderRichContent` call (replace with plain-string title resolution); thin the component down to a data adapter.
-- **Refactor:** `src/components/PageHeader.tsx` (lines 503-530) → consume the primitive; replace `/` separators with the primitive's chevron; drop `touch-target` on individual crumbs (primitive handles the 44px hit via `pointer:coarse` padding).
-- **Tests:** update `BlockZoomBar.test.tsx` + `PageHeader.test.tsx` to assert the new DOM (no nested chip elements inside `button[data-zoom-crumb]`, chevron separators for namespaced titles).
-- **No** backend changes. **No** new i18n keys beyond what already exists. **No** new stores or IPC commands.
-
-**Cost:** M — single focused refactor session. Two callers, one new primitive, one coordinated test pass. No protocol, schema, store, or sync-protocol changes; stays firmly inside AGENTS.md "Architectural Stability" guardrails.
-
-### UX-260 — Discoverability sweep for keyboard shortcuts, gestures, and customization
-
-**Problem:** Several real, working features are effectively invisible to users who don't read code or doc files:
-
-1. **Sidebar swipe-to-open on mobile.** `src/components/ui/sidebar.tsx:31-32` defines `SWIPE_EDGE_ZONE = 20` and `SWIPE_MIN_DISTANCE = 50`. The gesture works but the rail has no visual hint at the left edge — first-time mobile users won't discover it.
-2. **Journal date-navigation shortcuts.** `src/App.tsx:184-200` ships `Alt+Left/Right` (prev/next day) and `Alt+T` (today). The prev/next/today buttons in `JournalPage` have no tooltip showing the binding.
-3. **Two-tier undo/redo.** `src/hooks/useUndoShortcuts.ts:1-105` distinguishes editor-undo (ProseMirror) from page-undo (op log); the user has no UI signal which tier `Ctrl+Z` will hit.
-4. **Shift+Click range select** (UX-140) implemented in `src/hooks/useListMultiSelect.ts:76-102`, used by HistoryView, TrashView, ConflictList. No tooltip, no toolbar hint anywhere except `HistorySelectionToolbar:63-65`.
-5. **Properties drawer keyboard binding.** `src/editor/use-block-keyboard.ts:186-193` recognises a configurable `openPropertiesDrawer` shortcut, but the binding is not in the `KeyboardShortcuts` panel and no UI button surfaces it.
-6. **Ctrl+F → SearchPanel.** Documented in UX.md but not in the `SearchPanel.tsx` header comment, which makes the dispatch chain hard to trace.
-7. **`KeyboardShortcuts` sheet doesn't link to Settings → Keyboard.** Users see the shortcuts but can't discover that they're customisable (`src/components/KeyboardShortcuts.tsx:94-235`).
-
-**Fix outline (single sweep):**
-
-- Mobile sidebar: render a 2-3 px gradient indicator at `left-0 inset-y-0 w-[3px] bg-foreground/10` on `pointer:coarse` only.
-- Journal nav buttons: add `Tooltip` showing the chord (use `t()` keys; no hardcoded English).
-- Page-header undo button: tooltip clarifies which tier fires depending on whether the editor is currently focused.
-- Shift+Click hint: add `t('list.rangeSelectHint')` to `BatchActionToolbar` (right-aligned), reusing the `HistorySelectionToolbar` pattern across the other callers.
-- Properties drawer shortcut: add to `KeyboardShortcuts` panel + tooltip on the gutter property button (UX.md keyboard-shortcuts table — see MAINT-100).
-- `SearchPanel.tsx:1-10` header: one-line comment "Opened via Ctrl+F (see App.tsx global handler)".
-- `KeyboardShortcuts.tsx`: add a footer button `t('keyboard.customizeButton')` that navigates to Settings → Keyboard.
-
-**Cost:** M — many small surfaces but each fix is XS.
-**Risk:** S — additive UI, no behaviour change.
-**Impact:** L — flips a large amount of latent capability into discoverable capability.
 
 ### PUB-2 — Git author email across all history is corporate (`javier.folcini@avature.net`)
 
