@@ -272,6 +272,118 @@ async fn navigate_journal_different_dates_create_different_pages() {
 }
 
 // ======================================================================
+// quick_capture_block — FEAT-12 (global-shortcut quick capture)
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quick_capture_block_creates_today_journal_and_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let block = quick_capture_block_inner(&pool, DEV, &mat, "captured note".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        block.block_type, "content",
+        "quick capture must create a content block"
+    );
+    assert_eq!(
+        block.content,
+        Some("captured note".into()),
+        "captured content must round-trip verbatim"
+    );
+    assert!(
+        block.parent_id.is_some(),
+        "captured block must be parented under today's journal page"
+    );
+
+    let parent_id = block.parent_id.clone().unwrap();
+    let parent = get_block_inner(&pool, parent_id.clone()).await.unwrap();
+    assert_eq!(
+        parent.block_type, "page",
+        "parent of a quick-captured block must be a page (the journal)"
+    );
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    assert_eq!(
+        parent.content,
+        Some(today),
+        "parent must be today's journal page"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quick_capture_block_reuses_existing_journal_page() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Pre-create today's journal page so the second call sees an existing page.
+    let page = today_journal_inner(&pool, DEV, &mat).await.unwrap();
+    settle(&mat).await;
+
+    let block = quick_capture_block_inner(&pool, DEV, &mat, "after-create".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        block.parent_id.as_deref(),
+        Some(page.id.as_str()),
+        "quick capture must reuse the pre-existing today journal page"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quick_capture_block_appends_two_blocks_when_called_twice() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let first = quick_capture_block_inner(&pool, DEV, &mat, "first capture".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let second = quick_capture_block_inner(&pool, DEV, &mat, "second capture".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_ne!(
+        first.id, second.id,
+        "two quick captures on the same day must produce two distinct blocks"
+    );
+    assert_eq!(
+        first.parent_id, second.parent_id,
+        "both quick-captured blocks must share the same today-journal parent"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quick_capture_block_oversize_content_returns_validation_error() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // MAX_CONTENT_LENGTH = 256 KiB — anything larger must be rejected by
+    // create_block_inner with a Validation error, propagated through the
+    // quick_capture wrapper unchanged.
+    let oversize = "x".repeat(256 * 1024 + 1);
+    let result = quick_capture_block_inner(&pool, DEV, &mat, oversize).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "oversize content must produce AppError::Validation, got {result:?}"
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
 // restore_page_to_op — point-in-time page restore
 // ======================================================================
 

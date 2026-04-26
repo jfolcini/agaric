@@ -17,10 +17,43 @@
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '../../lib/i18n'
 import { SettingsView } from '../SettingsView'
+
+// FEAT-13: mock @tauri-apps/plugin-autostart so the AutostartRow's
+// dynamic import (via @/lib/tauri's wrappers) hits a controllable stub.
+// Per-test `mockResolvedValueOnce` / `mockRejectedValueOnce` overrides
+// drive the desktop-available / mobile-unavailable / IPC-error paths.
+const mockEnable = vi.fn()
+const mockDisable = vi.fn()
+const mockIsEnabled = vi.fn()
+vi.mock('@tauri-apps/plugin-autostart', () => ({
+  enable: mockEnable,
+  disable: mockDisable,
+  isEnabled: mockIsEnabled,
+}))
+
+// FEAT-12: mock @tauri-apps/plugin-global-shortcut for the
+// QuickCaptureRow tests. Per-test overrides drive the success / failure
+// paths.
+const mockShortcutRegister = vi.fn()
+const mockShortcutUnregister = vi.fn()
+const mockShortcutIsRegistered = vi.fn()
+vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
+  register: mockShortcutRegister,
+  unregister: mockShortcutUnregister,
+  isRegistered: mockShortcutIsRegistered,
+}))
+
+// FEAT-12: mock the use-mobile hook so the desktop / mobile branches
+// of the QuickCaptureRow are deterministic in jsdom.
+const mockUseIsMobile = vi.fn(() => false)
+vi.mock('../../hooks/use-mobile', () => ({
+  useIsMobile: () => mockUseIsMobile(),
+}))
 
 // Mock child components to isolate SettingsView logic
 
@@ -95,6 +128,23 @@ beforeEach(() => {
   // `?settings=…` deep-link param (each test that needs a specific URL
   // sets it explicitly).
   window.history.replaceState(null, '', '/')
+  // FEAT-13: default the autostart plugin to "unavailable" so tests
+  // that don't care about the launch-on-login row don't have to mock
+  // it explicitly. Tests that exercise the row override per-call with
+  // `mockResolvedValueOnce(...)` / `mockRejectedValueOnce(...)`.
+  mockEnable.mockReset()
+  mockDisable.mockReset()
+  mockIsEnabled.mockReset()
+  mockIsEnabled.mockRejectedValue(new Error('autostart unavailable'))
+  // FEAT-12: reset global-shortcut + isMobile mocks each test.
+  mockShortcutRegister.mockReset()
+  mockShortcutUnregister.mockReset()
+  mockShortcutIsRegistered.mockReset()
+  mockShortcutRegister.mockResolvedValue(undefined)
+  mockShortcutUnregister.mockResolvedValue(undefined)
+  mockUseIsMobile.mockReset()
+  mockUseIsMobile.mockReturnValue(false)
+  localStorage.removeItem('agaric:quickCaptureShortcut')
 })
 
 describe('SettingsView', () => {
@@ -566,5 +616,241 @@ describe('SettingsView', () => {
     expect(keyboardTab).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('keyboard-settings-tab')).toBeInTheDocument()
     expect(screen.getByText('Keyboard Settings Content')).toBeInTheDocument()
+  })
+
+  // ── FEAT-13: Launch-on-login toggle (General tab) ──────────────────
+
+  describe('Launch-on-login toggle (FEAT-13)', () => {
+    it('hides the toggle on mobile / browser-dev when the plugin rejects', async () => {
+      // Default `beforeEach` already rejects `isEnabled()` with
+      // "autostart unavailable", simulating Android / iOS where the
+      // plugin is `#[cfg(desktop)]`-gated out of the build, or browser
+      // dev with no `__TAURI_INTERNALS__`.
+      render(<SettingsView />)
+
+      // The General tab is the default — no click required.
+      await waitFor(() => {
+        expect(mockIsEnabled).toHaveBeenCalled()
+      })
+      // Toggle row must not render — the user can't talk to the plugin.
+      expect(
+        screen.queryByRole('switch', { name: t('settings.autostart.label') }),
+      ).not.toBeInTheDocument()
+      // The DeadlineWarningSection sibling stays visible — only the
+      // autostart row is conditionally hidden.
+      expect(screen.getByTestId('deadline-warning-section')).toBeInTheDocument()
+    })
+
+    it('renders the toggle on desktop and reads the initial state (disabled)', async () => {
+      mockIsEnabled.mockReset()
+      mockIsEnabled.mockResolvedValue(false)
+      render(<SettingsView />)
+
+      const toggle = await screen.findByRole('switch', {
+        name: t('settings.autostart.label'),
+      })
+      expect(toggle).toBeInTheDocument()
+      // Radix Switch surfaces state via aria-checked.
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+      // The description copy lands alongside the label.
+      expect(screen.getByText(t('settings.autostart.description'))).toBeInTheDocument()
+    })
+
+    it('renders the toggle on desktop and reads the initial state (enabled)', async () => {
+      mockIsEnabled.mockReset()
+      mockIsEnabled.mockResolvedValue(true)
+      render(<SettingsView />)
+
+      const toggle = await screen.findByRole('switch', {
+        name: t('settings.autostart.label'),
+      })
+      expect(toggle).toHaveAttribute('aria-checked', 'true')
+    })
+
+    it('calls enable() when the user flips the toggle on', async () => {
+      mockIsEnabled.mockReset()
+      mockIsEnabled.mockResolvedValue(false)
+      mockEnable.mockResolvedValue(undefined)
+      const user = userEvent.setup()
+      render(<SettingsView />)
+
+      const toggle = await screen.findByRole('switch', {
+        name: t('settings.autostart.label'),
+      })
+      await user.click(toggle)
+
+      await waitFor(() => {
+        expect(mockEnable).toHaveBeenCalledOnce()
+      })
+      expect(mockDisable).not.toHaveBeenCalled()
+      // Optimistic update — the toggle reflects the new state.
+      expect(toggle).toHaveAttribute('aria-checked', 'true')
+    })
+
+    it('calls disable() when the user flips the toggle off', async () => {
+      mockIsEnabled.mockReset()
+      mockIsEnabled.mockResolvedValue(true)
+      mockDisable.mockResolvedValue(undefined)
+      const user = userEvent.setup()
+      render(<SettingsView />)
+
+      const toggle = await screen.findByRole('switch', {
+        name: t('settings.autostart.label'),
+      })
+      await user.click(toggle)
+
+      await waitFor(() => {
+        expect(mockDisable).toHaveBeenCalledOnce()
+      })
+      expect(mockEnable).not.toHaveBeenCalled()
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+    })
+
+    it('reverts the optimistic update and toasts the failure when enable() rejects', async () => {
+      mockIsEnabled.mockReset()
+      mockIsEnabled.mockResolvedValue(false)
+      // MAINT-99 ipc-error-path-coverage: the new component test must
+      // include at least one mockRejectedValue* path.
+      mockEnable.mockRejectedValueOnce(new Error('IPC denied'))
+      const user = userEvent.setup()
+      render(<SettingsView />)
+
+      const toggle = await screen.findByRole('switch', {
+        name: t('settings.autostart.label'),
+      })
+      await user.click(toggle)
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(t('settings.autostart.toggleFailed'))
+      })
+      // Toggle must revert to the previous state — never lie about
+      // the underlying setting.
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+    })
+
+    it('reverts and toasts the failure when disable() rejects', async () => {
+      mockIsEnabled.mockReset()
+      mockIsEnabled.mockResolvedValue(true)
+      mockDisable.mockRejectedValueOnce(new Error('IPC denied'))
+      const user = userEvent.setup()
+      render(<SettingsView />)
+
+      const toggle = await screen.findByRole('switch', {
+        name: t('settings.autostart.label'),
+      })
+      await user.click(toggle)
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(t('settings.autostart.toggleFailed'))
+      })
+      expect(toggle).toHaveAttribute('aria-checked', 'true')
+    })
+  })
+
+  // ── FEAT-12: Quick-capture shortcut row (General tab) ─────────────
+  describe('Quick capture shortcut (FEAT-12)', () => {
+    it('renders with the default chord on first paint and exposes an Edit button', () => {
+      render(<SettingsView />)
+
+      const row = screen.getByTestId('quick-capture-settings-row')
+      expect(row).toBeInTheDocument()
+
+      // Default chord on Linux jsdom (isMac() returns false): Ctrl+Alt+N
+      const binding = screen.getByTestId('quick-capture-shortcut-binding')
+      expect(binding).toHaveTextContent('Ctrl+Alt+N')
+      expect(
+        screen.getByRole('button', { name: t('settings.quickCapture.editButton') }),
+      ).toBeInTheDocument()
+    })
+
+    it('reads the persisted chord from localStorage on mount', () => {
+      localStorage.setItem('agaric:quickCaptureShortcut', 'Ctrl+Shift+J')
+      render(<SettingsView />)
+
+      expect(screen.getByTestId('quick-capture-shortcut-binding')).toHaveTextContent('Ctrl+Shift+J')
+    })
+
+    it('Edit button reveals the inline input + Save / Cancel buttons', async () => {
+      const user = userEvent.setup()
+      render(<SettingsView />)
+
+      await user.click(screen.getByTestId('quick-capture-shortcut-edit'))
+
+      expect(screen.getByTestId('quick-capture-shortcut-input')).toBeInTheDocument()
+      expect(screen.getByTestId('quick-capture-shortcut-save')).toBeInTheDocument()
+      expect(screen.getByTestId('quick-capture-shortcut-cancel')).toBeInTheDocument()
+    })
+
+    it('Cancel restores the previous binding without touching the plugin or storage', async () => {
+      const user = userEvent.setup()
+      render(<SettingsView />)
+
+      await user.click(screen.getByTestId('quick-capture-shortcut-edit'))
+      const input = screen.getByTestId('quick-capture-shortcut-input')
+      await user.clear(input)
+      await user.type(input, 'Ctrl+Shift+J')
+      await user.click(screen.getByTestId('quick-capture-shortcut-cancel'))
+
+      expect(mockShortcutRegister).not.toHaveBeenCalled()
+      expect(mockShortcutUnregister).not.toHaveBeenCalled()
+      expect(localStorage.getItem('agaric:quickCaptureShortcut')).toBe(null)
+      // The view returns to read-only mode with the prior binding.
+      expect(screen.getByTestId('quick-capture-shortcut-binding')).toHaveTextContent('Ctrl+Alt+N')
+    })
+
+    it('Save persists the new chord to localStorage after a probe register/unregister', async () => {
+      const user = userEvent.setup()
+      mockShortcutRegister.mockResolvedValueOnce(undefined)
+      mockShortcutUnregister.mockResolvedValueOnce(undefined)
+
+      render(<SettingsView />)
+
+      await user.click(screen.getByTestId('quick-capture-shortcut-edit'))
+      const input = screen.getByTestId('quick-capture-shortcut-input')
+      await user.clear(input)
+      await user.type(input, 'Ctrl+Shift+J')
+      await user.click(screen.getByTestId('quick-capture-shortcut-save'))
+
+      await waitFor(() => {
+        expect(localStorage.getItem('agaric:quickCaptureShortcut')).toBe('Ctrl+Shift+J')
+      })
+      // The probe registers and then unregisters the new chord; App.tsx
+      // is the one that re-binds it with the live handler via the
+      // synthetic storage event.
+      expect(mockShortcutRegister).toHaveBeenCalledWith('Ctrl+Shift+J', expect.any(Function))
+      expect(mockShortcutUnregister).toHaveBeenCalledWith('Ctrl+Shift+J')
+      expect(screen.getByTestId('quick-capture-shortcut-binding')).toHaveTextContent('Ctrl+Shift+J')
+    })
+
+    // MAINT-99: every component that calls IPC must have a mockRejectedValue path.
+    it('shows a toast and does NOT persist the new chord when probe register() rejects', async () => {
+      const user = userEvent.setup()
+      mockShortcutUnregister.mockResolvedValue(undefined)
+      // The probe register rejects; we should toast and leave
+      // localStorage untouched. App.tsx still owns the previous
+      // binding so the user is not left without a working chord.
+      mockShortcutRegister.mockRejectedValueOnce(new Error('shortcut conflict'))
+
+      render(<SettingsView />)
+      await user.click(screen.getByTestId('quick-capture-shortcut-edit'))
+      const input = screen.getByTestId('quick-capture-shortcut-input')
+      await user.clear(input)
+      await user.type(input, 'Ctrl+Shift+J')
+      await user.click(screen.getByTestId('quick-capture-shortcut-save'))
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(t('settings.quickCapture.saveFailed'))
+      })
+      // The localStorage write only happens on success, so the saved
+      // chord must still be the default.
+      expect(localStorage.getItem('agaric:quickCaptureShortcut')).toBe(null)
+    })
+
+    it('hides the entire row on mobile', () => {
+      mockUseIsMobile.mockReturnValue(true)
+      render(<SettingsView />)
+
+      expect(screen.queryByTestId('quick-capture-settings-row')).not.toBeInTheDocument()
+    })
   })
 })

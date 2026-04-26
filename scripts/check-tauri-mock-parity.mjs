@@ -64,6 +64,11 @@ const KNOWN_UNMOCKED = new Set([
   // Trash detail-count aggregator — used by the Trash header badge
   // only; per-page tests pass through a manual count fixture.
   'trash_descendant_counts',
+  // FEAT-12: quick-capture is wired through the global-shortcut
+  // plugin (OS-level keybinding) and the QuickCaptureDialog, both
+  // mocked at the per-component level (QuickCaptureDialog.test.tsx,
+  // SettingsView.test.tsx). No Playwright surface yet.
+  'quick_capture_block',
 ])
 
 const bindingsSrc = fs.readFileSync(BINDINGS, 'utf8')

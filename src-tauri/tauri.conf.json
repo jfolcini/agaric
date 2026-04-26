@@ -30,6 +30,17 @@
         "https://github.com/agaric-app/org-mode-for-the-rest-of-us/releases/latest/download/latest.json"
       ],
       "pubkey": ""
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": ["agaric"]
+      },
+      "mobile": [
+        {
+          "host": "agaric.app",
+          "pathPrefix": ["/o/"]
+        }
+      ]
     }
   },
   "bundle": {

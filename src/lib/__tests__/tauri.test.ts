@@ -73,6 +73,7 @@ import {
   queryBacklinksFiltered,
   queryByProperty,
   queryByTags,
+  quickCaptureBlock,
   readLogsForReport,
   redoPageOp,
   removeTag,
@@ -2608,6 +2609,144 @@ describe('createPageInSpace', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Autostart (FEAT-13)
+// ---------------------------------------------------------------------------
+//
+// `enableAutostart`, `disableAutostart`, and `isAutostartEnabled` thin-wrap
+// `@tauri-apps/plugin-autostart`'s three exports.  Unlike the rest of the
+// `tauri.ts` wrappers (which call `invoke()` directly), these use a dynamic
+// `import('@tauri-apps/plugin-autostart')` so the tests follow the
+// `clipboard.test.ts` / `relaunch-app.test.ts` pattern: `vi.doMock(...)`
+// before re-importing the wrappers via `vi.resetModules()`.
+
+describe('autostart wrappers (FEAT-13)', () => {
+  const mockEnable = vi.fn()
+  const mockDisable = vi.fn()
+  const mockIsEnabled = vi.fn()
+
+  beforeEach(() => {
+    vi.resetModules()
+    mockEnable.mockReset()
+    mockDisable.mockReset()
+    mockIsEnabled.mockReset()
+  })
+
+  describe('isAutostartEnabled', () => {
+    it('returns the boolean from the plugin when available', async () => {
+      vi.doMock('@tauri-apps/plugin-autostart', () => ({
+        isEnabled: mockIsEnabled,
+        enable: mockEnable,
+        disable: mockDisable,
+      }))
+      mockIsEnabled.mockResolvedValueOnce(true)
+
+      const { isAutostartEnabled } = await import('../tauri')
+      const result = await isAutostartEnabled()
+
+      expect(mockIsEnabled).toHaveBeenCalledOnce()
+      expect(result).toBe(true)
+    })
+
+    it('returns false when the plugin reports disabled', async () => {
+      vi.doMock('@tauri-apps/plugin-autostart', () => ({
+        isEnabled: mockIsEnabled,
+        enable: mockEnable,
+        disable: mockDisable,
+      }))
+      mockIsEnabled.mockResolvedValueOnce(false)
+
+      const { isAutostartEnabled } = await import('../tauri')
+      const result = await isAutostartEnabled()
+
+      expect(result).toBe(false)
+    })
+
+    it('propagates rejections so callers can detect plugin unavailability', async () => {
+      vi.doMock('@tauri-apps/plugin-autostart', () => ({
+        isEnabled: mockIsEnabled,
+        enable: mockEnable,
+        disable: mockDisable,
+      }))
+      mockIsEnabled.mockRejectedValueOnce(new Error('plugin not registered'))
+
+      const { isAutostartEnabled } = await import('../tauri')
+
+      await expect(isAutostartEnabled()).rejects.toThrow('plugin not registered')
+    })
+  })
+
+  describe('enableAutostart', () => {
+    it('calls enable() from the plugin and resolves on success', async () => {
+      vi.doMock('@tauri-apps/plugin-autostart', () => ({
+        isEnabled: mockIsEnabled,
+        enable: mockEnable,
+        disable: mockDisable,
+      }))
+      mockEnable.mockResolvedValueOnce(undefined)
+
+      const { enableAutostart } = await import('../tauri')
+      await enableAutostart()
+
+      expect(mockEnable).toHaveBeenCalledOnce()
+      expect(mockDisable).not.toHaveBeenCalled()
+      expect(mockIsEnabled).not.toHaveBeenCalled()
+    })
+
+    it('propagates the rejection when enable() fails (caller surfaces toast)', async () => {
+      vi.doMock('@tauri-apps/plugin-autostart', () => ({
+        isEnabled: mockIsEnabled,
+        enable: mockEnable,
+        disable: mockDisable,
+      }))
+      vi.doMock('@/lib/logger', () => ({
+        logger: { warn: vi.fn(), error: vi.fn() },
+      }))
+      mockEnable.mockRejectedValueOnce(new Error('IPC denied'))
+
+      const { enableAutostart } = await import('../tauri')
+
+      await expect(enableAutostart()).rejects.toThrow('IPC denied')
+      expect(mockEnable).toHaveBeenCalledOnce()
+    })
+  })
+
+  describe('disableAutostart', () => {
+    it('calls disable() from the plugin and resolves on success', async () => {
+      vi.doMock('@tauri-apps/plugin-autostart', () => ({
+        isEnabled: mockIsEnabled,
+        enable: mockEnable,
+        disable: mockDisable,
+      }))
+      mockDisable.mockResolvedValueOnce(undefined)
+
+      const { disableAutostart } = await import('../tauri')
+      await disableAutostart()
+
+      expect(mockDisable).toHaveBeenCalledOnce()
+      expect(mockEnable).not.toHaveBeenCalled()
+      expect(mockIsEnabled).not.toHaveBeenCalled()
+    })
+
+    it('propagates the rejection when disable() fails', async () => {
+      vi.doMock('@tauri-apps/plugin-autostart', () => ({
+        isEnabled: mockIsEnabled,
+        enable: mockEnable,
+        disable: mockDisable,
+      }))
+      vi.doMock('@/lib/logger', () => ({
+        logger: { warn: vi.fn(), error: vi.fn() },
+      }))
+      mockDisable.mockRejectedValueOnce(new Error('plugin unavailable'))
+
+      const { disableAutostart } = await import('../tauri')
+
+      await expect(disableAutostart()).rejects.toThrow('plugin unavailable')
+      expect(mockDisable).toHaveBeenCalledOnce()
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Cross-cutting concerns
 // ---------------------------------------------------------------------------
 
@@ -2733,5 +2872,203 @@ describe('cross-cutting', () => {
       'resolve_page_by_alias',
       'export_page_markdown',
     ])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// FEAT-12: quickCaptureBlock + global-shortcut wrappers
+// ---------------------------------------------------------------------------
+//
+// `registerGlobalShortcut` / `unregisterGlobalShortcut` /
+// `isGlobalShortcutRegistered` use a dynamic `import('@tauri-apps/plugin-global-shortcut')`
+// internally, so we mock the module factory at the file scope and import
+// the wrappers separately.
+
+const mockRegister = vi.fn()
+const mockUnregister = vi.fn()
+const mockIsRegistered = vi.fn()
+vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
+  register: mockRegister,
+  unregister: mockUnregister,
+  isRegistered: mockIsRegistered,
+}))
+
+// Defer the import so the vi.mock above hoists ahead of it. Using a dynamic
+// import at the top of each test keeps the wrapper references fresh across
+// `vi.clearAllMocks()` runs in `beforeEach`.
+async function importGlobalShortcutWrappers() {
+  return await import('../tauri')
+}
+
+describe('quickCaptureBlock', () => {
+  it('invokes quick_capture_block with the captured content', async () => {
+    const expected = {
+      id: 'BLK_QC1',
+      block_type: 'content',
+      content: 'captured note',
+      parent_id: 'PARENT_PAGE',
+      position: 1,
+      deleted_at: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await quickCaptureBlock('captured note')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('quick_capture_block', {
+      content: 'captured note',
+    })
+    expect(result).toEqual(expected)
+  })
+
+  // MAINT-99: every IPC wrapper must have at least one mockRejectedValue
+  // test so the failure path is covered.
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('quick_capture_block failed'))
+    await expect(quickCaptureBlock('foo')).rejects.toThrow('quick_capture_block failed')
+  })
+})
+
+describe('registerGlobalShortcut', () => {
+  beforeEach(() => {
+    mockRegister.mockReset()
+    mockUnregister.mockReset()
+    mockIsRegistered.mockReset()
+  })
+
+  it('forwards the accelerator to the plugin and only fires the user callback on Pressed events', async () => {
+    const { registerGlobalShortcut } = await importGlobalShortcutWrappers()
+    mockRegister.mockResolvedValueOnce(undefined)
+
+    const handler = vi.fn()
+    await registerGlobalShortcut('Ctrl+Alt+N', handler)
+
+    expect(mockRegister).toHaveBeenCalledOnce()
+    expect(mockRegister).toHaveBeenCalledWith('Ctrl+Alt+N', expect.any(Function))
+
+    // Drive the captured plugin handler with a Pressed and a Released
+    // event — only the Pressed activation should reach the user callback.
+    const pluginHandler = mockRegister.mock.calls[0]?.[1] as (e: {
+      shortcut: string
+      id: number
+      state: 'Pressed' | 'Released'
+    }) => void
+    pluginHandler({ shortcut: 'Ctrl+Alt+N', id: 1, state: 'Pressed' })
+    expect(handler).toHaveBeenCalledOnce()
+
+    pluginHandler({ shortcut: 'Ctrl+Alt+N', id: 1, state: 'Released' })
+    expect(handler).toHaveBeenCalledOnce()
+  })
+
+  it('propagates errors from the plugin (chord conflict)', async () => {
+    const { registerGlobalShortcut } = await importGlobalShortcutWrappers()
+    mockRegister.mockRejectedValueOnce(new Error('shortcut already registered'))
+
+    await expect(registerGlobalShortcut('Ctrl+Alt+N', () => {})).rejects.toThrow(
+      'shortcut already registered',
+    )
+  })
+
+  it('is a no-op on mobile (Android user agent)', async () => {
+    const { registerGlobalShortcut } = await importGlobalShortcutWrappers()
+    const originalUA = navigator.userAgent
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      get: () => 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120.0',
+    })
+    try {
+      await registerGlobalShortcut('Ctrl+Alt+N', () => {})
+      expect(mockRegister).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(navigator, 'userAgent', {
+        configurable: true,
+        get: () => originalUA,
+      })
+    }
+  })
+})
+
+describe('unregisterGlobalShortcut', () => {
+  beforeEach(() => {
+    mockUnregister.mockReset()
+  })
+
+  it('forwards the accelerator to the plugin', async () => {
+    const { unregisterGlobalShortcut } = await importGlobalShortcutWrappers()
+    mockUnregister.mockResolvedValueOnce(undefined)
+
+    await unregisterGlobalShortcut('Ctrl+Alt+N')
+
+    expect(mockUnregister).toHaveBeenCalledOnce()
+    expect(mockUnregister).toHaveBeenCalledWith('Ctrl+Alt+N')
+  })
+
+  it('propagates errors from the plugin', async () => {
+    const { unregisterGlobalShortcut } = await importGlobalShortcutWrappers()
+    mockUnregister.mockRejectedValueOnce(new Error('not registered'))
+
+    await expect(unregisterGlobalShortcut('Ctrl+Alt+N')).rejects.toThrow('not registered')
+  })
+
+  it('is a no-op on mobile (iPhone user agent)', async () => {
+    const { unregisterGlobalShortcut } = await importGlobalShortcutWrappers()
+    const originalUA = navigator.userAgent
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      get: () =>
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148',
+    })
+    try {
+      await unregisterGlobalShortcut('Ctrl+Alt+N')
+      expect(mockUnregister).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(navigator, 'userAgent', {
+        configurable: true,
+        get: () => originalUA,
+      })
+    }
+  })
+})
+
+describe('isGlobalShortcutRegistered', () => {
+  beforeEach(() => {
+    mockIsRegistered.mockReset()
+  })
+
+  it('forwards the accelerator and returns the plugin response', async () => {
+    const { isGlobalShortcutRegistered } = await importGlobalShortcutWrappers()
+    mockIsRegistered.mockResolvedValueOnce(true)
+
+    const result = await isGlobalShortcutRegistered('Ctrl+Alt+N')
+
+    expect(mockIsRegistered).toHaveBeenCalledOnce()
+    expect(mockIsRegistered).toHaveBeenCalledWith('Ctrl+Alt+N')
+    expect(result).toBe(true)
+  })
+
+  it('propagates errors from the plugin', async () => {
+    const { isGlobalShortcutRegistered } = await importGlobalShortcutWrappers()
+    mockIsRegistered.mockRejectedValueOnce(new Error('plugin unavailable'))
+
+    await expect(isGlobalShortcutRegistered('Ctrl+Alt+N')).rejects.toThrow('plugin unavailable')
+  })
+
+  it('returns false on mobile without invoking the plugin', async () => {
+    const { isGlobalShortcutRegistered } = await importGlobalShortcutWrappers()
+    const originalUA = navigator.userAgent
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      get: () => 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120.0',
+    })
+    try {
+      const result = await isGlobalShortcutRegistered('Ctrl+Alt+N')
+      expect(mockIsRegistered).not.toHaveBeenCalled()
+      expect(result).toBe(false)
+    } finally {
+      Object.defineProperty(navigator, 'userAgent', {
+        configurable: true,
+        get: () => originalUA,
+      })
+    }
   })
 })

@@ -68,6 +68,17 @@ tauri-plugin-window-state = "2"
 # Used by the bug-report metadata collector (see commands/bug_report.rs).
 # Works on desktop and mobile.  Part of the Tauri plugin coupled stack.
 tauri-plugin-os = "2"
+# FEAT-13: launch-on-login support.  Settings → General → "Launch on
+# login" toggle drives the plugin's `enable()` / `disable()` /
+# `isEnabled()` IPC.  Plumbing per OS lives upstream (XDG autostart
+# `.desktop` files on Linux, macOS `LaunchAgents`, Windows registry).
+# Desktop-only — Android/iOS handle "start at boot" via the OS task
+# model (foreground service / background fetch entitlements), so the
+# plugin is gated behind `#[cfg(desktop)]` in lib.rs.  Part of the
+# Tauri plugin coupled stack per AGENTS.md §"Coupled Dependency
+# Updates" — move in lockstep with the rest of the tauri-plugin-*
+# crates.
+tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
@@ -148,6 +159,33 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 secrecy = "0.10"
 tauri-plugin-oauth = "2"
 async-trait = "0.1"
+
+# FEAT-10 — `tauri-plugin-deep-link` enables OS-level URL routing for the
+# `agaric://` scheme: `agaric://block/<ULID>` / `agaric://page/<ULID>` for
+# external automation (terminal scripts, OS notifications, Spotlight),
+# `agaric://settings/<tab>` for OS-level deep links into the Settings
+# panel (composes with UX-276's `?settings=…` query param), and
+# `agaric://oauth/callback` for the Custom-Tabs + PKCE + App-Link flow on
+# Android (FEAT-5g unblocker — Android sandboxes the loopback HTTP
+# listener that desktop OAuth uses).  Cross-platform — required on
+# desktop AND Android, so registration is NOT gated behind
+# `#[cfg(desktop)]`.  Part of the Tauri plugin coupled stack per
+# AGENTS.md §"Coupled Dependency Updates" — move in lockstep with the
+# rest of the tauri-plugin-* crates.
+tauri-plugin-deep-link = "2"
+# FEAT-10 — `url` 2.x is already a transitive dep of every `tauri-plugin-*`
+# crate that handles URLs (notably `tauri-plugin-deep-link`); declare it
+# explicitly so `src-tauri/src/deeplink/mod.rs` can `use url::Url` to
+# parse inbound `agaric://…` strings without depending on transitive
+# resolution of an indirect dependency.
+url = "2"
+# FEAT-12 — global hotkey for "quick capture" (drop a line into today's
+# journal from anywhere). Desktop-only — Android / iOS have no
+# global-shortcut concept, so registration is gated `#[cfg(desktop)]` in
+# lib.rs.  Part of the Tauri plugin coupled stack per AGENTS.md §"Coupled
+# Dependency Updates" — move in lockstep with the rest of the
+# tauri-plugin-* crates.
+tauri-plugin-global-shortcut = "2"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["async_tokio"] }

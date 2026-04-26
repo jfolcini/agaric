@@ -1866,6 +1866,13 @@ const resources = {
 
       // F-30: Settings view
       'sidebar.settings': 'Settings',
+      // FEAT-13: Launch-on-login toggle (Settings → General).  Desktop-only —
+      // the toggle row is hidden on mobile / browser-dev where the plugin's
+      // IPC is unavailable.
+      'settings.autostart.description':
+        'Start Agaric automatically when you sign into your computer.',
+      'settings.autostart.label': 'Launch on login',
+      'settings.autostart.toggleFailed': "Couldn't update launch-on-login setting",
       'settings.tabGeneral': 'General',
       'settings.tabProperties': 'Properties',
       'settings.tabAppearance': 'Appearance',
@@ -1902,6 +1909,21 @@ const resources = {
       'keyboard.settings.customized': 'Customized',
       'keyboard.settings.typeNewBinding': 'Type new key binding...',
       'keyboard.settings.emptyBinding': 'Key binding cannot be empty',
+
+      // FEAT-12: Quick capture (global shortcut) settings
+      'settings.quickCapture.label': 'Quick capture shortcut',
+      'settings.quickCapture.description':
+        "Press this key combination from anywhere to drop a line into today's journal.",
+      'settings.quickCapture.editButton': 'Edit shortcut',
+      'settings.quickCapture.saveFailed':
+        "Couldn't register shortcut. It may conflict with another app.",
+
+      // FEAT-12: Quick capture dialog
+      'quickCapture.dialogTitle': 'Quick capture',
+      'quickCapture.placeholder': "What's on your mind?",
+      'quickCapture.saveButton': 'Capture',
+      'quickCapture.successToast': "Captured to today's journal",
+      'quickCapture.failureToast': "Couldn't save quick capture",
 
       // F-35: Mermaid diagrams
       'mermaid.loading': 'Rendering diagram…',

@@ -27,6 +27,7 @@ import { BugReportDialog } from './components/BugReportDialog'
 import { FeatureErrorBoundary } from './components/FeatureErrorBoundary'
 import { GlobalDateControls, JournalControls, JournalPage } from './components/JournalPage'
 import { LoadingSkeleton } from './components/LoadingSkeleton'
+import { QuickCaptureDialog } from './components/QuickCaptureDialog'
 import { RecentPagesStrip } from './components/RecentPagesStrip'
 import { SpaceSwitcher } from './components/SpaceSwitcher'
 import { TabBar } from './components/TabBar'
@@ -51,6 +52,7 @@ import {
 import { Toaster } from './components/ui/sonner'
 import { ViewHeaderOutletProvider, ViewHeaderOutletSlot } from './components/ViewHeaderOutlet'
 import { useIsMobile } from './hooks/use-mobile'
+import { useDeepLinkRouter } from './hooks/useDeepLinkRouter'
 import { useItemCount } from './hooks/useItemCount'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
 import { usePrimaryFocusRegistry } from './hooks/usePrimaryFocus'
@@ -67,12 +69,18 @@ import { logger } from './lib/logger'
 import { CLOSE_ALL_OVERLAYS_EVENT } from './lib/overlay-events'
 import { setPriorityLevels } from './lib/priority-levels'
 import {
+  loadQuickCaptureShortcut,
+  QUICK_CAPTURE_SHORTCUT_STORAGE_KEY,
+} from './lib/quick-capture-shortcut'
+import {
   createPageInSpace,
   flushDraft,
   getConflicts,
   listBlocks,
   listDrafts,
   listPropertyDefs,
+  registerGlobalShortcut,
+  unregisterGlobalShortcut,
 } from './lib/tauri'
 import { cn } from './lib/utils'
 import { type JournalMode, useJournalStore } from './stores/journal'
@@ -517,6 +525,15 @@ function App() {
   // shell without prop-drilling.
   const [bugReportOpen, setBugReportOpen] = useState<boolean>(false)
   const [bugReportPrefill, setBugReportPrefill] = useState<BugReportEventDetail | null>(null)
+  // FEAT-12: quick-capture dialog open state. Driven by the global
+  // shortcut handler registered below; the dialog itself is mounted
+  // unconditionally so we don't need a Suspense fallback for it.
+  const [quickCaptureOpen, setQuickCaptureOpen] = useState<boolean>(false)
+  // FEAT-12: lift the chord into state so the registration effect
+  // re-runs when SettingsView changes it. Lazy-init from localStorage
+  // so we don't read on every render. The storage-event listener
+  // below feeds new chords into this state.
+  const [quickCaptureChord, setQuickCaptureChord] = useState<string>(loadQuickCaptureShortcut)
   const mainContentRef = useRef<HTMLDivElement | null>(null)
 
   // The main content scroller is a `ScrollArea`; `mainContentRef` points at
@@ -664,6 +681,15 @@ function App() {
   // ── Sync event listeners (Tauri → store) ───────────────────────────
   useSyncEvents()
 
+  // ── Deep-link router (FEAT-10) ─────────────────────────────────────
+  // Listens for `deeplink:navigate-to-{block,page}` / `deeplink:open-settings`
+  // events emitted by the Rust router and feeds them into the
+  // navigation store / settings localStorage key.  Also backfills the
+  // launch URL on mount (Linux / Windows deliver the deep-link as a
+  // CLI argument BEFORE the React listener registers).  No-op outside
+  // Tauri.
+  useDeepLinkRouter()
+
   // ── Journal navigation shortcuts (Alt+Arrow, Alt+T) ────────────────
   // Uses keyboard-config matchers so users can rebind these (BUG-18).
   // Dispatches through JOURNAL_SHORTCUTS so the handler stays well under
@@ -742,6 +768,81 @@ function App() {
     window.addEventListener('keydown', handleGlobalShortcuts)
     return () => window.removeEventListener('keydown', handleGlobalShortcuts)
   }, [t])
+
+  // ── FEAT-12: register the quick-capture global hotkey ─────────────
+  // Registers the user-configured chord (default Ctrl+Alt+N on Linux /
+  // Windows, Cmd+Option+N on macOS) via `tauri-plugin-global-shortcut`.
+  // When the chord fires the handler:
+  //   1. Brings the window forward (unminimize + show + setFocus) so
+  //      the dialog is visible even if the app was hidden / minimized.
+  //   2. Opens `QuickCaptureDialog` via `setQuickCaptureOpen(true)`.
+  //
+  // The effect re-runs whenever the localStorage key changes (Settings
+  // panel triggers a `storage`-event-style rerender by writing the new
+  // chord). On unmount or re-bind, we unregister the previous chord so
+  // we don't leak OS-level bindings across hot reloads.
+  //
+  // Desktop-only: `registerGlobalShortcut` itself short-circuits on
+  // mobile, so there is no platform gate here.
+  // Storage-event listener that updates the chord state, kept in its
+  // own effect so it never tears down between chord-driven re-binds.
+  // SettingsView writes the new chord to localStorage and dispatches
+  // a synthetic storage event; we re-read and feed it into state.
+  useEffect(() => {
+    function onStorage(e: StorageEvent) {
+      if (e.key !== QUICK_CAPTURE_SHORTCUT_STORAGE_KEY) return
+      const next = loadQuickCaptureShortcut()
+      setQuickCaptureChord((prev) => (prev === next ? prev : next))
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
+  // Register / re-register the global chord whenever it changes.
+  // Cleanup unregisters the previous chord before the new one is
+  // registered, so the OS only ever has one binding at a time.
+  // Desktop-only: `registerGlobalShortcut` short-circuits on mobile.
+  useEffect(() => {
+    let active = true
+    const accelerator = quickCaptureChord
+
+    const handler = () => {
+      // Best-effort window focus. The IPC failures here are non-fatal —
+      // the dialog still opens; only the visibility / focus state may
+      // be wrong if the user already closed the window manually.
+      void (async () => {
+        try {
+          const { getCurrentWindow } = await import('@tauri-apps/api/window')
+          const w = getCurrentWindow()
+          // Order matters: unminimize before show before setFocus.
+          if (await w.isMinimized().catch(() => false)) {
+            await w.unminimize().catch(() => {})
+          }
+          await w.show().catch(() => {})
+          await w.setFocus().catch(() => {})
+        } catch (err) {
+          logger.warn('App', 'quick-capture window focus failed', undefined, err)
+        }
+      })()
+      if (active) setQuickCaptureOpen(true)
+    }
+
+    registerGlobalShortcut(accelerator, handler).catch((err: unknown) => {
+      logger.warn('App', 'failed to register quick-capture global shortcut', { accelerator }, err)
+    })
+
+    return () => {
+      active = false
+      unregisterGlobalShortcut(accelerator).catch((err: unknown) => {
+        logger.warn(
+          'App',
+          'failed to unregister quick-capture global shortcut',
+          { accelerator },
+          err,
+        )
+      })
+    }
+  }, [quickCaptureChord])
 
   // ── Global "close all overlays" shortcut (Escape by default) ────────
   // UX-228: dispatch a plain DOM CustomEvent on `window` so any top-level
@@ -1121,6 +1222,10 @@ function App() {
             }
           : {})}
       />
+      {/* FEAT-12: Quick-capture dialog — driven by the global hotkey
+          registered in App's startup effect. Mounted unconditionally so
+          the global shortcut handler can flip `open` instantly. */}
+      <QuickCaptureDialog open={quickCaptureOpen} onOpenChange={setQuickCaptureOpen} />
       <Toaster position="bottom-right" richColors closeButton />
     </BootGate>
   )
