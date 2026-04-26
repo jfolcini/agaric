@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-30 open items.
+27 open items.
 
 Previously resolved: 422+ items across 149 sessions.
 
@@ -43,14 +43,11 @@ Previously resolved: 422+ items across 149 sessions.
 | MAINT-99 | MAINT | No automated enforcement for several documented test rules (axe-audit per component test, IPC-error-path coverage, test file naming convention) | M |
 | MAINT-103 | MAINT | `BlockPropertyEditor` inline editor uses absolute positioning without portal — should follow the `suggestion-renderer` pattern | M |
 | TEST-4 | TEST | 25 of 26 Playwright specs lack a console-error listener — backend / mock errors leak silently in every E2E suite except `smoke.spec.ts` | M |
-| TEST-11 | TEST | 7 E2E specs use CSS-class selectors (23 instances total) instead of `data-testid` per the documented selector convention | M |
 | UX-257 | UX | Breadcrumb bar (zoom + page header) doesn't read as a breadcrumb, is oversized, and styling is inconsistent across the two surfaces | M |
 | UX-260 | UX | Discoverability sweep for keyboard shortcuts and gestures (sidebar swipe, journal nav, undo tiers, Shift+Click range, properties drawer shortcut, Ctrl+F, KeyboardShortcuts→Settings link) | M |
-| UX-264 | UX | Sync error UX (no retry action on failure toast, no online/offline transition feedback, no batch progress, camera-permission denial leaves user stuck on QR mode) | M |
-| UX-265 | UX | Conflict UI improvements (Keep/Discard label clarity, sort/filter for large conflict sets, type-badge tooltips, missing-original-block fallback, large-diff handling) | M |
 | UX-270 | UX | `GraphView` a11y + filter persistence — bare `overflow-y-auto` → `ScrollArea`, redundant aria-label on labelled checkboxes, `role="img"` on interactive SVG, filter state reset on every navigation | M |
 | UX-274 | UX | Agenda views — `DateChipEditor` parse error not shown on input itself; `QueryResult` error has no retry; `RescheduleDropZone` has no keyboard alternative; per-group collapse not persisted; empty-filter validation silent; `DuePanel` projected entries skipped by keyboard nav; `QueryBuilderModal` accepts unknown property keys | M |
-| UX-275 | UX | History view UX gaps — Restore-to-here wording, non-reversible icon a11y, missing inline filter clear, DiffDisplay hunk navigation, descendant-count badge wrap, batch keyboard shortcuts, restore-action missing undo toast, checkbox row-click ambiguity, generic error banner, no batch-restore confirmation | M |
+| UX-275 | UX | History view UX residue — DiffDisplay hunk navigation, descendant-count badge wrap, batch keyboard shortcuts, restore-action missing undo toast, checkbox row-click ambiguity, "Restore to here" icon-only on touch, generic error banner, no batch-restore confirmation | M |
 | UX-277 | UX | `BugReportDialog` log-content preview before submit (Checkbox primitive swap + success toast shipped; log preview pending — may be superseded by H-9c) | M |
 | UX-281 | UX | Gutter-button tooltips invisible on touch — gutter is fixed at 68px, three buttons already inflate to 44×44 on `pointer:coarse` so inline labels would overflow; needs a different affordance (long-press → toast, or wider gutter / drawer on touch) | S |
 | PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S |
@@ -802,24 +799,6 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 **Risk:** M — turning the listener on may surface real warnings that need triage. Some may be noisy dev-only logs that need filtering or fixing in production code.
 **Impact:** M — catches a real class of regressions that currently leaks through every E2E suite.
 
-### TEST-11 — 7 E2E specs use CSS-class selectors (23 instances) instead of `data-testid`
-
-**Problem:** Selector convention from `src/__tests__/AGENTS.md:404`: *"Use `data-testid` selectors (not CSS classes) for targeting elements."* Verified violations (`grep -n "page.locator('\." e2e/*.spec.ts` returns 23 hits across 7 specs):
-
-| File | Lines | Selector |
-|------|-------|----------|
-| `e2e/inner-links.spec.ts` | 79, 376 | `.block-tree`, `.linked-references` |
-| `e2e/batch-operations.spec.ts` | 65, 96, 129 | `.batch-toolbar` |
-| `e2e/attachments.spec.ts` | 62, 82, 92, 117, 146 | `.attachment-badge` |
-| `e2e/sync-ui.spec.ts` | 111, 112 | `.device-no-peers` |
-| `e2e/agenda-advanced.spec.ts` | 245, 519, 533, 537, 557, 561, 588 | `.due-panel-priority`, `.agenda-results-item`, `.agenda-group-header` |
-
-**Fix:** For each violation, add the matching `data-testid` to the corresponding component (one-line edit per component) and update the spec selector to `page.locator('[data-testid="..."]')` or, better, `page.getByTestId('...')`. CSS classes used purely for styling stay; the `data-testid` is what tests bind to. After landing, optionally extend MAINT-99's lint hooks with a check for `page.locator('\\.` patterns in `e2e/`.
-
-**Cost:** M (~1 day across 7 specs + ~7 component edits).
-**Risk:** S — additive `data-testid` attributes; existing CSS classes preserved for styling.
-**Impact:** M — CSS refactors are a recurring source of test breakage; switching to `data-testid` decouples test stability from style changes.
-
 ### UX-257 — Breadcrumb bar doesn't read as a breadcrumb, is oversized, and styling is inconsistent across the two surfaces
 
 **Problem:** Two breadcrumb-like surfaces exist in the app; neither reads as "the standard breadcrumb pattern" at a glance, and they don't match each other.
@@ -887,35 +866,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Risk:** S — additive UI, no behaviour change.
 **Impact:** L — flips a large amount of latent capability into discoverable capability.
 
-### UX-264 — Sync error UX
-
-**Problem:** Sync error feedback is consistently weak:
-
-- `src/hooks/useSyncTrigger.ts:42-50, 110-115` — failure toasts show `t('sync.failedForDevice', { deviceId: peerId.slice(0, 12) })` with no retry action and no error category. UX.md "Toast Action Patterns" mandates a retry action for retryable failures.
-- `src/hooks/useSyncTrigger.ts:152-159` — when transitioning from offline → online, `syncAll()` is triggered but no toast / banner confirms the transition. On mobile, network transitions are frequent and the StatusPanel is often not visible.
-- `src/components/ConflictList.tsx:362-400` — batch keep/discard processes conflicts sequentially with no per-item progress. For 50+ conflicts (realistic after a re-pair), users see only a spinner.
-- `src/components/QrScanner.tsx:34-77` — camera-permission denial is shown inside the scanner component but the parent `PairingEntryForm` does not auto-switch to manual entry. User has to click "Type Passphrase" themselves.
-
-**Fix outline:** add retry actions to failure toasts (see UX.md pattern); show a toast "Back online — syncing…" on the offline→online transition; add progress text "Resolving 3 of 50…" during conflict batch ops; auto-switch to manual mode on camera-permission denial with a `t('pairing.cameraDeniedFallback')` toast.
-
-**Cost:** M.
-**Risk:** M — toast retry needs backend error categorisation; auto-fallback needs careful focus-management.
-**Impact:** L — significantly improves user trust in sync.
-
-### UX-265 — Conflict UI improvements
-
-**Problem:** Several issues in the conflict-resolution surface:
-
-- `src/components/ConflictListItem.tsx:147-171` — "Keep" (outline) / "Discard" (destructive) buttons rely on visual hierarchy alone to communicate which is safer. Add tooltip / aria descriptions ("Keep: use the incoming version" / "Discard: delete the conflict copy"). Consider swapping order so the safer action sits on the right.
-- `src/components/ConflictList.tsx:414-442` — no sort / filter on the conflict list. After a re-pair, users may face dozens of conflicts and have no way to prioritise by type, source device, or timestamp. Add a filter bar with conflict-type + source-device + date-range dimensions.
-- `src/components/ConflictListItem.tsx:108-117` — conflict-type badge has aria-label but no visible tooltip. Wrap in a `Tooltip` showing the existing `conflict.type${type}` i18n description.
-- `src/components/ConflictTypeRenderer.tsx:224-240` — Property and Move conflicts fall through to `TextConflictView` when the original block is missing. The fallback shows "(original not available)" which is confusing for typed conflicts. Show a warning banner ("Original block not found — showing conflict content only") and disable the Keep action.
-- `src/components/DiffDisplay.tsx:24-53` — diffs render all spans inline with no special handling for very large diffs (10 KB+ blocks edited on two devices). The container has `max-h-40` upstream but the SVG render still touches every span. Add a "Show full diff" / "Collapse" toggle for diffs above a threshold (e.g., >500 spans).
-
-**Cost:** M.
-**Risk:** S — additive.
-**Impact:** M — improves usability of an inherently stressful flow.
-
 ### UX-270 — `GraphView` a11y + filter persistence
 
 **Problem:**
@@ -946,19 +896,15 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Risk:** S.
 **Impact:** M.
 
-### UX-275 — History view UX gaps
+### UX-275 — History view UX residue
 
-**Problem:** Eleven small issues in the history surface (`HistoryView`, `HistoryListItem`, `HistoryFilterBar`, `HistoryPanel`, `BatchActionToolbar`, `TrashView`, `DiffDisplay`):
+**Problem:** Remaining sub-fixes in the history / trash surface (`HistoryView`, `HistoryListItem`, `HistoryPanel`, `BatchActionToolbar`, `TrashView`, `DiffDisplay`). The session-483 batch shipped the wording / a11y polish (Restore-to-here scope copy + non-reversible aria-label / tooltip pair, an inline ✕ on `HistoryFilterBar`, the `TrashView` filter ✕ via `SearchInput`'s built-in clear, and the Shift+click range-select hint inside the trash batch toolbar). What's left is the heavier behavioural / interaction work:
 
-- `src/components/HistoryView.tsx:386-402` — "Restore to here" confirmation description doesn't make the scope explicit ("All operations after this point will be reverted. This action itself can be undone.").
-- `src/components/HistoryListItem.tsx:289-304` — non-reversible-op lock icon has aria-label `Non-reversible` but doesn't explain why (purge cannot be undone). Expand the label; consider increasing icon size on touch.
-- `src/components/HistoryFilterBar.tsx:49-82` — no inline ✕ to clear an active op-type filter; users have to open the dropdown and pick "All". Add an active-filter affordance.
 - `src/components/DiffDisplay.tsx:16-54` — no keyboard navigation between hunks; large diffs render as one paragraph. Add prev/next change buttons; wrap in `<div role="region" aria-label="...">`.
 - `src/components/TrashView.tsx:543-551` — descendant-count badge can wrap on narrow viewports; verify the i18n key `trash.itemsInBatch` exists; consider a more prominent badge variant.
-- `src/components/TrashView.tsx:438-459` — batch toolbar buttons (Restore / Purge) lack keyboard shortcuts and a hint matching `HistorySelectionToolbar:63-65`.
+- `src/components/TrashView.tsx:438-459` — batch toolbar buttons (Restore / Purge) lack keyboard shortcuts matching `HistorySelectionToolbar:63-65` (the visible Shift+click hint shipped in session 483; the actual keybinds did not).
 - `src/components/HistoryPanel.tsx:83-103` — restore success toast has no "Undo" action; UX.md "Toast Action Patterns" mandates one for reversible actions. Capture previous content before the restore so undo can revert.
 - `src/components/HistoryListItem.tsx:243-254` — checkbox + row-click both toggle selection on touch; users may accidentally select by tapping the row. Add visible focus-ring on the checkbox; clarify ownership (clickable row OR clickable checkbox, not both).
-- `src/components/TrashView.tsx:390-405` — filter input has search icon on left but no inline ✕; add one when `filterText.length > 0`.
 - `src/components/HistoryListItem.tsx:265-287` — "Restore to here" is icon-only via `Button size="sm"`; tooltip is the only label. On touch (no hover), the meaning is hidden. Add a text label or move to a long-press / context menu.
 - `src/components/HistoryView.tsx:311-322` — error banner has retry but generic message. Pass more context (network / server / unknown) into the error state and `logger.error` the full error.
 - `src/components/TrashView.tsx:268-289` — batch *restore* has no confirmation while batch *purge* does; inconsistent. Add confirmation when `selected.size > 5` (or always).
