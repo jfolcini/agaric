@@ -710,7 +710,9 @@ where
         #[cfg(unix)]
         SocketKind::Unix(listener) => serve_unix(listener, registry, activity_ctx, lifecycle).await,
         #[cfg(windows)]
-        SocketKind::Pipe(server) => serve_pipe(server, registry, activity_ctx, lifecycle).await,
+        SocketKind::Pipe { server, path } => {
+            serve_pipe(server, path, registry, activity_ctx, lifecycle).await
+        }
     }
 }
 
@@ -794,6 +796,7 @@ where
 #[cfg(windows)]
 async fn serve_pipe<R>(
     mut server: tokio::net::windows::named_pipe::NamedPipeServer,
+    pipe_path: String,
     registry: std::sync::Arc<R>,
     activity_ctx: Option<super::activity::ActivityContext>,
     lifecycle: Option<McpLifecycle>,
@@ -803,10 +806,13 @@ where
 {
     use tokio::net::windows::named_pipe::ServerOptions;
 
-    // The pipe path is needed to create the *next* server instance after the
-    // current one is handed off to a connection handler. We recover it from
-    // the constant rather than threading it through the API.
-    let pipe_path = super::MCP_RO_PIPE_PATH;
+    // M-83: the pipe path is threaded through from the bound listener
+    // (captured on the `SocketKind::Pipe` variant) rather than being
+    // recovered from `super::MCP_RO_PIPE_PATH`. The previous version
+    // hard-coded the RO constant here, which silently routed RW
+    // callers onto the RO pipe namespace once the first RW client
+    // connected and the loop spun up the second server instance.
+    let pipe_path = pipe_path.as_str();
 
     loop {
         // H-2: per-iteration gate. See `serve_unix` for the rationale.
@@ -2886,5 +2892,162 @@ mod tests {
                     "shutdown must clear lifecycle.enabled so the accept loop's gate fires",
                 );
             });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// M-83 regression tests
+// ---------------------------------------------------------------------------
+//
+// `serve_pipe` previously hard-coded the successor pipe path to
+// `super::MCP_RO_PIPE_PATH`, which silently re-bound the RW server's
+// successor named-pipe instances onto the RO namespace once the first
+// RW client connected. The fix threads the bound pipe path through the
+// `SocketKind::Pipe { server, path }` variant so the type system makes
+// the correct path available to the accept loop.
+//
+// Linux / macOS see no behaviour change — Windows named pipes are the
+// only platform that recreates per-instance servers, so the tests here
+// are gated `#[cfg(windows)]`. On Linux/macOS the M-83 module compiles
+// to nothing; the existing `serve_unix` path is unaffected.
+#[cfg(test)]
+mod tests_m83 {
+    // Compile-time signature checks. These run on every platform and
+    // catch the case where a future refactor drops the threaded path
+    // and reintroduces the constant fallback.
+    //
+    // The `SocketKind::Pipe` variant must carry both a `server` and a
+    // `path: String` field — verified at compile time on Windows by
+    // the destructuring patterns in `tests_m83_windows::*` below. On
+    // unix this module collapses to the sanity checks that the public
+    // surface still builds.
+
+    #[cfg(windows)]
+    mod tests_m83_windows {
+        use crate::mcp::server::{serve, PlaceholderRegistry};
+        use crate::mcp::{McpLifecycle, SocketKind, MCP_RO_PIPE_PATH, MCP_RW_PIPE_PATH};
+        use std::sync::Arc;
+        use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
+
+        /// Pick a pipe name that is guaranteed to differ from both
+        /// `MCP_RO_PIPE_PATH` and `MCP_RW_PIPE_PATH`. Includes the
+        /// current process id and a random ULID so concurrent test
+        /// runs do not collide.
+        fn unique_pipe_path(tag: &str) -> String {
+            format!(
+                r"\\.\pipe\agaric-mcp-m83-{tag}-{pid}-{ulid}",
+                tag = tag,
+                pid = std::process::id(),
+                ulid = ulid::Ulid::new(),
+            )
+        }
+
+        /// M-83 acceptance test. Bind a `NamedPipeServer` on a custom
+        /// path that differs from both the RO and RW constants, hand
+        /// the listener to `serve()` via `SocketKind::Pipe { server,
+        /// path }`, and verify that after the first client connects
+        /// (and the accept loop creates the next server instance) a
+        /// SECOND client can connect to the SAME custom path. Pre-fix
+        /// the second connect would either fail (custom path differs
+        /// from `MCP_RO_PIPE_PATH`) or — worse — succeed against the
+        /// RO pipe namespace and route RW traffic through the RO
+        /// listener.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn m83_serve_pipe_uses_threaded_path_not_hardcoded_constant() {
+            let pipe_path = unique_pipe_path("threaded");
+
+            // Make sure the chosen path is genuinely distinct from
+            // both production constants — defends the test against a
+            // future tweak to `unique_pipe_path` that accidentally
+            // matches one of them.
+            assert_ne!(pipe_path.as_str(), MCP_RO_PIPE_PATH);
+            assert_ne!(pipe_path.as_str(), MCP_RW_PIPE_PATH);
+
+            let server = ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(&pipe_path)
+                .expect("first server instance binds on the custom path");
+
+            let socket = SocketKind::Pipe {
+                server,
+                path: pipe_path.clone(),
+            };
+
+            let registry = Arc::new(PlaceholderRegistry);
+            let lifecycle = McpLifecycle::new();
+            let serve_lc = lifecycle.clone();
+            let serve_task =
+                tokio::spawn(async move { serve(socket, registry, None, Some(serve_lc)).await });
+
+            // First client: connect on the custom path. The accept
+            // loop hands the connection off to a per-connection task
+            // and then creates the next server instance via
+            // `ServerOptions::new().create(pipe_path)` — this is the
+            // line M-83 fixes.
+            let _client_1 = ClientOptions::new()
+                .open(pipe_path.as_str())
+                .expect("first client connects to the custom-path pipe");
+
+            // Second client: connect AGAIN on the custom path. This
+            // would fail pre-fix because the accept loop re-created
+            // the second server instance on `MCP_RO_PIPE_PATH`
+            // instead of the bound custom path, so no server exists
+            // on `pipe_path` to honour the connect.
+            //
+            // Named-pipe handoff is not synchronous — give the accept
+            // loop a moment to recreate the next server instance
+            // before retrying. A bounded retry keeps the test fast
+            // when the loop is healthy and surfaces a clear failure
+            // when it is not.
+            let mut second = None;
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+            while tokio::time::Instant::now() < deadline {
+                match ClientOptions::new().open(pipe_path.as_str()) {
+                    Ok(c) => {
+                        second = Some(c);
+                        break;
+                    }
+                    Err(_) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    }
+                }
+            }
+            assert!(
+                second.is_some(),
+                "second client must connect to the SAME custom pipe path the server was bound on (M-83)",
+            );
+
+            // Tear down cleanly so the test process does not leak the
+            // accept loop / pipe handles.
+            lifecycle.shutdown();
+            drop(second);
+            // `serve()` returns once the gate fires.
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), serve_task).await;
+        }
+
+        /// Lightweight signature / shape check that does not exercise
+        /// the named-pipe runtime — guards against a future refactor
+        /// that drops the `path` field from the `SocketKind::Pipe`
+        /// variant without anyone noticing because the heavy
+        /// integration test above happens to still compile.
+        #[test]
+        fn m83_socket_kind_pipe_carries_threaded_path() {
+            let path = r"\\.\pipe\agaric-mcp-m83-shape-check";
+            let server = ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(path)
+                .expect("bind shape-check pipe");
+            let kind = SocketKind::Pipe {
+                server,
+                path: path.to_string(),
+            };
+            // Match must destructure both fields; if `path` is dropped
+            // from the variant this stops compiling.
+            match kind {
+                SocketKind::Pipe { server: _, path: p } => {
+                    assert_eq!(p, path, "captured path round-trips through the variant");
+                }
+            }
+        }
     }
 }

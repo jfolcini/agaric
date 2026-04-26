@@ -681,7 +681,14 @@ pub fn run() {
             // FEAT-4c — clone the reader pool, materializer, and device_id
             // that ReadOnlyTools needs. These must be cloned before the
             // originals are moved into managed state below.
+            //
+            // M-82: also clone the writer pool — `journal_for_date` is the
+            // only RO tool with a write side-effect (creates a missing
+            // journal page) and `BEGIN IMMEDIATE` on the read pool is
+            // rejected by `PRAGMA query_only = ON`. The other eight RO
+            // tools stay on the reader pool.
             let pools_read_for_mcp = pools.read.clone();
+            let pools_write_for_mcp_ro = pools.write.clone();
             let materializer_for_mcp = materializer.clone();
             let device_id_for_mcp = device_id.clone();
 
@@ -810,12 +817,14 @@ pub fn run() {
             let mcp_lifecycle = std::sync::Arc::new(mcp::McpLifecycle::new());
             app.manage(mcp_lifecycle.clone());
             let mcp_pool = pools_read_for_mcp;
+            let mcp_write_pool = pools_write_for_mcp_ro;
             let mcp_materializer = materializer_for_mcp;
             let mcp_device_id = device_id_for_mcp;
             mcp::spawn_mcp_ro_task(
                 &app_data_dir,
                 app.handle().clone(),
                 mcp_pool,
+                mcp_write_pool,
                 mcp_materializer,
                 mcp_device_id,
                 Some((*mcp_lifecycle).clone()),
