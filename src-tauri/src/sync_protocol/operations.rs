@@ -178,7 +178,8 @@ pub async fn apply_remote_ops(
 /// Handles four kinds of concurrent-edit conflicts:
 ///
 /// 1. **`edit_block` divergence** — finds blocks with concurrent edits from
-///    both devices, performs three-way text merge via [`merge::merge_block`].
+///    both devices, performs three-way text merge via
+///    [`merge::merge_block_text_only`].
 /// 2. **`set_property` conflicts** — concurrent property changes on the same
 ///    `(block_id, key)` pair are resolved via Last-Writer-Wins
 ///    ([`merge::resolve_property_conflict`]).
@@ -244,14 +245,22 @@ pub async fn merge_diverged_blocks(
             // integrated their head.  After a merge, get_block_edit_heads
             // still returns 2 heads (one per device) because the merge op
             // only advances the LOCAL device's max seq.  Without this
-            // check, merge_block would be called again on every subsequent
-            // sync, creating duplicate merge ops.
+            // check, merge_block_text_only would be called again on every
+            // subsequent sync, creating duplicate merge ops.
             if dag::has_merge_for_heads(pool, &block_id, theirs).await? {
                 results.already_up_to_date += 1;
                 continue;
             }
 
-            let outcome = merge::merge_block(pool, device_id, &block_id, ours, theirs).await?;
+            let outcome = merge::merge_block_text_only(
+                pool,
+                device_id,
+                materializer,
+                &block_id,
+                ours,
+                theirs,
+            )
+            .await?;
 
             match outcome {
                 merge::MergeOutcome::Merged(ref record) => {
@@ -350,14 +359,71 @@ pub async fn merge_diverged_blocks(
             if let (Some(op_a), Some(op_b)) = (op_a_opt, op_b_opt) {
                 let resolution = merge::resolve_property_conflict(&op_a, &op_b)?;
 
-                // Idempotent guard: skip if the local device already has the
-                // winning value (e.g. from a previous merge pass).  Without
-                // this check we would append a redundant resolution op on
-                // every subsequent sync because the historical ops still
-                // satisfy the HAVING clause.
-                let current_local: crate::op::SetPropertyPayload =
-                    serde_json::from_str(&op_a.payload)?;
-                if current_local == resolution.winner_value {
+                // Idempotent guard (M-43): skip if the **materialized**
+                // value already matches the LWW winner.  Comparing
+                // `op_a.payload` (the latest local set_property op)
+                // against `resolution.winner_value` decouples the equality
+                // check from the actual LWW state and exposes two failure
+                // modes:
+                //   (a) spurious skip — local user re-edited the property
+                //       after a prior LWW pass; the latest op happens to
+                //       carry the winner's value, but the materialized
+                //       state diverged in between.  We'd skip and leak.
+                //   (b) perpetual re-emit — local user re-edited and
+                //       op_a.payload now differs from winner.value, so we
+                //       emit a redundant LWW op every sync round forever.
+                // Reserved property keys (todo_state, priority, due_date,
+                // scheduled_date) materialize into fixed columns on the
+                // `blocks` table, NOT `block_properties` (see
+                // `materializer/handlers.rs::OpType::SetProperty`); branch
+                // on `is_reserved_property_key` so the read goes to the
+                // right table.
+                let materialized_matches = if crate::op::is_reserved_property_key(&pk) {
+                    let row: Option<(
+                        Option<String>,
+                        Option<String>,
+                        Option<String>,
+                        Option<String>,
+                    )> = sqlx::query_as(
+                        "SELECT todo_state, priority, due_date, scheduled_date \
+                         FROM blocks WHERE id = ?",
+                    )
+                    .bind(&bid)
+                    .fetch_optional(pool)
+                    .await?;
+                    row.map(|(todo, prio, due, sched)| match pk.as_str() {
+                        "todo_state" => todo == resolution.winner_value.value_text,
+                        "priority" => prio == resolution.winner_value.value_text,
+                        "due_date" => due == resolution.winner_value.value_date,
+                        "scheduled_date" => sched == resolution.winner_value.value_date,
+                        _ => unreachable!(),
+                    })
+                    .unwrap_or(false)
+                } else {
+                    let materialized: Option<(
+                        Option<String>,
+                        Option<f64>,
+                        Option<String>,
+                        Option<String>,
+                    )> = sqlx::query_as(
+                        "SELECT value_text, value_num, value_date, value_ref \
+                         FROM block_properties WHERE block_id = ? AND key = ?",
+                    )
+                    .bind(&bid)
+                    .bind(&pk)
+                    .fetch_optional(pool)
+                    .await?;
+                    materialized
+                        .map(|(vt, vn, vd, vr)| {
+                            vt == resolution.winner_value.value_text
+                                && vn == resolution.winner_value.value_num
+                                && vd == resolution.winner_value.value_date
+                                && vr == resolution.winner_value.value_ref
+                        })
+                        .unwrap_or(false)
+                };
+
+                if materialized_matches {
                     continue;
                 }
 
@@ -465,12 +531,30 @@ pub async fn merge_diverged_blocks(
                 let winner_move: crate::op::MoveBlockPayload =
                     serde_json::from_str(&winner.payload)?;
 
-                // Idempotent guard: skip if the local device's latest move
-                // already matches the winning move (avoids infinite
-                // re-resolution).
-                let local_move: crate::op::MoveBlockPayload = serde_json::from_str(&op_a.payload)?;
-                if local_move == winner_move {
-                    continue;
+                // Idempotent guard (M-44): skip if the **materialized**
+                // parent_id + position in `blocks` already match the
+                // winning move.  Comparing `op_a.payload` against
+                // `winner_move` decouples the check from the actual LWW
+                // state and either spuriously skips or re-emits the move
+                // op every sync round when the local user has issued a
+                // subsequent move (or the materializer has otherwise
+                // converged on the winner via prior remote ops).  The
+                // materialized row is the source of truth for "is the
+                // block already at the target location?".
+                let materialized: Option<(Option<String>, Option<i64>)> =
+                    sqlx::query_as("SELECT parent_id, position FROM blocks WHERE id = ?")
+                        .bind(&bid)
+                        .fetch_optional(pool)
+                        .await?;
+
+                if let Some((parent_id, position)) = materialized {
+                    let target_parent = winner_move
+                        .new_parent_id
+                        .as_ref()
+                        .map(|id| id.as_str().to_owned());
+                    if parent_id == target_parent && position == Some(winner_move.new_position) {
+                        continue;
+                    }
                 }
 
                 let move_payload = crate::op::OpPayload::MoveBlock(winner_move);
@@ -554,4 +638,337 @@ pub async fn complete_sync(
     last_sent_hash: &str,
 ) -> Result<(), AppError> {
     peer_refs::update_on_sync(pool, peer_id, last_received_hash, last_sent_hash).await
+}
+
+// ---------------------------------------------------------------------------
+// M-43 / M-44 LWW idempotency tests
+// ---------------------------------------------------------------------------
+//
+// These tests cover the two REVIEW-LATER items M-43 (property LWW) and
+// M-44 (move LWW).  The bug they target: the idempotency early-exit
+// previously parsed `op_a.payload` (the latest local op for the
+// conflicting key/block) and compared it to the LWW winner.  After the
+// user re-edits the property/moves the block locally, that comparison
+// either spuriously skips OR re-emits the resolution op every sync
+// round.  The fix pulls values from the materialized state
+// (`block_properties` for M-43, `blocks` for M-44) and compares those
+// against the winner — the materialized row is the actual integrated
+// state.
+
+#[cfg(test)]
+mod tests_m43_m44 {
+    use super::*;
+    use crate::db::init_pool;
+    use crate::materializer::Materializer;
+    use crate::op::{CreateBlockPayload, MoveBlockPayload, OpPayload, SetPropertyPayload};
+    use crate::op_log::append_local_op_at;
+    use crate::ulid::BlockId;
+    use sqlx::SqlitePool;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path: PathBuf = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    fn create_payload(block_id: &str) -> OpPayload {
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id(block_id),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(0),
+            content: "test".into(),
+        })
+    }
+
+    /// Materialized state already matches the LWW winner.  No new
+    /// resolution op should be emitted regardless of the latest local
+    /// op's payload.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn lww_property_skip_when_materialized_already_winning() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let ts_a = "2025-01-15T12:00:00Z";
+        let ts_b = "2025-01-15T12:01:00Z"; // B wins LWW
+
+        // Create the block.
+        append_local_op_at(&pool, "device-A", create_payload("BLK1"), ts_a.into())
+            .await
+            .unwrap();
+
+        // M-43/M-44: idempotency guard reads materialized state, so the
+        // block row must exist (the test bypasses the materializer's
+        // CreateBlock handler by calling append_local_op_at directly).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position)              VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(BlockId::test_id("BLK1").as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Both devices append a set_property op so the conflict-detect
+        // HAVING clause (COUNT(DISTINCT device_id) > 1) fires.
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "priority".into(),
+                value_text: Some("winning".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "priority".into(),
+                value_text: Some("winning".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        // Materialize the block row with `priority = 'winning'` directly
+        // (simulating a prior merge pass that already converged).  Note
+        // `priority` is a reserved property key — the materializer writes
+        // it to `blocks.priority`, NOT `block_properties` — so the M-43
+        // idempotency guard must read from there.
+        sqlx::query(
+            "INSERT OR REPLACE INTO blocks              (id, block_type, content, parent_id, position, priority)              VALUES (?, 'content', 'test', NULL, 0, 'winning')",
+        )
+        .bind(BlockId::test_id("BLK1").as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let results = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            results.property_lww, 0,
+            "materialized value already matches the LWW winner — no new \
+             set_property op should be emitted"
+        );
+
+        materializer.shutdown();
+    }
+
+    /// The bug fix in action: materialized value matches the winner,
+    /// but the latest local op carries a different value (e.g. from a
+    /// concurrent re-edit).  The OLD code would compare op_a.payload
+    /// to winner and re-emit the LWW op every sync round.  The fix
+    /// compares materialized state to winner and correctly skips.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn lww_property_emits_when_materialized_diverges_from_local_op() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let ts_a = "2025-01-15T12:00:00Z";
+        let ts_b = "2025-01-15T12:01:00Z"; // B's "winning" wins LWW
+
+        // Create the block.
+        append_local_op_at(&pool, "device-A", create_payload("BLK1"), ts_a.into())
+            .await
+            .unwrap();
+
+        // M-43/M-44: idempotency guard reads materialized state, so the
+        // block row must exist (the test bypasses the materializer's
+        // CreateBlock handler by calling append_local_op_at directly).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position)              VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(BlockId::test_id("BLK1").as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // device-A's latest set_property op is "later_value" — diverges
+        // from the materialized state intentionally.
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "priority".into(),
+                value_text: Some("later_value".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        // device-B's set_property op carries "winning" with a later
+        // timestamp, so LWW resolves to "winning".
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "priority".into(),
+                value_text: Some("winning".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        // Materialized state matches the LWW winner ("winning") but
+        // diverges from op_a.payload ("later_value").  Reserved-key
+        // properties land on `blocks.<col>` directly (M-43 fix branches
+        // on `is_reserved_property_key`).
+        sqlx::query(
+            "INSERT OR REPLACE INTO blocks \
+             (id, block_type, content, parent_id, position, priority) \
+             VALUES (?, 'content', 'test', NULL, 0, 'winning')",
+        )
+        .bind(BlockId::test_id("BLK1").as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let results = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+
+        // M-43 fix: compare against materialized state, not op_a.payload.
+        // The OLD code would have emitted a LWW op here because
+        // op_a.payload ("later_value") != winner ("winning").  The fix
+        // recognises the materialized state already matches the winner
+        // and skips.  The local re-edit is a separate concern that the
+        // LWW idempotency guard should not undo.
+        assert_eq!(
+            results.property_lww, 0,
+            "materialized state matches the winner — no new LWW op should \
+             be emitted, even though op_a.payload diverges"
+        );
+
+        materializer.shutdown();
+    }
+
+    /// Same pattern for move LWW: materialized parent_id + position
+    /// already match the winning move.  No new resolution op should be
+    /// emitted regardless of op_a.payload.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn lww_move_skip_when_materialized_already_at_target() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let ts_a = "2025-01-15T12:00:00+00:00";
+        let ts_b = "2025-01-15T12:01:00+00:00"; // B wins LWW
+
+        // Create the block and the two candidate parents.
+        append_local_op_at(&pool, "device-A", create_payload("BLK1"), ts_a.into())
+            .await
+            .unwrap();
+
+        // M-43/M-44: idempotency guard reads materialized state, so the
+        // block row must exist (the test bypasses the materializer's
+        // CreateBlock handler by calling append_local_op_at directly).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position)              VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(BlockId::test_id("BLK1").as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+        append_local_op_at(&pool, "device-A", create_payload("PARENTA"), ts_a.into())
+            .await
+            .unwrap();
+        append_local_op_at(&pool, "device-A", create_payload("PARENTB"), ts_a.into())
+            .await
+            .unwrap();
+
+        // device-A: latest move op points BLK1 at PARENTA.  This is the
+        // op_a.payload that the OLD code would compare against.
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLK1"),
+                new_parent_id: Some(BlockId::test_id("PARENTA")),
+                new_position: 0,
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        // device-B: later move op points BLK1 at PARENTB at position 1
+        // — wins LWW.
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLK1"),
+                new_parent_id: Some(BlockId::test_id("PARENTB")),
+                new_position: 1,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        // Materialize the parents and the block at the LWW-winning
+        // location (parent_id = PARENTB, position = 1).  Diverges from
+        // op_a.payload (which says PARENTA / position 0).
+        for parent in &["PARENTA", "PARENTB"] {
+            sqlx::query(
+                "INSERT OR REPLACE INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'content', 'p', NULL, 0)",
+            )
+            .bind(BlockId::test_id(parent).as_str())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT OR REPLACE INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'test', ?, 1)",
+        )
+        .bind(BlockId::test_id("BLK1").as_str())
+        .bind(BlockId::test_id("PARENTB").as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let results = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+
+        // M-44 fix: compare against materialized blocks.parent_id +
+        // blocks.position, not op_a.payload.  The OLD code would have
+        // re-emitted the move op because op_a.payload (PARENTA/0)
+        // differs from the winner (PARENTB/1).  The fix sees materialized
+        // state already at the winner and skips.
+        assert_eq!(
+            results.move_lww, 0,
+            "materialized parent_id + position already match the winning \
+             move — no new move op should be emitted"
+        );
+
+        materializer.shutdown();
+    }
 }

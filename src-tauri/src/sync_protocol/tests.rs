@@ -921,6 +921,19 @@ async fn merge_property_idempotent_on_repeated_sync() {
         .await
         .unwrap();
 
+    // M-43: idempotency guard reads materialized blocks.priority, so the
+    // block row must exist. Pre-seed it (the test bypasses the
+    // materializer's CreateBlock handler by calling append_local_op_at
+    // directly).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'content', '', NULL, 0)",
+    )
+    .bind(BlockId::test_id("BLK1").as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+
     append_local_op_at(
         &pool,
         "device-A",
@@ -961,6 +974,16 @@ async fn merge_property_idempotent_on_repeated_sync() {
         r1.property_lww, 1,
         "first merge should resolve 1 property conflict"
     );
+
+    // M-43/M-44: idempotency guard now reads materialized state, so we
+    // must let the materializer apply the resolution op before the next
+    // merge; otherwise the materialized property/block state lags behind
+    // the op_log and the early-exit test would race.
+    materializer
+        .flush()
+        .await
+        .expect("flush after first merge");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Second merge — idempotent guard should skip
     let r2 = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
@@ -1004,6 +1027,20 @@ async fn merge_move_idempotent_on_repeated_sync() {
     .await
     .unwrap();
 
+    // M-44: idempotency guard reads materialized blocks.parent_id /
+    // blocks.position, so the row must exist (the test bypasses the
+    // materializer's CreateBlock handler).
+    for id in ["BLK1", "PARENT-A", "PARENT-B"] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(BlockId::test_id(id).as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
     append_local_op_at(
         &pool,
         "device-A",
@@ -1035,6 +1072,14 @@ async fn merge_move_idempotent_on_repeated_sync() {
         .unwrap();
     assert_eq!(r1.move_lww, 1, "first merge should resolve 1 move conflict");
 
+    // M-44: materialized blocks.parent_id/position is what the idempotency
+    // guard now reads — flush so the resolution op is applied before re-checking.
+    materializer
+        .flush()
+        .await
+        .expect("flush after first merge");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
     let r2 = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
         .await
         .unwrap();
@@ -1060,11 +1105,20 @@ async fn batch_conflict_resolution_multiple_properties_and_move() {
     let ts_a = "2025-01-15T12:00:00Z";
     let ts_b = "2025-01-15T12:01:00Z"; // B wins on LWW
 
-    // Create blocks
+    // Create blocks (op_log + materialized rows so M-43/M-44's idempotency
+    // guard can read materialized state).
     for blk in &["BLK1", "BLK2", "BLK3", "PARENT-A", "PARENT-B"] {
         append_local_op_at(&pool, "device-A", test_create_payload(blk), ts_a.into())
             .await
             .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(BlockId::test_id(blk).as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
     }
 
     // ── 3 property conflicts on 2 different blocks ──────────────────
@@ -1204,6 +1258,18 @@ async fn batch_conflict_resolution_multiple_properties_and_move() {
         results.move_lww, 1,
         "should resolve 1 move conflict in one batch pass"
     );
+
+    // M-43/M-44: flush both foreground (ApplyOp) and background tasks,
+    // then settle, so all resolution ops are visibly materialized into
+    // block_properties / blocks before the idempotency check re-reads
+    // them.  Without the settle, the consumer can still hold an
+    // in-flight transaction not yet committed when flush() returns its
+    // barrier (the barrier only guarantees the queue drained).
+    materializer
+        .flush()
+        .await
+        .expect("flush after first merge");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Second merge should be fully idempotent
     let r2 = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
@@ -1445,6 +1511,15 @@ async fn merge_property_conflict_equal_timestamps_uses_device_id_tiebreaker() {
     append_local_op_at(&pool, "AAAA", test_create_payload("BLK1"), same_ts.into())
         .await
         .unwrap();
+    // M-43: idempotency guard reads materialized blocks.priority.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'content', '', NULL, 0)",
+    )
+    .bind(BlockId::test_id("BLK1").as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // Device "AAAA" sets property "priority" = "high"
     append_local_op_at(
@@ -1489,6 +1564,14 @@ async fn merge_property_conflict_equal_timestamps_uses_device_id_tiebreaker() {
         results.property_lww > 0,
         "should resolve property conflict via device_id tiebreaker when timestamps are equal"
     );
+
+    // M-43: flush so the materializer applies the resolution op before
+    // the idempotency check re-reads block_properties.
+    materializer
+        .flush()
+        .await
+        .expect("flush after first merge");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // A second merge should be idempotent — the resolution already applied
     let r2 = merge_diverged_blocks(&pool, "AAAA", &materializer, "ZZZZ")
