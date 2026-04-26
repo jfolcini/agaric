@@ -806,6 +806,18 @@ pub fn fill_full_window(dirty: &mut DirtySet, today: NaiveDate, window_days: i64
     }
 }
 
+/// Apply a `force_resync` request to the in-memory dirty set.
+///
+/// M-87: `force_resync` semantics are "dispatch a full-window resync",
+/// NOT "clear the queued dirty set" — the latter silently dropped every
+/// pending date when the user hit "Resync now" in Settings. This helper
+/// centralises the priming behaviour so the outer loop's
+/// `force_sweep.notified()` arm can be unit-tested without spinning up
+/// the whole task.
+pub fn handle_force_resync(dirty: &mut DirtySet, today: NaiveDate) {
+    fill_full_window(dirty, today, MAX_WINDOW_DAYS);
+}
+
 // ---------------------------------------------------------------------------
 // Outer task — spawn + event loop
 // ---------------------------------------------------------------------------
@@ -899,8 +911,15 @@ async fn run_task_loop<C: GcalClient + ?Sized>(
             biased;
             _ = shutdown.notified() => break,
             _ = force_sweep.notified() => {
-                dirty.clear();
-                tracing::info!(target: "gcal", "force_resync: dropping accumulated dirty set");
+                // M-87: `force_resync` must DISPATCH a full-window resync,
+                // not clear the dirty set. The previous `dirty.clear()`
+                // silently dropped every queued date.
+                handle_force_resync(&mut dirty, clock.today());
+                tracing::info!(
+                    target: "gcal",
+                    primed = dirty.len(),
+                    "force_resync: primed full-window dirty set",
+                );
             }
             maybe_ev = dirty_rx.recv() => match maybe_ev {
                 Some(ev) => dirty.extend(ev.affected()),
@@ -1829,6 +1848,48 @@ mod tests {
         assert!(dirty.contains(&today));
         assert!(dirty.contains(&NaiveDate::from_ymd_opt(2026, 5, 21).unwrap()));
         assert!(!dirty.contains(&NaiveDate::from_ymd_opt(2026, 5, 22).unwrap()));
+    }
+
+    #[test]
+    fn handle_force_resync_primes_full_window_and_preserves_existing_entries() {
+        // M-87 regression: `force_resync` must DISPATCH (prime the full
+        // window), not CLEAR the dirty set. Earlier code silently dropped
+        // every pending date when the user hit "Resync now" in Settings.
+        let mut dirty = DirtySet::new();
+        let today = NaiveDate::from_ymd_opt(2026, 4, 22).unwrap();
+        // Pre-existing dirty entries — both inside and outside the new window.
+        let outside = NaiveDate::from_ymd_opt(2025, 12, 31).unwrap();
+        let inside = today + chrono::Duration::days(3);
+        dirty.insert(outside);
+        dirty.insert(inside);
+
+        handle_force_resync(&mut dirty, today);
+
+        // The full window is now primed, AND the previously-queued
+        // out-of-window date survives (we dispatch, we do not clear).
+        // `usize` cast is safe: `MAX_WINDOW_DAYS` is a small positive const.
+        assert!(
+            dirty.len() >= MAX_WINDOW_DAYS as usize + 1,
+            "force_resync must prime full window AND retain prior dirty entries; got {}",
+            dirty.len()
+        );
+        assert!(
+            dirty.contains(&today),
+            "today must be in the primed full-window dirty set"
+        );
+        assert!(
+            dirty.contains(&outside),
+            "out-of-window pre-existing dirty entries must NOT be dropped",
+        );
+        assert!(
+            dirty.contains(&inside),
+            "in-window pre-existing dirty entries must survive (dispatch, not clear)",
+        );
+        let last = today + chrono::Duration::days(MAX_WINDOW_DAYS - 1);
+        assert!(
+            dirty.contains(&last),
+            "last day of the full window (today + MAX-1) must be primed"
+        );
     }
 
     #[test]

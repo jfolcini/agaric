@@ -106,10 +106,18 @@ pub async fn create_conflict_copy(
     .execute(&mut *tx)
     .await?;
 
-    // Copy tags from the original block
+    // Copy tags from the original block.
+    // M-75: Filter out rows whose tag-block is soft-deleted or itself a
+    // conflict copy, so the new conflict copy doesn't end up "tagged but
+    // invisibly tagged" (the tags_cache rebuild would skip those rows).
     sqlx::query(
         "INSERT INTO block_tags (block_id, tag_id) \
-         SELECT ?1, tag_id FROM block_tags WHERE block_id = ?2",
+         SELECT ?1, bt.tag_id \
+         FROM block_tags bt \
+         JOIN blocks t ON t.id = bt.tag_id \
+         WHERE bt.block_id = ?2 \
+           AND t.deleted_at IS NULL \
+           AND t.is_conflict = 0",
     )
     .bind(new_block_id.as_str())
     .bind(original_block_id)

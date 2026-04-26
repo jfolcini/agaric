@@ -238,8 +238,29 @@ pub(crate) fn serialize_inner_payload(op_payload: &OpPayload) -> Result<String, 
 /// `delete_attachment` op targets an attachment_id only) or if the JSON
 /// cannot be parsed.
 pub(crate) fn extract_block_id_from_payload(payload_json: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(payload_json).ok()?;
-    value.get("block_id")?.as_str().map(str::to_owned)
+    // L-1: surface JSON parse failures as a warn-level log instead of
+    // silently returning None.  AGENTS.md "Anti-patterns" forbids the
+    // silent-swallow pattern — a future caller without an upstream
+    // hash check would silently lose the indexed `block_id` entry on
+    // corruption, producing very-hard-to-attribute "queries miss this
+    // op" bugs.  Warn-and-continue keeps the existing call sites'
+    // behaviour while making the failure visible in logs.
+    match serde_json::from_str::<serde_json::Value>(payload_json) {
+        Ok(value) => value.get("block_id")?.as_str().map(str::to_owned),
+        Err(e) => {
+            // Truncate at 80 chars so a multi-MB malformed payload does
+            // not flood the log line.  `chars().take(80)` handles UTF-8
+            // boundaries correctly (slicing by byte index can split a
+            // multi-byte codepoint).
+            let prefix: String = payload_json.chars().take(80).collect();
+            tracing::warn!(
+                error = %e,
+                op_payload_prefix = %prefix,
+                "failed to extract block_id from payload"
+            );
+            None
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1544,6 +1565,174 @@ mod tests {
         assert_eq!(
             captured.seq, record.seq,
             "LAST_APPEND.seq must match the inserted row",
+        );
+    }
+
+    // ── extract_block_id_from_payload (L-1) ───────────────────────────
+
+    /// L-1: a well-formed payload returns the `block_id` value as
+    /// before — the warn-on-malformed change must not regress the
+    /// happy path.
+    #[test]
+    fn extract_block_id_from_payload_returns_value_for_well_formed_json() {
+        let payload = r#"{"block_id":"BLKHAPPY","content":"x"}"#;
+        let got = extract_block_id_from_payload(payload);
+        assert_eq!(got, Some("BLKHAPPY".to_owned()));
+    }
+
+    /// L-1: a payload without a `block_id` field (e.g. the
+    /// `delete_attachment` op which targets an `attachment_id` only)
+    /// returns `None` cleanly with no warn log emitted — only parse
+    /// failures are warned, missing fields are not an error.
+    #[test]
+    fn extract_block_id_from_payload_missing_field_returns_none() {
+        let payload = r#"{"attachment_id":"ATT001"}"#;
+        let got = extract_block_id_from_payload(payload);
+        assert_eq!(got, None);
+    }
+
+    /// L-1: malformed JSON must (a) still return `None` so existing
+    /// callers' behaviour is preserved, and (b) emit a `warn`-level
+    /// log including a truncated payload prefix so the failure is
+    /// observable.  Without this, a future caller without an upstream
+    /// hash check would silently lose the indexed `block_id` entry on
+    /// corruption.
+    ///
+    /// Uses `#[tokio::test]` to mirror the working pattern in
+    /// `materializer::tests::dispatch_background_or_warn_logs_seq_and_device_id_on_serde_error`
+    /// — the per-thread `set_default` guard is reliably honoured by
+    /// `tracing::warn!` calls when established inside a tokio test.
+    #[tokio::test]
+    async fn extract_block_id_from_payload_warns_with_payload_prefix_on_malformed_json() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        /// Thread-safe buffered writer for in-process log capture.
+        /// Mirrors the helper used in `materializer::tests` and
+        /// `sync_protocol::tests` (see AGENTS.md "Test helper
+        /// duplication is intentional").
+        #[derive(Clone, Default)]
+        struct WarnBufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+        impl std::io::Write for WarnBufWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for WarnBufWriter {
+            type Writer = WarnBufWriter;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let writer = WarnBufWriter::default();
+        // Pattern mirrors `db::tests::begin_immediate_logged_emits_warn_on_slow_acquire`
+        // which is known to capture warns reliably from the lib's
+        // `agaric_lib::*` modules.
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("warn"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(writer.clone())
+                    .with_ansi(false)
+                    .with_target(true),
+            );
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        // A clearly-malformed JSON payload with an identifiable prefix
+        // so we can assert it appears in the log line.
+        let payload = "{not-valid-json:::truncate-marker-XYZQ123";
+        let got = extract_block_id_from_payload(payload);
+        assert_eq!(
+            got, None,
+            "malformed JSON must still return None to preserve caller behaviour"
+        );
+
+        let contents = {
+            let bytes = writer.0.lock().unwrap();
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
+        assert!(
+            contents.contains("failed to extract block_id"),
+            "warn message must surface the failure, got: {contents:?}"
+        );
+        assert!(
+            contents.contains("op_payload_prefix"),
+            "warn must include the op_payload_prefix field, got: {contents:?}"
+        );
+        assert!(
+            contents.contains("truncate-marker-XYZQ123"),
+            "warn must include the actual payload prefix so the failure is debuggable, got: {contents:?}"
+        );
+    }
+
+    /// L-1: a multi-MB malformed payload must not flood the log line —
+    /// the prefix is truncated to the first 80 chars so the warn log
+    /// stays bounded regardless of input size.
+    #[tokio::test]
+    async fn extract_block_id_from_payload_truncates_prefix_to_80_chars() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        #[derive(Clone, Default)]
+        struct BufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+        impl std::io::Write for BufWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for BufWriter {
+            type Writer = BufWriter;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let writer = BufWriter::default();
+        // Disable timestamp to avoid the 'Z' from RFC 3339 timestamps
+        // that the default fmt layer prepends — the truncation
+        // assertion below scans for a unique sentinel character.
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("warn"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(writer.clone())
+                    .with_ansi(false)
+                    .with_target(true)
+                    .without_time(),
+            );
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        // 200-char malformed payload — beyond the 80-char cap.  The
+        // single sentinel char `~` at index 199 must NOT appear in the
+        // log line because the prefix truncates well before it.
+        let mut payload = "X".repeat(199);
+        payload.push('~');
+        // Make it actually invalid JSON.
+        let payload = format!("{{not-json{payload}");
+        let _ = extract_block_id_from_payload(&payload);
+
+        let contents = {
+            let bytes = writer.0.lock().unwrap();
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
+        assert!(
+            !contents.is_empty(),
+            "warn must be captured at all (filter sanity check), got empty buffer"
+        );
+        assert!(
+            !contents.contains('~'),
+            "the trailing '~' is past the 80-char cap and must not appear in the log, got: {contents:?}"
         );
     }
 }

@@ -352,6 +352,30 @@ pub(super) fn resolve_url(base: &str, href: &str) -> String {
 }
 
 /// Decode common HTML entities.
+///
+/// **Known limitation (I-Search-16):** this is a chained `replace`
+/// pipeline, not a single-pass decoder. Inputs that contain entity
+/// escapes which themselves decode into another entity sequence
+/// (chained / double-escaped entities, e.g. `&amp;lt;` — which is the
+/// HTML encoding of the literal four-character text `&lt;`) are
+/// **over-decoded**: `&amp;lt;` collapses to `<` because the first
+/// `replace` produces `&lt;`, which the next `replace` then decodes
+/// again.
+///
+/// The proper fix is a single decode pass that consumes the source
+/// left-to-right and emits the decoded char without re-scanning. Either
+/// the `html-escape` or `htmlescape` crate would implement that
+/// correctly; neither is currently a dependency of this crate (checked
+/// `src-tauri/Cargo.toml`), so we accept the limitation. Real-world
+/// `<title>` tags very rarely contain double-escaped entities, and the
+/// failure mode is benign (slightly mangled title text, never a panic
+/// or security issue).
+///
+/// See REVIEW-LATER.md item I-Search-16 for the full discussion. The
+/// regression test `parse_title_chained_entity_known_limitation` in
+/// `link_metadata/tests.rs` pins the current over-decoding behaviour so
+/// that a future fix is recognised the moment it lands (the test will
+/// start failing and need to be updated).
 fn decode_html_entities(s: &str) -> String {
     s.replace("&amp;", "&")
         .replace("&lt;", "<")

@@ -82,7 +82,6 @@ import type { GcalStatus } from '@/lib/bindings'
 
 function makeStatus(overrides: Partial<GcalStatus> = {}): GcalStatus {
   return {
-    enabled: true,
     connected: true,
     account_email: 'user@example.com',
     calendar_id: 'agaric-agenda-cal-id',
@@ -101,7 +100,6 @@ function makeStatus(overrides: Partial<GcalStatus> = {}): GcalStatus {
 
 function makeDisconnectedStatus(): GcalStatus {
   return {
-    enabled: false,
     connected: false,
     account_email: null,
     calendar_id: null,

@@ -15,7 +15,7 @@ use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
 use crate::sync_scheduler::SyncScheduler;
 
 use super::discovery::{
-    format_peer_address, get_peer_cert_hash, process_discovery_event, resolve_peer_address,
+    format_peer_addresses, get_peer_cert_hash, process_discovery_event, resolve_peer_address,
     should_store_cert_hash,
 };
 use super::server::handle_incoming_sync;
@@ -344,6 +344,50 @@ async fn list_peer_refs_or_empty(pool: &SqlitePool, cycle: &'static str) -> Vec<
 }
 
 // ---------------------------------------------------------------------------
+// try_connect_each_address — L-62 multi-address connect helper
+// ---------------------------------------------------------------------------
+
+/// Attempt `sync_net::connect_to_peer` against each address in
+/// `addresses` in order, returning the first successful connection
+/// together with the address that worked (so the caller can persist it
+/// as `last_address`). If every attempt fails, the returned `Err`
+/// concatenates the individual error strings so logs / events surface
+/// exactly which addresses failed and why.
+///
+/// Empty `addresses` is the caller's responsibility — this function
+/// returns a generic "no addresses tried" error rather than panicking.
+async fn try_connect_each_address(
+    addresses: &[String],
+    cert_hash: Option<&str>,
+    cert: &SyncCert,
+    peer_id: &str,
+) -> Result<(SyncConnection, String), AppError> {
+    let mut errors: Vec<String> = Vec::with_capacity(addresses.len());
+    for addr in addresses {
+        match sync_net::connect_to_peer(addr, cert_hash, cert).await {
+            Ok(conn) => return Ok((conn, addr.clone())),
+            Err(e) => {
+                tracing::debug!(
+                    peer_id,
+                    addr,
+                    error = %e,
+                    "connect_to_peer failed; trying next advertised address"
+                );
+                errors.push(format!("{addr}: {e}"));
+            }
+        }
+    }
+    Err(AppError::InvalidOperation(if errors.is_empty() {
+        format!("[sync_daemon] {peer_id}: no addresses tried")
+    } else {
+        format!(
+            "[sync_daemon] {peer_id}: all addresses failed — {}",
+            errors.join("; ")
+        )
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // try_sync_with_peer — single sync session with backoff
 // ---------------------------------------------------------------------------
 
@@ -398,11 +442,13 @@ pub(crate) async fn try_sync_with_peer(
         return; // already syncing with this peer
     };
 
-    // 3. Resolve address from discovered peer info
-    let Some(addr) = format_peer_address(peer) else {
+    // 3. Resolve all addresses from discovered peer info, in connection
+    //    priority order (L-62). Empty list ⇒ no useable address.
+    let addrs = format_peer_addresses(peer);
+    if addrs.is_empty() {
         tracing::warn!(peer_id, "peer has no addresses, skipping sync");
         return;
-    };
+    }
 
     // 4. Look up cert hash for TLS certificate pinning
     let cert_hash = get_peer_cert_hash(peer_id, peer_refs);
@@ -415,19 +461,29 @@ pub(crate) async fn try_sync_with_peer(
         ops_sent: 0,
     });
 
-    // 6. Connect to peer with optional cert pinning (#278: reconnect with backoff)
-    let mut conn = match sync_net::connect_to_peer(&addr, cert_hash.as_deref(), cert).await {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(peer_id, error = %e, "failed to connect to peer");
-            scheduler.record_failure(peer_id);
-            event_sink.on_sync_event(SyncEvent::Error {
-                message: format!("Connection failed: {e}"),
-                remote_device_id: peer_id.clone(),
-            });
-            return;
-        }
-    };
+    // 6. L-62: try every advertised address in order (IPv4 → IPv6
+    //    non-link-local → IPv6 link-local). The first successful TLS
+    //    handshake wins; if all fail, surface a combined error so the
+    //    user can see exactly which addresses were attempted instead of
+    //    wondering why a dual-stacked peer entered backoff.
+    let (mut conn, addr) =
+        match try_connect_each_address(&addrs, cert_hash.as_deref(), cert, peer_id).await {
+            Ok((conn, addr)) => (conn, addr),
+            Err(combined) => {
+                tracing::warn!(
+                    peer_id,
+                    attempts = addrs.len(),
+                    error = %combined,
+                    "failed to connect to peer at any advertised address"
+                );
+                scheduler.record_failure(peer_id);
+                event_sink.on_sync_event(SyncEvent::Error {
+                    message: format!("Connection failed: {combined}"),
+                    remote_device_id: peer_id.clone(),
+                });
+                return;
+            }
+        };
 
     // 7. Run sync protocol through the orchestrator
     let event_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(Arc::clone(event_sink)));

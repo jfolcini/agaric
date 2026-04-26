@@ -114,6 +114,32 @@ pub(crate) async fn handle_recurrence(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let mut op_records: Vec<op_log::OpRecord> = Vec::new();
 
+    // M-78: Use MAX(position) + 1 among living siblings to avoid collision.
+    // Naive `original.position + 1` collides with whatever sibling already
+    // occupies that slot, leaving two siblings sharing one position and the
+    // agenda's order non-deterministic. Mirrors the BUG-24 fix in
+    // `merge/resolve.rs::create_conflict_copy`.
+    //
+    // - If the original carries the NULL_POSITION_SENTINEL, the sibling
+    //   keeps the sentinel (incrementing would overflow i64::MAX).
+    // - Sentinel-bearing siblings are excluded from the MAX scan to avoid
+    //   the same overflow.
+    let new_position = match original.position {
+        Some(p) if p == NULL_POSITION_SENTINEL => Some(NULL_POSITION_SENTINEL),
+        Some(_) => {
+            let max_pos: Option<i64> = sqlx::query_scalar(
+                "SELECT MAX(position) FROM blocks \
+                 WHERE parent_id IS ? AND deleted_at IS NULL AND position != ?",
+            )
+            .bind(original.parent_id.as_deref())
+            .bind(NULL_POSITION_SENTINEL)
+            .fetch_one(&mut *tx)
+            .await?;
+            Some(max_pos.unwrap_or(0) + 1)
+        }
+        None => Some(NULL_POSITION_SENTINEL),
+    };
+
     // Create next occurrence as a sibling
     let (new_block, op) = create_block_in_tx(
         &mut tx,
@@ -121,11 +147,7 @@ pub(crate) async fn handle_recurrence(
         original.block_type.clone(),
         original.content.unwrap_or_default(),
         original.parent_id.clone(),
-        match original.position {
-            Some(p) if p == NULL_POSITION_SENTINEL => Some(NULL_POSITION_SENTINEL),
-            Some(p) => Some(p + 1),
-            None => Some(NULL_POSITION_SENTINEL),
-        },
+        new_position,
     )
     .await?;
     op_records.push(op);

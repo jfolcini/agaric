@@ -10,6 +10,19 @@ use std::path::Path;
 /// normal cold-start acquires but surfaces anything pathological.
 pub const SLOW_ACQUIRE_WARN_MS: u128 = 100;
 
+/// Maximum number of SQL bind parameters per statement for chunked
+/// multi-row INSERTs.
+///
+/// SQLite raised the compile-time default from 999 to 32766 in 3.32.0
+/// (2020-05-22), but the conservative 999 bound keeps us compatible with
+/// the lowest-version libsqlite that any platform might ship and matches
+/// the value the snapshot/restore path has used since launch. Callers
+/// derive a per-table chunk size as `MAX_SQL_PARAMS / num_columns`.
+///
+/// I-Cache-3: lifted from `cache/block_tag_refs.rs` and `snapshot/restore.rs`
+/// so the chunking constant has a single source of truth.
+pub const MAX_SQL_PARAMS: usize = 999;
+
 /// Acquire a connection from the pool, logging at `warn` if the acquire
 /// itself took longer than [`SLOW_ACQUIRE_WARN_MS`].
 ///

@@ -76,6 +76,16 @@ fn bench_add_attachment(c: &mut Criterion) {
         let mat = rt.block_on(async { Materializer::new(pool.clone()) });
         let ids = rt.block_on(seed_blocks_bulk(&pool, size));
 
+        // M-29: `add_attachment_inner` now stat-checks the file under
+        // `app_data_dir`, so create the bench fixture once and reuse it
+        // for every iteration. The bench measures DB-write cost, not
+        // filesystem cost — a single zero-byte file is enough.
+        let app_data_dir = dir.path().to_path_buf();
+        let attachments_dir = app_data_dir.join("attachments");
+        std::fs::create_dir_all(&attachments_dir).unwrap();
+        let bench_fs_path = "attachments/bench_file.txt".to_string();
+        std::fs::write(app_data_dir.join(&bench_fs_path), b"").unwrap();
+
         let mut counter = 0u64;
 
         group.throughput(Throughput::Elements(1));
@@ -88,16 +98,19 @@ fn bench_add_attachment(c: &mut Criterion) {
                     let pool = pool.clone();
                     let mat_ref = &mat;
                     let block_id = ids[counter as usize % ids.len()].clone();
+                    let app_data_dir = app_data_dir.clone();
+                    let bench_fs_path = bench_fs_path.clone();
                     async move {
                         add_attachment_inner(
                             &pool,
                             "dev-bench",
                             mat_ref,
+                            &app_data_dir,
                             block_id,
                             format!("file_{counter}.txt"),
                             "text/plain".into(),
-                            1024,
-                            "/tmp/bench_file.txt".into(),
+                            0,
+                            bench_fs_path,
                         )
                         .await
                         .unwrap();

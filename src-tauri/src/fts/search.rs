@@ -96,14 +96,32 @@ fn tokenize_query(input: &str) -> Vec<QueryToken> {
 /// ## Rules
 ///
 /// 1. **Quoted phrases** — matched `"..."` in the input are kept as a single
-///    FTS5 phrase token (internal `"` escaped by doubling).
+///    FTS5 phrase token (internal `"` escaped by doubling). Quoted phrases
+///    are *not* subject to the trigram length filter — the user explicitly
+///    asked for them.
 /// 2. **`NOT` operator** — preserved as the bare keyword when followed by at
 ///    least one more token.
 /// 3. **`OR` / `AND` operators** — preserved as bare keywords when they appear
 ///    between two other tokens.
-/// 4. **Everything else** — wrapped in `"..."` with internal `"` escaped.
+/// 4. **Trigram length filter (I-Search-2)** — non-operator word tokens
+///    shorter than 3 characters are dropped. The FTS5 table uses the
+///    trigram tokenizer (migration `0006_fts5_trigram.sql`,
+///    `tokenize = 'trigram case_sensitive 0'`); tokens with fewer than 3
+///    characters cannot match anything in the index, so retaining them
+///    would only AND-collapse the whole query to zero hits. The
+///    operator-keyword whitelist below is the single exception.
+/// 5. **Everything else** — wrapped in `"..."` with internal `"` escaped.
 ///
 /// Operator detection is case-insensitive (`not` → `NOT`, `or` → `OR`).
+///
+/// ## Trigram-filter operator whitelist
+///
+/// `OR` (2 chars) and `AND` / `NOT` (3 chars) bypass the length filter
+/// when they appear in a valid operator position. They are FTS5 syntax,
+/// not search terms, so the trigram minimum does not apply. Outside an
+/// operator position the same tokens are treated as ordinary words and
+/// `OR` is dropped (2 chars), while `AND` / `NOT` survive on length
+/// alone.
 ///
 /// ## Safety
 ///
@@ -112,6 +130,9 @@ fn tokenize_query(input: &str) -> Vec<QueryToken> {
 /// parentheses.
 #[must_use]
 pub(crate) fn sanitize_fts_query(query: &str) -> String {
+    /// Trigram tokenizer minimum match length — see migration
+    /// `0006_fts5_trigram.sql` (`tokenize = 'trigram case_sensitive 0'`).
+    const TRIGRAM_MIN_LEN: usize = 3;
     let tokens = tokenize_query(query);
     let len = tokens.len();
     let mut output_parts: Vec<String> = Vec::new();
@@ -119,6 +140,8 @@ pub(crate) fn sanitize_fts_query(query: &str) -> String {
     for (i, token) in tokens.iter().enumerate() {
         match token {
             QueryToken::QuotedPhrase(phrase) => {
+                // User-quoted phrases bypass the trigram length filter —
+                // the explicit quoting signals intent.
                 let escaped = phrase.replace('"', "\"\"");
                 output_parts.push(format!("\"{escaped}\""));
             }
@@ -133,8 +156,15 @@ pub(crate) fn sanitize_fts_query(query: &str) -> String {
                 };
 
                 if is_operator {
+                    // Whitelisted operator — bypass the trigram length filter.
                     output_parts.push(upper);
                 } else {
+                    // I-Search-2: drop sub-trigram tokens. `word.chars().count()`
+                    // counts unicode scalars (so a 2-character CJK token is
+                    // measured as 2, not by byte length).
+                    if word.chars().count() < TRIGRAM_MIN_LEN {
+                        continue;
+                    }
                     let escaped = word.replace('"', "\"\"");
                     output_parts.push(format!("\"{escaped}\""));
                 }
@@ -213,8 +243,22 @@ pub async fn search_fts(
         });
     }
 
-    // Sanitize user input for safe FTS5 MATCH (F01: prevent operator injection)
+    // Sanitize user input for safe FTS5 MATCH (F01: prevent operator injection).
     let sanitized = sanitize_fts_query(query);
+
+    // Guard: I-Search-2 — `sanitize_fts_query` now drops sub-trigram
+    // tokens (≤ 2 chars) and a non-operator-position `OR`. A query that
+    // is exclusively those tokens (e.g. `"OR"`, `"a b"`, `"*"`) sanitises
+    // to an empty string, which would otherwise be passed to FTS5 MATCH
+    // and produce a syntax error. Mirror the raw-empty short-circuit
+    // above so empty post-sanitisation also yields an empty page.
+    if sanitized.is_empty() {
+        return Ok(PageResponse {
+            items: vec![],
+            next_cursor: None,
+            has_more: false,
+        });
+    }
 
     // Cap page limit to MAX_SEARCH_RESULTS
     let effective_limit = page.limit.min(MAX_SEARCH_RESULTS);

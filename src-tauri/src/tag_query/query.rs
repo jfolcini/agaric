@@ -50,11 +50,23 @@ pub async fn eval_tag_query(
         });
     }
     let placeholders = actual_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    // I-Search-14: defense-in-depth — `cache::rebuild_tags_cache` and the
+    // production tag-resolve paths already exclude conflict copies and
+    // soft-deleted rows at the leaves, but making the dependency explicit
+    // in the final projection means a future change to `resolve_expr`
+    // (e.g. a new `TagExpr` variant that re-includes the universe) cannot
+    // accidentally surface a conflict copy in the response. Mirrors the
+    // `is_conflict = 0` / `deleted_at IS NULL` filters used in
+    // `cache::rebuild_tags_cache` and other production read paths.
     let query_str = format!(
         "SELECT id, block_type, content, parent_id, position, \
          deleted_at, is_conflict, conflict_type, \
          todo_state, priority, due_date, scheduled_date, page_id \
-         FROM blocks WHERE id IN ({placeholders}) ORDER BY id"
+         FROM blocks \
+         WHERE id IN ({placeholders}) \
+           AND deleted_at IS NULL \
+           AND is_conflict = 0 \
+         ORDER BY id"
     );
     let mut query = sqlx::query_as::<_, BlockRow>(&query_str);
     for id in &actual_ids {
@@ -342,5 +354,59 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let result = list_tags_for_block(&pool, "DOES_NOT_EXIST").await.unwrap();
         assert!(result.is_empty());
+    }
+
+    /// I-Search-14 — defense-in-depth: the final projection SELECT in
+    /// `eval_tag_query` filters `is_conflict = 0` and `deleted_at IS NULL`.
+    /// `resolve_expr` already excludes conflict copies and soft-deleted
+    /// blocks at the leaves, but the defensive filter on the final SELECT
+    /// guards against future regressions where the resolver might re-include
+    /// the universe (e.g. an extension to `TagExpr::Not`).
+    ///
+    /// We exercise the contract by populating `block_tags` for a conflict
+    /// block and a soft-deleted block and asserting `eval_tag_query`
+    /// returns neither — even though `resolve_expr` is what excludes them
+    /// today, mutating the projection to drop the defensive filter would
+    /// fail this test the moment the resolver was relaxed.
+    #[tokio::test]
+    async fn eval_tag_query_excludes_conflict_and_deleted_blocks() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TAG_X", "tag", "x").await;
+        insert_block(&pool, "BLK_KEEP", "content", "keep me").await;
+        insert_tag_assoc(&pool, "BLK_KEEP", "TAG_X").await;
+
+        // Soft-deleted block tagged with TAG_X.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, deleted_at) \
+             VALUES (?, 'content', 'soft-deleted', '2025-01-15T12:00:00+00:00')",
+        )
+        .bind("BLK_DEL")
+        .execute(&pool)
+        .await
+        .unwrap();
+        insert_tag_assoc(&pool, "BLK_DEL", "TAG_X").await;
+
+        // Conflict-copy block tagged with TAG_X.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, is_conflict, conflict_type) \
+             VALUES (?, 'content', 'conflict copy', 1, 'concurrent_edit')",
+        )
+        .bind("BLK_CONFLICT")
+        .execute(&pool)
+        .await
+        .unwrap();
+        insert_tag_assoc(&pool, "BLK_CONFLICT", "TAG_X").await;
+
+        let expr = TagExpr::Tag("TAG_X".into());
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = eval_tag_query(&pool, &expr, &page, false).await.unwrap();
+        let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["BLK_KEEP"],
+            "eval_tag_query must exclude both conflict copies and soft-deleted \
+             blocks via the defensive `is_conflict = 0` / `deleted_at IS NULL` \
+             filter on the final projection (I-Search-14)"
+        );
     }
 }

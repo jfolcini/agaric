@@ -219,10 +219,17 @@ pub async fn set_todo_state_inner(
     Ok(result)
 }
 
-/// Set the priority on a block (1 / 2 / 3 or clear).
+/// Set the priority on a block (level value or clear).
 ///
-/// Validates the value and delegates to [`set_property_inner`] with the
-/// reserved `"priority"` key.
+/// M-20: priority levels are user-configurable through the
+/// `property_definitions.options` JSON for the `priority` key (see
+/// ARCHITECTURE.md §20 / UX-201b). Validation against the configured
+/// options is performed inside [`set_property_in_tx`], which honours the
+/// current definition row. As a defensive fallback — mirroring the
+/// `set_todo_state_inner` pattern (BUG-20) — when the `priority`
+/// definition row has been deleted we re-enforce the seeded built-in
+/// `["1","2","3"]` defaults so a missing definition cannot relax the
+/// reserved-key contract.
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn set_priority_inner(
     pool: &SqlitePool,
@@ -232,10 +239,29 @@ pub async fn set_priority_inner(
     level: Option<String>,
 ) -> Result<BlockRow, AppError> {
     if let Some(ref l) = level {
-        if !matches!(l.as_str(), "1" | "2" | "3") {
-            return Err(AppError::Validation(format!(
-                "priority must be 1, 2, or 3, got '{l}'"
-            )));
+        if l.is_empty() || l.len() > 50 {
+            return Err(AppError::Validation(
+                "priority must be 1-50 characters".into(),
+            ));
+        }
+
+        // M-20: rely on the user-extended `priority` property definition
+        // options for validation (handled inside `set_property_in_tx`).
+        // If the definition row has been deleted, fall back to the
+        // built-in seeded options so reserved-key validation remains
+        // enforced. Mirrors `set_todo_state_inner`.
+        let def_row =
+            sqlx::query!("SELECT options FROM property_definitions WHERE key = 'priority'")
+                .fetch_optional(pool)
+                .await?;
+        if def_row.is_none() {
+            let default_options = ["1", "2", "3"];
+            if !default_options.iter().any(|d| d == l) {
+                return Err(AppError::Validation(format!(
+                    "priority '{l}' is not in allowed options: {}",
+                    default_options.join(", ")
+                )));
+            }
         }
     }
     set_property_inner(
@@ -678,19 +704,44 @@ pub async fn set_todo_state(
 }
 
 /// Tauri command: set priority on a block. Delegates to [`set_priority_inner`].
+///
+/// L-38: emits `EVENT_PROPERTY_CHANGED` after a successful set so the
+/// frontend property-change listener fires for priority updates (parity
+/// with `set_todo_state` / `set_due_date` / `set_scheduled_date` /
+/// `delete_property` / `set_property`). The emit uses the
+/// log-on-error pattern (mirror of L-33) so a transient emit failure
+/// does not propagate as a command error.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn set_priority(
+    app: tauri::AppHandle,
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     block_id: String,
     level: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    set_priority_inner(&pool.0, device_id.as_str(), &materializer, block_id, level)
+    let block_id_clone = block_id.clone();
+    let result = set_priority_inner(&pool.0, device_id.as_str(), &materializer, block_id, level)
         .await
-        .map_err(sanitize_internal_error)
+        .map_err(sanitize_internal_error)?;
+    use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
+    use tauri::Emitter;
+    if let Err(e) = app.emit(
+        EVENT_PROPERTY_CHANGED,
+        PropertyChangedEvent {
+            block_id: block_id_clone,
+            changed_keys: vec!["priority".to_string()],
+        },
+    ) {
+        tracing::warn!(
+            error = %e,
+            event = EVENT_PROPERTY_CHANGED,
+            "failed to emit property-changed event",
+        );
+    }
+    Ok(result)
 }
 
 /// Tauri command: set due date on a block. Delegates to [`set_due_date_inner`].

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::peer_refs::PeerRef;
-use crate::sync_net::{self, DiscoveredPeer};
+use crate::sync_net::{self, DiscoveredPeer, ServiceEventKind};
 
 /// Determine whether a newly discovered mDNS peer should trigger an
 /// immediate sync attempt.
@@ -122,10 +122,75 @@ pub fn resolve_peer_address(
 
 /// Format a peer's first address as "ip:port" for connection.
 /// Returns None if the peer has no addresses.
+///
+/// Prefer [`format_peer_addresses`] when callers can iterate — L-62 added
+/// a multi-address try-all callsite in `try_sync_with_peer`. This
+/// single-address helper is retained for callers (and tests) that
+/// genuinely want only the top-priority address.
 pub fn format_peer_address(peer: &DiscoveredPeer) -> Option<String> {
-    peer.addresses
-        .first()
-        .map(|ip| format!("{ip}:{}", peer.port))
+    format_peer_addresses(peer).into_iter().next()
+}
+
+/// L-62: format every address advertised by the peer, ordered so that
+/// `try_sync_with_peer` can fail-fast from the most-likely-routable
+/// candidate to the least, without ever silently giving up after the
+/// first attempt.
+///
+/// Order policy (deterministic):
+/// 1. IPv4 (most LANs route v4 reliably).
+/// 2. IPv6 unicast non-link-local.
+/// 3. IPv6 link-local last (no zone-id support in `IpAddr` so these
+///    only work on single-interface hosts).
+///
+/// Within each tier the original mDNS announcement order is preserved.
+/// IPv6 literals are bracketed (`[fe80::1]:8080`) so the produced
+/// strings parse via `SocketAddr::from_str` and are accepted by
+/// `connect_to_peer` without further wrangling.
+pub fn format_peer_addresses(peer: &DiscoveredPeer) -> Vec<String> {
+    let mut indexed: Vec<(usize, u8, &std::net::IpAddr)> = peer
+        .addresses
+        .iter()
+        .enumerate()
+        .map(|(i, ip)| (i, address_family_priority(ip), ip))
+        .collect();
+    // Stable sort on (priority, original_index) keeps within-tier order
+    // identical to the announcement order — critical so a fixed-host
+    // network produces the same connection sequence on every cycle.
+    indexed.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+    indexed
+        .into_iter()
+        .map(|(_, _, ip)| format_ip_with_port(ip, peer.port))
+        .collect()
+}
+
+/// Format an `(ip, port)` pair into a `host:port` string suitable for
+/// [`std::net::SocketAddr::from_str`]. IPv4 → `1.2.3.4:8080`; IPv6 →
+/// `[2001:db8::1]:8080`.
+fn format_ip_with_port(ip: &std::net::IpAddr, port: u16) -> String {
+    match ip {
+        std::net::IpAddr::V4(v4) => format!("{v4}:{port}"),
+        std::net::IpAddr::V6(v6) => format!("[{v6}]:{port}"),
+    }
+}
+
+/// Compute the connection-order priority bucket for `ip` (lower = tried
+/// earlier). See [`format_peer_addresses`] for the documented policy.
+fn address_family_priority(ip: &std::net::IpAddr) -> u8 {
+    match ip {
+        std::net::IpAddr::V4(_) => 0,
+        // IPv6 link-local addresses begin with `fe80::/10`; the first
+        // 16-bit segment falls in `0xfe80..=0xfebf`. We hand-roll the
+        // check so we don't depend on the unstable
+        // `Ipv6Addr::is_unicast_link_local` API.
+        std::net::IpAddr::V6(v6) => {
+            let high = v6.segments()[0];
+            if (0xfe80..=0xfebf).contains(&high) {
+                2
+            } else {
+                1
+            }
+        }
+    }
 }
 
 /// Look up the stored TLS certificate hash for a peer.
@@ -146,7 +211,9 @@ pub fn should_store_cert_hash(stored_hash: Option<&str>, observed_hash: Option<&
 /// returns the peer to sync with (if it's a new, paired peer).
 ///
 /// Returns `None` when:
-/// - The event is not a ServiceResolved event
+/// - The event is not a [`ServiceEventKind::Resolved`] event
+///   ([`ServiceEventKind::Removed`] flows through
+///   [`process_service_removed`] instead)
 /// - The peer is the local device (self-discovery)
 /// - The peer was already discovered (timestamp updated, no new sync)
 /// - The peer is not in the paired peer_refs list
@@ -156,25 +223,61 @@ pub fn process_discovery_event(
     discovered: &mut HashMap<String, (DiscoveredPeer, tokio::time::Instant)>,
     peer_refs: &[PeerRef],
 ) -> Option<DiscoveredPeer> {
-    let peer = sync_net::parse_service_event(event)?;
-    if peer.device_id == device_id {
-        return None; // Self-discovery
+    match sync_net::parse_service_event(event)? {
+        ServiceEventKind::Resolved(peer) => {
+            if peer.device_id == device_id {
+                return None; // Self-discovery
+            }
+            let already_discovered = discovered.contains_key(&peer.device_id);
+            discovered.insert(
+                peer.device_id.clone(),
+                (peer.clone(), tokio::time::Instant::now()),
+            );
+            if already_discovered {
+                return None; // Already known, just updated timestamp
+            }
+            if !should_attempt_sync_with_discovered_peer(
+                &peer.device_id,
+                device_id,
+                already_discovered,
+                peer_refs,
+            ) {
+                return None; // Not paired
+            }
+            Some(peer)
+        }
+        ServiceEventKind::Removed { device_id: removed } => {
+            // L-63: drop the entry from the discovered map immediately
+            // so try_sync_with_peer doesn't keep firing against a stale
+            // address. Returns None because there is no peer to sync
+            // with — eviction is the side effect.
+            if removed != device_id {
+                discovered.remove(&removed);
+                tracing::debug!(peer_id = %removed, "evicted peer after mDNS ServiceRemoved");
+            }
+            None
+        }
     }
-    let already_discovered = discovered.contains_key(&peer.device_id);
-    discovered.insert(
-        peer.device_id.clone(),
-        (peer.clone(), tokio::time::Instant::now()),
-    );
-    if already_discovered {
-        return None; // Already known, just updated timestamp
+}
+
+/// L-63: explicit eviction helper.
+///
+/// Drops `removed_device_id` from the `discovered` HashMap. Returns
+/// `true` if the entry was present (useful in unit tests asserting the
+/// HashMap shrinks the moment mDNS announces the removal). The
+/// daemon's main loop already calls into [`process_discovery_event`],
+/// which forwards `Removed` events here; this helper is exported so
+/// tests can drive the eviction path without constructing real
+/// `mdns_sd::ServiceEvent` values.
+pub fn process_service_removed(
+    removed_device_id: &str,
+    local_device_id: &str,
+    discovered: &mut HashMap<String, (DiscoveredPeer, tokio::time::Instant)>,
+) -> bool {
+    if removed_device_id == local_device_id {
+        // Removing our own announcement is a no-op for the discovered
+        // map (the local device was never inserted).
+        return false;
     }
-    if !should_attempt_sync_with_discovered_peer(
-        &peer.device_id,
-        device_id,
-        already_discovered,
-        peer_refs,
-    ) {
-        return None; // Not paired
-    }
-    Some(peer)
+    discovered.remove(removed_device_id).is_some()
 }

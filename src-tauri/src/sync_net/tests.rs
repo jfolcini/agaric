@@ -189,7 +189,7 @@ fn sync_message_roundtrip_sync_complete() {
 // -- 3. mDNS helpers --------------------------------------------------
 
 #[test]
-fn parse_service_event_returns_none_for_non_resolved() {
+fn parse_service_event_returns_none_for_unhandled_kinds() {
     // ServiceFound carries (service_type, fullname) – not enough info.
     let event = mdns_sd::ServiceEvent::ServiceFound(
         "_agaric._tcp.local.".into(),
@@ -197,7 +197,47 @@ fn parse_service_event_returns_none_for_non_resolved() {
     );
     assert!(
         parse_service_event(event).is_none(),
-        "non-Resolved events should return None"
+        "non-Resolved/non-Removed events should return None"
+    );
+}
+
+/// L-63: `ServiceRemoved` events must surface as
+/// `ServiceEventKind::Removed { device_id }` so the daemon can evict
+/// the entry from the discovered HashMap immediately. The device_id
+/// is recovered from the service fullname produced by `MdnsService::announce`.
+#[test]
+fn parse_service_event_returns_removed_for_service_removed() {
+    let fullname = format!(
+        "{name}_PEER42.{ty}",
+        name = MDNS_SERVICE_NAME,
+        ty = MDNS_SERVICE_TYPE,
+    );
+    let event = mdns_sd::ServiceEvent::ServiceRemoved(MDNS_SERVICE_TYPE.into(), fullname);
+    let parsed = parse_service_event(event).expect("ServiceRemoved must surface a Removed kind");
+    match parsed {
+        ServiceEventKind::Removed { device_id } => {
+            assert_eq!(
+                device_id, "PEER42",
+                "L-63: device_id must be recovered from the service fullname"
+            );
+        }
+        other => panic!("expected ServiceEventKind::Removed, got {other:?}"),
+    }
+}
+
+/// L-63: a `ServiceRemoved` whose fullname does not match the announce
+/// shape returns `None` so we never evict an unrelated entry.
+#[test]
+fn parse_service_event_returns_none_for_unknown_removed_fullname() {
+    let event = mdns_sd::ServiceEvent::ServiceRemoved(
+        MDNS_SERVICE_TYPE.into(),
+        "OtherService_X.something.local.".into(),
+    );
+    assert!(
+        parse_service_event(event).is_none(),
+        "L-63: a removed event whose fullname does not match \
+         <{MDNS_SERVICE_NAME}>_<id>.<...> must return None so we don't \
+         evict the wrong peer"
     );
 }
 
@@ -1110,6 +1150,100 @@ async fn recv_fails_after_graceful_close_by_peer() {
         err_msg.contains("connection closed") || err_msg.contains("Close"),
         "error should indicate connection closed, got: {err_msg}"
     );
+}
+
+// -- 8. M-53: SyncServer accept backoff -------------------------------
+
+/// M-53: a `failure_count` of zero (post-accept-success) must yield zero
+/// back-off so the next accept call runs immediately.
+#[test]
+fn accept_backoff_is_zero_after_successful_accept() {
+    use super::websocket::compute_accept_backoff_duration;
+    assert_eq!(compute_accept_backoff_duration(0), Duration::ZERO);
+}
+
+/// M-53: documented schedule starts at 100 ms and doubles each step
+/// (100, 200, 400, 800, …) until the 30 s cap kicks in.
+#[test]
+fn accept_backoff_doubles_each_step_until_cap() {
+    use super::websocket::compute_accept_backoff_duration;
+
+    assert_eq!(
+        compute_accept_backoff_duration(1),
+        Duration::from_millis(100),
+        "first failure ⇒ 100ms"
+    );
+    assert_eq!(
+        compute_accept_backoff_duration(2),
+        Duration::from_millis(200),
+        "second failure ⇒ 200ms"
+    );
+    assert_eq!(
+        compute_accept_backoff_duration(3),
+        Duration::from_millis(400),
+        "third failure ⇒ 400ms"
+    );
+    assert_eq!(
+        compute_accept_backoff_duration(4),
+        Duration::from_millis(800),
+        "fourth failure ⇒ 800ms"
+    );
+    assert_eq!(
+        compute_accept_backoff_duration(5),
+        Duration::from_millis(1_600),
+        "fifth failure ⇒ 1.6s"
+    );
+}
+
+/// M-53: schedule must cap at 30 s so a runaway accept loop cannot stall
+/// the runtime indefinitely between retries.
+#[test]
+fn accept_backoff_caps_at_thirty_seconds() {
+    use super::websocket::compute_accept_backoff_duration;
+
+    // 100ms × 2^9 = 51_200ms which exceeds the 30s cap → 30s.
+    assert_eq!(
+        compute_accept_backoff_duration(10),
+        Duration::from_secs(30),
+        "10th failure must be clamped to the 30s cap"
+    );
+    // A genuinely runaway counter must not panic via shift overflow and
+    // must still return the 30s cap.
+    assert_eq!(
+        compute_accept_backoff_duration(u32::MAX),
+        Duration::from_secs(30),
+        "saturating cap must hold for arbitrarily large counters"
+    );
+}
+
+/// M-53: server keeps accepting after a successful accept resets the
+/// counter — the existing TLS round-trip already exercises a clean
+/// accept; this test simply asserts that calling accept twice in
+/// succession both succeed (so the failure counter stays at zero, the
+/// loop never sleeps, and shutdown still works).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn accept_loop_handles_multiple_successive_connections() {
+    install_crypto_provider();
+    let cert = generate_self_signed_cert("backoff-loop").unwrap();
+    let client_cert = generate_self_signed_cert("backoff-client").unwrap();
+
+    let (server, port) = SyncServer::start(&cert, |_conn| {}).await.unwrap();
+
+    // Two back-to-back accepts: both should succeed without the loop
+    // wedging or accumulating spurious failure counts.
+    for attempt in 0..2 {
+        let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert).await;
+        assert!(
+            conn.is_ok(),
+            "M-53: attempt {attempt} must succeed, got {:?}",
+            conn.err()
+        );
+        if let Ok(c) = conn {
+            c.close().await.ok();
+        }
+    }
+
+    server.shutdown().await;
 }
 
 #[tokio::test]

@@ -87,6 +87,13 @@ fn extract_recent_errors<'a, I: Iterator<Item = &'a str>>(lines: I) -> Vec<Strin
 /// read — a bug report without recent errors is still useful, and boot-time
 /// failures (no log dir, permission denied) should not also break the
 /// report surface.
+///
+/// M-31: reuses [`read_capped_file`] (cap = [`MAX_FILE_BYTES`] = 2 MB) so
+/// a chatty session that grows `agaric.log` to tens of MB does not stall
+/// the bug-report dialog's IPC thread on a multi-MB
+/// `fs::read_to_string` followed by a full-buffer line scan. The cap is
+/// shared with `read_logs_for_report_inner`, so the preview window
+/// matches the bundle-export window byte-for-byte.
 fn recent_errors_from_log_dir(log_dir: &Path) -> Vec<String> {
     let today = chrono::Utc::now()
         .date_naive()
@@ -110,7 +117,12 @@ fn recent_errors_from_log_dir(log_dir: &Path) -> Vec<String> {
 }
 
 fn read_errors_from_path(path: &Path) -> Vec<String> {
-    match fs::read_to_string(path) {
+    // M-31: cap the read at MAX_FILE_BYTES (2 MB) using the same helper
+    // as `read_logs_for_report_inner`. On oversized files the helper
+    // prepends a `…[truncated …]` marker line; that marker contains
+    // neither " ERROR " nor " WARN " so it is naturally filtered out by
+    // `extract_recent_errors` below.
+    match read_capped_file(path) {
         Ok(contents) => extract_recent_errors(contents.lines()),
         Err(_) => Vec::new(),
     }
@@ -437,6 +449,45 @@ mod tests {
         let md = collect_bug_report_metadata_inner(dir.path(), DEV.into()).unwrap();
 
         assert_eq!(md.recent_errors.len(), 0);
+    }
+
+    /// M-31: a chatty session can grow `agaric.log` to tens of MB; the
+    /// bug-report dialog must not stall the IPC thread on an unbounded
+    /// `fs::read_to_string` of the live log. With the cap applied, a
+    /// >2 MB file completes well under 50 ms even with an ERROR line
+    /// at the very tail.
+    #[test]
+    fn collect_metadata_completes_quickly_for_oversized_log_file() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = log_dir_for_app_data(dir.path());
+        fs::create_dir_all(&log_dir).unwrap();
+
+        // Write > MAX_FILE_BYTES (2 MB) of filler followed by a clearly
+        // identifiable ERROR line at the tail.
+        let cap = usize::try_from(MAX_FILE_BYTES).unwrap_or(usize::MAX);
+        let mut contents = String::with_capacity(cap + 4_096);
+        while contents.len() < cap + 1_024 {
+            contents.push_str("2025-01-01 INFO [agaric] filler line abcdefghijklmnopqrstuvwxyz\n");
+        }
+        contents.push_str("2025-01-01 ERROR [agaric] M31_TAIL_MARKER\n");
+        fs::write(log_dir.join("agaric.log"), &contents).unwrap();
+
+        let start = std::time::Instant::now();
+        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into()).unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_millis(50),
+            "collect_bug_report_metadata_inner took {elapsed:?}; expected < 50ms with the read cap in place"
+        );
+        // Tail marker survives the cap-truncate-from-head path.
+        assert!(
+            md.recent_errors
+                .iter()
+                .any(|l| l.contains("M31_TAIL_MARKER")),
+            "tail ERROR marker must survive the cap, got recent_errors: {:?}",
+            md.recent_errors
+        );
     }
 
     // -- should_include_log_file -----------------------------------------

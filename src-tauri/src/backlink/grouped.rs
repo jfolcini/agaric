@@ -346,6 +346,13 @@ pub async fn eval_unlinked_references(
     //    Cap at FTS_ROW_CAP + 1 rows so we can detect truncation (return at most
     //    FTS_ROW_CAP). The `+ 1` literal is derived from the constant via
     //    `format!` so the SQL stays in sync if the constant changes (I-Search-3).
+    //    `ORDER BY fb.block_id` makes the truncation boundary deterministic
+    //    across calls (M-62) — without it SQLite is free to return a different
+    //    10 001 rows on the next request, which breaks cursor pagination
+    //    (the cursor encodes a page_id from the truncated set; if the next
+    //    truncation drops it, `skip_while` consumes everything and pagination
+    //    terminates early or loops). See I-Search-13 for the cursor-side
+    //    cross-reference.
     const FTS_ROW_CAP: usize = 10_000;
     let fts_sql = format!(
         "SELECT fb.block_id \
@@ -357,6 +364,7 @@ pub async fn eval_unlinked_references(
            AND fb.block_id NOT IN ( \
              SELECT source_id FROM block_links WHERE target_id = ?2 \
            ) \
+         ORDER BY fb.block_id \
          LIMIT {}",
         FTS_ROW_CAP + 1
     );

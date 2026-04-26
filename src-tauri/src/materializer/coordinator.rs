@@ -488,6 +488,13 @@ impl Materializer {
                 Ok(())
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
+                // M-7 / M-8: when the bounded background channel is full,
+                // we shed the task and warn — but every dropped fan-out
+                // (RebuildTagsCache, RebuildAgendaCache, …) must also be
+                // visible in the `StatusInfo.bg_dropped` counter. Without
+                // this increment, sustained backpressure silently degrades
+                // cache freshness with no observable signal.
+                self.metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
                 tracing::warn!("background queue full, dropping task");
                 Ok(())
             }

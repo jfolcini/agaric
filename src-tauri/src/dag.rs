@@ -17,6 +17,14 @@ use crate::op_log::{
     extract_block_id_from_payload, get_op_by_seq, serialize_inner_payload, OpRecord,
 };
 
+/// M-4: hard cap on the number of `prev_edit` chain steps `find_lca` will
+/// walk before giving up.  ARCHITECTURE.md §4 documents this 10,000-step
+/// cap as the cycle-detection ceiling; the constant turns the
+/// HashSet-only check into a true fail-fast ceiling so a pathologically
+/// long acyclic chain (corruption, future schema bug) can never issue an
+/// unbounded number of `get_op_by_seq` writer-pool acquires.
+const MAX_LCA_STEPS: usize = 10_000;
+
 /// Extract the `prev_edit` pointer from an op record's payload.
 ///
 /// - `edit_block` → returns `payload.prev_edit` (may be `None`)
@@ -58,6 +66,32 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
         return Err(AppError::InvalidOperation(
             "hash mismatch on remote op".into(),
         ));
+    }
+
+    // M-5: verify every `(device_id, seq)` entry in `parent_seqs` already
+    // exists in `op_log` before landing this row.  Without the check, a
+    // buggy peer or a corrupted stream can insert a row whose parent
+    // pointer dangles, silently breaking later DAG walks (`find_lca`,
+    // history reconstruction).  The single-user threat model rules out
+    // hardening against malicious peers, but data integrity is the
+    // explicit defensive priority — fail fast on insert rather than
+    // surface as a `NotFound` deep inside a sync log.
+    if let Some(parent_seqs_json) = record.parent_seqs.as_deref() {
+        let parents: Vec<(String, i64)> = serde_json::from_str(parent_seqs_json)?;
+        for (parent_dev, parent_seq) in &parents {
+            let exists: i64 = sqlx::query_scalar!(
+                "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND seq = ?",
+                parent_dev,
+                parent_seq,
+            )
+            .fetch_one(pool)
+            .await?;
+            if exists == 0 {
+                return Err(AppError::InvalidOperation(
+                    "dag.parent_seqs.unresolved".into(),
+                ));
+            }
+        }
     }
 
     // INSERT OR IGNORE — duplicate delivery is a no-op.
@@ -215,9 +249,21 @@ pub async fn find_lca(
             }
             Err(e) => return Err(e),
         };
+        // M-4: bound the walk so a pathologically long chain cannot
+        // issue an unbounded number of writer-pool acquires.  The
+        // HashSet-based cycle break still terminates true cycles, but
+        // a long acyclic chain (e.g. corruption with no repeated key)
+        // must also fail fast.
+        let mut steps_a: usize = 0;
         while let Some(key) = next.take() {
             if visited_a.contains(&key) {
                 break; // cycle detected — stop walking
+            }
+            steps_a += 1;
+            if steps_a >= MAX_LCA_STEPS {
+                return Err(AppError::InvalidOperation(format!(
+                    "find_lca exceeded max steps ({MAX_LCA_STEPS}) walking chain A"
+                )));
             }
             visited_a.insert(key.clone());
             chain_a.push(key);
@@ -264,12 +310,20 @@ pub async fn find_lca(
             }
             Err(e) => return Err(e),
         };
+        // M-4: same step-cap as chain A above.
+        let mut steps_b: usize = 0;
         while let Some(key) = next.take() {
             if visited.contains(&(key.0.as_str(), key.1)) {
                 return Ok(Some(key));
             }
             if visited_b.contains(&key) {
                 break; // cycle detected — stop walking
+            }
+            steps_b += 1;
+            if steps_b >= MAX_LCA_STEPS {
+                return Err(AppError::InvalidOperation(format!(
+                    "find_lca exceeded max steps ({MAX_LCA_STEPS}) walking chain B"
+                )));
             }
             visited_b.insert(key.clone());
             chain_b.push(key);

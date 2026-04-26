@@ -18,6 +18,17 @@
 /// delimiter, or encoding without a coordinated migration across all
 /// implementations.
 ///
+/// **Positional, not Merkle.** `parent_seqs_canonical` carries `(parent_device_id,
+/// parent_seq)` *positions* — not parent *hashes*. A child op's hash therefore does
+/// **not** transitively depend on its parents' content. The chain is a
+/// deterministic per-op fingerprint that protects ordering and op-payload
+/// integrity, not a Merkle commitment over ancestor history. Within the
+/// single-user threat model (see AGENTS.md "Threat Model" — mTLS + TOFU pinning
+/// between user-owned devices, no adversarial peers) this is intentional;
+/// tampering protection comes from the duplicate-hash check on the composite
+/// `(device_id, seq)` primary key rather than from chain re-computation. See
+/// ARCHITECTURE.md §"Hash chain" for the matching narrative.
+///
 /// - `parent_seqs`: The raw JSON string from the `parent_seqs` column, or `None`
 ///   for the genesis op (seq 1). When `None`, the empty string is used in the
 ///   hash input. When `Some`, the JSON array should already have entries sorted

@@ -2,12 +2,9 @@ use sqlx::SqlitePool;
 
 use super::codec::decode_snapshot;
 use super::types::SnapshotData;
+use crate::db::MAX_SQL_PARAMS;
 use crate::error::AppError;
 use crate::materializer::{MaterializeTask, Materializer};
-
-/// Maximum number of SQL bind parameters per statement.
-/// SQLite default is 999 (conservative; 32766 since 3.32).
-const MAX_SQL_PARAMS: usize = 999;
 
 /// Apply a snapshot (RESET path). Wipes all core + cache tables, inserts
 /// snapshot data, then enqueues the full cache-rebuild set on the

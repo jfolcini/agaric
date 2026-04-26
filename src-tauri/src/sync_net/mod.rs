@@ -37,6 +37,6 @@ pub use connection::test_connection_pair;
 pub use connection::{connect_to_peer, SyncConnection};
 pub use tls::{generate_self_signed_cert, SyncCert};
 pub use websocket::{
-    parse_service_event, DiscoveredPeer, MdnsService, SyncServer, MDNS_BROWSE_TIMEOUT,
-    MDNS_SERVICE_NAME, MDNS_SERVICE_TYPE,
+    parse_service_event, DiscoveredPeer, MdnsService, ServiceEventKind, SyncServer,
+    MDNS_BROWSE_TIMEOUT, MDNS_SERVICE_NAME, MDNS_SERVICE_TYPE,
 };

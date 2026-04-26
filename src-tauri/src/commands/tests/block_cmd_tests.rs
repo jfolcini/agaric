@@ -1892,10 +1892,17 @@ async fn add_attachment_creates_row() {
     .await
     .unwrap();
 
+    // M-29: file must exist on disk under app_data_dir before the row commits.
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    let bytes: Vec<u8> = vec![0u8; 1024];
+    std::fs::write(app_data_dir.join("attachments/photo.png"), &bytes).unwrap();
+
     let att = add_attachment_inner(
         &pool,
         DEV,
         &mat,
+        app_data_dir,
         block.id.clone(),
         "photo.png".into(),
         "image/png".into(),
@@ -1957,10 +1964,16 @@ async fn delete_attachment_removes_row() {
     .await
     .unwrap();
 
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    let bytes: Vec<u8> = vec![0u8; 2048];
+    std::fs::write(app_data_dir.join("attachments/doc.pdf"), &bytes).unwrap();
+
     let att = add_attachment_inner(
         &pool,
         DEV,
         &mat,
+        app_data_dir,
         block.id.clone(),
         "doc.pdf".into(),
         "application/pdf".into(),
@@ -2012,6 +2025,7 @@ async fn add_attachment_validates_size_limit() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         block.id.clone(),
         "big.bin".into(),
         "application/zip".into(),
@@ -2055,6 +2069,7 @@ async fn add_attachment_validates_mime_type() {
         &pool,
         DEV,
         &mat,
+        _dir.path(),
         block.id.clone(),
         "virus.exe".into(),
         "application/x-msdownload".into(),
@@ -2107,11 +2122,19 @@ async fn list_attachments_returns_for_block() {
     .await
     .unwrap();
 
+    // Set up the on-disk attachment fixtures (M-29: stat-check inside tx).
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    std::fs::write(app_data_dir.join("attachments/a1.png"), vec![0u8; 100]).unwrap();
+    std::fs::write(app_data_dir.join("attachments/a2.pdf"), vec![0u8; 200]).unwrap();
+    std::fs::write(app_data_dir.join("attachments/b1.txt"), vec![0u8; 50]).unwrap();
+
     // Add 2 attachments to block_a
     add_attachment_inner(
         &pool,
         DEV,
         &mat,
+        app_data_dir,
         block_a.id.clone(),
         "a1.png".into(),
         "image/png".into(),
@@ -2125,6 +2148,7 @@ async fn list_attachments_returns_for_block() {
         &pool,
         DEV,
         &mat,
+        app_data_dir,
         block_a.id.clone(),
         "a2.pdf".into(),
         "application/pdf".into(),
@@ -2139,6 +2163,7 @@ async fn list_attachments_returns_for_block() {
         &pool,
         DEV,
         &mat,
+        app_data_dir,
         block_b.id.clone(),
         "b1.txt".into(),
         "text/plain".into(),
@@ -2170,6 +2195,62 @@ async fn list_attachments_returns_for_block() {
     assert_eq!(
         list_b[0].filename, "b1.txt",
         "block_b attachment should be b1.txt"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_returns_io_error_when_file_missing_on_disk() {
+    // M-29: when the frontend's `@tauri-apps/plugin-fs` write fails or
+    // races so the file is never actually persisted, `add_attachment`
+    // must surface `AppError::Io` rather than committing a row that
+    // points at a non-existent file (which would later trip the sync
+    // layer's `MissingAttachment` path).
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "missing fs".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    // Note: we deliberately do NOT create the file on disk.
+    let app_data_dir = _dir.path();
+
+    let result = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "ghost.png".into(),
+        "image/png".into(),
+        1024,
+        "attachments/ghost.png".into(),
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Io(_))),
+        "missing fs_path file must surface as AppError::Io, got: {result:?}"
+    );
+
+    // No row inserted — the IMMEDIATE tx rolled back on the metadata error.
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "missing-file failure must not leave an attachment row"
     );
 
     mat.shutdown();

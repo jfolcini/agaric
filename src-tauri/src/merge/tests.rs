@@ -573,6 +573,69 @@ async fn conflict_copy_includes_tags() {
 }
 
 #[tokio::test]
+async fn conflict_copy_excludes_soft_deleted_and_conflict_tags() {
+    // M-75 regression: tags whose underlying tag-block is soft-deleted
+    // (deleted_at IS NOT NULL) or itself a conflict copy (is_conflict = 1)
+    // must NOT be replicated to the conflict copy. Otherwise the new copy
+    // ends up "tagged but invisibly tagged" — FK is satisfied but the
+    // tags_cache rebuild filters them out.
+    let (pool, _dir) = test_pool().await;
+
+    // Tag #1: live and visible — should be copied.
+    insert_block(&pool, "TAGOK", "tag", "urgent", None, None).await;
+    // Tag #2: soft-deleted — must NOT be copied.
+    insert_block(&pool, "TAGDEL", "tag", "deprecated", None, None).await;
+    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+        .bind("2025-01-15T00:00:00Z")
+        .bind("TAGDEL")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Tag #3: conflict copy — must NOT be copied.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+         VALUES (?, ?, ?, NULL, NULL, 1)",
+    )
+    .bind("TAGCONF")
+    .bind("tag")
+    .bind("conflicted-tag")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Original block tagged with all three.
+    insert_block(&pool, "BT75", "content", "tagged block", None, Some(1)).await;
+    for tag in ["TAGOK", "TAGDEL", "TAGCONF"] {
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind("BT75")
+            .bind(tag)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let record = create_conflict_copy(&pool, DEV_A, "BT75", "conflict text", "Text")
+        .await
+        .unwrap();
+    let payload: CreateBlockPayload = serde_json::from_str(&record.payload).unwrap();
+    let new_id = payload.block_id.as_str();
+
+    let mut tags: Vec<String> =
+        sqlx::query_scalar("SELECT tag_id FROM block_tags WHERE block_id = ?")
+            .bind(new_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    tags.sort();
+
+    assert_eq!(
+        tags,
+        vec!["TAGOK".to_owned()],
+        "only the live, non-conflict tag should be replicated; got {tags:?}",
+    );
+}
+
+#[tokio::test]
 async fn conflict_copy_includes_properties() {
     let (pool, _dir) = test_pool().await;
 

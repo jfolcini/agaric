@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT options FROM property_definitions WHERE key = 'priority'",
+  "describe": {
+    "columns": [
+      {
+        "name": "options",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "0e5565288e554bca1facbc4bcbcdc2092dc4dd87ff382a4e4ef4f62b4d30151a"
+}

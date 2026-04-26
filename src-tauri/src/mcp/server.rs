@@ -161,7 +161,6 @@ struct IncomingRequest {
 
 struct IncomingNotification {
     method: String,
-    #[allow(dead_code)]
     params: Value,
 }
 
@@ -556,20 +555,57 @@ async fn dispatch<R: ToolRegistry>(
     }
 }
 
-fn handle_notification(state: &mut ConnectionState, method: &str) {
+/// Maximum length (in bytes) of the truncated `params` summary that
+/// `handle_notification` includes in its warn-level log line.
+/// I-MCP-3: keep the diagnostic short so a noisy / verbose client cannot
+/// blow up the log buffer, while still leaving enough context for support.
+const UNKNOWN_NOTIFICATION_PARAMS_PREVIEW_LEN: usize = 200;
+
+fn handle_notification(state: &mut ConnectionState, method: &str, params: &Value) {
     match method {
         "notifications/initialized" => {
             state.initialized = true;
             tracing::debug!(target: "mcp", "client signalled notifications/initialized");
         }
         other => {
-            tracing::debug!(
+            // I-MCP-3: promote unknown notifications from `debug` to `warn`
+            // so that a misconfigured agent (or a future MCP spec extension
+            // we have not implemented yet — `notifications/cancelled`,
+            // `notifications/progress`, …) is visible in support reports
+            // without re-enabling the `mcp` log target.
+            let preview = truncate_params_preview(params, UNKNOWN_NOTIFICATION_PARAMS_PREVIEW_LEN);
+            tracing::warn!(
                 target: "mcp",
                 method = other,
-                "ignoring unknown notification",
+                params_preview = %preview,
+                "ignoring unknown MCP notification — promote-to-warn for diagnostic visibility",
             );
         }
     }
+}
+
+/// Render `params` as a short single-line preview suitable for logs.
+///
+/// Returns an empty string for `Null`, otherwise serialises to JSON and
+/// truncates to `max_len` bytes (with a trailing ellipsis when truncated).
+/// Truncation is guarded against splitting a multi-byte UTF-8 codepoint.
+fn truncate_params_preview(params: &Value, max_len: usize) -> String {
+    if params.is_null() {
+        return String::new();
+    }
+    let raw = serde_json::to_string(params).unwrap_or_else(|_| "<unserialisable>".to_owned());
+    if raw.len() <= max_len {
+        return raw;
+    }
+    // Find the largest valid char boundary <= max_len so we never split
+    // a multi-byte codepoint.
+    let mut cut = max_len;
+    while cut > 0 && !raw.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let mut out = raw[..cut].to_owned();
+    out.push('…');
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -624,7 +660,7 @@ where
             }
             ParsedRequest::Err(envelope) => Some(envelope),
             ParsedRequest::Notification(note) => {
-                handle_notification(&mut state, &note.method);
+                handle_notification(&mut state, &note.method, &note.params);
                 None
             }
         };
@@ -1071,6 +1107,132 @@ mod tests {
             ParsedRequest::Notification(n) => assert_eq!(n.method, "notifications/x"),
             other => panic!("expected notification, got {other:?}"),
         }
+    }
+
+    // ── I-MCP-3 — unknown-notification log-level promotion ─────────
+
+    /// Thread-safe buffered writer used to capture emitted log lines.
+    /// Mirrors the BufWriter pattern from `db.rs::tests`.
+    #[derive(Clone, Default)]
+    struct MockBufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for MockBufWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for MockBufWriter {
+        type Writer = MockBufWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    impl MockBufWriter {
+        fn contents(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+        }
+    }
+
+    #[test]
+    fn handle_notification_unknown_method_emits_warn() {
+        // I-MCP-3 regression: previously logged at `debug` and silently
+        // dropped — a misconfigured agent firing real MCP-spec
+        // notifications (`notifications/cancelled`, `notifications/progress`)
+        // was invisible without re-enabling the `mcp` log target.
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let writer = MockBufWriter::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("warn"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(writer.clone())
+                    .with_ansi(false)
+                    .with_target(true),
+            );
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let mut state = ConnectionState::default();
+        let params = json!({"reason": "user-cancelled", "request_id": 7});
+        handle_notification(&mut state, "unknown.method.test", &params);
+
+        let logs = writer.contents();
+        assert!(
+            logs.contains("WARN"),
+            "unknown notification must be logged at warn level; got: {logs:?}",
+        );
+        assert!(
+            logs.contains("unknown.method.test"),
+            "warn must include the unknown method name; got: {logs:?}",
+        );
+        // Initialised flag must NOT be flipped by an unknown notification.
+        assert!(
+            !state.initialized,
+            "unknown notification must not initialise the session",
+        );
+    }
+
+    #[test]
+    fn handle_notification_initialized_stays_at_debug_level() {
+        // Sanity: the known `notifications/initialized` path stays
+        // at debug (no warn noise) and toggles state.initialized.
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let writer = MockBufWriter::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("warn"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(writer.clone())
+                    .with_ansi(false),
+            );
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let mut state = ConnectionState::default();
+        handle_notification(&mut state, "notifications/initialized", &Value::Null);
+
+        let logs = writer.contents();
+        assert!(
+            !logs.contains("WARN"),
+            "known notification path must not emit warn; got: {logs:?}",
+        );
+        assert!(
+            state.initialized,
+            "known initialized notification must flip state.initialized"
+        );
+    }
+
+    #[test]
+    fn truncate_params_preview_handles_null_short_and_long_inputs() {
+        // I-MCP-3: helper-level coverage for the truncated `params` summary.
+        assert_eq!(
+            truncate_params_preview(&Value::Null, 200),
+            "",
+            "null params render as empty string"
+        );
+        assert_eq!(
+            truncate_params_preview(&json!({"a": 1}), 200),
+            "{\"a\":1}",
+            "short params render verbatim",
+        );
+        let big = json!({"data": "x".repeat(500)});
+        let preview = truncate_params_preview(&big, 64);
+        // Truncation appends a single ellipsis char (3-byte UTF-8).
+        assert!(
+            preview.ends_with('…'),
+            "truncated preview must end with ellipsis; got {preview:?}",
+        );
+        assert!(
+            preview.chars().count() <= 65,
+            "preview must be at most 64 chars + 1 ellipsis; got {} chars",
+            preview.chars().count(),
+        );
     }
 
     #[test]

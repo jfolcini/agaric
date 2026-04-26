@@ -46,9 +46,15 @@ pub struct LeaseHolder {
 /// the presence of an OAuth token in the keychain; `calendar_id` is
 /// only populated after the first push-cycle has created the
 /// dedicated calendar.
+///
+/// L-45: the previous shape carried both `enabled` and `connected`,
+/// populated from the same expression. `connected` is the canonical
+/// field consumed by the frontend (`GoogleCalendarSettingsTab.tsx`);
+/// `enabled` was unused and has been removed to prevent FE/BE drift on
+/// future refactors. If a separate "feature toggle" surface is ever
+/// needed it should be a distinct field with its own provenance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct GcalStatus {
-    pub enabled: bool,
     pub connected: bool,
     pub account_email: Option<String>,
     pub calendar_id: Option<String>,
@@ -144,7 +150,6 @@ pub async fn get_gcal_status_inner(
     let last_push = last_push_at(pool).await?;
 
     Ok(GcalStatus {
-        enabled: connected,
         connected,
         account_email: optionalize(account_email),
         calendar_id: optionalize(calendar_id),
@@ -460,7 +465,6 @@ mod tests {
             .await
             .unwrap();
         assert!(!status.connected, "no tokens → not connected");
-        assert!(!status.enabled, "no tokens → not enabled");
         assert_eq!(status.account_email, None);
         assert_eq!(status.calendar_id, None);
         assert_eq!(status.privacy_mode, "full", "default privacy is 'full'");
@@ -544,10 +548,6 @@ mod tests {
         assert!(
             !status.connected,
             "keyring unavailable must degrade to connected=false"
-        );
-        assert!(
-            !status.enabled,
-            "keyring unavailable must degrade to enabled=false (mirrors connected)"
         );
     }
 
