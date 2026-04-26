@@ -88,14 +88,20 @@ pub async fn find_prior_text(
     created_at: &str,
     seq: i64,
 ) -> Result<Option<String>, AppError> {
+    // M-63: use the indexed `block_id` column (migration 0030) instead of
+    // `json_extract(payload, '$.block_id')` so undo of `edit_block` is
+    // O(log N) on op_log size. AGENTS.md invariant #8: ULIDs are stored
+    // uppercase for hash determinism, so normalize the bound parameter to
+    // match — mirrors `recovery/draft_recovery.rs`.
+    let bid_upper = block_id.to_ascii_uppercase();
     let row = sqlx::query!(
         "SELECT op_type, payload FROM op_log \
-         WHERE json_extract(payload, '$.block_id') = ?1 \
+         WHERE block_id = ?1 \
            AND op_type IN ('edit_block', 'create_block') \
            AND (created_at < ?2 OR (created_at = ?2 AND seq < ?3)) \
          ORDER BY created_at DESC, seq DESC \
          LIMIT 1",
-        block_id,
+        bid_upper,
         created_at,
         seq,
     )
@@ -121,14 +127,17 @@ async fn find_prior_position(
     created_at: &str,
     seq: i64,
 ) -> Result<Option<(Option<BlockId>, i64)>, AppError> {
+    // M-63: see `find_prior_text` — use the indexed `block_id` column and
+    // normalize to uppercase per AGENTS.md invariant #8.
+    let bid_upper = block_id.to_ascii_uppercase();
     let row = sqlx::query!(
         "SELECT op_type, payload FROM op_log \
-         WHERE json_extract(payload, '$.block_id') = ?1 \
+         WHERE block_id = ?1 \
            AND op_type IN ('move_block', 'create_block') \
            AND (created_at < ?2 OR (created_at = ?2 AND seq < ?3)) \
          ORDER BY created_at DESC, seq DESC \
          LIMIT 1",
-        block_id,
+        bid_upper,
         created_at,
         seq,
     )
@@ -160,5 +169,245 @@ async fn find_prior_position(
             }
         }
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests_m63 {
+    //! M-63 regression tests: ensure `find_prior_text` and
+    //! `find_prior_position` use the indexed `op_log.block_id` column
+    //! (migration 0030) and uppercase-normalize the bound parameter so
+    //! lookups remain case-insensitive against AGENTS.md invariant #8.
+    use super::*;
+    use crate::db::init_pool;
+    use crate::op::{CreateBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload};
+    use crate::op_log::append_local_op_at;
+    use crate::ulid::BlockId;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    const TEST_DEVICE: &str = "test-device";
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path: PathBuf = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    /// Happy path: with two distinct blocks each carrying their own
+    /// create + edit history, `find_prior_text` for block A must return
+    /// A's previous text and never leak B's text. Exercises the
+    /// `block_id = ?1` predicate against the indexed column.
+    #[tokio::test]
+    async fn find_prior_text_uses_block_id_column() {
+        let (pool, _dir) = test_pool().await;
+
+        // Block A: create + first edit.
+        append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id("BLKA"),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(1),
+                content: "A original".into(),
+            }),
+            "2025-01-15T12:00:00+00:00".into(),
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id("BLKA"),
+                to_text: "A first edit".into(),
+                prev_edit: None,
+            }),
+            "2025-01-15T12:01:00+00:00".into(),
+        )
+        .await
+        .unwrap();
+
+        // Block B: create + edit (different block, must NOT match A's lookup).
+        append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id("BLKB"),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(2),
+                content: "B original".into(),
+            }),
+            "2025-01-15T12:02:00+00:00".into(),
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id("BLKB"),
+                to_text: "B first edit".into(),
+                prev_edit: None,
+            }),
+            "2025-01-15T12:03:00+00:00".into(),
+        )
+        .await
+        .unwrap();
+
+        // A second edit on Block A — find_prior_text should return
+        // "A first edit", never any of B's content.
+        let rec_a2 = append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id("BLKA"),
+                to_text: "A second edit".into(),
+                prev_edit: None,
+            }),
+            "2025-01-15T12:04:00+00:00".into(),
+        )
+        .await
+        .unwrap();
+
+        let prior = find_prior_text(&pool, "BLKA", &rec_a2.created_at, rec_a2.seq)
+            .await
+            .unwrap();
+        assert_eq!(prior, Some("A first edit".into()));
+    }
+
+    /// Happy path for `find_prior_position`: with two distinct blocks
+    /// each having a create + move history, the lookup for block A must
+    /// return A's most-recent prior position and never B's.
+    #[tokio::test]
+    async fn find_prior_position_uses_block_id_column() {
+        let (pool, _dir) = test_pool().await;
+
+        // Block A: create at (P1, 1), then move to (P2, 3).
+        append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id("BLKMA"),
+                block_type: "content".into(),
+                parent_id: Some(BlockId::test_id("P1")),
+                position: Some(1),
+                content: "A".into(),
+            }),
+            "2025-01-15T12:00:00+00:00".into(),
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLKMA"),
+                new_parent_id: Some(BlockId::test_id("P2")),
+                new_position: 3,
+            }),
+            "2025-01-15T12:01:00+00:00".into(),
+        )
+        .await
+        .unwrap();
+
+        // Block B: independent history — must not influence A's lookup.
+        append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id("BLKMB"),
+                block_type: "content".into(),
+                parent_id: Some(BlockId::test_id("P9")),
+                position: Some(9),
+                content: "B".into(),
+            }),
+            "2025-01-15T12:02:00+00:00".into(),
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLKMB"),
+                new_parent_id: Some(BlockId::test_id("P9X")),
+                new_position: 99,
+            }),
+            "2025-01-15T12:03:00+00:00".into(),
+        )
+        .await
+        .unwrap();
+
+        // Move A again — prior position for A must be (P2, 3).
+        let rec_a_move2 = append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLKMA"),
+                new_parent_id: Some(BlockId::test_id("P3")),
+                new_position: 5,
+            }),
+            "2025-01-15T12:04:00+00:00".into(),
+        )
+        .await
+        .unwrap();
+
+        let prior = find_prior_position(&pool, "BLKMA", &rec_a_move2.created_at, rec_a_move2.seq)
+            .await
+            .unwrap();
+        assert_eq!(prior, Some((Some(BlockId::test_id("P2")), 3)));
+    }
+
+    /// Stored block_id is uppercase (BlockId serializes uppercase per
+    /// AGENTS.md invariant #8). Calling `find_prior_text` with a
+    /// lowercase ID must still find the row, mirroring the
+    /// `recovery/draft_recovery.rs` normalization pattern.
+    #[tokio::test]
+    async fn find_prior_text_uppercase_normalization() {
+        let (pool, _dir) = test_pool().await;
+
+        append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id("BLKLOWER"),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(1),
+                content: "seed".into(),
+            }),
+            "2025-01-15T12:00:00+00:00".into(),
+        )
+        .await
+        .unwrap();
+        let rec = append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id("BLKLOWER"),
+                to_text: "edited".into(),
+                prev_edit: None,
+            }),
+            "2025-01-15T12:01:00+00:00".into(),
+        )
+        .await
+        .unwrap();
+
+        let upper_result = find_prior_text(&pool, "BLKLOWER", &rec.created_at, rec.seq)
+            .await
+            .unwrap();
+        let lower_result = find_prior_text(&pool, "blklower", &rec.created_at, rec.seq)
+            .await
+            .unwrap();
+        assert_eq!(upper_result, Some("seed".into()));
+        assert_eq!(
+            lower_result, upper_result,
+            "lowercase block_id must match the same row as uppercase"
+        );
     }
 }
