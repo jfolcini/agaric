@@ -301,6 +301,14 @@ blake3(device_id || seq || parent_seqs_canonical || op_type || payload_canonical
 - ULIDs in payloads are normalised to uppercase Crockford base32 before hashing (determinism).
 - Constant-time comparison for verification.
 
+**Positional, not Merkle.** `parent_seqs_canonical` carries `(parent_device_id, parent_seq)`
+*positions* — not parent *hashes*. A child op's hash therefore does **not** transitively depend on
+its parents' content. The chain is a deterministic per-op fingerprint that protects ordering and
+op-payload integrity, not a Merkle commitment over ancestor history. Within the single-user threat
+model this is intentional (mTLS + TOFU pinning between user-owned devices, no adversarial peers per
+AGENTS.md "Threat Model"), and tampering protection comes from the duplicate-hash check on the
+composite `(device_id, seq)` PK rather than chain re-computation.
+
 ### Causal tracking
 
 `parent_seqs` is a JSON array of `[device_id, seq]` pairs stored from Phase 1:
