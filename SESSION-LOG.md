@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 493 — Release CI: drop macOS + Windows code signing (maintainer opts out of paid Apple Developer Program + Windows OV/EV certs) (2026-04-26)
+
+**Decision:** maintainer will not pay for Apple Developer Program enrollment ($99/year) or Windows OV/EV certificates ($200–400/year) for this open-source project. Bundles ship unsigned with OS-level first-launch warnings. Linux is unaffected (`.deb` / `.AppImage` consumers don't expect platform-level signatures). Android is unaffected — the Android signing path uses a self-generated keystore, no paid CA.
+
+**Triggered by:** `release.yml` failures on macOS for tag `0.1.10` / `0.1.11` / `0.1.12` with `failed codesign application: failed to run command security import: failed to import keychain certificate`. The previous workflow exposed `secrets.APPLE_*` env vars unconditionally; if any were set with bad/empty values (or the certificate had drifted), `tauri-action`'s built-in macOS signing path attempted to import the cert and failed — causing the entire build matrix entry to fail.
+
+**Changes:**
+
+| File | Change |
+|---|---|
+| `.github/workflows/release.yml` | Removed all six `APPLE_*` env vars from the `Build Tauri app` step so `tauri-action` skips macOS code signing + notarization entirely (produces unsigned `.dmg` / `.app`). Removed the entire `Sign Windows bundles` post-build step (~60 lines of PowerShell signtool wiring) so `.msi` / `.exe` ship unsigned. Replaced both blocks with comments documenting why signing is intentionally off and pointing users at `BUILD.md` for the install-time bypass instructions. |
+| `BUILD.md` | Replaced the "macOS code signing + notarization" + "Windows code signing" subsections (which described the cert-procurement path with `secrets.APPLE_*` + `secrets.WINDOWS_CERTIFICATE_BASE64` setup) with new "macOS unsigned bundles" + "Windows unsigned bundles" sections containing the user-facing first-install bypass instructions: macOS uses right-click → Open or `xattr -dr com.apple.quarantine`; Windows uses SmartScreen "More info" → "Run anyway". Top-of-section preamble now reads "Desktop builds ship unsigned" and explains the maintainer opted out of paid certs. |
+| `REVIEW-LATER.md` | Removed `PUB-9` (Windows SignPath OSS sponsorship) from both the summary table AND the detail section — no longer relevant since the maintainer is opting out of Windows signing entirely. PUB-* status note above the summary updated to reflect the opt-out. PUB-8 (Android keystore) RETAINED — Android signing uses a self-generated keystore which is free, no paid CA involved. Summary count adjusted from stale `11` to actual `16`. |
+
+**Out of scope:**
+- The Tauri updater key (PUB-5) remains commented-out and is orthogonal: it's a Minisign key for binary update verification, not a platform-level cert. Free to use.
+- Linux `.deb` / `.AppImage` GPG signing remains intentionally not wired (separate doc section, unchanged).
+- Android signing remains wired and uses a self-generated keystore (free); see PUB-8.
+
+**Quality gate:**
+- `prek run --all-files` → all 33 hooks pass.
+- No code changes — only CI workflow + docs. No Rust / TypeScript test impact.
+
+**REVIEW-LATER.md:** PUB-9 detail block + table row removed; PUB-* status preamble updated. Summary count `11` → `16`. Previously resolved counter updated to `504+`.
+
 ## Session 492 — CRITICAL + HIGH severity batch: C-3c (orphaned attachments GC) + H-1 (pairing passphrase) + H-2 (mcp listener close) + H-7 (move_block cycle CTE) + H-10/H-11 (backlink pagination + count drift) (2026-04-26)
 
 **6 severity findings resolved** (1 CRITICAL + 5 HIGH) in one batch via 5 parallel build subagents + 1 orchestrator-direct fix (H-7) + pipelined technical reviewers — every reviewer returned PASS-on-correctness with zero blocking issues. Backend Code Review section: CRITICAL 2 → 1 (-C-3c, the last C-3 sub-item; only C-2b remains and is blocked on user approval for schema migration), HIGH 17 → 12 (-H-1, -H-2, -H-7, -H-10, -H-11). MEDIUM 62 / LOW 126 / INFO 125 unchanged. Top-of-file FEAT/PERF/PUB tracker (17 items) unchanged. Previously-resolved counter: 497+ → 503+ across 152 sessions.
