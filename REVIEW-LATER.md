@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-11 open items.
+16 open items.
 
-Previously resolved: 493+ items across 151 sessions.
+Previously resolved: 504+ items across 152 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -39,10 +39,9 @@ Previously resolved: 493+ items across 151 sessions.
 | PUB-3 | PUB | Employer IP clearance before public release | S |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S |
-| PUB-9 | PUB | Windows code signing — apply for SignPath Foundation OSS sponsorship, then provision 2 GH Actions secrets (signtool wiring already shipped) | M |
 
 > **`PUB-*` statuses are heterogeneous now that the publish target is concrete (`github.com/jfolcini/agaric`).**
-> PUB-5 / PUB-8 are ACTIONABLE; PUB-9 is BLOCKED on SignPath Foundation approval; PUB-2 / PUB-3 / PUB-7 remain DEFERRED on the identity / employer-IP / disclosure-contact decisions. See each item's detail section below for the per-item status line and concrete next steps.
+> PUB-5 / PUB-8 are ACTIONABLE; PUB-2 / PUB-3 remain DEFERRED on the identity / employer-IP decisions. macOS + Windows code signing are explicitly out of scope: the maintainer opted out of paid Apple Developer Program enrollment ($99/year) and Windows OV/EV certs ($200–400/year) for this OSS project. Bundles ship unsigned with Gatekeeper / SmartScreen first-launch warnings; see `BUILD.md` → "Desktop code signing in CI" for the user-facing install instructions.
 
 ---
 
@@ -741,25 +740,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 **Cost:** S (~15 min once you've decided what to use as DN).
 **Status:** ACTIONABLE — pure operations, no design decision pending.
-
-### PUB-9 — Windows code signing — apply for SignPath OSS sponsorship + provision 2 secrets
-
-**Problem:** `release.yml`'s `Sign Windows bundles` step already contains the full signtool pipeline (decode .pfx, find highest-version signtool.exe in the Windows SDK, `signtool sign /fd SHA256 /t timestamp.digicert.com`, `signtool verify /pa`, `gh release upload --clobber`), gated on a `WINDOWS_CERTIFICATE_BASE64` secret. Without the cert + secrets the .msi / .exe ship unsigned and Windows SmartScreen shows "Windows protected your PC" on every install for the first ~3000 users until reputation builds (or never, for low-volume distributions).
-
-**Decision: pursue SignPath Foundation OSS sponsorship** (free signing-as-a-service for qualifying open-source projects) rather than a paid OV/EV cert (~USD 200–400/year, EV requires hardware tokens that don't work in CI without extra plumbing).
-
-**Concrete remaining work:**
-1. **Apply** for the SignPath Foundation OSS sponsorship (search "SignPath Foundation" — the landing page URL has shifted historically and link checkers flag it as a network error in some configurations). Submit project repo URL + license + brief description. Approval typically takes 1–4 weeks.
-2. **Once approved:** SignPath provides an organization-scoped API token. The simplest integration uses SignPath's GitHub Action (`signpath/github-action-submit-signing-request`), which would replace our current self-hosted signtool step. Two ways to integrate:
-   - **Replace** the existing `Sign Windows bundles` step with the SignPath action — they sign in their cloud, return the signed artifact, we upload it. Cleanest, but couples to SignPath's service.
-   - **Keep** the current signtool step + populate `WINDOWS_CERTIFICATE_BASE64` from a SignPath-issued cert. Less common — most SignPath users use the action — but possible for ad-hoc certs.
-3. **Provision the relevant secrets** (depends on the integration path chosen above).
-4. **Tag a release** to verify SmartScreen no longer warns: install the signed .msi on a clean Windows 10/11 VM, observe the "Verified publisher" line in the UAC prompt.
-
-If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS status, etc.), the fallback is a paid Sectigo/DigiCert OV cert — see `BUILD.md` → "Windows code signing" for the procurement path.
-
-**Cost:** M — actual setup is ~30 min, but the SignPath approval cycle is the bottleneck (1–4 weeks of waiting).
-**Status:** BLOCKED on SignPath Foundation approval.
 
 ---
 

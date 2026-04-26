@@ -426,62 +426,41 @@ adb logcat -s RustStdoutStderr:V
 
 ## Desktop code signing in CI
 
-The `release.yml` workflow signs each desktop bundle on tag push **iff** the relevant secrets are configured. If a platform's secrets aren't set, that platform produces an unsigned bundle (works, but Gatekeeper / SmartScreen will warn on first install). Each platform is independent — set up only the platforms you ship to.
+**Desktop builds ship unsigned.** The maintainer has opted out of paid Apple Developer Program enrollment ($99/year) and Windows OV/EV certificates ($200–400/year) for this open-source project. Each platform's `release.yml` job produces unsigned bundles; the OS will warn on first install. Linux is unaffected because `.deb` / `.AppImage` consumers don't expect platform-level signatures.
 
 Cross-references:
 
-- **Android** signing lives in [Release signing in CI](#release-signing-in-ci) under Android Builds above (different mechanism: `apksigner` post-build, not `tauri-action`).
-- **Tauri updater** signing (`TAURI_SIGNING_PRIVATE_KEY`) is currently commented out in `release.yml`, gated on `PUB-5` in `REVIEW-LATER.md` (publish target / updater endpoint must be locked in first).
+- **Android** signing lives in [Release signing in CI](#release-signing-in-ci) under Android Builds above (different mechanism: `apksigner` post-build, not `tauri-action`). Android signing IS wired and uses a self-generated keystore, no paid CA required — see PUB-8 in `REVIEW-LATER.md`.
+- **Tauri updater** signing (`TAURI_SIGNING_PRIVATE_KEY`) is currently commented out in `release.yml`, gated on `PUB-5` in `REVIEW-LATER.md` (publish target / updater endpoint must be locked in first). The updater key is Minisign-based and free; orthogonal to platform code-signing.
 
-### macOS code signing + notarization
+### macOS unsigned bundles
 
-`tauri-action` handles the full macOS signing path automatically — keychain import, `codesign`, `notarytool` submission, ticket stapling — when the six `APPLE_*` env vars are set.
+`tauri-action` produces `.dmg` and `.app` bundles without `codesign` or notarization. On first launch macOS Gatekeeper shows: **"Apple could not verify 'Agaric' is free of malware that may harm your Mac or compromise your privacy."**
 
-Setup (one-time):
+User-facing install instructions:
 
-1. **Enroll in the [Apple Developer Program](https://developer.apple.com/programs/)** (~USD 99/year). Required to issue Developer ID certificates and access the notary service.
+1. **First-launch bypass (one-time):** Right-click `Agaric.app` in Finder → **Open** → confirm in the dialog. After this, double-click works normally.
+2. **Or strip the quarantine attribute (advanced):**
 
-2. **Create a Developer ID Application certificate** in Xcode (`Preferences → Accounts → your team → Manage Certificates → +`). Export it as `.p12` from Keychain Access, including its private key.
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/Agaric.app
+   ```
 
-3. **Create an [app-specific password](https://support.apple.com/en-us/HT204397)** for `notarytool` — your real Apple ID password won't work for non-interactive notarization.
+3. **System Settings approval (modern macOS):** if Gatekeeper still blocks the app after right-click → Open, go to `System Settings → Privacy & Security`, scroll to the bottom, and click **Open Anyway** next to the Agaric notice.
 
-4. **Find your Team ID** at `https://developer.apple.com/account` → Membership.
+The maintainer may revisit signing if Apple offers a free open-source path (none exists today; all paths require Developer Program membership).
 
-5. **Add six secrets** at `Settings → Secrets and variables → Actions`:
+### Windows unsigned bundles
 
-   | Secret | Value |
-   | --- | --- |
-   | `APPLE_CERTIFICATE` | `base64 -i developer_id.p12` |
-   | `APPLE_CERTIFICATE_PASSWORD` | password used when exporting the `.p12` |
-   | `APPLE_SIGNING_IDENTITY` | full identity string, e.g. `Developer ID Application: Jane Doe (ABCDEF1234)` |
-   | `APPLE_ID` | your Apple ID email |
-   | `APPLE_PASSWORD` | the app-specific password from step 3 (not your Apple ID password) |
-   | `APPLE_TEAM_ID` | your 10-character Team ID |
+`tauri-action` produces `.msi` and `.exe` bundles without `signtool`. On first run Windows SmartScreen shows: **"Windows protected your PC"** (the "unrecognized publisher" prompt).
 
-6. **Tag a release.** `tauri-action` will detect all six and produce signed + notarized `.dmg` and `.app` bundles. Verify with `spctl -a -v Agaric.app` on a Mac (`accepted`, `source=Notarized Developer ID`).
+User-facing install instructions:
 
-If you only want **ad-hoc signing** (Gatekeeper-bypassable but doesn't crash on launch), set `APPLE_SIGNING_IDENTITY=-` and skip the other five — `tauri-action` will codesign with an ad-hoc identity. Useful for personal-use builds; not for distribution.
+1. Click **More info** in the SmartScreen dialog.
+2. Click **Run anyway** to launch the installer.
+3. The MSI / EXE is otherwise normal — no admin prompts beyond what an installer expects.
 
-### Windows code signing
-
-The `Sign Windows bundles` step in `release.yml` post-signs the `.msi` and `.exe` produced by `tauri-action` using `signtool`, then re-uploads them to the draft release with `gh release upload --clobber`. Skipped silently if the cert secrets aren't set.
-
-Setup (one-time):
-
-1. **Obtain a code-signing certificate**. Two viable paths:
-   - **Paid OV/EV cert** from a CA (Sectigo, DigiCert, etc.) — ~USD 200–400/year. EV certs build SmartScreen reputation faster but cost more and require hardware tokens that don't work in CI without extra plumbing.
-   - **SignPath OSS Sponsorship** (search for "SignPath Foundation") — free signing-as-a-service for qualifying open-source projects. Different secret setup; see SignPath's GitHub Action docs if you go this route.
-
-2. **Export the cert as `.pfx`** with its private key.
-
-3. **Add two secrets** at `Settings → Secrets and variables → Actions`:
-
-   | Secret | Value |
-   | --- | --- |
-   | `WINDOWS_CERTIFICATE_BASE64` | `base64 -w0 cert.pfx` |
-   | `WINDOWS_CERTIFICATE_PASSWORD` | password for the `.pfx` |
-
-4. **Tag a release.** The `Sign Windows bundles` step decodes the cert, calls `signtool sign /f cert.pfx /p <pwd> /t http://timestamp.digicert.com /fd SHA256` against every `.msi` / `.exe` in the bundle dir, runs `signtool verify /pa` as a sanity check, and re-uploads the signed copies to the draft release. Verify with `signtool verify /pa /v Agaric.msi` on Windows.
+The maintainer may revisit if **SignPath Foundation OSS Sponsorship** application is approved (free signing-as-a-service for qualifying open-source projects); see PUB-9 in `REVIEW-LATER.md`. Until then, Windows ships unsigned.
 
 ### Linux `.deb` and `.AppImage` — intentionally not signed
 
