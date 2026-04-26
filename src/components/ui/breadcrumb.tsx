@@ -3,32 +3,51 @@
  *
  * Single source of truth for breadcrumb UI across the app. Used by
  * `BlockZoomBar` (zoomed block trail) and `PageHeader`'s namespace breadcrumb
- * for `/`-separated page titles. See REVIEW-LATER.md UX-257 for the design
- * direction this primitive consolidates.
+ * for `/`-separated page titles. See REVIEW-LATER.md UX-257 / FEAT-13 for the
+ * design direction this primitive consolidates.
  *
  * Structure:
  * - `<nav role="navigation" aria-label>` wrapping `<div role="toolbar">`.
  *   (`<ol role="toolbar">` would re-open the axe `listitem` violation —
  *   overriding `<ol>`'s implicit `list` role strips the listitem context
  *   from `<li>` children.)
- * - `aria-current="location"` on the final crumb (rendered as a non-clickable
- *   span — the user is already there).
+ * - `aria-current="page"` on the final crumb (rendered as a non-clickable
+ *   span — the user is already there). `"page"` is the conventional ARIA
+ *   value for breadcrumb final segments.
  * - Per-crumb truncation: intermediate crumbs `max-w-[160px]`, final
- *   `max-w-[320px]`.
+ *   `max-w-[280px]` (the page title above the bar is the focal point).
  * - Overflow: when more than `OVERFLOW_THRESHOLD` (5) crumbs exist, middle
  *   crumbs collapse into a `…` Radix `Popover` (per AGENTS.md — never custom
  *   dropdowns).
- * - 44 px touch hit-area on the toolbar via `[@media(pointer:coarse)]:py-2`,
- *   not by stretching every crumb. Matches the density of the tab bar /
- *   filter-pill row.
+ * - 44 px touch hit-area on the toolbar via
+ *   `[@media(pointer:coarse)]:min-h-11` + `[@media(pointer:coarse)]:py-2`,
+ *   not by stretching every crumb. The desktop `min-h-6` (24 px) on its own
+ *   would only reach 40 px under the touch padding (24 + 2×8); bumping
+ *   `min-h` to `11` (44 px) on touch-coarse hits the AGENTS.md mandate
+ *   exactly. Matches the density of the tab bar / filter-pill row.
  *
  * Keyboard navigation (UX-215):
  * - ArrowLeft / ArrowRight move focus across breadcrumb buttons.
  * - Home / End jump to the first / last button.
  * - The container has `role="toolbar"` so AT announces the grouping.
  *
- * Tokens: only `--muted-foreground` / `--foreground` / `--ring` from
- * `index.css`. No hardcoded Tailwind colour classes (AGENTS.md anti-pattern).
+ * Tokens: only `--muted-foreground` / `--foreground` from `index.css`. No
+ * hardcoded Tailwind colour classes (AGENTS.md anti-pattern).
+ *
+ * ── Principled deviation from AGENTS.md "Mandatory patterns" ──────────────
+ *
+ * AGENTS.md instructs: "Focus management: use `focus-visible:ring-[3px]
+ * focus-visible:ring-ring/50` consistently". This file deliberately deviates
+ * for the breadcrumb crumb buttons — they render with `focus-visible:underline`
+ * + `focus-visible:outline-hidden` instead of the form-control ring. The ring
+ * rule applies to interactive form controls (Button, Input, Select); breadcrumb
+ * crumbs are wayfinding text-links and the conventional focus indicator for a
+ * text-link is an underline, not a 3 px ring. Pairing this with the underline
+ * hover treatment makes the trail read as a path of links rather than a button
+ * bar — see FEAT-13 in REVIEW-LATER.md. The overflow popover trigger and home
+ * icon follow the same convention for visual consistency. The popover's
+ * interior menu items keep the standard form-control ring (they are inside a
+ * menu surface, not on the trail).
  */
 
 import { ChevronRight, Home, MoreHorizontal } from 'lucide-react'
@@ -66,10 +85,10 @@ export interface BreadcrumbHomeConfig {
 export interface BreadcrumbProps {
   /**
    * Items in left-to-right order. The final item is rendered as the active
-   * step (`aria-current="location"`, non-clickable).
+   * step (`aria-current="page"`, non-clickable).
    */
   items: readonly BreadcrumbCrumb[]
-  /** aria-label for the `<nav>` and `<ol role="toolbar">` (i18n). */
+  /** aria-label for the `<nav>` and `<div role="toolbar">` (i18n). */
   ariaLabel: string
   /** Optional Home icon rendered as the leading item. */
   home?: BreadcrumbHomeConfig | undefined
@@ -79,27 +98,23 @@ export interface BreadcrumbProps {
   overflowAriaLabel?: string | undefined
 }
 
+// FEAT-13: text-link styling for non-active crumbs (no rounded pill, no
+// hover-bg, no focus ring). See the file's top doc comment for the rationale
+// behind the focus-style deviation from AGENTS.md.
 const itemButtonClass = cn(
-  'inline-flex max-w-[160px] items-center truncate rounded-sm px-1',
-  'text-muted-foreground transition-colors hover:text-foreground',
-  'outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
+  'inline-flex max-w-[160px] items-center truncate text-muted-foreground transition-colors hover:underline focus-visible:underline focus-visible:outline-hidden',
 )
 
 const itemActiveClass = cn(
-  'inline-flex max-w-[320px] items-center truncate px-1',
-  'font-medium text-foreground',
+  'inline-flex max-w-[280px] items-center truncate font-medium text-foreground',
 )
 
 const homeButtonClass = cn(
-  'inline-flex shrink-0 items-center rounded-sm px-1',
-  'text-muted-foreground transition-colors hover:text-foreground',
-  'outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
+  'inline-flex shrink-0 items-center text-muted-foreground transition-colors hover:underline focus-visible:underline focus-visible:outline-hidden',
 )
 
 const overflowTriggerClass = cn(
-  'inline-flex shrink-0 items-center rounded-sm px-1',
-  'text-muted-foreground transition-colors hover:text-foreground',
-  'outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
+  'inline-flex shrink-0 items-center text-muted-foreground transition-colors hover:underline focus-visible:underline focus-visible:outline-hidden',
 )
 
 export function BreadcrumbSeparator({
@@ -151,7 +166,7 @@ BreadcrumbHome.displayName = 'BreadcrumbHome'
 
 export interface BreadcrumbItemProps {
   label: string
-  /** When true, renders as a non-clickable span with `aria-current="location"`. */
+  /** When true, renders as a non-clickable span with `aria-current="page"`. */
   isActive: boolean
   onSelect?: (() => void) | undefined
   testId?: string | undefined
@@ -171,7 +186,7 @@ export function BreadcrumbItem({
     return (
       <div className="flex min-w-0 items-center" data-slot="breadcrumb-item">
         <span
-          aria-current="location"
+          aria-current="page"
           {...(testId !== undefined ? { 'data-breadcrumb-crumb': testId } : {})}
           {...(dataAttributes ?? {})}
           className={cn(itemActiveClass, className)}
@@ -332,8 +347,8 @@ export function Breadcrumb({
         aria-label={ariaLabel}
         onKeyDown={handleKeyDown}
         className={cn(
-          'flex min-h-7 items-center gap-1 px-2 py-1 text-xs text-muted-foreground',
-          '[@media(pointer:coarse)]:py-2',
+          'flex min-h-6 items-center gap-1 px-2 py-1 text-xs text-muted-foreground',
+          '[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:py-2',
         )}
       >
         {home ? (

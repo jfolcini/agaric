@@ -1,17 +1,21 @@
 /**
- * Tests for the Breadcrumb primitive (UX-257).
+ * Tests for the Breadcrumb primitive (UX-257 / FEAT-13).
  *
  * Covers:
  *  - Returns null when there are no items and no home button
  *  - Renders all items + Home + chevron separators in the right order
- *  - Final item is rendered as a non-clickable span with `aria-current="location"`
+ *  - Final item is rendered as a non-clickable span with `aria-current="page"`
  *  - Intermediate items invoke their onSelect handler
- *  - Per-crumb truncation: intermediate `max-w-[160px]`, active `max-w-[320px]`
+ *  - Per-crumb truncation: intermediate `max-w-[160px]`, active `max-w-[280px]`
+ *  - FEAT-13 text-link styling: non-active crumbs do NOT carry `rounded-sm`
+ *    or the form-control `focus-visible:ring-[3px]`; hover/focus indicate
+ *    via underline + outline-hidden instead.
+ *  - Toolbar density `min-h-6` (FEAT-13).
  *  - UX-215 keyboard navigation — ArrowLeft / ArrowRight / Home / End on the
  *    `role="toolbar"` container (now lives in the primitive, not BlockZoomBar)
  *  - Overflow popover triggers when items > 5 (and not at exactly 5)
  *  - Overflow popover lists the collapsed middle crumbs and invokes their handlers
- *  - axe(container) audit passes
+ *  - axe(container) audit passes (incl. after the FEAT-13 focus-style change)
  */
 
 import { render, screen } from '@testing-library/react'
@@ -88,11 +92,11 @@ describe('Breadcrumb', () => {
     expect(container.textContent).not.toContain('/')
   })
 
-  it('renders the final crumb as a non-clickable span with aria-current="location"', () => {
+  it('renders the final crumb as a non-clickable span with aria-current="page"', () => {
     render(<Breadcrumb items={baseItems} ariaLabel="Trail" />)
     const last = screen.getByText('Gamma')
     expect(last.tagName).toBe('SPAN')
-    expect(last).toHaveAttribute('aria-current', 'location')
+    expect(last).toHaveAttribute('aria-current', 'page')
   })
 
   it('does not mark intermediate crumbs with aria-current', () => {
@@ -170,7 +174,7 @@ describe('Breadcrumb', () => {
       expect(intermediate?.className).toContain('max-w-[160px]')
     })
 
-    it('applies max-w-[320px] truncate to the active final crumb', () => {
+    it('applies max-w-[280px] truncate to the active final crumb (FEAT-13)', () => {
       const items: BreadcrumbCrumb[] = [
         { id: 'A', label: 'first', onSelect: vi.fn() },
         {
@@ -181,7 +185,90 @@ describe('Breadcrumb', () => {
       render(<Breadcrumb items={items} ariaLabel="Trail" />)
       const active = screen.getByText(/long anchor crumb/i)
       expect(active.className).toContain('truncate')
-      expect(active.className).toContain('max-w-[320px]')
+      expect(active.className).toContain('max-w-[280px]')
+    })
+  })
+
+  describe('FEAT-13 text-link styling', () => {
+    it('non-active crumbs use hover:underline (not hover:text-foreground / hover:bg)', () => {
+      const items: BreadcrumbCrumb[] = [
+        { id: 'A', label: 'Alpha', onSelect: vi.fn() },
+        { id: 'B', label: 'final' },
+      ]
+      render(<Breadcrumb items={items} ariaLabel="Trail" />)
+      const btn = screen.getByText('Alpha').closest('button') as HTMLButtonElement
+      expect(btn.className).toContain('hover:underline')
+      expect(btn.className).not.toContain('hover:text-foreground')
+      expect(btn.className).not.toContain('hover:bg-')
+    })
+
+    it('non-active crumbs use focus-visible:underline + focus-visible:outline-hidden (no 3px ring)', () => {
+      const items: BreadcrumbCrumb[] = [
+        { id: 'A', label: 'Alpha', onSelect: vi.fn() },
+        { id: 'B', label: 'final' },
+      ]
+      render(<Breadcrumb items={items} ariaLabel="Trail" />)
+      const btn = screen.getByText('Alpha').closest('button') as HTMLButtonElement
+      expect(btn.className).toContain('focus-visible:underline')
+      expect(btn.className).toContain('focus-visible:outline-hidden')
+      expect(btn.className).not.toContain('focus-visible:ring-[3px]')
+      expect(btn.className).not.toContain('ring-ring/50')
+    })
+
+    it('non-active crumbs do NOT carry rounded-sm or px-1 padding (no button-bar look)', () => {
+      const items: BreadcrumbCrumb[] = [
+        { id: 'A', label: 'Alpha', onSelect: vi.fn() },
+        { id: 'B', label: 'final' },
+      ]
+      render(<Breadcrumb items={items} ariaLabel="Trail" />)
+      const btn = screen.getByText('Alpha').closest('button') as HTMLButtonElement
+      expect(btn.className).not.toContain('rounded-sm')
+      expect(btn.className).not.toContain('px-1')
+    })
+
+    it('home icon button uses the same text-link treatment (no rounded-sm, no ring)', () => {
+      render(
+        <Breadcrumb
+          items={baseItems}
+          ariaLabel="Trail"
+          home={{ onClick: vi.fn(), ariaLabel: 'Home' }}
+        />,
+      )
+      const homeBtn = screen.getByRole('button', { name: 'Home' })
+      expect(homeBtn.className).toContain('hover:underline')
+      expect(homeBtn.className).toContain('focus-visible:underline')
+      expect(homeBtn.className).not.toContain('rounded-sm')
+      expect(homeBtn.className).not.toContain('focus-visible:ring-[3px]')
+    })
+
+    it('overflow trigger uses the same text-link treatment', () => {
+      const items = Array.from({ length: 7 }, (_, i) => ({
+        id: `id-${i}`,
+        label: `Crumb${i}`,
+        ...(i === 6 ? {} : { onSelect: vi.fn() }),
+      }))
+      render(<Breadcrumb items={items} ariaLabel="Trail" />)
+      const trigger = screen.getByRole('button', { name: /show hidden breadcrumbs/i })
+      expect(trigger.className).toContain('hover:underline')
+      expect(trigger.className).toContain('focus-visible:underline')
+      expect(trigger.className).not.toContain('rounded-sm')
+      expect(trigger.className).not.toContain('focus-visible:ring-[3px]')
+    })
+
+    it('toolbar uses min-h-6 density (FEAT-13)', () => {
+      render(<Breadcrumb items={baseItems} ariaLabel="Trail" />)
+      const toolbar = screen.getByRole('toolbar', { name: 'Trail' })
+      expect(toolbar.className).toContain('min-h-6')
+      expect(toolbar.className).not.toContain('min-h-7')
+    })
+
+    it('final crumb is rendered as a span (not a button) with aria-current="page"', () => {
+      render(<Breadcrumb items={baseItems} ariaLabel="Trail" />)
+      const last = screen.getByText('Gamma')
+      expect(last.tagName).toBe('SPAN')
+      expect(last).toHaveAttribute('aria-current', 'page')
+      // And the same text is not exposed as a button anywhere.
+      expect(screen.queryByRole('button', { name: 'Gamma' })).not.toBeInTheDocument()
     })
   })
 
@@ -387,6 +474,24 @@ describe('Breadcrumb', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+
+    // FEAT-13 — the principled deviation from the AGENTS.md focus-ring rule
+    // (text-link `focus-visible:underline` instead of the form-control 3 px
+    // ring) must not introduce any axe violation. Focus an intermediate
+    // crumb so the focus-visible style is engaged at audit time.
+    it('passes axe with the FEAT-13 text-link focus style (focused crumb)', async () => {
+      const { container } = render(
+        <Breadcrumb
+          items={baseItems}
+          ariaLabel="Trail"
+          home={{ onClick: vi.fn(), ariaLabel: 'Home' }}
+        />,
+      )
+      const buttons = screen.getAllByRole('button')
+      ;(buttons[1] as HTMLButtonElement).focus()
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 })
 
@@ -424,6 +529,6 @@ describe('BreadcrumbItem', () => {
     render(<BreadcrumbItem label="Active" isActive={true} />)
     const node = screen.getByText('Active')
     expect(node.tagName).toBe('SPAN')
-    expect(node).toHaveAttribute('aria-current', 'location')
+    expect(node).toHaveAttribute('aria-current', 'page')
   })
 })

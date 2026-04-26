@@ -655,10 +655,14 @@ const resources = {
       'pageBrowser.sortCreated': 'Created',
       'pageBrowser.starPage': 'Star page',
       'pageBrowser.unstarPage': 'Unstar page',
-      'pageBrowser.showStarred': 'Show starred pages',
-      'pageBrowser.showAll': 'Show all pages',
-      'pageBrowser.noStarredPages': 'No starred pages',
       'pageBrowser.pageList': 'Page list',
+      'pageBrowser.pageListGrouped': 'Page list, grouped by starred',
+      'pageBrowser.starredSection': 'Starred',
+      'pageBrowser.otherPagesSection': 'Other pages',
+      'pageBrowser.starredSectionLabel_one': 'Starred, {{count}} page',
+      'pageBrowser.starredSectionLabel_other': 'Starred, {{count}} pages',
+      'pageBrowser.otherPagesSectionLabel_one': 'Other pages, {{count}} page',
+      'pageBrowser.otherPagesSectionLabel_other': 'Other pages, {{count}} pages',
 
       // Due Panel (agenda: due_date + scheduled_date + date properties + date tags)
       'duePanel.headerOne': '1 Agenda',
@@ -1565,6 +1569,12 @@ const resources = {
       // UX-264: Sync error UX
       'sync.retryAction': 'Retry sync',
       'sync.backOnline': 'Back online. Syncing\u2026',
+      // BUG-2: sidebar Sync click guard when zero peers are paired.
+      'sync.noPeersTitle': 'No devices paired',
+      'sync.noPeersBody':
+        'Sync requires at least one paired device. Open sync settings to pair one.',
+      'sync.noPeersCta': 'Open sync settings',
+      'sync.noPeersCancel': 'Cancel',
       'device.deviceNameLabel': 'Device name',
 
       // History toasts + aria-labels

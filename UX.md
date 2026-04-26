@@ -1097,9 +1097,16 @@ File: `src/components/BlockTree.tsx`
 Context menu "Zoom in" focuses the view on a single block and its descendants:
 
 - Block tree filters to descendants only.
-- Breadcrumb trail shows: `Home > Page Title > Parent Block > Current Block`.
+- Breadcrumb trail shows: `Home › Page Title › Parent Block › Current Block`,
+  rendered by the shared `<Breadcrumb>` primitive (`src/components/ui/breadcrumb.tsx`)
+  with chevron separators.
 - "Home" resets zoom to full page.
-- Breadcrumb segments are clickable for intermediate navigation.
+- Crumb visual treatment is **text-link**, not button-bar (FEAT-13). Non-active
+  crumbs render as muted-foreground text links with `hover:underline` and
+  `focus-visible:underline` (no rounded pill, no hover-bg, no 3 px focus ring).
+  The active crumb is bold `text-foreground` and carries `aria-current="page"`.
+  Intermediate crumbs are clickable and keyboard-navigable
+  (ArrowLeft/ArrowRight/Home/End on the `role="toolbar"` container).
 
 ## Kebab / Overflow Menu
 
@@ -1302,6 +1309,11 @@ Syntax highlighting via lowlight with OKLCH-based colors:
 File: `src/stores/navigation.ts`
 
 Managed by `useNavigationStore` (Zustand). Tracks current view and page stack.
+This store is **stateful navigation**, not visual chrome — the visible breadcrumb
+trail (zoom trail in `BlockZoomBar`, namespace path in `PageHeader`) is rendered
+by the shared `<Breadcrumb>` primitive at `src/components/ui/breadcrumb.tsx`,
+which uses a text-link visual treatment (FEAT-13): muted-foreground crumbs with
+`hover:underline` / `focus-visible:underline` and no button-pill styling.
 
 **View types:** `journal`, `search`, `pages`, `tags`, `settings`, `trash`, `status`, `conflicts`, `history`, `templates`, `graph`, `page-editor`
 

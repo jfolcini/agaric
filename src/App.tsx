@@ -27,6 +27,7 @@ import { BugReportDialog } from './components/BugReportDialog'
 import { FeatureErrorBoundary } from './components/FeatureErrorBoundary'
 import { GlobalDateControls, JournalControls, JournalPage } from './components/JournalPage'
 import { LoadingSkeleton } from './components/LoadingSkeleton'
+import { NoPeersDialog } from './components/NoPeersDialog'
 import { QuickCaptureDialog } from './components/QuickCaptureDialog'
 import { RecentPagesStrip } from './components/RecentPagesStrip'
 import { SpaceSwitcher } from './components/SpaceSwitcher'
@@ -78,10 +79,12 @@ import {
   getConflicts,
   listBlocks,
   listDrafts,
+  listPeerRefs,
   listPropertyDefs,
   registerGlobalShortcut,
   unregisterGlobalShortcut,
 } from './lib/tauri'
+import { setSettingsTabInUrl } from './lib/url-state'
 import { cn } from './lib/utils'
 import { type JournalMode, useJournalStore } from './stores/journal'
 import {
@@ -555,6 +558,13 @@ function App() {
   // so we don't read on every render. The storage-event listener
   // below feeds new chords into this state.
   const [quickCaptureChord, setQuickCaptureChord] = useState<string>(loadQuickCaptureShortcut)
+  // BUG-2: gate the sidebar Sync click on a paired-peers check. When
+  // there are zero peers we open this dialog instead of forwarding to
+  // `syncAll()` (which would silently short-circuit at the
+  // `peers.length === 0` branch and leave the user with no signpost
+  // to the pairing flow). The dialog opens via local state only — no
+  // store, no IPC event — because this is a single use site.
+  const [showNoPeersDialog, setShowNoPeersDialog] = useState<boolean>(false)
   const mainContentRef = useRef<HTMLDivElement | null>(null)
 
   // The main content scroller is a `ScrollArea`; `mainContentRef` points at
@@ -974,6 +984,51 @@ function App() {
     [navigateToPage],
   )
 
+  // BUG-2: sidebar Sync click guard. The hook itself short-circuits on
+  // `peers.length === 0` silently (see useSyncTrigger.ts:113-117) — this
+  // wrapper opens a discoverable dialog instead, with a CTA that
+  // navigates the user to the Settings → Sync tab where pairing lives.
+  //
+  // Offline state is intentionally not handled here — the existing
+  // `disabled={syncing || !isOnline}` on the button + the offline
+  // tooltip already cover that case. This wrapper only fires when the
+  // button is enabled (online + not currently syncing), so the only
+  // remaining branch is "online but no peers".
+  //
+  // We swallow `listPeerRefs` failures to a `syncAll()` call: the hook
+  // performs the same lookup itself and will surface a proper error
+  // toast via its own try/catch, so we don't double-report here.
+  const handleSyncClick = useCallback(async () => {
+    let peers: Awaited<ReturnType<typeof listPeerRefs>>
+    try {
+      peers = await listPeerRefs()
+    } catch (err) {
+      logger.warn(
+        'App',
+        'listPeerRefs failed during sidebar sync click; falling through',
+        undefined,
+        err,
+      )
+      void syncAll()
+      return
+    }
+    if (peers.length === 0) {
+      setShowNoPeersDialog(true)
+      return
+    }
+    void syncAll()
+  }, [syncAll])
+
+  // BUG-2: CTA handler for the NoPeersDialog. Pre-selects the Sync tab
+  // via the `?settings=sync` URL param mechanism (UX-276) — SettingsView
+  // reads the param on mount in `readActiveTab()` so the user lands
+  // directly on the pairing UI without an extra click.
+  const handleOpenSyncSettings = useCallback(() => {
+    setShowNoPeersDialog(false)
+    setSettingsTabInUrl('sync')
+    setView('settings')
+  }, [setView])
+
   const activePage = pageStack.length > 0 ? pageStack[pageStack.length - 1] : null
 
   // ── View key for scroll restore + transition ──────────────────────
@@ -1102,7 +1157,7 @@ function App() {
                         ? t('sidebar.syncing')
                         : t('sidebar.syncTooltip')
                   }
-                  onClick={syncAll}
+                  onClick={handleSyncClick}
                   disabled={syncing || !isOnline}
                 >
                   {!isOnline ? (
@@ -1253,6 +1308,15 @@ function App() {
           registered in App's startup effect. Mounted unconditionally so
           the global shortcut handler can flip `open` instantly. */}
       <QuickCaptureDialog open={quickCaptureOpen} onOpenChange={setQuickCaptureOpen} />
+      {/* BUG-2: shell-level dialog opened by the sidebar Sync button when
+          there are zero paired peers. Replaces the silent
+          `peers.length === 0` no-op with a discoverable affordance that
+          links the user to the pairing flow. */}
+      <NoPeersDialog
+        open={showNoPeersDialog}
+        onOpenChange={setShowNoPeersDialog}
+        onOpenSettings={handleOpenSyncSettings}
+      />
       <Toaster position="bottom-right" richColors closeButton />
     </BootGate>
   )

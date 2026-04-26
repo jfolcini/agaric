@@ -190,11 +190,11 @@ describe('BlockZoomBar', () => {
   })
 
   describe('UX-215 arrow-key navigation', () => {
-    it('marks the last breadcrumb with aria-current="location"', () => {
+    it('marks the last breadcrumb with aria-current="page"', () => {
       render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
       // The active crumb is now a span (non-clickable). Look up by text.
       const last = screen.getByText('Detail')
-      expect(last).toHaveAttribute('aria-current', 'location')
+      expect(last).toHaveAttribute('aria-current', 'page')
     })
 
     it('does not mark non-last breadcrumbs with aria-current', () => {

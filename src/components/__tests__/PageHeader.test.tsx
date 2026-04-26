@@ -891,6 +891,11 @@ describe('PageHeader breadcrumb', () => {
     const buttons = nav.querySelectorAll('button')
     const buttonTexts = Array.from(buttons).map((b) => b.textContent)
     expect(buttonTexts).not.toContain('tasks')
+
+    // FEAT-13: final crumb is the active step and carries aria-current="page".
+    const finalCrumb = nav.querySelector('[aria-current="page"]')
+    expect(finalCrumb).not.toBeNull()
+    expect(finalCrumb?.textContent).toBe('tasks')
   })
 
   // UX-257 — slashes are replaced with the canonical chevron separator from
