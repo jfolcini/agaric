@@ -190,6 +190,58 @@ export const HANDLERS: Record<string, Handler> = {
     return id
   },
 
+  // FEAT-3p6 atomic space-creation IPC. Accepts `name` and optional
+  // `accentColor`. Returns the new space's ULID as a plain string.
+  // Mirrors `create_page_in_space` but produces a top-level page block
+  // marked with `is_space="true"` so `list_spaces` picks it up.
+  create_space: (args) => {
+    const a = args as Record<string, unknown>
+    const id = fakeId()
+    const row = {
+      id,
+      block_type: 'page',
+      content: (a['name'] as string) ?? null,
+      parent_id: null,
+      page_id: id,
+      position: 0,
+      deleted_at: null,
+      is_conflict: false,
+      conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+    }
+    blocks.set(id, row)
+    pushOp('create_block', {
+      block_id: id,
+      content: row.content,
+      parent_id: null,
+      block_type: 'page',
+      position: 0,
+    })
+    pushOp('set_property', {
+      block_id: id,
+      key: 'is_space',
+      value_text: 'true',
+      value_number: null,
+      value_date: null,
+      value_ref: null,
+    })
+    const accentColor = a['accentColor'] as string | null | undefined
+    if (accentColor != null) {
+      pushOp('set_property', {
+        block_id: id,
+        key: 'accent_color',
+        value_text: accentColor,
+        value_number: null,
+        value_date: null,
+        value_ref: null,
+      })
+    }
+    return id
+  },
+
   edit_block: (args) => {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)

@@ -88,7 +88,7 @@ export const commands = {
 	// Tauri command: batch-fetch properties. Delegates to [`get_batch_properties_inner`].
 	getBatchProperties: (blockIds: string[]) => typedError<{ [key in string]: PropertyRow[] }, AppErrorSchema>(__TAURI_INVOKE("get_batch_properties", { blockIds })),
 	// Tauri command: list page history. Delegates to [`list_page_history_inner`].
-	listPageHistory: (pageId: string, opTypeFilter: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppErrorSchema>(__TAURI_INVOKE("list_page_history", { pageId, opTypeFilter, cursor, limit })),
+	listPageHistory: (pageId: string, opTypeFilter: string | null, spaceId: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppErrorSchema>(__TAURI_INVOKE("list_page_history", { pageId, opTypeFilter, spaceId, cursor, limit })),
 	// Tauri command: batch revert ops. Delegates to [`revert_ops_inner`].
 	revertOps: (ops: OpRef[]) => typedError<UndoResult[], AppErrorSchema>(__TAURI_INVOKE("revert_ops", { ops })),
 	// Tauri command: undo page op. Delegates to [`undo_page_op_inner`].
@@ -312,6 +312,15 @@ export const commands = {
 	 *  is durable before scheduling derived-state work.
 	 */
 	createPageInSpace: (parentId: string | null, content: string, spaceId: string) => typedError<string, AppErrorSchema>(__TAURI_INVOKE("create_page_in_space", { parentId, content, spaceId })),
+	/**
+	 *  Tauri command wrapper around [`create_space_inner`].
+	 *
+	 *  Returns a plain `String` (the new space's ULID). Background cache
+	 *  rebuilds (FTS, tag-inheritance, agenda projection) are dispatched
+	 *  for the two-or-three ops that landed so derived state stays fresh —
+	 *  the helper mirrors `create_page_in_space`'s pattern.
+	 */
+	createSpace: (name: string, accentColor: string | null) => typedError<string, AppErrorSchema>(__TAURI_INVOKE("create_space", { name, accentColor })),
 	/**
 	 *  Tauri command: quick-capture a single content block onto today's
 	 *  journal page. Delegates to [`quick_capture_block_inner`].

@@ -87,7 +87,7 @@ async fn list_page_history_returns_ops_for_page_descendants() {
     .await
     .unwrap();
 
-    let result = list_page_history_inner(&pool, page_id.clone(), None, None, None)
+    let result = list_page_history_inner(&pool, page_id.clone(), None, None, None, None)
         .await
         .unwrap();
 
@@ -130,6 +130,7 @@ async fn list_page_history_with_op_type_filter() {
         Some("edit_block".into()),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -154,7 +155,7 @@ async fn list_page_history_pagination_works() {
         .unwrap();
 
     // Page 1: limit 2
-    let page1 = list_page_history_inner(&pool, page_id.clone(), None, None, Some(2))
+    let page1 = list_page_history_inner(&pool, page_id.clone(), None, None, None, Some(2))
         .await
         .unwrap();
     assert_eq!(page1.items.len(), 2, "first page should have 2 items");
@@ -162,9 +163,16 @@ async fn list_page_history_pagination_works() {
     assert!(page1.next_cursor.is_some(), "should have a cursor");
 
     // Page 2: use cursor from page 1
-    let page2 = list_page_history_inner(&pool, page_id.clone(), None, page1.next_cursor, Some(2))
-        .await
-        .unwrap();
+    let page2 = list_page_history_inner(
+        &pool,
+        page_id.clone(),
+        None,
+        None,
+        page1.next_cursor,
+        Some(2),
+    )
+    .await
+    .unwrap();
     assert_eq!(page2.items.len(), 2, "second page should have 2 items");
     assert!(!page2.has_more, "should be the last page");
 }
@@ -203,7 +211,7 @@ async fn list_page_history_all_returns_ops_from_all_pages() {
     mat.flush_background().await.unwrap();
 
     // __all__ should return ops from both pages
-    let result = list_page_history_inner(&pool, "__all__".to_string(), None, None, None)
+    let result = list_page_history_inner(&pool, "__all__".to_string(), None, None, None, None)
         .await
         .unwrap();
 
@@ -235,7 +243,7 @@ async fn list_page_history_all_returns_ops_from_all_pages() {
     );
 
     // Pagination: limit=2
-    let page1 = list_page_history_inner(&pool, "__all__".to_string(), None, None, Some(2))
+    let page1 = list_page_history_inner(&pool, "__all__".to_string(), None, None, None, Some(2))
         .await
         .unwrap();
     assert_eq!(page1.items.len(), 2, "first page should have 2 items");
@@ -245,6 +253,7 @@ async fn list_page_history_all_returns_ops_from_all_pages() {
     let page2 = list_page_history_inner(
         &pool,
         "__all__".to_string(),
+        None,
         None,
         page1.next_cursor,
         Some(2),
@@ -257,6 +266,7 @@ async fn list_page_history_all_returns_ops_from_all_pages() {
     let page3 = list_page_history_inner(
         &pool,
         "__all__".to_string(),
+        None,
         None,
         page2.next_cursor,
         Some(2),
@@ -2659,7 +2669,7 @@ async fn list_page_history_deep_nesting_includes_grandchildren() {
     .await
     .unwrap();
 
-    let result = list_page_history_inner(&pool, page.id.clone(), None, None, None)
+    let result = list_page_history_inner(&pool, page.id.clone(), None, None, None, None)
         .await
         .unwrap();
 
@@ -2731,7 +2741,7 @@ async fn list_page_history_includes_ops_for_deleted_blocks() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    let result = list_page_history_inner(&pool, page.id.clone(), None, None, None)
+    let result = list_page_history_inner(&pool, page.id.clone(), None, None, None, None)
         .await
         .unwrap();
 
@@ -2775,7 +2785,7 @@ async fn list_page_history_empty_page_returns_only_create() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let result = list_page_history_inner(&pool, page.id.clone(), None, None, None)
+    let result = list_page_history_inner(&pool, page.id.clone(), None, None, None, None)
         .await
         .unwrap();
 
@@ -3054,12 +3064,12 @@ async fn list_page_history_includes_ops_after_block_moved_to_different_page() {
     mat.flush_background().await.unwrap();
 
     // Query page A history — child is no longer under A
-    let history_a = list_page_history_inner(&pool, page_a.id.clone(), None, None, Some(50))
+    let history_a = list_page_history_inner(&pool, page_a.id.clone(), None, None, None, Some(50))
         .await
         .unwrap();
 
     // Query page B history — child is now under B
-    let history_b = list_page_history_inner(&pool, page_b.id.clone(), None, None, Some(50))
+    let history_b = list_page_history_inner(&pool, page_b.id.clone(), None, None, None, Some(50))
         .await
         .unwrap();
 
@@ -3699,7 +3709,7 @@ async fn list_page_history_excludes_ops_on_conflict_copy_descendants() {
     });
     op_log::append_local_op(&pool, DEV, payload).await.unwrap();
 
-    let result = list_page_history_inner(&pool, page.id.clone(), None, None, None)
+    let result = list_page_history_inner(&pool, page.id.clone(), None, None, None, None)
         .await
         .unwrap();
 

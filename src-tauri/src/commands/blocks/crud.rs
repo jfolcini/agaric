@@ -382,6 +382,45 @@ pub async fn delete_block_inner(
         )));
     }
 
+    // FEAT-3p6 — refuse to delete a non-empty space. The frontend
+    // SpaceManageDialog already disables the delete button until the space
+    // is empty, but a concurrent device creating a page in the same space
+    // between the frontend probe and this IPC would otherwise leave the
+    // space soft-deleted with orphan pages whose `space` ref now dangles.
+    // The check runs INSIDE this BEGIN IMMEDIATE tx so no concurrent
+    // CreateBlock-with-space-property can sneak in between the count and
+    // the cascade. Spaces are page blocks carrying `is_space = "true"`;
+    // child membership is a `space` ref property on each page.
+    let is_space_block = sqlx::query_scalar!(
+        "SELECT 1 AS \"flag!: i64\" FROM block_properties \
+         WHERE block_id = ? AND key = 'is_space' AND value_text = 'true'",
+        block_id,
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    .is_some();
+    if is_space_block {
+        let child_count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"n!: i64\" FROM blocks b \
+             WHERE b.deleted_at IS NULL \
+             AND b.is_conflict = 0 \
+             AND EXISTS ( \
+                 SELECT 1 FROM block_properties p \
+                 WHERE p.block_id = b.id \
+                 AND p.key = 'space' \
+                 AND p.value_ref = ? \
+             )",
+            block_id,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if child_count > 0 {
+            return Err(AppError::InvalidOperation(format!(
+                "cannot delete space '{block_id}': it contains {child_count} pages"
+            )));
+        }
+    }
+
     // FEAT-5i — snapshot pre-delete dates so the post-commit
     // `notify_gcal_for_op` call can emit `old_affected_dates = {...},
     // new_affected_dates = []`.

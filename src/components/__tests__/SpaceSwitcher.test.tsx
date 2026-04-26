@@ -1,16 +1,19 @@
 /**
- * Tests for SpaceSwitcher (FEAT-3 Phase 1).
+ * Tests for SpaceSwitcher (FEAT-3 Phase 1 + Phase 6).
  *
  * Validates:
  *  - Renders current space name from the store
  *  - Mounts trigger `refreshAvailableSpaces` via listSpaces mock
  *  - Options render in alphabetical order (server-sorted by list_spaces)
  *  - Selecting an option calls `setCurrentSpace` with the right id
- *  - "Manage spaces…" is disabled and has the Phase 6 tooltip string
+ *  - "Manage spaces…" is enabled and opens the SpaceManageDialog
  *  - a11y compliance via axe audit
  *
  * Radix Select is mocked globally via `src/test-setup.ts` (native
- * `<select>` shim) so `userEvent.selectOptions()` works in jsdom.
+ * `<select>` shim) so `userEvent.selectOptions()` works in jsdom. The
+ * SpaceManageDialog child is stubbed with a render-prop spy so this
+ * suite stays focused on the switcher's behaviour — the dialog has its
+ * own dedicated test file.
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
@@ -29,6 +32,15 @@ vi.mock('../../lib/tauri', async (importActual) => {
     listSpaces: vi.fn(),
   }
 })
+
+// Stub the manage dialog so the switcher tests stay isolated. The stub
+// renders a sentinel element only when `open === true` so tests can
+// assert the dialog flipped open without exercising the real dialog's
+// emptiness-probe IPC, accent picker, etc.
+vi.mock('../SpaceManageDialog', () => ({
+  SpaceManageDialog: ({ open }: { open: boolean; onOpenChange: (open: boolean) => void }) =>
+    open ? <div data-testid="space-manage-dialog-stub" /> : null,
+}))
 
 const mockedListSpaces = vi.mocked(listSpaces)
 
@@ -100,7 +112,13 @@ describe('SpaceSwitcher', () => {
     expect(useSpaceStore.getState().currentSpaceId).toBe(WORK.id)
   })
 
-  it('renders the Manage spaces placeholder as disabled', async () => {
+  // FEAT-3 Phase 6 — the "Manage spaces…" entry is no longer a
+  // disabled placeholder. It is an enabled SelectItem and selecting it
+  // opens `SpaceManageDialog` instead of switching space. The dialog
+  // mount itself is asserted via the stub installed at the top of the
+  // file.
+  it('renders the Manage spaces option as enabled and opens the manage dialog when selected', async () => {
+    const user = userEvent.setup()
     mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
 
     render(<SpaceSwitcher />)
@@ -110,62 +128,20 @@ describe('SpaceSwitcher', () => {
 
     const manageOption = screen.getByRole('option', { name: /Manage spaces/ })
     expect(manageOption).toBeInTheDocument()
-    expect(manageOption).toBeDisabled()
-    // The option wraps a Radix Tooltip; the trigger element must be in
-    // the tree so hover reveals the Phase 6 label. Radix only mounts
-    // tooltip content on open, so we assert on the trigger attributes
-    // that are always present.
-    const tooltipTrigger = document.querySelector('[data-slot="tooltip-trigger"]')
-    expect(tooltipTrigger).not.toBeNull()
-    expect(tooltipTrigger).toContainElement(manageOption as HTMLElement)
-  })
+    // Phase 6 — must NOT be disabled any more. The disabled placeholder
+    // was the Phase 1 stub; the dialog is now real.
+    expect(manageOption).not.toBeDisabled()
+    // The dialog stub renders nothing when `open === false`.
+    expect(screen.queryByTestId('space-manage-dialog-stub')).not.toBeInTheDocument()
 
-  it('exposes the Phase 6 tooltip label when the trigger is hovered', async () => {
-    const user = userEvent.setup()
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+    const select = screen.getByRole('combobox', { name: /Switch space/ })
+    await user.selectOptions(select, '__manage__')
 
-    render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
-
-    const tooltipTrigger = document.querySelector(
-      '[data-slot="tooltip-trigger"]',
-    ) as HTMLElement | null
-    expect(tooltipTrigger).not.toBeNull()
-    if (tooltipTrigger === null) return
-
-    await user.hover(tooltipTrigger)
-    // Radix portals TooltipContent to document.body on open and also
-    // renders a visually-hidden screen-reader copy — two "Coming in
-    // Phase 6" nodes appear in the tree. `findAllByText` accepts both
-    // and `length > 0` is the observable signal that the tooltip opened.
-    await waitFor(
-      async () => {
-        const matches = await screen.findAllByText('Coming in Phase 6')
-        expect(matches.length).toBeGreaterThanOrEqual(1)
-      },
-      { timeout: 3000 },
-    )
-  })
-
-  // UX-284: tooltips don't fire on touch. A small "ⓘ" (U+24D8 circled
-  // info) is appended to the "Manage spaces…" label as a visible
-  // affordance that there's additional context. The character is
-  // text-only (avoids nesting non-text content inside the native
-  // `<option>` rendered by the test mock); the tooltip's
-  // `space.manageComingSoon` string remains the accessible source of
-  // truth.
-  it('appends an info affordance to the disabled Manage spaces entry (UX-284)', async () => {
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
-
-    render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
-
-    const manageOption = screen.getByRole('option', { name: /Manage spaces/ })
-    expect(manageOption.textContent).toContain('ⓘ')
+    // The sentinel must NOT switch space — `currentSpaceId` is still
+    // the alphabetical fallback (Personal). It must, however, open the
+    // SpaceManageDialog.
+    expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
+    expect(screen.getByTestId('space-manage-dialog-stub')).toBeInTheDocument()
   })
 
   it('does not update currentSpaceId when the Manage sentinel is selected', async () => {
@@ -180,10 +156,9 @@ describe('SpaceSwitcher', () => {
     expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
 
     const select = screen.getByRole('combobox', { name: /Switch space/ })
-    // Attempt to "switch" to the Manage sentinel — the component must
-    // ignore the change (HTML select allows selecting disabled options
-    // programmatically). Even if the onChange fires, the component's
-    // guard discards the sentinel.
+    // Selecting the Manage sentinel must not switch space — the
+    // component short-circuits the sentinel and routes the click to
+    // the dialog instead.
     await user.selectOptions(select, '__manage__')
 
     expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
@@ -219,5 +194,45 @@ describe('SpaceSwitcher', () => {
       },
       { timeout: 5000 },
     )
+  })
+
+  // FEAT-3p11 — each non-disabled SelectItem must carry a digit-hotkey
+  // hint chip (`Ctrl+1`, `Ctrl+2`, … on Linux/Windows; `⌘1`, `⌘2`, … on
+  // macOS) so the shortcut is discoverable without consulting the
+  // keyboard cheat-sheet. The chip is rendered for the first nine
+  // spaces in alphabetical order; the disabled "Manage spaces…"
+  // placeholder must NOT carry a chip — it isn't bound to a hotkey
+  // and its row is owned by FEAT-3p6.
+  it('renders a hint chip on each space row in alphabetical order (FEAT-3p11)', async () => {
+    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+
+    render(<SpaceSwitcher />)
+    await waitFor(() => {
+      expect(useSpaceStore.getState().isReady).toBe(true)
+    })
+
+    // jsdom's UA does not match macOS, so `isMac()` returns false and
+    // the chip text is the spelled-out modifier (`Ctrl+N`). This keeps
+    // the assertion deterministic across platforms running the test
+    // suite.
+    const select = screen.getByRole('combobox', { name: /Switch space/ })
+    const options = select.querySelectorAll('option')
+    // 2 spaces + 1 Manage placeholder.
+    expect(options).toHaveLength(3)
+    // Alphabetical order: Personal first, Work second.
+    expect(options[0]?.textContent).toContain('Personal')
+    expect(options[0]?.textContent).toContain('Ctrl+1')
+    expect(options[1]?.textContent).toContain('Work')
+    expect(options[1]?.textContent).toContain('Ctrl+2')
+    // The disabled Manage placeholder must stay chip-free — FEAT-3p6
+    // owns it and it isn't a hotkey target.
+    const manageOption = screen.getByRole('option', { name: /Manage spaces/ })
+    expect(manageOption.textContent).not.toMatch(/Ctrl\+\d/)
+    // Belt-and-braces: the data-testid'd chip elements are exactly two
+    // (one per space) and not attached to the placeholder.
+    const chips = document.querySelectorAll('[data-testid^="space-hotkey-hint-"]')
+    expect(chips).toHaveLength(2)
+    expect(chips[0]?.getAttribute('data-testid')).toBe('space-hotkey-hint-1')
+    expect(chips[1]?.getAttribute('data-testid')).toBe('space-hotkey-hint-2')
   })
 })

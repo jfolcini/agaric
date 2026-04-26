@@ -68,10 +68,19 @@ pub async fn list_block_history(
 ///
 /// The cursor stores `created_at` (in the `deleted_at` field, reused for
 /// this timestamp purpose) and `seq` for correct keyset pagination.
+///
+/// FEAT-3 Phase 8 — when `page_id == "__all__"` and `space_id` is `Some`,
+/// the global query is additionally filtered to only ops whose
+/// `payload.block_id` resolves (via `block_properties.key = 'space'`) to
+/// the requested space. When `space_id` is `None`, behaviour is identical
+/// to before — every op in `op_log` is returned. When `page_id` is a real
+/// ULID (per-page mode), `space_id` is ignored: a page is itself
+/// space-bound, so the existing recursive CTE already scopes correctly.
 pub async fn list_page_history(
     pool: &SqlitePool,
     page_id: &str,
     op_type_filter: Option<&str>,
+    space_id: Option<&str>,
     page: &PageRequest,
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
     let fetch_limit = page.limit + 1;
@@ -93,7 +102,10 @@ pub async fn list_page_history(
     };
 
     if page_id == "__all__" {
-        // Global history: query all ops without page-scoping CTE
+        // Global history: query all ops without page-scoping CTE.
+        // FEAT-3 Phase 8 — when `space_id` is `Some`, narrow to ops whose
+        // `payload.block_id` belongs to the requested space (matching the
+        // pattern used in `pagination/hierarchy.rs:113-134`).
         let rows = sqlx::query_as::<_, HistoryEntry>(
             "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at \
              FROM op_log ol \
@@ -102,6 +114,9 @@ pub async fn list_page_history(
                     ol.created_at < ?3 \
                     OR (ol.created_at = ?3 AND ol.seq < ?4) \
                     OR (ol.created_at = ?3 AND ol.seq = ?4 AND ol.device_id < ?6))) \
+               AND (?7 IS NULL OR json_extract(ol.payload, '$.block_id') IN ( \
+                    SELECT bp.block_id FROM block_properties bp \
+                    WHERE bp.key = 'space' AND bp.value_ref = ?7)) \
              ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
              LIMIT ?5",
         )
@@ -111,6 +126,7 @@ pub async fn list_page_history(
         .bind(cursor_seq) // ?4
         .bind(fetch_limit) // ?5
         .bind(cursor_device_id) // ?6
+        .bind(space_id) // ?7
         .fetch_all(pool)
         .await?;
 

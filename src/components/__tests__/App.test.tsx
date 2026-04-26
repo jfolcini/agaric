@@ -2292,4 +2292,88 @@ describe('App', () => {
       expect(descInput.value).toBe('')
     })
   })
+
+  // ── FEAT-3p11 — digit hotkeys for instant space switching ──────────────
+  //
+  // `Ctrl+1` … `Ctrl+9` (`Cmd+1` … `Cmd+9` on macOS — `matchesShortcutBinding`
+  // already accepts `metaKey`) jump directly to the Nth space in the
+  // alphabetical `availableSpaces` order. Out-of-range digits are silent
+  // no-ops, and the handler is suppressed while the user is typing in an
+  // input/textarea/contenteditable so it never steals keystrokes.
+  describe('FEAT-3p11 — space digit hotkeys', () => {
+    const PERSONAL = { id: 'SPACE_PERSONAL', name: 'Personal' }
+    const WORK = { id: 'SPACE_WORK', name: 'Work' }
+
+    beforeEach(() => {
+      // Two seeded spaces in alphabetical order matches the v1 onboarding
+      // shape: `Personal` first, `Work` second. Default
+      // `currentSpaceId === Personal` means `Ctrl+2` is the observable
+      // change for "first switch", and `Ctrl+5` is unambiguously
+      // out-of-range without depending on test ordering.
+      useSpaceStore.setState({
+        currentSpaceId: PERSONAL.id,
+        availableSpaces: [PERSONAL, WORK],
+        isReady: true,
+      })
+    })
+
+    it('Ctrl+1 switches to first space alphabetically', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      // Start on the second space so the Ctrl+1 chord causes an
+      // observable change to the first alphabetical entry.
+      useSpaceStore.getState().setCurrentSpace(WORK.id)
+      expect(useSpaceStore.getState().currentSpaceId).toBe(WORK.id)
+
+      fireEvent.keyDown(window, { key: '1', ctrlKey: true })
+
+      await waitFor(() => {
+        expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
+      })
+    })
+
+    it('Ctrl+5 with only 2 spaces is a silent no-op (no toast, no error)', async () => {
+      const mockedToastError = vi.mocked(toast.error)
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      // Capture the active id so we can assert it never moved.
+      const before = useSpaceStore.getState().currentSpaceId
+
+      fireEvent.keyDown(window, { key: '5', ctrlKey: true })
+      // Let the synchronous handler + any microtasks settle.
+      await Promise.resolve()
+
+      expect(useSpaceStore.getState().currentSpaceId).toBe(before)
+      expect(mockedToastError).not.toHaveBeenCalled()
+      expect(vi.mocked(logger.error)).not.toHaveBeenCalled()
+    })
+
+    it('Ctrl+1 inside a textarea does NOT switch space (typing is preserved)', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      // Pin the active space to Work so the would-be Ctrl+1 fallback to
+      // Personal is the observable signal that the handler fired
+      // erroneously.
+      useSpaceStore.getState().setCurrentSpace(WORK.id)
+
+      const textarea = document.createElement('textarea')
+      document.body.appendChild(textarea)
+      try {
+        fireEvent.keyDown(textarea, { key: '1', ctrlKey: true })
+        await Promise.resolve()
+        expect(useSpaceStore.getState().currentSpaceId).toBe(WORK.id)
+      } finally {
+        document.body.removeChild(textarea)
+      }
+    })
+  })
 })

@@ -45,13 +45,39 @@ const resources = {
       // Spaces (FEAT-3)
       'space.switch': 'Switch space',
       'space.manage': 'Manage spaces…',
-      'space.manageComingSoon': 'Coming in Phase 6',
       'space.moveTo': 'Move to space',
       'space.movedToast': 'Page moved to {{space}}',
       'space.moveFailed': 'Failed to move page',
       'space.notReady': 'Loading spaces…',
       'space.activeDeletedNotification':
         'Your active space was deleted on another device. Switched to {{space}}.',
+      // Spaces — Phase 6 manage-spaces dialog
+      'space.manageDialogTitle': 'Manage spaces',
+      'space.manageDialogDescription':
+        'Rename a space, pick its accent color, delete an empty space, or create a new one.',
+      'space.renameLabel': 'Rename space',
+      'space.accentColorLabel': 'Accent color',
+      'space.accentSwatchLabel': 'Use {{color}} accent',
+      'space.deleteSpaceLabel': 'Delete space',
+      'space.deleteSpaceTooltipDisabled':
+        'Delete every page in this space first — spaces can only be deleted when empty.',
+      'space.deleteLastTooltipDisabled':
+        'You must keep at least one space — delete is disabled on the last remaining space.',
+      'space.deleteConfirmTitle': "Delete space '{{name}}'?",
+      'space.deleteConfirmDescription': 'This space must already be empty. This cannot be undone.',
+      'space.deleteFailed': 'Failed to delete space',
+      'space.renameFailed': 'Failed to rename space',
+      'space.accentFailed': 'Failed to update accent color',
+      'space.createSpaceLabel': 'Create new space',
+      'space.createSpaceCta': 'Create',
+      'space.createSpaceFailed': 'Failed to create space',
+      'space.newSpacePlaceholder': 'New space name',
+      'space.cancelLabel': 'Cancel',
+      'space.onboardingTitle': 'What is a space?',
+      'space.onboardingBody':
+        'Spaces keep separate contexts (e.g. work, personal) physically apart. Pages, journals, tags, and links never cross between spaces. Switch with the dropdown above.',
+      'space.onboardingDismiss': 'Got it',
+      'space.onboardingSeenKey': 'agaric:space-onboarding-seen-v1',
 
       // Empty states
       'empty.noBlocks': 'No blocks yet. Click + Add block below to start writing.',
@@ -1260,6 +1286,11 @@ const resources = {
       'history.selectOperationLabel': 'Select operation {{opType}} #{{seq}}',
       'history.diffButton': 'Diff',
       'history.nonReversibleTooltip': 'Purges cannot be undone',
+      // FEAT-3 Phase 8 — "All spaces" toggle in HistoryFilterBar
+      'history.allSpacesToggle': 'All spaces',
+      'history.allSpacesTooltip': 'Show changes from every space',
+      'history.emptyCurrentSpace':
+        "No changes in this space yet. Toggle 'All spaces' to see history from other spaces.",
 
       // Trash view
       'trash.emptyMessage': 'Nothing in trash. Deleted items will appear here.',
@@ -1985,6 +2016,22 @@ const resources = {
       'keyboard.suggestionPassSpace': 'Insert space in query',
       'keyboard.suggestionAutocomplete': 'Autocomplete selection',
       'keyboard.condition.popupOpen': 'When suggestion popup is open',
+
+      // Keyboard shortcuts — spaces (FEAT-3p11). One entry per digit so
+      // each row in the cheat-sheet has its own description; the values
+      // collapse into a tidy "Switch to space N" pattern that doesn't
+      // depend on i18n interpolation features the renderer hasn't been
+      // taught to use elsewhere in this section.
+      'keyboard.category.spaces': 'Spaces',
+      'keyboard.switchSpace1': 'Switch to space 1',
+      'keyboard.switchSpace2': 'Switch to space 2',
+      'keyboard.switchSpace3': 'Switch to space 3',
+      'keyboard.switchSpace4': 'Switch to space 4',
+      'keyboard.switchSpace5': 'Switch to space 5',
+      'keyboard.switchSpace6': 'Switch to space 6',
+      'keyboard.switchSpace7': 'Switch to space 7',
+      'keyboard.switchSpace8': 'Switch to space 8',
+      'keyboard.switchSpace9': 'Switch to space 9',
 
       // UX-121: Block Context (batch toolbar)
       'blockContext.selected': 'selected',

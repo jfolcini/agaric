@@ -3228,7 +3228,7 @@ async fn test_list_page_history_basic_pagination() {
     .await;
 
     let page = PageRequest::new(None, Some(2)).unwrap();
-    let resp = list_page_history(&pool, "PH_PAGE1", None, &page)
+    let resp = list_page_history(&pool, "PH_PAGE1", None, None, &page)
         .await
         .unwrap();
 
@@ -3257,7 +3257,7 @@ async fn test_list_page_history_empty_result() {
     insert_block(&pool, "PH_EMPTY", "page", "empty page", None, Some(1)).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_page_history(&pool, "PH_EMPTY", None, &page)
+    let resp = list_page_history(&pool, "PH_EMPTY", None, None, &page)
         .await
         .unwrap();
 
@@ -3303,6 +3303,7 @@ async fn test_list_page_history_cursor_continuation() {
         &pool,
         "PH_PAG2",
         None,
+        None,
         &PageRequest::new(None, Some(2)).unwrap(),
     )
     .await
@@ -3318,6 +3319,7 @@ async fn test_list_page_history_cursor_continuation() {
         &pool,
         "PH_PAG2",
         None,
+        None,
         &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
     )
     .await
@@ -3331,6 +3333,7 @@ async fn test_list_page_history_cursor_continuation() {
     let r3 = list_page_history(
         &pool,
         "PH_PAG2",
+        None,
         None,
         &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
     )
@@ -3391,7 +3394,7 @@ async fn test_list_page_history_op_type_filter() {
 
     // Filter by edit_block only
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_page_history(&pool, "PH_PAG3", Some("edit_block"), &page)
+    let resp = list_page_history(&pool, "PH_PAG3", Some("edit_block"), None, &page)
         .await
         .unwrap();
 
@@ -3407,7 +3410,7 @@ async fn test_list_page_history_op_type_filter() {
     assert_eq!(resp.items[0].seq, 2, "edit_block op is seq 2");
 
     // Filter by create_block only
-    let resp2 = list_page_history(&pool, "PH_PAG3", Some("create_block"), &page)
+    let resp2 = list_page_history(&pool, "PH_PAG3", Some("create_block"), None, &page)
         .await
         .unwrap();
     assert_eq!(
@@ -3421,7 +3424,7 @@ async fn test_list_page_history_op_type_filter() {
     );
 
     // No filter → all 3
-    let resp_all = list_page_history(&pool, "PH_PAG3", None, &page)
+    let resp_all = list_page_history(&pool, "PH_PAG3", None, None, &page)
         .await
         .unwrap();
     assert_eq!(resp_all.items.len(), 3, "no filter returns all op types");
@@ -3465,7 +3468,7 @@ async fn test_list_page_history_global_all_pages() {
 
     // Use __all__ sentinel for global history
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_page_history(&pool, "__all__", None, &page)
+    let resp = list_page_history(&pool, "__all__", None, None, &page)
         .await
         .unwrap();
 
@@ -3493,7 +3496,7 @@ async fn test_list_page_history_global_pagination() {
     let mut cursor = None;
     loop {
         let page = PageRequest::new(cursor, Some(2)).unwrap();
-        let resp = list_page_history(&pool, "__all__", None, &page)
+        let resp = list_page_history(&pool, "__all__", None, None, &page)
             .await
             .unwrap();
         for entry in &resp.items {
@@ -3538,7 +3541,7 @@ async fn test_list_page_history_global_op_type_filter() {
     .await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_page_history(&pool, "__all__", Some("edit_block"), &page)
+    let resp = list_page_history(&pool, "__all__", Some("edit_block"), None, &page)
         .await
         .unwrap();
 
@@ -3610,7 +3613,7 @@ async fn test_list_page_history_includes_nested_children() {
     .await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_page_history(&pool, "PH_ROOT", None, &page)
+    let resp = list_page_history(&pool, "PH_ROOT", None, None, &page)
         .await
         .unwrap();
 
@@ -3940,6 +3943,180 @@ async fn list_trash_filters_by_space() {
         resp.items[0].id, "TRSH_A",
         "SPACE_A trash row must be TRSH_A"
     );
+}
+
+// ====================================================================
+// FEAT-3 Phase 8 — list_page_history space scoping
+// ====================================================================
+//
+// `list_page_history(page_id, op_type_filter, space_id, page)` gains a new
+// `space_id` parameter that filters the global (`page_id == "__all__"`)
+// query to only the ops whose `payload.block_id` belongs to the requested
+// space. When `space_id` is `None`, behaviour is identical to before
+// (all ops). When `page_id` is a real ULID (per-page mode), `space_id`
+// is ignored — the existing recursive CTE already scopes to a single
+// space because every page belongs to exactly one space.
+
+mod tests_p8 {
+    use super::super::*;
+    use super::{
+        assign_to_space, insert_block, insert_op_log_entry, insert_space_block, test_pool,
+        SPACE_A_ID, SPACE_B_ID,
+    };
+    use sqlx::SqlitePool;
+
+    /// Seed a tiny corpus across two spaces:
+    ///
+    /// - SPACE_A_ID (Personal) — page `PG_AA` with one op.
+    /// - SPACE_B_ID (Work)     — page `PG_BB` with one op.
+    ///
+    /// Ops are appended to `op_log` with a payload that refers to the
+    /// page block_id directly (mirrors how the materializer records
+    /// `create_block` for a page).
+    async fn seed_two_spaces(pool: &SqlitePool) {
+        insert_space_block(pool, SPACE_A_ID, "Personal").await;
+        insert_space_block(pool, SPACE_B_ID, "Work").await;
+
+        // SPACE_A page + op
+        insert_block(pool, "PG_AA", "page", "Personal page", None, Some(1)).await;
+        assign_to_space(pool, "PG_AA", SPACE_A_ID).await;
+        let payload_a = r#"{"block_id":"PG_AA","block_type":"page","content":"Personal page"}"#;
+        insert_op_log_entry(
+            pool,
+            "device-1",
+            1,
+            "create_block",
+            payload_a,
+            "2025-01-01T00:00:00Z",
+        )
+        .await;
+
+        // SPACE_B page + op
+        insert_block(pool, "PG_BB", "page", "Work page", None, Some(2)).await;
+        assign_to_space(pool, "PG_BB", SPACE_B_ID).await;
+        let payload_b = r#"{"block_id":"PG_BB","block_type":"page","content":"Work page"}"#;
+        insert_op_log_entry(
+            pool,
+            "device-1",
+            2,
+            "create_block",
+            payload_b,
+            "2025-01-02T00:00:00Z",
+        )
+        .await;
+    }
+
+    /// Baseline: `space_id = None` and `page_id = "__all__"` returns every
+    /// op (existing "All spaces" behaviour). This is the path the new
+    /// "All spaces" toggle exercises in the UI.
+    #[tokio::test]
+    async fn list_page_history_all_pages_all_spaces_returns_every_op() {
+        let (pool, _dir) = test_pool().await;
+        seed_two_spaces(&pool).await;
+
+        let page = PageRequest::new(None, Some(50)).unwrap();
+        let resp = list_page_history(&pool, "__all__", None, None, &page)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.items.len(),
+            2,
+            "space_id = None must return ops from every space (baseline)"
+        );
+        let block_ids: Vec<String> = resp
+            .items
+            .iter()
+            .map(|e| {
+                let payload: serde_json::Value = serde_json::from_str(&e.payload).unwrap();
+                payload["block_id"].as_str().unwrap().to_string()
+            })
+            .collect();
+        assert!(
+            block_ids.iter().any(|id| id == "PG_AA"),
+            "PG_AA (SPACE_A) must appear; got {block_ids:?}"
+        );
+        assert!(
+            block_ids.iter().any(|id| id == "PG_BB"),
+            "PG_BB (SPACE_B) must appear; got {block_ids:?}"
+        );
+    }
+
+    /// New behaviour: `space_id = Some(SPACE_A_ID)` and `page_id = "__all__"`
+    /// must drop ops on pages outside SPACE_A — the count differs from the
+    /// baseline by exactly the foreign-space ops.
+    #[tokio::test]
+    async fn list_page_history_all_pages_current_space_excludes_foreign_ops() {
+        let (pool, _dir) = test_pool().await;
+        seed_two_spaces(&pool).await;
+
+        let page = PageRequest::new(None, Some(50)).unwrap();
+        let unfiltered = list_page_history(&pool, "__all__", None, None, &page)
+            .await
+            .unwrap();
+        let filtered = list_page_history(&pool, "__all__", None, Some(SPACE_A_ID), &page)
+            .await
+            .unwrap();
+
+        // The corpus has exactly 1 foreign-space op (PG_BB on SPACE_B), so
+        // filtered must drop exactly that op.
+        assert_eq!(
+            unfiltered.items.len() - filtered.items.len(),
+            1,
+            "filtered result must differ from unfiltered by exactly the foreign-space op count"
+        );
+        assert_eq!(
+            filtered.items.len(),
+            1,
+            "SPACE_A filter must keep only the SPACE_A op"
+        );
+        let payload: serde_json::Value = serde_json::from_str(&filtered.items[0].payload).unwrap();
+        assert_eq!(
+            payload["block_id"].as_str().unwrap(),
+            "PG_AA",
+            "remaining op must be the SPACE_A op"
+        );
+    }
+
+    /// `space_id` is ignored when `page_id` is a real ULID (per-page
+    /// mode). The page itself belongs to exactly one space, so the
+    /// existing recursive CTE already scopes correctly — passing a
+    /// foreign `space_id` must NOT silently drop the page's own ops.
+    #[tokio::test]
+    async fn list_page_history_per_page_mode_ignores_space_id() {
+        let (pool, _dir) = test_pool().await;
+        seed_two_spaces(&pool).await;
+
+        let page = PageRequest::new(None, Some(50)).unwrap();
+
+        // Query PG_AA (SPACE_A page) but pass SPACE_B_ID as the filter.
+        // Per-page mode must ignore `space_id` — the result must match
+        // the same query with `space_id = None`.
+        let with_foreign_space = list_page_history(&pool, "PG_AA", None, Some(SPACE_B_ID), &page)
+            .await
+            .unwrap();
+        let without_space = list_page_history(&pool, "PG_AA", None, None, &page)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            with_foreign_space.items.len(),
+            without_space.items.len(),
+            "per-page mode must ignore space_id; foreign space filter must not drop ops"
+        );
+        assert_eq!(
+            with_foreign_space.items.len(),
+            1,
+            "PG_AA's own create_block op must remain present"
+        );
+        let payload: serde_json::Value =
+            serde_json::from_str(&with_foreign_space.items[0].payload).unwrap();
+        assert_eq!(
+            payload["block_id"].as_str().unwrap(),
+            "PG_AA",
+            "per-page mode returns the page's own op even with a foreign space_id"
+        );
+    }
 }
 
 // ====================================================================

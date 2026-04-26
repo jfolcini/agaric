@@ -25,6 +25,7 @@ import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { logger } from '../lib/logger'
 import type { HistoryEntry } from '../lib/tauri'
 import { listPageHistory, restorePageToOp, revertOps } from '../lib/tauri'
+import { useSpaceStore } from '../stores/space'
 import { CompactionCard } from './CompactionCard'
 import { EmptyState } from './EmptyState'
 import { HistoryFilterBar } from './HistoryFilterBar'
@@ -106,6 +107,13 @@ export function HistoryView(): React.ReactElement {
   const [confirmRestore, setConfirmRestore] = useState(false)
   const [restoring, setRestoring] = useState(false)
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
+  // FEAT-3 Phase 8 — current-space scoping. Default `false` ⇒ pass the
+  // current space id so only ops on pages in this space are returned.
+  // Toggling on drops the filter (cross-space "All spaces" mode). State
+  // is intentionally NOT persisted: every History session must restart
+  // current-space-only — the privacy-preserving default.
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const [showAllSpaces, setShowAllSpaces] = useState(false)
   const { expandedKeys, diffCache, loadingDiffs, handleToggleDiff } = useHistoryDiffToggle<string>(
     (entry) => entryKey(entry),
   )
@@ -120,12 +128,17 @@ export function HistoryView(): React.ReactElement {
   // UX-275 sub-fix 7: track the categorised failure so the error banner can
   // show network/server/unknown-specific copy alongside the generic title.
   const [errorCategory, setErrorCategory] = useState<HistoryErrorCategory | null>(null)
+  // FEAT-3 Phase 8 — when "All spaces" is off, narrow the IPC to the
+  // current space. When on (or when no current space exists yet), pass
+  // `undefined` so the backend returns ops from every space.
+  const effectiveSpaceId = showAllSpaces ? undefined : (currentSpaceId ?? undefined)
   const queryFn = useCallback(
     async (cursor?: string) => {
       try {
         const result = await listPageHistory({
           pageId: '__all__',
           ...(opTypeFilter != null && { opTypeFilter }),
+          ...(effectiveSpaceId != null && { spaceId: effectiveSpaceId }),
           ...(cursor != null && { cursor }),
           limit: 50,
         })
@@ -137,13 +150,18 @@ export function HistoryView(): React.ReactElement {
         logger.error(
           'HistoryView',
           'Failed to load history page',
-          { category, opTypeFilter: opTypeFilter ?? null, cursor: cursor ?? null },
+          {
+            category,
+            opTypeFilter: opTypeFilter ?? null,
+            spaceId: effectiveSpaceId ?? null,
+            cursor: cursor ?? null,
+          },
           err,
         )
         throw err
       }
     },
-    [opTypeFilter],
+    [opTypeFilter, effectiveSpaceId],
   )
   const {
     items: entries,
@@ -203,12 +221,14 @@ export function HistoryView(): React.ReactElement {
     [entries, hookToggle],
   )
 
-  // Reset selection when filter changes (entries are replaced by the hook)
+  // Reset selection when filter changes (entries are replaced by the hook).
+  // FEAT-3 Phase 8 — also resets when the space scope flips so a stale
+  // selection from the previous scope doesn't leak into the new one.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset UI state when filter changes
   useEffect(() => {
     clearSelection()
     setFocusedIndex(0)
-  }, [opTypeFilter, setFocusedIndex, clearSelection])
+  }, [opTypeFilter, effectiveSpaceId, setFocusedIndex, clearSelection])
 
   // ── Revert ───────────────────────────────────────────────────────
 
@@ -358,7 +378,12 @@ export function HistoryView(): React.ReactElement {
       <ViewHeader>
         <div className="history-view-header space-y-2">
           {/* Filter bar */}
-          <HistoryFilterBar opTypeFilter={opTypeFilter} onFilterChange={setOpTypeFilter} />
+          <HistoryFilterBar
+            opTypeFilter={opTypeFilter}
+            onFilterChange={setOpTypeFilter}
+            showAllSpaces={showAllSpaces}
+            onShowAllSpacesChange={setShowAllSpaces}
+          />
 
           {/* Selection toolbar — only render when items are selected so that
               batch actions (revert, clear) disappear after completion. Matches
@@ -406,9 +431,21 @@ export function HistoryView(): React.ReactElement {
         </div>
       )}
 
-      {/* Empty state */}
+      {/* Empty state.
+          FEAT-3 Phase 8 — when scoped to the current space, surface the
+          "Toggle 'All spaces' to see history from other spaces." hint
+          so users understand why the list is empty and how to expand
+          the scope. The cross-space ("All spaces" on) empty state keeps
+          the existing generic copy. */}
       {!loading && entries.length === 0 && (
-        <EmptyState icon={Clock} message={t('history.noEntriesFound')} />
+        <EmptyState
+          icon={Clock}
+          message={
+            !showAllSpaces && currentSpaceId !== null
+              ? t('history.emptyCurrentSpace')
+              : t('history.noEntriesFound')
+          }
+        />
       )}
 
       {/* History list */}

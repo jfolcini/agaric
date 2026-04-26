@@ -213,15 +213,28 @@ pub async fn apply_reverse_in_tx(
 
 /// List all ops for blocks descended from a page, with cursor pagination
 /// and optional op_type filter.
+///
+/// FEAT-3 Phase 8 — `space_id` narrows the global (`page_id == "__all__"`)
+/// query to ops whose `payload.block_id` belongs to the requested space.
+/// It is ignored in per-page mode (a real ULID `page_id` is already
+/// space-bound).
 pub async fn list_page_history_inner(
     pool: &SqlitePool,
     page_id: String,
     op_type_filter: Option<String>,
+    space_id: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
     let page = pagination::PageRequest::new(cursor, limit)?;
-    pagination::list_page_history(pool, &page_id, op_type_filter.as_deref(), &page).await
+    pagination::list_page_history(
+        pool,
+        &page_id,
+        op_type_filter.as_deref(),
+        space_id.as_deref(),
+        &page,
+    )
+    .await
 }
 
 /// Batch revert: compute and apply reverse ops for a list of op refs.
@@ -562,10 +575,11 @@ pub async fn list_page_history(
     pool: State<'_, ReadPool>,
     page_id: String,
     op_type_filter: Option<String>,
+    space_id: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
-    list_page_history_inner(&pool.0, page_id, op_type_filter, cursor, limit)
+    list_page_history_inner(&pool.0, page_id, op_type_filter, space_id, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }
