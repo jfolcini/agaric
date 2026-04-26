@@ -218,10 +218,17 @@ impl GcalClient for GcalApiAdapter {
 /// Injectable clock for testability.  Production uses [`SystemClock`];
 /// tests drive [`FixedClock`] to simulate midnight rollover + lease
 /// expiry without any real sleeping.
+///
+/// `now()` returns UTC because the database stores RFC 3339 timestamps
+/// in UTC and SQL-side comparisons must be timezone-consistent. In
+/// contrast, `today()` returns the user's **local** date because every
+/// caller (reconcile sweep window `[today, today + window_days]`,
+/// journal-page lookup, agenda dates, GCal digest contents) wants the
+/// user's current calendar day, not UTC's.  See REVIEW-LATER.md H-16.
 pub trait Clock: Send + Sync + std::fmt::Debug {
     fn now(&self) -> DateTime<Utc>;
     fn today(&self) -> NaiveDate {
-        self.now().date_naive()
+        chrono::Local::now().date_naive()
     }
 }
 
@@ -233,6 +240,8 @@ impl Clock for SystemClock {
     fn now(&self) -> DateTime<Utc> {
         Utc::now()
     }
+    // `today()` uses the trait default, which reads `chrono::Local::now()`
+    // — the user's local date, not UTC.
 }
 
 /// Test clock — returns a caller-settable fixed instant.  Advancing
@@ -273,6 +282,16 @@ impl Clock for FixedClock {
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    /// Override the trait default so test "today" stays deterministic
+    /// across CI timezones.  Production `Clock::today()` reads
+    /// `chrono::Local::now().date_naive()` (so the user's local day
+    /// drives the reconcile window), but tests want the date_naive of
+    /// the caller-set fixed instant — anything else would make
+    /// midnight-rollover tests flaky on machines whose local TZ is not
+    /// UTC.
+    fn today(&self) -> NaiveDate {
+        self.now().date_naive()
     }
 }
 
@@ -1949,6 +1968,86 @@ mod tests {
         assert_eq!(
             deletes_for_old_event, 0,
             "midnight rollover must not retro-delete pre-window events"
+        );
+    }
+
+    // ── Clock: local-vs-UTC `today()` (REVIEW-LATER H-16) ──────────
+
+    /// `SystemClock::today()` must reflect the user's **local** date,
+    /// not UTC's, so that the GCal reconcile window
+    /// `[today, today + window_days]`, the journal-page lookup, and the
+    /// digest contents all match the user's calendar day.
+    ///
+    /// Known limitation: this assertion is theoretically flaky if the
+    /// test runs across the local-midnight boundary (the call to
+    /// `today()` and the call to `Local::now().date_naive()` could
+    /// straddle it).  In practice the two calls are microseconds apart
+    /// so the window of flakiness is vanishingly small; we tolerate it.
+    #[test]
+    fn system_clock_today_uses_local_timezone() {
+        let clock = SystemClock;
+        // Compare both before and after to absorb a midnight rollover
+        // happening between the two reads — at least one of the two
+        // local-now reads must agree with `today()`.
+        let local_before = chrono::Local::now().date_naive();
+        let today = clock.today();
+        let local_after = chrono::Local::now().date_naive();
+        assert!(
+            today == local_before || today == local_after,
+            "SystemClock::today() = {today} should match \
+             chrono::Local::now().date_naive() (before={local_before}, \
+             after={local_after}); H-16 regression — production clock \
+             must use the user's local date, not UTC's"
+        );
+        // Sanity: `now()` still returns UTC.
+        let _: DateTime<Utc> = clock.now();
+    }
+
+    /// `FixedClock::today()` must remain the date_naive of its caller-
+    /// set fixed UTC instant, so tests stay deterministic regardless of
+    /// the host's local timezone (CI runs in UTC; developer machines do
+    /// not).  This guards against accidentally inheriting the new
+    /// trait default that reads `chrono::Local::now()`.
+    #[test]
+    fn fixed_clock_today_remains_deterministic_for_tests() {
+        // 2026-04-22 10:00 UTC — picked so that the date is the same in
+        // both UTC and any plausible local TZ at that wall-clock time.
+        let instant = Utc.with_ymd_and_hms(2026, 4, 22, 10, 0, 0).unwrap();
+        let clock = FixedClock::new(instant);
+        assert_eq!(
+            clock.today(),
+            instant.date_naive(),
+            "FixedClock::today() must equal the fixed instant's UTC \
+             date_naive — anything else makes midnight-rollover tests \
+             flaky on machines whose local TZ is not UTC"
+        );
+        assert_eq!(clock.now(), instant);
+    }
+
+    /// Cross-check that on a UTC instant late enough in the day to fall
+    /// on different calendar dates in UTC vs. a far-east local zone,
+    /// `FixedClock::today()` still tracks the UTC date (test
+    /// determinism), while a hypothetical user in that east-of-UTC zone
+    /// would see a different `Local::now().date_naive()`.  This is the
+    /// concrete behavioural difference that motivates H-16: the
+    /// production trait default reads `Local`, but tests pin to UTC.
+    #[test]
+    fn clock_today_local_differs_from_utc_at_midnight_boundary() {
+        // 23:30 UTC on 2026-04-22 — in any zone east of UTC+00:30 the
+        // local date is already 2026-04-23.
+        let instant = Utc.with_ymd_and_hms(2026, 4, 22, 23, 30, 0).unwrap();
+        let clock = FixedClock::new(instant);
+        // FixedClock pins to UTC date for determinism.
+        assert_eq!(clock.today(), NaiveDate::from_ymd_opt(2026, 4, 22).unwrap());
+        // For the same instant a user in (say) UTC+05:00 would see
+        // the local date as 2026-04-23 — that is the asymmetry the
+        // production `SystemClock` now resolves in favour of "local".
+        let east_offset = chrono::FixedOffset::east_opt(5 * 3600).unwrap();
+        assert_eq!(
+            instant.with_timezone(&east_offset).date_naive(),
+            NaiveDate::from_ymd_opt(2026, 4, 23).unwrap(),
+            "sanity check: chosen instant straddles the UTC/east-of-UTC \
+             midnight boundary"
         );
     }
 

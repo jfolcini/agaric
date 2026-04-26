@@ -9,19 +9,28 @@ use crate::link_metadata::{self, LinkMetadata};
 
 /// Fetch metadata for a URL (HTTP fetch + store in cache).
 /// Returns cached metadata if fresh (< 7 days), otherwise fetches from network.
+///
+/// **H-15:** Split-pool routing — the cache lookup runs against the
+/// `read_pool` so the network-bound HTTP fetch never holds a connection
+/// from the writer pool. The `write_pool` is acquired only for the final
+/// `upsert` after a fresh fetch, keeping write contention with the
+/// materializer to the minimum necessary footprint.
 pub async fn fetch_link_metadata_inner(
-    pool: &SqlitePool,
+    read_pool: &SqlitePool,
+    write_pool: &SqlitePool,
     url: String,
 ) -> Result<LinkMetadata, AppError> {
-    // Check cache first — return if fresh (< 7 days)
-    if let Some(cached) = link_metadata::get_cached(pool, &url).await? {
+    // Check cache first — return if fresh (< 7 days). Read-only path:
+    // never touches the write pool on a cache hit.
+    if let Some(cached) = link_metadata::get_cached(read_pool, &url).await? {
         if !is_stale(&cached.fetched_at, 7) {
             return Ok(cached);
         }
     }
-    // Fetch from network
+    // Cache miss or stale — fetch from network (no DB usage), then
+    // acquire the write pool *only* for the upsert.
     let meta = link_metadata::fetch_metadata(&url).await?;
-    link_metadata::upsert(pool, &meta).await?;
+    link_metadata::upsert(write_pool, &meta).await?;
     Ok(meta)
 }
 
@@ -51,10 +60,11 @@ fn is_stale(fetched_at: &str, max_days: u32) -> bool {
 #[tauri::command]
 #[specta::specta]
 pub async fn fetch_link_metadata(
-    pool: State<'_, WritePool>,
+    read_pool: State<'_, ReadPool>,
+    write_pool: State<'_, WritePool>,
     url: String,
 ) -> Result<LinkMetadata, AppError> {
-    fetch_link_metadata_inner(&pool.0, url).await
+    fetch_link_metadata_inner(&read_pool.0, &write_pool.0, url).await
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -70,7 +80,7 @@ pub async fn get_link_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_pool;
+    use crate::db::{init_pool, init_pools, DbPools};
     use crate::link_metadata::{self, LinkMetadata};
     use sqlx::SqlitePool;
     use tempfile::TempDir;
@@ -80,6 +90,20 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let pool = init_pool(&db_path).await.unwrap();
         (pool, dir)
+    }
+
+    /// Split read/write pool fixture — H-15 verification.
+    ///
+    /// Mirrors the production `init_pools` configuration so the
+    /// `query_only` pragma on the read pool is enforced. Tests that
+    /// pass the read pool where a write would be expected will fail
+    /// at the SQLite layer, giving us a hard runtime check that the
+    /// inner function routes reads vs writes to the correct pool.
+    async fn test_pools_split() -> (DbPools, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pools = init_pools(&db_path).await.unwrap();
+        (pools, dir)
     }
 
     // ==================================================================
@@ -103,9 +127,13 @@ mod tests {
         link_metadata::upsert(&pool, &meta).await.unwrap();
 
         // Call the inner function — should return cached data without HTTP.
-        let result = fetch_link_metadata_inner(&pool, "https://example.com/cached".to_string())
-            .await
-            .unwrap();
+        // Legacy single-pool tests pass the same pool for both args; the
+        // split-pool semantics are exercised in the dedicated
+        // `*_split_pool*` tests below.
+        let result =
+            fetch_link_metadata_inner(&pool, &pool, "https://example.com/cached".to_string())
+                .await
+                .unwrap();
 
         // The fetched_at timestamp must match what we inserted, proving no
         // network fetch occurred (a fresh fetch would set a new timestamp).
@@ -137,9 +165,10 @@ mod tests {
         };
         link_metadata::upsert(&pool, &meta).await.unwrap();
 
-        let result = fetch_link_metadata_inner(&pool, "https://private.example.com".to_string())
-            .await
-            .unwrap();
+        let result =
+            fetch_link_metadata_inner(&pool, &pool, "https://private.example.com".to_string())
+                .await
+                .unwrap();
 
         assert_eq!(result.fetched_at, now, "should return cached row");
         assert!(
@@ -155,7 +184,8 @@ mod tests {
         // No cached entry exists. Call with an unreachable URL so the HTTP
         // fetch fails, proving the function attempted a network call.
         let result =
-            fetch_link_metadata_inner(&pool, "http://127.0.0.1:1/nonexistent".to_string()).await;
+            fetch_link_metadata_inner(&pool, &pool, "http://127.0.0.1:1/nonexistent".to_string())
+                .await;
 
         assert!(
             result.is_err(),
@@ -188,7 +218,8 @@ mod tests {
         // The stale entry should cause a refetch attempt, which will fail
         // because the URL is unreachable.
         let result =
-            fetch_link_metadata_inner(&pool, "http://127.0.0.1:1/stale-entry".to_string()).await;
+            fetch_link_metadata_inner(&pool, &pool, "http://127.0.0.1:1/stale-entry".to_string())
+                .await;
 
         assert!(
             result.is_err(),
@@ -211,15 +242,125 @@ mod tests {
         };
         link_metadata::upsert(&pool, &meta).await.unwrap();
 
-        let result = fetch_link_metadata_inner(&pool, "https://minimal.example.com".to_string())
-            .await
-            .unwrap();
+        let result =
+            fetch_link_metadata_inner(&pool, &pool, "https://minimal.example.com".to_string())
+                .await
+                .unwrap();
 
         assert_eq!(result.fetched_at, now);
         assert!(result.title.is_none());
         assert!(result.favicon_url.is_none());
         assert!(result.description.is_none());
         assert!(!result.auth_required);
+    }
+
+    // ==================================================================
+    // H-15 split-pool routing tests
+    //
+    // These tests verify that `fetch_link_metadata_inner` correctly routes
+    // its DB operations across separate read/write pools so the network-
+    // bound HTTP fetch never blocks writers in the materializer.
+    // ==================================================================
+
+    #[tokio::test]
+    async fn cache_hit_uses_read_pool_only() {
+        // Pre-insert a fresh cached row via the write pool, then close the
+        // write pool. A subsequent cache-hit must succeed using only the
+        // read pool — if the inner function touches the write pool on the
+        // hit path the call will fail with a "PoolClosed" error.
+        let (pools, _dir) = test_pools_split().await;
+
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let meta = LinkMetadata {
+            url: "https://example.com/split-cache-hit".to_string(),
+            title: Some("Split-Pool Cached".to_string()),
+            favicon_url: None,
+            description: None,
+            fetched_at: now.clone(),
+            auth_required: false,
+        };
+        link_metadata::upsert(&pools.write, &meta).await.unwrap();
+
+        // Close the write pool — any acquire against it will now fail.
+        // The cache-hit path must not go anywhere near the write pool.
+        pools.write.close().await;
+
+        let result = fetch_link_metadata_inner(
+            &pools.read,
+            &pools.write,
+            "https://example.com/split-cache-hit".to_string(),
+        )
+        .await
+        .expect("cache hit must not touch the (closed) write pool");
+
+        assert_eq!(result.fetched_at, now);
+        assert_eq!(result.title.as_deref(), Some("Split-Pool Cached"));
+    }
+
+    #[tokio::test]
+    async fn cache_lookup_runs_against_read_pool_query_only() {
+        // The read pool has PRAGMA query_only = ON. If the inner function
+        // mistakenly issued a write through the read pool argument, it
+        // would error. This test seeds the cache via the write pool and
+        // confirms the lookup succeeds against the (read-only) read pool.
+        let (pools, _dir) = test_pools_split().await;
+
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let meta = LinkMetadata {
+            url: "https://example.com/query-only-lookup".to_string(),
+            title: Some("Read-only Lookup".to_string()),
+            favicon_url: None,
+            description: None,
+            fetched_at: now.clone(),
+            auth_required: false,
+        };
+        link_metadata::upsert(&pools.write, &meta).await.unwrap();
+
+        let result = fetch_link_metadata_inner(
+            &pools.read,
+            &pools.write,
+            "https://example.com/query-only-lookup".to_string(),
+        )
+        .await
+        .expect("query_only-pinned read pool must satisfy the cache lookup");
+
+        assert_eq!(result.fetched_at, now);
+        assert_eq!(result.title.as_deref(), Some("Read-only Lookup"));
+    }
+
+    #[tokio::test]
+    async fn cache_miss_consults_read_pool_then_attempts_write() {
+        // No cache row exists. The inner function should: (1) consult the
+        // read pool — returning None — then (2) attempt the HTTP fetch and
+        // upsert via the write pool. We use an unreachable URL so the HTTP
+        // fetch fails, but that proves the read-pool lookup happened
+        // first (it would have returned cached data if any existed) and
+        // that the function correctly proceeded past the read step.
+        let (pools, _dir) = test_pools_split().await;
+
+        let result = fetch_link_metadata_inner(
+            &pools.read,
+            &pools.write,
+            "http://127.0.0.1:1/split-miss".to_string(),
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "cache miss with unreachable URL should error after the read-pool lookup returns None"
+        );
+
+        // The write pool must remain functional after the failed call —
+        // the failure should be from the HTTP layer, not from a pool
+        // misuse that poisoned the writer.
+        let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM link_metadata")
+            .fetch_one(&pools.write)
+            .await
+            .expect("write pool must still be usable after the failed fetch");
+        assert_eq!(
+            row_count, 0,
+            "no cache row should have been written for an unreachable URL"
+        );
     }
 
     // ==================================================================

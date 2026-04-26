@@ -775,18 +775,18 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Already-tracked in REVIEW-LATER (PERF-19, PERF-20, PERF-23) | 3 |
 | Net findings in this report | 333 |
 | **Critical** | **1** |
-| **High** | **12** |
-| **Medium** | **62** |
-| **Low** | **126** |
+| **High** | **10** |
+| **Medium** | **60** |
+| **Low** | **125** |
 | **Info / nits** | **125** |
 
 ### Top-5 highest-priority items (Impact ÷ Cost)
 
-1. **C-2b** — Boot-time op-log replay path for unmaterialized ops; op_log diverges from materialized state with no automatic remediation (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/materializer/consumer.rs" />). C-2a (divergence detection) shipped — divergence is now visible via `fg_apply_dropped` in `StatusInfo`; C-2b remains as the actual replay path.
+1. **C-2b** — Boot-time op-log replay path for unmaterialized ops; op_log diverges from materialized state with no automatic remediation (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/materializer/consumer.rs" />). C-2a (divergence detection) shipped — divergence is now visible via `fg_apply_dropped` in `StatusInfo`; C-2b remains as the actual replay path. **Schema migration approval required**.
 2. **H-3** — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated daily. Split into H-3a (backend IPC enforcement), H-3b (frontend callsites), H-3c (property test) (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/blocks/crud.rs" />).
-3. **H-9a** — Bug-report redaction allow-list misses GCal email + peer device IDs + generic email regex; reports cross the public-GitHub trust boundary (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/bug_report.rs" />).
-4. **H-4** — `set_todo_state_inner` runs state change + timestamp writes + recurrence sibling creation across separate transactions; crash mid-sequence leaves recurring task stuck (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/properties.rs" />).
-5. **H-13** — Op-log immutability has zero database-level enforcement; only application-level invariant (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/op_log.rs" />).
+3. **H-4** — `set_todo_state_inner` runs state change + timestamp writes + recurrence sibling creation across separate transactions; crash mid-sequence leaves recurring task stuck (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/properties.rs" />).
+4. **H-13** — Op-log immutability has zero database-level enforcement; only application-level invariant (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/op_log.rs" />).
+5. **H-17** — `recurrence::handle_recurrence` reads counters BEFORE `BEGIN IMMEDIATE` (TOCTOU); two clicks on a recurring task can duplicate or skip the next-occurrence sibling (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/recurrence/handle.rs" />).
 
 ### Findings by Domain × Severity
 
@@ -795,8 +795,8 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Core data layer | 0 | 1 | 6 | 9 | 11 |
 | Materializer | 1 | 2 | 6 | 8 | 4 |
 | Cache + Pagination | 0 | 0 | 6 | 12 | 6 |
-| Commands (CRUD) | 0 | 1 | 8 | 10 | 13 |
-| Commands (System) | 0 | 2 | 13 | 13 | 6 |
+| Commands (CRUD) | 0 | 1 | 6 | 9 | 13 |
+| Commands (System) | 0 | 2 | 12 | 13 | 6 |
 | Sync stack | 0 | 3 | 17 | 25 | 5 |
 | Search & Links | 0 | 2 | 4 | 16 | 19 |
 | Lifecycle / Snapshots | 0 | 0 | 18 | 16 | 8 |
@@ -827,12 +827,9 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | ID | Title | Why |
 |---|---|---|
 | **H-3** | Fix `create_page_in_space` bypass in journal/templates/`create_block` | "Nothing outside of spaces" invariant |
-| **H-9a** | Bug-report redaction: GCal email + peer device IDs + email regex | PII leak vector; bug reports cross to public GitHub |
-| **M-3** | `set_page_aliases_inner` wrap in BEGIN IMMEDIATE | One-line atomicity fix |
-| **M-4** | `journal::resolve_or_create_journal_page` wrap in BEGIN IMMEDIATE | TOCTOU dup-page fix |
-| **M-7** | `set_priority_inner` honor user-extended priority options (1..10 not 1..3) | One-line; matches ARCHITECTURE.md §20 (UX-201b) |
-| **M-23** | `MAX_BLOCK_DEPTH` enforced in `create_block_in_tx`, not just `move_block` | One-line guard, prevents bypass |
-| **M-32** | `start_sync_inner` move `record_success` to AFTER actual sync | One-line fix; backoff pre-wipe bug |
+| **H-8** | `list_agenda_range` cursor encodes `b.due_date`/`b.scheduled_date`, not `ac.date` | Pagination drift on agenda |
+| **H-17** | `recurrence::handle_recurrence` reads counters before BEGIN IMMEDIATE (TOCTOU) | Two clicks duplicate next-occurrence sibling |
+| **M-23** | `flush_draft_inner` reads `prev_edit` outside the flush transaction | Conflict-detection asymmetry vs `edit_block_inner` |
 
 ---
 
@@ -851,7 +848,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ---
 
-## HIGH findings (12)
+## HIGH findings (10)
 
 ### H-3 — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated daily (parent — split into H-3a, H-3b, H-3c)
 - **Domain:** Spaces / Commands
@@ -938,24 +935,13 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Recommendation:** Encode `ac.date` in the cursor; bump cursor version field.
 - **Pass-1 source:** 03-cache-pagination / F1
 
-### H-9 — Bug-report redaction allow-list misses GCal email, peer device IDs, and any other PII (parent — split into H-9a, H-9b, H-9c)
+### H-9 — Bug-report redaction allow-list misses GCal email, peer device IDs, and any other PII (parent — split into H-9b, H-9c after H-9a shipped)
 - **Domain:** Commands / System
 - **Location:** `src-tauri/src/commands/bug_report.rs`
-- **What:** Redaction only scrubs `$HOME` + local `device_id`. GCal account email (in error logs), peer device IDs (in sync error context), any property value with PII pass through verbatim into the ZIP destined for GitHub.
-- **Why it matters:** Bug reports cross the trust boundary the feature exists to police — the GitHub repo is public.
-- **Cost:** L (combined) — split into H-9a (S, targeted scrubs — covers the user-visible regression today), H-9b (M, generic redaction architecture), H-9c (M, preview UI). H-9a is the immediate priority; H-9b + H-9c can be scheduled separately.
+- **What:** Redaction now scrubs `$HOME` + local `device_id` + GCal email + peer device IDs + a generic email regex (H-9a shipped). The remaining work is the architectural shift to a deny-list (H-9b) and the user-facing preview UI (H-9c).
+- **Why it matters:** H-9a closed the immediate user-visible leak vectors. H-9b makes the redaction posture future-proof; H-9c adds defense-in-depth UI.
+- **Cost:** L (combined) — split into H-9b (M, generic redaction architecture), H-9c (M, preview UI). Both can be scheduled separately.
 - **Pass-1 source:** 05-commands-system / F5
-
-### H-9a — Bug-report: add specific scrubs for GCal email, peer device IDs, and email regex
-- **Domain:** Commands / System
-- **Location:** `src-tauri/src/commands/bug_report.rs::redact_log` (and similar redact helpers)
-- **What:** Extend the existing `$HOME` + `device_id` allow-list with three additional scrubs: (1) GCal account email (`oauth_account_email` from the keyring or in-memory state at redact time), (2) every known peer device ID (from `peer_refs` table at redact time), (3) a generic `[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}` email regex as a catch-all. Existing tests for redaction continue to pass; add three new ones.
-- **Why it matters:** Closes the immediate user-facing leak today. Cheap, low-risk, doesn't require redesign.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** High (closes the most likely PII leak vectors)
-- **Recommendation:** Land first. The list of "known peer device IDs" comes from a single `SELECT device_id FROM peer_refs` at redact time — no architecture change.
-- **Status:** Open. No dependencies.
 
 ### H-9b — Bug-report: replace allow-list with deny-list-of-tokens architecture
 - **Domain:** Commands / System
@@ -1030,28 +1016,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** High (data integrity observability)
 - **Recommendation:** Detect `(device_id, seq)` collision before INSERT; on hash mismatch, log + emit a sync warning event + persist a fork record for diagnostics.
 - **Pass-1 source:** 06-sync / F4
-
-### H-15 — `fetch_link_metadata` uses the WritePool for a mostly-read operation
-- **Domain:** Commands / Link metadata
-- **Location:** `src-tauri/src/commands/link_metadata.rs::fetch_link_metadata`
-- **What:** Inverse of the split-pool pattern: a network-bound, read-heavy command holds the WritePool while doing HTTP. Blocks all writes.
-- **Why it matters:** Page render that triggers metadata fetch can stall every other write in the app for the duration of the HTTP request.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** High (UX latency)
-- **Recommendation:** Take the read pool for the read-existing path; only acquire the writer for the final upsert.
-- **Pass-1 source:** 05-commands-system / F27
-
-### H-16 — `Clock::today()` returns UTC, not local
-- **Domain:** GCal / Recurrence
-- **Location:** `src-tauri/src/gcal_push/clock.rs::today`; second site in `clamp_to_window`
-- **What:** Window filtering and dirty-set clamping use UTC date; user-visible "today" silently shifts ±1 day across time zones.
-- **Why it matters:** Agenda-day push to GCal goes to the wrong calendar day for users near 00:00 local. Recurrence checks against "today" misfire.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** High
-- **Recommendation:** Use `chrono::Local::now().date_naive()`; thread a `TimeZone` reference if Android needs explicit zone handling.
-- **Pass-1 source:** 10-gcal-spaces-misc / F3, F22
 
 ### H-17 — `recurrence::handle_recurrence` reads counters BEFORE `BEGIN IMMEDIATE` (TOCTOU)
 - **Domain:** Recurrence
@@ -1198,30 +1162,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Commands (CRUD)
 
-### M-21 — `set_page_aliases_inner` is not wrapped in a transaction (DELETE then loop INSERT)
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/pages.rs:33-76`
-- **What:** The function deletes every alias for `page_id` against the bare pool, then loops issuing per-row `INSERT OR IGNORE`. There is no `BEGIN IMMEDIATE` wrapper, so a panic, pool-acquire failure, or partial loop error leaves the page with strictly fewer aliases than before, and concurrent calls for the same page can interleave their delete/insert phases.
-- **Why it matters:** AGENTS.md "Backend Patterns" #2 calls out atomic multi-op sequences; aliases live outside the op log (see I-CommandsCRUD-4) so this DELETE+INSERT is the only enforcement of "replace the full set" semantics.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Wrap the DELETE plus the alias-insert loop (and the existence check) in a single `pool.begin_with("BEGIN IMMEDIATE")` transaction, or replace the loop with one chunked multi-row INSERT respecting `MAX_SQL_PARAMS`.
-- **Pass-1 source:** 04/F4
-- **Status:** Open
-
-### M-22 — `resolve_or_create_journal_page` TOCTOU duplicates journal pages for the same date
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/journal.rs:84-121`
-- **What:** The helper runs a `SELECT ... WHERE block_type = 'page' AND content = ?` against the bare pool and, on miss, calls `create_block_inner` which begins its own tx. Two concurrent callers (UI + MCP `journal_for_date` + boot's `today_journal`) for the same date can both observe "no page" and both create one, since there is no UNIQUE on `(block_type='page', content)` in the schema.
-- **Why it matters:** Duplicate journal pages produce two parallel daily streams, break backlink resolution to that date, and confuse downstream MCP/agenda consumers; the bug is silent and persistent.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Move the existence check inside a `BEGIN IMMEDIATE` tx and call a `create_block_in_tx` variant on miss, so the second caller serialises behind the first and finds the just-created page on its inside-tx re-check.
-- **Pass-1 source:** 04/F5
-- **Status:** Open
-
 ### M-23 — `flush_draft_inner` reads `prev_edit` outside the flush transaction
 - **Domain:** Commands (CRUD)
 - **Location:** `src-tauri/src/commands/drafts.rs:18-45`
@@ -1306,18 +1246,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Add `CREATE UNIQUE INDEX idx_attachments_fs_path ON attachments(fs_path)` in a new migration, and add a `tests/data_shape` assertion that all existing rows are unique; if collisions show up in real DBs, namespace fs_path under `attachment_id` during import.
 - **Pass-1 source:** 05/F4
-- **Status:** Open
-
-### M-32 — `start_sync_inner` records success before any sync has happened
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/sync_cmds.rs:167-197` (function), `src-tauri/src/commands/sync_cmds.rs:188` (offending `record_success`)
-- **What:** The wrapper checks backoff via `scheduler.may_retry`, acquires `_guard` (immediately dropped on return), calls `scheduler.notify_change()`, and then calls `scheduler.record_success(&peer_id)` *before* the daemon has attempted (let alone succeeded at) a real sync. Step 4 wipes per-peer backoff state pre-emptively, so if the daemon then fails (peer offline, cert mismatch) no backoff applies on the next click.
-- **Why it matters:** Defeats the backoff invariant documented in ARCHITECTURE.md §18:1565 ("`record_failure(id)` Doubles backoff: 1s → 2s → 4s → … → 60s max"). Single-user threat model, but hammering a misconfigured peer wastes battery, network, and daemon-task time.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Drop the `record_success` call from `start_sync_inner` — the daemon's own success path already calls `scheduler.record_success(peer_id)` on real success. The wrapper should only *trigger* a sync, not pre-credit it.
-- **Pass-1 source:** 05/F17 (downgraded High→Medium per REVIEW-LATER; cross-ref 06/F41)
 - **Status:** Open
 
 ### M-33 — `start_sync_inner`'s peer lock guard is dropped before the daemon syncs
@@ -2168,18 +2096,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Move the file-deletion loop into `tokio::task::spawn_blocking` (or a background materializer task) so the IPC returns as soon as the rows are purged; keep the existing per-file warning logs.
 - **Pass-1 source:** 04/F28
-- **Status:** Open
-
-### L-37 — `MAX_BLOCK_DEPTH` enforced in `move_block_inner` but not in `create_block_in_tx`
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/blocks/crud.rs:37-172` (create), vs `src-tauri/src/commands/blocks/move_ops.rs:140-144` (enforcement)
-- **What:** `move_block_inner` rejects moves that push the subtree past `MAX_BLOCK_DEPTH = 20`, but `create_block_in_tx` performs only a `SELECT ... WHERE id = ?` parent existence check — no depth count. A user can therefore reach depth >20 by repeatedly creating blocks under the deepest leaf. ARCHITECTURE.md §20 documents the limit as 20 for `create_block`, so the contract is not enforced.
-- **Why it matters:** `depth < 100` on recursive CTEs catches catastrophic cases, but `MAX_BLOCK_DEPTH` is the user-visible limit; the asymmetry is a real loophole that lets the tree drift past the intended bound through the create path.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** After resolving `parent_id` in `create_block_in_tx`, count parent depth via the same `path` recursive CTE used in `move_block_inner` (already filters `is_conflict = 0` and bounds at `depth < 100`) and reject when `parent_depth + 1 > MAX_BLOCK_DEPTH`. Add a regression test creating 21 nested blocks and asserting the 21st errors.
-- **Pass-1 source:** 04/F30
 - **Status:** Open
 
 ### L-39 — `compute_edit_diff_inner` propagates `serde_json::from_str` errors via `?` (opaque message)

@@ -420,6 +420,28 @@ fn sync_start_sync_after_backoff_reset_succeeds() {
     );
 }
 
+#[test]
+fn sync_start_sync_does_not_record_success_preemptively() {
+    // M-32 regression: `start_sync_inner` used to call
+    // `scheduler.record_success(peer_id)` immediately after
+    // `notify_change`, wiping per-peer backoff state before the
+    // SyncDaemon had attempted (let alone succeeded at) a real sync.
+    // The wrapper now only *triggers* a sync; the daemon's own
+    // success path records the result after a real network round-trip.
+    let scheduler = SyncScheduler::new();
+    let result = start_sync_inner(&scheduler, "device-local", "peer-1".into());
+    assert!(result.is_ok(), "start_sync must succeed for a fresh peer");
+
+    // No backoff entries should exist for peer-1 — `start_sync_inner`
+    // does not add one (the daemon does), and post-M-32 it must not
+    // touch the backoff map at all.
+    assert!(
+        scheduler.failure_counts().is_empty(),
+        "start_sync_inner must not touch backoff state; found: {:?}",
+        scheduler.failure_counts()
+    );
+}
+
 // ======================================================================
 // Sync — cancel_sync
 // ======================================================================

@@ -17,13 +17,30 @@
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use sqlx::SqlitePool;
 use tauri::Manager;
 
 use crate::error::AppError;
 use crate::log_dir_for_app_data;
+
+/// H-9a — generic email regex applied AFTER the specific GCal-email scrub
+/// so a known account still carries the precise `[REDACTED:GCAL_EMAIL]`
+/// marker while stray emails in error messages, tracing fields, or third-
+/// party log lines all collapse to the generic `[EMAIL]` placeholder.
+///
+/// The pattern is the well-known "good-enough" email shape used in most
+/// log scrubbers; deliberately conservative so common cases (Gmail, work
+/// addresses, mailing lists) are caught without trying to be RFC 5322
+/// compliant. Compiled once via [`LazyLock`] — the regex is hot-path.
+static EMAIL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+        .expect("EMAIL_REGEX is a compile-time constant; regex must parse")
+});
 
 /// Metadata returned by [`collect_bug_report_metadata`].
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -218,12 +235,30 @@ fn read_capped_file(path: &Path) -> std::io::Result<String> {
     ))
 }
 
-/// Redact a single line by:
+/// Redact a single line by, in order:
 ///  1. Replacing `$HOME` prefixes (and any absolute path beginning with `/`
 ///     except bracketed log-fmt tokens) with `~` when `home` is given.
 ///  2. Blanking any occurrence of `device_id` with `[REDACTED_DEVICE_ID]`.
-///  3. Truncating the result to [`MAX_LINE_BYTES`] chars.
-fn redact_line(line: &str, home: Option<&str>, device_id: Option<&str>) -> String {
+///  3. **H-9a:** Replacing the user's GCal account email (if known) with
+///     `[REDACTED:GCAL_EMAIL]`.
+///  4. **H-9a:** Replacing every known peer device ID (from `peer_refs`)
+///     with `[REDACTED:PEER_DEVICE_ID]`.
+///  5. **H-9a:** Catch-all email regex → `[EMAIL]`. Applied AFTER the
+///     specific GCal-email scrub so the known account keeps its precise
+///     marker; this fold catches stray emails in error messages, tracing
+///     fields, and third-party log lines that the specific scrubs miss.
+///  6. Truncating the result to [`MAX_LINE_BYTES`] chars.
+///
+/// All three new scrubs are additive — passing `None` / `&[]` is a noop,
+/// preserving the previous semantics for callers that have not yet been
+/// updated (e.g. early boot before the SQLite pool is online).
+fn redact_line(
+    line: &str,
+    home: Option<&str>,
+    device_id: Option<&str>,
+    gcal_email: Option<&str>,
+    peer_device_ids: &[String],
+) -> String {
     let mut out = line.to_string();
     if let Some(home) = home {
         if !home.is_empty() {
@@ -234,6 +269,27 @@ fn redact_line(line: &str, home: Option<&str>, device_id: Option<&str>) -> Strin
         if !id.is_empty() {
             out = out.replace(id, "[REDACTED_DEVICE_ID]");
         }
+    }
+    // H-9a (1): specific GCal account email replaced BEFORE the generic
+    // email regex so the known account keeps its precise tag.
+    if let Some(email) = gcal_email {
+        if !email.is_empty() {
+            out = out.replace(email, "[REDACTED:GCAL_EMAIL]");
+        }
+    }
+    // H-9a (2): every known peer device ID — the local `device_id` is
+    // already covered above, but cross-device sync logs reference peer IDs
+    // verbatim and must be scrubbed independently.
+    for peer in peer_device_ids {
+        if !peer.is_empty() {
+            out = out.replace(peer.as_str(), "[REDACTED:PEER_DEVICE_ID]");
+        }
+    }
+    // H-9a (3): generic email catch-all. Runs LAST so the GCal-specific
+    // marker above is preserved verbatim (the specific tag itself does not
+    // match the email shape, so it is not re-rewritten by this pass).
+    if EMAIL_REGEX.is_match(&out) {
+        out = EMAIL_REGEX.replace_all(&out, "[EMAIL]").into_owned();
     }
     if out.len() > MAX_LINE_BYTES {
         let extra = out.len() - MAX_LINE_BYTES;
@@ -250,7 +306,13 @@ fn redact_line(line: &str, home: Option<&str>, device_id: Option<&str>) -> Strin
 }
 
 /// Apply line-by-line redaction to an entire log file's contents.
-fn redact_log(contents: &str, home: Option<&str>, device_id: Option<&str>) -> String {
+fn redact_log(
+    contents: &str,
+    home: Option<&str>,
+    device_id: Option<&str>,
+    gcal_email: Option<&str>,
+    peer_device_ids: &[String],
+) -> String {
     let mut out = String::with_capacity(contents.len());
     for line in contents.split_inclusive('\n') {
         // `split_inclusive` preserves the trailing `\n`; strip it before
@@ -259,7 +321,13 @@ fn redact_log(contents: &str, home: Option<&str>, device_id: Option<&str>) -> St
             Some(body) => (body, "\n"),
             None => (line, ""),
         };
-        out.push_str(&redact_line(body, home, device_id));
+        out.push_str(&redact_line(
+            body,
+            home,
+            device_id,
+            gcal_email,
+            peer_device_ids,
+        ));
         out.push_str(newline);
     }
     out
@@ -288,11 +356,20 @@ fn home_dir_string() -> Option<String> {
 /// Enumerates matching files under `log_dir`, reads each one with a byte
 /// cap, optionally applies redaction, and returns them sorted by filename
 /// (which — thanks to the `YYYY-MM-DD` suffix — sorts chronologically).
+///
+/// H-9a — `gcal_email` and `peer_device_ids` extend the redaction allow-list
+/// with PII vectors that cross the trust boundary when a bug-report ZIP is
+/// uploaded to a public GitHub issue. They are only consulted when
+/// `redact == true`; pass `None` / `&[]` if the values are unknown (e.g.
+/// the user has never connected GCal, or has no paired peers) and the
+/// scrubs gracefully degrade to a noop.
 pub fn read_logs_for_report_inner(
     log_dir: &Path,
     redact: bool,
     home: Option<&str>,
     device_id: Option<&str>,
+    gcal_email: Option<&str>,
+    peer_device_ids: &[String],
 ) -> Result<Vec<LogFileEntry>, AppError> {
     if !log_dir.is_dir() {
         return Ok(Vec::new());
@@ -331,7 +408,7 @@ pub fn read_logs_for_report_inner(
             .unwrap_or("agaric.log")
             .to_string();
         let final_contents = if redact {
-            redact_log(&contents, home, device_id)
+            redact_log(&contents, home, device_id, gcal_email, peer_device_ids)
         } else {
             contents
         };
@@ -344,11 +421,66 @@ pub fn read_logs_for_report_inner(
     Ok(out)
 }
 
+/// H-9a — fetch the redaction allow-list inputs that live in SQLite.
+///
+/// Returns `(gcal_email, peer_device_ids)`. Both are best-effort:
+///
+/// * **GCal email:** the value of `gcal_settings.oauth_account_email`. The
+///   user-prompt suggested reading this from the keyring, but `Token` (the
+///   keyring payload) does not carry the email — the email is persisted in
+///   `gcal_settings` alongside the rest of the per-device GCal config (see
+///   `commands/gcal.rs::get_gcal_status_inner` which reads it from the
+///   exact same row). On any DB error we drop to `None`; a redaction miss
+///   beats a failed bug-report dialog.
+/// * **Peer device IDs:** every `peer_id` from `peer_refs`. The user-prompt
+///   referred to the column as `device_id`; the actual schema (see
+///   `migrations/0001_initial.sql`) names it `peer_id` (the comment notes
+///   "device UUID of remote peer"). The semantics — "every paired peer's
+///   stable identifier" — are unchanged. On DB error we fall back to an
+///   empty slice for the same fail-soft reason.
+async fn fetch_redaction_extras(pool: &SqlitePool) -> (Option<String>, Vec<String>) {
+    let gcal_email = match crate::gcal_push::models::get_setting(
+        pool,
+        crate::gcal_push::models::GcalSettingKey::OauthAccountEmail,
+    )
+    .await
+    {
+        Ok(Some(s)) if !s.is_empty() => Some(s),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!(
+                target: "bug_report",
+                error = %e,
+                "failed to fetch oauth_account_email for redaction; skipping GCal email scrub",
+            );
+            None
+        }
+    };
+
+    let peer_device_ids: Vec<String> = match sqlx::query_scalar!("SELECT peer_id FROM peer_refs")
+        .fetch_all(pool)
+        .await
+    {
+        Ok(rows) => rows.into_iter().filter(|s| !s.is_empty()).collect(),
+        Err(e) => {
+            tracing::warn!(
+                target: "bug_report",
+                error = %e,
+                "failed to fetch peer_refs for redaction; skipping peer-device-id scrub",
+            );
+            Vec::new()
+        }
+    };
+
+    (gcal_email, peer_device_ids)
+}
+
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn read_logs_for_report(
     app: tauri::AppHandle,
+    pool: tauri::State<'_, crate::db::ReadPool>,
     device_id: tauri::State<'_, crate::device::DeviceId>,
     redact: bool,
 ) -> Result<Vec<LogFileEntry>, AppError> {
@@ -358,7 +490,19 @@ pub async fn read_logs_for_report(
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
     let log_dir = log_dir_for_app_data(&data_dir);
     let home = home_dir_string();
-    read_logs_for_report_inner(&log_dir, redact, home.as_deref(), Some(device_id.as_str()))
+    let (gcal_email, peer_device_ids) = if redact {
+        fetch_redaction_extras(&pool.inner().0).await
+    } else {
+        (None, Vec::new())
+    };
+    read_logs_for_report_inner(
+        &log_dir,
+        redact,
+        home.as_deref(),
+        Some(device_id.as_str()),
+        gcal_email.as_deref(),
+        &peer_device_ids,
+    )
 }
 
 #[cfg(test)]
@@ -531,14 +675,14 @@ mod tests {
     #[test]
     fn read_logs_empty_dir_returns_empty() {
         let dir = TempDir::new().unwrap();
-        let out = read_logs_for_report_inner(dir.path(), false, None, None).unwrap();
+        let out = read_logs_for_report_inner(dir.path(), false, None, None, None, &[]).unwrap();
         assert_eq!(out.len(), 0);
     }
 
     #[test]
     fn read_logs_nonexistent_dir_returns_empty() {
         let bogus = PathBuf::from("/tmp/agaric-nonexistent-bug-report-dir");
-        let out = read_logs_for_report_inner(&bogus, false, None, None).unwrap();
+        let out = read_logs_for_report_inner(&bogus, false, None, None, None, &[]).unwrap();
         assert_eq!(out.len(), 0);
     }
 
@@ -557,7 +701,7 @@ mod tests {
         )
         .unwrap();
 
-        let out = read_logs_for_report_inner(log_dir, false, None, None).unwrap();
+        let out = read_logs_for_report_inner(log_dir, false, None, None, None, &[]).unwrap();
 
         assert_eq!(out.len(), 2, "should include today + yesterday");
         // Files sort alphabetically: "agaric.log" < "agaric.log.YYYY-..."
@@ -582,7 +726,7 @@ mod tests {
         contents.push_str("2025-01-01 ERROR [agaric] TAIL_MARKER\n");
         fs::write(&path, &contents).unwrap();
 
-        let out = read_logs_for_report_inner(log_dir, false, None, None).unwrap();
+        let out = read_logs_for_report_inner(log_dir, false, None, None, None, &[]).unwrap();
 
         assert_eq!(out.len(), 1);
         let got = &out[0].contents;
@@ -614,7 +758,7 @@ mod tests {
             .to_string();
         fs::write(log_dir.join(format!("agaric.log.{old}")), "should skip\n").unwrap();
 
-        let out = read_logs_for_report_inner(log_dir, false, None, None).unwrap();
+        let out = read_logs_for_report_inner(log_dir, false, None, None, None, &[]).unwrap();
         assert_eq!(out.len(), 1, "only today's file should be included");
         assert_eq!(out[0].name, "agaric.log");
     }
@@ -629,7 +773,8 @@ mod tests {
         );
         fs::write(log_dir.join("agaric.log"), &contents).unwrap();
 
-        let out = read_logs_for_report_inner(log_dir, true, Some(HOME), Some(DEV)).unwrap();
+        let out =
+            read_logs_for_report_inner(log_dir, true, Some(HOME), Some(DEV), None, &[]).unwrap();
 
         assert_eq!(out.len(), 1);
         let body = &out[0].contents;
@@ -659,7 +804,7 @@ mod tests {
         long_line.push('\n');
         fs::write(log_dir.join("agaric.log"), &long_line).unwrap();
 
-        let out = read_logs_for_report_inner(log_dir, true, None, None).unwrap();
+        let out = read_logs_for_report_inner(log_dir, true, None, None, None, &[]).unwrap();
 
         assert_eq!(out.len(), 1);
         let lines: Vec<&str> = out[0].contents.split_inclusive('\n').collect();
@@ -683,7 +828,8 @@ mod tests {
         let contents = format!("device={DEV} home={HOME}/foo\n");
         fs::write(log_dir.join("agaric.log"), &contents).unwrap();
 
-        let out = read_logs_for_report_inner(log_dir, false, Some(HOME), Some(DEV)).unwrap();
+        let out =
+            read_logs_for_report_inner(log_dir, false, Some(HOME), Some(DEV), None, &[]).unwrap();
 
         assert_eq!(out.len(), 1);
         assert!(out[0].contents.contains(DEV));
@@ -706,7 +852,7 @@ mod tests {
         // ...then a 4-byte codepoint (😀 = U+1F600) so the byte cut lands
         // inside it.
         s.push('😀');
-        let out = redact_line(&s, None, None);
+        let out = redact_line(&s, None, None, None, &[]);
         assert!(out.contains("…[truncated"), "must carry truncation marker");
         // No panic = success. Verify the output is still valid UTF-8 (it
         // inherently is since it's a `String`).
@@ -716,22 +862,151 @@ mod tests {
     #[test]
     fn redact_line_no_home_no_device_is_identity_on_short_lines() {
         let line = "2025-01-01 INFO nothing to redact";
-        assert_eq!(redact_line(line, None, None), line);
+        assert_eq!(redact_line(line, None, None, None, &[]), line);
     }
 
     #[test]
     fn redact_line_empty_home_is_noop() {
         let line = "2025-01-01 path=/home/alice/x";
         // Empty home must NOT replace all forward-slashes or similar.
-        let out = redact_line(line, Some(""), None);
+        let out = redact_line(line, Some(""), None, None, &[]);
         assert_eq!(out, line);
     }
 
     #[test]
     fn redact_line_empty_device_id_is_noop() {
         let line = "2025-01-01 device=abc";
-        let out = redact_line(line, None, Some(""));
+        let out = redact_line(line, None, Some(""), None, &[]);
         assert_eq!(out, line);
+    }
+
+    // -- H-9a redaction extensions ---------------------------------------
+
+    /// H-9a (1) — when the GCal account email is known, every occurrence of
+    /// it must be replaced with the precise `[REDACTED:GCAL_EMAIL]` marker
+    /// and the original literal must not survive in the output.
+    #[test]
+    fn redact_line_replaces_gcal_email() {
+        let line = "2025-01-01 INFO [gcal] account=me@gmail.com synced 12 events";
+        let out = redact_line(line, None, None, Some("me@gmail.com"), &[]);
+        assert!(
+            !out.contains("me@gmail.com"),
+            "GCal email must be redacted, got: {out}"
+        );
+        assert!(
+            out.contains("[REDACTED:GCAL_EMAIL]"),
+            "specific GCal-email marker must be present, got: {out}"
+        );
+        // The catch-all `[EMAIL]` marker must not also appear — the
+        // specific scrub takes precedence and the marker itself does not
+        // match the email regex.
+        assert!(
+            !out.contains("[EMAIL]"),
+            "specific GCal scrub must not be double-tagged with [EMAIL], got: {out}"
+        );
+    }
+
+    /// H-9a (2) — every known peer device ID from `peer_refs` must be
+    /// scrubbed, regardless of how many appear on a line.
+    #[test]
+    fn redact_line_replaces_peer_device_ids() {
+        let peers = vec![
+            "01HZQ7-PEER-AAA".to_string(),
+            "01HZQ7-PEER-BBB".to_string(),
+            "01HZQ7-PEER-CCC".to_string(),
+        ];
+        let line = format!(
+            "2025-01-01 DEBUG [sync] peers={} forwarded to {}, {}",
+            peers[0], peers[1], peers[2],
+        );
+        let out = redact_line(&line, None, None, None, &peers);
+        for peer in &peers {
+            assert!(
+                !out.contains(peer.as_str()),
+                "peer id {peer} must be redacted, got: {out}"
+            );
+        }
+        // All three occurrences should collapse to the marker.
+        assert_eq!(
+            out.matches("[REDACTED:PEER_DEVICE_ID]").count(),
+            3,
+            "expected 3 peer-redaction markers, got: {out}"
+        );
+    }
+
+    /// H-9a (3) — the catch-all email regex must scrub stray emails that
+    /// are NOT the GCal account (e.g. an upstream library logging a
+    /// support address, an error message echoing a third party's email).
+    #[test]
+    fn redact_line_email_regex_catches_unknown_emails() {
+        let line = "2025-01-01 ERROR upstream=random@example.com timed out";
+        // Note: gcal_email is None here — the only email present is NOT
+        // the user's GCal account, so it MUST fall to the catch-all regex.
+        let out = redact_line(line, None, None, None, &[]);
+        assert!(
+            !out.contains("random@example.com"),
+            "unknown email must be redacted, got: {out}"
+        );
+        assert!(
+            out.contains("[EMAIL]"),
+            "catch-all [EMAIL] marker must be present, got: {out}"
+        );
+    }
+
+    /// H-9a — ordering invariant: the specific GCal-email marker must take
+    /// precedence over the generic regex. If the regex were applied first,
+    /// the GCal address would be scrubbed to `[EMAIL]` and the more
+    /// specific provenance information would be lost.
+    #[test]
+    fn redact_line_specific_email_takes_precedence_over_regex() {
+        let line = "2025-01-01 INFO oauth.account=me@gmail.com refreshed";
+        let out = redact_line(line, None, None, Some("me@gmail.com"), &[]);
+        assert!(
+            out.contains("[REDACTED:GCAL_EMAIL]"),
+            "GCal-specific marker must win, got: {out}"
+        );
+        assert!(
+            !out.contains("[EMAIL]"),
+            "generic [EMAIL] marker must NOT clobber the specific one, got: {out}"
+        );
+        assert!(
+            !out.contains("me@gmail.com"),
+            "the original email must not survive, got: {out}"
+        );
+    }
+
+    /// H-9a — multiple distinct emails on the same line must all be
+    /// scrubbed by the catch-all regex (`replace_all`, not `replace`).
+    #[test]
+    fn redact_line_email_regex_handles_multiple_emails_in_one_line() {
+        let line = "2025-01-01 ERROR cc=alice@example.com,bob@other.org delivery failed";
+        let out = redact_line(line, None, None, None, &[]);
+        assert!(
+            !out.contains("alice@example.com"),
+            "first email must be redacted, got: {out}"
+        );
+        assert!(
+            !out.contains("bob@other.org"),
+            "second email must be redacted, got: {out}"
+        );
+        assert_eq!(
+            out.matches("[EMAIL]").count(),
+            2,
+            "both emails must be replaced with [EMAIL], got: {out}"
+        );
+    }
+
+    /// H-9a — a line with no PII must pass through unchanged. Guards
+    /// against false-positive regex matches (e.g. tracing fields with `@`
+    /// signs that are not emails — `attr@key=value` style).
+    #[test]
+    fn redact_line_no_pii_input_unchanged() {
+        let line = "2025-01-01 INFO [agaric] db.pool=2W+4R writer=available";
+        let out = redact_line(line, Some("/home/alice"), Some("dev-id"), None, &[]);
+        assert_eq!(
+            out, line,
+            "line with no PII must pass through unchanged, got: {out}"
+        );
     }
 
     // -- home_dir_string (L-41) ------------------------------------------

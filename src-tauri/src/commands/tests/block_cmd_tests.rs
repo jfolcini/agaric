@@ -1833,6 +1833,127 @@ async fn move_block_at_depth_limit_succeeds() {
     );
 }
 
+// ── L-37: MAX_BLOCK_DEPTH enforced in create_block_in_tx ─────────────────
+//
+// `move_block_inner` already rejects moves that would push the subtree past
+// the documented limit (ARCHITECTURE.md §20). L-37 closed the asymmetry on
+// the create side: a user used to be able to repeatedly create blocks under
+// the deepest leaf and drift past the bound. The recursive CTE inside
+// `create_block_in_tx` now computes parent_depth and rejects when
+// parent_depth + 1 > MAX_BLOCK_DEPTH.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_at_max_depth_succeeds() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Build a chain of MAX_BLOCK_DEPTH - 1 levels under a page. The deepest
+    // existing block is at depth (MAX_BLOCK_DEPTH - 1); creating one more
+    // under it lands at exactly MAX_BLOCK_DEPTH = OK.
+    insert_block(&pool, "CDLIM_PAGE", "page", "root", None, Some(1)).await;
+    let mut parent = "CDLIM_PAGE".to_string();
+    for i in 1..MAX_BLOCK_DEPTH {
+        let id = format!("CDLIM_{i:02}");
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            &format!("level {i}"),
+            Some(&parent),
+            Some(1),
+        )
+        .await;
+        parent = id;
+    }
+
+    let result = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "at-limit".into(),
+        Some(parent),
+        Some(1),
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "create at exactly MAX_BLOCK_DEPTH should succeed, got: {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_exceeding_max_depth_returns_validation_error() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Build a chain of MAX_BLOCK_DEPTH levels: page→b1→...→b20. The deepest
+    // existing block is at depth MAX_BLOCK_DEPTH; creating one more under it
+    // would push the new block to depth MAX_BLOCK_DEPTH + 1 = rejected.
+    insert_block(&pool, "CDOVER_PAGE", "page", "root", None, Some(1)).await;
+    let mut parent = "CDOVER_PAGE".to_string();
+    for i in 1..=MAX_BLOCK_DEPTH {
+        let id = format!("CDOVER_{i:02}");
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            &format!("level {i}"),
+            Some(&parent),
+            Some(1),
+        )
+        .await;
+        parent = id;
+    }
+
+    let result = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "over-limit".into(),
+        Some(parent),
+        Some(1),
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "creating beyond MAX_BLOCK_DEPTH should return Validation, got: {result:?}"
+    );
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("nesting depth"),
+        "error message should mention nesting depth, got: {err}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_at_root_with_no_parent_skips_depth_check() {
+    // L-37 regression guard: when `parent_id = None`, the new depth check
+    // must NOT fire — root-level page creation is unconstrained by the
+    // depth limit (the page itself sits at depth 0).
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let result = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "root-page".into(),
+        None,
+        Some(1),
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "creating a root-level block (no parent) must succeed regardless of depth, got: {result:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn move_block_with_subtree_exceeding_max_depth_returns_validation_error() {
     let (pool, _dir) = test_pool().await;
