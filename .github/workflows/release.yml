@@ -13,13 +13,46 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Guard against version drift between the git tag and the in-repo
+  # manifests. tauri-action names release bundles + the in-app version
+  # from tauri.conf.json, while the GitHub Release uses `github.ref_name`
+  # (the tag). If they disagree, the published release page says one
+  # thing while the .deb/.AppImage/.msi/.dmg/About-dialog/Cargo
+  # `--version` strings say another, and the Tauri updater compares the
+  # wrong number against the manifest. Fail fast before any heavy build
+  # job spins up. Tag may be `0.1.14` or `v0.1.14`; strip a leading `v`
+  # before comparing.
+  verify-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify tag matches manifest versions
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          CONF=$(jq -r .version src-tauri/tauri.conf.json)
+          CARGO=$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)
+          PKG=$(jq -r .version package.json)
+          PKG_LOCK=$(jq -r .version package-lock.json)
+          CARGO_LOCK=$(awk '/^name = "agaric"$/{getline; print; exit}' src-tauri/Cargo.lock | cut -d'"' -f2)
+          echo "tag=$TAG conf=$CONF cargo=$CARGO cargo.lock=$CARGO_LOCK pkg=$PKG pkg.lock=$PKG_LOCK"
+          fail=0
+          for v in "$CONF" "$CARGO" "$CARGO_LOCK" "$PKG" "$PKG_LOCK"; do
+            if [ "$v" != "$TAG" ]; then fail=1; fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Version drift — tag=$TAG but tauri.conf.json=$CONF, Cargo.toml=$CARGO, Cargo.lock=$CARGO_LOCK, package.json=$PKG, package-lock.json=$PKG_LOCK. Bump all of them in lockstep before tagging."
+            exit 1
+          fi
+
   # Run the same validation as `prek run --all-files` locally before letting
   # the release matrix build any artifacts. Source of truth: prek.toml.
   validate:
+    needs: verify-version
     uses: ./.github/workflows/_validate.yml
 
   build-and-release:
-    needs: validate
+    needs: [verify-version, validate]
     strategy:
       fail-fast: false
       matrix:
@@ -263,7 +296,7 @@ jobs:
   # APK to that same release with `gh release upload`.
   # ---------------------------------------------------------------------------
   android-build-and-release:
-    needs: [validate, build-and-release]
+    needs: [verify-version, validate, build-and-release]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
