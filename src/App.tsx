@@ -592,23 +592,37 @@ function App() {
     }
   }, [])
 
-  // Preload the resolve cache (pages + tags) once on app boot
+  // Preload the resolve cache (pages + tags) once on app boot, and
+  // again whenever the active space changes (FEAT-3p7). Boot races
+  // between this effect and `refreshAvailableSpaces()` are fine — the
+  // first pass may run with `currentSpaceId == null` (preload skips the
+  // space filter, populates the global cache), and a second pass runs
+  // once the space store hydrates. Either way the cache lands keyed by
+  // the eventual current space.
   useEffect(() => {
-    useResolveStore.getState().preload()
-  }, [])
+    useResolveStore.getState().preload(currentSpaceId ?? undefined)
+  }, [currentSpaceId])
 
+  // FEAT-3p7 — Cross-space link enforcement: on space switch, flush
+  // BOTH the short-query pages list AND every cache entry keyed under
+  // the previous space. Without the cache flush, a chip whose ULID
+  // belongs to the previous space would still resolve to its title
+  // and silently navigate the user across the space boundary on click
+  // (the locked-in policy is no live links between spaces, ever).
+  //
+  // Order matters: we read `prevSpaceIdRef.current` BEFORE touching
+  // anything so we know which prefix to flush, then update the ref so
+  // the next switch sees the now-current space as the next "previous".
+  // Keeping this in its own effect (separate from the visual-identity
+  // effect below) keeps the two concerns decoupled.
+  const prevSpaceIdRef = useRef<string | null>(currentSpaceId)
   useEffect(() => {
-    // FEAT-3 Phase 2 — clear the global page-title search cache on space
-    // switch so the link picker's short-query path doesn't surface
-    // other-space matches. Resolve cache (title→ULID map) is kept intact
-    // so existing cross-space `[[ULID]]` chips still render their names.
-    //
-    // The `void currentSpaceId` pin is deliberate: biome's exhaustive-deps
-    // can't see that `clearPagesList` semantically depends on the current
-    // space (it reads state indirectly via the store getter), so we
-    // reference `currentSpaceId` once to keep the dep array meaningful.
-    void currentSpaceId
+    const prev = prevSpaceIdRef.current
+    if (prev != null && prev !== currentSpaceId) {
+      useResolveStore.getState().clearAllForSpace(prev)
+    }
     useResolveStore.getState().clearPagesList()
+    prevSpaceIdRef.current = currentSpaceId
   }, [currentSpaceId])
 
   // FEAT-3p10 — visual identity. On every space change:

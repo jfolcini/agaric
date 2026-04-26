@@ -19,6 +19,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '../../lib/i18n'
+import { useSpaceStore } from '../../stores/space'
 import { QuickCaptureDialog } from '../QuickCaptureDialog'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -27,6 +28,14 @@ const mockedToastError = vi.mocked(toast.error)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // FEAT-3p5: QuickCaptureDialog reads `currentSpaceId` from
+  // `useSpaceStore` and passes it through `quickCaptureBlock`. Seed
+  // a fixed space so the IPC arg shape is deterministic.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_PERSONAL',
+    availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
+    isReady: true,
+  })
 })
 
 describe('QuickCaptureDialog', () => {
@@ -76,6 +85,7 @@ describe('QuickCaptureDialog', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('quick_capture_block', {
         content: 'captured',
+        spaceId: 'SPACE_PERSONAL',
       })
     })
     expect(onOpenChange).toHaveBeenCalledWith(false)
@@ -102,6 +112,7 @@ describe('QuickCaptureDialog', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('quick_capture_block', {
         content: 'hotkey-submit',
+        spaceId: 'SPACE_PERSONAL',
       })
     })
     expect(onOpenChange).toHaveBeenCalledWith(false)

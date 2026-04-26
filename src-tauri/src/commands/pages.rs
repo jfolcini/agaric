@@ -457,7 +457,14 @@ pub struct PageSubtreeResponse {
 /// descendant walk for the children. Validates that the requested block
 /// exists and is actually a `page`. Returns [`AppError::NotFound`] for
 /// unknown IDs and [`AppError::Validation`] when the ID resolves to a
-/// non-page block.
+/// non-page block, or when the page does not belong to `space_id`.
+///
+/// FEAT-3 Phase 7 — `space_id` is required (not optional). Pages whose
+/// `space` property does not match `space_id` are rejected with
+/// [`AppError::Validation`]. This is the policy enforcement point for
+/// "no live links between spaces, ever": deep-linking into a foreign
+/// page from inside a different space's tab stack is impossible. See
+/// REVIEW-LATER FEAT-3p7.
 ///
 /// The descendant walk intentionally uses the denormalized `page_id`
 /// column (index `idx_blocks_page_id`) rather than a recursive CTE —
@@ -468,6 +475,7 @@ pub struct PageSubtreeResponse {
 pub async fn get_page_inner(
     pool: &SqlitePool,
     page_id: &str,
+    space_id: &str,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageSubtreeResponse, AppError> {
@@ -476,6 +484,25 @@ pub async fn get_page_inner(
         return Err(AppError::Validation(format!(
             "block '{page_id}' has block_type '{}', expected 'page'",
             page.block_type
+        )));
+    }
+
+    // FEAT-3 Phase 7: enforce space membership. The page must carry a
+    // `space` property equal to `space_id`, otherwise the request crosses
+    // a space boundary — which the locked-in design forbids. Returning
+    // `Validation` keeps the error category consistent with other
+    // policy-violation rejections (e.g. wrong block_type above).
+    let space_match = sqlx::query_scalar!(
+        r#"SELECT 1 AS "ok!: i32" FROM block_properties
+           WHERE block_id = ? AND key = 'space' AND value_ref = ?"#,
+        page_id,
+        space_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+    if space_match.is_none() {
+        return Err(AppError::Validation(format!(
+            "page '{page_id}' not in current space '{space_id}'"
         )));
     }
 

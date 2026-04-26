@@ -124,19 +124,34 @@ pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<Bloc
 /// Batch-resolve block metadata for a list of IDs in a single query.
 ///
 /// Returns one [`ResolvedBlock`] per matched ID. IDs that don't exist in the
-/// database are silently omitted (no error). Soft-deleted blocks are included
-/// with `deleted = true`.
+/// database **or whose owning page lives in a different space** are silently
+/// omitted (no error). Soft-deleted blocks are included with `deleted = true`.
 ///
 /// Uses `json_each()` so the full ID list is passed as a single JSON-encoded
 /// bind parameter — no dynamic SQL construction.
 ///
+/// FEAT-3 Phase 7 — `space_id` is required (not optional). Targets whose
+/// `COALESCE(b.page_id, b.id)` does not carry `space = ?space_id` are
+/// dropped from the result. This is the policy enforcement point for
+/// "no live links between spaces, ever": foreign-space chips fall into
+/// the "unknown id" branch in the frontend and render as broken-link
+/// chips via the existing UX. See REVIEW-LATER FEAT-3p7.
+///
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `ids` is empty
+///
+/// `space_id` is `Option<String>` — when `Some`, results are scoped to that
+/// space (FEAT-3p7's broken-chip rendering for foreign-space `[[ULID]]`
+/// targets); when `None`, the call is cross-space (used by legacy surfaces
+/// like trash, search, agenda views that have not yet been promoted to
+/// per-space scoping — tracked under FEAT-3p4). The transitional `Option`
+/// shape mirrors `list_page_history`'s FEAT-3p8 pattern.
 #[instrument(skip(pool, ids), err)]
 pub async fn batch_resolve_inner(
     pool: &SqlitePool,
     ids: Vec<String>,
+    space_id: Option<String>,
 ) -> Result<Vec<ResolvedBlock>, AppError> {
     if ids.is_empty() {
         return Err(AppError::Validation("ids list cannot be empty".into()));
@@ -144,16 +159,38 @@ pub async fn batch_resolve_inner(
 
     let ids_json = serde_json::to_string(&ids)?;
 
+    // FEAT-3 Phase 7: scope to the current space using the canonical
+    // `COALESCE(b.page_id, b.id) IN (SELECT bp.block_id FROM block_properties bp
+    // WHERE bp.key = 'space' AND bp.value_ref = ?)` filter (matches the pattern
+    // shipped in `pagination/{hierarchy,trash}.rs` and `fts/search.rs`).
+    // The `?2 IS NULL OR …` shape lets cross-space callers (None) bypass
+    // the filter entirely while space-scoped callers (Some) get the
+    // foreign-target-drops-out behaviour the spec demands.
+    //
+    // AGENTS.md invariant #9 — `is_conflict = 0` filter prevents conflict
+    // copies from leaking into resolution results. A conflict copy carries
+    // its own ULID + the same content as the original; without this guard
+    // a `[[ULID]]` chip targeting the original would resolve to either the
+    // original or its conflict copy depending on row ordering, surfacing
+    // duplicate / corrupted titles in breadcrumbs and link chips. Mirrors
+    // the pattern in every other space-scoped query we ship.
     let rows = sqlx::query_as!(
         ResolvedBlockRow,
         r#"SELECT
-             id,
-             content AS title,
-             block_type,
-             (CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS "deleted: bool"
-           FROM blocks
-           WHERE id IN (SELECT value FROM json_each(?1))"#,
+             b.id,
+             b.content AS title,
+             b.block_type,
+             (CASE WHEN b.deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS "deleted: bool"
+           FROM blocks b
+           WHERE b.id IN (SELECT value FROM json_each(?1))
+             AND b.is_conflict = 0
+             AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN (
+                 SELECT bp.block_id
+                 FROM block_properties bp
+                 WHERE bp.key = 'space' AND bp.value_ref = ?2
+             ))"#,
         ids_json,
+        space_id,
     )
     .fetch_all(pool)
     .await?;
@@ -231,14 +268,19 @@ pub async fn get_block(pool: State<'_, ReadPool>, block_id: String) -> Result<Bl
 }
 
 /// Tauri command: batch-resolve block metadata. Delegates to [`batch_resolve_inner`].
+///
+/// FEAT-3 Phase 7 — `space_id` is required so the resolve store cannot
+/// surface foreign-space titles. The frontend always knows the current
+/// space and threads it through `useResolveStore.preload(spaceId)`.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn batch_resolve(
     pool: State<'_, ReadPool>,
     ids: Vec<String>,
+    space_id: Option<String>,
 ) -> Result<Vec<ResolvedBlock>, AppError> {
-    batch_resolve_inner(&pool.0, ids)
+    batch_resolve_inner(&pool.0, ids, space_id)
         .await
         .map_err(sanitize_internal_error)
 }

@@ -590,10 +590,20 @@ async fn batch_resolve_returns_all_requested_blocks() {
     insert_block(&pool, "BR01", "content", "First block", None, Some(0)).await;
     insert_block(&pool, "BR02", "page", "My Page", None, Some(1)).await;
     insert_block(&pool, "BR03", "tag", "work", None, Some(2)).await;
+    // FEAT-3 Phase 7 — `batch_resolve_inner` filters by space via
+    // `COALESCE(b.page_id, b.id) IN (block_properties WHERE key='space' …)`.
+    // Each block needs a space row for the filter to keep it in scope.
+    assign_to_test_space(&pool, "BR01").await;
+    assign_to_test_space(&pool, "BR02").await;
+    assign_to_test_space(&pool, "BR03").await;
 
-    let result = batch_resolve_inner(&pool, vec!["BR01".into(), "BR02".into(), "BR03".into()])
-        .await
-        .unwrap();
+    let result = batch_resolve_inner(
+        &pool,
+        vec!["BR01".into(), "BR02".into(), "BR03".into()],
+        Some(TEST_SPACE_ID.to_string()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(result.len(), 3, "must return all 3 blocks");
 
@@ -629,7 +639,7 @@ async fn batch_resolve_returns_all_requested_blocks() {
 async fn batch_resolve_empty_ids_returns_validation_error() {
     let (pool, _dir) = test_pool().await;
 
-    let result = batch_resolve_inner(&pool, vec![]).await;
+    let result = batch_resolve_inner(&pool, vec![], Some(TEST_SPACE_ID.to_string())).await;
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
@@ -641,15 +651,21 @@ async fn batch_resolve_empty_ids_returns_validation_error() {
 async fn batch_resolve_includes_deleted_blocks() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "BR_DEL", "content", "deleted block", None, Some(0)).await;
-    sqlx::query("UPDATE blocks SET deleted_at = ?")
+    assign_to_test_space(&pool, "BR_DEL").await;
+    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
         .bind(FIXED_TS)
+        .bind("BR_DEL")
         .execute(&pool)
         .await
         .unwrap();
 
-    let result = batch_resolve_inner(&pool, vec!["BR_DEL".into()])
-        .await
-        .unwrap();
+    let result = batch_resolve_inner(
+        &pool,
+        vec!["BR_DEL".into()],
+        Some(TEST_SPACE_ID.to_string()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(result.len(), 1, "should return the deleted block");
     assert!(result[0].deleted, "deleted blocks must have deleted=true");
@@ -664,10 +680,15 @@ async fn batch_resolve_includes_deleted_blocks() {
 async fn batch_resolve_omits_nonexistent_ids() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "BR_EXISTS", "content", "exists", None, Some(0)).await;
+    assign_to_test_space(&pool, "BR_EXISTS").await;
 
-    let result = batch_resolve_inner(&pool, vec!["BR_EXISTS".into(), "BR_MISSING".into()])
-        .await
-        .unwrap();
+    let result = batch_resolve_inner(
+        &pool,
+        vec!["BR_EXISTS".into(), "BR_MISSING".into()],
+        Some(TEST_SPACE_ID.to_string()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(result.len(), 1, "nonexistent IDs must be silently omitted");
     assert_eq!(
@@ -688,10 +709,15 @@ async fn batch_resolve_null_content_returns_none_title() {
     .execute(&pool)
     .await
     .unwrap();
+    assign_to_test_space(&pool, "BR_NULL").await;
 
-    let result = batch_resolve_inner(&pool, vec!["BR_NULL".into()])
-        .await
-        .unwrap();
+    let result = batch_resolve_inner(
+        &pool,
+        vec!["BR_NULL".into()],
+        Some(TEST_SPACE_ID.to_string()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         result.len(),
@@ -705,10 +731,15 @@ async fn batch_resolve_null_content_returns_none_title() {
 async fn batch_resolve_single_id() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "BR_SINGLE", "page", "Solo Page", None, Some(0)).await;
+    assign_to_test_space(&pool, "BR_SINGLE").await;
 
-    let result = batch_resolve_inner(&pool, vec!["BR_SINGLE".into()])
-        .await
-        .unwrap();
+    let result = batch_resolve_inner(
+        &pool,
+        vec!["BR_SINGLE".into()],
+        Some(TEST_SPACE_ID.to_string()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(result.len(), 1, "single ID should return one result");
     assert_eq!(result[0].id, "BR_SINGLE", "resolved block ID should match");
@@ -723,10 +754,12 @@ async fn batch_resolve_single_id() {
 async fn batch_resolve_duplicate_ids_deduped_by_db() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "BR_DUP", "content", "Dup block", None, Some(0)).await;
+    assign_to_test_space(&pool, "BR_DUP").await;
 
     let result = batch_resolve_inner(
         &pool,
         vec!["BR_DUP".into(), "BR_DUP".into(), "BR_DUP".into()],
+        Some(TEST_SPACE_ID.to_string()),
     )
     .await
     .unwrap();
@@ -759,10 +792,24 @@ async fn batch_resolve_mixed_block_types() {
         Some(0),
     )
     .await;
+    // Page + tag both need explicit space rows because COALESCE(page_id, id) = id.
+    // Content block resolves via its parent page row's space property when
+    // page_id is set; here we set page_id = "BR_PAGE" via UPDATE (insert_block
+    // does not populate page_id), so giving BR_PAGE a space row is sufficient
+    // for BR_CONTENT — but we assign explicitly to keep the test obvious.
+    sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+        .bind("BR_PAGE")
+        .bind("BR_CONTENT")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assign_to_test_space(&pool, "BR_PAGE").await;
+    assign_to_test_space(&pool, "BR_TAG").await;
 
     let result = batch_resolve_inner(
         &pool,
         vec!["BR_PAGE".into(), "BR_TAG".into(), "BR_CONTENT".into()],
+        Some(TEST_SPACE_ID.to_string()),
     )
     .await
     .unwrap();

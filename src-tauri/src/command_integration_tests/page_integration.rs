@@ -156,13 +156,17 @@ async fn alias_collision_returns_error() {
 // ======================================================================
 // Journal commands — today_journal / navigate_journal
 // ======================================================================
+//
+// FEAT-3p5: every journal call now requires a `space_id`. Tests seed a
+// space via `test_space()` and pass its ULID through.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn today_journal_creates_page_for_today() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
+    let space = test_space(&pool, "Personal").await;
 
-    let page = today_journal_inner(&pool, DEV, &mat).await.unwrap();
+    let page = today_journal_inner(&pool, DEV, &mat, &space).await.unwrap();
     settle(&mat).await;
 
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
@@ -181,11 +185,12 @@ async fn today_journal_creates_page_for_today() {
 async fn today_journal_returns_existing_page() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
+    let space = test_space(&pool, "Personal").await;
 
-    let first = today_journal_inner(&pool, DEV, &mat).await.unwrap();
+    let first = today_journal_inner(&pool, DEV, &mat, &space).await.unwrap();
     settle(&mat).await;
 
-    let second = today_journal_inner(&pool, DEV, &mat).await.unwrap();
+    let second = today_journal_inner(&pool, DEV, &mat, &space).await.unwrap();
     settle(&mat).await;
 
     assert_eq!(
@@ -200,9 +205,10 @@ async fn today_journal_returns_existing_page() {
 async fn navigate_journal_creates_page_for_date() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
+    let space = test_space(&pool, "Personal").await;
 
     let date = "2025-03-15".to_string();
-    let page = navigate_journal_inner(&pool, DEV, &mat, date.clone())
+    let page = navigate_journal_inner(&pool, DEV, &mat, date.clone(), &space)
         .await
         .unwrap();
     settle(&mat).await;
@@ -226,14 +232,15 @@ async fn navigate_journal_creates_page_for_date() {
 async fn navigate_journal_returns_existing_page_for_same_date() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
+    let space = test_space(&pool, "Personal").await;
 
     let date = "2025-06-01".to_string();
-    let first = navigate_journal_inner(&pool, DEV, &mat, date.clone())
+    let first = navigate_journal_inner(&pool, DEV, &mat, date.clone(), &space)
         .await
         .unwrap();
     settle(&mat).await;
 
-    let second = navigate_journal_inner(&pool, DEV, &mat, date.clone())
+    let second = navigate_journal_inner(&pool, DEV, &mat, date.clone(), &space)
         .await
         .unwrap();
     settle(&mat).await;
@@ -250,13 +257,14 @@ async fn navigate_journal_returns_existing_page_for_same_date() {
 async fn navigate_journal_different_dates_create_different_pages() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
+    let space = test_space(&pool, "Personal").await;
 
-    let page_a = navigate_journal_inner(&pool, DEV, &mat, "2025-01-10".into())
+    let page_a = navigate_journal_inner(&pool, DEV, &mat, "2025-01-10".into(), &space)
         .await
         .unwrap();
     settle(&mat).await;
 
-    let page_b = navigate_journal_inner(&pool, DEV, &mat, "2025-01-11".into())
+    let page_b = navigate_journal_inner(&pool, DEV, &mat, "2025-01-11".into(), &space)
         .await
         .unwrap();
     settle(&mat).await;
@@ -279,8 +287,9 @@ async fn navigate_journal_different_dates_create_different_pages() {
 async fn quick_capture_block_creates_today_journal_and_block() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
+    let space = test_space(&pool, "Personal").await;
 
-    let block = quick_capture_block_inner(&pool, DEV, &mat, "captured note".into())
+    let block = quick_capture_block_inner(&pool, DEV, &mat, "captured note".into(), &space)
         .await
         .unwrap();
     settle(&mat).await;
@@ -319,12 +328,13 @@ async fn quick_capture_block_creates_today_journal_and_block() {
 async fn quick_capture_block_reuses_existing_journal_page() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
+    let space = test_space(&pool, "Personal").await;
 
     // Pre-create today's journal page so the second call sees an existing page.
-    let page = today_journal_inner(&pool, DEV, &mat).await.unwrap();
+    let page = today_journal_inner(&pool, DEV, &mat, &space).await.unwrap();
     settle(&mat).await;
 
-    let block = quick_capture_block_inner(&pool, DEV, &mat, "after-create".into())
+    let block = quick_capture_block_inner(&pool, DEV, &mat, "after-create".into(), &space)
         .await
         .unwrap();
     settle(&mat).await;
@@ -342,13 +352,14 @@ async fn quick_capture_block_reuses_existing_journal_page() {
 async fn quick_capture_block_appends_two_blocks_when_called_twice() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
+    let space = test_space(&pool, "Personal").await;
 
-    let first = quick_capture_block_inner(&pool, DEV, &mat, "first capture".into())
+    let first = quick_capture_block_inner(&pool, DEV, &mat, "first capture".into(), &space)
         .await
         .unwrap();
     settle(&mat).await;
 
-    let second = quick_capture_block_inner(&pool, DEV, &mat, "second capture".into())
+    let second = quick_capture_block_inner(&pool, DEV, &mat, "second capture".into(), &space)
         .await
         .unwrap();
     settle(&mat).await;
@@ -369,12 +380,13 @@ async fn quick_capture_block_appends_two_blocks_when_called_twice() {
 async fn quick_capture_block_oversize_content_returns_validation_error() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
+    let space = test_space(&pool, "Personal").await;
 
     // MAX_CONTENT_LENGTH = 256 KiB — anything larger must be rejected by
     // create_block_inner with a Validation error, propagated through the
     // quick_capture wrapper unchanged.
     let oversize = "x".repeat(256 * 1024 + 1);
-    let result = quick_capture_block_inner(&pool, DEV, &mat, oversize).await;
+    let result = quick_capture_block_inner(&pool, DEV, &mat, oversize, &space).await;
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "oversize content must produce AppError::Validation, got {result:?}"

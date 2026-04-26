@@ -787,9 +787,12 @@ describe('PropertyRowEditor ref picker', () => {
   })
 
   it('displays resolved page title when value_ref is set', async () => {
-    const { useResolveStore } = await import('../../stores/resolve')
+    // FEAT-3p7 — cache is now keyed by composite `${spaceId}::${ulid}`.
+    // No active space is set up here, so the default `__global__`
+    // sentinel is used (lookup falls back to it via `keyFor(null, id)`).
+    const { useResolveStore, keyFor } = await import('../../stores/resolve')
     useResolveStore.setState({
-      cache: new Map([['TARGET_PAGE', { title: 'My Target', deleted: false }]]),
+      cache: new Map([[keyFor(null, 'TARGET_PAGE'), { title: 'My Target', deleted: false }]]),
       version: 1,
     })
 

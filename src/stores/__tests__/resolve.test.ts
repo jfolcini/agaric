@@ -3,14 +3,26 @@
  *
  * Covers the global resolve cache that maps block/tag ULIDs to display titles.
  * The preload function calls listBlocks and listTagsByPrefix (which wrap invoke).
+ *
+ * # FEAT-3p7 — Cache key encoding (cross-space link enforcement)
+ *
+ * The cache `Map` is keyed by `${spaceId}::${ulid}`. Tests fix
+ * `useSpaceStore.currentSpaceId = TEST_SPACE_ID` in `beforeEach` so every
+ * `set` / `batchSet` / lookup uses the same prefix; tests that explicitly
+ * exercise multi-space behaviour switch the active space via
+ * `useSpaceStore.setState({ currentSpaceId: ... })` before reading.
  */
 
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { logger } from '../../lib/logger'
-import { useResolveStore } from '../resolve'
+import { GLOBAL_SPACE_ID, keyFor, useResolveStore } from '../resolve'
+import { useSpaceStore } from '../space'
 
 const mockedInvoke = vi.mocked(invoke)
+
+const TEST_SPACE_ID = 'SPACE_TEST'
+const OTHER_SPACE_ID = 'SPACE_OTHER'
 
 beforeEach(async () => {
   // Flush any pending microtasks from previous test (e.g., debounced version bumps)
@@ -20,6 +32,16 @@ beforeEach(async () => {
     pagesList: [],
     version: 0,
     _preloaded: false,
+  })
+  // FEAT-3p7 — pin the active space so composite-key encoding is
+  // deterministic for every test in this file.
+  useSpaceStore.setState({
+    currentSpaceId: TEST_SPACE_ID,
+    availableSpaces: [
+      { id: TEST_SPACE_ID, name: 'Test', accent_color: null },
+      { id: OTHER_SPACE_ID, name: 'Other', accent_color: null },
+    ],
+    isReady: true,
   })
   vi.clearAllMocks()
 })
@@ -53,13 +75,22 @@ describe('preload', () => {
       return null
     })
 
-    await useResolveStore.getState().preload()
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
 
     const state = useResolveStore.getState()
     expect(state.cache.size).toBe(4)
-    expect(state.cache.get('PAGE_1')).toEqual({ title: 'Page One', deleted: false })
-    expect(state.cache.get('PAGE_2')).toEqual({ title: 'Page Two', deleted: false })
-    expect(state.cache.get('TAG_1')).toEqual({ title: 'tag-one', deleted: false })
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))).toEqual({
+      title: 'Page One',
+      deleted: false,
+    })
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_2'))).toEqual({
+      title: 'Page Two',
+      deleted: false,
+    })
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'TAG_1'))).toEqual({
+      title: 'tag-one',
+      deleted: false,
+    })
     expect(state.pagesList).toHaveLength(2)
     expect(state.pagesList).toEqual([
       { id: 'PAGE_1', title: 'Page One' },
@@ -69,6 +100,10 @@ describe('preload', () => {
     // Should have called list_blocks twice (pagination)
     const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
     expect(listBlocksCalls).toHaveLength(2)
+    // FEAT-3p7 — listBlocks call must forward the spaceId so the
+    // backend filters out other-space pages.
+    const firstListBlocksArgs = listBlocksCalls[0]?.[1] as Record<string, unknown> | undefined
+    expect(firstListBlocksArgs?.['spaceId']).toBe(TEST_SPACE_ID)
   })
 
   it('uses "Untitled" for pages with null content', async () => {
@@ -80,9 +115,9 @@ describe('preload', () => {
       return null
     })
 
-    await useResolveStore.getState().preload()
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
 
-    const entry = useResolveStore.getState().cache.get('PAGE_NULL')
+    const entry = useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'PAGE_NULL'))
     expect(entry).toEqual({ title: 'Untitled', deleted: false })
   })
 
@@ -97,16 +132,16 @@ describe('preload', () => {
       return null
     })
 
-    await useResolveStore.getState().preload()
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
 
-    const entry = useResolveStore.getState().cache.get('PAGE_DEL')
+    const entry = useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'PAGE_DEL'))
     expect(entry).toEqual({ title: 'Deleted Page', deleted: true })
   })
 
   it('sets _preloaded on error', async () => {
     mockedInvoke.mockRejectedValue(new Error('network failure'))
 
-    await useResolveStore.getState().preload()
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
 
     const state = useResolveStore.getState()
     expect(state._preloaded).toBe(true)
@@ -122,7 +157,7 @@ describe('preload', () => {
       return null
     })
 
-    await useResolveStore.getState().preload()
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
 
     expect(warnSpy).toHaveBeenCalledTimes(1)
     expect(warnSpy).toHaveBeenCalledWith(
@@ -144,7 +179,7 @@ describe('preload', () => {
       return null
     })
 
-    await useResolveStore.getState().preload()
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
 
     expect(warnSpy).toHaveBeenCalledTimes(1)
     expect(warnSpy).toHaveBeenCalledWith(
@@ -165,7 +200,7 @@ describe('preload', () => {
     })
 
     const versionBefore = useResolveStore.getState().version
-    await useResolveStore.getState().preload()
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
     const versionAfter = useResolveStore.getState().version
 
     expect(versionAfter).toBe(versionBefore + 1)
@@ -187,13 +222,19 @@ describe('preload', () => {
       return null
     })
 
-    await useResolveStore.getState().preload()
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
 
     const state = useResolveStore.getState()
     // Fetched data wins over stale cache entries
-    expect(state.cache.get('NEW_PAGE')).toEqual({ title: 'DB Title', deleted: false })
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'NEW_PAGE'))).toEqual({
+      title: 'DB Title',
+      deleted: false,
+    })
     // Other fetched entries should still be present
-    expect(state.cache.get('PAGE_1')).toEqual({ title: 'Page One', deleted: false })
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))).toEqual({
+      title: 'Page One',
+      deleted: false,
+    })
   })
 
   it('preserves pages created via set() during preload in pagesList (#534)', async () => {
@@ -208,7 +249,7 @@ describe('preload', () => {
       return null
     })
 
-    await useResolveStore.getState().preload()
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
 
     const state = useResolveStore.getState()
     // pagesList should contain both fetched pages AND the page created during preload
@@ -230,11 +271,11 @@ describe('preload', () => {
       return null
     })
 
-    await useResolveStore.getState().preload(true)
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true)
 
     const state = useResolveStore.getState()
     // Freshly fetched data must overwrite the stale cache entry
-    expect(state.cache.get('PAGE_RENAMED')).toEqual({
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_RENAMED'))).toEqual({
       title: 'New Title After Rename',
       deleted: false,
     })
@@ -254,11 +295,11 @@ describe('preload', () => {
     })
 
     // Default preload (forceRefresh=false) — fetched data wins
-    await useResolveStore.getState().preload()
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
 
     const state = useResolveStore.getState()
     // Fetched data overwrites stale cache entries
-    expect(state.cache.get('PAGE_EDITED')).toEqual({
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_EDITED'))).toEqual({
       title: 'Fresh Backend Title',
       deleted: false,
     })
@@ -278,12 +319,34 @@ describe('preload', () => {
     })
 
     // Normal preload (forceRefresh=false)
-    await useResolveStore.getState().preload(false)
+    await useResolveStore.getState().preload(TEST_SPACE_ID, false)
 
     const state = useResolveStore.getState()
     // Fresh fetched data must overwrite the stale cache entry
-    expect(state.cache.get('PAGE_SYNC')).toEqual({
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_SYNC'))).toEqual({
       title: 'Renamed Title After Sync',
+      deleted: false,
+    })
+  })
+
+  it('preload(undefined) keys entries under the global sentinel', async () => {
+    // FEAT-3p7 — boot-before-space-hydrates pass: preload runs without
+    // a space id and entries land under `__global__::*`. The next pass
+    // (after the space store hydrates) re-keys them under the real space.
+    useSpaceStore.setState({ currentSpaceId: null, isReady: false })
+    const mockPages = [{ id: 'PAGE_PRE', content: 'Pre-hydrate Page', deleted_at: null }]
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
+      if (cmd === 'list_tags_by_prefix') return []
+      return null
+    })
+
+    await useResolveStore.getState().preload()
+
+    const state = useResolveStore.getState()
+    expect(state.cache.get(keyFor(GLOBAL_SPACE_ID, 'PAGE_PRE'))).toEqual({
+      title: 'Pre-hydrate Page',
       deleted: false,
     })
   })
@@ -299,7 +362,10 @@ describe('set', () => {
     useResolveStore.getState().set('ID_1', 'My Page', false)
 
     const state = useResolveStore.getState()
-    expect(state.cache.get('ID_1')).toEqual({ title: 'My Page', deleted: false })
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'ID_1'))).toEqual({
+      title: 'My Page',
+      deleted: false,
+    })
     // Version bump is debounced via microtask
     await new Promise<void>((r) => queueMicrotask(r))
     expect(useResolveStore.getState().version).toBe(versionBefore + 1)
@@ -309,7 +375,7 @@ describe('set', () => {
     useResolveStore.getState().set('ID_1', 'First Title', false)
     useResolveStore.getState().set('ID_1', 'Updated Title', true)
 
-    const entry = useResolveStore.getState().cache.get('ID_1')
+    const entry = useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'ID_1'))
     expect(entry).toEqual({ title: 'Updated Title', deleted: true })
   })
 
@@ -339,9 +405,18 @@ describe('set', () => {
     // Version hasn't bumped yet (debounced via microtask)
     expect(useResolveStore.getState().version).toBe(versionBefore)
     // Data is already in cache though
-    expect(useResolveStore.getState().cache.get('A')).toEqual({ title: 'Alpha', deleted: false })
-    expect(useResolveStore.getState().cache.get('B')).toEqual({ title: 'Beta', deleted: false })
-    expect(useResolveStore.getState().cache.get('C')).toEqual({ title: 'Charlie', deleted: false })
+    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'A'))).toEqual({
+      title: 'Alpha',
+      deleted: false,
+    })
+    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'B'))).toEqual({
+      title: 'Beta',
+      deleted: false,
+    })
+    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'C'))).toEqual({
+      title: 'Charlie',
+      deleted: false,
+    })
 
     // After microtask, version bumps exactly once
     await new Promise<void>((r) => queueMicrotask(r))
@@ -362,9 +437,9 @@ describe('batchSet', () => {
 
     const cache = useResolveStore.getState().cache
     expect(cache.size).toBe(3)
-    expect(cache.get('A')).toEqual({ title: 'Alpha', deleted: false })
-    expect(cache.get('B')).toEqual({ title: 'Beta', deleted: false })
-    expect(cache.get('C')).toEqual({ title: 'Charlie', deleted: true })
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'A'))).toEqual({ title: 'Alpha', deleted: false })
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'B'))).toEqual({ title: 'Beta', deleted: false })
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'C'))).toEqual({ title: 'Charlie', deleted: true })
   })
 
   it('is no-op for empty array', () => {
@@ -441,8 +516,8 @@ describe('clearPagesList', () => {
     // `cache` (the ULID → title resolver map) so we can verify the
     // asymmetric invalidation contract.
     const cache = new Map<string, { title: string; deleted: boolean }>([
-      ['PAGE_IN_OTHER_SPACE', { title: 'Cross-space chip', deleted: false }],
-      ['TAG_GLOBAL', { title: 'tag-global', deleted: false }],
+      [keyFor(TEST_SPACE_ID, 'PAGE_IN_OTHER_SPACE'), { title: 'Cross-space chip', deleted: false }],
+      [keyFor(TEST_SPACE_ID, 'TAG_GLOBAL'), { title: 'tag-global', deleted: false }],
     ])
     const pagesList = [
       { id: 'PAGE_A1', title: 'Page A1' },
@@ -458,17 +533,117 @@ describe('clearPagesList', () => {
     const state = useResolveStore.getState()
     expect(state.pagesList).toHaveLength(0)
     expect(state.cache.size).toBe(cacheSizeBefore)
-    // Existing cross-space `[[ULID]]` chips must still resolve to their
-    // original titles after clearPagesList — that's the whole point.
-    expect(state.cache.get('PAGE_IN_OTHER_SPACE')).toEqual({
+    // FEAT-3p7 — clearPagesList no longer touches the composite cache.
+    // Cache flushing on space switch is `clearAllForSpace`'s job.
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_IN_OTHER_SPACE'))).toEqual({
       title: 'Cross-space chip',
       deleted: false,
     })
-    expect(state.cache.get('TAG_GLOBAL')).toEqual({
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'TAG_GLOBAL'))).toEqual({
       title: 'tag-global',
       deleted: false,
     })
     expect(state.version).toBe(versionBefore + 1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// FEAT-3p7 — cross-space cache scoping
+// ---------------------------------------------------------------------------
+describe('FEAT-3p7 — cross-space cache scoping', () => {
+  // Test 1 from the spec: Same ULID resolved against two different
+  // spaces returns different cached values (cache is space-scoped).
+  it('the same ULID can carry different titles in two different spaces', () => {
+    // Write under SPACE_A
+    useSpaceStore.setState({ currentSpaceId: TEST_SPACE_ID })
+    useResolveStore.getState().set('SHARED_ULID', 'A-side title', false)
+
+    // Switch active space and write a DIFFERENT title under the same ULID
+    useSpaceStore.setState({ currentSpaceId: OTHER_SPACE_ID })
+    useResolveStore.getState().set('SHARED_ULID', 'B-side title', false)
+
+    const cache = useResolveStore.getState().cache
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'SHARED_ULID'))).toEqual({
+      title: 'A-side title',
+      deleted: false,
+    })
+    expect(cache.get(keyFor(OTHER_SPACE_ID, 'SHARED_ULID'))).toEqual({
+      title: 'B-side title',
+      deleted: false,
+    })
+
+    // resolveTitle picks the active-space entry, never the other space's
+    expect(useResolveStore.getState().resolveTitle('SHARED_ULID')).toBe('B-side title')
+    useSpaceStore.setState({ currentSpaceId: TEST_SPACE_ID })
+    expect(useResolveStore.getState().resolveTitle('SHARED_ULID')).toBe('A-side title')
+  })
+
+  // Test 2 from the spec: clearAllForSpace(prevSpaceId) flushes ONLY
+  // that space's entries — the other space's cache survives.
+  it('clearAllForSpace flushes only the named space and leaves others intact', () => {
+    // Pre-populate cache with entries from BOTH spaces. Use direct
+    // setState to keep encoding under test (rather than relying on
+    // `set` to round-trip through useSpaceStore).
+    const cache = new Map<string, { title: string; deleted: boolean }>([
+      [keyFor(TEST_SPACE_ID, 'A1'), { title: 'A page 1', deleted: false }],
+      [keyFor(TEST_SPACE_ID, 'A2'), { title: 'A page 2', deleted: false }],
+      [keyFor(OTHER_SPACE_ID, 'B1'), { title: 'B page 1', deleted: false }],
+      [keyFor(OTHER_SPACE_ID, 'B2'), { title: 'B page 2', deleted: true }],
+      [keyFor(GLOBAL_SPACE_ID, 'GLOBAL'), { title: 'global', deleted: false }],
+    ])
+    useResolveStore.setState({ cache, version: 1 })
+
+    useResolveStore.getState().clearAllForSpace(TEST_SPACE_ID)
+
+    const after = useResolveStore.getState().cache
+    // SPACE_TEST entries gone
+    expect(after.get(keyFor(TEST_SPACE_ID, 'A1'))).toBeUndefined()
+    expect(after.get(keyFor(TEST_SPACE_ID, 'A2'))).toBeUndefined()
+    // OTHER space and global entries survive
+    expect(after.get(keyFor(OTHER_SPACE_ID, 'B1'))).toEqual({
+      title: 'B page 1',
+      deleted: false,
+    })
+    expect(after.get(keyFor(OTHER_SPACE_ID, 'B2'))).toEqual({
+      title: 'B page 2',
+      deleted: true,
+    })
+    expect(after.get(keyFor(GLOBAL_SPACE_ID, 'GLOBAL'))).toEqual({
+      title: 'global',
+      deleted: false,
+    })
+    // version bumped so memoised consumers recompute
+    expect(useResolveStore.getState().version).toBe(2)
+  })
+
+  it('clearAllForSpace on a space with no entries is a no-op (still bumps version)', () => {
+    const cache = new Map<string, { title: string; deleted: boolean }>([
+      [keyFor(TEST_SPACE_ID, 'A1'), { title: 'A1', deleted: false }],
+    ])
+    useResolveStore.setState({ cache, version: 5 })
+
+    useResolveStore.getState().clearAllForSpace('SPACE_NONEXISTENT')
+
+    expect(useResolveStore.getState().cache.size).toBe(1)
+    expect(useResolveStore.getState().version).toBe(6)
+  })
+
+  // Test 3 from the spec: Resolution from a foreign space falls
+  // through to the broken-link fallback string. Belt-and-braces — the
+  // chip render relies on `resolveStatus` returning 'active' on miss
+  // (and BlockTree priming a deleted placeholder); but `resolveTitle`
+  // unambiguously surfaces the fallback.
+  it('foreign-space ULID resolves to the [[ULID-prefix...]] fallback (no cross-space leak)', () => {
+    // Cache only contains an entry under SPACE_OTHER.
+    useResolveStore.setState({
+      cache: new Map([
+        [keyFor(OTHER_SPACE_ID, 'FOREIGN_ULID'), { title: 'Foreign Page', deleted: false }],
+      ]),
+    })
+
+    // Active space is SPACE_TEST — looking up FOREIGN_ULID must NOT
+    // surface "Foreign Page".
+    expect(useResolveStore.getState().resolveTitle('FOREIGN_ULID')).toBe('[[FOREIGN_...]]')
   })
 })
 
@@ -480,7 +655,7 @@ describe('cache eviction', () => {
     // Pre-fill cache with exactly 10,000 entries
     const cache = new Map<string, { title: string; deleted: boolean }>()
     for (let i = 0; i < 10_000; i++) {
-      cache.set(`id-${i}`, { title: `T${i}`, deleted: false })
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
     }
     useResolveStore.setState({ cache })
 
@@ -490,16 +665,16 @@ describe('cache eviction', () => {
     const state = useResolveStore.getState()
     expect(state.cache.size).toBe(10_000)
     // The first entry added should have been evicted
-    expect(state.cache.has('id-0')).toBe(false)
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'id-0'))).toBe(false)
     // The new entry should be present
-    expect(state.cache.has('new-id')).toBe(true)
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'new-id'))).toBe(true)
   })
 
   it('batchSet() evicts when batch pushes cache over limit', () => {
     // Pre-fill cache to 9,998 entries
     const cache = new Map<string, { title: string; deleted: boolean }>()
     for (let i = 0; i < 9_998; i++) {
-      cache.set(`id-${i}`, { title: `T${i}`, deleted: false })
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
     }
     useResolveStore.setState({ cache })
 
@@ -513,11 +688,11 @@ describe('cache eviction', () => {
     const state = useResolveStore.getState()
     expect(state.cache.size).toBe(10_000)
     // The first entry (oldest) should have been evicted
-    expect(state.cache.has('id-0')).toBe(false)
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'id-0'))).toBe(false)
     // All new entries should be present
-    expect(state.cache.has('a')).toBe(true)
-    expect(state.cache.has('b')).toBe(true)
-    expect(state.cache.has('c')).toBe(true)
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'a'))).toBe(true)
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'b'))).toBe(true)
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'c'))).toBe(true)
   })
 
   it('set() evicts oldest pagesList entries at MAX_PAGES_LIST_SIZE', () => {

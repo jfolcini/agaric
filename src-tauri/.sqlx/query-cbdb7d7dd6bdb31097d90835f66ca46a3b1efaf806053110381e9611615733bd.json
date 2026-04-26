@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id as \"id!: String\" FROM block_properties\n           WHERE key = 'space' AND value_ref = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cbdb7d7dd6bdb31097d90835f66ca46a3b1efaf806053110381e9611615733bd"
+}

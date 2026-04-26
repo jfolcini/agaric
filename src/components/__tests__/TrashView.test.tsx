@@ -24,7 +24,8 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import { useResolveStore } from '../../stores/resolve'
+import { keyFor, useResolveStore } from '../../stores/resolve'
+import { useSpaceStore } from '../../stores/space'
 import { TrashView } from '../TrashView'
 
 vi.mock('../StaticBlock', () => ({
@@ -83,6 +84,14 @@ function mockListAndResolve(items: ReturnType<typeof makeBlock>[], hasMore = fal
 beforeEach(() => {
   vi.clearAllMocks()
   useResolveStore.setState({ cache: new Map(), pagesList: [], version: 0, _preloaded: false })
+  // FEAT-3p7 — `useResolveStore.set` keys entries by `${currentSpaceId}::${ulid}`.
+  // Pin a deterministic test space so the `cache.get` assertions below
+  // can compose the same prefix.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
+  })
 })
 
 describe('TrashView', () => {
@@ -476,7 +485,7 @@ describe('TrashView', () => {
     await user.click(restoreBtn)
 
     await waitFor(() => {
-      const entry = useResolveStore.getState().cache.get('P1')
+      const entry = useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'P1'))
       expect(entry).toEqual({ title: 'My Page', deleted: false })
     })
   })

@@ -10,7 +10,8 @@
 
 import { useCallback, useRef } from 'react'
 import { useNavigationStore } from '../stores/navigation'
-import { useResolveStore } from '../stores/resolve'
+import { keyFor, useResolveStore } from '../stores/resolve'
+import { useSpaceStore } from '../stores/space'
 
 export interface RichContentCallbacks {
   resolveBlockTitle: (id: string) => string | undefined
@@ -28,26 +29,33 @@ export function useRichContentCallbacks(): RichContentCallbacks {
   const cacheRef = useRef(cache)
   cacheRef.current = cache
 
+  // FEAT-3p7 — cache is keyed by composite `${spaceId}::${ulid}`. Read
+  // the active space at lookup time so a switch immediately routes
+  // resolves to the new space's slice.
   const resolveBlockTitle = useCallback((id: string): string | undefined => {
-    const cached = cacheRef.current.get(id)
+    const spaceId = useSpaceStore.getState().currentSpaceId
+    const cached = cacheRef.current.get(keyFor(spaceId, id))
     if (cached) return cached.title
     return undefined
   }, [])
 
   const resolveBlockStatus = useCallback((id: string): 'active' | 'deleted' => {
-    const cached = cacheRef.current.get(id)
+    const spaceId = useSpaceStore.getState().currentSpaceId
+    const cached = cacheRef.current.get(keyFor(spaceId, id))
     if (cached) return cached.deleted ? 'deleted' : 'active'
     return 'active'
   }, [])
 
   const resolveTagName = useCallback((id: string): string | undefined => {
-    const cached = cacheRef.current.get(id)
+    const spaceId = useSpaceStore.getState().currentSpaceId
+    const cached = cacheRef.current.get(keyFor(spaceId, id))
     if (cached) return cached.title
     return undefined
   }, [])
 
   const resolveTagStatus = useCallback((id: string): 'active' | 'deleted' => {
-    const cached = cacheRef.current.get(id)
+    const spaceId = useSpaceStore.getState().currentSpaceId
+    const cached = cacheRef.current.get(keyFor(spaceId, id))
     if (cached) return cached.deleted ? 'deleted' : 'active'
     return 'active'
   }, [])
@@ -85,7 +93,9 @@ export function useTagClickHandler(): (tagId: string) => void {
 
   return useCallback(
     (tagId: string) => {
-      const cached = cacheRef.current.get(tagId)
+      // FEAT-3p7 — composite-key cache; resolve under the active space.
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      const cached = cacheRef.current.get(keyFor(spaceId, tagId))
       const name = cached?.title ?? 'Tag'
       navigateToPage(tagId, name)
     },

@@ -94,6 +94,15 @@ vi.mock('@/stores/resolve', () => ({
   },
 }))
 
+// FEAT-3p7 — `useSyncEvents.preload(spaceId, true)` reads
+// `useSpaceStore.currentSpaceId`. Mock with a deterministic
+// active-space id so the test asserts the spaceId arg is forwarded.
+vi.mock('@/stores/space', () => ({
+  useSpaceStore: {
+    getState: vi.fn(() => ({ currentSpaceId: 'SPACE_TEST' })),
+  },
+}))
+
 vi.mock('@/lib/tauri', () => ({
   getConflicts: (...args: unknown[]) => mockGetConflicts(...args),
 }))
@@ -500,7 +509,10 @@ describe('useSyncEvents', () => {
         },
       })
 
-      expect(mockPreload).toHaveBeenCalledWith(true)
+      // FEAT-3p7 — preload now takes (spaceId, forceRefresh). The
+      // sync-events hook reads currentSpaceId from useSpaceStore (mocked
+      // to 'SPACE_TEST' above) and forwards forceRefresh=true.
+      expect(mockPreload).toHaveBeenCalledWith('SPACE_TEST', true)
 
       unmount()
     })

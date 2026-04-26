@@ -90,7 +90,8 @@ vi.mock('../../lib/announcer', () => ({
 
 import { toast } from 'sonner'
 import { useNavigationStore } from '@/stores/navigation'
-import { useResolveStore } from '@/stores/resolve'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 import { announce } from '../../lib/announcer'
 
@@ -134,6 +135,13 @@ beforeEach(() => {
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   vi.clearAllMocks()
   useResolveStore.setState({ cache: new Map(), pagesList: [], version: 0, _preloaded: false })
+  // FEAT-3p7 — pin a deterministic active space so `useResolveStore.set`
+  // composes its key with a known prefix.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
+  })
 
   // Reset default mock return values
   mockedNavGetState.mockReturnValue({
@@ -624,7 +632,7 @@ describe('refresh after undo/redo', () => {
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
     await vi.waitFor(() => {
-      const entry = useResolveStore.getState().cache.get('PAGE_1')
+      const entry = useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'PAGE_1'))
       expect(entry).toEqual({ title: 'Reverted Title', deleted: false })
     })
 

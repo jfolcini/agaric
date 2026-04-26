@@ -1854,8 +1854,13 @@ describe('BlockTree resolve cache preload', () => {
 
     await waitFor(
       () => {
-        // Preload should call batch_resolve for the uncached ULID
-        expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', { ids: [CONTENT_ULID] })
+        // Preload should call batch_resolve for the uncached ULID.
+        // FEAT-3p7 — the wrapper now also threads `spaceId` (null when
+        // useSpaceStore is unhydrated under this test setup).
+        expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', {
+          ids: [CONTENT_ULID],
+          spaceId: expect.anything(),
+        })
       },
       { timeout: 3000 },
     )

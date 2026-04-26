@@ -4120,6 +4120,298 @@ mod tests_p8 {
 }
 
 // ====================================================================
+// FEAT-3 Phase 7 — cross-space link enforcement
+// ====================================================================
+//
+// `batch_resolve_inner(ids, space_id)` and `get_page_inner(page_id,
+// space_id, ...)` both gain a required `space_id` parameter that
+// enforces space membership. The locked-in policy is "no live links
+// between spaces, ever":
+//
+//   - `batch_resolve_inner` filters foreign-space targets out of the
+//     result set so the chip falls into the "unknown id" branch on the
+//     frontend → broken-link UX. Same `COALESCE(b.page_id, b.id) IN
+//     (SELECT bp.block_id FROM block_properties bp WHERE bp.key='space'
+//     AND bp.value_ref = ?)` filter shipped in Phase 2 for list paths.
+//   - `get_page_inner` rejects with `AppError::Validation` when the
+//     requested page's `space` property does not match `space_id` so
+//     deep-linking into a foreign page from a different space's tab
+//     stack is impossible.
+//
+// `list_block_history` (different from `list_page_history` — see
+// `pagination::history`) is intentionally left unscoped: per-block
+// history viewing is allowed across spaces (it's an admin/diagnostics
+// surface, not a user-facing navigation entry-point). The umbrella
+// FEAT-3 design explicitly carves it out.
+
+mod tests_p7 {
+    use super::{
+        assign_to_space, insert_block, insert_block_with_page_id, insert_space_block, test_pool,
+        SPACE_A_ID, SPACE_B_ID,
+    };
+    use crate::commands::{batch_resolve_inner, get_page_inner};
+    use crate::error::AppError;
+
+    /// Synthetic third space — required by the property-style regression
+    /// test below to model "more than two spaces" without depending on
+    /// the bootstrap-seeded Personal/Work pair.
+    const SPACE_C_ID: &str = "SPACE_CC";
+
+    /// Test 1 — cross-space resolution: a chip whose target lives in a
+    /// foreign space silently drops out of the resolution result. The
+    /// frontend's `useResolveStore` then renders the chip via the
+    /// "unknown id" branch (broken-link UX).
+    #[tokio::test]
+    async fn batch_resolve_excludes_foreign_space_pages() {
+        let (pool, _dir) = test_pool().await;
+        insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+        insert_space_block(&pool, SPACE_B_ID, "Work").await;
+
+        // One page per space.
+        insert_block(&pool, "PG_A", "page", "Personal page", None, Some(1)).await;
+        assign_to_space(&pool, "PG_A", SPACE_A_ID).await;
+        insert_block(&pool, "PG_B", "page", "Work page", None, Some(2)).await;
+        assign_to_space(&pool, "PG_B", SPACE_B_ID).await;
+
+        // From inside SPACE_A, asking to resolve both PG_A and PG_B must
+        // return PG_A only — PG_B is in a foreign space and falls out.
+        let resolved = batch_resolve_inner(
+            &pool,
+            vec!["PG_A".into(), "PG_B".into()],
+            Some(SPACE_A_ID.to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resolved.len(),
+            1,
+            "exactly the SPACE_A page must surface; foreign target must be silently dropped"
+        );
+        assert_eq!(
+            resolved[0].id, "PG_A",
+            "the surviving entry must be the SPACE_A page"
+        );
+        assert!(
+            !resolved.iter().any(|r| r.id == "PG_B"),
+            "PG_B (foreign space) MUST NOT appear in the result"
+        );
+    }
+
+    /// Test 2 — `get_page_inner` rejects deep-link/page-fetch attempts
+    /// that cross a space boundary with `AppError::Validation`.
+    #[tokio::test]
+    async fn get_page_rejects_foreign_space_target() {
+        let (pool, _dir) = test_pool().await;
+        insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+        insert_space_block(&pool, SPACE_B_ID, "Work").await;
+
+        insert_block(&pool, "PG_A_ONLY", "page", "Personal-only", None, Some(1)).await;
+        assign_to_space(&pool, "PG_A_ONLY", SPACE_A_ID).await;
+
+        // Same-space fetch must succeed (sanity check the happy path
+        // before testing the foreign-space branch).
+        let ok = get_page_inner(&pool, "PG_A_ONLY", SPACE_A_ID, None, Some(10))
+            .await
+            .expect("same-space fetch must succeed");
+        assert_eq!(ok.page.id, "PG_A_ONLY");
+
+        // Foreign-space fetch must be rejected.
+        let err = get_page_inner(&pool, "PG_A_ONLY", SPACE_B_ID, None, Some(10))
+            .await
+            .expect_err("foreign-space fetch must be rejected");
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "foreign-space rejection must be Validation, got {err:?}"
+        );
+    }
+
+    /// Test 3 — there is no `get_block_with_children_inner` in this
+    /// codebase. The single-block-with-subtree fetch surface is
+    /// `get_page_inner` (the page editor / deep-link / journal nav
+    /// entry-point). Bare `get_block_inner` returns a single row (no
+    /// subtree) and is used by MCP / undo / batch-resolve paths where
+    /// space scoping is enforced upstream.
+    ///
+    /// To keep the FEAT-3p7 contract honest we cover the related
+    /// regression — a page that has no `space` property at all (legacy
+    /// pre-Phase-2 vault content that bypassed bootstrap somehow) is
+    /// also rejected by `get_page_inner` regardless of the requested
+    /// space, because no row matches the membership subquery.
+    #[tokio::test]
+    async fn get_page_rejects_unscoped_target() {
+        let (pool, _dir) = test_pool().await;
+        insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+
+        // Page with NO space property — represents legacy / corrupted
+        // state. The membership query has nothing to match on.
+        insert_block(&pool, "PG_NOSPACE", "page", "Unscoped", None, Some(1)).await;
+
+        let err = get_page_inner(&pool, "PG_NOSPACE", SPACE_A_ID, None, Some(10))
+            .await
+            .expect_err("unscoped page must be rejected from any space");
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "unscoped page must be Validation, got {err:?}"
+        );
+    }
+
+    /// Test 4 — deterministic property-style regression: 3 spaces × 5
+    /// pages each (15 pages) × 2 foreign spaces per page (30 foreign
+    /// pairs). Every foreign-space resolution MUST return None and
+    /// every foreign-space `get_page_inner` MUST return Validation.
+    /// Same-space queries MUST succeed (12 same-space pairs).
+    ///
+    /// The codebase has `proptest` available but a deterministic walk
+    /// is sufficient for this regression — the predicate is a closed-form
+    /// "for all (page, space)" assertion, not a search over a large
+    /// state-space. Per the user's instruction (REVIEW-LATER FEAT-3p7),
+    /// ship the deterministic version for clarity and CI determinism.
+    #[tokio::test]
+    async fn property_no_cross_space_resolution_or_fetch() {
+        let (pool, _dir) = test_pool().await;
+        insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+        insert_space_block(&pool, SPACE_B_ID, "Work").await;
+        insert_space_block(&pool, SPACE_C_ID, "Archive").await;
+
+        let spaces: [&str; 3] = [SPACE_A_ID, SPACE_B_ID, SPACE_C_ID];
+        // Seed 5 pages per space. Page IDs encode (space_index,
+        // page_index) so failures pinpoint the offending pair.
+        let mut all_pages: Vec<(String, &'static str)> = Vec::with_capacity(15);
+        for (s_idx, space_id) in spaces.iter().enumerate() {
+            for p_idx in 0..5 {
+                let page_id = format!("PG_S{s_idx}_P{p_idx}");
+                insert_block(
+                    &pool,
+                    &page_id,
+                    "page",
+                    &format!("page {p_idx} in space {s_idx}"),
+                    None,
+                    Some(p_idx as i64 + 1),
+                )
+                .await;
+                assign_to_space(&pool, &page_id, space_id).await;
+                // Add one descendant per page so `get_page_inner`'s
+                // subtree walk has something to chew on. The descendant
+                // inherits its parent's space via the `page_id` column.
+                let child_id = format!("CH_S{s_idx}_P{p_idx}");
+                insert_block_with_page_id(
+                    &pool,
+                    &child_id,
+                    "content",
+                    &format!("child of page {p_idx}"),
+                    Some(&page_id),
+                    Some(1),
+                    Some(&page_id),
+                )
+                .await;
+                all_pages.push((page_id, space_id));
+            }
+        }
+
+        // For every (page, space) pair: same-space succeeds, foreign-space fails.
+        for (page_id, owning_space) in &all_pages {
+            for candidate_space in spaces.iter() {
+                if candidate_space == owning_space {
+                    // Same-space — both APIs must succeed.
+                    let resolved = batch_resolve_inner(
+                        &pool,
+                        vec![page_id.clone()],
+                        Some((*candidate_space).to_string()),
+                    )
+                    .await
+                    .expect("same-space resolve must succeed");
+                    assert_eq!(
+                        resolved.len(),
+                        1,
+                        "same-space resolve of {page_id} from {candidate_space} must return the page"
+                    );
+                    assert_eq!(resolved[0].id, *page_id);
+
+                    let page_resp = get_page_inner(&pool, page_id, candidate_space, None, Some(10))
+                        .await
+                        .expect("same-space get_page must succeed");
+                    assert_eq!(page_resp.page.id, *page_id);
+                } else {
+                    // Foreign-space — both APIs must reject.
+                    let resolved = batch_resolve_inner(
+                        &pool,
+                        vec![page_id.clone()],
+                        Some((*candidate_space).to_string()),
+                    )
+                    .await
+                    .expect("foreign-space resolve must not error, just drop the row");
+                    assert!(
+                        resolved.is_empty(),
+                        "foreign-space resolve of {page_id} from {candidate_space} must return empty (got {} entries)",
+                        resolved.len()
+                    );
+
+                    let err = get_page_inner(&pool, page_id, candidate_space, None, Some(10))
+                        .await
+                        .expect_err("foreign-space get_page must reject");
+                    assert!(
+                        matches!(err, AppError::Validation(_)),
+                        "foreign-space get_page of {page_id} from {candidate_space} must be Validation, got {err:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// AGENTS.md invariant #9 — `batch_resolve_inner` must filter
+    /// `is_conflict = 0`. A conflict copy carries its own ULID + the
+    /// same content as the original; without the guard, a `[[ULID]]`
+    /// chip targeting the original would resolve to either row
+    /// depending on row ordering, surfacing duplicate / corrupted
+    /// titles in breadcrumbs and link chips. This regression test
+    /// proves the filter is in place.
+    #[tokio::test]
+    async fn batch_resolve_excludes_conflict_copies() {
+        let (pool, _dir) = test_pool().await;
+        insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+
+        // Original page, in the active space.
+        insert_block(&pool, "PG_ORIG", "page", "Original", None, Some(1)).await;
+        assign_to_space(&pool, "PG_ORIG", SPACE_A_ID).await;
+
+        // Conflict copy: distinct ULID, same content, marked `is_conflict = 1`,
+        // also assigned to the active space (same as a sync-induced conflict).
+        insert_block(&pool, "PG_CONF", "page", "Original", None, Some(2)).await;
+        sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
+            .bind("PG_CONF")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assign_to_space(&pool, "PG_CONF", SPACE_A_ID).await;
+
+        // Resolving both ULIDs from the active space must yield the
+        // original ONLY — the conflict copy is silently dropped.
+        let resolved = batch_resolve_inner(
+            &pool,
+            vec!["PG_ORIG".into(), "PG_CONF".into()],
+            Some(SPACE_A_ID.to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resolved.len(),
+            1,
+            "exactly the non-conflict page must surface; conflict copy must be silently dropped"
+        );
+        assert_eq!(
+            resolved[0].id, "PG_ORIG",
+            "the surviving entry must be the original (non-conflict) page"
+        );
+        assert!(
+            !resolved.iter().any(|r| r.id == "PG_CONF"),
+            "PG_CONF (is_conflict = 1) MUST NOT appear in the result"
+        );
+    }
+}
+
+// ====================================================================
 // Proptest tests
 // ====================================================================
 

@@ -1,5 +1,6 @@
 ---
 source: src/mcp/tools_ro.rs
+assertion_line: 743
 expression: wire
 ---
 - description: List all pages with cursor pagination.
@@ -127,14 +128,18 @@ expression: wire
       - end_date
     type: object
   name: get_agenda
-- description: "Return the journal page for a specific date, creating it if missing. Idempotent."
+- description: "Return the journal page for a specific date in the given space, creating it if missing. Idempotent per-space."
   inputSchema:
     additionalProperties: false
     properties:
       date:
         description: YYYY-MM-DD date string.
         type: string
+      space_id:
+        description: ULID of the space the daily journal belongs to (FEAT-3p5).
+        type: string
     required:
       - date
+      - space_id
     type: object
   name: journal_for_date

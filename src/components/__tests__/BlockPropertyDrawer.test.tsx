@@ -541,10 +541,13 @@ describe('BlockPropertyDrawer', () => {
   })
 
   it('renders ref-type property with resolved page title', async () => {
-    // Pre-populate resolve cache so the title is available
-    const { useResolveStore } = await import('../../stores/resolve')
+    // Pre-populate resolve cache so the title is available.
+    // FEAT-3p7 — cache is keyed by composite `${spaceId}::${ulid}`;
+    // no active space is set so we use the `__global__` sentinel via
+    // `keyFor(null, id)`.
+    const { useResolveStore, keyFor } = await import('../../stores/resolve')
     useResolveStore.setState({
-      cache: new Map([['TARGET_PAGE', { title: 'My Target Page', deleted: false }]]),
+      cache: new Map([[keyFor(null, 'TARGET_PAGE'), { title: 'My Target Page', deleted: false }]]),
       version: 1,
     })
 

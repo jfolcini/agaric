@@ -26,7 +26,7 @@ import {
   resolvePageByAlias,
   searchBlocks,
 } from '../lib/tauri'
-import { useResolveStore } from '../stores/resolve'
+import { keyFor, useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
 
 function logSlowQuery(fn: string, query: string, t0: number, count: number): void {
@@ -205,26 +205,37 @@ export function useBlockResolve(): UseBlockResolveReturn {
   // for short-query caching. Updated by the preload effect in BlockTree.
   const pagesListRef = useRef<Array<{ id: string; title: string }>>([])
 
+  // FEAT-3p7 — every cache lookup is composed against the active
+  // space's id so a chip resolved in space A is invisible from space B.
+  // `useSpaceStore.getState()` is read at call-time (not hook-mount-time)
+  // because the active space can change while the user is typing — the
+  // App-level subscriber flushes the previous space's cache, so a stale
+  // `spaceId` captured at mount would re-key against an empty bucket
+  // and surface only the fallback string.
   const resolveBlockTitle = useCallback((id: string): string => {
-    const cached = cacheRef.current.get(id)
+    const spaceId = useSpaceStore.getState().currentSpaceId
+    const cached = cacheRef.current.get(keyFor(spaceId, id))
     if (cached) return cached.title
     return `[[${id.slice(0, 8)}...]]`
   }, [])
 
   const resolveBlockStatus = useCallback((id: string): 'active' | 'deleted' => {
-    const cached = cacheRef.current.get(id)
+    const spaceId = useSpaceStore.getState().currentSpaceId
+    const cached = cacheRef.current.get(keyFor(spaceId, id))
     if (cached) return cached.deleted ? 'deleted' : 'active'
     return 'active'
   }, [])
 
   const resolveTagName = useCallback((id: string): string => {
-    const cached = cacheRef.current.get(id)
+    const spaceId = useSpaceStore.getState().currentSpaceId
+    const cached = cacheRef.current.get(keyFor(spaceId, id))
     if (cached) return cached.title
     return `#${id.slice(0, 8)}...`
   }, [])
 
   const resolveTagStatus = useCallback((id: string): 'active' | 'deleted' => {
-    const cached = cacheRef.current.get(id)
+    const spaceId = useSpaceStore.getState().currentSpaceId
+    const cached = cacheRef.current.get(keyFor(spaceId, id))
     if (cached) return cached.deleted ? 'deleted' : 'active'
     return 'active'
   }, [])
@@ -332,8 +343,14 @@ export function useBlockResolve(): UseBlockResolveReturn {
           const content = b.content ?? 'Untitled'
           const firstLine = content.split('\n')[0] as string
           const label = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine
-          // Show parent page title as breadcrumb when available
-          const parentTitle = b.parent_id ? cacheRef.current.get(b.parent_id)?.title : undefined
+          // Show parent page title as breadcrumb when available.
+          // FEAT-3p7 — compose against current space so a foreign-space
+          // parent (which shouldn't appear in the picker anyway, but
+          // could leak via stale cache) doesn't surface its title.
+          const parentSpaceId = useSpaceStore.getState().currentSpaceId
+          const parentTitle = b.parent_id
+            ? cacheRef.current.get(keyFor(parentSpaceId, b.parent_id))?.title
+            : undefined
           return { id: b.id, label, icon: Hash, breadcrumb: parentTitle }
         })
 
