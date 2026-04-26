@@ -1,15 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useJournalStore } from '../journal'
-import { resetTabIdCounter, selectPageStack, useNavigationStore } from '../navigation'
+import {
+  resetTabIdCounter,
+  selectActiveTabIndexForSpace,
+  selectPageStack,
+  selectTabsForSpace,
+  useNavigationStore,
+} from '../navigation'
 import { useRecentPagesStore } from '../recent-pages'
+import { useSpaceStore } from '../space'
 
 /** Helper to reset the store to a clean initial state. */
 function resetStore() {
   resetTabIdCounter()
+  // FEAT-3 Phase 3 — clear the per-space slices alongside the flat fields
+  // so tab data from a prior test doesn't leak in via the selector fall-
+  // back path.
   useNavigationStore.setState({
     currentView: 'journal',
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
+    tabsBySpace: {},
+    activeTabIndexBySpace: {},
     selectedBlockId: null,
   })
   // Reset journal store so date-routing tests start from a known baseline.
@@ -20,7 +32,7 @@ function resetStore() {
     scrollToPanel: null,
   })
   // Reset recent-pages store so FEAT-9 hook tests start from an empty MRU.
-  useRecentPagesStore.setState({ recentPages: [] })
+  useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
 }
 
 describe('useNavigationStore', () => {
@@ -905,7 +917,7 @@ describe('useNavigationStore', () => {
       expect(raw).not.toBeNull()
 
       const parsed = JSON.parse(raw as string)
-      expect(parsed.version).toBe(0)
+      expect(parsed.version).toBe(1)
       expect(parsed.state.currentView).toBe('page-editor')
       expect(parsed.state.tabs).toHaveLength(2)
       expect(parsed.state.activeTabIndex).toBe(1)
@@ -1061,6 +1073,192 @@ describe('useNavigationStore', () => {
       expect(recentPages[0]).toEqual({ pageId: 'DATE_PAGE', title: '2026-04-20' })
 
       recordVisitSpy.mockRestore()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // FEAT-3 Phase 3 — per-space tab partitioning
+  // ---------------------------------------------------------------------------
+  describe('FEAT-3p3 per-space tabs', () => {
+    beforeEach(() => {
+      // Each per-space test drives `useSpaceStore` directly. Reset it
+      // back to "no active space" between cases so the subscriber never
+      // races against leftovers from a sibling test.
+      useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [], isReady: true })
+    })
+
+    it('selectTabsForSpace falls back to flat state.tabs when spaceId is null', () => {
+      useNavigationStore.setState({
+        tabs: [{ id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' }],
+        activeTabIndex: 0,
+        tabsBySpace: {},
+        activeTabIndexBySpace: {},
+      })
+      const state = useNavigationStore.getState()
+      expect(selectTabsForSpace(state, null)).toEqual([
+        { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+      ])
+      expect(selectActiveTabIndexForSpace(state, null)).toBe(0)
+    })
+
+    it('selectTabsForSpace reads from per-space slice when spaceId is non-null', () => {
+      useNavigationStore.setState({
+        tabs: [],
+        activeTabIndex: 0,
+        tabsBySpace: {
+          'space-1': [{ id: 'a', pageStack: [{ pageId: 'A', title: 'Alpha' }], label: 'Alpha' }],
+          'space-2': [{ id: 'b', pageStack: [{ pageId: 'B', title: 'Bravo' }], label: 'Bravo' }],
+        },
+        activeTabIndexBySpace: { 'space-1': 0, 'space-2': 0 },
+      })
+      const state = useNavigationStore.getState()
+      expect(selectTabsForSpace(state, 'space-1')).toEqual([
+        { id: 'a', pageStack: [{ pageId: 'A', title: 'Alpha' }], label: 'Alpha' },
+      ])
+      expect(selectTabsForSpace(state, 'space-2')).toEqual([
+        { id: 'b', pageStack: [{ pageId: 'B', title: 'Bravo' }], label: 'Bravo' },
+      ])
+    })
+
+    it('openInNewTab in space-1 does not appear in tabsBySpace[space-2]', () => {
+      // Activate space-1, then open a tab. The action writes to both
+      // state.tabs (active mirror) AND tabsBySpace['space-1'].
+      useSpaceStore.setState({
+        currentSpaceId: 'space-1',
+        availableSpaces: [
+          { id: 'space-1', name: 'One' },
+          { id: 'space-2', name: 'Two' },
+        ],
+        isReady: true,
+      })
+      useNavigationStore.getState().openInNewTab('PAGE_A', 'Alpha')
+
+      const state = useNavigationStore.getState()
+      // Per-space slice for space-1 contains the new tab.
+      expect(state.tabsBySpace['space-1']?.some((t) => t.label === 'Alpha')).toBe(true)
+      // space-2 has no slice yet — the per-space partition holds.
+      expect(state.tabsBySpace['space-2']).toBeUndefined()
+      // Selector for space-2 returns the fall-back (active mirror), but the
+      // raw partition map is what cross-space code paths read in production.
+      expect(state.tabsBySpace['space-1']).not.toEqual(state.tabsBySpace['space-2'] ?? [])
+    })
+
+    it('switching space flushes the outgoing tabs and pulls the incoming slice', () => {
+      // Seed space-1 with a tab via the action so the per-space slice
+      // and the flat fields end up in sync.
+      useSpaceStore.setState({
+        currentSpaceId: 'space-1',
+        availableSpaces: [
+          { id: 'space-1', name: 'One' },
+          { id: 'space-2', name: 'Two' },
+        ],
+        isReady: true,
+      })
+      useNavigationStore.getState().openInNewTab('PAGE_A', 'Alpha')
+      // Pre-seed space-2 so we can verify pull-on-switch.
+      useNavigationStore.setState((prev) => ({
+        tabsBySpace: {
+          ...prev.tabsBySpace,
+          'space-2': [{ id: 'b', pageStack: [{ pageId: 'B', title: 'Bravo' }], label: 'Bravo' }],
+        },
+        activeTabIndexBySpace: { ...prev.activeTabIndexBySpace, 'space-2': 0 },
+      }))
+
+      // Switch space-1 → space-2. The subscriber flushes flat (space-1's
+      // current view) into tabsBySpace['space-1'] and pulls space-2's
+      // slice into the flat fields.
+      useSpaceStore.setState({ currentSpaceId: 'space-2' })
+
+      const state = useNavigationStore.getState()
+      expect(state.tabs.some((t) => t.label === 'Bravo')).toBe(true)
+      // space-1's tab must still be retained in its slice.
+      expect(state.tabsBySpace['space-1']?.some((t) => t.label === 'Alpha')).toBe(true)
+    })
+
+    it('rehydrate with stale currentSpaceId (no slice) does not crash', () => {
+      // Persisted shape has tabsBySpace + activeTabIndexBySpace but the
+      // user's current space is no longer a key. This is the
+      // "deleted-on-another-device" path.
+      const STORAGE_KEY = 'agaric:navigation'
+      const persistedState = {
+        state: {
+          currentView: 'page-editor',
+          tabs: [{ id: '0', pageStack: [], label: '' }],
+          activeTabIndex: 0,
+          tabsBySpace: {
+            'space-1': [
+              { id: '1', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+            ],
+          },
+          activeTabIndexBySpace: { 'space-1': 0 },
+        },
+        version: 1,
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedState))
+      useSpaceStore.setState({ currentSpaceId: 'space-DELETED' })
+
+      expect(() => useNavigationStore.persist.rehydrate()).not.toThrow()
+
+      const state = useNavigationStore.getState()
+      // Selector for the now-stale current space falls back to the flat
+      // mirror (a single empty tab) rather than throwing.
+      const tabs = selectTabsForSpace(state, useSpaceStore.getState().currentSpaceId)
+      expect(Array.isArray(tabs)).toBe(true)
+
+      localStorage.removeItem(STORAGE_KEY)
+    })
+
+    it('persistence round-trips tabsBySpace + activeTabIndexBySpace', () => {
+      const STORAGE_KEY = 'agaric:navigation'
+      localStorage.removeItem(STORAGE_KEY)
+
+      useSpaceStore.setState({
+        currentSpaceId: 'space-1',
+        availableSpaces: [{ id: 'space-1', name: 'One' }],
+        isReady: true,
+      })
+      useNavigationStore.getState().openInNewTab('PAGE_A', 'Alpha')
+      useNavigationStore.getState().openInNewTab('PAGE_B', 'Bravo')
+
+      const raw = localStorage.getItem(STORAGE_KEY)
+      expect(raw).not.toBeNull()
+      const parsed = JSON.parse(raw as string)
+      expect(parsed.version).toBe(1)
+      expect(parsed.state.tabsBySpace['space-1']).toBeDefined()
+      expect(parsed.state.tabsBySpace['space-1']).toHaveLength(3) // initial empty + 2 opens
+      expect(parsed.state.activeTabIndexBySpace['space-1']).toBe(2)
+    })
+
+    it('migration from v0 (flat-only) seeds tabsBySpace.__legacy__', () => {
+      const STORAGE_KEY = 'agaric:navigation'
+      const legacyShape = {
+        state: {
+          currentView: 'page-editor',
+          tabs: [
+            { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+            { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+          ],
+          activeTabIndex: 1,
+        },
+        version: 0,
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(legacyShape))
+      useSpaceStore.setState({ currentSpaceId: null })
+
+      useNavigationStore.persist.rehydrate()
+
+      const state = useNavigationStore.getState()
+      // The migration must move the legacy flat tabs into the __legacy__
+      // slot so consumers that pass `currentSpaceId = null` (or fall
+      // through via the per-space fall-back) keep seeing them.
+      expect(state.tabsBySpace['__legacy__']).toBeDefined()
+      expect(state.tabsBySpace['__legacy__']).toHaveLength(2)
+      expect(state.activeTabIndexBySpace['__legacy__']).toBe(1)
+      // The flat fields are still populated for the legacy reads.
+      expect(state.tabs).toHaveLength(2)
+      expect(state.activeTabIndex).toBe(1)
+
+      localStorage.removeItem(STORAGE_KEY)
     })
   })
 })

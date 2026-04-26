@@ -7,13 +7,13 @@
  * owner/repo below must match the updater endpoint pinned in
  * `tauri.conf.json`:
  *
- *   "https://github.com/agaric-app/org-mode-for-the-rest-of-us/releases/..."
+ *   "https://github.com/jfolcini/agaric/releases/..."
  */
 
 export const BUG_TRACKER = {
   kind: 'github',
-  owner: 'agaric-app',
-  repo: 'org-mode-for-the-rest-of-us',
+  owner: 'jfolcini',
+  repo: 'agaric',
 } as const
 
 export type BugTrackerConfig = typeof BUG_TRACKER

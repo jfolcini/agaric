@@ -17,14 +17,12 @@ const SAMPLE_METADATA: BugReport = {
 describe('buildGitHubIssueUrl', () => {
   it('URL-encodes title and body into the query string', () => {
     const url = buildGitHubIssueUrl({
-      owner: 'agaric-app',
-      repo: 'org-mode-for-the-rest-of-us',
+      owner: 'jfolcini',
+      repo: 'agaric',
       title: 'Crash & burn',
       body: 'Hello #world, how are you?',
     })
-    expect(
-      url.startsWith('https://github.com/agaric-app/org-mode-for-the-rest-of-us/issues/new?'),
-    ).toBe(true)
+    expect(url.startsWith('https://github.com/jfolcini/agaric/issues/new?')).toBe(true)
     // URLSearchParams encodes spaces as '+'. Ampersands, hashes, and slashes
     // all get percent-encoded.
     expect(url).toContain('title=Crash+%26+burn')

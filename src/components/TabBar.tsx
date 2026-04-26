@@ -43,12 +43,20 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/utils'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { getShortcutKeys } from '../lib/keyboard-config'
-import { useNavigationStore } from '../stores/navigation'
+import {
+  selectActiveTabIndexForSpace,
+  selectTabsForSpace,
+  useNavigationStore,
+} from '../stores/navigation'
+import { useSpaceStore } from '../stores/space'
 
 export function TabBar(): React.ReactElement | null {
   const { t } = useTranslation()
-  const tabs = useNavigationStore((s) => s.tabs)
-  const activeTabIndex = useNavigationStore((s) => s.activeTabIndex)
+  // FEAT-3 Phase 3 — read tabs through the per-space selector so tabs
+  // opened in space-A never bleed into space-B's bar.
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const tabs = useNavigationStore((s) => selectTabsForSpace(s, currentSpaceId))
+  const activeTabIndex = useNavigationStore((s) => selectActiveTabIndexForSpace(s, currentSpaceId))
   const currentView = useNavigationStore((s) => s.currentView)
   const switchTab = useNavigationStore((s) => s.switchTab)
   const closeTab = useNavigationStore((s) => s.closeTab)

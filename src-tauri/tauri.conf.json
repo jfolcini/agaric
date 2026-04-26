@@ -26,9 +26,7 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": [
-        "https://github.com/agaric-app/org-mode-for-the-rest-of-us/releases/latest/download/latest.json"
-      ],
+      "endpoints": ["https://github.com/jfolcini/agaric/releases/latest/download/latest.json"],
       "pubkey": ""
     },
     "deep-link": {
