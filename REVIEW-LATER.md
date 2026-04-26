@@ -17,21 +17,18 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-16 open items.
+12 open items.
 
-Previously resolved: 529+ items across 154 sessions.
+Previously resolved: 533+ items across 155 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
 | FEAT-3 | FEAT | Spaces — parent / umbrella (Phases 1 + 2 + 3 shipped; Phases 4–11 split into FEAT-3p4..FEAT-3p11) | S |
 | FEAT-3p4 | FEAT | Spaces Phase 4: agenda / graph / backlinks / tags / properties scoping (+ promote `space_id` to required on `list_blocks` / `search_blocks`, page-membership check in `get_page_inner`, per-space `currentView`) | L |
 | FEAT-3p5 | FEAT | Spaces Phase 5: per-space journal (J1) + per-space journal templates + per-space `currentDate` slice in `useJournalStore` | M |
-| FEAT-3p6 | FEAT | Spaces Phase 6: manage-spaces UI (rename, delete-only-if-empty, second-space onboarding) — status-bar chip / collapsed indicator / keyboard shortcuts moved to FEAT-3p10 / FEAT-3p11 | S |
 | FEAT-3p7 | FEAT | Spaces Phase 7: cross-space link enforcement — resolve store + `get_page_inner` scoped to current space; cross-space `[[ULID]]` chips render via existing broken-link UX. **No links between spaces, ever.** | M |
-| FEAT-3p8 | FEAT | Spaces Phase 8: history view space scoping — default current-space, "All spaces" toggle in HistoryFilterBar | S |
 | FEAT-3p9 | FEAT | Spaces Phase 9: per-space external integrations — per-space GCal calendar IDs / OAuth / push pipeline + space-name prefix on OS notifications (FEAT-11 coupling) | L |
 | FEAT-3p10 | FEAT | Spaces Phase 10: visual identity — per-space accent color + status-bar chip + window title prefix + collapsed-sidebar indicator (single highest-priority remaining FEAT-3 work for "fully separated feel") | M |
-| FEAT-3p11 | FEAT | Spaces Phase 11: digit hotkeys (`Ctrl+1` … `Ctrl+9` / `Cmd+1` … `Cmd+9`) for instant per-space switching, additive to FEAT-3p6's popup-search + cycle bindings | S |
 | FEAT-4 | FEAT | Agent access: expose notes to external agents via an MCP server — parent / umbrella | L |
 | FEAT-4i | FEAT | MCP v3 — Mobile (HTTPS/LAN via mTLS reuse from `sync_cert.rs`, agent-pairing flow) — DEFERRED pending v2 | L |
 | FEAT-5 | FEAT | Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar) — parent / umbrella | L |
@@ -42,7 +39,6 @@ Previously resolved: 529+ items across 154 sessions.
 | FEAT-14b | FEAT | PageBrowser grouping: i18n keys + section icons + per-section empty-state visibility flags | S |
 | FEAT-14c | FEAT | PageBrowser grouping: test coverage update (replace FEAT-12 tree-bypasses assertions, add duplication / filter / a11y / keyboard tests) | S–M |
 | BUG-1 | BUG | PageBrowser silently hides pages that lack a `space` property — journal pages, templates, WelcomeModal samples, and peer-synced pages disappear from the Pages view (rolls up the existing deep-CR H-3a / H-3b / H-3c + L-133) | S–M |
-| MAINT-1 | MAINT | One-shot migration to move all existing pages from Personal → Work space (maintainer-only / single-user deployment; pre-publish-threshold ULIDs only, idempotent, op-emitting so peer devices converge) | S |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
@@ -220,27 +216,6 @@ Fresh installs and upgrades both run a boot-time Rust bootstrap (`src-tauri/src/
 **Cost:** M — single focused session.
 **Status:** Open. Depends on FEAT-3 Phases 1 + 2 + 3 (shipped). Couples loosely with H-3a / H-3b (backend `create_block` IPC enforcement) — recommend landing H-3a first, then this.
 
-### FEAT-3p6 — Spaces Phase 6: manage-spaces UI (rename, delete-only-if-empty, second-space onboarding)
-
-**Problem:** Today the SpaceSwitcher dropdown surfaces a disabled "Manage spaces…" placeholder (i18n key `space.manageComingSoon`, "Coming in Phase 6"). Users cannot rename a space, cannot create new spaces beyond the seeded "Personal" + "Work", cannot delete a space, and the app provides no first-run guidance about what spaces are or how to use them.
-
-**Scope (narrowed — visual-identity items moved to FEAT-3p10, keyboard shortcuts moved to FEAT-3p11):**
-- **"Manage spaces…" dialog** (Radix `Dialog` reusing existing primitives). Lists every space with row-level actions: rename (inline editable label), pick accent color (consumed by FEAT-3p10), delete.
-- **Rename** round-trips through the existing block-content edit op (no new op type; spaces are page blocks). Updates the `availableSpaces` cache via `refreshAvailableSpaces()` after the op materializes.
-- **Delete** — button is **DISABLED until the space is empty** per the locked-in user decision (no soft-delete, no reassign-on-delete). Hover tooltip on disabled state explains why ("Delete every page in this space first"). When enabled, click → confirmation `AlertDialog` → soft-delete the space block (existing `delete_block` op). Rejects deletion of the last remaining space (always at least one space must exist).
-- **Create new space** — primary button in the dialog. Spawns a `Personal`/`Work`-style page block + `is_space=true` property + default accent color in a single `BEGIN IMMEDIATE` transaction (mirrors `create_page_in_space`'s atomicity).
-- **Second-space onboarding** — first time the user opens "Manage spaces…" with only the two seeded spaces, a one-time tooltip / inline hint explains: "Spaces keep your contexts (work, personal, etc.) physically separate. Pages, journals, tags, and links never cross between spaces. Switch with the dropdown or `Ctrl+1` / `Ctrl+2` (FEAT-3p11)." Dismissal flag in localStorage (`agaric:space-onboarding-seen-v1`).
-
-**Testing:**
-- Delete button disabled state: hover tooltip explains why; switches to enabled when the space is empty; confirmation dialog on enable+click; cannot delete the last remaining space.
-- Rename round-trips through the property write and reflects in the SpaceSwitcher within one tick.
-- Create new space appears in `availableSpaces` and is immediately switchable.
-- a11y: every new control has `aria-label`, focus-visible ring, touch-target compliance per AGENTS.md frontend guidelines.
-- Onboarding hint shows on first manage-spaces open and never again after dismissal.
-
-**Cost:** S — single short session. Mostly dialog wiring on top of existing primitives.
-**Status:** Open. Depends on FEAT-3 Phases 1 + 2 + 3 (shipped). Independent of FEAT-3p4 / p5 / p7 / p8 / p9 / p10 / p11 — schedulable any time, but recommended after FEAT-3p10 lands so the accent picker has a real consumer.
-
 ### FEAT-3p7 — Spaces Phase 7: cross-space link enforcement (broken-chip rendering)
 
 **Problem:** The shipped `[[ULID]]` resolution path does not honour the locked-in "no links between spaces" decision. `useResolveStore.preload()` calls `listBlocks({ blockType: 'page', limit: 1000 })` with no `spaceId`, so the global title cache contains pages from every space. When a chip renders a `[[ULID]]` whose target lives in a different space, the chip resolves to the foreign page's title and clicking it silently navigates into the current-space tab stack — **the user crosses a space boundary with no UI signal and no auto-switch**, contradicting the locked-in design intent.
@@ -289,46 +264,6 @@ The picker is already current-space-only (Phase 2 shipped), so cross-space links
 **Cost:** M — single focused session. Touches one resolve store, one Rust resolve helper, one Rust page-fetch helper, one Tauri command signature, plus property + vitest tests. No schema changes, no new op types, no migration.
 
 **Status:** Open. Independent of FEAT-3p4 / p5 / p6 / p8 / p9 / p10 / p11. **Recommend landing alongside or before FEAT-3p10** so the visual-identity work is not undermined by silent cross-space navigation via clickable foreign chips.
-
-### FEAT-3p8 — Spaces Phase 8: history view space scoping
-
-**Problem:** `HistoryView.tsx` (`src/components/HistoryView.tsx`) calls `listPageHistory({ pageId: '__all__' })`, which the backend (`src-tauri/src/pagination/history.rs`) treats as a sentinel meaning "every op in `op_log`, every space". Today this is the default and only mode of the History view — there is no UI affordance to scope it to the current space, and there is no "current page" filter except by typing a ULID. For a user trying to live in one context, opening the History drawer dumps every Work mutation while they're in Personal (and vice versa). Per the locked-in "spaces are physically separate vaults" decision, this is a leak.
-
-**Locked-in policy:**
-
-- **History defaults to current-space only.** The default query becomes "all ops whose `payload.block_id` belongs to a page in the current space" — the page-ancestor join from Phase 2 applied to `op_log` rows.
-- **Explicit "All spaces" toggle** in `HistoryFilterBar` — a single Radix `Switch` that, when on, drops the space filter. **Off by default**. State **not persisted** (every History session starts current-space — the default is the privacy-preserving one).
-- **Per-page mode is unchanged.** When `pageId` is a real ULID (not `__all__`), the existing per-page query already implicitly scopes correctly because the page itself belongs to exactly one space.
-- **Revert is unchanged.** `revert_ops` operates on `(device_id, seq)` tuples; the reverter only sees the ops the user can see. No additional space check needed at revert time.
-
-**Backend scope:**
-
-- `pagination::history::list_page_history` gains `space_id: Option<String>`. When `pageId == "__all__"` AND `space_id` is `Some`, append:
-
-```sql
-AND json_extract(ol.payload, '$.block_id') IN (
-    SELECT bp.block_id FROM block_properties bp
-    WHERE bp.key = 'space' AND bp.value_ref = ?
-)
-```
-
-  When `space_id` is `None`, behaviour is identical to today (the "All spaces" path). When `pageId` is a real ULID, `space_id` is ignored (per-page mode).
-
-- Test matrix: (a) per-page (existing), (b) all-pages all-spaces (existing), (c) all-pages current-space (new). Property test: union of (c)-results across all spaces equals (b)-result, and (c) is a strict subset of (b) for any single space.
-
-**Frontend scope:**
-
-- `HistoryView.tsx` reads `currentSpaceId` from `useSpaceStore` and passes it as `spaceId` by default.
-- Add "All spaces" `Switch` in `HistoryFilterBar` (next to the existing op-type filter). When toggled on, pass `spaceId: undefined`. Toggle state lives in `HistoryView`'s local `useState`, not persisted.
-- Empty-state message when current-space history is empty: "No changes in this space yet. Toggle 'All spaces' to see history from other spaces."
-
-**Testing:**
-
-- Vitest: HistoryView renders only current-space ops by default. Toggle "All spaces" → renders cross-space ops. Toggle off → re-scopes. Op-type filter and space filter compose correctly.
-- Rust: filtered-vs-unfiltered result counts differ by exactly the foreign-space ops; cursor pagination remains stable across the filter.
-
-**Cost:** S — single focused session. One SQL clause, one new Switch, one test set.
-**Status:** Open. Independent of every other phase. Recommend after FEAT-3p4 (so all data-leakage backend work lands together) but schedulable independently.
 
 ### FEAT-3p9 — Spaces Phase 9: per-space external integrations (GCal, OS notifications)
 
@@ -403,34 +338,6 @@ AND json_extract(ol.payload, '$.block_id') IN (
 
 **Cost:** M — single focused session. Touches `App.tsx`, `index.css`, two new shared components, one Tauri wrapper, one bootstrap migration adding default accent properties.
 **Status:** Open. **HIGHEST-PRIORITY remaining FEAT-3 work for the stated goal of "fully separated feel"**. Independent of FEAT-3p4 / p5 / p7 / p8 / p9 / p11. Couples with FEAT-3p6 (the management UI surface that lets the user pick the accent for a renamed/new space) — recommend p10 first so p6 has a real consumer to wire up.
-
-### FEAT-3p11 — Spaces Phase 11: digit hotkeys (`Ctrl+1` … `Ctrl+9`) for instant switching
-
-**Problem:** The Phase 6 plan (now narrowed to manage-spaces UI in FEAT-3p6) was going to add two switching hotkeys: `Ctrl+Shift+S` (popup search) and `Ctrl+Alt+S` (cycle). Both involve a modifier-search-or-rotate motion that is slower than the universal "digit-per-tab/workspace" pattern Chrome, Slack, iTerm, every IDE, and most Linux WMs use. With only two seeded spaces in v1, **`Ctrl+1` / `Ctrl+2` is the single fastest possible motion** — one chord, no menu, no rotation count, no "did I press it twice or three times?". This is the muscle memory the user already has from every other app.
-
-**Locked-in policy:**
-
-- **`Ctrl+1` … `Ctrl+9` switch directly to the Nth space** in `list_spaces` order (alphabetical; same as the SpaceSwitcher dropdown).
-- **`Cmd+1` … `Cmd+9` on macOS** to match platform convention.
-- Rebindable via `keyboard-config.ts`. Conflicts with browser-tab digit shortcuts elsewhere are not relevant — this is a desktop app, not a browser.
-- **Out-of-range digits are no-ops.** `Ctrl+5` with three spaces does nothing (no toast, no error, just suppressed).
-- These shortcuts **coexist** with the FEAT-3p6 popup-search and cycle bindings (if those still ship in p6 polish — TBD by the user) — they are additive, not replacements.
-
-**Frontend scope:**
-
-- 9 new entries in `keyboard-config.ts`: `switchSpace1` … `switchSpace9` with default `Ctrl+1` … `Ctrl+9` (`Cmd+1` … `Cmd+9` on macOS — use the existing platform-aware binding helper).
-- Single handler in `App.tsx` (or wherever the global keyboard router lives) that resolves digit → space ID via the alphabetical `availableSpaces` order, then calls `useSpaceStore.getState().setCurrentSpace(id)`.
-- Visible shortcuts in the SpaceSwitcher dropdown items as a right-aligned hint chip (`Ctrl+1`, `Ctrl+2`, …) — discoverability without docs. Hint chip uses the existing keyboard-shortcut chip primitive.
-- Visible shortcut hint in the FEAT-3p6 onboarding tooltip: "…or `Ctrl+1` / `Ctrl+2`."
-
-**Testing:**
-
-- Vitest: `Ctrl+1` switches to first space alphabetically. `Ctrl+2` to second. `Ctrl+5` with three spaces is a no-op.
-- Vitest: rebinding persists through `keyboard-config` and is honoured by the handler.
-- Vitest: dropdown items show the right hotkey hint per row, in alphabetical order.
-
-**Cost:** S — single short session. Mechanical wiring on top of the existing keyboard-config + SpaceSwitcher. No architectural change.
-**Status:** Open. **HIGHEST-PRIORITY remaining FEAT-3 work for the stated goal of "easily and quickly switch"**. Independent of every other phase.
 
 ### FEAT-4 — Agent access: expose notes to external agents via an MCP server
 
@@ -1040,104 +947,6 @@ Any page without a `space` property is excluded — silently. Once the boot-time
 **Cost:** S–M — backend IPC tightening + bootstrap loosening (~80 lines), 6 frontend callsites swapped (~6 lines each), ~10-15 new/updated tests, 1 e2e flow. No schema migration; no new tables; the property test framework (`fast-check`) is already in the project.
 **Risk:** Medium — the IPC tightening is a structural change to `create_block`. If any callsite (especially in tests, mocks, or sync paths) silently relies on the legacy behaviour, those will fail loudly rather than silently corrupt data — preferred direction. The bootstrap re-run is low-risk (pure additive backfill, idempotent) but must keep the fast-path skip for the `is_space` properties to avoid re-emitting redundant `is_space` ops every boot.
 **Status:** Open. Schedule the four fixes (H-3a + L-133 + H-3b + H-3c) together — partial fixes leave the silent-divergence behaviour partially in place.
-
-## MAINT — Tooling / dev-experience maintenance / code quality
-
-### MAINT-1 — One-shot migration: move existing pages from Personal → Work space (maintainer-only)
-
-**Context:** The repo today is single-user — the maintainer is the only user — and the seeded spaces are "Personal" + "Work". The boot-time `bootstrap_spaces` migration (`src-tauri/src/spaces/bootstrap.rs`) backfills `space = Personal` on every existing page that didn't have one. The maintainer wants their existing data to live under the **Work** space instead. Since no other user has installed the app yet, the migration only affects the maintainer's vault(s) in practice — but the implementation must be safe enough that fresh installs after this ships are NOT impacted (their newly-created Personal pages must not be dragged into Work).
-
-**Decisions locked in:**
-- Move every page currently scoped to **Personal** AND created **before this migration ships** into **Work**.
-- Fresh installs are unaffected: pages created after the migration's publish timestamp stay in Personal (or wherever the user puts them).
-- The default space for fresh installs stays **Personal** — no change to bootstrap defaults, no change to the SpaceSwitcher initial selection.
-- The migration is **idempotent** — re-running yields zero ops once the page set has fully shifted.
-- The migration emits **ops via the op log** (not a raw SQL `UPDATE`) so peer devices that later sync converge naturally and the change is durable across snapshot/restore.
-
-**Approach: time-gated, op-emitting, runs at boot once.**
-
-Add a sibling routine to `bootstrap_spaces` (e.g. `migrate_personal_pages_to_work`) that runs on every boot AFTER `bootstrap_spaces` has completed and has the same shape:
-
-1. **Guard #1 — fast-path skip.** Read a marker property from a stable seed block (the `SPACE_PERSONAL_ULID` block itself): `personal_to_work_migration_v1 = "true"`. If present, return early. This is the same idempotency-marker pattern `bootstrap_spaces` already uses (e.g. `is_space = "true"` on the seeded blocks).
-2. **Guard #2 — time-gate.** Hard-code a `MIGRATION_THRESHOLD_ULID` constant in the routine — the ULID of the moment this code is published (a 26-char string like `01J3XYZABCDEFGHJKMNPQRSTVW0`). Only consider pages whose `id < THRESHOLD_ULID` (i.e., created before this migration shipped). This is the protection for fresh installs: a brand-new install's pages will all have `id >= THRESHOLD_ULID` and the move is a no-op.
-3. **Inside one `BEGIN IMMEDIATE`:** for every page satisfying:
-   - `block_type = 'page'`
-   - `deleted_at IS NULL`
-   - `is_conflict = 0`
-   - `id < ?MIGRATION_THRESHOLD_ULID`
-   - currently has a `space` property pointing at `SPACE_PERSONAL_ULID`
-   - is NOT itself a space block (`is_space != "true"`)
-   - emit `set_property_in_tx(device_id, page_id, "space", value_ref = SPACE_WORK_ULID)`. The materializer will UPSERT on `(block_id, key)` so the local row converges immediately, and the op replicates to peers via the normal sync path.
-4. **Mark complete:** on the same transaction, set `personal_to_work_migration_v1 = "true"` on the `SPACE_PERSONAL_ULID` block (the marker for guard #1) and commit.
-5. **Telemetry:** emit a `tracing::info!` with `pages_moved = N, threshold = MIGRATION_THRESHOLD_ULID, marker_set = bool` so the bug-report bundle records the run.
-
-**Why this is safe across the install matrix:**
-
-| Install scenario | Behaviour |
-|---|---|
-| Maintainer's existing vault, first boot after migration ships | All existing Personal pages have `id < THRESHOLD` → all move to Work. Marker set. |
-| Maintainer's existing vault, second boot | Marker present → fast-path skip. No ops emitted. |
-| Maintainer's second device that syncs later | Same op set arrives via sync; materializer UPSERTs converge. Local routine runs once and finds nothing to do (peer's ops already moved them) → marker set. |
-| Fresh install of the published app | No pages older than THRESHOLD exist → loop body never fires → marker set. Zero ops. Zero impact. |
-| Fresh install + maintainer imports a backup | Imported pages WITH `id < THRESHOLD` move to Work (correct — those are old maintainer pages). Pages with `id >= THRESHOLD` (new) stay where they are. |
-| Two devices, one bumps the migration first | First device emits ops; second device's local routine on next boot finds zero pages still pointing at Personal-with-id-below-threshold → no-op. Marker set on both. |
-
-**Why op-emitting (not raw SQL UPDATE):**
-- AGENTS.md invariant #1: "Op log is strictly append-only — never mutate, never delete (except compaction)." A raw SQL `UPDATE block_properties` would mutate materialized state without a corresponding op-log entry, violating CQRS. Subsequent `compute_reverse` walks (undo / restore) would reverse-translate against state that has no op-log provenance → divergence between what the user sees and what undo would do.
-- The sync path replicates ops, not materialized state. A raw SQL update on device A would not reach device B.
-- The bootstrap precedent (`pages_without_space` → emits `SetProperty` ops, not raw UPDATEs) is the correct model.
-
-**Files touched:**
-- `src-tauri/src/spaces/bootstrap.rs` — add `migrate_personal_pages_to_work` (sibling of `bootstrap_spaces`); call it from the same boot wiring after `bootstrap_spaces` returns Ok.
-- `src-tauri/src/spaces/mod.rs` — re-export the new symbol.
-- `src-tauri/src/lib.rs` (or wherever `bootstrap_spaces` is currently invoked at boot) — add the second call.
-- `src-tauri/src/spaces/tests.rs` — see test plan.
-- No new migration SQL file. No schema changes. No new tables. No new property defs (the `space` ref-type and `is_space` text-type are already defined; the `personal_to_work_migration_v1` marker re-uses the `text` value type — no `property_definitions` row needed because property defs are advisory for the UI, not enforced at the property write level for system-internal markers).
-- No frontend changes — purely backend / boot-time.
-
-**Open questions to settle BEFORE implementation:**
-1. **Pages currently in Work already.** The maintainer may have already moved some pages to Work manually via the kebab "Move to space". Those should be left alone (they have `space = Work` already, so the WHERE clause naturally skips them).
-2. **Conflict copies.** Conflict-copy pages should NOT be moved (they're already filtered by `is_conflict = 0`).
-3. **Templates vs regular pages.** Templates have `template = "true"`. Move them too? **Yes** — the maintainer wants ALL existing data moved. The WHERE clause doesn't discriminate on `template`.
-4. **Deleted pages (in trash).** Skip them via `deleted_at IS NULL` (already in the WHERE clause). If the maintainer restores a trashed page later, the migration won't run again (marker set), so the restored page stays under whatever `space` it had at deletion time — Personal — which is intentional: the user can move it manually.
-5. **The Personal space block itself.** Filtered by `is_space != "true"` — it stays as Personal (it IS Personal).
-6. **Per-space tabs / per-space recent pages (FEAT-3 Phase 3).** Today still global per the table at the top of the file (FEAT-3p3 hasn't shipped). Once Phase 3 lands, this migration should also rewrite `tabsBySpace[Personal]` → `tabsBySpace[Work]` and same for recent. **Until Phase 3 ships, this is a non-issue.** If Phase 3 ships first, MAINT-1 needs an addendum — file it as MAINT-1a.
-7. **Threshold value.** Pick the threshold as `BlockId::now()` evaluated at the time the commit lands. The constant goes in `migrate_personal_pages_to_work` at the top: `const MIGRATION_THRESHOLD_ULID: &str = "01<…26 chars>";`. The same `seeded_ulids_parse_as_valid_ulids` test pattern catches typos.
-
-**Test plan:**
-
-*Unit (`src-tauri/src/spaces/tests.rs`):*
-- `migrate_personal_pages_to_work_moves_pre_threshold_pages_to_work` — seed three pages: A with `id < THRESHOLD` and `space = Personal`; B with `id >= THRESHOLD` and `space = Personal`; C with `id < THRESHOLD` and `space = Work`. Run migration. Assert A is now under Work, B stays under Personal, C unchanged. Assert ops in op_log: exactly one `SetProperty` op for A.
-- `migrate_personal_pages_to_work_is_idempotent` — run twice; assert second run emits zero ops and the marker is unchanged.
-- `migrate_personal_pages_to_work_skips_when_marker_present` — set the marker first; run; assert no scan, no ops.
-- `migrate_personal_pages_to_work_skips_conflict_copies` — seed a conflict-copy page with `is_conflict = 1` AND old `id` AND `space = Personal`. Assert it stays in Personal.
-- `migrate_personal_pages_to_work_skips_deleted` — seed a soft-deleted page; assert unchanged.
-- `migrate_personal_pages_to_work_skips_space_blocks` — assert SPACE_PERSONAL_ULID's own block isn't moved.
-- `migrate_personal_pages_to_work_fresh_install_is_noop` — seed only post-threshold pages; assert zero ops, marker set.
-- Property test (`fast-check`): random page sets straddling the threshold → invariant: every pre-threshold page that was in Personal ends up in Work; every post-threshold page is unchanged; the marker is always set after a successful run.
-
-*Sync convergence:*
-- Two-pool integration test (use the existing `tests/sync_*` harness): pool A runs the migration, replicates ops to pool B (which has the same seeded pages), assert pool B's state converges to the same Work scoping AFTER applying the synced ops. Pool B's local migration on next boot should be a no-op (it already saw the ops).
-
-*E2E:*
-- Skip — this is a one-shot data migration. The post-migration end state is exercised by FEAT-3 Phase 2's existing PageBrowser space-scoping tests.
-
-*Manual sanity (maintainer's actual vault):*
-- Before deploying: dump `SELECT id, content FROM blocks WHERE block_type='page' AND deleted_at IS NULL` and the matching `space` properties as a baseline.
-- Deploy. Boot once.
-- Re-dump. Assert every pre-deploy page now has `space = SPACE_WORK_ULID`.
-- Open the SpaceSwitcher → switch to "Work" → confirm every expected page is listed in PageBrowser.
-- Open the SpaceSwitcher → switch to "Personal" → expected to be empty (or contain only the post-threshold pages created since deploy).
-
-**Out of scope (deliberately deferred):**
-- Flipping the bootstrap default for fresh installs from Personal → Work. Out of scope — would change UX for any new user, and Personal is a more universally appropriate default name. If the maintainer later wants to flip the default, it's a separate decision.
-- Per-space tabs / per-space recent pages migration (depends on FEAT-3p3 shipping first; file as MAINT-1a if needed when Phase 3 lands).
-- A general "rename / merge / split spaces" UI. Out of scope; this is a one-shot data move, not a feature.
-- A user-facing "move all my pages from X to Y" operation. Could be a future FEAT but would need a confirmation dialog, undo support, and a cancel path — none of those apply to this maintainer-only one-shot.
-
-**Cost:** S — one new boot-time routine (~80 lines mirroring `bootstrap_spaces`'s shape), ~6 unit tests + 1 property test + 1 sync-convergence test (~150 lines of test code). No schema migration, no new tables, no IPC change, no frontend change.
-**Risk:** Low — the routine is gated by both a marker AND a time-threshold; the worst-case "runs twice / runs on a fresh install / runs on a peer that already saw the ops" scenarios all degrade to a no-op with zero data loss. The op-emitting design preserves all CQRS / sync invariants.
-**Status:** Open. Schedule independently from BUG-1 (which fixes the upstream "pages without `space` are invisible" issue). Order doesn't matter, but BUG-1 first is cleaner: it ensures every page HAS a `space` before this migration tries to rewrite it. If MAINT-1 ships first on a vault still leaking pages via the bypass paths, those leaked pages won't be moved (they have no `space` to match in the WHERE clause) and will remain invisible until BUG-1 fixes them.
 
 ### PUB-2 — Git author email across all history is corporate (`javier.folcini@avature.net`)
 
