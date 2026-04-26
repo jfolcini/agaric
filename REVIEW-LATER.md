@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-27 open items.
+22 open items.
 
 Previously resolved: 422+ items across 149 sessions.
 
@@ -45,11 +45,6 @@ Previously resolved: 422+ items across 149 sessions.
 | TEST-4 | TEST | 25 of 26 Playwright specs lack a console-error listener — backend / mock errors leak silently in every E2E suite except `smoke.spec.ts` | M |
 | UX-257 | UX | Breadcrumb bar (zoom + page header) doesn't read as a breadcrumb, is oversized, and styling is inconsistent across the two surfaces | M |
 | UX-260 | UX | Discoverability sweep for keyboard shortcuts and gestures (sidebar swipe, journal nav, undo tiers, Shift+Click range, properties drawer shortcut, Ctrl+F, KeyboardShortcuts→Settings link) | M |
-| UX-270 | UX | `GraphView` a11y + filter persistence — bare `overflow-y-auto` → `ScrollArea`, redundant aria-label on labelled checkboxes, `role="img"` on interactive SVG, filter state reset on every navigation | M |
-| UX-274 | UX | Agenda views — `DateChipEditor` parse error not shown on input itself; `QueryResult` error has no retry; `RescheduleDropZone` has no keyboard alternative; per-group collapse not persisted; empty-filter validation silent; `DuePanel` projected entries skipped by keyboard nav; `QueryBuilderModal` accepts unknown property keys | M |
-| UX-275 | UX | History view UX residue — DiffDisplay hunk navigation, descendant-count badge wrap, batch keyboard shortcuts, restore-action missing undo toast, checkbox row-click ambiguity, "Restore to here" icon-only on touch, generic error banner, no batch-restore confirmation | M |
-| UX-277 | UX | `BugReportDialog` log-content preview before submit (Checkbox primitive swap + success toast shipped; log preview pending — may be superseded by H-9c) | M |
-| UX-281 | UX | Gutter-button tooltips invisible on touch — gutter is fixed at 68px, three buttons already inflate to 44×44 on `pointer:coarse` so inline labels would overflow; needs a different affordance (long-press → toast, or wider gutter / drawer on touch) | S |
 | PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S |
 | PUB-3 | PUB | Employer IP clearance before public release | S |
 | PUB-5 | PUB | Tauri updater — wire endpoint URL + Minisign keypair (publish target is now jfolcini/agaric) | S |
@@ -865,79 +860,6 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Cost:** M — many small surfaces but each fix is XS.
 **Risk:** S — additive UI, no behaviour change.
 **Impact:** L — flips a large amount of latent capability into discoverable capability.
-
-### UX-270 — `GraphView` a11y + filter persistence
-
-**Problem:**
-
-- `src/components/GraphFilterBar.tsx:196` — uses bare `overflow-y-auto` instead of `ScrollArea` for the tag list; AGENTS.md mandates `ScrollArea` for all scrollable containers (`SourcePageFilter.tsx:140` is the correct pattern).
-- `src/components/GraphFilterBar.tsx:191-213` — checkbox has `aria-label={tag.name}` *and* a `<label>` element wrapping the input with the same text. Remove the redundant `aria-label`.
-- `src/components/GraphView.tsx:207-212` — SVG has `role="img"` while the inner nodes are interactive (`role="button"`, Enter/Space handlers via `useGraphSimulation.ts`). Either drop the wrapper role or use `role="application"`.
-- `src/components/GraphFilterBar.tsx:309-431` — filters reset on every navigation; unlike SearchPanel and BacklinkFilterBuilder, GraphFilterBar has no localStorage persistence. Persist under `agaric:graph-filters`.
-- `src/hooks/useGraphSimulation.ts:136-176` — keyboard nav (`tabindex=0`, `role="button"`, Enter/Space handler) is implemented but undocumented in the file; add a JSDoc comment block explaining the pattern (mirrors AGENTS.md "Floating UI lifecycle logging" doc-as-you-go expectation).
-
-**Cost:** M — bundle.
-**Risk:** S.
-**Impact:** M — a11y + persistence parity with the rest of the app.
-
-### UX-274 — Agenda views: error retry, parse feedback, persistence, keyboard nav
-
-**Problem:** Seven small UX gaps in agenda + queries:
-
-- `src/components/DateChipEditor.tsx:105-116` — when parse fails, error message is in helper text only; the input itself has no `aria-invalid` or `border-destructive`. Add both.
-- `src/components/QueryResult.tsx:201` — `{error && <div className="...">{error}</div>}` has no retry button. Add one that calls `fetchResults()`.
-- `src/components/journal/RescheduleDropZone.tsx:29-102` — drag-only interface with a `biome-ignore` acknowledging no keyboard alternative. Document the keyboard reschedule path (DateChipEditor) in the component's JSDoc; consider a context-menu reschedule on right-click of agenda items.
-- `src/components/journal/UnfinishedTasks.tsx:161` — per-group collapse state lives in React state only; parent section collapse persists to localStorage. Add per-group persistence under e.g. `unfinishedTasks.groupCollapsed`.
-- `src/components/AgendaFilterBuilder.tsx:140-145` — clicking "Apply" with no values silently does nothing; the button is disabled but disabled state isn't visually obvious. Either make disabled prominent (`opacity-50 cursor-not-allowed`) or show a brief toast.
-- `src/components/DuePanel.tsx:331-380` — projected entries (`<li>` with `onClick` + `onKeyDown`) are not part of the `useListKeyboardNavigation` flat-items array. Keyboard users can't arrow-navigate to them.
-- `src/components/QueryBuilderModal.tsx:96-116` — accepts arbitrary property keys without checking against `listPropertyDefinitions()`. Add autocomplete or pre-save validation.
-
-**Cost:** M.
-**Risk:** S.
-**Impact:** M.
-
-### UX-275 — History view UX residue
-
-**Problem:** Remaining sub-fixes in the history / trash surface (`HistoryView`, `HistoryListItem`, `HistoryPanel`, `BatchActionToolbar`, `TrashView`, `DiffDisplay`). The session-483 batch shipped the wording / a11y polish (Restore-to-here scope copy + non-reversible aria-label / tooltip pair, an inline ✕ on `HistoryFilterBar`, the `TrashView` filter ✕ via `SearchInput`'s built-in clear, and the Shift+click range-select hint inside the trash batch toolbar). What's left is the heavier behavioural / interaction work:
-
-- `src/components/DiffDisplay.tsx:16-54` — no keyboard navigation between hunks; large diffs render as one paragraph. Add prev/next change buttons; wrap in `<div role="region" aria-label="...">`.
-- `src/components/TrashView.tsx:543-551` — descendant-count badge can wrap on narrow viewports; verify the i18n key `trash.itemsInBatch` exists; consider a more prominent badge variant.
-- `src/components/TrashView.tsx:438-459` — batch toolbar buttons (Restore / Purge) lack keyboard shortcuts matching `HistorySelectionToolbar:63-65` (the visible Shift+click hint shipped in session 483; the actual keybinds did not).
-- `src/components/HistoryPanel.tsx:83-103` — restore success toast has no "Undo" action; UX.md "Toast Action Patterns" mandates one for reversible actions. Capture previous content before the restore so undo can revert.
-- `src/components/HistoryListItem.tsx:243-254` — checkbox + row-click both toggle selection on touch; users may accidentally select by tapping the row. Add visible focus-ring on the checkbox; clarify ownership (clickable row OR clickable checkbox, not both).
-- `src/components/HistoryListItem.tsx:265-287` — "Restore to here" is icon-only via `Button size="sm"`; tooltip is the only label. On touch (no hover), the meaning is hidden. Add a text label or move to a long-press / context menu.
-- `src/components/HistoryView.tsx:311-322` — error banner has retry but generic message. Pass more context (network / server / unknown) into the error state and `logger.error` the full error.
-- `src/components/TrashView.tsx:268-289` — batch *restore* has no confirmation while batch *purge* does; inconsistent. Add confirmation when `selected.size > 5` (or always).
-
-**Cost:** M.
-**Risk:** S.
-**Impact:** M.
-
-### UX-277 — `BugReportDialog` log-content preview before submit
-
-**Problem:** `src/components/BugReportDialog.tsx` lists filenames + sizes for attached logs but offers no preview of contents. Users cannot verify what data they're submitting before the report leaves the device. Add a per-entry "Preview" button that shows the first 500 chars in a modal.
-
-**Note:** May be superseded by **H-9c** (`bug_report_preview()` Tauri command + dialog rendering of the redacted bundle). When H-9c lands, drop this UX-277 entry.
-
-**Cost:** M.
-**Risk:** S.
-**Impact:** M — improves transparency before submit.
-
-### UX-281 — Gutter-button tooltips invisible on touch
-
-**Problem:** `src/components/SortableBlock.tsx:39` fixes the gutter at `w-[68px]` and `src/components/BlockGutterControls.tsx:104-112` packs three icon-only buttons (drag, history, delete) into it relying on hover tooltips for labels. On `pointer:coarse`, each button inflates to ≥44×44 (touch-target utility), so the three buttons already exceed 132 px of horizontal space and overflow the 68 px lane — there is no room left for inline text labels. On touch the result is a row of unlabelled icons with no discoverable affordance.
-
-**History:** Sub-fixes for the suggestion-list `<h3>` headers and the markdown-serializer unknown-node toast were closed in session 478 (UX-281 sub-fixes 1 and 2). This sub-fix was deferred because `pointer:coarse` inline labels would compound the overflow without addressing the root constraint.
-
-**Fix:** needs a different affordance, not inline labels. Options to evaluate:
-
-- Long-press on `pointer:coarse` → show a small `toast` describing the action (works on a fixed gutter, but adds latency and a toast layer to a high-frequency interaction).
-- Expand the gutter on `pointer:coarse` to ~120-140 px and add inline icon+label rows (cleaner UX; needs `SortableBlock` width audit and may shift block content over).
-- Move the secondary actions (history, delete) into an overflow `Sheet` on touch and keep only drag in the gutter (smallest visual change, preserves existing layout).
-
-**Cost:** S.
-**Risk:** S — touch-only path.
-**Impact:** S — improves discoverability for touch users; desktop unaffected.
 
 ### PUB-2 — Git author email across all history is corporate (`javier.folcini@avature.net`)
 
