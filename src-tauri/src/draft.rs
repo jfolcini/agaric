@@ -121,15 +121,16 @@ pub async fn draft_count(pool: &SqlitePool) -> Result<i64, AppError> {
     Ok(rec.count)
 }
 
-/// Flush a draft: write an `edit_block` op and then delete the draft row.
+/// Flush a draft: write an `edit_block` op and then delete the draft row,
+/// using an existing outer transaction.
 ///
-/// This is the blur / window-focus-loss path.
-///
-/// Both the op append and the draft deletion are wrapped in a single
-/// IMMEDIATE transaction. If any step fails the entire transaction is
-/// rolled back, preventing orphaned drafts or duplicate ops on retry.
-pub async fn flush_draft(
-    pool: &SqlitePool,
+/// The caller is responsible for committing the transaction. Used by
+/// [`flush_draft`] (thin wrapper) and by `commands::drafts::flush_draft_inner`,
+/// which wraps additional pre-flight validation (target-block existence,
+/// content-length cap, `prev_edit` lookup) in the same `BEGIN IMMEDIATE` tx
+/// so the entire flush is atomic.
+pub async fn flush_draft_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
     block_id: &str,
     content: &str,
@@ -141,11 +142,34 @@ pub async fn flush_draft(
         prev_edit,
     });
 
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let record = append_local_op_in_tx(&mut tx, device_id, op, now_rfc3339()).await?;
-    delete_draft_in_tx(&mut tx, block_id).await?;
-    tx.commit().await?;
+    let record = append_local_op_in_tx(tx, device_id, op, now_rfc3339()).await?;
+    delete_draft_in_tx(tx, block_id).await?;
+    Ok(record)
+}
 
+/// Flush a draft: write an `edit_block` op and then delete the draft row.
+///
+/// This is the blur / window-focus-loss path.
+///
+/// Both the op append and the draft deletion are wrapped in a single
+/// IMMEDIATE transaction. If any step fails the entire transaction is
+/// rolled back, preventing orphaned drafts or duplicate ops on retry.
+///
+/// Thin wrapper around [`flush_draft_in_tx`] that opens its own
+/// `BEGIN IMMEDIATE` transaction. Callers that need to combine the flush
+/// with additional pre-flight checks (e.g. validating the target block
+/// still exists) should drive [`flush_draft_in_tx`] directly on an outer
+/// transaction.
+pub async fn flush_draft(
+    pool: &SqlitePool,
+    device_id: &str,
+    block_id: &str,
+    content: &str,
+    prev_edit: Option<(String, i64)>,
+) -> Result<OpRecord, AppError> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let record = flush_draft_in_tx(&mut tx, device_id, block_id, content, prev_edit).await?;
+    tx.commit().await?;
     Ok(record)
 }
 
