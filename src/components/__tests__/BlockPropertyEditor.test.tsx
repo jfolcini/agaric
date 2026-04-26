@@ -13,7 +13,36 @@ vi.mock('sonner', () => ({
   toast: { error: (...args: unknown[]) => mockToastError(...args) },
 }))
 
+// Mock @floating-ui/dom — JSDOM has no layout engine, so mirror the pattern
+// used by suggestion-renderer.test.ts / LinkPreviewTooltip.test.tsx. The
+// `autoUpdate` mock invokes the update callback once on registration and
+// re-invokes it on `window` `resize`, returning a cleanup fn — that is the
+// minimal contract callers depend on.
+vi.mock('@floating-ui/dom', () => ({
+  computePosition: vi.fn().mockResolvedValue({ x: 42, y: 84 }),
+  autoUpdate: vi.fn((_anchor: Element, _floating: Element, update: () => void) => {
+    update()
+    const handler = () => update()
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }),
+  flip: vi.fn(() => ({})),
+  shift: vi.fn(() => ({})),
+  offset: vi.fn(() => ({})),
+}))
+
+import { autoUpdate, computePosition } from '@floating-ui/dom'
+import { logger } from '../../lib/logger'
 import { BlockPropertyEditor, type BlockPropertyEditorProps } from '../BlockPropertyEditor'
+
+// Make rAF synchronous so the deferred outside-click registration runs
+// immediately within the test's microtask flush.
+beforeEach(() => {
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
+    cb(0)
+    return 0
+  })
+})
 
 function makeProps(overrides: Partial<BlockPropertyEditorProps> = {}): BlockPropertyEditorProps {
   return {
@@ -37,9 +66,10 @@ describe('BlockPropertyEditor', () => {
   })
 
   it('renders nothing when editingProp and editingKey are null', () => {
-    const { container } = render(<BlockPropertyEditor {...makeProps()} />)
-    expect(container.querySelector('[role="dialog"]')).not.toBeInTheDocument()
-    expect(container.querySelector('.property-key-editor')).not.toBeInTheDocument()
+    render(<BlockPropertyEditor {...makeProps()} />)
+    expect(document.querySelector('[role="dialog"]')).not.toBeInTheDocument()
+    expect(document.querySelector('.property-key-editor')).not.toBeInTheDocument()
+    expect(document.querySelector('[data-editor-portal]')).not.toBeInTheDocument()
   })
 
   it('renders text input when editingProp is set without selectOptions', () => {
@@ -143,6 +173,170 @@ describe('BlockPropertyEditor', () => {
 
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalled()
+    })
+  })
+
+  // ── MAINT-103: portal + floating-ui ─────────────────────────────────────
+  describe('portal rendering', () => {
+    it('renders the value popup as a portal in document.body, not inside the trigger tree', () => {
+      const { container } = render(
+        <BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />,
+      )
+      const popup = document.querySelector('[role="dialog"]')
+      expect(popup).toBeInTheDocument()
+      expect(popup).toHaveAttribute('data-editor-portal')
+      // The popup must NOT live inside the rendered React subtree — that's
+      // the whole point of MAINT-103 (escapes overflow:hidden ancestors).
+      expect(container.contains(popup)).toBe(false)
+      expect(popup?.parentElement).toBe(document.body)
+    })
+
+    it('renders the key-rename popup as a portal with property-key-editor + data-editor-portal', () => {
+      const { container } = render(
+        <BlockPropertyEditor {...makeProps({ editingKey: { oldKey: 'effort', value: '2h' } })} />,
+      )
+      const popup = document.querySelector('.property-key-editor')
+      expect(popup).toBeInTheDocument()
+      expect(popup).toHaveAttribute('data-editor-portal')
+      expect(container.contains(popup)).toBe(false)
+      expect(popup?.parentElement).toBe(document.body)
+    })
+
+    it('calls computePosition + autoUpdate when the value popup mounts', async () => {
+      render(
+        <BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />,
+      )
+      await waitFor(() => {
+        expect(autoUpdate).toHaveBeenCalled()
+        expect(computePosition).toHaveBeenCalled()
+      })
+    })
+
+    it('recomputes position on window resize', async () => {
+      render(
+        <BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />,
+      )
+      await waitFor(() => {
+        expect(computePosition).toHaveBeenCalled()
+      })
+      vi.mocked(computePosition).mockClear()
+      fireEvent(window, new Event('resize'))
+      await waitFor(() => {
+        expect(computePosition).toHaveBeenCalled()
+      })
+    })
+
+    it('cleans up the portal when editingProp returns to null', () => {
+      const { rerender } = render(
+        <BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />,
+      )
+      expect(document.querySelector('[data-editor-portal]')).toBeInTheDocument()
+      rerender(<BlockPropertyEditor {...makeProps({ editingProp: null })} />)
+      expect(document.querySelector('[data-editor-portal]')).not.toBeInTheDocument()
+    })
+
+    it('logs a warning when computePosition rejects (stale state lifecycle)', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const err = new Error('computePosition boom')
+      vi.mocked(computePosition).mockRejectedValueOnce(err)
+
+      render(
+        <BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />,
+      )
+
+      await waitFor(() => {
+        expect(warnSpy).toHaveBeenCalledWith(
+          'BlockPropertyEditor',
+          'value popup computePosition failed',
+          { key: 'effort' },
+          err,
+        )
+      })
+      warnSpy.mockRestore()
+    })
+
+    it('logs a warning when the anchor is detached while the popup is open', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+      render(
+        <BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />,
+      )
+      await waitFor(() => {
+        expect(autoUpdate).toHaveBeenCalled()
+      })
+
+      // Pull the update callback handed to autoUpdate, simulate the anchor
+      // being torn out of the document tree, then invoke it manually — this
+      // is the desync `update()` guards against (mirrors
+      // `suggestion-renderer.ts:onUpdate`). We override `isConnected` rather
+      // than calling `.remove()` so React's reconciliation can still unmount
+      // the element cleanly during test teardown.
+      const calls = vi.mocked(autoUpdate).mock.calls
+      const lastCall = calls[calls.length - 1]
+      expect(lastCall).toBeDefined()
+      const update = lastCall?.[2] as () => void
+      const anchor = document.querySelector(
+        '[data-testid="block-property-editor-anchor"]',
+      ) as HTMLElement | null
+      expect(anchor).toBeInTheDocument()
+      Object.defineProperty(anchor, 'isConnected', { configurable: true, get: () => false })
+
+      warnSpy.mockClear()
+      update()
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        'BlockPropertyEditor',
+        'anchor unmounted while value popup open',
+        expect.objectContaining({ key: 'effort' }),
+      )
+      warnSpy.mockRestore()
+    })
+
+    it('dismisses the value popup on outside click', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'effort', value: '2h' },
+            setEditingProp,
+          })}
+        />,
+      )
+
+      // Wait for the deferred (rAF) registration of the outside-click handler.
+      await waitFor(() => {
+        expect(document.querySelector('[role="dialog"]')).toBeInTheDocument()
+      })
+
+      // Click on document.body (outside both the popup and the anchor).
+      fireEvent.pointerDown(document.body)
+      expect(setEditingProp).toHaveBeenCalledWith(null)
+    })
+
+    it('does not dismiss on click inside the popup', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'effort', value: '2h' },
+            setEditingProp,
+          })}
+        />,
+      )
+      await waitFor(() => {
+        expect(document.querySelector('[role="dialog"]')).toBeInTheDocument()
+      })
+      const popup = document.querySelector('[role="dialog"]') as HTMLElement
+      fireEvent.pointerDown(popup)
+      expect(setEditingProp).not.toHaveBeenCalled()
+    })
+
+    it('focuses the input on mount', async () => {
+      render(
+        <BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />,
+      )
+      const input = await screen.findByRole('textbox')
+      expect(input).toHaveFocus()
     })
   })
 
@@ -372,17 +566,18 @@ describe('BlockPropertyEditor', () => {
 
   describe('key rename popover', () => {
     it('renders key rename input when editingKey is set', () => {
-      const { container } = render(
+      render(
         <BlockPropertyEditor {...makeProps({ editingKey: { oldKey: 'effort', value: '2h' } })} />,
       )
-      expect(container.querySelector('.property-key-editor')).toBeInTheDocument()
-      const input = container.querySelector('.property-key-editor input') as HTMLInputElement
+      const popup = document.querySelector('.property-key-editor')
+      expect(popup).toBeInTheDocument()
+      const input = popup?.querySelector('input') as HTMLInputElement
       expect(input).toHaveValue('effort')
     })
 
     it('renames key on blur with new name', async () => {
       const setEditingKey = vi.fn()
-      const { container } = render(
+      render(
         <BlockPropertyEditor
           {...makeProps({
             editingKey: { oldKey: 'effort', value: '2h' },
@@ -390,7 +585,7 @@ describe('BlockPropertyEditor', () => {
           })}
         />,
       )
-      const input = container.querySelector('.property-key-editor input') as HTMLInputElement
+      const input = document.querySelector('.property-key-editor input') as HTMLInputElement
       fireEvent.change(input, { target: { value: 'time' } })
       fireEvent.blur(input)
 
@@ -413,7 +608,7 @@ describe('BlockPropertyEditor', () => {
 
     it('does not rename when key has not changed', async () => {
       const setEditingKey = vi.fn()
-      const { container } = render(
+      render(
         <BlockPropertyEditor
           {...makeProps({
             editingKey: { oldKey: 'effort', value: '2h' },
@@ -421,7 +616,7 @@ describe('BlockPropertyEditor', () => {
           })}
         />,
       )
-      const input = container.querySelector('.property-key-editor input') as HTMLInputElement
+      const input = document.querySelector('.property-key-editor input') as HTMLInputElement
       fireEvent.blur(input)
 
       await waitFor(() => {
@@ -433,7 +628,7 @@ describe('BlockPropertyEditor', () => {
     it('shows toast on rename error', async () => {
       mockSetProperty.mockRejectedValueOnce(new Error('fail'))
       const setEditingKey = vi.fn()
-      const { container } = render(
+      render(
         <BlockPropertyEditor
           {...makeProps({
             editingKey: { oldKey: 'effort', value: '2h' },
@@ -441,7 +636,7 @@ describe('BlockPropertyEditor', () => {
           })}
         />,
       )
-      const input = container.querySelector('.property-key-editor input') as HTMLInputElement
+      const input = document.querySelector('.property-key-editor input') as HTMLInputElement
       fireEvent.change(input, { target: { value: 'time' } })
       fireEvent.blur(input)
 
@@ -452,7 +647,7 @@ describe('BlockPropertyEditor', () => {
 
     it('closes on Escape key', () => {
       const setEditingKey = vi.fn()
-      const { container } = render(
+      render(
         <BlockPropertyEditor
           {...makeProps({
             editingKey: { oldKey: 'effort', value: '2h' },
@@ -460,8 +655,25 @@ describe('BlockPropertyEditor', () => {
           })}
         />,
       )
-      const input = container.querySelector('.property-key-editor input') as HTMLInputElement
+      const input = document.querySelector('.property-key-editor input') as HTMLInputElement
       fireEvent.keyDown(input, { key: 'Escape' })
+      expect(setEditingKey).toHaveBeenCalledWith(null)
+    })
+
+    it('dismisses on outside click', async () => {
+      const setEditingKey = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingKey: { oldKey: 'effort', value: '2h' },
+            setEditingKey,
+          })}
+        />,
+      )
+      await waitFor(() => {
+        expect(document.querySelector('.property-key-editor')).toBeInTheDocument()
+      })
+      fireEvent.pointerDown(document.body)
       expect(setEditingKey).toHaveBeenCalledWith(null)
     })
   })
@@ -503,6 +715,16 @@ describe('BlockPropertyEditor', () => {
     )
     await waitFor(async () => {
       const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('has no a11y violations on the portal contents (text input mode)', async () => {
+    render(<BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />)
+    const portal = document.querySelector('[data-editor-portal]') as HTMLElement
+    expect(portal).toBeInTheDocument()
+    await waitFor(async () => {
+      const results = await axe(portal)
       expect(results).toHaveNoViolations()
     })
   })

@@ -171,6 +171,42 @@ language = "system"
 pass_filenames = false
 files = "(AGENTS\\.md$|\\.test\\.(ts|tsx)$|\\.spec\\.ts$|^src-tauri/src/.*\\.rs$)"
 
+# ipc-error-path-coverage: every top-level `src/components/*.tsx` that
+# imports from `@/lib/tauri` (or pulls `invoke` directly from
+# `@tauri-apps/api/core`) must have at least one error-path test in its
+# sibling `src/components/__tests__/<name>.test.tsx`. Catches the
+# silent-`.catch` / missing-toast class of regression that AGENTS.md:198
+# is aimed at. Hard half of MAINT-99 (narrowed to top-level components;
+# subdirs deferred — see script header for the FOLLOW-UP).
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "ipc-error-path-coverage"
+name = "IPC error-path coverage"
+entry = "node scripts/check-ipc-error-path.mjs"
+language = "system"
+pass_filenames = false
+files = "^src/components/([^/]+\\.tsx|__tests__/[^/]+\\.test\\.tsx)$"
+
+# snapshot-redaction: scan every `*.snap` file under `src/` and
+# `src-tauri/` for unredacted ULIDs (26-char Crockford base32),
+# blake3 hashes (64-char lowercase hex), ISO-8601 timestamps with a
+# time component, and base64url cursors. Values that appear verbatim
+# in any `src-tauri/src/**/*.rs` source file are auto-allowlisted as
+# deterministic test fixtures (per src-tauri/tests/AGENTS.md:319 —
+# "For deterministic data, no redaction needed"). Inline
+# `# MAINT-99-allow-<kind>: <reason>` comments support the rare known-
+# fixed-generated-value case. Hard half of MAINT-99.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "snapshot-redaction"
+name = "snapshot redaction"
+entry = "node scripts/check-snapshot-redaction.mjs"
+language = "system"
+pass_filenames = false
+files = "(\\.snap$|^src-tauri/src/.*\\.rs$)"
+
 # JS: better-npm-audit (security advisories)
 [[repos]]
 repo = "local"

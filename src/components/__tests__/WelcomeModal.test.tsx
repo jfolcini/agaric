@@ -14,6 +14,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18n from 'i18next'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -204,6 +205,33 @@ describe('WelcomeModal', () => {
         expect.objectContaining({ content: i18n.t(key) }),
       )
     }
+  })
+
+  // MAINT-99: IPC error-path coverage. The "Create sample pages" flow
+  // wraps the createBlock chain in try/catch and surfaces failures via
+  // toast.error. A regression where the catch block is dropped (or the
+  // toast call goes missing) would leave the user staring at a stuck
+  // dialog with no signal — this test pins the contract: rejection →
+  // error toast, modal stays open, onboarding flag is NOT persisted.
+  it('shows an error toast and keeps the modal open when createBlock rejects', async () => {
+    const user = userEvent.setup()
+    const mockedToastError = vi.mocked(toast.error)
+
+    // First create_block call (Getting Started page) rejects — the
+    // remaining 7 calls are short-circuited by the try/catch.
+    mockedInvoke.mockRejectedValueOnce(new Error('database is locked'))
+
+    render(<WelcomeModal />)
+    await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(i18n.t('welcome.samplePagesFailed'))
+    })
+
+    // Modal stays open; onboarding flag NOT set so the user can retry
+    // (or pick a different action) on next launch.
+    expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
+    expect(localStorage.getItem('agaric-onboarding-done')).toBeNull()
   })
 
   it('does not show during boot loading state', () => {
