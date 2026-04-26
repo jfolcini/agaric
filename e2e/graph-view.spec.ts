@@ -7,7 +7,7 @@ import { expect, test } from './helpers'
  * so the graph should render nodes (pages) and edges (links).
  *
  * Key selectors:
- * - SVG container: `svg[role="img"]` inside `[data-testid="graph-view"]`
+ * - SVG container: `[data-testid="graph-svg"]` (UX-270: role="img" was deliberately removed from the SVG; aria-label provides the accessible name without forcing AT to treat the interactive node graph as one opaque graphic)
  * - Nodes: `svg g.node` groups, each containing two `<circle>` elements
  *   (a transparent hit-area and a visible node circle)
  * - Edges: `svg line` elements
@@ -30,7 +30,7 @@ test.describe('Graph view', () => {
     await page.getByRole('button', { name: 'Graph', exact: true }).click()
 
     // Wait for the SVG to appear (loading skeleton resolves)
-    await expect(page.locator('[data-testid="graph-view"] svg[role="img"]')).toBeVisible()
+    await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
 
     // Each node group contains circles — verify at least one node exists
     const nodes = page.locator('[data-testid="graph-view"] svg circle')
@@ -41,7 +41,7 @@ test.describe('Graph view', () => {
 
   test('graph view renders edges between linked pages', async ({ page }) => {
     await page.getByRole('button', { name: 'Graph', exact: true }).click()
-    await expect(page.locator('[data-testid="graph-view"] svg[role="img"]')).toBeVisible()
+    await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
 
     // Seed data has [[link]] references between pages (e.g. Getting Started ↔ Quick Notes),
     // so there should be <line> elements for edges.
@@ -53,7 +53,7 @@ test.describe('Graph view', () => {
 
   test('clicking a node navigates to that page', async ({ page }) => {
     await page.getByRole('button', { name: 'Graph', exact: true }).click()
-    await expect(page.locator('[data-testid="graph-view"] svg[role="img"]')).toBeVisible()
+    await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
 
     // Wait for nodes to render
     const nodeGroup = page.locator('[data-testid="graph-view"] svg g.node').first()
@@ -78,7 +78,7 @@ test.describe('Graph view', () => {
     await expect(page.locator('[data-testid="graph-view"]')).toBeVisible()
 
     // SVG inside the container should have the accessible role
-    const svg = page.locator('[data-testid="graph-view"] svg[role="img"]')
+    const svg = page.locator('[data-testid="graph-svg"]')
     await expect(svg).toBeVisible()
   })
 
@@ -86,7 +86,7 @@ test.describe('Graph view', () => {
     await page.getByRole('button', { name: 'Graph', exact: true }).click()
 
     // The graph should eventually render — SVG becomes visible
-    await expect(page.locator('[data-testid="graph-view"] svg[role="img"]')).toBeVisible()
+    await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
 
     // And it should contain node groups (seed data has pages)
     const nodeGroups = page.locator('[data-testid="graph-view"] svg g.node')

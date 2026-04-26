@@ -38,7 +38,7 @@ test.describe('Block-level undo/redo', () => {
     await page.keyboard.press('Control+z')
 
     // Wait for the "Undone" toast to confirm undo fired
-    await expect(page.getByText('Undone')).toBeVisible()
+    await expect(page.getByLabel('Notifications alt+T').getByText('Undone')).toBeVisible()
 
     // Navigate away and back to re-fetch blocks from mock's updated state
     await reopenPage(page, 'Getting Started')
@@ -68,7 +68,7 @@ test.describe('Block-level undo/redo', () => {
 
     // Press Ctrl+Z — triggers block-level undo
     await page.keyboard.press('Control+z')
-    await expect(page.getByText('Undone')).toBeVisible()
+    await expect(page.getByLabel('Notifications alt+T').getByText('Undone')).toBeVisible()
 
     // Navigate away and back to re-fetch from mock
     await reopenPage(page, 'Getting Started')
@@ -91,11 +91,11 @@ test.describe('Block-level undo/redo', () => {
 
     // Press Ctrl+Z — triggers undo
     await page.keyboard.press('Control+z')
-    await expect(page.getByText('Undone')).toBeVisible()
+    await expect(page.getByLabel('Notifications alt+T').getByText('Undone')).toBeVisible()
 
     // Now redo with Ctrl+Y
     await page.keyboard.press('Control+y')
-    await expect(page.getByText('Redone')).toBeVisible()
+    await expect(page.getByLabel('Notifications alt+T').getByText('Redone')).toBeVisible()
 
     // Navigate away and back to verify
     await reopenPage(page, 'Getting Started')
