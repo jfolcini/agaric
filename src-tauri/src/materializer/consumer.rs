@@ -168,14 +168,72 @@ pub(super) async fn process_single_foreground_task(
             let pool_clone2 = pool.clone();
             let metrics_clone2 = Arc::clone(metrics);
             let gcal_clone2 = Arc::clone(gcal_handle);
+            // C-2a: keep `retry_task` alive past the spawn so we can
+            // pull `OpRecord` fields out of it for the warn line below
+            // when the retry also fails. The spawn gets its own clone.
+            let spawned_task = retry_task.clone();
             let retry_result = tokio::task::spawn(async move {
-                handle_foreground_task(&pool_clone2, &retry_task, &metrics_clone2, &gcal_clone2)
+                handle_foreground_task(&pool_clone2, &spawned_task, &metrics_clone2, &gcal_clone2)
                     .await
             })
             .await;
             log_consumer_result("fg-retry", &retry_result);
             if matches!(&retry_result, Ok(Err(_)) | Err(_)) {
                 metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
+                // REVIEW-LATER C-2a: defense-in-depth observability for
+                // materializer divergence. `ApplyOp` / `BatchApplyOps`
+                // tasks that exhaust the foreground retry are dropped
+                // silently — `fg_errors` alone lumps every fg failure
+                // together, so a non-Apply error masks a real apply
+                // divergence. Bump a dedicated counter and emit a warn
+                // line carrying the op coordinates (kind, seq,
+                // device_id, op_type) so the drop is searchable in
+                // logs and surfaceable via `StatusInfo` in the status
+                // banner. Non-Apply foreground failures (Barrier and
+                // legacy non-Apply variants — none of which are routed
+                // through the foreground queue today, but the match
+                // arm is exhaustive for safety) keep their existing
+                // single-counter behavior.
+                let err_msg = match &retry_result {
+                    Ok(Err(e)) => format!("{e}"),
+                    Err(e) => format!("panic: {e}"),
+                    Ok(Ok(())) => unreachable!("matched Ok(Err)|Err just above"),
+                };
+                match &retry_task {
+                    MaterializeTask::ApplyOp(record) => {
+                        tracing::warn!(
+                            kind = "ApplyOp",
+                            seq = record.seq,
+                            device_id = %record.device_id,
+                            op_type = %record.op_type,
+                            error = %err_msg,
+                            "foreground apply-op dropped after retry exhausted — materializer divergence"
+                        );
+                        metrics.fg_apply_dropped.fetch_add(1, Ordering::Relaxed);
+                    }
+                    MaterializeTask::BatchApplyOps(records) => {
+                        if let Some(first) = records.first() {
+                            tracing::warn!(
+                                kind = "BatchApplyOps",
+                                seq = first.seq,
+                                device_id = %first.device_id,
+                                op_type = %first.op_type,
+                                batch_size = records.len(),
+                                error = %err_msg,
+                                "foreground batch-apply-ops dropped after retry exhausted — materializer divergence (rest of batch implicitly dropped)"
+                            );
+                        } else {
+                            tracing::warn!(
+                                kind = "BatchApplyOps",
+                                batch_size = 0,
+                                error = %err_msg,
+                                "foreground batch-apply-ops dropped after retry exhausted — empty batch"
+                            );
+                        }
+                        metrics.fg_apply_dropped.fetch_add(1, Ordering::Relaxed);
+                    }
+                    _ => {}
+                }
             }
         }
         Err(_) => {

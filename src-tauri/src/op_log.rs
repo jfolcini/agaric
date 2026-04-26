@@ -459,6 +459,7 @@ mod tests {
                 "delete_attachment",
                 OpPayload::DeleteAttachment(DeleteAttachmentPayload {
                     attachment_id: "ATT01".into(),
+                    fs_path: "/tmp/readme.txt".into(),
                 }),
             ),
         ]

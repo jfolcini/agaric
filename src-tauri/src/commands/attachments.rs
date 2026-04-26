@@ -161,37 +161,52 @@ pub async fn add_attachment_inner(
 
 /// Delete an attachment by its ID.
 ///
-/// Validates the attachment exists, appends a `DeleteAttachment` op,
-/// deletes from the `attachments` table, and dispatches background cache
-/// tasks.
+/// Validates the attachment exists, appends a `DeleteAttachment` op (carrying
+/// the captured `fs_path`), deletes from the `attachments` table, commits,
+/// and *then* attempts to unlink the underlying file from disk.
+///
+/// C-3a/b: the on-disk file must be removed when the user deletes an
+/// attachment, otherwise the file leaks on disk. The op-log entry is the
+/// source of truth: if the unlink fails for any reason (other than
+/// `NotFound`, which is already-clean), the row is still committed and a
+/// future GC pass (C-3c) will reconcile orphaned files. We never return an
+/// error from a failed unlink — that would leave the DB and op-log saying
+/// "deleted" but force the caller to retry, which would then return
+/// `NotFound` from the existence check above and surface a misleading
+/// error to the user.
 ///
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — attachment does not exist
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer, app_data_dir), err)]
 pub async fn delete_attachment_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
+    app_data_dir: &Path,
     attachment_id: String,
 ) -> Result<(), AppError> {
-    let payload = OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
-        attachment_id: attachment_id.clone(),
-    });
-
     // Single IMMEDIATE transaction: validation + op_log + delete.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    // Validate attachment exists
-    let exists = sqlx::query!(
-        r#"SELECT 1 as "v: i32" FROM attachments WHERE id = ?"#,
+    // Validate attachment exists AND fetch its fs_path in one query.
+    // The fs_path goes into the op-log payload (so remote peers / future
+    // GC passes can reconcile) and into the post-commit unlink.
+    let row = sqlx::query!(
+        r#"SELECT fs_path FROM attachments WHERE id = ?"#,
         attachment_id
     )
     .fetch_optional(&mut *tx)
     .await?;
-    if exists.is_none() {
+    let Some(row) = row else {
         return Err(AppError::NotFound(format!("attachment '{attachment_id}'")));
-    }
+    };
+    let fs_path = row.fs_path;
+
+    let payload = OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+        attachment_id: attachment_id.clone(),
+        fs_path: fs_path.clone(),
+    });
 
     // Append to op_log within transaction
     let op_record =
@@ -204,6 +219,30 @@ pub async fn delete_attachment_inner(
         .await?;
 
     tx.commit().await?;
+
+    // C-3b: unlink the on-disk file *after* the commit. The op-log entry is
+    // authoritative — failures here are logged and reconciled later by the
+    // C-3c GC pass; we never surface them as errors because the user-facing
+    // delete already succeeded.
+    let full_path = app_data_dir.join(&fs_path);
+    match tokio::fs::remove_file(&full_path).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::info!(
+                path = %full_path.display(),
+                attachment_id = %attachment_id,
+                "attachment file already missing on disk; skipping unlink"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                path = %full_path.display(),
+                attachment_id = %attachment_id,
+                error = %e,
+                "failed to unlink attachment file; will be reconciled by C-3c GC pass"
+            );
+        }
+    }
 
     // Fire-and-forget background cache dispatch
     materializer.dispatch_background_or_warn(&op_record);
@@ -276,14 +315,25 @@ pub async fn add_attachment(
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_attachment(
+    app: tauri::AppHandle,
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     attachment_id: String,
 ) -> Result<(), AppError> {
-    delete_attachment_inner(&pool.0, device_id.as_str(), &materializer, attachment_id)
-        .await
-        .map_err(sanitize_internal_error)
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
+    delete_attachment_inner(
+        &pool.0,
+        device_id.as_str(),
+        &materializer,
+        &app_data_dir,
+        attachment_id,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: list attachments for a block. Delegates to [`list_attachments_inner`].

@@ -424,6 +424,7 @@ async fn reverse_delete_attachment_returns_non_reversible_error() {
         &pool,
         OpPayload::DeleteAttachment(DeleteAttachmentPayload {
             attachment_id: "ATT2".into(),
+            fs_path: "/tmp/att2.bin".into(),
         }),
         FIXED_TS,
     )
@@ -804,6 +805,7 @@ async fn reverse_delete_attachment_returns_add_attachment_with_metadata() {
         &pool,
         OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
             attachment_id: "ATT_001".into(),
+            fs_path: "attachments/att_001.bin".into(),
         }),
         "2025-01-15T12:01:00+00:00",
     )
@@ -823,6 +825,7 @@ async fn reverse_delete_attachment_no_add_op_returns_non_reversible() {
         &pool,
         OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
             attachment_id: "ATT_ORPHAN".into(),
+            fs_path: "attachments/orphan.bin".into(),
         }),
         FIXED_TS,
     )

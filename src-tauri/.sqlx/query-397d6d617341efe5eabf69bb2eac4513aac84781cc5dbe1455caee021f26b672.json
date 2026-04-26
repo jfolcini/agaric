@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT fs_path FROM attachments WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "fs_path",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "397d6d617341efe5eabf69bb2eac4513aac84781cc5dbe1455caee021f26b672"
+}

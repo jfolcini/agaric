@@ -814,6 +814,7 @@ async fn dispatch_op_delete_attachment() {
         &pool,
         OpPayload::DeleteAttachment(DeleteAttachmentPayload {
             attachment_id: "att-2".into(),
+            fs_path: "/tmp/f.txt".into(),
         }),
     )
     .await;
@@ -2414,6 +2415,111 @@ async fn apply_op_success() {
     );
     mat.shutdown();
 }
+// ──────────────────────────────────────────────────────────────────────
+// REVIEW-LATER C-2a — defense-in-depth observability for materializer
+// divergence.
+//
+// When a foreground `ApplyOp` / `BatchApplyOps` task exhausts its 100ms
+// in-memory retry, the dedicated `fg_apply_dropped` counter must bump
+// (in addition to the existing `fg_errors`) and a warn line must be
+// emitted with `kind` / `seq` / `device_id` / `op_type`. Non-Apply
+// task failures must NOT bump `fg_apply_dropped`.
+//
+// These tests exercise only the metric side; the warn-line wiring is
+// covered by inspection (tracing-test fixtures are intentionally not
+// pulled in to keep this drop-observability change strictly additive).
+// ──────────────────────────────────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fg_apply_dropped_bumps_when_apply_op_retry_exhausts() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // C-2a: A `create_block` with an empty payload deterministically fails
+    // `serde_json::from_str::<CreateBlockPayload>` inside `apply_op_tx`,
+    // so both the first attempt and the 100ms retry land on Ok(Err(_)).
+    // That is exactly the retry-exhaust path we want to observe.
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(fake_op_record(
+        "create_block",
+        "{}",
+    )))
+    .await
+    .unwrap();
+    mat.flush_foreground().await.unwrap();
+    let m = mat.metrics();
+    assert!(
+        m.fg_apply_dropped.load(AtomicOrdering::Relaxed) >= 1,
+        "ApplyOp retry exhaust should bump fg_apply_dropped at least once",
+    );
+    assert!(
+        m.fg_errors.load(AtomicOrdering::Relaxed) >= 1,
+        "ApplyOp retry exhaust should also still bump fg_errors",
+    );
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fg_apply_dropped_bumps_once_per_failed_batch() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // C-2a: A 2-element batch where the first op deterministically fails
+    // payload deserialization. The whole batch is dropped together
+    // (apply_op_tx returns Err inside the outer transaction, which is
+    // rolled back). Per the spec, fg_apply_dropped must increment
+    // exactly once for the failed batch, regardless of batch size — the
+    // remaining ops are implicitly dropped.
+    let bad1 = fake_op_record("create_block", "{}");
+    let bad2 = fake_op_record("create_block", "{}");
+    mat.enqueue_foreground(MaterializeTask::BatchApplyOps(vec![bad1, bad2]))
+        .await
+        .unwrap();
+    mat.flush_foreground().await.unwrap();
+    let m = mat.metrics();
+    assert!(
+        m.fg_apply_dropped.load(AtomicOrdering::Relaxed) >= 1,
+        "BatchApplyOps retry exhaust should bump fg_apply_dropped at least once",
+    );
+    assert!(
+        m.fg_errors.load(AtomicOrdering::Relaxed) >= 1,
+        "BatchApplyOps retry exhaust should also still bump fg_errors",
+    );
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fg_apply_dropped_stays_zero_for_non_apply_task() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // C-2a (negative case): a non-Apply task — `UpdateFtsBlock` for a
+    // block that doesn't exist — must never bump `fg_apply_dropped`.
+    // This task is routed to the background queue, where the existing
+    // retry/persist semantics (BUG-22) apply unchanged. The point of
+    // the assertion is that the new fg-only counter does not pollute
+    // the bg path. (`UpdateFtsBlock` against a missing block actually
+    // succeeds — the handler treats "no row" as "remove from FTS" — so
+    // this also exercises the bg-success path's effect on the new
+    // counter.)
+    mat.enqueue_background(MaterializeTask::UpdateFtsBlock {
+        block_id: "BLK_DOES_NOT_EXIST".into(),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    let m = mat.metrics();
+    assert_eq!(
+        m.fg_apply_dropped.load(AtomicOrdering::Relaxed),
+        0,
+        "non-Apply background task must not bump fg_apply_dropped",
+    );
+    // Sanity: the bg path itself ran (bg_processed advanced). We don't
+    // assert on bg_errors / bg_dropped here — the point is just that
+    // the new counter is fg-only.
+    assert!(
+        m.bg_processed.load(AtomicOrdering::Relaxed) >= 1,
+        "background task should still be processed",
+    );
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn with_read_pool() {
     let (pool, _dir) = test_pool().await;

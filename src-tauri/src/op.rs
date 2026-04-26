@@ -197,9 +197,17 @@ pub struct AddAttachmentPayload {
 }
 
 /// Payload for the `delete_attachment` op — removes an attachment by its ID (block_id is not needed).
+///
+/// `fs_path` carries the on-disk path (relative to `app_data_dir`) of the
+/// attachment file at the time of deletion so the local apply step can
+/// unlink it. Marked `#[serde(default)]` so op-log entries written before
+/// C-3 (which had no `fs_path`) still deserialize — they yield `fs_path
+/// = ""` and will be reconciled by the C-3c GC pass.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteAttachmentPayload {
     pub attachment_id: String,
+    #[serde(default)]
+    pub fs_path: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -536,6 +544,7 @@ mod tests {
             }),
             OpPayload::DeleteAttachment(DeleteAttachmentPayload {
                 attachment_id: "A1".into(),
+                fs_path: "/tmp/photo.png".into(),
             }),
         ]
     }
@@ -620,6 +629,36 @@ mod tests {
         };
         assert!(inner.parent_id.is_none(), "parent_id should be None");
         assert!(inner.position.is_none(), "position should be None");
+    }
+
+    /// C-3a backwards-compat: pre-existing op-log rows for `delete_attachment`
+    /// were written without an `fs_path` field. Those entries must continue to
+    /// deserialize, with `fs_path` defaulting to the empty string. The C-3c
+    /// GC pass is responsible for reconciling such rows against on-disk state.
+    #[test]
+    fn delete_attachment_payload_legacy_json_deserializes_without_fs_path() {
+        let legacy = r#"{"attachment_id":"ATT-LEGACY"}"#;
+        let parsed: DeleteAttachmentPayload = serde_json::from_str(legacy)
+            .expect("legacy DeleteAttachmentPayload JSON without fs_path must still deserialize");
+        assert_eq!(parsed.attachment_id, "ATT-LEGACY");
+        assert_eq!(
+            parsed.fs_path, "",
+            "missing fs_path in legacy JSON must default to empty string"
+        );
+
+        // Also exercise the OpPayload-tagged form (this is the on-wire shape
+        // used by the op_log; the inner-struct test above guards
+        // serde_json::from_str on the bare payload).
+        let legacy_tagged = r#"{"op_type":"delete_attachment","attachment_id":"ATT-LEGACY-2"}"#;
+        let parsed: OpPayload = serde_json::from_str(legacy_tagged)
+            .expect("legacy tagged OpPayload JSON without fs_path must still deserialize");
+        match parsed {
+            OpPayload::DeleteAttachment(inner) => {
+                assert_eq!(inner.attachment_id, "ATT-LEGACY-2");
+                assert_eq!(inner.fs_path, "");
+            }
+            other => panic!("expected DeleteAttachment, got {other:?}"),
+        }
     }
 
     // -----------------------------------------------------------------------

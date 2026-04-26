@@ -142,18 +142,30 @@ fn bench_delete_attachment(c: &mut Criterion) {
         let target_block = ids[size / 2].clone();
         let target_att_id = format!("DELATT{:020}", 0);
 
-        // Seed initial attachment
+        // C-3b: `delete_attachment_inner` now unlinks `app_data_dir.join(fs_path)`
+        // after the commit. Use a path under the bench's TempDir so the
+        // unlink target is predictable; we recreate the stub file before
+        // each iteration since the previous iter unlinked it.
+        let app_data_dir = dir.path().to_path_buf();
+        let attachments_dir = app_data_dir.join("attachments");
+        std::fs::create_dir_all(&attachments_dir).unwrap();
+        let bench_fs_path = "attachments/bench_file.txt".to_string();
+        let bench_file_full = app_data_dir.join(&bench_fs_path);
+
+        // Seed initial attachment row + file
         rt.block_on(async {
             sqlx::query(
                 "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-                 VALUES (?, ?, 'text/plain', 'file.txt', 1024, '/tmp/bench_file.txt', '2026-01-01T00:00:00.000Z')",
+                 VALUES (?, ?, 'text/plain', 'file.txt', 1024, ?, '2026-01-01T00:00:00.000Z')",
             )
             .bind(&target_att_id)
             .bind(&target_block)
+            .bind(&bench_fs_path)
             .execute(&pool)
             .await
             .unwrap();
         });
+        std::fs::write(&bench_file_full, b"").unwrap();
 
         group.throughput(Throughput::Elements(1));
         group.bench_with_input(
@@ -165,24 +177,31 @@ fn bench_delete_attachment(c: &mut Criterion) {
                     let mat_ref = &mat;
                     let target_block = target_block.clone();
                     let target_att_id = target_att_id.clone();
+                    let app_data_dir = app_data_dir.clone();
+                    let bench_fs_path = bench_fs_path.clone();
+                    let bench_file_full = bench_file_full.clone();
                     async move {
                         let start = std::time::Instant::now();
                         for _ in 0..iters {
                             // Re-insert so there is something to delete
                             sqlx::query(
                                 "INSERT OR REPLACE INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-                                 VALUES (?, ?, 'text/plain', 'file.txt', 1024, '/tmp/bench_file.txt', '2026-01-01T00:00:00.000Z')",
+                                 VALUES (?, ?, 'text/plain', 'file.txt', 1024, ?, '2026-01-01T00:00:00.000Z')",
                             )
                             .bind(&target_att_id)
                             .bind(&target_block)
+                            .bind(&bench_fs_path)
                             .execute(&pool)
                             .await
                             .unwrap();
+                            // Recreate the on-disk file (previous iter unlinked it).
+                            tokio::fs::write(&bench_file_full, b"").await.unwrap();
 
                             delete_attachment_inner(
                                 &pool,
                                 "dev-bench",
                                 mat_ref,
+                                &app_data_dir,
                                 target_att_id.clone(),
                             )
                             .await

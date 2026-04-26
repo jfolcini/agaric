@@ -643,6 +643,7 @@ impl Materializer {
             bg_errors: self.metrics.bg_errors.load(Ordering::Relaxed),
             fg_panics: self.metrics.fg_panics.load(Ordering::Relaxed),
             bg_panics: self.metrics.bg_panics.load(Ordering::Relaxed),
+            fg_apply_dropped: self.metrics.fg_apply_dropped.load(Ordering::Relaxed),
             bg_dropped: self.metrics.bg_dropped.load(Ordering::Relaxed),
             bg_deduped: self.metrics.bg_deduped.load(Ordering::Relaxed),
             fg_full_waits: self.metrics.fg_full_waits.load(Ordering::Relaxed),

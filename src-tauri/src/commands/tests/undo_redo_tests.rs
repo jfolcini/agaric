@@ -1192,6 +1192,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
         DEV,
         OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
             attachment_id: att_id.into(),
+            fs_path: "/tmp/photo.png".into(),
         }),
         del_ts.clone(),
     )
@@ -1314,6 +1315,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
         DEV,
         OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
             attachment_id: att_id.into(),
+            fs_path: "/tmp/photo.png".into(),
         }),
         del_ts.clone(),
     )
@@ -1519,6 +1521,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
         DEV,
         OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
             attachment_id: att_id.into(),
+            fs_path: "/tmp/photo.png".into(),
         }),
         del_ts.clone(),
     )
@@ -3619,6 +3622,7 @@ async fn apply_reverse_delete_attachment_on_nonexistent_returns_not_found() {
 
     let payload = OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
         attachment_id: "ATT_GHOST".into(),
+        fs_path: "/tmp/ghost.bin".into(),
     });
     let result = apply_reverse_in_tx(&mut tx, &payload).await;
 

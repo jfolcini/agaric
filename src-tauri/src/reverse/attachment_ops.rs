@@ -10,6 +10,9 @@ pub fn reverse_add_attachment(record: &OpRecord) -> Result<OpPayload, AppError> 
     Ok(OpPayload::DeleteAttachment(
         crate::op::DeleteAttachmentPayload {
             attachment_id: payload.attachment_id,
+            // Carry forward the original `fs_path` so the reverse op can
+            // unlink the file the AddAttachment created.
+            fs_path: payload.fs_path,
         },
     ))
 }
