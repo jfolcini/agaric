@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO materializer_retry_queue (block_id, task_type, attempts, last_error, next_attempt_at) VALUES (?, ?, 1, ?, ?) ON CONFLICT(block_id, task_type) DO UPDATE SET attempts = materializer_retry_queue.attempts + 1, last_error = excluded.last_error, next_attempt_at = ? RETURNING attempts AS \"attempts!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "attempts!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5e6b824d80793605dc31b14f7dfb64904a940d3d9a70efd1a7f4282c202e2d9a"
+}

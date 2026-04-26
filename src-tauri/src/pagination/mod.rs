@@ -148,6 +148,14 @@ pub struct HistoryEntry {
 ///   comparison `ABS(rank - cursor_rank) < 1e-9` to avoid exact float
 ///   equality).  `id` stores `block_id` as the deterministic tiebreaker.
 /// - `id` — always present; serves as the tie-breaker in every keyset.
+///
+/// **Composite overload** (`list_page_history`): three slots are reused
+/// simultaneously — `deleted_at` stashes `created_at`, `seq` keeps its
+/// usual meaning, and `id` stashes `device_id` as the keyset tiebreaker.
+/// This compound usage lets the same opaque cursor type carry the
+/// `(created_at, seq, device_id)` triple without expanding the struct;
+/// future cursor-bearing queries should reuse the existing slots in the
+/// same way rather than adding new fields.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Cursor {
     pub id: String,

@@ -627,13 +627,19 @@ pub async fn set_property(
     .map_err(sanitize_internal_error)?;
     use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
     use tauri::Emitter;
-    let _ = app.emit(
+    if let Err(e) = app.emit(
         EVENT_PROPERTY_CHANGED,
         PropertyChangedEvent {
             block_id: block_id_clone,
             changed_keys: vec![key_clone],
         },
-    );
+    ) {
+        tracing::warn!(
+            error = %e,
+            event = EVENT_PROPERTY_CHANGED,
+            "failed to emit property-changed event",
+        );
+    }
     Ok(result)
 }
 
@@ -655,13 +661,19 @@ pub async fn set_todo_state(
         .map_err(sanitize_internal_error)?;
     use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
     use tauri::Emitter;
-    let _ = app.emit(
+    if let Err(e) = app.emit(
         EVENT_PROPERTY_CHANGED,
         PropertyChangedEvent {
             block_id: block_id_clone,
             changed_keys: vec!["todo_state".to_string()],
         },
-    );
+    ) {
+        tracing::warn!(
+            error = %e,
+            event = EVENT_PROPERTY_CHANGED,
+            "failed to emit property-changed event",
+        );
+    }
     Ok(result)
 }
 
@@ -699,13 +711,19 @@ pub async fn set_due_date(
         .map_err(sanitize_internal_error)?;
     use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
     use tauri::Emitter;
-    let _ = app.emit(
+    if let Err(e) = app.emit(
         EVENT_PROPERTY_CHANGED,
         PropertyChangedEvent {
             block_id: block_id_clone,
             changed_keys: vec!["due_date".to_string()],
         },
-    );
+    ) {
+        tracing::warn!(
+            error = %e,
+            event = EVENT_PROPERTY_CHANGED,
+            "failed to emit property-changed event",
+        );
+    }
     Ok(result)
 }
 
@@ -728,13 +746,19 @@ pub async fn set_scheduled_date(
             .map_err(sanitize_internal_error)?;
     use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
     use tauri::Emitter;
-    let _ = app.emit(
+    if let Err(e) = app.emit(
         EVENT_PROPERTY_CHANGED,
         PropertyChangedEvent {
             block_id: block_id_clone,
             changed_keys: vec!["scheduled_date".to_string()],
         },
-    );
+    ) {
+        tracing::warn!(
+            error = %e,
+            event = EVENT_PROPERTY_CHANGED,
+            "failed to emit property-changed event",
+        );
+    }
     Ok(result)
 }
 
@@ -757,13 +781,19 @@ pub async fn delete_property(
         .map_err(sanitize_internal_error)?;
     use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
     use tauri::Emitter;
-    let _ = app.emit(
+    if let Err(e) = app.emit(
         EVENT_PROPERTY_CHANGED,
         PropertyChangedEvent {
             block_id: block_id_clone,
             changed_keys: vec![key_clone],
         },
-    );
+    ) {
+        tracing::warn!(
+            error = %e,
+            event = EVENT_PROPERTY_CHANGED,
+            "failed to emit property-changed event",
+        );
+    }
     Ok(())
 }
 

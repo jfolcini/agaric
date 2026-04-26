@@ -463,3 +463,38 @@ fn from_trusted_normalizes_to_uppercase() {
         "from_trusted should normalize a lowercase ULID to uppercase"
     );
 }
+
+#[test]
+fn from_trusted_uses_ascii_only_uppercase_for_non_ascii() {
+    // L-3 — Unicode `to_uppercase()` would map "ß" to "SS", but the
+    // Deserialize path uses `to_ascii_uppercase()`, which leaves "ß"
+    // untouched. `from_trusted` must match the Deserialize behaviour
+    // so the two normalization paths agree on every byte sequence.
+    let id = BlockId::from_trusted("ß");
+    assert_eq!(
+        id.as_str(),
+        "ß",
+        "from_trusted must use ASCII-only uppercase to match Deserialize"
+    );
+}
+
+proptest::proptest! {
+    /// L-3 — Property test: for any `String s`, the result of
+    /// `BlockId::from_trusted(&s)` must agree byte-for-byte with the
+    /// result of round-tripping `s` through serde JSON deserialization
+    /// (which uses `to_ascii_uppercase()`). Both paths normalize without
+    /// validating ULID format, so they must produce identical output.
+    #[test]
+    fn from_trusted_matches_deserialize_for_arbitrary_strings(s in ".*") {
+        let trusted = BlockId::from_trusted(&s);
+        let value = serde_json::Value::String(s.clone());
+        let deserialized: BlockId = serde_json::from_value(value)
+            .expect("BlockId Deserialize accepts any string");
+        proptest::prop_assert_eq!(
+            trusted.as_str(),
+            deserialized.as_str(),
+            "from_trusted and Deserialize must produce identical output for input {:?}",
+            s
+        );
+    }
+}

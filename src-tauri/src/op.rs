@@ -402,6 +402,27 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error:
     .count();
 
     if count == 1 {
+        // L-6 — Reject empty / whitespace-only string fields. The frontend
+        // already enforces non-empty values, but op-log entries can also
+        // originate from MCP tools and import paths, so backend-side
+        // validation prevents downstream parse failures (e.g. agenda code
+        // parses `value_date` as ISO 8601 and chokes on `""`).
+        // `value_num` is unaffected — finite-ness is checked above.
+        if p.value_text.as_ref().is_some_and(|s| s.trim().is_empty()) {
+            return Err(crate::error::AppError::Validation(
+                "set_property.value_text.empty".into(),
+            ));
+        }
+        if p.value_date.as_ref().is_some_and(|s| s.trim().is_empty()) {
+            return Err(crate::error::AppError::Validation(
+                "set_property.value_date.empty".into(),
+            ));
+        }
+        if p.value_ref.as_ref().is_some_and(|s| s.trim().is_empty()) {
+            return Err(crate::error::AppError::Validation(
+                "set_property.value_ref.empty".into(),
+            ));
+        }
         Ok(())
     } else if count == 0 && is_reserved_property_key(&p.key) {
         // Reserved keys allow all-null values (= clear the column)
@@ -1263,6 +1284,79 @@ mod tests {
             validate_set_property(&p).is_ok(),
             "reserved key with all-null values should be allowed (clear)"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // L-6: validate_set_property rejects empty / whitespace-only string fields
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_set_property_rejects_empty_value_text() {
+        for empty in ["", "   ", "\t\n"] {
+            let p = SetPropertyPayload {
+                block_id: BlockId::test_id("B1"),
+                key: "k".into(),
+                value_text: Some(empty.into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            };
+            let err = validate_set_property(&p).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    crate::error::AppError::Validation(ref m)
+                        if m == "set_property.value_text.empty"
+                ),
+                "empty value_text ({empty:?}) must return the value_text.empty error, got: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_set_property_rejects_empty_value_date() {
+        for empty in ["", "   ", "\t\n"] {
+            let p = SetPropertyPayload {
+                block_id: BlockId::test_id("B1"),
+                key: "k".into(),
+                value_text: None,
+                value_num: None,
+                value_date: Some(empty.into()),
+                value_ref: None,
+            };
+            let err = validate_set_property(&p).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    crate::error::AppError::Validation(ref m)
+                        if m == "set_property.value_date.empty"
+                ),
+                "empty value_date ({empty:?}) must return the value_date.empty error, got: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_set_property_rejects_empty_value_ref() {
+        for empty in ["", "   ", "\t\n"] {
+            let p = SetPropertyPayload {
+                block_id: BlockId::test_id("B1"),
+                key: "k".into(),
+                value_text: None,
+                value_num: None,
+                value_date: None,
+                value_ref: Some(empty.into()),
+            };
+            let err = validate_set_property(&p).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    crate::error::AppError::Validation(ref m)
+                        if m == "set_property.value_ref.empty"
+                ),
+                "empty value_ref ({empty:?}) must return the value_ref.empty error, got: {err:?}"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------

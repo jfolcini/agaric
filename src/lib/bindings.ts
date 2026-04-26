@@ -703,7 +703,17 @@ export type StatusInfo = {
 	background_queue_depth: number,
 	total_ops_dispatched: number,
 	total_background_dispatched: number,
+	/**
+	 *  Peak foreground queue depth observed in the current 5-minute
+	 *  metrics-snapshot window. Resets every dump tick (see
+	 *  `metrics_snapshot_task` in `coordinator.rs`); not an all-time peak.
+	 */
 	fg_high_water: number,
+	/**
+	 *  Peak background queue depth observed in the current 5-minute
+	 *  metrics-snapshot window. Same windowed-reset semantics as
+	 *  `fg_high_water`.
+	 */
 	bg_high_water: number,
 	fg_errors: number,
 	bg_errors: number,

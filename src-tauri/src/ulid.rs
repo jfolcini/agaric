@@ -60,8 +60,12 @@ impl BlockId {
     /// prior `BlockId::new()` call).  Normalises to uppercase but skips ULID
     /// validation. Use in command handlers where the ID was returned by a
     /// previous `create_block` and is being passed back from the frontend.
+    ///
+    /// Uses `to_ascii_uppercase()` to match the `Deserialize` impl — Unicode
+    /// `to_uppercase()` would produce different output for non-ASCII inputs
+    /// (e.g. "ß" → "SS"), breaking blake3 determinism across the two paths.
     pub fn from_trusted(s: &str) -> Self {
-        Self(s.to_uppercase())
+        Self(s.to_ascii_uppercase())
     }
 
     /// Consume and return the inner string.

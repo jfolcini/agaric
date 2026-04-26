@@ -265,19 +265,25 @@ pub(super) async fn resolve_root_pages_cte(
     }
 
     let placeholders = block_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    // Bound `depth < 100` on the recursive member to prevent runaway recursion
+    // on corrupted parent_id chains (AGENTS.md invariant #9), filter
+    // `b.is_conflict = 0` on the recursive walk so conflict-copy ancestors do
+    // not redirect a block's root, and re-apply `b.is_conflict = 0` on the
+    // final projection so prod (`resolve_root_pages` filtering `p.is_conflict = 0`)
+    // and oracle agree on the same root-page universe. (M-60)
     let sql = format!(
-        "WITH RECURSIVE walk(block_id, current_id) AS ( \
-            SELECT id, id FROM blocks WHERE id IN ({placeholders}) \
+        "WITH RECURSIVE walk(block_id, current_id, depth) AS ( \
+            SELECT id, id, 0 FROM blocks WHERE id IN ({placeholders}) \
             UNION ALL \
-            SELECT w.block_id, b.parent_id \
+            SELECT w.block_id, b.parent_id, w.depth + 1 \
             FROM walk w \
             JOIN blocks b ON b.id = w.current_id \
-            WHERE b.parent_id IS NOT NULL \
+            WHERE b.parent_id IS NOT NULL AND b.is_conflict = 0 AND w.depth < 100 \
         ) \
         SELECT w.block_id, w.current_id as root_id, b.content as root_title \
         FROM walk w \
         JOIN blocks b ON b.id = w.current_id \
-        WHERE b.parent_id IS NULL AND b.block_type = 'page'"
+        WHERE b.parent_id IS NULL AND b.block_type = 'page' AND b.is_conflict = 0"
     );
 
     #[derive(sqlx::FromRow)]

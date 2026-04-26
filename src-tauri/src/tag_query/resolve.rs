@@ -187,17 +187,20 @@ pub(crate) fn resolve_expr_cte<'a>(
     Box::pin(async move {
         match expr {
             TagExpr::Tag(tag_id) if include_inherited => {
+                // Bound `depth < 100` on the recursive member to match
+                // `tag_inheritance::rebuild_all` and AGENTS.md invariant #9
+                // (no runaway recursion on corrupted parent_id chains). (M-59)
                 let rows = sqlx::query_scalar::<_, String>(
-                    "WITH RECURSIVE tagged_tree AS ( \
-                         SELECT bt.block_id AS id \
+                    "WITH RECURSIVE tagged_tree(id, depth) AS ( \
+                         SELECT bt.block_id AS id, 0 AS depth \
                          FROM block_tags bt \
                          JOIN blocks b ON b.id = bt.block_id \
                          WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
                          UNION ALL \
-                         SELECT b.id \
+                         SELECT b.id, tt.depth + 1 \
                          FROM blocks b \
                          JOIN tagged_tree tt ON b.parent_id = tt.id \
-                         WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                         WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND tt.depth < 100 \
                      ) \
                      SELECT DISTINCT id FROM tagged_tree",
                 )
@@ -208,19 +211,21 @@ pub(crate) fn resolve_expr_cte<'a>(
             }
             TagExpr::Prefix(prefix) if include_inherited => {
                 let escaped = format!("{}%", escape_like(prefix));
+                // Bound `depth < 100` on the recursive member — see comment in
+                // the `Tag` branch above. (M-59)
                 let rows = sqlx::query_scalar::<_, String>(
-                    "WITH RECURSIVE tagged_tree AS ( \
-                         SELECT DISTINCT bt.block_id AS id \
+                    "WITH RECURSIVE tagged_tree(id, depth) AS ( \
+                         SELECT DISTINCT bt.block_id AS id, 0 AS depth \
                          FROM tags_cache tc \
                          JOIN block_tags bt ON bt.tag_id = tc.tag_id \
                          JOIN blocks b ON b.id = bt.block_id \
                          WHERE tc.name LIKE ?1 ESCAPE '\\' \
                            AND b.deleted_at IS NULL AND b.is_conflict = 0 \
                          UNION ALL \
-                         SELECT b.id \
+                         SELECT b.id, tt.depth + 1 \
                          FROM blocks b \
                          JOIN tagged_tree tt ON b.parent_id = tt.id \
-                         WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                         WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND tt.depth < 100 \
                      ) \
                      SELECT DISTINCT id FROM tagged_tree",
                 )

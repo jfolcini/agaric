@@ -11,6 +11,15 @@ use crate::error::AppError;
 
 use super::*;
 
+/// Minimum retention period accepted by [`compact_op_log_cmd_inner`].
+///
+/// M-38: Hard floor at the IPC boundary so a buggy Settings tab or malformed
+/// IPC payload supplying `0` cannot purge the entire op log down to the
+/// snapshot frontier in one shot. AGENTS.md invariant 1 ("op log is strictly
+/// append-only … except compaction") relies on the user explicitly opting
+/// in to a retention window; this guard is the second line of defence.
+pub const MIN_RETENTION_DAYS: u64 = 7;
+
 /// A link between two pages (for graph visualization).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, sqlx::FromRow, specta::Type)]
 pub struct PageLink {
@@ -97,6 +106,13 @@ pub async fn compact_op_log_cmd_inner(
     device_id: &str,
     retention_days: u64,
 ) -> Result<CompactionResult, AppError> {
+    // M-38: reject pathologically small retention windows at the IPC boundary
+    // before any DB work. retention_days = 0 would otherwise set cutoff = now()
+    // and purge the entire op log down to the snapshot frontier.
+    if retention_days < MIN_RETENTION_DAYS {
+        return Err(AppError::Validation("retention_days.too_small".into()));
+    }
+
     let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days.cast_signed());
     let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 

@@ -85,7 +85,11 @@ pub async fn upsert_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<(), App
 
 /// Insert a new peer ref with a certificate hash (used during pairing).
 ///
-/// Uses `INSERT OR REPLACE` so an existing peer's cert_hash is updated.
+/// Uses `INSERT … ON CONFLICT(peer_id) DO UPDATE` so re-pairing an existing
+/// peer updates only `cert_hash`. The other columns (`last_hash`,
+/// `synced_at`, `reset_count`, `last_address`, `device_name`) are
+/// **preserved** across re-pairing — this is the deliberate difference
+/// vs. an `INSERT OR REPLACE`, which would zero them out.
 pub async fn upsert_peer_ref_with_cert(
     pool: &SqlitePool,
     peer_id: &str,
@@ -184,7 +188,7 @@ pub async fn update_device_name(
     .rows_affected();
 
     if rows == 0 {
-        return Err(AppError::NotFound(format!("peer_ref {peer_id}")));
+        return Err(AppError::NotFound(format!("peer_refs ({peer_id})")));
     }
     Ok(())
 }
@@ -198,11 +202,13 @@ pub async fn update_last_address(
     peer_id: &str,
     address: &str,
 ) -> Result<(), AppError> {
-    sqlx::query("UPDATE peer_refs SET last_address = ?1 WHERE peer_id = ?2")
-        .bind(address)
-        .bind(peer_id)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "UPDATE peer_refs SET last_address = ? WHERE peer_id = ?",
+        address,
+        peer_id,
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

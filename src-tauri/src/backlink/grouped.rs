@@ -280,9 +280,12 @@ pub async fn eval_unlinked_references(
     sort: Option<BacklinkSort>,
     page: &PageRequest,
 ) -> Result<GroupedBacklinkResponse, AppError> {
-    // 1. Fetch the page title
+    // 1. Fetch the page title.
+    //    Filter `is_conflict = 0` so a conflict-copy page id never resolves to a
+    //    title that drives the unlinked-references search (mirrors the sister
+    //    `resolve_root_pages` helper). (L-81)
     let title: Option<String> = sqlx::query_scalar(
-        "SELECT content FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL",
+        "SELECT content FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL AND is_conflict = 0",
     )
     .bind(page_id)
     .fetch_optional(pool)
@@ -340,9 +343,11 @@ pub async fn eval_unlinked_references(
     };
 
     // 3. FTS5 query to find blocks mentioning the title, excluding linked blocks.
-    //    Cap at 10 001 rows so we can detect truncation (return at most 10 000).
+    //    Cap at FTS_ROW_CAP + 1 rows so we can detect truncation (return at most
+    //    FTS_ROW_CAP). The `+ 1` literal is derived from the constant via
+    //    `format!` so the SQL stays in sync if the constant changes (I-Search-3).
     const FTS_ROW_CAP: usize = 10_000;
-    let fts_rows: Vec<String> = sqlx::query_scalar::<_, String>(
+    let fts_sql = format!(
         "SELECT fb.block_id \
          FROM fts_blocks fb \
          JOIN blocks b ON b.id = fb.block_id \
@@ -352,12 +357,14 @@ pub async fn eval_unlinked_references(
            AND fb.block_id NOT IN ( \
              SELECT source_id FROM block_links WHERE target_id = ?2 \
            ) \
-         LIMIT 10001",
-    )
-    .bind(&fts_query)
-    .bind(page_id)
-    .fetch_all(pool)
-    .await?;
+         LIMIT {}",
+        FTS_ROW_CAP + 1
+    );
+    let fts_rows: Vec<String> = sqlx::query_scalar::<_, String>(&fts_sql)
+        .bind(&fts_query)
+        .bind(page_id)
+        .fetch_all(pool)
+        .await?;
 
     let truncated = fts_rows.len() > FTS_ROW_CAP;
     let matching_ids: FxHashSet<String> = if truncated {

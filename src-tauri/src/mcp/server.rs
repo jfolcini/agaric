@@ -2158,6 +2158,143 @@ mod tests {
         assert_eq!(result["isError"], false);
     }
 
+    /// I-MCP-8: defensive regression test for the `chars().take(200)`
+    /// clip at server.rs:508. The clip MUST be char-based; a byte-based
+    /// truncate (`s.truncate(200)`, `&s[..200]`, `String::from_utf8_unchecked`)
+    /// would panic at a multi-byte UTF-8 boundary. The existing
+    /// length-only assertion at `handle_tools_call_emits_activity_on_error_with_err_result`
+    /// would not catch a regression to byte-based truncation — this
+    /// test pins the multi-byte invariant directly.
+    ///
+    /// 199 ASCII chars + 1 four-byte emoji = 200 chars total but 203
+    /// UTF-8 bytes — the worst-case input for `chars().take(200)` since
+    /// it ends precisely on the multi-byte boundary that a byte-based
+    /// `s.truncate(200)` would split mid-codepoint and panic on.
+    #[test]
+    fn err_clip_handles_multibyte_codepoint_at_boundary() {
+        // Build the 200-char / 203-byte input.
+        let input = "a".repeat(199) + "\u{1F980}"; // 🦀
+        assert_eq!(input.chars().count(), 200, "input is exactly 200 chars");
+        assert_eq!(input.len(), 203, "input is 203 UTF-8 bytes (199 + 4)");
+
+        // Mirror server.rs:508 verbatim. This must not panic.
+        let short: String = input.chars().take(200).collect();
+
+        // Char count preserved.
+        assert_eq!(short.chars().count(), 200);
+
+        // Output is valid UTF-8 (trivially true for `String`, but pin
+        // the boundary explicitly so a future swap to `unsafe` slicing
+        // gets caught).
+        assert!(
+            short.is_char_boundary(short.len()),
+            "clip must end on a UTF-8 char boundary"
+        );
+        assert_eq!(short.len(), 203, "no codepoint was split mid-byte");
+
+        // Round-trip cleanly through serde_json — the activity emitter
+        // serialises `ActivityResult::Err(short)` to JSON for the
+        // frontend (see `activity.rs::ActivityResult` Serialize impl).
+        let v = serde_json::to_value(&short).unwrap();
+        let back: String = serde_json::from_value(v).unwrap();
+        assert_eq!(back, short, "serde_json round-trip preserves bytes");
+    }
+
+    /// I-MCP-8: a longer all-emoji payload (500 four-byte codepoints =
+    /// 2000 UTF-8 bytes). The clip MUST yield exactly 200 emojis (800
+    /// bytes), never panic, never split mid-codepoint.
+    #[test]
+    fn err_clip_truncates_long_emoji_string_without_splitting() {
+        let input = "\u{1F4A5}".repeat(500); // 💥 × 500
+        assert_eq!(input.chars().count(), 500);
+        assert_eq!(input.len(), 2000);
+
+        let short: String = input.chars().take(200).collect();
+        assert_eq!(short.chars().count(), 200);
+        assert_eq!(short.len(), 800, "200 four-byte codepoints = 800 bytes");
+        assert!(
+            short.is_char_boundary(short.len()),
+            "clip must end on a UTF-8 char boundary"
+        );
+
+        let v = serde_json::to_value(&short).unwrap();
+        let back: String = serde_json::from_value(v).unwrap();
+        assert_eq!(back, short);
+    }
+
+    /// I-MCP-8: end-to-end check that the clipping in `handle_tools_call`'s
+    /// error branch (server.rs:503-510) survives a multi-byte AppError
+    /// payload through to `ActivityResult::Err(short)`. Pairs with the
+    /// unit tests above which pin the clip pattern in isolation.
+    #[tokio::test]
+    async fn handle_tools_call_err_clip_survives_multibyte_apperror_payload() {
+        use super::super::activity::ActivityResult;
+
+        /// Test registry whose tool always returns the configured AppError
+        /// payload. Exercises the Err arm of `handle_tools_call` without
+        /// needing the PlaceholderRegistry's hard-coded NotFound path.
+        struct ErrRegistry {
+            err_msg: String,
+        }
+        impl ToolRegistry for ErrRegistry {
+            fn list_tools(&self) -> Vec<ToolDescription> {
+                Vec::new()
+            }
+            async fn call_tool(
+                &self,
+                _name: &str,
+                _args: Value,
+                _ctx: &ActorContext,
+            ) -> Result<Value, AppError> {
+                Err(AppError::Validation(self.err_msg.clone()))
+            }
+        }
+
+        let (ctx, recorder) = recording_ctx();
+        let state = ConnectionState {
+            client_info: Some(ClientInfo {
+                name: "claude".to_string(),
+                version: None,
+            }),
+            activity_ctx: Some(ctx),
+            ..ConnectionState::default()
+        };
+        // 250 four-byte emojis well past the 200-char clip — the
+        // production path goes through `err.to_string().chars().take(200)`,
+        // and the `Validation(...)` Display prefix `"Validation error: "`
+        // counts toward the clip.
+        let registry = ErrRegistry {
+            err_msg: "\u{1F4A5}".repeat(250),
+        };
+        let params = json!({ "name": "boom", "arguments": {} });
+
+        let _ = handle_tools_call(&state, &params, &registry)
+            .await
+            .expect_err("ErrRegistry surfaces AppError::Validation");
+
+        let entries = recorder.entries();
+        assert_eq!(entries.len(), 1);
+        match &entries[0].result {
+            ActivityResult::Err(short) => {
+                assert!(
+                    short.chars().count() <= 200,
+                    "I-MCP-8: clip must cap at 200 chars even for emoji-heavy payloads, got {}",
+                    short.chars().count()
+                );
+                assert!(
+                    short.is_char_boundary(short.len()),
+                    "I-MCP-8: clip must end on a UTF-8 char boundary"
+                );
+                // serde_json round-trip on the captured Err — pins the
+                // frontend-facing payload shape.
+                let v = serde_json::to_value(short).unwrap();
+                let back: String = serde_json::from_value(v).unwrap();
+                assert_eq!(&back, short);
+            }
+            other => panic!("expected ActivityResult::Err, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn handle_tools_call_session_id_stable_across_two_requests() {
         // FEAT-4h slice 3 invariant: every emission from the same

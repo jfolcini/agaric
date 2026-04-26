@@ -30,7 +30,7 @@ pub async fn list_agenda(
                 b.page_id
          FROM agenda_cache ac
          JOIN blocks b ON b.id = ac.block_id
-         WHERE ac.date = ?1 AND b.deleted_at IS NULL
+         WHERE ac.date = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0
            AND (?2 IS NULL OR ac.source = ?2)
            AND (?3 IS NULL OR b.id > ?4)
          ORDER BY b.id ASC
@@ -86,7 +86,7 @@ pub async fn list_agenda_range(
          FROM agenda_cache ac
          JOIN blocks b ON b.id = ac.block_id
          WHERE ac.date >= ?1 AND ac.date <= ?2
-           AND b.deleted_at IS NULL
+           AND b.deleted_at IS NULL AND b.is_conflict = 0
            AND (?3 IS NULL OR ac.source = ?3)
            AND (?4 IS NULL OR (ac.date > ?5 OR (ac.date = ?5 AND b.id > ?6)))
          ORDER BY ac.date ASC, b.id ASC

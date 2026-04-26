@@ -109,6 +109,28 @@ async fn add_tag_non_tag_block_type_returns_error() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tag_self_returns_invalid_operation() {
+    // L-34 regression: a block cannot tag itself. The guard rejects the call
+    // before any DB work, regardless of whether the block exists or its type.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "AT_SELF", "tag", "self", None, None).await;
+
+    let result = add_tag_inner(&pool, DEV, &mat, "AT_SELF".into(), "AT_SELF".into()).await;
+
+    assert!(
+        matches!(result, Err(AppError::InvalidOperation(_))),
+        "self-tagging should return InvalidOperation, got {result:?}"
+    );
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("a block cannot tag itself"),
+        "error message should mention self-tag guard, got {err}"
+    );
+}
+
 // ======================================================================
 // remove_tag
 // ======================================================================

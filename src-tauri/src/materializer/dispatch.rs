@@ -63,6 +63,8 @@ impl Materializer {
         if let Err(e) = self.dispatch_background(record) {
             tracing::warn!(
                 op_type = %record.op_type,
+                seq = record.seq,
+                device_id = %record.device_id,
                 error = %e,
                 "failed to dispatch background cache task"
             );

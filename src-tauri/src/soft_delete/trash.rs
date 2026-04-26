@@ -35,10 +35,17 @@ pub async fn soft_delete_block(
 /// Canonical CTE in `crate::block_descendants::DESCENDANTS_CTE_ACTIVE`.
 /// This site inlines the SQL because `sqlx::query!` requires a string
 /// literal and cannot accept `concat!()` of a `macro_rules!` expansion.
+///
+/// L-101: Emits `tracing::debug!` at entry and `tracing::info!` after
+/// the cascade UPDATE so a user-reported "I lost a tree of blocks"
+/// triage has a log record of the seed block_id, the cascade size, and
+/// the timestamp. `compact_op_log` is fully instrumented; cascade
+/// delete (which can sweep thousands of blocks in one tx) was opaque.
 pub async fn cascade_soft_delete(
     pool: &SqlitePool,
     block_id: &str,
 ) -> Result<(String, u64), AppError> {
+    tracing::debug!(seed_block_id = %block_id, "cascade soft-delete starting");
     let now = crate::now_rfc3339();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
@@ -61,5 +68,11 @@ pub async fn cascade_soft_delete(
 
     let count = result.rows_affected();
     tx.commit().await?;
+    tracing::info!(
+        seed_block_id = %block_id,
+        descendants_marked = count,
+        deleted_at = %now,
+        "cascade soft-delete"
+    );
     Ok((now, count))
 }

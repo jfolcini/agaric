@@ -187,14 +187,15 @@ struct FtsSearchRow {
 /// all other tokens are individually double-quoted to prevent injection of
 /// arbitrary FTS5 syntax.
 ///
-/// ## Known limitation: CJK tokenization
+/// ## Tokenization
 ///
-/// The FTS5 table uses the default `unicode61` tokenizer, which splits tokens
-/// on Unicode-defined word boundaries.  This works well for Latin, Cyrillic,
-/// and most scripts, but may split CJK (Chinese/Japanese/Korean) text
-/// incorrectly — individual characters may become separate tokens instead of
-/// multi-character words.  Proper CJK support requires a dedicated tokenizer
-/// (e.g., ICU or jieba) and is planned for a future phase.
+/// The FTS5 table uses the `trigram` tokenizer (`tokenize = 'trigram
+/// case_sensitive 0'`, see migration `0006_fts5_trigram.sql`).  Trigrams
+/// give substring search across all scripts including CJK, at the cost
+/// of increased index size and a 3-character minimum match length —
+/// queries shorter than 3 characters return no results.  Earlier
+/// versions of this module used the default `unicode61` tokenizer, which
+/// split CJK incorrectly; the trigram switch is what fixes that.
 pub async fn search_fts(
     pool: &SqlitePool,
     query: &str,

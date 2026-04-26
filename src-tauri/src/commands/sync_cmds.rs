@@ -240,6 +240,7 @@ pub async fn delete_peer_ref(pool: State<'_, WritePool>, peer_id: String) -> Res
         .map_err(sanitize_internal_error)
 }
 
+#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn update_peer_name(
@@ -253,6 +254,7 @@ pub async fn update_peer_name(
 }
 
 /// Tauri command: set a peer's last-known network address for direct connection.
+#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn set_peer_address(

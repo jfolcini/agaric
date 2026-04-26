@@ -254,11 +254,21 @@ fn redact_log(contents: &str, home: Option<&str>, device_id: Option<&str>) -> St
 }
 
 /// Resolve the user's home directory as a string, if known. Used for path
-/// redaction. Returns `None` when `$HOME` is unset or the env lookup fails
-/// — callers must treat the absence as "no home replacement" rather than
+/// redaction. Returns `None` when no home directory can be determined —
+/// callers must treat the absence as "no home replacement" rather than
 /// fabricating a path.
+///
+/// L-41 — Uses `dirs::home_dir()` so that the platform-canonical source is
+/// consulted on every OS:
+/// - **Unix:** `$HOME` (with `/etc/passwd` fallback)
+/// - **Windows:** `USERPROFILE` (and the `SHGetKnownFolderPath` API as a
+///   fallback). The previous `$HOME`-only implementation silently returned
+///   `None` on Windows, leaking `C:\Users\<name>\…` paths into bug-report
+///   ZIP exports destined for public GitHub issues.
 fn home_dir_string() -> Option<String> {
-    std::env::var("HOME").ok().filter(|s| !s.is_empty())
+    dirs::home_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
 }
 
 /// Core implementation shared between the Tauri command and its tests.
@@ -667,5 +677,57 @@ mod tests {
         let line = "2025-01-01 device=abc";
         let out = redact_line(line, None, Some(""));
         assert_eq!(out, line);
+    }
+
+    // -- home_dir_string (L-41) ------------------------------------------
+
+    /// L-41 — On Linux/macOS the standard CI environments set `$HOME`, so
+    /// `dirs::home_dir()` resolves and `home_dir_string()` returns Some.
+    /// Headless container CIs that strip `$HOME` would force `dirs` to
+    /// fall back to `/etc/passwd`; if even that fails we treat absence as
+    /// "no home replacement" rather than failing the test (matching the
+    /// production "no home replacement" semantics the function documents).
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn home_dir_string_returns_some_when_dirs_resolves() {
+        if let Some(expected) = dirs::home_dir() {
+            let got = home_dir_string();
+            assert_eq!(
+                got.as_deref(),
+                Some(expected.to_string_lossy().as_ref()),
+                "home_dir_string must mirror dirs::home_dir() when it resolves"
+            );
+            assert!(
+                got.as_deref().is_some_and(|s| !s.is_empty()),
+                "home_dir_string must filter out empty strings"
+            );
+        } else {
+            // Container CI without HOME and no /etc/passwd entry — accept
+            // None as the documented "no home replacement" outcome.
+            assert!(
+                home_dir_string().is_none(),
+                "home_dir_string must return None when dirs::home_dir() fails"
+            );
+        }
+    }
+
+    /// L-41 — On Windows, `dirs::home_dir()` resolves through `USERPROFILE`
+    /// (and the `SHGetKnownFolderPath` API as a fallback), not `$HOME`.
+    /// The previous `std::env::var("HOME")` implementation would silently
+    /// return `None` here, leaking `C:\Users\<name>\…` into bug-report ZIPs.
+    #[cfg(windows)]
+    #[test]
+    fn home_dir_string_resolves_on_windows_via_userprofile() {
+        let expected = dirs::home_dir().expect(
+            "Windows: dirs::home_dir() must resolve via USERPROFILE on developer/CI machines",
+        );
+        let got = home_dir_string()
+            .expect("home_dir_string must return Some on Windows when USERPROFILE is set");
+        assert_eq!(
+            got,
+            expected.to_string_lossy().into_owned(),
+            "home_dir_string must mirror dirs::home_dir() on Windows"
+        );
+        assert!(!got.is_empty(), "home_dir_string must filter empty strings");
     }
 }

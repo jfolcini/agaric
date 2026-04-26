@@ -1594,18 +1594,18 @@ async fn is_terminal_includes_all_terminal_states() {
 }
 
 // ======================================================================
-// #616 — apply_remote_ops skips ops with invalid JSON payload
+// #616 — apply_remote_ops rejects ops with invalid JSON payload
+// (M-42 — all-or-nothing batch validation)
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_remote_ops_skips_invalid_payload() {
+async fn apply_remote_ops_rejects_batch_on_invalid_payload() {
     let (local_pool, _local_dir) = test_pool().await;
     let materializer = Materializer::new(local_pool.clone());
 
     // Build an op with a valid hash but invalid JSON payload.
-    // We need the hash to match the payload for it to pass hash verification,
-    // so we create it via append_local_op_at first, then corrupt the payload
-    // while recomputing the hash to match.
+    // The hash matches the payload (so hash verification passes), but the
+    // payload itself is not valid JSON. The whole batch must be rejected.
     let bad_payload_op = OpTransfer {
         device_id: "remote-dev".into(),
         seq: 1,
@@ -1622,17 +1622,104 @@ async fn apply_remote_ops_skips_invalid_payload() {
         created_at: FIXED_TS.into(),
     };
 
-    let result = apply_remote_ops(&local_pool, &materializer, vec![bad_payload_op])
+    let result = apply_remote_ops(&local_pool, &materializer, vec![bad_payload_op]).await;
+
+    let err = result.expect_err("invalid-JSON-payload batch must be rejected");
+    assert!(
+        err.to_string().contains("invalid JSON payload"),
+        "error must mention invalid JSON payload, got: {err}"
+    );
+
+    // Ensure nothing was inserted.
+    let ops_in_local = crate::op_log::get_ops_since(&local_pool, "remote-dev", 0)
         .await
         .unwrap();
-
-    // The op should have passed hash verification but been skipped
-    // due to invalid payload.
-    assert_eq!(
-        result.inserted, 0,
-        "invalid payload op should not be inserted"
+    assert!(
+        ops_in_local.is_empty(),
+        "no ops should be inserted from a rejected batch — found {} ops",
+        ops_in_local.len()
     );
-    assert_eq!(result.hash_mismatches, 0, "hash should have matched");
+
+    materializer.shutdown();
+}
+
+// ======================================================================
+// M-42 — apply_remote_ops rejects entire batch when middle op has
+// malformed payload; none of the surrounding valid ops land in op_log.
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_remote_ops_rejects_batch_when_middle_op_payload_malformed() {
+    // Create three ops on a "remote" database so they have valid hashes.
+    let (remote_pool, _remote_dir) = test_pool().await;
+    let op1 = append_local_op_at(
+        &remote_pool,
+        "remote-dev",
+        test_create_payload("BLK1"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+    let op2 = append_local_op_at(
+        &remote_pool,
+        "remote-dev",
+        test_create_payload("BLK2"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+    let op3 = append_local_op_at(
+        &remote_pool,
+        "remote-dev",
+        test_create_payload("BLK3"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    let t1: OpTransfer = op1.into();
+    let t3: OpTransfer = op3.into();
+
+    // Replace op2 (the MIDDLE op) with one that has a malformed JSON payload
+    // but a hash that matches the malformed payload (so it passes hash
+    // verification yet still must be rejected as malformed JSON).
+    let malformed_payload = "{\"this\": \"is not closed";
+    let middle_bad = OpTransfer {
+        device_id: op2.device_id.clone(),
+        seq: op2.seq,
+        parent_seqs: op2.parent_seqs.clone(),
+        hash: crate::hash::compute_op_hash(
+            &op2.device_id,
+            op2.seq,
+            op2.parent_seqs.as_deref(),
+            &op2.op_type,
+            malformed_payload,
+        ),
+        op_type: op2.op_type.clone(),
+        payload: malformed_payload.into(),
+        created_at: op2.created_at.clone(),
+    };
+
+    let (local_pool, _local_dir) = test_pool().await;
+    let materializer = Materializer::new(local_pool.clone());
+
+    let result = apply_remote_ops(&local_pool, &materializer, vec![t1, middle_bad, t3]).await;
+
+    let err = result.expect_err("batch with middle malformed op must be rejected");
+    assert!(
+        err.to_string().contains("invalid JSON payload"),
+        "error must mention invalid JSON payload, got: {err}"
+    );
+
+    // None of the three ops should have landed in op_log.
+    let ops_in_local = crate::op_log::get_ops_since(&local_pool, "remote-dev", 0)
+        .await
+        .unwrap();
+    assert!(
+        ops_in_local.is_empty(),
+        "no ops from a rejected batch should be in op_log — found {} ops",
+        ops_in_local.len()
+    );
 
     materializer.shutdown();
 }

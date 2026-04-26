@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE peer_refs SET last_address = ? WHERE peer_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "157298d9c5d11cbb53b065cd163fd7855929b3f42ac96371c4067473477fd72a"
+}

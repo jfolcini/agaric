@@ -48,19 +48,31 @@ fn shared_event_sink_forwards_to_inner() {
 }
 
 #[test]
-fn shutdown_sets_flag() {
-    let shutdown = Arc::new(AtomicBool::new(false));
+fn shutdown_notifies_waiter() {
+    let shutdown_notify = Arc::new(Notify::new());
     let daemon = SyncDaemon {
-        shutdown: shutdown.clone(),
-        shutdown_notify: Arc::new(Notify::new()),
+        shutdown_notify: shutdown_notify.clone(),
         cancel: Arc::new(AtomicBool::new(false)),
         handle: None,
     };
-    assert!(!shutdown.load(Ordering::Acquire), "flag must start false");
     daemon.shutdown();
+    // A subsequent `notified()` future must complete immediately because
+    // notify_one() stored a permit on the Notify.
+    let permit_ready = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_millis(50),
+                shutdown_notify.notified(),
+            )
+            .await
+            .is_ok()
+        });
     assert!(
-        shutdown.load(Ordering::Acquire),
-        "shutdown must set the flag"
+        permit_ready,
+        "shutdown() must deliver a permit to the shutdown_notify"
     );
 }
 
@@ -68,7 +80,6 @@ fn shutdown_sets_flag() {
 fn cancel_active_sync_sets_flag() {
     let cancel = Arc::new(AtomicBool::new(false));
     let daemon = SyncDaemon {
-        shutdown: Arc::new(AtomicBool::new(false)),
         shutdown_notify: Arc::new(Notify::new()),
         cancel: cancel.clone(),
         handle: None,
@@ -86,31 +97,23 @@ fn cancel_active_sync_sets_flag() {
 
 #[test]
 fn shutdown_and_cancel_are_independent() {
-    let shutdown = Arc::new(AtomicBool::new(false));
     let cancel = Arc::new(AtomicBool::new(false));
     let daemon = SyncDaemon {
-        shutdown: shutdown.clone(),
         shutdown_notify: Arc::new(Notify::new()),
         cancel: cancel.clone(),
         handle: None,
     };
     daemon.shutdown();
-    assert!(shutdown.load(Ordering::Acquire), "shutdown must be set");
     assert!(!cancel.load(Ordering::Acquire), "cancel must remain unset");
 
     daemon.cancel_active_sync();
     assert!(cancel.load(Ordering::Acquire), "cancel must now be set");
-    assert!(
-        shutdown.load(Ordering::Acquire),
-        "shutdown must still be set"
-    );
 }
 
 #[test]
 fn cancel_flag_clear_after_session() {
     let cancel = Arc::new(AtomicBool::new(false));
     let daemon = SyncDaemon {
-        shutdown: Arc::new(AtomicBool::new(false)),
         shutdown_notify: Arc::new(Notify::new()),
         cancel: cancel.clone(),
         handle: None,
@@ -156,7 +159,6 @@ fn shared_event_sink_concurrent_emission() {
 fn cancel_is_idempotent() {
     let cancel = Arc::new(AtomicBool::new(false));
     let daemon = SyncDaemon {
-        shutdown: Arc::new(AtomicBool::new(false)),
         shutdown_notify: Arc::new(Notify::new()),
         cancel: cancel.clone(),
         handle: None,
