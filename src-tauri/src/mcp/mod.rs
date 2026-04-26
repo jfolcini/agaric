@@ -281,8 +281,18 @@ pub enum SocketKind {
     /// require re-creating a `NamedPipeServer` each time the previous one
     /// is handed off to a connection handler; `serve_pipe` takes care of
     /// that in FEAT-4a's accept loop.
+    ///
+    /// The bound `path` is captured on the variant (M-83 fix) so the
+    /// accept loop creates each successor instance on the same pipe
+    /// namespace it bound on. Recovering the path from a constant
+    /// (the pre-M-83 implementation) silently routed RW callers onto
+    /// the RO pipe namespace once the first RW client connected and
+    /// the loop tried to spin up the second server instance.
     #[cfg(windows)]
-    Pipe(tokio::net::windows::named_pipe::NamedPipeServer),
+    Pipe {
+        server: tokio::net::windows::named_pipe::NamedPipeServer,
+        path: String,
+    },
 }
 
 impl std::fmt::Debug for SocketKind {
@@ -291,7 +301,7 @@ impl std::fmt::Debug for SocketKind {
             #[cfg(unix)]
             SocketKind::Unix(_) => f.write_str("SocketKind::Unix"),
             #[cfg(windows)]
-            SocketKind::Pipe(_) => f.write_str("SocketKind::Pipe"),
+            SocketKind::Pipe { path, .. } => write!(f, "SocketKind::Pipe({path})"),
         }
     }
 }
@@ -405,7 +415,10 @@ pub async fn bind_socket(pipe_path: &Path, socket_kind: &str) -> Result<SocketKi
         "MCP named pipe created",
     );
 
-    Ok(SocketKind::Pipe(server))
+    Ok(SocketKind::Pipe {
+        server,
+        path: pipe_str.to_string(),
+    })
 }
 
 /// Spawn the MCP read-only task onto the current Tokio runtime.
@@ -423,6 +436,14 @@ pub async fn bind_socket(pipe_path: &Path, socket_kind: &str) -> Result<SocketKi
 /// device's `device_id` so any op-log entries the tool creates are
 /// attributed correctly.
 ///
+/// M-82: `journal_for_date` is the only RO tool with a write side-effect
+/// (it inserts a fresh `page` block whenever the requested date has no
+/// existing journal page). The registry therefore takes **both** pools:
+/// `read_pool` backs the eight pure-read tools and the lookup branch of
+/// `journal_for_date`, while `write_pool` backs the create branch —
+/// `BEGIN IMMEDIATE` on the read pool fails with `SQLITE_READONLY`
+/// because that pool sets `PRAGMA query_only = ON`.
+///
 /// `app_handle` is used to build the FEAT-4d activity emitter — every
 /// completed tool call pushes an [`activity::ActivityEntry`] into the ring
 /// and emits an `mcp:activity` event on this handle's bus.
@@ -434,6 +455,7 @@ pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
     app_data_dir: &Path,
     app_handle: tauri::AppHandle<R>,
     read_pool: SqlitePool,
+    write_pool: SqlitePool,
     materializer: Materializer,
     device_id: String,
     lifecycle: Option<McpLifecycle>,
@@ -448,7 +470,7 @@ pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
 
     let socket_path = default_mcp_ro_socket_path(app_data_dir);
     let activity_ctx = activity::ActivityContext::from_app_handle(app_handle);
-    let registry = tools_ro::ReadOnlyTools::new(read_pool, materializer, device_id);
+    let registry = tools_ro::ReadOnlyTools::new(read_pool, write_pool, materializer, device_id);
     spawn_mcp_ro_task_with_registry(socket_path, registry, Some(activity_ctx), lifecycle);
 }
 

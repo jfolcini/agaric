@@ -185,8 +185,21 @@ fn parse_args<T: serde::de::DeserializeOwned>(tool: &str, args: Value) -> Result
 /// Journal-page creation is reversible (creates an ordinary `page` block
 /// via `create_block_inner`), matching the FEAT-4 invariant that v1 never
 /// exposes non-reversible ops.
+///
+/// M-82: `journal_for_date` is the only RO tool with a write side-effect —
+/// it calls `create_block_inner` when the requested date has no existing
+/// page. The reader pool sets `PRAGMA query_only = ON`, so feeding it to
+/// the create path raises `SQLITE_READONLY`. The struct therefore carries
+/// **both** pools: `pool` (reader) is used by the eight pure-read tools
+/// and the lookup branch of `journal_for_date`, while `writer_pool` is
+/// used by `journal_for_date` whenever it has to insert a new page.
 pub struct ReadOnlyTools {
     pool: SqlitePool,
+    /// Writer pool from `DbPools::write` — used exclusively by
+    /// `journal_for_date` when it needs to create a missing journal
+    /// page. The other eight RO tools continue to use `pool` (reader)
+    /// so the read/write capacity split is preserved. (M-82.)
+    writer_pool: SqlitePool,
     materializer: Materializer,
     /// Local-device id used when a tool has to write (today only
     /// `journal_for_date` when the requested date page does not exist
@@ -196,12 +209,25 @@ pub struct ReadOnlyTools {
 }
 
 impl ReadOnlyTools {
-    /// Construct a read-only registry. `pool` should be the *reader*
-    /// pool — writes still go through `materializer` (which carries its
-    /// own writer-pool handle internally).
-    pub fn new(pool: SqlitePool, materializer: Materializer, device_id: String) -> Self {
+    /// Construct a read-only registry.
+    ///
+    /// - `pool` is the *reader* pool (`DbPools::read`) and backs every
+    ///   pure-read tool plus the lookup branch of `journal_for_date`.
+    /// - `writer_pool` is the *writer* pool (`DbPools::write`) and backs
+    ///   the `journal_for_date` create branch — opening `BEGIN IMMEDIATE`
+    ///   on the read pool fails with `SQLITE_READONLY` because the read
+    ///   pool sets `PRAGMA query_only = ON`. (M-82.)
+    /// - `materializer` carries its own writer-pool handle internally;
+    ///   passed through unchanged.
+    pub fn new(
+        pool: SqlitePool,
+        writer_pool: SqlitePool,
+        materializer: Materializer,
+        device_id: String,
+    ) -> Self {
         Self {
             pool,
+            writer_pool,
             materializer,
             device_id,
         }
@@ -238,6 +264,7 @@ impl ToolRegistry for ReadOnlyTools {
         // to know about `ACTOR`. See `mcp::actor` tests.
         let scoped = ctx.clone();
         let pool = self.pool.clone();
+        let writer_pool = self.writer_pool.clone();
         let materializer = self.materializer.clone();
         let device_id = self.device_id.clone();
         let name = name.to_string();
@@ -254,7 +281,16 @@ impl ToolRegistry for ReadOnlyTools {
                         "list_property_defs" => handle_list_property_defs(&pool, args).await,
                         "get_agenda" => handle_get_agenda(&pool, args).await,
                         "journal_for_date" => {
-                            handle_journal_for_date(&pool, &materializer, &device_id, args).await
+                            // M-82: route `journal_for_date` to the writer
+                            // pool because `journal_for_date_inner` opens
+                            // `BEGIN IMMEDIATE` and inserts into `op_log` +
+                            // `blocks` whenever the requested date has no
+                            // existing page. The reader pool's
+                            // `PRAGMA query_only = ON` rejects that path
+                            // with `SQLITE_READONLY`. The other eight
+                            // tools stay on the reader pool.
+                            handle_journal_for_date(&writer_pool, &materializer, &device_id, args)
+                                .await
                         }
                         other => Err(AppError::NotFound(format!("unknown tool `{other}`"))),
                     }
@@ -600,7 +636,11 @@ mod tests {
     async fn mk_tools() -> (ReadOnlyTools, Materializer, TempDir) {
         let (pool, dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
-        let tools = ReadOnlyTools::new(pool, mat.clone(), DEV.to_string());
+        // M-82: `init_pool` returns a single combined pool, so reuse it
+        // for both the reader and writer slots in this fixture. The
+        // production wiring uses split `init_pools` semantics; the
+        // dedicated `tests_m82` block below exercises that path.
+        let tools = ReadOnlyTools::new(pool.clone(), pool, mat.clone(), DEV.to_string());
         (tools, mat, dir)
     }
 
@@ -1808,6 +1848,179 @@ mod tests {
         assert!(
             captured.is_none(),
             "RO tool `list_pages` must not populate LAST_APPEND; got {captured:?}",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// M-82 tests — split-pool semantics for `journal_for_date`
+//
+// These tests exercise the production wiring that `mk_tools()` deliberately
+// does not: separate reader (`PRAGMA query_only = ON`) and writer pools,
+// just like `init_pools()`. The bug fixed by M-82 was that `ReadOnlyTools`
+// was constructed with the reader pool only, so the very first
+// `journal_for_date` call for a missing date hit `BEGIN IMMEDIATE` + INSERT
+// against `query_only = ON` and surfaced as JSON-RPC `-32603`.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests_m82 {
+    use super::*;
+    use crate::commands::create_block_inner;
+    use crate::db::init_pools;
+    use crate::materializer::Materializer;
+    use crate::mcp::actor::{Actor, ActorContext};
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    const DEV: &str = "test-mcp-dev-m82";
+
+    fn test_ctx() -> ActorContext {
+        ActorContext {
+            actor: Actor::Agent {
+                name: "test-agent-m82".to_string(),
+            },
+            request_id: "req-test-m82".to_string(),
+        }
+    }
+
+    /// Build production-style split pools — a reader pool with
+    /// `PRAGMA query_only = ON` and a writer pool without — so the
+    /// resulting `ReadOnlyTools` mirrors the way `lib.rs` wires the
+    /// real MCP RO server.
+    async fn mk_split_tools() -> (ReadOnlyTools, Materializer, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("m82.db");
+        let pools = init_pools(&db_path).await.unwrap();
+        // Materializer uses the writer pool internally — same wiring as
+        // production (`lib.rs` builds it from `pools.write` / `pools.read`).
+        let mat = Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+        let tools = ReadOnlyTools::new(
+            pools.read.clone(),
+            pools.write.clone(),
+            mat.clone(),
+            DEV.to_string(),
+        );
+        (tools, mat, dir)
+    }
+
+    /// Reproduction of the M-82 production failure: with the old wiring
+    /// (`pool` = reader-only) the very first `journal_for_date` call for
+    /// a missing date opens `BEGIN IMMEDIATE` and INSERTs into `op_log`
+    /// + `blocks`, which `query_only = ON` rejects as `SQLITE_READONLY`
+    /// and surfaces as JSON-RPC `-32603`. With the writer pool wired in
+    /// the create branch succeeds and we get back a freshly minted
+    /// journal page.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn journal_for_date_uses_writer_pool_for_missing_date() {
+        let (tools, _mat, _dir) = mk_split_tools().await;
+
+        // No journal page exists for this date — the call must hit the
+        // create branch, which is the path that previously failed on the
+        // query_only=ON reader pool.
+        let result = tools
+            .call_tool(
+                "journal_for_date",
+                json!({"date": "2025-09-09"}),
+                &test_ctx(),
+            )
+            .await;
+
+        let value = result.expect("journal_for_date must succeed for a missing date when wired with the writer pool — pre-M-82 this surfaced SQLITE_READONLY as JSON-RPC -32603");
+
+        // Verify the response shape matches a fresh journal page (a
+        // `page` block whose `content` is the requested date).
+        assert_eq!(
+            value.get("block_type").and_then(|v| v.as_str()),
+            Some("page"),
+            "expected a fresh `page` block, got {value:?}",
+        );
+        assert_eq!(
+            value.get("content").and_then(|v| v.as_str()),
+            Some("2025-09-09"),
+            "expected `content` == requested date, got {value:?}",
+        );
+    }
+
+    /// Sanity check that the lookup branch of `journal_for_date` works
+    /// across pool wirings: idempotency on a date that already has a
+    /// page must succeed whether the registry is wired with the
+    /// production split (reader pool + writer pool, M-82 fix) or the
+    /// legacy combined `init_pool` wiring used by the in-tree test
+    /// fixture (`mk_tools()`). The lookup-then-return path inside
+    /// `journal_for_date_inner` uses `BEGIN IMMEDIATE` to keep the
+    /// SELECT-then-INSERT pair atomic against concurrent callers; the
+    /// transaction commits without inserting when the page exists, so
+    /// any pool that can acquire the writer lock is sufficient. With
+    /// the M-82 fix applied, both wirings use the writer pool for this
+    /// path and resolve to the same `BlockRow.id`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn journal_for_date_finds_existing_page_via_either_pool() {
+        // ── Wiring A — production split via init_pools() ──────────────
+        let (tools_split, mat_split, _dir_split) = mk_split_tools().await;
+        let date = "2025-09-10";
+
+        // First call creates the page via the writer pool.
+        let first = tools_split
+            .call_tool("journal_for_date", json!({"date": date}), &test_ctx())
+            .await
+            .expect("first journal_for_date call must succeed (creates the page)");
+        let first_id = first
+            .get("id")
+            .and_then(|v| v.as_str())
+            .expect("response must include an `id`")
+            .to_string();
+        mat_split.flush_background().await.unwrap();
+
+        // Second call finds the same page via the lookup branch — no
+        // INSERT runs, the BEGIN IMMEDIATE transaction commits empty.
+        let second = tools_split
+            .call_tool("journal_for_date", json!({"date": date}), &test_ctx())
+            .await
+            .expect(
+                "lookup branch must succeed on the production split wiring when the page exists",
+            );
+        assert_eq!(
+            second.get("id").and_then(|v| v.as_str()),
+            Some(first_id.as_str()),
+            "idempotent call must return the same page id under split wiring",
+        );
+
+        // ── Wiring B — legacy combined-pool wiring (init_pool) ─────────
+        // Mirrors the in-tree `mk_tools()` fixture: a single pool wired
+        // into both slots. Pre-create the page via the same pool so the
+        // subsequent `call_tool` exercises the lookup branch.
+        let combined_dir = TempDir::new().unwrap();
+        let combined_path = combined_dir.path().join("m82-combined.db");
+        let combined = crate::db::init_pool(&combined_path).await.unwrap();
+        let mat_combined = Materializer::new(combined.clone());
+        create_block_inner(
+            &combined,
+            DEV,
+            &mat_combined,
+            "page".into(),
+            date.into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat_combined.flush_background().await.unwrap();
+        let tools_combined =
+            ReadOnlyTools::new(combined.clone(), combined, mat_combined, DEV.to_string());
+
+        let combined_resp = tools_combined
+            .call_tool("journal_for_date", json!({"date": date}), &test_ctx())
+            .await
+            .expect("lookup branch must succeed on the combined-pool wiring when the page exists");
+        assert_eq!(
+            combined_resp.get("block_type").and_then(|v| v.as_str()),
+            Some("page"),
+            "lookup must return a `page` block under combined wiring",
+        );
+        assert_eq!(
+            combined_resp.get("content").and_then(|v| v.as_str()),
+            Some(date),
+            "lookup must return the page whose content matches the requested date",
         );
     }
 }

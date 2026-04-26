@@ -225,6 +225,7 @@ pub async fn mcp_set_enabled(
     app: tauri::AppHandle,
     lifecycle: tauri::State<'_, Arc<McpLifecycle>>,
     read_pool: tauri::State<'_, crate::db::ReadPool>,
+    write_pool: tauri::State<'_, crate::db::WritePool>,
     materializer: tauri::State<'_, crate::materializer::Materializer>,
     device_id: tauri::State<'_, crate::device::DeviceId>,
     enabled: bool,
@@ -241,11 +242,16 @@ pub async fn mcp_set_enabled(
     // FEAT-4c — the reader pool, materializer, and device_id are pulled
     // from managed state so the respawn rewires the real `ReadOnlyTools`
     // registry rather than a placeholder.
+    //
+    // M-82 — also pull the writer pool from managed state because
+    // `journal_for_date` (the lone RO tool with a write side-effect)
+    // needs it whenever the requested date page does not yet exist.
     if enabled && !lc.is_running() {
         mcp::spawn_mcp_ro_task(
             &app_data_dir,
             app.clone(),
             read_pool.inner().0.clone(),
+            write_pool.inner().0.clone(),
             materializer.inner().clone(),
             device_id.inner().as_str().to_string(),
             Some((*lc).clone()),
