@@ -76,6 +76,26 @@ pub(crate) fn shift_date_once(
                     let max_day = days_in_month(new_year, new_month);
                     chrono::NaiveDate::from_ymd_opt(new_year, new_month, day.min(max_day))?
                 }
+                "y" => {
+                    // M-80: `+Ny` is `N*12` months. Reuse the month branch's
+                    // leap-day clamp so e.g. `+1y` from 2024-02-29 lands on
+                    // 2025-02-28 (Feb 29 only exists in leap years).
+                    let n_months = n.checked_mul(12)?;
+                    let total_months = (year as i64)
+                        .checked_mul(12)?
+                        .checked_add(month as i64 - 1)?
+                        .checked_add(n_months)?;
+                    let new_year_i64 = total_months.div_euclid(12);
+                    // rem_euclid(12) + 1 is in [1, 12]; always fits in u32
+                    #[allow(clippy::cast_possible_truncation)]
+                    let new_month = (total_months.rem_euclid(12) + 1) as u32;
+                    if !(1900..=2200).contains(&new_year_i64) {
+                        return None;
+                    }
+                    let new_year = i32::try_from(new_year_i64).ok()?;
+                    let max_day = days_in_month(new_year, new_month);
+                    chrono::NaiveDate::from_ymd_opt(new_year, new_month, day.min(max_day))?
+                }
                 _ => return None,
             }
         }
@@ -98,6 +118,7 @@ pub(crate) fn shift_date_once(
 /// - `+Nd` / `Nd` — every N days
 /// - `+Nw` / `Nw` — every N weeks
 /// - `+Nm` / `Nm` — every N months
+/// - `+Ny` / `Ny` — every N years (clamped on Feb 29 → Feb 28)
 pub(crate) fn shift_date(date: &str, rule: &str) -> Option<String> {
     let parts: Vec<&str> = date.split('-').collect();
     if parts.len() != 3 {
@@ -146,4 +167,80 @@ pub(crate) fn shift_date(date: &str, rule: &str) -> Option<String> {
     };
 
     Some(shifted.format("%Y-%m-%d").to_string())
+}
+
+#[cfg(test)]
+mod tests_m80 {
+    //! Table-driven tests for M-80: `+Ny` (yearly) recurrence support.
+
+    use super::shift_date;
+
+    #[test]
+    fn shift_date_yearly_table() {
+        // (input_date, rule, expected_result, description)
+        let cases: &[(&str, &str, Option<&str>, &str)] = &[
+            // Plain yearly shift on a non-leap-edge date
+            (
+                "2025-04-26",
+                "+1y",
+                Some("2026-04-26"),
+                "+1y from 2025-04-26 → 2026-04-26",
+            ),
+            // Leap day → next non-leap year clamps to Feb 28
+            (
+                "2024-02-29",
+                "+1y",
+                Some("2025-02-28"),
+                "+1y from 2024-02-29 (leap) → 2025-02-28 (no Feb 29 in 2025)",
+            ),
+            // Leap day → next leap year keeps Feb 29
+            (
+                "2028-02-29",
+                "+4y",
+                Some("2032-02-29"),
+                "+4y from 2028-02-29 (leap) → 2032-02-29 (also leap)",
+            ),
+            (
+                "2024-02-29",
+                "+4y",
+                Some("2028-02-29"),
+                "+4y from 2024-02-29 (leap) → 2028-02-29 (also leap)",
+            ),
+            // Multi-year shift on a year-end date
+            (
+                "2025-12-31",
+                "+2y",
+                Some("2027-12-31"),
+                "+2y from 2025-12-31 → 2027-12-31",
+            ),
+            // Zero count: matches `+0d`/`+0w`/`+0m` behaviour (returns None;
+            // org-mode recurrence never goes "nowhere", per M-79).
+            (
+                "2025-04-26",
+                "+0y",
+                None,
+                "+0y returns None (matches m/w/d zero-count behaviour)",
+            ),
+            // Negative count: matches `+-1d` etc., rejected at parse time.
+            (
+                "2025-04-26",
+                "+-1y",
+                None,
+                "+-1y (negative) returns None",
+            ),
+            // Malformed numeric portion
+            (
+                "2025-04-26",
+                "+abcy",
+                None,
+                "+abcy (non-numeric count) returns None",
+            ),
+        ];
+
+        for (date, rule, expected, desc) in cases {
+            let actual = shift_date(date, rule);
+            let expected_owned = expected.map(std::string::ToString::to_string);
+            assert_eq!(actual, expected_owned, "{desc}");
+        }
+    }
 }
