@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-18 open items.
+16 open items.
 
 Previously resolved: 422+ items across 149 sessions.
 
@@ -39,8 +39,6 @@ Previously resolved: 422+ items across 149 sessions.
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
-| MAINT-99 | MAINT | Two remaining `prek` hooks deferred from session 485: IPC error-path coverage + snapshot redaction. (Easy three — axe-presence, test-file-naming, agents-md-count-tables — shipped.) | M |
-| MAINT-103 | MAINT | `BlockPropertyEditor` inline editor uses absolute positioning without portal — should follow the `suggestion-renderer` pattern | M |
 | PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S |
 | PUB-3 | PUB | Employer IP clearance before public release | S |
 | PUB-5 | PUB | Tauri updater — wire endpoint URL + Minisign keypair (publish target is now jfolcini/agaric) | S |
@@ -726,31 +724,6 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 ## BUG — Correctness items surfaced during review
 
 ## MAINT — Tooling / dev-experience maintenance / code quality
-
-### MAINT-99 — Two remaining `prek` hooks for documented test rules
-
-**Status:** session 485 shipped the easy three (`axe-presence`, `test-file-naming`, `agents-md-count-tables` — all under `scripts/check-*` + `prek.toml`). Two remaining rules need careful pattern design and were deliberately deferred:
-
-| Rule | Doc | Approach |
-|------|-----|----------|
-| Every component that calls `invoke` has at least one error-path test (mocked rejection) | `AGENTS.md:198` | Scan `*.test.tsx` files using `vi.mocked(invoke)` for at least one `mockRejectedValueOnce` per importer of `tauri.ts`. Pair component → tests via grep import graph or co-located `__tests__` convention. |
-| Snapshot tests must redact ULIDs / timestamps / hashes / cursors | `src-tauri/tests/AGENTS.md:284-313` | Parse `.snap` files for raw 26-char Crockford / 64-char hex / ISO-8601 patterns. Whitelist intentional sentinels via comment markers if needed. |
-
-**Fix:** Each hook follows the existing `repo = "local"` + `language = "system"` pattern. Both are tractable but require ~half a day each to design + tune to avoid false positives.
-
-**Cost:** S–M (~half a day each).
-**Risk:** S — purely additive lint hooks. Some triage expected on first activation.
-**Impact:** M — completes the test-convention enforcement coverage.
-
-### MAINT-103 — `BlockPropertyEditor` inline editor uses absolute positioning without portal
-
-**Problem:** `src/components/BlockPropertyEditor.tsx:40-44` renders the inline edit popup with a plain `<div className="absolute z-50 ...">`. If the surrounding row is inside a scroll container with `overflow: hidden`, the popup gets clipped. Every other floating UI in the editor (suggestion popups, `BlockContextMenu`, `BlockDatePicker`) goes through `createPortal()` + `@floating-ui/dom` per AGENTS.md "Floating UI lifecycle logging".
-
-**Fix:** convert to the portal pattern used by `src/editor/suggestion-renderer.ts`: `createPortal(<div data-editor-portal>...)` with `computePosition` from `@floating-ui/dom`, log lifecycle (warn on stale/null state, fallback positioning, `.catch` on positioning), and ensure the portal selector is recognised by `EDITOR_PORTAL_SELECTORS` in `src/hooks/useEditorBlur.ts` (the `[data-editor-portal]` entry already covers this).
-
-**Cost:** M.
-**Risk:** M — touches editor blur lifecycle; needs careful tests.
-**Impact:** S — closes a small clipping risk and aligns with the documented floating-UI pattern.
 
 ### PUB-2 — Git author email across all history is corporate (`javier.folcini@avature.net`)
 
