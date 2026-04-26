@@ -49,7 +49,10 @@ export function BlockContextMenu({
 
   return (
     <>
-      <div className="batch-toolbar sticky top-0 z-10 flex items-center gap-2 rounded-lg border bg-background/95 backdrop-blur px-3 py-2 mb-2 shadow-sm">
+      <div
+        className="batch-toolbar sticky top-0 z-10 flex items-center gap-2 rounded-lg border bg-background/95 backdrop-blur px-3 py-2 mb-2 shadow-sm"
+        data-testid="batch-toolbar"
+      >
         <span className="text-sm font-medium tabular-nums">
           {selectedBlockIds.length} {t('blockContext.selected')}
         </span>

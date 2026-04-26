@@ -271,7 +271,10 @@ export function DeviceManagement(): React.ReactElement {
                   items={peers}
                   skeleton={null}
                   empty={
-                    <p className="device-no-peers text-sm text-muted-foreground">
+                    <p
+                      className="device-no-peers text-sm text-muted-foreground"
+                      data-testid="device-no-peers"
+                    >
                       {t('device.noPairedDevices')}
                     </p>
                   }

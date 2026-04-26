@@ -197,6 +197,7 @@ export function BlockListRenderer({
       ) : (
         <ul
           className="block-tree list-none m-0 p-0 space-y-0.5 [@media(pointer:coarse)]:space-y-1.5"
+          data-testid="block-tree"
           aria-label={t('blockTree.treeLabel')}
           onPointerDown={onContainerPointerDown}
         >

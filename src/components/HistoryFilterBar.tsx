@@ -4,8 +4,10 @@
  * Extracted from HistoryView for testability.
  */
 
+import { X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+import { Button } from '@/components/ui/button'
 import {
   Select,
   SelectContent,
@@ -77,6 +79,21 @@ export function HistoryFilterBar({
           ))}
         </SelectContent>
       </Select>
+      {/* UX-275 sub-fix 3: inline ✕ to clear an active filter without
+          opening the dropdown. */}
+      {opTypeFilter !== null && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={() => onFilterChange(null)}
+          aria-label={t('history.clearFilter')}
+          data-testid="history-filter-clear"
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      )}
     </div>
   )
 }

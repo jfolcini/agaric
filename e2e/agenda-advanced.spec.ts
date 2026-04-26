@@ -516,7 +516,7 @@ test.describe('Page-centric agenda defaults', () => {
     await page.getByRole('button', { name: 'Clear all filters' }).click()
 
     // Wait for results to load
-    const items = page.locator('.agenda-results-item')
+    const items = page.getByTestId('agenda-results-item')
     await expect(items.first()).toBeVisible({ timeout: 5000 })
 
     // BLOCK_PROJ_3 "Update dependencies" is undated (todo_state=DONE, no dates)
@@ -530,11 +530,11 @@ test.describe('Page-centric agenda defaults', () => {
     await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
 
     // Wait for results to load
-    const items = page.locator('.agenda-results-item')
+    const items = page.getByTestId('agenda-results-item')
     await expect(items.first()).toBeVisible({ timeout: 5000 })
 
     // Page group headers should appear (agenda groups by page by default)
-    const groupHeaders = page.locator('.agenda-group-header')
+    const groupHeaders = page.getByTestId('agenda-group-header')
     const headerCount = await groupHeaders.count()
     expect(headerCount).toBeGreaterThanOrEqual(1)
   })
@@ -554,11 +554,11 @@ test.describe('Page-centric agenda defaults', () => {
     await expect(groupList).not.toBeVisible()
 
     // Wait for regrouped results
-    const items = page.locator('.agenda-results-item')
+    const items = page.getByTestId('agenda-results-item')
     await expect(items.first()).toBeVisible({ timeout: 5000 })
 
     // Verify page group headers contain page names from seed data
-    const groupHeaders = page.locator('.agenda-group-header')
+    const groupHeaders = page.getByTestId('agenda-group-header')
     const headerCount = await groupHeaders.count()
     expect(headerCount).toBeGreaterThanOrEqual(1)
 
@@ -585,7 +585,7 @@ test.describe('Page-centric agenda defaults', () => {
     await expect(sortList).not.toBeVisible()
 
     // Verify items are still rendered after re-sort
-    const items = page.locator('.agenda-results-item')
+    const items = page.getByTestId('agenda-results-item')
     await expect(items.first()).toBeVisible({ timeout: 5000 })
     const count = await items.count()
     expect(count).toBeGreaterThanOrEqual(1)

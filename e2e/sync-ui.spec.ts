@@ -108,8 +108,8 @@ test.describe('Sync UI', () => {
       // Should show the empty-state paragraph (distinct from the "Pair New
       // Device" button, which otherwise collides with a permissive regex
       // match under strict mode).
-      await expect(page.locator('.device-no-peers')).toBeVisible()
-      await expect(page.locator('.device-no-peers')).toHaveText(/no paired devices/i)
+      await expect(page.getByTestId('device-no-peers')).toBeVisible()
+      await expect(page.getByTestId('device-no-peers')).toHaveText(/no paired devices/i)
     })
   })
 })

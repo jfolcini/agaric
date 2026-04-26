@@ -407,10 +407,9 @@ test.describe('External link editing and removal', () => {
     await urlInput.fill('https://example.com')
     await urlInput.press('Enter')
 
-    // Verify link exists in editor — the TipTap ExternalLink extension
-    // emits `<a class="external-link">`; the `data-testid="external-link"`
-    // attribute only exists on the StaticBlock (RichContentRenderer) render.
-    const link = page.locator('[data-testid="block-editor"] .external-link')
+    // Verify link exists in editor — both the TipTap ExternalLink extension
+    // and the StaticBlock RichContentRenderer emit `data-testid="external-link"`.
+    const link = page.locator('[data-testid="block-editor"] [data-testid="external-link"]')
     await expect(link).toBeVisible()
 
     // Wait for popover to close
@@ -451,10 +450,9 @@ test.describe('External link editing and removal', () => {
     await urlInput.fill('https://example.com')
     await urlInput.press('Enter')
 
-    // Verify link exists — same CSS class as above (TipTap emits
-    // `<a class="external-link">`; `data-testid="external-link"` is a
-    // StaticBlock-only attribute).
-    const link = page.locator('[data-testid="block-editor"] .external-link')
+    // Verify link exists — both the TipTap ExternalLink extension and the
+    // StaticBlock RichContentRenderer emit `data-testid="external-link"`.
+    const link = page.locator('[data-testid="block-editor"] [data-testid="external-link"]')
     await expect(link).toBeVisible()
 
     // Wait for popover to close
@@ -482,7 +480,9 @@ test.describe('External link editing and removal', () => {
     await removeBtn.dispatchEvent('click')
 
     // Verify the link is gone from the editor
-    await expect(page.locator('[data-testid="block-editor"] .external-link')).not.toBeVisible()
+    await expect(
+      page.locator('[data-testid="block-editor"] [data-testid="external-link"]'),
+    ).not.toBeVisible()
   })
 })
 

@@ -255,11 +255,11 @@ test.describe('Link buttons', () => {
     await urlInput.fill('https://example.com')
     await urlInput.press('Enter')
 
-    // Verify link appears in editor. During edit mode the TipTap
-    // ExternalLink extension emits `<a class="external-link">` without a
-    // testid — the testid is only added by RichContentRenderer /
-    // StaticBlock. Scope via the CSS class inside the block-editor.
-    await expect(page.locator('[data-testid="block-editor"] a.external-link')).toBeVisible()
+    // Verify link appears in editor. Both the TipTap ExternalLink extension
+    // and the StaticBlock RichContentRenderer emit `data-testid="external-link"`.
+    await expect(
+      page.locator('[data-testid="block-editor"] [data-testid="external-link"]'),
+    ).toBeVisible()
 
     // Save by blurring the editor (click the app header — idempotent,
     // non-focusable element). Pressing Enter here would split the

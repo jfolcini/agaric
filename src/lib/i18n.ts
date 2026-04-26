@@ -953,6 +953,35 @@ const resources = {
       'conflict.expand': 'Expand conflict details',
       'conflict.collapse': 'Collapse conflict details',
 
+      // Conflict type descriptions (UX-265 sub-fix 3 — badge tooltip)
+      'conflict.typeTextDescription':
+        'Same block was edited on two devices. Pick which version to keep.',
+      'conflict.typePropertyDescription':
+        'A block property (state, priority, due date) was changed on two devices.',
+      'conflict.typeTagDescription': 'The same tag was added or changed on two devices.',
+      'conflict.typeDateDescription':
+        'A scheduled or due date on this block diverged across devices.',
+      'conflict.typeMoveDescription':
+        'The block was moved to different parents or positions on two devices.',
+
+      // Conflict — Keep/Discard tooltips (UX-265 sub-fix 1)
+      'conflict.keepTooltip': 'Use the incoming version',
+      'conflict.discardTooltip': 'Delete the conflict copy',
+
+      // Conflict — original-block-missing fallback (UX-265 sub-fix 4)
+      'conflict.originalNotFound': 'Original block not found — showing conflict content only',
+      'conflict.keepDisabledNoOriginal': 'Cannot keep — original block is missing',
+
+      // Conflict — filter bar (UX-265 sub-fix 2)
+      'conflict.filterByType': 'Filter by type',
+      'conflict.filterByDevice': 'Filter by device',
+      'conflict.filterByDate': 'Filter by date',
+      'conflict.allTypes': 'All types',
+      'conflict.allDevices': 'All devices',
+      'conflict.last7Days': 'Last 7 days',
+      'conflict.allTime': 'All time',
+      'conflict.noMatchingFilters': 'No conflicts match the current filters.',
+
       // Conflict — property diff labels (UX-120)
       'conflict.propertyState': 'State: ',
       'conflict.propertyPriority': 'Priority: ',
@@ -1007,6 +1036,11 @@ const resources = {
 
       // Diff (UX-120)
       'diff.noChanges': 'No changes',
+
+      // Diff — large-diff toggle (UX-265 sub-fix 5)
+      'conflict.diffShowMore_one': 'Show full diff (1 hidden)',
+      'conflict.diffShowMore_other': 'Show full diff ({{count}} hidden)',
+      'conflict.diffCollapse': 'Collapse diff',
 
       // Device (UX-120)
       'device.thisDevice': 'This device',
@@ -1132,6 +1166,7 @@ const resources = {
       'conflict.discardAllButton': 'Discard All Incoming',
       'conflict.selectConflictLabel': 'Select conflict {{id}}',
       'conflict.viewOriginalLabel': 'View original block for {{id}}',
+      'conflict.viewOriginalButton': 'View original',
       'conflict.keepIncomingLabel': 'Keep incoming version for block {{id}}',
       'conflict.discardConflictLabel': 'Discard conflict for block {{id}}',
       'conflicts.sourceDevice': 'Source device',
@@ -1160,6 +1195,8 @@ const resources = {
       'pairing.pairButton': 'Pair',
       'pairing.pairedDevicesTitle': 'Paired Devices',
       'pairing.noPairedDevices': 'No paired devices yet.',
+      // UX-264: Camera permission denied auto-fallback to manual entry
+      'pairing.cameraDeniedFallback': 'Camera access denied \u2014 switched to manual entry',
       // UX-263: Mid-pair close guard
       'pairing.confirmCloseTitle': 'Cancel pairing?',
       'pairing.confirmCloseDescription':
@@ -1205,7 +1242,7 @@ const resources = {
       'history.noEntriesFound': 'No history entries found',
       'history.selectOperationLabel': 'Select operation {{opType}} #{{seq}}',
       'history.diffButton': 'Diff',
-      'history.nonReversibleTooltip': 'This operation cannot be reversed',
+      'history.nonReversibleTooltip': 'Purges cannot be undone',
 
       // Trash view
       'trash.emptyMessage': 'Nothing in trash. Deleted items will appear here.',
@@ -1503,6 +1540,9 @@ const resources = {
       'sync.completedWithConflicts':
         'Sync completed with conflicts \u2014 review in Conflicts view',
       'sync.failed': 'Sync failed: {{message}}',
+      // UX-264: Sync error UX
+      'sync.retryAction': 'Retry sync',
+      'sync.backOnline': 'Back online. Syncing\u2026',
       'device.deviceNameLabel': 'Device name',
 
       // History toasts + aria-labels
@@ -1512,7 +1552,7 @@ const resources = {
       'history.restoreToHereTooltip': 'Revert all operations after this point',
       'history.restoreToTitle': 'Restore to {{timestamp}}?',
       'history.restoreToDescription':
-        'This will revert all operations that occurred after this point. Non-reversible operations (purge) will be skipped. The original operations remain in history.',
+        'All operations after this point will be reverted. Non-reversible operations (purge) will be skipped. This action itself can be undone, and the original operations remain in history.',
       'history.restoreSuccess': '{{count}} operations reverted successfully',
       'history.restoreSkipped': '{{count}} non-reversible operations were skipped',
       'history.restoreFailed': 'Failed to restore — please try again',
@@ -1527,7 +1567,10 @@ const resources = {
       'history.loadDiffFailed': 'Failed to load diff',
       'history.filterByTypeLabel': 'Filter by operation type',
       'history.entriesLabel': 'History entries',
-      'history.nonReversibleLabel': 'Non-reversible',
+      'history.nonReversibleLabel': 'Non-reversible action',
+      'history.clearFilter': 'Clear filter',
+      'trash.searchClear': 'Clear filter',
+      'trash.batchHint': 'Tip: Shift+click to select a range',
 
       // Trash toasts
       'trash.blockRestored': 'Block restored',
@@ -1949,6 +1992,8 @@ const resources = {
       'conflict.batchError': '{{failCount}} of {{count}} operations failed',
       'conflict.batchKeptCount': 'Kept {{count}} conflict(s)',
       'conflict.batchDiscardedCount': 'Discarded {{count}} conflict(s)',
+      // UX-264: Batch resolution progress text
+      'conflicts.batchProgress': 'Resolving {{current}} of {{total}}\u2026',
 
       // UX-162: History restore description
       'history.restoreConfirmDescription':

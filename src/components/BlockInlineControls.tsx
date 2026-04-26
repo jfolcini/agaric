@@ -338,6 +338,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
             <button
               type="button"
               className="attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5 max-sm:py-1 touch-target"
+              data-testid="attachment-badge"
               aria-label={t('block.attachments', { count: attachmentCount })}
               aria-expanded={showAttachments}
               onClick={onToggleAttachments}

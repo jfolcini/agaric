@@ -16,6 +16,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { makeConflict } from '../../__tests__/fixtures'
 import { ConflictListItem } from '../ConflictListItem'
 
@@ -384,6 +385,183 @@ describe('ConflictListItem', () => {
 
     const actionsContainer = document.querySelector('.conflict-item-actions')
     expect(actionsContainer?.className).toContain('flex-wrap')
+  })
+
+  // -- UX-265 sub-fix 1: Keep/Discard tooltip + aria-description ----------
+  describe('UX-265 Keep/Discard tooltip + aria-description', () => {
+    it('Keep button exposes the tooltip text via aria-description', () => {
+      const block = makeConflict({ id: 'C1', content: 'text' })
+
+      render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
+        </ul>,
+      )
+
+      const keepBtn = screen.getByTestId('conflict-keep-btn')
+      expect(keepBtn.getAttribute('aria-description')).toBe(t('conflict.keepTooltip'))
+    })
+
+    it('Discard button exposes the tooltip text via aria-description', () => {
+      const block = makeConflict({ id: 'C1', content: 'text' })
+
+      render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
+        </ul>,
+      )
+
+      const discardBtn = screen.getByTestId('conflict-discard-btn')
+      expect(discardBtn.getAttribute('aria-description')).toBe(t('conflict.discardTooltip'))
+    })
+
+    it('Keep tooltip becomes visible on hover', async () => {
+      const user = userEvent.setup()
+      const block = makeConflict({ id: 'C1', content: 'text' })
+
+      render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
+        </ul>,
+      )
+
+      // Tooltip is portaled into document.body — query there once shown.
+      await user.hover(screen.getByTestId('conflict-keep-btn'))
+      const tooltip = await waitFor(() => {
+        const matches = screen.getAllByText(t('conflict.keepTooltip'))
+        // First match is the aria-description value attached to the button.
+        // The tooltip-content render is a second match once it opens.
+        expect(matches.length).toBeGreaterThanOrEqual(1)
+        return matches
+      })
+      // The tooltip content lives under [data-slot="tooltip-content"]; ensure
+      // at least one such element renders the keepTooltip text.
+      const contents = document.querySelectorAll('[data-slot="tooltip-content"]')
+      const visible = Array.from(contents).find((c) =>
+        c.textContent?.includes(t('conflict.keepTooltip')),
+      )
+      expect(visible).toBeTruthy()
+      // Sanity: the matches array variable above is non-empty.
+      expect(tooltip.length).toBeGreaterThan(0)
+    })
+  })
+
+  // -- UX-265 sub-fix 3: Conflict-type badge tooltip ----------------------
+  describe('UX-265 Conflict-type badge tooltip', () => {
+    it('renders the type-description tooltip content for Text conflicts', async () => {
+      const user = userEvent.setup()
+      const block = makeConflict({ id: 'C1', content: 'text', conflict_type: null })
+
+      const { container } = render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
+        </ul>,
+      )
+
+      const badge = container.querySelector('.conflict-type-badge') as HTMLElement
+      await user.hover(badge)
+      await waitFor(() => {
+        const contents = document.querySelectorAll('[data-slot="tooltip-content"]')
+        const visible = Array.from(contents).find((c) =>
+          c.textContent?.includes(t('conflict.typeTextDescription')),
+        )
+        expect(visible).toBeTruthy()
+      })
+    })
+
+    it('renders the type-description tooltip content for Property conflicts', async () => {
+      const user = userEvent.setup()
+      const block = makeConflict({ id: 'C1', content: 'p', conflict_type: 'Property' })
+
+      const { container } = render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
+        </ul>,
+      )
+
+      const badge = container.querySelector('.conflict-type-badge') as HTMLElement
+      await user.hover(badge)
+      await waitFor(() => {
+        const contents = document.querySelectorAll('[data-slot="tooltip-content"]')
+        const visible = Array.from(contents).find((c) =>
+          c.textContent?.includes(t('conflict.typePropertyDescription')),
+        )
+        expect(visible).toBeTruthy()
+      })
+    })
+  })
+
+  // -- UX-265 sub-fix 4: original-block-missing fallback -------------------
+  describe('UX-265 original-block-missing fallback', () => {
+    it('shows the warning banner when parent_id is set but original is undefined', () => {
+      const block = makeConflict({ id: 'C1', content: 'text', parent_id: 'GONE' })
+
+      render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={undefined} />
+        </ul>,
+      )
+
+      const banner = screen.getByTestId('conflict-original-missing')
+      expect(banner).toBeInTheDocument()
+      expect(banner.getAttribute('role')).toBe('alert')
+      expect(banner.textContent).toContain(t('conflict.originalNotFound'))
+    })
+
+    it('disables the Keep button when the original block is missing', () => {
+      const block = makeConflict({ id: 'C1', content: 'text', parent_id: 'GONE' })
+
+      render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={undefined} />
+        </ul>,
+      )
+
+      const keepBtn = screen.getByTestId('conflict-keep-btn') as HTMLButtonElement
+      expect(keepBtn.disabled).toBe(true)
+      expect(keepBtn.getAttribute('aria-description')).toBe(t('conflict.keepDisabledNoOriginal'))
+    })
+
+    it('does not call onKeep when Keep is disabled (missing original)', async () => {
+      const user = userEvent.setup()
+      const onKeep = vi.fn()
+      const block = makeConflict({ id: 'C1', content: 'text', parent_id: 'GONE' })
+
+      render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={undefined} onKeep={onKeep} />
+        </ul>,
+      )
+
+      await user.click(screen.getByTestId('conflict-keep-btn'))
+      expect(onKeep).not.toHaveBeenCalled()
+    })
+
+    it('does not show the banner when parent_id is null', () => {
+      const block = makeConflict({ id: 'C1', content: 'text', parent_id: null })
+
+      render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={undefined} />
+        </ul>,
+      )
+
+      expect(screen.queryByTestId('conflict-original-missing')).not.toBeInTheDocument()
+      const keepBtn = screen.getByTestId('conflict-keep-btn') as HTMLButtonElement
+      expect(keepBtn.disabled).toBe(false)
+    })
+
+    it('does not show the banner when original is loaded', () => {
+      const block = makeConflict({ id: 'C1', content: 'text' })
+
+      render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
+        </ul>,
+      )
+
+      expect(screen.queryByTestId('conflict-original-missing')).not.toBeInTheDocument()
+    })
   })
 
   describe('a11y', () => {
