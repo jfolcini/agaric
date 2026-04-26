@@ -43,8 +43,17 @@ pub struct ParseOutput {
 pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     let mut blocks: Vec<ParsedBlock> = Vec::new();
 
+    // Normalize line endings BEFORE any other parsing. The frontmatter strip
+    // below uses `find("\n---")`, which is fragile against CRLF (works only
+    // because `\n---` is a substring of `\r\n---`) and outright broken for
+    // CR-only files (classic Mac), where no `\n` exists at all and the entire
+    // frontmatter would otherwise be retained as block content. Doing this
+    // first also lets `body.lines()` and the indent calculation see clean
+    // lines without stray `\r` characters. (REVIEW-LATER L-9)
+    let normalized_eol = content.replace("\r\n", "\n").replace('\r', "\n");
+
     // Normalize tabs to 2 spaces for consistent indentation parsing
-    let normalized = content.replace('\t', "  ");
+    let normalized = normalized_eol.replace('\t', "  ");
 
     // Skip YAML frontmatter (--- delimited block at start of file)
     let body = if let Some(stripped) = normalized.strip_prefix("---") {
@@ -241,5 +250,108 @@ mod tests {
             "warning message should describe clamped blocks, got: {}",
             output.warnings[0]
         );
+    }
+}
+
+/// REVIEW-LATER L-9 — Line-ending normalization in front of the YAML
+/// frontmatter strip. The strip uses `find("\n---")`, so CRLF and lone-CR
+/// inputs must be normalized to LF first. Tests live in their own module
+/// (per the L-9 review note) to keep the regression surface explicit.
+#[cfg(test)]
+mod tests_l9 {
+    use super::*;
+
+    #[test]
+    fn crlf_frontmatter_is_stripped() {
+        // Exact fixture from the L-9 review note.
+        let output = parse_logseq_markdown("---\r\ntitle: hello\r\n---\r\nbody");
+        assert_eq!(
+            output.blocks.len(),
+            1,
+            "frontmatter should be stripped, got blocks: {:?}",
+            output.blocks
+        );
+        assert_eq!(output.blocks[0].content, "body");
+        for block in &output.blocks {
+            assert!(
+                !block.content.contains("title:"),
+                "frontmatter key leaked into block content: {:?}",
+                block.content
+            );
+        }
+    }
+
+    #[test]
+    fn cr_only_frontmatter_is_stripped() {
+        // Classic-Mac line endings (lone `\r`). Without the normalization
+        // step `find("\n---")` would never match and the entire frontmatter
+        // would survive as block content.
+        let output = parse_logseq_markdown("---\rtitle: hello\r---\rbody");
+        assert_eq!(
+            output.blocks.len(),
+            1,
+            "frontmatter should be stripped, got blocks: {:?}",
+            output.blocks
+        );
+        assert_eq!(output.blocks[0].content, "body");
+        for block in &output.blocks {
+            assert!(
+                !block.content.contains("title:"),
+                "frontmatter key leaked into block content: {:?}",
+                block.content
+            );
+        }
+    }
+
+    #[test]
+    fn crlf_frontmatter_with_list_blocks() {
+        // CRLF variant of the existing `parse_yaml_frontmatter_stripped`
+        // case in the main `tests` module.
+        let output = parse_logseq_markdown(
+            "---\r\ntitle: Test Page\r\ntags: [a, b]\r\n---\r\n- Block 1\r\n- Block 2",
+        );
+        assert_eq!(output.blocks.len(), 2);
+        assert_eq!(output.blocks[0].content, "Block 1");
+        assert_eq!(output.blocks[1].content, "Block 2");
+    }
+
+    #[test]
+    fn mixed_line_endings_match_lf_only() {
+        // A file with all three styles: CRLF, LF, and lone CR. After
+        // normalization the parser should produce the same blocks (content,
+        // depth, properties) and the same warnings as the equivalent LF-only
+        // fixture.
+        let mixed = "- Block A\r\n  - Child A\n- Block B\r  - Child B";
+        let lf_only = "- Block A\n  - Child A\n- Block B\n  - Child B";
+
+        let mixed_out = parse_logseq_markdown(mixed);
+        let lf_out = parse_logseq_markdown(lf_only);
+
+        assert_eq!(
+            mixed_out.blocks.len(),
+            lf_out.blocks.len(),
+            "mixed line endings should yield the same block count as LF-only; \
+             mixed: {:?}, lf: {:?}",
+            mixed_out.blocks,
+            lf_out.blocks
+        );
+        assert_eq!(mixed_out.blocks.len(), 4);
+        for (m, l) in mixed_out.blocks.iter().zip(lf_out.blocks.iter()) {
+            assert_eq!(m.content, l.content);
+            assert_eq!(m.depth, l.depth);
+            assert_eq!(m.properties, l.properties);
+        }
+        assert_eq!(mixed_out.warnings, lf_out.warnings);
+    }
+
+    #[test]
+    fn lf_frontmatter_still_stripped_after_normalization() {
+        // Regression guard: the existing `parse_yaml_frontmatter_stripped`
+        // fixture must keep passing after line-ending normalization is added.
+        let output =
+            parse_logseq_markdown("---\ntitle: Test Page\ntags: [a, b]\n---\n- Block 1\n- Block 2");
+        assert_eq!(output.blocks.len(), 2);
+        assert_eq!(output.blocks[0].content, "Block 1");
+        assert_eq!(output.blocks[1].content, "Block 2");
     }
 }
