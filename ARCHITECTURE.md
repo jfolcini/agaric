@@ -395,8 +395,10 @@ task via spawned sub-tasks.
 
 - **Foreground:** single retry after 100ms backoff for transient errors. Panics and barrier tasks
   are never retried. `fg_errors` only incremented if both attempts fail.
-- **Background:** up to 2 retries with exponential backoff (50ms, 100ms). Barrier tasks skip
-  retry. Panics during retry stop the retry loop.
+- **Background:** up to 2 retries with exponential backoff (150ms initial, doubled per attempt
+  → 150ms, 300ms). Barrier tasks skip retry. Panics during retry stop the retry loop. Tuned up
+  from 50/100ms to reduce retry churn on transient WAL lock contention; see
+  `INITIAL_BACKOFF_MS` in `materializer/consumer.rs`.
 
 **Read/write pool split:** `Materializer::with_read_pool(write_pool, read_pool)` separates read
 and write paths for background tasks. Cache-rebuild functions read from the read pool and only
@@ -437,9 +439,10 @@ first dispatch after boot.
 The FTS5 index accumulates segment files. Without periodic maintenance, segment count grows and
 search degrades.
 
-- **Scheduled optimize:** After every 500 `edit_block` ops or every 60 minutes (whichever comes
-  first): `INSERT INTO fts_blocks(fts_blocks) VALUES('optimize')`. Merges all segments into one
-  b-tree.
+- **Scheduled optimize:** After every `max(500, block_count / 10_000)` `edit_block` ops or
+  every 60 minutes (whichever comes first): `INSERT INTO fts_blocks(fts_blocks) VALUES('optimize')`.
+  The adaptive threshold prevents very large vaults from running optimize on every tiny edit
+  burst while keeping small vaults responsive. Merges all segments into one b-tree.
 - **Post-RESET:** One immediate `optimize` pass after full FTS rebuild from snapshot.
 - **Rejected:** `optimize` after every op (too costly), `optimize` only on user request (invisible
   degradation).
@@ -1165,7 +1168,8 @@ Boot recovery runs **before** the materializer is created, before any user-visib
 1. Delete `log_snapshots` rows with `status = 'pending'` (incomplete snapshots).
 2. Walk `block_drafts` table.
 3. For each draft:
-   - Check if an `edit_block` op exists for this `block_id` with `created_at >= draft.updated_at`.
+   - Check if an `edit_block` op exists for this `block_id` with `created_at > draft.updated_at`
+     (strict comparator — relies on the millisecond-precision `Z`-suffix lex-monotonic invariant).
    - If none: draft was not flushed. Emit a synthetic `edit_block` op. Log a warning.
    - If found: draft was already flushed (no-op).
 4. Delete all draft rows regardless.
