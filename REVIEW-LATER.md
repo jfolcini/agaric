@@ -17,14 +17,13 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-13 open items.
+11 open items.
 
 Previously resolved: 422+ items across 149 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
-| FEAT-3 | FEAT | Spaces — parent / umbrella (Phases 1 + 2 shipped; Phases 3–6 split into FEAT-3p3..FEAT-3p6) | S |
-| FEAT-3p3 | FEAT | Spaces Phase 3: per-space tabs + per-space recent pages (`tabsBySpace` + `recentPagesBySpace` refactor) | M |
+| FEAT-3 | FEAT | Spaces — parent / umbrella (Phases 1 + 2 + 3 shipped; Phases 4–6 split into FEAT-3p4..FEAT-3p6) | S |
 | FEAT-3p4 | FEAT | Spaces Phase 4: agenda / graph / backlinks / tags / properties scoping (largest remaining slice) | L |
 | FEAT-3p5 | FEAT | Spaces Phase 5: per-space journal (J1) + per-space journal templates | M |
 | FEAT-3p6 | FEAT | Spaces Phase 6: polish (keyboard shortcuts, space management UI, brand identity, collapsed-icon indicator) | M |
@@ -38,8 +37,7 @@ Previously resolved: 422+ items across 149 sessions.
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
 | PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S |
 | PUB-3 | PUB | Employer IP clearance before public release | S |
-| PUB-5 | PUB | Tauri updater — wire endpoint URL + Minisign keypair (publish target is now jfolcini/agaric) | S |
-| PUB-7 | PUB | Missing `SECURITY.md` — private-disclosure contact pending publish target | S |
+| PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S |
 | PUB-9 | PUB | Windows code signing — apply for SignPath Foundation OSS sponsorship, then provision 2 GH Actions secrets (signtool wiring already shipped) | M |
 
@@ -156,27 +154,6 @@ Fresh installs and upgrades both run a boot-time Rust bootstrap (`src-tauri/src/
 **Cost:** S — this umbrella entry is now a tracker only. Each remaining phase is filed as its own item: FEAT-3p3 (tabs/recent), FEAT-3p4 (agenda/graph/backlinks), FEAT-3p5 (journal), FEAT-3p6 (polish). Schedule via the per-phase items, not this umbrella.
 
 **Status:** IN PROGRESS — Phases 1 + 2 shipped. Remaining work tracked under FEAT-3p3 / FEAT-3p4 / FEAT-3p5 / FEAT-3p6.
-
-### FEAT-3p3 — Spaces Phase 3: per-space tabs + per-space recent pages
-
-**Problem:** `useNavigationStore.tabs` and `useRecentPagesStore.recentPages` are still global. Switching space does not swap the tab set or the recent strip, so cross-space context bleeds through the navigation surface (visible in TabBar + RecentPagesStrip + the sidebar tab dropdown).
-
-**Scope (one focused session — both refactors must land together):**
-
-- `useNavigationStore`: `tabs: Tab[]` → `tabsBySpace: Record<SpaceId, Tab[]>`, `activeTabIndex: number` → `activeTabIndexBySpace: Record<SpaceId, number>`. Every action (`navigateToPage`, `goBack`, `openInNewTab`, `closeTab`, `switchTab`, `selectPageStack`) reads/writes the current space's slice. Persistence `partialize` serializes the full map; on rehydrate, if the persisted `currentSpaceId` no longer resolves, fall back to the first existing space.
-- `useRecentPagesStore`: `recentPages: string[]` → `recentPagesBySpace: Record<SpaceId, string[]>`. Same dedup + MRU rules per-space. Switching space swaps the strip. Visits never cross space boundaries.
-- One-line swaps in `TabBar.tsx`, `RecentPagesStrip.tsx`, the active-tab dropdown switcher, and `keyboard-config.ts` (selectors / data sources only — DOM and styling stay).
-- FEAT-7 autohide guard preserved: tab bar hides when the current space has ≤1 tab.
-- Space deletion requires closing/reassigning all tabs in that space (Phase 6 closes the loop on the deletion UI; this phase ensures the data-shape supports it).
-
-**Testing (per AGENTS.md):**
-- Persistence round-trip for `tabsBySpace` and `recentPagesBySpace`.
-- Rehydrate with a stale `currentSpaceId` — falls back cleanly.
-- Per-space dedup invariants (property test): `recentPagesBySpace[s]` is dedup'd per-space; entries never duplicate the page in another space's list.
-- Cross-space tab-open never affects another space's tab list.
-
-**Cost:** M — single focused session.
-**Status:** Open. Schedulable any time after FEAT-3 Phases 1 + 2 (already shipped).
 
 ### FEAT-3p4 — Spaces Phase 4: agenda / graph / backlinks / tags / properties scoping
 
@@ -722,49 +699,21 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 **Decision:** Defer — user-only legal task. Agent does nothing and does not revisit this item during routine sweeps. Will be marked cleared (and the item removed) only when the user explicitly states "PUB-3 is cleared".
 **Status:** DEFERRED — user task, not agent-actionable.
 
-### PUB-5 — Tauri updater endpoint + Minisign keypair not yet wired
+### PUB-5 — Tauri updater endpoint URL pinned; keypair + secrets remain user-only
 
-**Problem:** `src-tauri/tauri.conf.json:30` still points at a placeholder URL:
-```json
-"updater": {
-  "endpoints": [
-    "https://github.com/agaric-app/org-mode-for-the-rest-of-us/releases/latest/download/latest.json"
-  ],
-  "pubkey": ""
-}
-```
-On a tagged release today the updater would 404 (the `agaric-app/org-mode-for-the-rest-of-us` repo doesn't exist) and signing is unconfigured (`pubkey` empty, `TAURI_SIGNING_PRIVATE_KEY` block in `.github/workflows/release.yml:93-95` commented out).
+**Status:** the endpoint URL in `src-tauri/tauri.conf.json` now points at `https://github.com/jfolcini/agaric/releases/latest/download/latest.json` (session 488). The remaining work is purely user-side and cannot be agent-actioned:
 
-**Update — publish target is now concrete:** the public repo lives at `github.com/jfolcini/agaric`. The endpoint URL just needs to match. The PUB-2 identity decision (corporate-email-in-history) can still move under that path independently — the updater URL only needs to track wherever the release repo is at any given time. Per-platform code signing (PUB-8 Android, PUB-9 Windows) is orthogonal: those sign the OS-installable bundles for Gatekeeper / SmartScreen / Play Protect, while this signs the auto-update payload chain.
-
-**Concrete remaining work:**
-1. **Pick the endpoint URL.** Default: `https://github.com/jfolcini/agaric/releases/latest/download/latest.json`. If PUB-2 ever moves the repo under an org, the URL moves too.
-2. **Generate the Minisign keypair** (`cargo tauri signer generate -w ~/.tauri/agaric.key`). Back up the private key offline — losing it means future updaters can't verify against the deployed pubkey, breaking the auto-update chain for installed users.
-3. **Paste the public key** into `tauri.conf.json` `updater.pubkey`.
-4. **Add two GH Actions secrets** at `Settings → Secrets and variables → Actions`:
+1. **Generate the Minisign keypair** (`cargo tauri signer generate -w ~/.tauri/agaric.key`). Back up the private key offline — losing it means future updaters can't verify against the deployed pubkey, breaking the auto-update chain for installed users.
+2. **Paste the public key** into `tauri.conf.json` `updater.pubkey`.
+3. **Add two GH Actions secrets** at `Settings → Secrets and variables → Actions`:
    - `TAURI_SIGNING_PRIVATE_KEY` — contents of the generated `.key` file
    - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the passphrase used at generation time
-5. **Uncomment** the two `TAURI_SIGNING_PRIVATE_KEY*` env lines in `release.yml:93-95` (just under the `# PUB-5: Uncomment …` comment).
-6. **Tag a release** to verify: tauri-action will produce `*.sig` files alongside each bundle (`.dmg.sig`, `.AppImage.sig`, `.msi.sig`, etc.), which the in-app updater fetches and verifies against the embedded pubkey.
+4. **Uncomment** the two `TAURI_SIGNING_PRIVATE_KEY*` env lines in `release.yml:93-95` (under the `# PUB-5: Uncomment …` comment). The agent intentionally left these commented because uncommenting before the secrets exist + pubkey is set causes tauri-action to attempt signing with empty inputs.
+5. **Tag a release** to verify: tauri-action will produce `*.sig` files alongside each bundle (`.dmg.sig`, `.AppImage.sig`, `.msi.sig`, etc.), which the in-app updater fetches and verifies against the embedded pubkey.
 
-**Alternative (skip the updater):** if you don't want auto-update at all, remove the `updater` block from `tauri.conf.json` and the `tauri-plugin-updater` dependency from `src-tauri/Cargo.toml`. Users would update by manually downloading new releases.
+**Alternative (skip the updater):** remove the `updater` block from `tauri.conf.json` and the `tauri-plugin-updater` dependency from `src-tauri/Cargo.toml`. Users would update by manually downloading new releases.
 
-**Cost:** S (~30 min once the keypair + URL are decided).
-**Status:** ACTIONABLE — publish target resolved; remaining work is mechanical (keypair generation + URL edit + 2 secrets + 2 uncommented lines).
-
-### PUB-7 — Missing `SECURITY.md` — private-disclosure contact pending publish target
-
-**Problem:** `SECURITY.md` is the standard GitHub-recognised private-disclosure file. The repo does not ship one yet. For a local-first single-user app with no adversarial-peer threat model (see AGENTS.md), the file is mostly a courtesy affordance — it documents the reporting channel and the scope of "things worth reporting" so surface-level finders don't waste time filing issues against the sync protocol's peer authentication (which is deliberately non-adversarial).
-
-**Blocker:** no private-disclosure contact is locked in yet. Options considered in a prior batch (personal email / GitHub Security Advisories only / placeholder pointing at Security tab) were all deferred until the publish target is concrete (PUB-5). The Code of Conduct already ships (Contributor Covenant 2.1) with a deferred contact line that forward-references `SECURITY.md`.
-
-**Implementation (when PUB-5 unblocks):**
-- `SECURITY.md` — private contact (personal email, Matrix handle, or GitHub Security Advisory-only policy), a one-paragraph restatement of the local-first threat model from AGENTS.md so reporters don't file "sync peer DoS" reports, and a line about what the project does and does not accept (no bug bounty, local-only, etc.).
-- Once `SECURITY.md` lands, update the `CODE_OF_CONDUCT.md` Enforcement section so its pointer line resolves cleanly (it currently reads "Contact details will be published in `SECURITY.md` before the first public release.").
-
-**Cost:** S — ~30 min once the contact is picked.
-**Decision:** Defer alongside PUB-5 — revisit when the publish target + timing is concrete.
-**Status:** DEFERRED — revisit with PUB-5.
+**Cost:** S (~30 min of user work once the keypair is generated).
 
 ### PUB-8 — Android release keystore + 4 GH Actions secrets
 
