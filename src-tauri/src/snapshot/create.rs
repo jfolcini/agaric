@@ -139,6 +139,14 @@ pub async fn create_snapshot(pool: &SqlitePool, device_id: &str) -> Result<Strin
 
     let encoded = encode_snapshot(&data)?;
 
+    // M-69: fold the INSERT(pending) + UPDATE(complete) pair into a single
+    // `BEGIN IMMEDIATE` transaction so no other connection ever observes
+    // an orphan 'pending' row. Mirrors the write phase of `compact_op_log`
+    // below. `begin_immediate_logged` also surfaces slow acquires as
+    // `warn` logs (MAINT-30 family) instead of being absorbed by the
+    // pool's busy_timeout.
+    let mut tx = crate::db::begin_immediate_logged(pool, "snapshot_create").await?;
+
     // Step 1: INSERT with status='pending'
     sqlx::query(
         "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
@@ -148,15 +156,19 @@ pub async fn create_snapshot(pool: &SqlitePool, device_id: &str) -> Result<Strin
     .bind(&up_to_hash)
     .bind(serde_json::to_string(&data.up_to_seqs)?)
     .bind(&encoded)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
 
     // Step 2: UPDATE to 'complete'
-    // If we crash before this, boot cleanup deletes the pending row.
+    // Inside the same tx — either both rows land (status='complete') or
+    // neither does. Boot cleanup is therefore only needed for crashes
+    // mid-transaction at the SQLite layer, not for our application logic.
     sqlx::query("UPDATE log_snapshots SET status = 'complete' WHERE id = ?")
         .bind(&snapshot_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+
+    tx.commit().await?;
 
     Ok(snapshot_id)
 }
@@ -342,4 +354,217 @@ pub async fn cleanup_old_snapshots(pool: &SqlitePool, keep: usize) -> Result<u64
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
+}
+
+// ---------------------------------------------------------------------------
+// M-69: atomic create_snapshot regression tests
+// ---------------------------------------------------------------------------
+//
+// These tests live inline (rather than in `snapshot/tests.rs`) because the
+// REVIEW-LATER item that motivated them is scoped to `create_snapshot` —
+// keeping them next to the production code makes the invariant ("INSERT +
+// UPDATE are one atomic transaction") easier to spot when this function is
+// edited again in the future.
+#[cfg(test)]
+mod tests_m69 {
+    use super::*;
+    use crate::db::init_pool;
+    use crate::op::{CreateBlockPayload, OpPayload};
+    use crate::op_log::append_local_op_at;
+    use crate::ulid::BlockId;
+    use sqlx::SqlitePool;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    /// Build an isolated pool against a fresh temp DB. Mirrors the helper
+    /// in `snapshot/tests.rs` (which we cannot import from here without
+    /// touching that file — disallowed by the task scope).
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path: PathBuf = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    /// Insert a block directly so frontier collection has something to
+    /// reference. Bypasses the op log on purpose — we need exact control
+    /// over what's in the DB before calling `create_snapshot`.
+    async fn insert_block(pool: &SqlitePool, id: &str, content: &str) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position, is_conflict) \
+             VALUES (?, 'content', ?, 1, 0)",
+        )
+        .bind(id)
+        .bind(content)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Append a single op so `collect_frontier` has at least one row to
+    /// fold into `up_to_seqs` (it errors out otherwise).
+    async fn insert_op_at(pool: &SqlitePool, device_id: &str, block_id: &str, ts: &str) {
+        let op = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id(block_id),
+            block_type: "content".to_owned(),
+            parent_id: None,
+            position: Some(0),
+            content: "test".to_owned(),
+        });
+        append_local_op_at(pool, device_id, op, ts.to_owned())
+            .await
+            .unwrap();
+    }
+
+    /// Happy-path atomicity: after a successful `create_snapshot`, the
+    /// row is in `'complete'` state with a non-empty payload, and no
+    /// orphan `'pending'` row is left behind. Calling it twice must
+    /// produce two `'complete'` rows and zero `'pending'` rows — the
+    /// strongest observable check we can make from a separate
+    /// connection without instrumenting the function itself.
+    #[tokio::test]
+    async fn create_snapshot_is_atomic_pending_to_complete() {
+        let (pool, _dir) = test_pool().await;
+        let device_id = "dev-1";
+
+        insert_block(&pool, "block-1", "first").await;
+        insert_op_at(&pool, device_id, "block-1", "2025-01-01T00:00:00Z").await;
+
+        // First call ---------------------------------------------------
+        let snap1 = create_snapshot(&pool, device_id).await.unwrap();
+        assert!(!snap1.is_empty(), "first snapshot id should not be empty");
+
+        // Exactly one row, status='complete', payload non-empty. Both
+        // queries match shapes already in the committed `.sqlx/` cache
+        // (see `snapshot/tests.rs` line ~322 + ~372) so no prepare is
+        // needed for the new tests.
+        let status: String =
+            sqlx::query_scalar!("SELECT status FROM log_snapshots WHERE id = ?", snap1)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            status, "complete",
+            "snapshot must commit in 'complete' state, not 'pending'"
+        );
+
+        let payload = sqlx::query!(
+            "SELECT id, data FROM log_snapshots WHERE id = ? AND status = 'complete'",
+            snap1
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            !payload.data.is_empty(),
+            "snapshot payload must be non-empty after commit"
+        );
+
+        let total_after_first: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            total_after_first, 1,
+            "exactly one snapshot row should exist after first create_snapshot"
+        );
+
+        let pending_after_first: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'pending'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            pending_after_first, 0,
+            "no 'pending' rows should be visible after first create_snapshot"
+        );
+
+        // Second call --------------------------------------------------
+        // Append a fresh op so the frontier query still finds something
+        // (it does anyway — the original op is still in op_log — but
+        // a second op makes the test resilient to future cleanup).
+        insert_op_at(&pool, device_id, "block-1", "2025-02-01T00:00:00Z").await;
+
+        let snap2 = create_snapshot(&pool, device_id).await.unwrap();
+        assert_ne!(
+            snap1, snap2,
+            "second create_snapshot must produce a fresh ULID"
+        );
+
+        let complete_count: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            complete_count, 2,
+            "second create_snapshot must add a second 'complete' row"
+        );
+
+        let pending_after_second: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'pending'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            pending_after_second, 0,
+            "no 'pending' rows should remain after either create_snapshot call"
+        );
+
+        let total_rows: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            total_rows, 2,
+            "exactly two rows total — no leftover intermediate-state rows"
+        );
+    }
+
+    /// Belt-and-braces check: even when the second snapshot races the
+    /// first on a multi-threaded runtime, neither call may leave a
+    /// `'pending'` row visible. The serialisation guarantee comes from
+    /// `BEGIN IMMEDIATE` + SQLite's WAL writer lock; this test just
+    /// makes sure we don't regress the call site to two separate
+    /// `pool.execute()`s under load.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_snapshot_atomic_under_concurrent_calls() {
+        let (pool, _dir) = test_pool().await;
+        let device_id = "dev-1";
+
+        insert_block(&pool, "block-1", "first").await;
+        insert_op_at(&pool, device_id, "block-1", "2025-01-01T00:00:00Z").await;
+
+        let pool_a = pool.clone();
+        let pool_b = pool.clone();
+        let dev_a = device_id.to_string();
+        let dev_b = device_id.to_string();
+
+        let h_a = tokio::spawn(async move { create_snapshot(&pool_a, &dev_a).await });
+        let h_b = tokio::spawn(async move { create_snapshot(&pool_b, &dev_b).await });
+
+        let id_a = h_a.await.unwrap().unwrap();
+        let id_b = h_b.await.unwrap().unwrap();
+        assert_ne!(id_a, id_b, "concurrent calls must produce distinct ULIDs");
+
+        let pending: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'pending'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            pending, 0,
+            "no 'pending' rows should be visible after concurrent create_snapshot calls"
+        );
+
+        let complete: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            complete, 2,
+            "both concurrent create_snapshot calls must commit in 'complete' state"
+        );
+    }
 }
