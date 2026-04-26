@@ -17,16 +17,21 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-9 open items.
+14 open items.
 
 Previously resolved: 515+ items across 153 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
-| FEAT-3 | FEAT | Spaces — parent / umbrella (Phases 1 + 2 + 3 shipped; Phases 4–6 split into FEAT-3p4..FEAT-3p6) | S |
-| FEAT-3p4 | FEAT | Spaces Phase 4: agenda / graph / backlinks / tags / properties scoping (largest remaining slice) | L |
-| FEAT-3p5 | FEAT | Spaces Phase 5: per-space journal (J1) + per-space journal templates | M |
-| FEAT-3p6 | FEAT | Spaces Phase 6: polish (keyboard shortcuts, space management UI, brand identity, collapsed-icon indicator) | M |
+| FEAT-3 | FEAT | Spaces — parent / umbrella (Phases 1 + 2 + 3 shipped; Phases 4–11 split into FEAT-3p4..FEAT-3p11) | S |
+| FEAT-3p4 | FEAT | Spaces Phase 4: agenda / graph / backlinks / tags / properties scoping (+ promote `space_id` to required on `list_blocks` / `search_blocks`, page-membership check in `get_page_inner`, per-space `currentView`) | L |
+| FEAT-3p5 | FEAT | Spaces Phase 5: per-space journal (J1) + per-space journal templates + per-space `currentDate` slice in `useJournalStore` | M |
+| FEAT-3p6 | FEAT | Spaces Phase 6: manage-spaces UI (rename, delete-only-if-empty, second-space onboarding) — status-bar chip / collapsed indicator / keyboard shortcuts moved to FEAT-3p10 / FEAT-3p11 | S |
+| FEAT-3p7 | FEAT | Spaces Phase 7: cross-space link enforcement — resolve store + `get_page_inner` scoped to current space; cross-space `[[ULID]]` chips render via existing broken-link UX. **No links between spaces, ever.** | M |
+| FEAT-3p8 | FEAT | Spaces Phase 8: history view space scoping — default current-space, "All spaces" toggle in HistoryFilterBar | S |
+| FEAT-3p9 | FEAT | Spaces Phase 9: per-space external integrations — per-space GCal calendar IDs / OAuth / push pipeline + space-name prefix on OS notifications (FEAT-11 coupling) | L |
+| FEAT-3p10 | FEAT | Spaces Phase 10: visual identity — per-space accent color + status-bar chip + window title prefix + collapsed-sidebar indicator (single highest-priority remaining FEAT-3 work for "fully separated feel") | M |
+| FEAT-3p11 | FEAT | Spaces Phase 11: digit hotkeys (`Ctrl+1` … `Ctrl+9` / `Cmd+1` … `Cmd+9`) for instant per-space switching, additive to FEAT-3p6's popup-search + cycle bindings | S |
 | FEAT-4 | FEAT | Agent access: expose notes to external agents via an MCP server — parent / umbrella | L |
 | FEAT-4i | FEAT | MCP v3 — Mobile (HTTPS/LAN via mTLS reuse from `sync_cert.rs`, agent-pairing flow) — DEFERRED pending v2 | L |
 | FEAT-5 | FEAT | Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar) — parent / umbrella | L |
@@ -62,6 +67,7 @@ Previously resolved: 515+ items across 153 sessions.
 - **Per-space journal (J1).** Each space owns its own daily note. Today's journal page is keyed by `(date, current_space_id)`, not by `date` alone. Daily pages in different spaces coexist with the same title.
 - **Per-space tabs.** Tabs are scoped to the active space. Switching space swaps the tab set. No tab shows pages from multiple spaces.
 - **Nothing outside of spaces.** Every page must belong to exactly one space. No "All" pseudo-space, no unassigned pages, no cross-space "show everything" view. If the user needs to see another context, they switch space.
+- **No links between spaces, ever.** Same page title in both spaces is fine and stays distinct (different ULIDs). Any `[[ULID]]` chip whose target lives in another space renders via the existing broken-link UX and is not clickable to navigate. See FEAT-3p7 for the enforcement scope. See "User decisions locked in" below for the full policy.
 
 **Model:**
 A **space** is a regular `page` block with a marker property `is_space = true`. Every non-space page has a `space` `ref` property pointing to its owning space. This reuses the properties system (AGENTS.md: "primary extension point"), adds no new tables, no new op types, no sync protocol changes.
@@ -138,25 +144,33 @@ Fresh installs and upgrades both run a boot-time Rust bootstrap (`src-tauri/src/
 
 1. **Migration + model + wizard — SHIPPED.** Property definitions (migration 0035), boot-time Rust bootstrap emitting seeded spaces + upgrade ops, `src-tauri/src/spaces/` module, `list_spaces` command, `SpaceStore` (Zustand + persist), `SpaceSwitcher` (Radix Select in `SidebarHeader`).
 2. **List/search filtering — SHIPPED.** `list_blocks` + `search_blocks` accept `space_id: Option<String>` (threaded through `pagination::list_children` / `list_by_type` / `list_trash` + `fts::search_fts` via the `?N IS NULL OR COALESCE(b.page_id, b.id) IN (...)` filter pattern). PageBrowser + SearchPanel pass `currentSpaceId` and gate render on `useSpaceStore.isReady` via `LoadingSkeleton`. Link picker (`useBlockResolve`'s `searchPagesViaCache` / `searchPagesViaFts`) scoped to current space — current-space-only per user decision, no opt-in toggle. "Move to space" action in the PageHeader kebab menu uses the existing `setProperty` wrapper (no new Tauri command). New atomic command `create_page_in_space` wraps `CreateBlock` + `SetProperty('space')` in a single `BEGIN IMMEDIATE`; all top-level page-creation callsites (sidebar "New page", Ctrl+N, PageBrowser inline form, link picker "Create new page") route through it. `AgendaQuery` struct bundles the three agenda knobs to keep `list_blocks` under the tauri-specta 10-arg limit. `useResolveStore.clearPagesList()` fires on space switch so the link picker's short-query cache doesn't surface other-space pages.
-3. **Per-space tabs + per-space recent.** Refactor `useNavigationStore` to `tabsBySpace` AND `recentPagesBySpace` in the same session (see Navigation-cluster preamble). Tests for space-deletion corner case, rehydrate with stale `currentSpaceId`.
-4. **Agenda / graph / backlinks / tags / properties.** Remaining query commands gain the filter: `list_undated_tasks`, `list_projected_agenda`, `query_by_tags`, `query_by_property`, `list_page_links`, `get_backlinks`, `list_backlinks_grouped`, `query_backlinks_filtered`, `count_agenda_batch*`. Migrate corresponding frontend callsites (`useBlockTags`, `agenda-filters`, `GraphView.helpers`, `export-graph`, backlinks views, `TrashView`, `useResolveStore.preload()`, template helpers, property UI). Status-bar chip showing the active space name (follows existing sync-status chip pattern). Also the optional Phase 3 polish: a subtle "Pages in \<SpaceName\>" header on the link-picker suggestions so the current-space scoping isn't silent (UX reviewer P2-2).
-5. **Per-space journal (J1).** Daily-page lookup by `(date, space)`. Per-space journal templates via a `journal_template` property on each space block. JournalPage's 4 internal `createBlock({blockType: 'page'})` callsites route through `createPageInSpace`.
-6. **Polish.** Keyboard shortcuts (`switchSpace` / `cycleSpace`), space management UI (rename, delete-only-if-empty per user decision — no soft-delete and no reassign-on-delete flow; the delete button is disabled until the space is empty), optional space icon/color, onboarding for second space. Two Phase 1 UX follow-ups land here as well: (a) restore brand identity in the sidebar (tooltip, persistent footer chip, or similar — window title + favicon currently carry the identity alone); (b) add a collapsed-icon-sidebar space indicator (e.g. 32px circle with the first letter of the space name + tooltip) so users can see and switch spaces without expanding the sidebar.
+3. **Per-space tabs + per-space recent — SHIPPED.** Refactored `useNavigationStore` to `tabsBySpace` + `activeTabIndexBySpace` AND `useRecentPagesStore` to `recentPagesBySpace`. Subscriber on `useSpaceStore.currentSpaceId` flushes the outgoing space's flat fields into its slice, then pulls the incoming space's slice into the flat fields (`navigation.ts:489-548`, `recent-pages.ts:130-167`). `TabBar.tsx` and `RecentPagesStrip.tsx` consume the per-space selectors `selectTabsForSpace` / `selectRecentPagesForSpace`. Tests cover space-deletion corner case + rehydrate with stale `currentSpaceId` + cross-space MRU isolation.
+4. **Agenda / graph / backlinks / tags / properties — FEAT-3p4.** Remaining query commands gain the filter: `list_undated_tasks`, `list_projected_agenda`, `query_by_tags`, `query_by_property`, `list_page_links`, `get_backlinks`, `list_backlinks_grouped`, `query_backlinks_filtered`, `count_agenda_batch*`. Plus: promote `space_id` from `Option` to required on `list_blocks` / `search_blocks`; page-membership check in `get_page_inner`; per-space `useNavigationStore.currentView` slice. See FEAT-3p4 entry for full scope.
+5. **Per-space journal (J1) — FEAT-3p5.** Daily-page lookup by `(date, space)`. Per-space journal templates via a `journal_template` property on each space block. JournalPage's 4 internal `createBlock({blockType: 'page'})` callsites route through `createPageInSpace`. Per-space `useJournalStore.currentDate` slice. See FEAT-3p5 entry for full scope.
+6. **Manage-spaces UI — FEAT-3p6.** Rename, delete-only-if-empty (no soft-delete, no reassign-on-delete), accent-color picker (consumed by FEAT-3p10), onboarding for second space. *(Status-bar chip / collapsed-icon indicator / brand identity moved to FEAT-3p10; keyboard shortcuts split into FEAT-3p11.)*
+7. **Cross-space link enforcement — FEAT-3p7.** Resolve store + `get_page_inner` filter by current space. Cross-space `[[ULID]]` chips render via the existing broken-link UX. Defence-in-depth against legacy text + manual paste + post-"Move to space" stale references. **Implements the locked-in "no links between spaces, ever" decision.**
+8. **History view space scoping — FEAT-3p8.** History defaults to current space; "All spaces" toggle in `HistoryFilterBar` (off by default, not persisted).
+9. **Per-space external integrations — FEAT-3p9.** Per-space GCal calendar IDs / OAuth tokens / push pipeline. OS notification titles prefix `[<SpaceName>]` (FEAT-11 coupling).
+10. **Visual identity — FEAT-3p10.** Per-space accent color (CSS custom property override) + status-bar chip + window title prefix + collapsed-sidebar indicator. **Single highest-priority remaining FEAT-3 phase for the "fully separated feel" goal.**
+11. **Digit hotkeys — FEAT-3p11.** `Ctrl+1` … `Ctrl+9` (`Cmd+1` … `Cmd+9` on macOS) switch directly to the Nth space in alphabetical order. Additive to FEAT-3p6's popup-search and cycle bindings — fastest possible motion (one chord) for the common 2-space case.
 
 **User decisions locked in (do NOT re-litigate):**
 
 - **Seeded spaces count:** 2 — "Personal" + "Work".
 - **Bootstrap:** deterministic genesis ops (two reserved ULIDs above) + local upgrade ops for existing pages.
 - **Space deletion:** forbid deleting a non-empty space (no soft-delete, no reassign-on-delete).
-- **Cross-space links:** forbidden at author time (picker is current-space-only, no opt-in). Existing `[[ULID]]` targets in another space render as broken-link chips (the existing broken-link UX).
-- **Graph view:** no cross-space edges to render (follows from the previous decision).
-- **Export:** markdown export references only stay within the current space (follows from the previous decision).
+- **Spaces are physically separate vaults from the user's perspective. NO live links between spaces, ever.** Picker is current-space-only (Phase 2 shipped). Resolve store and single-page fetch are current-space-only (FEAT-3p7). Any `[[ULID]]` whose target lives in another space — regardless of how it got there (legacy text written before Phase 2, post-"Move to space" stale references in the source space, manually-pasted ULIDs, sync replay of older content) — renders as a **broken-link chip via the existing broken-link UX** (`block-link-deleted` styling, "Broken link — click to remove" tooltip, click deletes the chip). **No auto-switch on click. No "show anyway" toggle. No developer override.** A single behaviour, period.
+- **Same page title in both spaces is allowed and stays distinct.** "Daily standup" in Personal and "Daily standup" in Work are two separate pages with two ULIDs. Titles are not a cross-space resolution surface. Title-based search is space-scoped (Phase 2 shipped); title collisions across spaces are invisible from inside any one space.
+- **Graph view:** no cross-space edges to render (follows from "no links between spaces").
+- **Export:** markdown export references only stay within the current space (follows from "no links between spaces"; cross-space `[[ULID]]` targets export as the same broken-chip placeholder that the UI renders).
 - **First-boot UI:** LoadingSkeleton on space-scoped panels until `useSpaceStore.isReady === true`.
 - **Search operator:** the switcher is the only scoping surface — no `space:<name>` operator.
 
-**Cost:** S — this umbrella entry is now a tracker only. Each remaining phase is filed as its own item: FEAT-3p3 (tabs/recent), FEAT-3p4 (agenda/graph/backlinks), FEAT-3p5 (journal), FEAT-3p6 (polish). Schedule via the per-phase items, not this umbrella.
+**Cost:** S — this umbrella entry is now a tracker only. Each remaining phase is filed as its own item: FEAT-3p4 (agenda/graph/backlinks), FEAT-3p5 (journal), FEAT-3p6 (manage UI), FEAT-3p7 (broken-chip enforcement), FEAT-3p8 (history scoping), FEAT-3p9 (per-space integrations), FEAT-3p10 (visual identity), FEAT-3p11 (digit hotkeys). Schedule via the per-phase items, not this umbrella.
 
-**Status:** IN PROGRESS — Phases 1 + 2 shipped. Remaining work tracked under FEAT-3p3 / FEAT-3p4 / FEAT-3p5 / FEAT-3p6.
+**Recommended sequencing for "fully separated feel + easy/quick switching":** FEAT-3p10 + FEAT-3p11 + FEAT-3p7 first (one session each, low blast-radius, immediately unlock the user-visible goal). Then FEAT-3p4 (largest backend slice, closes the remaining query leaks). Then FEAT-3p5 / p6 / p8 / p9 in any order.
+
+**Status:** IN PROGRESS — Phases 1 + 2 + 3 shipped. Remaining work tracked under FEAT-3p4 / FEAT-3p5 / FEAT-3p6 / FEAT-3p7 / FEAT-3p8 / FEAT-3p9 / FEAT-3p10 / FEAT-3p11.
 
 ### FEAT-3p4 — Spaces Phase 4: agenda / graph / backlinks / tags / properties scoping
 
@@ -175,8 +189,14 @@ Fresh installs and upgrades both run a boot-time Rust bootstrap (`src-tauri/src/
 
 **Recursive CTE invariants preserved:** `list_children`, cascade ops unchanged. Space is a query-time filter, not a structural partition. `is_conflict = 0` + `depth < 100` invariants stay where they are.
 
-**Cost:** L — biggest remaining FEAT-3 slice (10+ commands × backend + 7+ frontend areas + property tests). Realistic estimate: 1–2 focused sessions.
-**Status:** Open. Depends on FEAT-3 Phases 1 + 2 (shipped). Independent of FEAT-3p3, FEAT-3p5, FEAT-3p6.
+**Additional scope (folded in from confirmed leakage findings):**
+
+- **Promote `space_id` from `Option<String>` to `String` (required) on `list_blocks_inner` + `search_blocks_inner`.** Phase 2 shipped these as `Option<String>` for backwards-compat during incremental rollout; the locked-in user decision was "required, not optional, to enforce 'nothing outside of spaces'". New callers can currently leak silently by omitting `spaceId`. Required signature blocks that at the type system + tauri-specta layer. Migrate every existing callsite in the same commit (no flag-day window with mixed signatures).
+- **`get_page_inner` page-membership check.** When called with a `space_id`, verify the requested page's `space` property matches; otherwise return `AppError::Validation("page not in current space")`. Defence in depth — without this, deep-link / legacy `[[ULID]]` paths can fetch foreign-space pages directly. Same check applied to `get_block_with_children_inner`. (Couples loosely with FEAT-3p7, which is the user-facing "no cross-space links" enforcement; this item is the backend-rejection corollary.)
+- **Per-space `useNavigationStore.currentView` slice.** Today `currentView: View` is global, so `Search` view in Personal stays `Search` when the user switches to Work. Add `currentViewBySpace: Record<SpaceId, View>` mirroring the `tabsBySpace` pattern; the Phase 3 space-switch subscriber gains one extra flush/pull pair. Vitest covers: switch from Personal-search → Work resets to Work's last view (or default `page-editor` for fresh spaces).
+
+**Cost:** L — biggest remaining FEAT-3 slice (10+ commands × backend + 7+ frontend areas + property tests + the three additional items above). Realistic estimate: 2 focused sessions.
+**Status:** Open. Depends on FEAT-3 Phases 1 + 2 + 3 (shipped). Independent of FEAT-3p5, FEAT-3p6, FEAT-3p7, FEAT-3p8, FEAT-3p9, FEAT-3p10, FEAT-3p11.
 
 ### FEAT-3p5 — Spaces Phase 5: per-space journal (J1) + per-space journal templates
 
@@ -187,33 +207,228 @@ Fresh installs and upgrades both run a boot-time Rust bootstrap (`src-tauri/src/
 - Atomic-creation path: when creating today's journal page, set its `space` property in the same `BEGIN IMMEDIATE` transaction. Routes through `create_page_in_space` (this phase formalizes the route; H-3 from the backend review tracks the bypass cleanup).
 - Per-space journal templates via a `journal_template` property on each space block. No new schema — properties extension point.
 - Frontend: `JournalPage`'s 4 internal `createBlock({blockType: 'page'})` callsites route through `createPageInSpace`. (H-3a/H-3b cover the broader bypass cleanup; this phase covers the specific journal callsites.)
+- **Per-space `useJournalStore.currentDate` slice.** Today `currentDate: string` and `mode: JournalMode` are global. Switching from Personal viewing 2026-04-15 to Work leaves Work on 2026-04-15, which may not be where the user wants to land (e.g. Work has no entry for that date). Add `currentDateBySpace: Record<SpaceId, string>` and `modeBySpace: Record<SpaceId, JournalMode>` mirroring the Phase 3 `tabsBySpace` pattern. Same flush/pull subscriber on `useSpaceStore`. Fresh-space default: today's date in `daily` mode.
 
 **Testing:**
 - Journal per-space lookup, including the transition from "no journal today" to "journal created in current space".
 - Two spaces with the same date both have their own daily note; switching space swaps which one shows.
 - Journal template fetched per-space.
+- `useJournalStore` per-space `currentDate` + `mode` flush/pull on space switch; rehydrate after space deletion falls back to `today` for unknown space ids.
 
 **Cost:** M — single focused session.
-**Status:** Open. Depends on FEAT-3 Phases 1 + 2 (shipped). Couples loosely with H-3a / H-3b (backend `create_block` IPC enforcement) — recommend landing H-3a first, then this.
+**Status:** Open. Depends on FEAT-3 Phases 1 + 2 + 3 (shipped). Couples loosely with H-3a / H-3b (backend `create_block` IPC enforcement) — recommend landing H-3a first, then this.
 
-### FEAT-3p6 — Spaces Phase 6: polish (keyboard shortcuts, management UI, brand identity, collapsed-icon indicator)
+### FEAT-3p6 — Spaces Phase 6: manage-spaces UI (rename, delete-only-if-empty, second-space onboarding)
 
-**Problem:** The locked-in Phase 6 polish items have not landed: keyboard shortcuts to switch / cycle spaces, the space management UI (rename, delete-only-if-empty), and the two Phase 1 UX follow-ups about brand identity and collapsed-sidebar discoverability.
+**Problem:** Today the SpaceSwitcher dropdown surfaces a disabled "Manage spaces…" placeholder (i18n key `space.manageComingSoon`, "Coming in Phase 6"). Users cannot rename a space, cannot create new spaces beyond the seeded "Personal" + "Work", cannot delete a space, and the app provides no first-run guidance about what spaces are or how to use them.
 
-**Scope:**
-- Keyboard shortcuts in `keyboard-config.ts`: `switchSpace` (default Ctrl+Shift+S, opens a `SearchablePopover` to jump by name) and `cycleSpace` (default Ctrl+Alt+S, rotates through spaces).
-- Space management UI: rename, delete (delete button DISABLED until the space is empty — no soft-delete, no reassign-on-delete flow per user decision), optional space icon/color, onboarding for second space.
-- Brand identity restoration in the sidebar (tooltip, persistent footer chip, or similar — window title + favicon currently carry the identity alone).
-- Collapsed-icon-sidebar space indicator (e.g. 32px circle with the first letter of the space name + tooltip) so users can see and switch spaces without expanding the sidebar.
+**Scope (narrowed — visual-identity items moved to FEAT-3p10, keyboard shortcuts moved to FEAT-3p11):**
+- **"Manage spaces…" dialog** (Radix `Dialog` reusing existing primitives). Lists every space with row-level actions: rename (inline editable label), pick accent color (consumed by FEAT-3p10), delete.
+- **Rename** round-trips through the existing block-content edit op (no new op type; spaces are page blocks). Updates the `availableSpaces` cache via `refreshAvailableSpaces()` after the op materializes.
+- **Delete** — button is **DISABLED until the space is empty** per the locked-in user decision (no soft-delete, no reassign-on-delete). Hover tooltip on disabled state explains why ("Delete every page in this space first"). When enabled, click → confirmation `AlertDialog` → soft-delete the space block (existing `delete_block` op). Rejects deletion of the last remaining space (always at least one space must exist).
+- **Create new space** — primary button in the dialog. Spawns a `Personal`/`Work`-style page block + `is_space=true` property + default accent color in a single `BEGIN IMMEDIATE` transaction (mirrors `create_page_in_space`'s atomicity).
+- **Second-space onboarding** — first time the user opens "Manage spaces…" with only the two seeded spaces, a one-time tooltip / inline hint explains: "Spaces keep your contexts (work, personal, etc.) physically separate. Pages, journals, tags, and links never cross between spaces. Switch with the dropdown or `Ctrl+1` / `Ctrl+2` (FEAT-3p11)." Dismissal flag in localStorage (`agaric:space-onboarding-seen-v1`).
 
 **Testing:**
-- Shortcut handler registered and callable; cycle wraps.
-- Delete button disabled state: hover tooltip explains why; switches to enabled when the space is empty; confirmation dialog on enable+click.
-- Rename round-trips through the property write.
+- Delete button disabled state: hover tooltip explains why; switches to enabled when the space is empty; confirmation dialog on enable+click; cannot delete the last remaining space.
+- Rename round-trips through the property write and reflects in the SpaceSwitcher within one tick.
+- Create new space appears in `availableSpaces` and is immediately switchable.
 - a11y: every new control has `aria-label`, focus-visible ring, touch-target compliance per AGENTS.md frontend guidelines.
+- Onboarding hint shows on first manage-spaces open and never again after dismissal.
 
-**Cost:** M — single focused session.
-**Status:** Open. Depends on FEAT-3 Phases 1 + 2 (shipped). Independent of FEAT-3p3 / FEAT-3p4 / FEAT-3p5 — schedulable any time.
+**Cost:** S — single short session. Mostly dialog wiring on top of existing primitives.
+**Status:** Open. Depends on FEAT-3 Phases 1 + 2 + 3 (shipped). Independent of FEAT-3p4 / p5 / p7 / p8 / p9 / p10 / p11 — schedulable any time, but recommended after FEAT-3p10 lands so the accent picker has a real consumer.
+
+### FEAT-3p7 — Spaces Phase 7: cross-space link enforcement (broken-chip rendering)
+
+**Problem:** The shipped `[[ULID]]` resolution path does not honour the locked-in "no links between spaces" decision. `useResolveStore.preload()` calls `listBlocks({ blockType: 'page', limit: 1000 })` with no `spaceId`, so the global title cache contains pages from every space. When a chip renders a `[[ULID]]` whose target lives in a different space, the chip resolves to the foreign page's title and clicking it silently navigates into the current-space tab stack — **the user crosses a space boundary with no UI signal and no auto-switch**, contradicting the locked-in design intent.
+
+The picker is already current-space-only (Phase 2 shipped), so cross-space links cannot be authored fresh from inside the editor. But three paths still produce them in practice:
+
+1. **Legacy text** — pages migrated from a pre-Phase-2 vault carry `[[ULID]]` text written before scoping landed.
+2. **Post-"Move to space" stale references** — when a page moves from space A to space B, inbound `[[ULID]]` references in space A become foreign-target chips.
+3. **Manually-pasted ULIDs** — power users / agent writes / cross-device sync replay can land foreign-target text in a block.
+
+**Locked-in policy (do NOT re-litigate — reaffirms the umbrella decision):**
+
+- **Spaces are physically separate vaults from the user's perspective. NO live links between spaces, ever.**
+- **Same page title in both spaces is fine and stays distinct** (different ULIDs); titles are not a cross-space resolution surface.
+- **Cross-space `[[ULID]]` chips render as broken-link chips** using the existing broken-link UX (`block-link-deleted` class, "Broken link — click to remove" tooltip, click deletes the chip — undoable).
+- **No auto-switch on click.** The broken chip is a removable artifact, not a teleporter. If the user genuinely wants to view the foreign page, they switch spaces explicitly via the SpaceSwitcher / FEAT-3p11 hotkey.
+- **No "show-link-anyway" toggle, no opt-in setting, no developer override.** Single behaviour.
+
+**Backend scope:**
+
+- `batch_resolve_inner` (and the `listBlocks` call in `useResolveStore.preload()`) gain `space_id: String` (required, not optional — see FEAT-3p4 promotion) and apply the same `COALESCE(b.page_id, b.id) IN (SELECT bp.block_id FROM block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?)` filter that Phase 2 established. Targets in other spaces simply don't appear in the resolution result, so the chip falls into the "unknown id" branch — which already renders broken.
+- `get_page_inner` (the single-page fetch used by the page editor / deep-link / journal navigation) gains a space-membership check: if the requested page's `space` property does not match the passed `space_id`, return `AppError::Validation("page not in current space")`. Same check applied to `get_block_with_children_inner`. (This item also appears in FEAT-3p4 — keep it on whichever phase ships first; the other phase removes the duplicate at landing.)
+- Verify that `list_block_history` and any other single-block fetch path either inherits the membership check or is documented as intentionally allowed (e.g. backend admin tooling).
+
+**Frontend scope:**
+
+- `useResolveStore.preload(spaceId)` — pass `currentSpaceId` from the call site (`App.tsx`, `PageEditor` mount, every backlink panel).
+- `useResolveStore.cache` is keyed by `(space_id, ulid)` not just `ulid`, so a switch from Personal → Work doesn't surface cached Personal entries when resolving a Work page. The existing cache invalidation on space switch (today: `clearPagesList()` only) extends to a full per-space cache flush via a new `clearAllForSpace(prevSpaceId)` action, fired in the same `App.tsx` subscriber that already fires `clearPagesList()`.
+- `BlockLink` extension's `resolveStatus` callback is unchanged in shape — the data layer simply stops returning foreign blocks, so the chip naturally falls into the broken branch via the existing code path.
+- Click handler on broken chip already deletes the chip (existing broken-link UX); no change needed.
+- Markdown serializer (`src/editor/markdown-serializer.ts`) already emits `[[ULID]]` text for unresolved targets; verify export round-trip through the broken-chip path produces the same text and not a "Loading…" placeholder.
+
+**Migration safety:**
+
+- Existing legacy cross-space `[[ULID]]` text in saved blocks renders broken on first load and continues to render broken after edit/save round-trip. **Stored block content is never silently rewritten** — the user explicitly deletes the chip if they want to remove it.
+- No op-log changes. No schema changes. No bootstrap step.
+
+**Testing:**
+
+- Property test (`fast-check`): for any two non-empty spaces and any ULID from one of them, `batch_resolve(ulid, space_of_other)` returns `None`.
+- Vitest: `BlockLink` rendered for a foreign-space ULID shows `block-link-deleted` styling and the broken-link tooltip; clicking removes the chip and the deletion is undoable.
+- Vitest: `useResolveStore.cache` keyed correctly; switching from Personal → Work does not surface Personal-cached entries when resolving Work-page chips.
+- Rust: `get_page_inner(other_space_page_id, &current_space_id)` returns `Validation`; `get_block_with_children_inner` similarly rejects.
+- Property test: existing markdown export of a block containing a foreign-space `[[ULID]]` produces stable output across two passes (no "Loading…"/title flicker).
+
+**Cost:** M — single focused session. Touches one resolve store, one Rust resolve helper, one Rust page-fetch helper, one Tauri command signature, plus property + vitest tests. No schema changes, no new op types, no migration.
+
+**Status:** Open. Independent of FEAT-3p4 / p5 / p6 / p8 / p9 / p10 / p11. **Recommend landing alongside or before FEAT-3p10** so the visual-identity work is not undermined by silent cross-space navigation via clickable foreign chips.
+
+### FEAT-3p8 — Spaces Phase 8: history view space scoping
+
+**Problem:** `HistoryView.tsx` (`src/components/HistoryView.tsx`) calls `listPageHistory({ pageId: '__all__' })`, which the backend (`src-tauri/src/pagination/history.rs`) treats as a sentinel meaning "every op in `op_log`, every space". Today this is the default and only mode of the History view — there is no UI affordance to scope it to the current space, and there is no "current page" filter except by typing a ULID. For a user trying to live in one context, opening the History drawer dumps every Work mutation while they're in Personal (and vice versa). Per the locked-in "spaces are physically separate vaults" decision, this is a leak.
+
+**Locked-in policy:**
+
+- **History defaults to current-space only.** The default query becomes "all ops whose `payload.block_id` belongs to a page in the current space" — the page-ancestor join from Phase 2 applied to `op_log` rows.
+- **Explicit "All spaces" toggle** in `HistoryFilterBar` — a single Radix `Switch` that, when on, drops the space filter. **Off by default**. State **not persisted** (every History session starts current-space — the default is the privacy-preserving one).
+- **Per-page mode is unchanged.** When `pageId` is a real ULID (not `__all__`), the existing per-page query already implicitly scopes correctly because the page itself belongs to exactly one space.
+- **Revert is unchanged.** `revert_ops` operates on `(device_id, seq)` tuples; the reverter only sees the ops the user can see. No additional space check needed at revert time.
+
+**Backend scope:**
+
+- `pagination::history::list_page_history` gains `space_id: Option<String>`. When `pageId == "__all__"` AND `space_id` is `Some`, append:
+
+```sql
+AND json_extract(ol.payload, '$.block_id') IN (
+    SELECT bp.block_id FROM block_properties bp
+    WHERE bp.key = 'space' AND bp.value_ref = ?
+)
+```
+
+  When `space_id` is `None`, behaviour is identical to today (the "All spaces" path). When `pageId` is a real ULID, `space_id` is ignored (per-page mode).
+
+- Test matrix: (a) per-page (existing), (b) all-pages all-spaces (existing), (c) all-pages current-space (new). Property test: union of (c)-results across all spaces equals (b)-result, and (c) is a strict subset of (b) for any single space.
+
+**Frontend scope:**
+
+- `HistoryView.tsx` reads `currentSpaceId` from `useSpaceStore` and passes it as `spaceId` by default.
+- Add "All spaces" `Switch` in `HistoryFilterBar` (next to the existing op-type filter). When toggled on, pass `spaceId: undefined`. Toggle state lives in `HistoryView`'s local `useState`, not persisted.
+- Empty-state message when current-space history is empty: "No changes in this space yet. Toggle 'All spaces' to see history from other spaces."
+
+**Testing:**
+
+- Vitest: HistoryView renders only current-space ops by default. Toggle "All spaces" → renders cross-space ops. Toggle off → re-scopes. Op-type filter and space filter compose correctly.
+- Rust: filtered-vs-unfiltered result counts differ by exactly the foreign-space ops; cursor pagination remains stable across the filter.
+
+**Cost:** S — single focused session. One SQL clause, one new Switch, one test set.
+**Status:** Open. Independent of every other phase. Recommend after FEAT-3p4 (so all data-leakage backend work lands together) but schedulable independently.
+
+### FEAT-3p9 — Spaces Phase 9: per-space external integrations (GCal, OS notifications)
+
+**Problem:** Two integration surfaces leak across spaces today:
+
+1. **Google Calendar push** uses a single `calendar_id` in `GcalStatus` (`src-tauri/src/commands/gcal.rs:56-66`). The push pipeline (`gcal_push/connector.rs`) pulls agenda items via `list_projected_agenda_inner` — which is also unscoped today (FEAT-3p4 covers the read path) — and writes every item from every space into one calendar. A user with the integration on cannot keep their work calendar separate from their personal one.
+2. **OS notifications** (FEAT-11, deferred): when adopted, due-task notifications will show task content with no space attribution. A Work task firing while the user is "in" Personal breaks context.
+
+**Locked-in policy:**
+
+- **GCal config is per-space.** A user can connect GCal independently for each space, with independent calendar IDs, OAuth tokens (via the existing keychain wrapper, key suffixed with the space ULID), window-days, privacy-mode, push-lease. A space with no GCal connection has no GCal sync — period. **No global fallback.**
+- **Push pipeline branches by space.** Each space's push loop pulls agenda items scoped to that space (via FEAT-3p4's space-aware `list_projected_agenda`) and writes to that space's calendar. A failed push for one space does not block others.
+- **OS notifications carry the space name.** Title format becomes `[<SpaceName>] <existing title text>` so the user always knows which context fired the notification, regardless of the active space at the moment.
+
+**Backend scope (GCal):**
+
+- New schema: `gcal_space_config` table — `(space_id PRIMARY KEY, account_email, calendar_id, window_days, privacy_mode, last_push_at, last_error)` — additive migration. OAuth tokens stay in the keychain but the keychain key is suffixed with the space ULID (`agaric-gcal-token-<space_ulid>`).
+- Replace `GcalStatus` (single struct) with `Vec<GcalSpaceStatus>`: `(space_id, account_email, calendar_id, window_days, privacy_mode, push_lease, last_push_at, last_error, connected)`. Top-level `get_gcal_status` returns the vec keyed by space.
+- `gcal_push::connector::push_loop` iterates the configured spaces and runs an isolated push per space. Per-space `push_lease` lives in `gcal_space_config.push_lease` (or a dedicated `gcal_space_lease` table if leases must outlive config rows).
+- Per-space versions of every existing command: `force_gcal_resync(space_id)`, `disconnect_gcal(space_id)`, `connect_gcal(space_id)`, `set_gcal_window_days(space_id, days)`, `set_gcal_privacy_mode(space_id, mode)`. Settings tab UI gains a per-space accordion.
+
+**Backend scope (notifications, when FEAT-11 lands):**
+
+- Notification builder reads the firing task's owning page's `space` property and prefixes the title with `[<SpaceName>] `. No new schema. Lookup is one `block_properties` read per notification, fine at notification frequency. Couples with FEAT-11 — this sub-task ships alongside or after FEAT-11.
+
+**Migration:**
+
+- Existing single-space GCal config (if connected) migrates to the user's currently-active space at first run after this phase ships. Tracked as a one-shot Rust bootstrap step, idempotent, behind a `gcal_per_space_migrated` flag (mirrors the spaces bootstrap pattern).
+
+**Testing:**
+
+- Two configured spaces push to two different `calendar_id`s; per-space `last_push_at` advances independently.
+- Disconnect on space A leaves space B's push working.
+- Failed push on space A does not block the per-loop tick for space B.
+- Notification title always carries the originating space, regardless of active space.
+
+**Cost:** L — schema migration + connector refactor + UI refactor + per-space lease handling. Realistic estimate: 2 sessions. Depends on FEAT-3p4 (the push pipeline must already pull space-scoped agenda).
+**Status:** Open. Depends on FEAT-3p4. Independent of FEAT-3p5 / p6 / p7 / p8 / p10 / p11. Notification-prefix sub-task depends on FEAT-11 landing first.
+
+### FEAT-3p10 — Spaces Phase 10: visual identity (status-bar chip, accent color, window title prefix, collapsed-sidebar indicator)
+
+**Problem:** Today the only signal that the user is in a particular space is the SpaceSwitcher dropdown's text label in the sidebar header. When the sidebar is collapsed (icon-only mode, mobile), or when the user glances at the taskbar, the OS notification center, or the window title bar, **there is no visual cue** about which space is active. Two spaces look identical; switching is undetectable at a glance. **This is the single biggest barrier to "fully separated" feeling** — context blur is constant and undermines every other space-scoping effort. A user looking at the screen for a fraction of a second must be able to tell whether they're in Personal or Work without thinking.
+
+**Locked-in policy:**
+
+- **Per-space accent color.** Each space carries an optional `accent_color` text property (oklch token name from `index.css` — e.g. `accent-emerald`, `accent-violet`, `accent-blue`). When set, it overrides one or two CSS custom properties at the document root: a status-bar background tint and the SpaceSwitcher trigger background. Two seeded spaces ship with two distinct defaults (Personal: `accent-emerald`, Work: `accent-blue`). User-renameable + recolorable via the FEAT-3p6 "Manage spaces…" UI.
+- **Window title prefix.** Tauri `setTitle("<SpaceName> · Agaric")` fires on every space change. Regenerated when the space is renamed. Falls back to `Agaric` when no space is active (boot pre-bootstrap edge case).
+- **Status-bar chip** showing the active space name (lifted from FEAT-3p6 to here so visual identity ships as one cohesive surface). Pattern matches the existing sync-status chip; no new component primitives needed. Click on the chip opens the SpaceSwitcher dropdown.
+- **Collapsed-sidebar indicator** (also lifted from FEAT-3p6) — 32px circle with the first letter of the space name on top of the accent color, with an `aria-label` + tooltip showing the full name. Click cycles to the next space (sharing the FEAT-3p11 cycle-shortcut handler).
+- **Notification prefix** (when FEAT-11 lands) is a sub-task of FEAT-3p9, not p10 — listed here only for completeness of the "visual identity" surface.
+- **No per-space full theme.** Only the accent token + the chip + the title prefix + the badge. A full custom theme (per-space typography, density, custom colour palette) is out of scope. File as a future polish item if the user later wants it.
+
+**Frontend scope:**
+
+- New CSS variable `--accent-current` set on `:root` and rebound on every space change via a small effect in `App.tsx`. Two existing tokens (`--brand-accent`, `--status-bar-bg`) consume `var(--accent-current, fallback)`.
+- New `<SpaceAccentBadge>` shared component (`src/components/SpaceAccentBadge.tsx`) — the 32px circle + first letter, used in the collapsed sidebar. Supports hover + focus-visible per AGENTS.md guidelines.
+- New `<SpaceStatusChip>` component (or extend the existing chip primitive) reusing the sync-status-chip pattern. Mounts in `App.tsx`'s status-bar slot. Reads `useSpaceStore((s) => s.availableSpaces.find(x => x.id === s.currentSpaceId)?.name ?? '')`.
+- `useSpaceStore` adds `getCurrentAccent(): string` derived selector reading the active space's `accent_color` property (via a fresh property fetch on space change — small cost, fires only at switch). Cached on the store; refreshed by `refreshAvailableSpaces()`.
+- Tauri call `setWindowTitle("<spaceName> · Agaric")` on every space change. Wrapper in `src/lib/tauri.ts`. No-op fallback for non-Tauri runtime (vitest, storybook).
+
+**Backend scope:**
+
+- New optional property definition `accent_color` (text) — additive migration. Default values seeded by `bootstrap.rs` for Personal + Work. User edits via "Manage spaces…" UI (FEAT-3p6). No new tables, no new op types.
+
+**Testing:**
+
+- Vitest: switching spaces updates `--accent-current`, the status-bar chip text, and (mocked) the window title call.
+- Vitest: collapsed sidebar shows the right letter + accent for each space; click cycles.
+- Vitest: rename → chip + title + badge update without a manual refresh.
+- a11y: chip + badge have `aria-label`s; touch target 44px on `pointer:coarse`; focus-visible ring matches existing patterns.
+- prefers-contrast: accent tokens have high-contrast siblings (mirrors existing semantic-token convention from `index.css`).
+
+**Cost:** M — single focused session. Touches `App.tsx`, `index.css`, two new shared components, one Tauri wrapper, one bootstrap migration adding default accent properties.
+**Status:** Open. **HIGHEST-PRIORITY remaining FEAT-3 work for the stated goal of "fully separated feel"**. Independent of FEAT-3p4 / p5 / p7 / p8 / p9 / p11. Couples with FEAT-3p6 (the management UI surface that lets the user pick the accent for a renamed/new space) — recommend p10 first so p6 has a real consumer to wire up.
+
+### FEAT-3p11 — Spaces Phase 11: digit hotkeys (`Ctrl+1` … `Ctrl+9`) for instant switching
+
+**Problem:** The Phase 6 plan (now narrowed to manage-spaces UI in FEAT-3p6) was going to add two switching hotkeys: `Ctrl+Shift+S` (popup search) and `Ctrl+Alt+S` (cycle). Both involve a modifier-search-or-rotate motion that is slower than the universal "digit-per-tab/workspace" pattern Chrome, Slack, iTerm, every IDE, and most Linux WMs use. With only two seeded spaces in v1, **`Ctrl+1` / `Ctrl+2` is the single fastest possible motion** — one chord, no menu, no rotation count, no "did I press it twice or three times?". This is the muscle memory the user already has from every other app.
+
+**Locked-in policy:**
+
+- **`Ctrl+1` … `Ctrl+9` switch directly to the Nth space** in `list_spaces` order (alphabetical; same as the SpaceSwitcher dropdown).
+- **`Cmd+1` … `Cmd+9` on macOS** to match platform convention.
+- Rebindable via `keyboard-config.ts`. Conflicts with browser-tab digit shortcuts elsewhere are not relevant — this is a desktop app, not a browser.
+- **Out-of-range digits are no-ops.** `Ctrl+5` with three spaces does nothing (no toast, no error, just suppressed).
+- These shortcuts **coexist** with the FEAT-3p6 popup-search and cycle bindings (if those still ship in p6 polish — TBD by the user) — they are additive, not replacements.
+
+**Frontend scope:**
+
+- 9 new entries in `keyboard-config.ts`: `switchSpace1` … `switchSpace9` with default `Ctrl+1` … `Ctrl+9` (`Cmd+1` … `Cmd+9` on macOS — use the existing platform-aware binding helper).
+- Single handler in `App.tsx` (or wherever the global keyboard router lives) that resolves digit → space ID via the alphabetical `availableSpaces` order, then calls `useSpaceStore.getState().setCurrentSpace(id)`.
+- Visible shortcuts in the SpaceSwitcher dropdown items as a right-aligned hint chip (`Ctrl+1`, `Ctrl+2`, …) — discoverability without docs. Hint chip uses the existing keyboard-shortcut chip primitive.
+- Visible shortcut hint in the FEAT-3p6 onboarding tooltip: "…or `Ctrl+1` / `Ctrl+2`."
+
+**Testing:**
+
+- Vitest: `Ctrl+1` switches to first space alphabetically. `Ctrl+2` to second. `Ctrl+5` with three spaces is a no-op.
+- Vitest: rebinding persists through `keyboard-config` and is honoured by the handler.
+- Vitest: dropdown items show the right hotkey hint per row, in alphabetical order.
+
+**Cost:** S — single short session. Mechanical wiring on top of the existing keyboard-config + SpaceSwitcher. No architectural change.
+**Status:** Open. **HIGHEST-PRIORITY remaining FEAT-3 work for the stated goal of "easily and quickly switch"**. Independent of every other phase.
 
 ### FEAT-4 — Agent access: expose notes to external agents via an MCP server
 
