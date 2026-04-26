@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT payload FROM op_log WHERE block_id = ?1 AND json_extract(payload, '$.key') = ?2 AND op_type = 'set_property' AND (created_at < ?3 OR (created_at = ?3 AND seq < ?4)) ORDER BY created_at DESC, seq DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "payload",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "89f957e3f2e8af40ee500ef4cbee78d5a144b1374def1a455108b3b45c8ac789"
+}
