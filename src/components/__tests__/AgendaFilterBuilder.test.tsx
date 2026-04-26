@@ -305,6 +305,24 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
+  // 13b. (UX-274) Disabled apply button surfaces visual feedback via Button
+  //     primitive's `disabled:` Tailwind modifiers.
+  // -----------------------------------------------------------------------
+  it('apply button shows disabled visual styling (opacity + cursor)', async () => {
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+    await user.click(screen.getByText(t('agendaFilter.status')))
+
+    const applyBtn = screen.getByRole('button', { name: /Apply filter/i })
+    expect(applyBtn).toBeDisabled()
+    // Button primitive bakes these in — they are the visual cue users see.
+    expect(applyBtn.className).toContain('disabled:opacity-50')
+    expect(applyBtn.className).toContain('disabled:cursor-not-allowed')
+  })
+
+  // -----------------------------------------------------------------------
   // 14. Fieldset has proper sr-only legend
   // -----------------------------------------------------------------------
   it('renders sr-only legend inside fieldset', () => {

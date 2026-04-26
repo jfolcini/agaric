@@ -336,6 +336,7 @@ describe('HistoryPanel', () => {
     }
     mockedInvoke
       .mockResolvedValueOnce(page) // get_block_history
+      .mockResolvedValueOnce({ id: 'BLOCK001', block_type: 'content', content: 'snapshot' }) // get_block (snapshot)
       .mockRejectedValueOnce(new Error('edit failed')) // edit_block
 
     render(<HistoryPanel blockId="BLOCK001" />)
@@ -362,6 +363,7 @@ describe('HistoryPanel', () => {
     }
     mockedInvoke
       .mockResolvedValueOnce(page) // get_block_history
+      .mockResolvedValueOnce({ id: 'BLOCK001', block_type: 'content', content: 'Current text' }) // get_block (snapshot)
       .mockResolvedValueOnce({ id: 'BLOCK001', block_type: 'content', content: 'Old content' }) // edit_block
 
     render(<HistoryPanel blockId="BLOCK001" />)
@@ -373,8 +375,13 @@ describe('HistoryPanel', () => {
     const confirmBtn = await screen.findByRole('button', { name: /^Restore$/ })
     await user.click(confirmBtn)
 
+    // UX-275 sub-fix 4: success toast carries an Undo action when the
+    // pre-restore snapshot is available.
     await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Reverted successfully')
+      expect(toast.success).toHaveBeenCalledWith(
+        'Reverted successfully',
+        expect.objectContaining({ action: expect.objectContaining({ label: 'Undo' }) }),
+      )
     })
   })
 
@@ -426,6 +433,7 @@ describe('HistoryPanel', () => {
     }
     mockedInvoke
       .mockResolvedValueOnce(page) // get_block_history
+      .mockResolvedValueOnce({ id: 'BLOCK001', block_type: 'content', content: 'Current text' }) // get_block (snapshot)
       .mockResolvedValueOnce({ id: 'BLOCK001', block_type: 'content', content: 'Old content' }) // edit_block
 
     render(<HistoryPanel blockId="BLOCK001" />)
@@ -445,7 +453,10 @@ describe('HistoryPanel', () => {
     })
 
     await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Reverted successfully')
+      expect(toast.success).toHaveBeenCalledWith(
+        'Reverted successfully',
+        expect.objectContaining({ action: expect.objectContaining({ label: 'Undo' }) }),
+      )
     })
   })
 
@@ -618,5 +629,90 @@ describe('HistoryPanel', () => {
 
     expect(await screen.findByText('delete_property')).toBeInTheDocument()
     expect(screen.getByText('Due Date')).toBeInTheDocument()
+  })
+
+  // ===========================================================================
+  // UX-275 sub-fix 4: restore success toast carries an Undo action that
+  // round-trips the block back to its pre-restore content.
+  // ===========================================================================
+  describe('UX-275 restore Undo round-trip', () => {
+    it('attaches an Undo action to the success toast that re-applies the snapshot', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke
+        .mockResolvedValueOnce(page) // get_block_history
+        .mockResolvedValueOnce({
+          id: 'BLOCK001',
+          block_type: 'content',
+          content: 'CURRENT TEXT',
+        }) // get_block (snapshot)
+        .mockResolvedValueOnce({ id: 'BLOCK001', block_type: 'content', content: 'Old content' }) // edit_block (restore)
+        .mockResolvedValueOnce({ id: 'BLOCK001', block_type: 'content', content: 'CURRENT TEXT' }) // edit_block (undo)
+
+      render(<HistoryPanel blockId="BLOCK001" />)
+
+      const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+      await user.click(restoreBtn)
+
+      const confirmBtn = await screen.findByRole('button', { name: /^Restore$/ })
+      await user.click(confirmBtn)
+
+      // Capture the toast.success call and inspect its action option.
+      let undoOnClick: (() => void) | undefined
+      await waitFor(() => {
+        const calls = vi.mocked(toast.success).mock.calls
+        const lastCall = calls.find((c) => c[0] === 'Reverted successfully')
+        expect(lastCall).toBeDefined()
+        const opts = lastCall?.[1] as { action?: { label: string; onClick: () => void } }
+        expect(opts?.action?.label).toBe('Undo')
+        undoOnClick = opts?.action?.onClick
+      })
+
+      // Fire the Undo action — the previously-captured snapshot is re-applied.
+      undoOnClick?.()
+
+      await waitFor(() => {
+        // The undo path calls editBlock with the captured pre-restore content.
+        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+          blockId: 'BLOCK001',
+          toText: 'CURRENT TEXT',
+        })
+      })
+
+      // And surfaces a confirmation toast.
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Restore undone')
+      })
+    })
+
+    it('omits the Undo action when the pre-restore snapshot fails to load', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke
+        .mockResolvedValueOnce(page) // get_block_history
+        .mockRejectedValueOnce(new Error('block not found')) // get_block fails
+        .mockResolvedValueOnce({ id: 'BLOCK001', block_type: 'content', content: 'Old content' }) // edit_block
+
+      render(<HistoryPanel blockId="BLOCK001" />)
+
+      const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+      await user.click(restoreBtn)
+
+      const confirmBtn = await screen.findByRole('button', { name: /^Restore$/ })
+      await user.click(confirmBtn)
+
+      // Toast still fires, but with no action option (single arg call form).
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Reverted successfully')
+      })
+    })
   })
 })

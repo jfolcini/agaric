@@ -13,7 +13,7 @@
 
 import { Filter, Plus, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import {
@@ -22,16 +22,56 @@ import {
   type GraphFilterType,
   getGraphFilterKey,
 } from '@/lib/graph-filters'
+import { logger } from '@/lib/logger'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
 import { FilterPill } from './ui/filter-pill'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
+import { ScrollArea } from './ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
+
+/**
+ * UX-270: localStorage key for persisting the user's graph filters across
+ * navigation. Stored as a JSON-serialised `GraphFilter[]`. Reads + writes are
+ * wrapped in `try/catch` to survive corrupted or unavailable storage (private
+ * browsing, quota exceeded, SSR), and guarded by `typeof window !==
+ * 'undefined'` so this component can render in non-browser test runners.
+ */
+const STORAGE_KEY = 'agaric:graph-filters'
 
 /** Tag shape accepted by the tag-dimension selector. Compatible with `TagCacheRow`. */
 export interface GraphFilterBarTag {
   tag_id: string
   name: string
+}
+
+/**
+ * Read the persisted filter list from localStorage. Returns `null` when no
+ * value is stored, when storage is unavailable (SSR), or when the stored value
+ * fails to parse as a `GraphFilter[]`.
+ */
+function readPersistedFilters(): GraphFilter[] | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return null
+    return parsed as GraphFilter[]
+  } catch (err) {
+    logger.warn('GraphFilterBar', 'Failed to read persisted filters', { key: STORAGE_KEY }, err)
+    return null
+  }
+}
+
+/** Write the current filter list to localStorage. No-ops on SSR / storage errors. */
+function writePersistedFilters(filters: GraphFilter[]): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(filters))
+  } catch (err) {
+    logger.warn('GraphFilterBar', 'Failed to persist filters', { key: STORAGE_KEY }, err)
+  }
 }
 
 export interface GraphFilterBarProps {
@@ -193,22 +233,31 @@ function AddFilterForm({
           {allTags.length === 0 ? (
             <p className="text-xs text-muted-foreground">{t('graph.filter.tagNoTags')}</p>
           ) : (
-            <div className="flex max-h-40 flex-col gap-1 overflow-y-auto">
-              {allTags.map((tag) => (
-                <label
-                  key={tag.tag_id}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-muted"
-                >
-                  <input
-                    type="checkbox"
-                    checked={tagIds.includes(tag.tag_id)}
-                    onChange={() => setTagIds((c) => toggleMultiValue(c, tag.tag_id))}
-                    aria-label={tag.name}
-                  />
-                  <span>{tag.name}</span>
-                </label>
-              ))}
-            </div>
+            // UX-270: replace bare `overflow-y-auto` with the shared ScrollArea
+            // primitive (AGENTS.md mandates ScrollArea for every scrollable
+            // container — see `SourcePageFilter` for the reference pattern).
+            <ScrollArea className="max-h-40">
+              <div className="flex flex-col gap-1">
+                {allTags.map((tag) => (
+                  <label
+                    key={tag.tag_id}
+                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-muted"
+                  >
+                    {/*
+                     * UX-270: the wrapping <label> element provides the
+                     * accessible name for the checkbox via its visible text,
+                     * so the redundant `aria-label={tag.name}` was dropped.
+                     */}
+                    <input
+                      type="checkbox"
+                      checked={tagIds.includes(tag.tag_id)}
+                      onChange={() => setTagIds((c) => toggleMultiValue(c, tag.tag_id))}
+                    />
+                    <span>{tag.name}</span>
+                  </label>
+                ))}
+              </div>
+            </ScrollArea>
           )}
         </fieldset>
       )}
@@ -315,6 +364,30 @@ export function GraphFilterBar({
 }: GraphFilterBarProps): React.ReactElement {
   const { t } = useTranslation()
   const [popoverOpen, setPopoverOpen] = useState(false)
+
+  // UX-270: hydrate persisted filters once on mount, then write to
+  // localStorage whenever the controlled `filters` prop changes. The write
+  // effect skips its very first run so it doesn't clobber the just-loaded
+  // persisted value with the parent's pre-hydration default (empty) state
+  // before the hydration dispatch has propagated through the parent.
+  const hasHydratedRef = useRef(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only hydration; onFiltersChange is intentionally excluded so the effect does not re-run when the parent recreates the callback
+  useEffect(() => {
+    const persisted = readPersistedFilters()
+    if (persisted !== null && persisted.length > 0) {
+      onFiltersChange(persisted)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!hasHydratedRef.current) {
+      // Skip the initial commit; the next change to `filters` (whether from
+      // hydration above or a user action) will be persisted normally.
+      hasHydratedRef.current = true
+      return
+    }
+    writePersistedFilters(filters)
+  }, [filters])
 
   const handleAdd = useCallback(
     (filter: GraphFilter) => {

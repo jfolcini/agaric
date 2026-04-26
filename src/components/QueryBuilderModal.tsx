@@ -26,7 +26,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { logger } from '../lib/logger'
 import { parseQueryExpression } from '../lib/query-utils'
+import { listPropertyDefs } from '../lib/tauri'
+import { cn } from '../lib/utils'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -73,6 +76,24 @@ export function QueryBuilderModal({
   const [propertyOperator, setPropertyOperator] = useState('eq')
   const [backlinkTarget, setBacklinkTarget] = useState('')
   const [showAsTable, setShowAsTable] = useState(false)
+  const [knownPropertyKeys, setKnownPropertyKeys] = useState<string[]>([])
+
+  // ---- Load known property definitions for datalist autocomplete + validation ----
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    listPropertyDefs()
+      .then((defs) => {
+        if (!cancelled) setKnownPropertyKeys(defs.map((d) => d.key))
+      })
+      .catch((err) => {
+        logger.warn('QueryBuilderModal', 'failed to load property definitions', undefined, err)
+        if (!cancelled) setKnownPropertyKeys([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
 
   // ---- Parse initial expression (for editing existing queries) ----
   useEffect(() => {
@@ -123,6 +144,19 @@ export function QueryBuilderModal({
     backlinkTarget,
     showAsTable,
   ])
+
+  // ---- Property-key validation (UX-274) ----
+  // Warn when the user enters a key that is not a known property definition.
+  // This is a soft warning — submission is not blocked because the property
+  // may be defined later or via another device. When `knownPropertyKeys` is
+  // empty (e.g. listPropertyDefs failed) we suppress the warning to avoid a
+  // false-positive on every key.
+  const propertyKeyTrimmed = propertyKey.trim()
+  const propertyKeyUnknown =
+    queryType === 'property' &&
+    propertyKeyTrimmed !== '' &&
+    knownPropertyKeys.length > 0 &&
+    !knownPropertyKeys.includes(propertyKeyTrimmed)
 
   const isValid = expression !== ''
   const isEditing = !!initialExpression
@@ -178,7 +212,21 @@ export function QueryBuilderModal({
               value={propertyKey}
               onChange={(e) => setPropertyKey(e.target.value)}
               placeholder={t('queryBuilder.propertyKeyPlaceholder')}
+              list="qb-prop-key-list"
+              aria-invalid={propertyKeyUnknown}
+              aria-describedby={propertyKeyUnknown ? 'qb-prop-key-warning' : undefined}
+              className={cn(propertyKeyUnknown && 'border-destructive')}
             />
+            <datalist id="qb-prop-key-list" data-testid="qb-prop-key-list">
+              {knownPropertyKeys.map((k) => (
+                <option key={k} value={k} />
+              ))}
+            </datalist>
+            {propertyKeyUnknown && (
+              <p id="qb-prop-key-warning" className="text-xs text-destructive" role="status">
+                {t('queryBuilder.propertyKeyUnknown', { key: propertyKeyTrimmed })}
+              </p>
+            )}
 
             <Label htmlFor="qb-prop-operator">{t('queryBuilder.propertyOperator')}</Label>
             <Select value={propertyOperator} onValueChange={setPropertyOperator}>

@@ -602,6 +602,49 @@ describe('HistoryListItem', () => {
       await user.click(screen.getByRole('button', { name: /restore to this point/i }))
       expect(onRowClick).not.toHaveBeenCalled()
     })
+
+    // -- UX-275 sub-fix 6: visible label on touch ----------------------------
+    it('renders a touch-only label next to the restore icon', () => {
+      renderInListbox(defaultProps())
+      const label = screen.getByTestId('restore-to-here-touch-label')
+      // Label is in the DOM but visually hidden on pointer:fine devices.
+      expect(label).toBeInTheDocument()
+      expect(label.className).toContain('hidden')
+      expect(label.className).toContain('[@media(pointer:coarse)]:inline')
+      // aria-hidden so SRs read aria-label, not the visible+aria-label duplicate.
+      expect(label).toHaveAttribute('aria-hidden', 'true')
+    })
+
+    it('does not render the touch label for non-reversible ops', () => {
+      renderInListbox(defaultProps({ isNonReversible: true }))
+      expect(screen.queryByTestId('restore-to-here-touch-label')).not.toBeInTheDocument()
+    })
+  })
+
+  // -- UX-275 sub-fix 5: visible focus-ring on the checkbox ------------------
+  describe('UX-275 checkbox focus styling', () => {
+    it('checkbox carries visible focus-ring utilities', () => {
+      renderInListbox(defaultProps())
+      const checkbox = screen.getByRole('checkbox')
+      // focus-visible:* utilities are present so keyboard focus is surfaced.
+      expect(checkbox.className).toContain('focus-visible:ring-[3px]')
+      expect(checkbox.className).toContain('focus-visible:ring-ring/50')
+    })
+
+    it('checkbox click still toggles selection without triggering row click', async () => {
+      // Regression guard: visible focus-ring must not break the existing
+      // dual interaction contract (checkbox onChange + row onClick coexist
+      // because checkbox onClick stopPropagation is intact).
+      const user = userEvent.setup()
+      const onRowClick = vi.fn()
+      const onToggleSelection = vi.fn()
+      renderInListbox(defaultProps({ onRowClick, onToggleSelection }))
+
+      await user.click(screen.getByRole('checkbox'))
+
+      expect(onToggleSelection).toHaveBeenCalledWith(0)
+      expect(onRowClick).not.toHaveBeenCalled()
+    })
   })
 
   // -- Rich content rendering (B-45) ----------------------------------------

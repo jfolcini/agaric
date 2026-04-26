@@ -239,18 +239,26 @@ export function HistoryListItem({
       aria-disabled={isNonReversible || undefined}
     >
       <div className="flex items-center gap-3 w-full">
-        {/* Checkbox */}
+        {/* Checkbox.
+            UX-275 sub-fix 5: keep both row-click and checkbox-click as active
+            selection paths (matches the existing test contract), but surface
+            a clearly visible focus-ring on the checkbox so keyboard users
+            can see when it owns focus and Space-toggle works deterministically. */}
         <input
           type="checkbox"
           checked={isSelected}
           disabled={isNonReversible}
           onChange={() => onToggleSelection(index)}
           onClick={(e) => e.stopPropagation()}
-          className="h-4 w-4 shrink-0 rounded border-border [@media(pointer:coarse)]:size-11"
+          className={cn(
+            'h-4 w-4 shrink-0 rounded border-border [@media(pointer:coarse)]:size-11',
+            'focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-offset-1',
+          )}
           aria-label={t('history.selectOperationLabel', {
             opType: entry.op_type,
             seq: entry.seq,
           })}
+          data-testid={`history-checkbox-${index}`}
         />
 
         {/* Shared core content */}
@@ -261,7 +269,12 @@ export function HistoryListItem({
           onToggleDiff={onToggleDiff}
         />
 
-        {/* Restore to here button — only for reversible ops */}
+        {/* Restore to here button — only for reversible ops.
+            UX-275 sub-fix 6: tooltips don't fire on touch (no hover), so an
+            icon-only affordance is unlabelled there. The trailing span is
+            sr-only on pointer:fine and not-sr-only on pointer:coarse — the
+            text appears beside the icon on touch devices only, preserving
+            the compact desktop layout. */}
         {!isNonReversible && (
           <TooltipProvider>
             <Tooltip>
@@ -277,6 +290,15 @@ export function HistoryListItem({
                   aria-label={t('history.restoreToHereLabel')}
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
+                  {/* Visible only on touch (pointer:coarse) so SRs that
+                      already read aria-label aren't fed a duplicate. */}
+                  <span
+                    aria-hidden="true"
+                    className="hidden [@media(pointer:coarse)]:inline ml-1 text-xs"
+                    data-testid="restore-to-here-touch-label"
+                  >
+                    {t('history.restoreToHereTouchLabel')}
+                  </span>
                 </Button>
               </TooltipTrigger>
               <TooltipContent>

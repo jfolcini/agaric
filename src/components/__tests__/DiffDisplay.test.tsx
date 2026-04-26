@@ -264,4 +264,146 @@ describe('DiffDisplay', () => {
       expect(toggle.textContent).toContain('401')
     })
   })
+
+  // -- UX-275 sub-fix 1: hunk navigation -----------------------------------
+  describe('UX-275 hunk navigation', () => {
+    it('wraps the diff in a labelled region', () => {
+      const spans: DiffSpan[] = [makeSpan('Equal', 'unchanged')]
+
+      render(<DiffDisplay spans={spans} />)
+
+      // The diff region is a labelled landmark via aria-label.
+      expect(screen.getByRole('region', { name: /diff content/i })).toBeInTheDocument()
+    })
+
+    it('does not render hunk-nav buttons when there are no changes', () => {
+      // All-Equal diff has no hunks — nav UI must not appear.
+      const spans: DiffSpan[] = [makeSpan('Equal', 'a'), makeSpan('Equal', 'b')]
+
+      render(<DiffDisplay spans={spans} />)
+
+      expect(screen.queryByTestId('diff-prev-hunk-btn')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('diff-next-hunk-btn')).not.toBeInTheDocument()
+    })
+
+    it('renders prev/next buttons and a counter when at least one hunk exists', () => {
+      const spans: DiffSpan[] = [
+        makeSpan('Equal', 'a '),
+        makeSpan('Insert', 'one'),
+        makeSpan('Equal', ' b '),
+        makeSpan('Delete', 'two'),
+        makeSpan('Equal', ' c'),
+      ]
+
+      render(<DiffDisplay spans={spans} />)
+
+      expect(screen.getByTestId('diff-prev-hunk-btn')).toBeInTheDocument()
+      expect(screen.getByTestId('diff-next-hunk-btn')).toBeInTheDocument()
+      // Two non-Equal runs → 2 hunks.
+      expect(screen.getByTestId('diff-hunk-counter')).toHaveTextContent(/1\s+of\s+2\s+changes/i)
+    })
+
+    it('groups consecutive Insert/Delete spans into a single hunk', () => {
+      // Insert directly followed by Delete (no Equal between) is one hunk.
+      const spans: DiffSpan[] = [
+        makeSpan('Equal', 'before '),
+        makeSpan('Insert', 'inserted'),
+        makeSpan('Delete', 'deleted'),
+        makeSpan('Equal', ' after'),
+      ]
+
+      render(<DiffDisplay spans={spans} />)
+
+      expect(screen.getByTestId('diff-hunk-counter')).toHaveTextContent(/1\s+of\s+1\s+changes/i)
+    })
+
+    it('disables prev at first hunk and next at last hunk', async () => {
+      const user = userEvent.setup()
+      const spans: DiffSpan[] = [
+        makeSpan('Equal', 'a '),
+        makeSpan('Insert', 'one'),
+        makeSpan('Equal', ' b '),
+        makeSpan('Delete', 'two'),
+        makeSpan('Equal', ' c'),
+      ]
+
+      render(<DiffDisplay spans={spans} />)
+
+      const prev = screen.getByTestId('diff-prev-hunk-btn') as HTMLButtonElement
+      const next = screen.getByTestId('diff-next-hunk-btn') as HTMLButtonElement
+
+      // Initial: at first hunk → prev disabled, next enabled.
+      expect(prev).toBeDisabled()
+      expect(next).not.toBeDisabled()
+
+      await user.click(next)
+
+      // Now at last hunk → next disabled, prev enabled.
+      expect(prev).not.toBeDisabled()
+      expect(next).toBeDisabled()
+
+      // Step back to first hunk.
+      await user.click(prev)
+      expect(prev).toBeDisabled()
+      expect(next).not.toBeDisabled()
+    })
+
+    it('scrolls the active hunk into view when next/prev is clicked', async () => {
+      const user = userEvent.setup()
+      const scrollIntoViewSpy = vi
+        .spyOn(HTMLElement.prototype, 'scrollIntoView')
+        .mockImplementation(() => {})
+
+      const spans: DiffSpan[] = [
+        makeSpan('Equal', 'a '),
+        makeSpan('Insert', 'one'),
+        makeSpan('Equal', ' b '),
+        makeSpan('Delete', 'two'),
+        makeSpan('Equal', ' c'),
+      ]
+
+      render(<DiffDisplay spans={spans} />)
+
+      await user.click(screen.getByTestId('diff-next-hunk-btn'))
+
+      expect(scrollIntoViewSpy).toHaveBeenCalledWith({ block: 'nearest', behavior: 'smooth' })
+
+      scrollIntoViewSpy.mockRestore()
+    })
+
+    it('counter updates as the user steps through hunks', async () => {
+      const user = userEvent.setup()
+      const spans: DiffSpan[] = [
+        makeSpan('Insert', 'one'),
+        makeSpan('Equal', ' '),
+        makeSpan('Delete', 'two'),
+        makeSpan('Equal', ' '),
+        makeSpan('Insert', 'three'),
+      ]
+
+      render(<DiffDisplay spans={spans} />)
+
+      const counter = screen.getByTestId('diff-hunk-counter')
+      expect(counter).toHaveTextContent(/1\s+of\s+3\s+changes/i)
+
+      await user.click(screen.getByTestId('diff-next-hunk-btn'))
+      expect(counter).toHaveTextContent(/2\s+of\s+3\s+changes/i)
+
+      await user.click(screen.getByTestId('diff-next-hunk-btn'))
+      expect(counter).toHaveTextContent(/3\s+of\s+3\s+changes/i)
+    })
+
+    it('hunk-nav region has no a11y violations', async () => {
+      const spans: DiffSpan[] = [
+        makeSpan('Equal', 'before '),
+        makeSpan('Insert', 'changed'),
+        makeSpan('Equal', ' after'),
+      ]
+
+      const { container } = render(<DiffDisplay spans={spans} />)
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
 })

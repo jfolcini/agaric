@@ -2,22 +2,57 @@ import type { DraggableAttributes, DraggableSyntheticListeners } from '@dnd-kit/
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { LucideIcon } from 'lucide-react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '../../lib/i18n'
 
-// Mock lucide-react icons
-vi.mock('lucide-react', () => ({
-  Clock: (props: { className?: string }) => (
-    <svg data-testid="clock-icon" className={props.className} />
-  ),
-  GripVertical: (props: { className?: string }) => (
-    <svg data-testid="grip-vertical-icon" className={props.className} />
-  ),
-  Trash2: (props: { className?: string }) => (
-    <svg data-testid="trash-icon" className={props.className} />
-  ),
-}))
+// Mock lucide-react icons. We extend the original module so transitive
+// dependencies (e.g. Sheet's close button → XIcon) still resolve, while
+// pinning the icons we assert on to predictable test ids.
+vi.mock('lucide-react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('lucide-react')>()
+  return {
+    ...actual,
+    Clock: (props: { className?: string }) => (
+      <svg data-testid="clock-icon" className={props.className} />
+    ),
+    GripVertical: (props: { className?: string }) => (
+      <svg data-testid="grip-vertical-icon" className={props.className} />
+    ),
+    MoreVertical: (props: { className?: string }) => (
+      <svg data-testid="more-vertical-icon" className={props.className} />
+    ),
+    Trash2: (props: { className?: string }) => (
+      <svg data-testid="trash-icon" className={props.className} />
+    ),
+  }
+})
+
+/**
+ * Override `window.matchMedia` so `useIsTouch()` resolves deterministically.
+ *
+ * Returns the original descriptor so tests can restore it on teardown — the
+ * shared test-setup mock is not a Vitest spy, so we cannot rely on
+ * `vi.restoreAllMocks()` here.
+ */
+function setMatchMedia(isTouch: boolean) {
+  const original = Object.getOwnPropertyDescriptor(window, 'matchMedia')
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: isTouch && query.includes('coarse'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  })
+  return original
+}
 
 import { BlockGutterControls, GutterButton } from '../BlockGutterControls'
 import { TooltipProvider } from '../ui/tooltip'
@@ -292,6 +327,145 @@ describe('BlockGutterControls accessibility', () => {
     const { container } = renderWithTooltip(<BlockGutterControls blockId="B1" />)
 
     const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
+
+/* ── Touch (pointer: coarse) — UX-281 overflow Sheet ─────────────── */
+
+describe('BlockGutterControls (touch / pointer:coarse)', () => {
+  let originalMatchMedia: PropertyDescriptor | undefined
+
+  beforeEach(() => {
+    originalMatchMedia = setMatchMedia(true)
+  })
+
+  afterEach(() => {
+    if (originalMatchMedia) {
+      Object.defineProperty(window, 'matchMedia', originalMatchMedia)
+    }
+  })
+
+  it('renders only drag handle and overflow button (not inline history/delete)', () => {
+    renderWithTooltip(
+      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
+    )
+
+    expect(screen.getByTestId('drag-handle')).toBeInTheDocument()
+    expect(screen.getByTestId('more-actions')).toBeInTheDocument()
+    // Inline history/delete are NOT rendered on touch — they live in the Sheet.
+    expect(screen.queryByTestId('clock-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('trash-icon')).not.toBeInTheDocument()
+    expect(screen.getByTestId('more-vertical-icon')).toBeInTheDocument()
+  })
+
+  it('overflow button has the localized aria-label and dialog hint', () => {
+    renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
+
+    const overflow = screen.getByTestId('more-actions')
+    expect(overflow).toHaveAttribute('aria-label', t('block.moreActionsLabel'))
+    expect(overflow).toHaveAttribute('aria-haspopup', 'dialog')
+    expect(overflow).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('does not render the overflow button when no secondary actions are wired', () => {
+    renderWithTooltip(<BlockGutterControls blockId="B1" />)
+
+    expect(screen.getByTestId('drag-handle')).toBeInTheDocument()
+    expect(screen.queryByTestId('more-actions')).not.toBeInTheDocument()
+  })
+
+  it('tapping overflow opens the Sheet with labelled History and Delete rows', async () => {
+    const user = userEvent.setup()
+    renderWithTooltip(
+      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
+    )
+
+    await user.click(screen.getByTestId('more-actions'))
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+    expect(screen.getByText(t('block.actionsSheetTitle'))).toBeInTheDocument()
+    // Sheet rows expose the same labels as desktop tooltips.
+    expect(screen.getByTestId('more-actions-history')).toHaveTextContent(t('block.history'))
+    expect(screen.getByTestId('more-actions-delete')).toHaveTextContent(t('block.delete'))
+  })
+
+  it('History row in the Sheet calls onShowHistory(blockId)', async () => {
+    const user = userEvent.setup()
+    const onShowHistory = vi.fn()
+    renderWithTooltip(
+      <BlockGutterControls blockId="B_HX" onShowHistory={onShowHistory} onDelete={vi.fn()} />,
+    )
+
+    await user.click(screen.getByTestId('more-actions'))
+    await user.click(await screen.findByTestId('more-actions-history'))
+
+    expect(onShowHistory).toHaveBeenCalledTimes(1)
+    expect(onShowHistory).toHaveBeenCalledWith('B_HX')
+  })
+
+  it('Delete row in the Sheet calls onDelete(blockId)', async () => {
+    const user = userEvent.setup()
+    const onDelete = vi.fn()
+    renderWithTooltip(
+      <BlockGutterControls blockId="B_DEL" onDelete={onDelete} onShowHistory={vi.fn()} />,
+    )
+
+    await user.click(screen.getByTestId('more-actions'))
+    await user.click(await screen.findByTestId('more-actions-delete'))
+
+    expect(onDelete).toHaveBeenCalledTimes(1)
+    expect(onDelete).toHaveBeenCalledWith('B_DEL')
+  })
+
+  it('only renders the History row when onDelete is undefined', async () => {
+    const user = userEvent.setup()
+    renderWithTooltip(<BlockGutterControls blockId="B1" onShowHistory={vi.fn()} />)
+
+    await user.click(screen.getByTestId('more-actions'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('more-actions-history')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('more-actions-delete')).not.toBeInTheDocument()
+  })
+
+  it('only renders the Delete row when onShowHistory is undefined', async () => {
+    const user = userEvent.setup()
+    renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
+
+    await user.click(screen.getByTestId('more-actions'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('more-actions-delete')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('more-actions-history')).not.toBeInTheDocument()
+  })
+
+  it('passes axe audit in touch mode (closed Sheet)', async () => {
+    const { container } = renderWithTooltip(
+      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
+    )
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('passes axe audit in touch mode (open Sheet)', async () => {
+    const user = userEvent.setup()
+    const { baseElement } = renderWithTooltip(
+      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
+    )
+
+    await user.click(screen.getByTestId('more-actions'))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+
+    // Use baseElement so axe sees the portalled Sheet content.
+    const results = await axe(baseElement)
     expect(results).toHaveNoViolations()
   })
 })

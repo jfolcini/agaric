@@ -266,9 +266,12 @@ describe('GraphView', () => {
       expect(graphView).toBeInTheDocument()
     })
 
-    const svg = screen.getByRole('img', { name: 'Page Relationships' })
+    // UX-270: SVG no longer has role="img"; query by data-testid instead.
+    const svg = screen.getByTestId('graph-svg')
     expect(svg).toBeInTheDocument()
     expect(svg.tagName).toBe('svg')
+    expect(svg).toHaveAttribute('aria-label', 'Page Relationships')
+    expect(svg).not.toHaveAttribute('role')
   })
 
   it('invokes d3 APIs to set up rendering, zoom, and drag (worker path)', async () => {
@@ -515,7 +518,7 @@ describe('GraphView', () => {
       expect(screen.getByTestId('graph-view')).toBeInTheDocument()
     })
 
-    const svg = screen.getByRole('img', { name: 'Page Relationships' })
+    const svg = screen.getByTestId('graph-svg')
     expect(svg).toHaveAttribute('tabindex', '0')
   })
 
@@ -526,6 +529,38 @@ describe('GraphView', () => {
   // SVG inside the `.graph-view` (relative) ancestor so it fills the full
   // available height regardless of the percentage-height resolution quirk.
   // Class-list regression — do not weaken.
+  // UX-270: dropping `role="img"` from the SVG. The graph's nodes are
+  // interactive (`role="button"` + Enter/Space activation in
+  // useGraphSimulation), and `role="img"` on a container of interactive
+  // elements is incorrect — ATs treat the whole region as one opaque
+  // graphic. The accessible name remains via `aria-label`, but no wrapper
+  // role is set so the descendants surface naturally.
+  it('SVG has no wrapper role (UX-270 — interactive descendants)', async () => {
+    const pagesResponse = {
+      items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+      next_cursor: null,
+      has_more: false,
+    }
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_page_links') return Promise.resolve([])
+      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
+      return Promise.resolve(null)
+    })
+
+    render(<GraphView />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+    })
+
+    const svg = screen.getByTestId('graph-svg')
+    expect(svg).not.toHaveAttribute('role')
+    expect(svg).toHaveAttribute('aria-label', 'Page Relationships')
+  })
+
   it('SVG is absolutely positioned to fill the relative parent (UX-244)', async () => {
     const pagesResponse = {
       items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
@@ -550,7 +585,7 @@ describe('GraphView', () => {
     const container = screen.getByTestId('graph-view')
     expect(container).toHaveClass('relative')
 
-    const svg = screen.getByRole('img', { name: 'Page Relationships' })
+    const svg = screen.getByTestId('graph-svg')
     expect(svg).toHaveClass('absolute')
     expect(svg).toHaveClass('inset-0')
     expect(svg).toHaveClass('h-full')
@@ -728,7 +763,7 @@ describe('GraphView', () => {
         expect(screen.getByTestId('graph-view')).toBeInTheDocument()
       })
 
-      const svg = screen.getByRole('img', { name: 'Page Relationships' })
+      const svg = screen.getByTestId('graph-svg')
       fireEvent.keyDown(svg, { key: '+' })
 
       // biome-ignore lint/suspicious/noExplicitAny: d3 zoom mock access in test
@@ -757,7 +792,7 @@ describe('GraphView', () => {
         expect(screen.getByTestId('graph-view')).toBeInTheDocument()
       })
 
-      const svg = screen.getByRole('img', { name: 'Page Relationships' })
+      const svg = screen.getByTestId('graph-svg')
       fireEvent.keyDown(svg, { key: '-' })
 
       // biome-ignore lint/suspicious/noExplicitAny: d3 zoom mock access in test
@@ -786,7 +821,7 @@ describe('GraphView', () => {
         expect(screen.getByTestId('graph-view')).toBeInTheDocument()
       })
 
-      const svg = screen.getByRole('img', { name: 'Page Relationships' })
+      const svg = screen.getByTestId('graph-svg')
       fireEvent.keyDown(svg, { key: '0' })
 
       // biome-ignore lint/suspicious/noExplicitAny: d3 zoom mock access in test
@@ -821,7 +856,7 @@ describe('GraphView', () => {
           expect(screen.getByTestId('graph-view')).toBeInTheDocument()
         })
 
-        const svg = screen.getByRole('img', { name: 'Page Relationships' })
+        const svg = screen.getByTestId('graph-svg')
 
         // Old `+` should NOT fire zoom-in after rebinding
         fireEvent.keyDown(svg, { key: '+' })

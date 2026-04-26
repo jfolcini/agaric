@@ -33,7 +33,7 @@ import { QueryBuilderModal } from '../QueryBuilderModal'
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
-vi.mocked(invoke)
+const mockedInvoke = vi.mocked(invoke)
 
 describe('QueryBuilderModal', () => {
   const defaultProps = {
@@ -44,6 +44,10 @@ describe('QueryBuilderModal', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_property_defs') return []
+      return null
+    })
   })
 
   it('renders with 3 query type buttons', () => {
@@ -266,6 +270,172 @@ describe('QueryBuilderModal', () => {
     const { container } = render(<QueryBuilderModal {...defaultProps} />)
 
     await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // UX-274: property-key validation against listPropertyDefs()
+  // -----------------------------------------------------------------------
+  describe('property-key validation', () => {
+    it('populates the datalist with known property definitions', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_property_defs') {
+          return [
+            { key: 'priority', value_type: 'number', options: null, created_at: '2026-01-01' },
+            { key: 'status', value_type: 'text', options: null, created_at: '2026-01-01' },
+          ]
+        }
+        return null
+      })
+
+      const user = userEvent.setup()
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      await user.click(screen.getByRole('radio', { name: /^Property$/i }))
+
+      // Datalist exists with 2 options
+      await waitFor(() => {
+        const datalist = screen.getByTestId('qb-prop-key-list')
+        const options = datalist.querySelectorAll('option')
+        expect(options.length).toBe(2)
+        expect((options[0] as HTMLOptionElement).value).toBe('priority')
+        expect((options[1] as HTMLOptionElement).value).toBe('status')
+      })
+
+      // Input is wired to the datalist
+      const keyInput = screen.getByLabelText(/property key/i) as HTMLInputElement
+      expect(keyInput.getAttribute('list')).toBe('qb-prop-key-list')
+    })
+
+    it('shows inline warning when entered key is not a known definition', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_property_defs') {
+          return [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }]
+        }
+        return null
+      })
+
+      const user = userEvent.setup()
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      await user.click(screen.getByRole('radio', { name: /^Property$/i }))
+
+      // Wait for definitions to load before typing
+      await waitFor(() => {
+        const datalist = screen.getByTestId('qb-prop-key-list')
+        expect(datalist.querySelectorAll('option').length).toBe(1)
+      })
+
+      const keyInput = screen.getByLabelText(/property key/i) as HTMLInputElement
+      await user.type(keyInput, 'unknown_key')
+
+      // Warning is announced (role=status) and input is marked invalid
+      expect(screen.getByText(/not yet defined/i)).toBeInTheDocument()
+      expect(keyInput).toHaveAttribute('aria-invalid', 'true')
+      expect(keyInput.className).toContain('border-destructive')
+    })
+
+    it('does NOT show warning for a known property key', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_property_defs') {
+          return [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }]
+        }
+        return null
+      })
+
+      const user = userEvent.setup()
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      await user.click(screen.getByRole('radio', { name: /^Property$/i }))
+
+      await waitFor(() => {
+        const datalist = screen.getByTestId('qb-prop-key-list')
+        expect(datalist.querySelectorAll('option').length).toBe(1)
+      })
+
+      const keyInput = screen.getByLabelText(/property key/i) as HTMLInputElement
+      await user.type(keyInput, 'priority')
+
+      expect(screen.queryByText(/not yet defined/i)).not.toBeInTheDocument()
+      expect(keyInput).toHaveAttribute('aria-invalid', 'false')
+    })
+
+    it('suppresses warning when listPropertyDefs() returns empty (loader fail-safe)', async () => {
+      // beforeEach already returns [] for list_property_defs
+      const user = userEvent.setup()
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      await user.click(screen.getByRole('radio', { name: /^Property$/i }))
+
+      const keyInput = screen.getByLabelText(/property key/i) as HTMLInputElement
+      await user.type(keyInput, 'anything')
+
+      // No warning when there are zero known keys (avoids false positive)
+      expect(screen.queryByText(/not yet defined/i)).not.toBeInTheDocument()
+      expect(keyInput).toHaveAttribute('aria-invalid', 'false')
+    })
+
+    it('still allows submission of an unknown key (soft warning, not blocking)', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_property_defs') {
+          return [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }]
+        }
+        return null
+      })
+
+      const user = userEvent.setup()
+      const onSave = vi.fn()
+      render(<QueryBuilderModal {...defaultProps} onSave={onSave} />)
+
+      await user.click(screen.getByRole('radio', { name: /^Property$/i }))
+
+      await waitFor(() => {
+        const datalist = screen.getByTestId('qb-prop-key-list')
+        expect(datalist.querySelectorAll('option').length).toBe(1)
+      })
+
+      await user.type(screen.getByLabelText(/property key/i), 'future_key')
+
+      // The Insert button stays enabled despite the warning
+      const insertBtn = screen.getByRole('button', { name: /insert query/i })
+      expect(insertBtn).not.toBeDisabled()
+
+      await user.click(insertBtn)
+      expect(onSave).toHaveBeenCalledWith('type:property key:future_key')
+    })
+
+    it('does NOT call list_property_defs while modal is closed', async () => {
+      render(<QueryBuilderModal {...defaultProps} open={false} />)
+      // Allow any pending microtasks to settle
+      await waitFor(() => {
+        const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'list_property_defs')
+        expect(calls.length).toBe(0)
+      })
+    })
+
+    it('warning region has no a11y violations', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_property_defs') {
+          return [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }]
+        }
+        return null
+      })
+
+      const user = userEvent.setup()
+      const { container } = render(<QueryBuilderModal {...defaultProps} />)
+
+      await user.click(screen.getByRole('radio', { name: /^Property$/i }))
+
+      await waitFor(() => {
+        const datalist = screen.getByTestId('qb-prop-key-list')
+        expect(datalist.querySelectorAll('option').length).toBe(1)
+      })
+
+      await user.type(screen.getByLabelText(/property key/i), 'unknown_key')
+      expect(screen.getByText(/not yet defined/i)).toBeInTheDocument()
+
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })

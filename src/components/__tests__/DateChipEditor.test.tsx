@@ -174,6 +174,48 @@ describe('DateChipEditor', () => {
     expect(screen.getByText('Could not parse date')).toBeInTheDocument()
   })
 
+  // UX-274: invalid input also marks the input itself as invalid
+  it('sets aria-invalid + border-destructive on the input when parse fails', async () => {
+    const user = userEvent.setup()
+
+    render(<DateChipEditor blockId="B1" dateType="due" currentDate={null} />)
+
+    const input = screen.getByRole('textbox')
+
+    // Helper: detect the unconditional `border-destructive` class (separate from
+    // the `aria-invalid:border-destructive` Tailwind variant that the Input
+    // primitive bakes in for free).
+    const hasStandaloneBorderDestructive = (el: HTMLElement) =>
+      el.className.split(/\s+/).includes('border-destructive')
+
+    // Initial state: not invalid
+    expect(input).toHaveAttribute('aria-invalid', 'false')
+    expect(hasStandaloneBorderDestructive(input)).toBe(false)
+
+    await user.type(input, 'xyz')
+
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(hasStandaloneBorderDestructive(input)).toBe(true)
+  })
+
+  // UX-274: clearing the input restores the valid state
+  it('clears aria-invalid when input becomes empty', async () => {
+    const user = userEvent.setup()
+
+    render(<DateChipEditor blockId="B1" dateType="due" currentDate={null} />)
+
+    const input = screen.getByRole('textbox')
+    const hasStandaloneBorderDestructive = (el: HTMLElement) =>
+      el.className.split(/\s+/).includes('border-destructive')
+
+    await user.type(input, 'xyz')
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+
+    await user.clear(input)
+    expect(input).toHaveAttribute('aria-invalid', 'false')
+    expect(hasStandaloneBorderDestructive(input)).toBe(false)
+  })
+
   // 5. axe a11y audit
   it('a11y: no violations', async () => {
     const { container } = render(

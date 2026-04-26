@@ -198,7 +198,24 @@ export function QueryResult({
               <Spinner size="sm" />
             </div>
           )}
-          {error && <div className="px-3 py-2 text-xs text-destructive">{error}</div>}
+          {error && (
+            <div
+              className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-destructive"
+              role="alert"
+            >
+              <span>{error}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchResults}
+                aria-label={t('action.retry')}
+                disabled={loading || loadingMore}
+                aria-busy={loading || loadingMore}
+              >
+                {t('action.retry')}
+              </Button>
+            </div>
+          )}
           {!loading && !error && results.length === 0 && (
             <EmptyState message={t('query.noResults')} compact />
           )}
