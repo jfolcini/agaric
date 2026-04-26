@@ -18,8 +18,12 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
 
     // 1. Get current content (combined with step 2 in the same tx to avoid
     //    an extra connection round-trip).
+    //
+    // Filter `is_conflict = 0` so conflict-copy source blocks do not contribute
+    // outbound links to `block_links` — mirrors `cache/block_tag_refs.rs` and
+    // prevents conflict copies from leaking into `list_backlinks` (M-14).
     let row = sqlx::query!(
-        "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL AND is_conflict = 0",
         block_id,
     )
     .fetch_optional(&mut *tx)
@@ -103,8 +107,12 @@ pub async fn reindex_block_links_split(
     // Read phase from read_pool
 
     // 1. Get current content
+    //
+    // Filter `is_conflict = 0` so conflict-copy source blocks do not contribute
+    // outbound links to `block_links` — mirrors the single-pool variant above
+    // and prevents conflict copies from leaking into `list_backlinks` (M-14).
     let row = sqlx::query!(
-        "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL AND is_conflict = 0",
         block_id,
     )
     .fetch_optional(read_pool)

@@ -94,9 +94,9 @@ use sqlx::SqlitePool;
 
 /// Rebuilds all read-path caches in sequence.
 ///
-/// Calls [`rebuild_block_tag_refs_cache`], [`rebuild_tags_cache`],
-/// [`rebuild_pages_cache`], [`rebuild_agenda_cache`],
-/// [`rebuild_projected_agenda_cache`], and [`rebuild_page_ids`].
+/// Calls [`rebuild_page_ids`], [`rebuild_block_tag_refs_cache`],
+/// [`rebuild_tags_cache`], [`rebuild_pages_cache`], [`rebuild_agenda_cache`],
+/// and [`rebuild_projected_agenda_cache`].
 /// Each runs in its own transaction so a failure in a later cache does
 /// not roll back earlier ones.
 ///
@@ -104,17 +104,26 @@ use sqlx::SqlitePool;
 /// included here — they operate on a single block and are called
 /// per-block during materialisation.
 ///
+/// Ordering note: `rebuild_page_ids` runs **first** (M-15) because
+/// `rebuild_agenda_cache` and `rebuild_projected_agenda_cache` both
+/// consult `b.page_id` to apply the FEAT-5a template-page exclusion
+/// (`NOT EXISTS (... tp.block_id = b.page_id AND tp.key = 'template')`).
+/// Running them before page_ids is populated would silently include or
+/// exclude template-page blocks until something else triggered another
+/// rebuild — eventual consistency, not data loss, but visible to the
+/// user. The snapshot/restore enqueue array mirrors this ordering.
+///
 /// Ordering note: `rebuild_block_tag_refs_cache` runs **before**
 /// `rebuild_tags_cache` because the tags-cache usage-count subquery
 /// UNIONs `block_tag_refs` into the count — populating the inline-ref
 /// rows first lets the tags-cache rebuild observe them on the same
 /// invocation.
 pub async fn rebuild_all_caches(pool: &SqlitePool) -> Result<(), AppError> {
+    rebuild_page_ids(pool).await?;
     rebuild_block_tag_refs_cache(pool).await?;
     rebuild_tags_cache(pool).await?;
     rebuild_pages_cache(pool).await?;
     rebuild_agenda_cache(pool).await?;
     rebuild_projected_agenda_cache(pool).await?;
-    rebuild_page_ids(pool).await?;
     Ok(())
 }

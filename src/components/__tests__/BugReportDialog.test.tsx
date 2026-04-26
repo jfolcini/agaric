@@ -230,9 +230,7 @@ describe('BugReportDialog', () => {
     })
     const openCall = openUrlMock.mock.calls[0]
     expect(openCall).toBeDefined()
-    expect(openCall?.[0]).toMatch(
-      /^https:\/\/github\.com\/jfolcini\/agaric\/issues\/new\?/,
-    )
+    expect(openCall?.[0]).toMatch(/^https:\/\/github\.com\/jfolcini\/agaric\/issues\/new\?/)
     expect(downloadBlobMock).not.toHaveBeenCalled()
     expect(mockedToastSuccess).toHaveBeenCalledWith(t('bugReport.submitted'))
     expect(onOpenChange).toHaveBeenCalledWith(false)

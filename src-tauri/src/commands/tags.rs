@@ -38,6 +38,16 @@ pub async fn add_tag_inner(
     block_id: String,
     tag_id: String,
 ) -> Result<TagResponse, AppError> {
+    // L-34: defence-in-depth guard against pathological inputs (MCP tool, sync
+    // replay, scripted import) where a block tries to tag itself. Reject up-front
+    // before any DB work; otherwise `tag_inheritance::propagate_tag_to_descendants`
+    // could re-enter if the tag also appears in its own ancestry.
+    if block_id == tag_id {
+        return Err(AppError::InvalidOperation(
+            "a block cannot tag itself".into(),
+        ));
+    }
+
     // 1. Build OpPayload
     let payload = OpPayload::AddTag(AddTagPayload {
         block_id: BlockId::from_trusted(&block_id),

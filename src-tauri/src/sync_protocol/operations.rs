@@ -97,8 +97,12 @@ pub async fn apply_remote_ops(
     };
     let mut to_materialize = Vec::new();
 
-    // Convert all transfers to records and verify hashes upfront.
-    // Reject the entire batch on the first mismatch.
+    // Convert all transfers to records and verify them upfront.
+    // All-or-nothing contract: any single hash mismatch OR malformed JSON
+    // payload rejects the entire batch. We refuse to leak partial state from
+    // a buggy peer build (e.g., a serializer regression for one op type)
+    // into our op log, which would silently desynchronise op_log from the
+    // materialized state.
     let records: Vec<OpRecord> = ops.into_iter().map(OpRecord::from).collect();
     for record in &records {
         verify_op_record(record).map_err(|msg| {
@@ -109,22 +113,28 @@ pub async fn apply_remote_ops(
             );
             AppError::InvalidOperation(format!("integrity check failed: {msg}"))
         })?;
+
+        // Validate payload is well-formed JSON before any insertion.
+        // Treated identically to a hash mismatch: the whole batch is
+        // rejected so the op log never contains an op with an unparseable
+        // payload.
+        if let Err(e) = serde_json::from_str::<serde_json::Value>(&record.payload) {
+            tracing::warn!(
+                device_id = %record.device_id,
+                seq = record.seq,
+                "rejecting batch: op has invalid JSON payload: {e}"
+            );
+            return Err(AppError::InvalidOperation(format!(
+                "invalid JSON payload for op (device_id={}, seq={}): {e}",
+                record.device_id, record.seq
+            )));
+        }
     }
 
     // Wrap all inserts in a single transaction to reduce per-op overhead.
     let mut tx = pool.begin().await?;
 
     for record in records {
-        // Validate payload is well-formed JSON before insertion
-        if let Err(e) = serde_json::from_str::<serde_json::Value>(&record.payload) {
-            tracing::warn!(
-                device_id = %record.device_id,
-                seq = record.seq,
-                "skipping op with invalid payload: {e}"
-            );
-            continue;
-        }
-
         // INSERT OR IGNORE — duplicate delivery is a no-op
         let r = sqlx::query(
             "INSERT OR IGNORE INTO op_log \

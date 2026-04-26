@@ -218,3 +218,32 @@ async fn compact_op_log_cmd_noop_when_no_old_ops() {
 
     mat.shutdown();
 }
+
+#[tokio::test]
+async fn compact_op_log_cmd_rejects_retention_days_zero() {
+    // M-38 regression: retention_days = 0 must be rejected up-front with
+    // AppError::Validation("retention_days.too_small") before any DB work
+    // (otherwise cutoff = now() and the entire op log is purged).
+    let (pool, _dir) = test_pool().await;
+
+    let result = compact_op_log_cmd_inner(&pool, DEV, 0).await;
+
+    let err = result.expect_err("retention_days = 0 should be rejected");
+    assert!(
+        matches!(&err, AppError::Validation(msg) if msg == "retention_days.too_small"),
+        "expected AppError::Validation(\"retention_days.too_small\"), got {err:?}"
+    );
+
+    // Belt-and-braces: also reject any value below the floor.
+    let result = compact_op_log_cmd_inner(
+        &pool,
+        DEV,
+        crate::commands::compaction::MIN_RETENTION_DAYS - 1,
+    )
+    .await;
+    let err = result.expect_err("retention_days below floor should be rejected");
+    assert!(
+        matches!(&err, AppError::Validation(msg) if msg == "retention_days.too_small"),
+        "expected AppError::Validation(\"retention_days.too_small\"), got {err:?}"
+    );
+}

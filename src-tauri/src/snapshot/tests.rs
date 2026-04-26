@@ -2574,6 +2574,131 @@ async fn apply_snapshot_rebuilds_caches() {
 }
 
 // =======================================================================
+// apply_snapshot_excludes_template_page_blocks_from_agenda (M-15)
+// =======================================================================
+
+/// M-15 regression: after `apply_snapshot()`, the agenda must immediately
+/// exclude blocks whose page is template-tagged (a page with property
+/// `template`). Both `rebuild_agenda_cache` and `rebuild_projected_agenda_cache`
+/// consult `b.page_id` to apply the FEAT-5a template-page exclusion via
+/// `NOT EXISTS (... tp.block_id = b.page_id AND tp.key = 'template')`.
+///
+/// Before the fix the snapshot/restore enqueue array placed
+/// `RebuildPageIds` after the agenda rebuilds; the background consumer
+/// processed tasks sequentially, so the agenda saw a NULL `b.page_id`
+/// (the wipe-and-restore left `page_id` unpopulated) and the NOT EXISTS
+/// check silently failed — the template-page's blocks leaked into the
+/// agenda until the next unrelated op triggered another rebuild.
+///
+/// With the fix `RebuildPageIds` runs first, the agenda rebuilds see a
+/// populated `b.page_id`, and the template-page filter takes effect on
+/// the very first drain — i.e. immediately after `flush_background()`
+/// without waiting for any further events.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Snapshot: one template-tagged page + one child block under that
+    // page with a `due_date`. With no `template` property the child
+    // would land in the agenda via the `column:due_date` UNION arm.
+    let data = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-tpl".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "template-test".to_string(),
+        tables: SnapshotTables {
+            blocks: vec![
+                BlockSnapshot {
+                    id: "tpl-page".to_string(),
+                    block_type: "page".to_string(),
+                    content: Some("Template Page".to_string()),
+                    parent_id: None,
+                    position: Some(1),
+                    deleted_at: None,
+                    is_conflict: 0,
+                    conflict_source: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
+                    scheduled_date: None,
+                },
+                BlockSnapshot {
+                    id: "tpl-child".to_string(),
+                    block_type: "content".to_string(),
+                    content: Some("agenda-bait".to_string()),
+                    parent_id: Some("tpl-page".to_string()),
+                    position: Some(1),
+                    deleted_at: None,
+                    is_conflict: 0,
+                    conflict_source: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: Some("2025-06-15".to_string()),
+                    scheduled_date: None,
+                },
+            ],
+            block_tags: vec![],
+            // The page is template-tagged via property `template` — the
+            // FEAT-5a NOT EXISTS predicate keys off `tp.key = 'template'`
+            // alone (any value). Use the cheapest typed slot.
+            block_properties: vec![BlockPropertySnapshot {
+                block_id: "tpl-page".to_string(),
+                key: "template".to_string(),
+                value_text: Some("1".to_string()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }],
+            block_links: vec![],
+            attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    };
+
+    let encoded = encode_snapshot(&data).unwrap();
+    let _ = apply_snapshot(&pool, &mat, &encoded).await.unwrap();
+
+    // Process every enqueued cache rebuild task IN ORDER. The fix
+    // guarantees `RebuildPageIds` is the first task in the array, so
+    // by the time `RebuildAgendaCache` runs `b.page_id` is populated
+    // and the template-page filter takes effect on the very first
+    // rebuild — without waiting for any further events.
+    mat.flush_background().await.unwrap();
+
+    let agenda_rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT date, block_id FROM agenda_cache ORDER BY date, block_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(
+        agenda_rows.iter().all(|(_, b)| b != "tpl-child"),
+        "M-15: agenda_cache must exclude blocks whose page is template-tagged \
+         immediately after restore (no further events). RebuildPageIds must \
+         run before RebuildAgendaCache so b.page_id is populated when the \
+         agenda's `NOT EXISTS (... tp.block_id = b.page_id AND tp.key = 'template')` \
+         filter runs. Got rows: {agenda_rows:?}"
+    );
+
+    // Sanity: page_id was actually populated for the child (proves the
+    // RebuildPageIds task ran, not just that the agenda rebuild was
+    // skipped for some unrelated reason).
+    let child_page_id: Option<String> =
+        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'tpl-child'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        child_page_id.as_deref(),
+        Some("tpl-page"),
+        "RebuildPageIds must populate page_id for descendants of the template page"
+    );
+
+    mat.shutdown();
+}
+
+// =======================================================================
 // apply_snapshot_rejects_traversal_attachment_fs_path (BUG-35)
 // =======================================================================
 

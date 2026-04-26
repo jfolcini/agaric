@@ -259,7 +259,17 @@ pub async fn apply_snapshot(
     // silently drops if the queue is saturated (`warn!` logged), which is
     // acceptable — the worst case is a slightly delayed rebuild on an
     // overloaded system, not data loss.
+    // M-15: `RebuildPageIds` MUST be enqueued first so it is processed
+    // before `RebuildAgendaCache` / `RebuildProjectedAgendaCache`. Both
+    // agenda rebuilds consult `b.page_id` to apply the FEAT-5a
+    // template-page exclusion (`NOT EXISTS (... tp.block_id = b.page_id
+    // AND tp.key = 'template')`). The background consumer processes
+    // tasks sequentially in enqueue order, so ordering this array
+    // guarantees the agenda sees populated `page_id`s on first
+    // rebuild — otherwise template-tagged pages' blocks would leak into
+    // the agenda until something else triggered another rebuild.
     let rebuild_tasks = [
+        ("RebuildPageIds", MaterializeTask::RebuildPageIds),
         ("RebuildTagsCache", MaterializeTask::RebuildTagsCache),
         ("RebuildPagesCache", MaterializeTask::RebuildPagesCache),
         ("RebuildAgendaCache", MaterializeTask::RebuildAgendaCache),
@@ -271,11 +281,11 @@ pub async fn apply_snapshot(
             "RebuildTagInheritanceCache",
             MaterializeTask::RebuildTagInheritanceCache,
         ),
-        ("RebuildPageIds", MaterializeTask::RebuildPageIds),
         ("RebuildFtsIndex", MaterializeTask::RebuildFtsIndex),
         // UX-250: repopulate inline tag-ref cache scanning the restored
-        // block content. Ordering within this array does not matter —
-        // the background consumer processes each task independently.
+        // block content. Ordering within this array does not matter
+        // for agenda correctness — the background consumer processes
+        // each task independently.
         (
             "RebuildBlockTagRefsCache",
             MaterializeTask::RebuildBlockTagRefsCache,

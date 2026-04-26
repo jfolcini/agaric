@@ -152,7 +152,10 @@ pub async fn find_missing_attachments(
     let mut missing = Vec::new();
     for (id, fs_path) in rows {
         let full_path = app_data_dir.join(&fs_path);
-        if !full_path.exists() {
+        // M-49: prefer the async syscall over std's blocking `Path::exists`
+        // so the daemon's runtime is not stalled on cold-cache filesystems
+        // (notably Android with thousands of attachments).
+        if tokio::fs::metadata(&full_path).await.is_err() {
             missing.push(MissingAttachment { id, fs_path });
         }
     }

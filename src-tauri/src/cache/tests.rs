@@ -1146,6 +1146,55 @@ async fn block_links_extracts_links_inside_code_fences() {
     );
 }
 
+/// Regression for M-14: `reindex_block_links` must skip conflict-copy source
+/// blocks so their `[[ULID]]` tokens never enter `block_links` and therefore
+/// never surface through `list_backlinks`.
+#[tokio::test]
+async fn block_links_skips_conflict_source_and_does_not_appear_in_backlinks() {
+    use crate::pagination::{list_backlinks, PageRequest};
+
+    let (pool, _dir) = test_pool().await;
+
+    // Target block being linked to.
+    insert_block(&pool, "01HZ00000000000000000000AB", "content", "target").await;
+
+    // Conflict-copy source containing a `[[ULID]]` token. `is_conflict = 1`.
+    insert_block(
+        &pool,
+        "01HZ0000000000000000000SRC",
+        "content",
+        "[[01HZ00000000000000000000AB]]",
+    )
+    .await;
+    mark_conflict(&pool, "01HZ0000000000000000000SRC").await;
+
+    // Reindex on the conflict source — the filter must short-circuit the
+    // content read so the regex sees an empty string and no rows are
+    // inserted.
+    reindex_block_links(&pool, "01HZ0000000000000000000SRC")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_links").await,
+        0,
+        "conflict-copy source blocks must not contribute outbound links"
+    );
+
+    // And the conflict source must not appear as a backlink for the target.
+    let page = PageRequest {
+        after: None,
+        limit: 50,
+    };
+    let resp = list_backlinks(&pool, "01HZ00000000000000000000AB", &page)
+        .await
+        .unwrap();
+    assert!(
+        resp.items.is_empty(),
+        "list_backlinks must not return conflict-copy source blocks"
+    );
+}
+
 // ====================================================================
 // rebuild_all_caches & empty tables
 // ====================================================================

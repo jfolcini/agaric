@@ -27,7 +27,7 @@ pub async fn list_backlinks(
                 b.page_id
          FROM block_links bl
          JOIN blocks b ON b.id = bl.source_id
-         WHERE bl.target_id = ?1 AND b.deleted_at IS NULL
+         WHERE bl.target_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0
            AND (?2 IS NULL OR b.id > ?3)
          ORDER BY b.id ASC
          LIMIT ?4"#,

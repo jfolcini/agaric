@@ -483,6 +483,48 @@ async fn materialized_matches_cte_oracle() {
     );
 }
 
+/// Regression for M-59: the recursive-CTE oracle used by parity tests must
+/// bound `depth < 100` to match `tag_inheritance::rebuild_all` and
+/// AGENTS.md invariant #9. Build a 101-deep chain whose root is tagged;
+/// the oracle must not return the leaf, which sits beyond the depth bound.
+#[tokio::test]
+async fn resolve_expr_cte_bounds_depth_at_100() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_DEPTH", "tag", "depth-tag").await;
+    insert_tag_cache(&pool, "TAG_DEPTH", "depth-tag", 1).await;
+
+    // Tag the root of a 101-deep chain so the recursive walk would reach
+    // the leaf at depth 101 from the seed without a bound.
+    insert_block(&pool, "ROOT_DEPTH", "content", "root").await;
+    insert_tag_assoc(&pool, "ROOT_DEPTH", "TAG_DEPTH").await;
+    let mut prev = "ROOT_DEPTH".to_string();
+    for i in 0..=100 {
+        let id = format!("D{i:03}");
+        insert_child_block(&pool, &id, "content", "level", prev.as_str()).await;
+        prev = id;
+    }
+
+    let result = resolve_expr_cte(&pool, &TagExpr::Tag("TAG_DEPTH".into()), true)
+        .await
+        .unwrap();
+    // Seed ROOT_DEPTH is at depth 0; descendants D000..D099 are at depths
+    // 1..100 inclusive (all returned). The recursive predicate
+    // `tt.depth < 100` then prevents the step that would emit D100 at
+    // depth 101, so D100 must be excluded.
+    assert!(
+        result.contains("ROOT_DEPTH"),
+        "root (the tagged seed) must be returned"
+    );
+    assert!(
+        result.contains("D099"),
+        "descendant at depth 100 must still be returned (within the bound)"
+    );
+    assert!(
+        !result.contains("D100"),
+        "descendant beyond depth 100 must be excluded by the bound, got: {result:?}"
+    );
+}
+
 // ── Boolean combinator tests ─────────────────────────────────────
 
 #[tokio::test]

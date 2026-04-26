@@ -108,7 +108,23 @@ pub async fn get_gcal_status_inner(
     token_store: &Arc<dyn TokenStore>,
     this_device: &str,
 ) -> Result<GcalStatus, AppError> {
-    let connected = token_store.load().await?.is_some();
+    // L-44: a transient keyring failure (e.g. `KeyringBackendError::PlatformUnavailable`,
+    // surfaced upstream as `AppError::Validation("keyring.unavailable: ...")`) MUST NOT
+    // break the Settings → Google Calendar tab. Degrade to `connected = false` and let
+    // the user re-auth, but propagate any other (i.e. genuinely unexpected) error.
+    let connected = match token_store.load().await {
+        Ok(opt) => opt.is_some(),
+        Err(e) if matches!(&e, AppError::Validation(msg) if msg.starts_with("keyring.unavailable")) =>
+        {
+            tracing::warn!(
+                target: "gcal",
+                error = %e,
+                "keyring unavailable; reporting connected=false",
+            );
+            false
+        }
+        Err(e) => return Err(e),
+    };
     let account_email = models::get_setting(pool, GcalSettingKey::OauthAccountEmail)
         .await?
         .unwrap_or_default();
@@ -169,8 +185,24 @@ pub async fn disconnect_gcal_inner<C: GcalClient + ?Sized>(
     // Load a token for the optional calendar-delete call BEFORE we
     // clear the store.  If the token is gone we cannot delete remotely;
     // that is a soft failure (logged, no error surfaced).
+    //
+    // M-36: a keyring transient error here MUST NOT abort the disconnect.
+    // The user clicking disconnect *because* the keyring is misbehaving is
+    // exactly the user who needs the local cleanup to succeed; demote the
+    // failure to a warn-log and continue with `None` (no remote delete is
+    // possible, but that branch already handles missing tokens).
     let token = if delete_calendar {
-        token_store.load().await?
+        match token_store.load().await {
+            Ok(tok) => tok,
+            Err(e) => {
+                tracing::warn!(
+                    target: "gcal",
+                    error = %e,
+                    "keyring unavailable during disconnect; continuing",
+                );
+                None
+            }
+        }
     } else {
         None
     };
@@ -229,16 +261,18 @@ pub async fn disconnect_gcal_inner<C: GcalClient + ?Sized>(
 /// to `[MIN_WINDOW_DAYS, MAX_WINDOW_DAYS]` before persistence so the
 /// connector does not have to re-validate.
 pub async fn set_gcal_window_days_inner(pool: &SqlitePool, n: i32) -> Result<i32, AppError> {
-    let clamped = i32::try_from(i64::from(n).clamp(
-        crate::gcal_push::connector::MIN_WINDOW_DAYS,
-        crate::gcal_push::connector::MAX_WINDOW_DAYS,
-    ))
-    .unwrap_or_else(|_| {
-        // Unreachable: the clamp above guarantees the value is in [7, 90],
-        // which always fits in i32. Fallback to the default for defense
-        // in depth.
-        i32::try_from(crate::gcal_push::connector::DEFAULT_WINDOW_DAYS).unwrap_or(30)
-    });
+    // L-49: the clamp below produces a value in
+    // `[MIN_WINDOW_DAYS, MAX_WINDOW_DAYS]` (currently `[7, 90]`), which
+    // always fits in i32. Make the impossibility a panic guard rather than
+    // a dead `unwrap_or_else` fallback so future refactors that widen the
+    // bounds past `i32::MAX` fail loudly instead of silently coercing.
+    let clamped: i32 = i64::from(n)
+        .clamp(
+            crate::gcal_push::connector::MIN_WINDOW_DAYS,
+            crate::gcal_push::connector::MAX_WINDOW_DAYS,
+        )
+        .try_into()
+        .expect("clamped to [MIN_WINDOW_DAYS, MAX_WINDOW_DAYS] always fits i32");
     models::set_setting(pool, GcalSettingKey::WindowDays, &clamped.to_string()).await?;
     Ok(clamped)
 }
@@ -380,6 +414,42 @@ mod tests {
         Arc::new(NoopEventEmitter)
     }
 
+    /// Test-only [`TokenStore`] that simulates a transient keyring
+    /// failure on configurable methods.  Drives the M-36 / L-44
+    /// regression tests for the "keyring unavailable" branches without
+    /// going through the real `KeyringTokenStore` plumbing.
+    struct FailingTokenStore {
+        fail_load: bool,
+        fail_clear: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl TokenStore for FailingTokenStore {
+        async fn load(&self) -> Result<Option<crate::gcal_push::oauth::Token>, AppError> {
+            if self.fail_load {
+                Err(AppError::Validation(
+                    "keyring.unavailable: simulated transient failure".to_owned(),
+                ))
+            } else {
+                Ok(None)
+            }
+        }
+
+        async fn store(&self, _token: &crate::gcal_push::oauth::Token) -> Result<(), AppError> {
+            Ok(())
+        }
+
+        async fn clear(&self) -> Result<(), AppError> {
+            if self.fail_clear {
+                Err(AppError::Validation(
+                    "keyring.unavailable: simulated transient failure".to_owned(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     // ── get_gcal_status_inner ──────────────────────────────────────
 
     #[tokio::test]
@@ -453,6 +523,32 @@ mod tests {
             .unwrap();
         assert!(!status.push_lease.held_by_this_device);
         assert_eq!(status.push_lease.device_id.as_deref(), Some(OTHER_DEVICE),);
+    }
+
+    #[tokio::test]
+    async fn get_status_degrades_to_disconnected_on_keyring_unavailable() {
+        // L-44 regression: a transient keyring failure (PlatformUnavailable,
+        // surfaced as `AppError::Validation("keyring.unavailable: ...")`) must
+        // NOT abort the Settings tab.  Degrade to connected=false so the user
+        // can see the rest of the status and re-auth.
+        let (pool, _dir) = test_pool().await;
+        let store: Arc<dyn TokenStore> = Arc::new(FailingTokenStore {
+            fail_load: true,
+            fail_clear: false,
+        });
+
+        let status = get_gcal_status_inner(&pool, &store, THIS_DEVICE)
+            .await
+            .expect("status read must NOT propagate a keyring-unavailable error");
+
+        assert!(
+            !status.connected,
+            "keyring unavailable must degrade to connected=false"
+        );
+        assert!(
+            !status.enabled,
+            "keyring unavailable must degrade to enabled=false (mirrors connected)"
+        );
     }
 
     // ── set_gcal_window_days_inner ─────────────────────────────────
@@ -653,6 +749,105 @@ mod tests {
         assert_eq!(count.0, 0, "event map must be wiped");
         // Tokens cleared.
         assert!(store.load().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn disconnect_with_delete_calendar_continues_when_token_load_fails() {
+        // M-36 regression: when delete_calendar=true, a keyring transient
+        // failure on `token_store.load()` MUST be demoted to a warn-log so
+        // local cleanup (calendar_id reset, event-map wipe, account_email
+        // clear, PushDisabled emit) still runs. Before the fix, the `?`
+        // on the load call short-circuited and left the user in a
+        // half-disconnected state.
+        let (pool, _dir) = test_pool().await;
+        let token_store: Arc<dyn TokenStore> = Arc::new(FailingTokenStore {
+            fail_load: true,
+            fail_clear: false,
+        });
+        let client = Arc::new(MockGcalClient::new());
+        let client_trait: Arc<dyn GcalClient> = client.clone();
+        let recorder = Arc::new(RecordingEventEmitter::new());
+        let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
+
+        // Seed a calendar_id and event-map row so we can assert local
+        // cleanup ran.
+        models::set_setting(&pool, GcalSettingKey::CalendarId, "cal_FAIL")
+            .await
+            .unwrap();
+        models::set_setting(&pool, GcalSettingKey::OauthAccountEmail, "me@example.com")
+            .await
+            .unwrap();
+        let entry = crate::gcal_push::models::GcalAgendaEventMap {
+            date: "2026-04-22".to_owned(),
+            gcal_event_id: "evt_1".to_owned(),
+            last_pushed_hash: "deadbeef".to_owned(),
+            last_pushed_at: crate::now_rfc3339(),
+        };
+        crate::gcal_push::models::upsert_event_map(&pool, &entry)
+            .await
+            .unwrap();
+
+        // Disconnect must succeed even though token_store.load() errors.
+        disconnect_gcal_inner(&pool, client_trait.as_ref(), &token_store, &emitter, true)
+            .await
+            .expect(
+                "disconnect must succeed even when keyring is unavailable (M-36 regression guard)",
+            );
+
+        // Local cleanup happened: calendar_id cleared.
+        let cal_id = models::get_setting(&pool, GcalSettingKey::CalendarId)
+            .await
+            .unwrap()
+            .unwrap_or_default();
+        assert_eq!(
+            cal_id, "",
+            "calendar_id must be cleared even after keyring load failure"
+        );
+
+        // Event-map wiped.
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM gcal_agenda_event_map")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count.0, 0,
+            "event map must be wiped even after keyring load failure"
+        );
+
+        // account_email cleared.
+        assert_eq!(
+            models::get_setting(&pool, GcalSettingKey::OauthAccountEmail)
+                .await
+                .unwrap()
+                .unwrap_or_default(),
+            "",
+            "account_email must be cleared even after keyring load failure"
+        );
+
+        // No remote delete attempted — token wasn't loadable.
+        let state = client.state.lock().await;
+        let deletes = state
+            .calls
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c,
+                    crate::gcal_push::connector::testing::MockCall::DeleteCalendar { .. }
+                )
+            })
+            .count();
+        assert_eq!(
+            deletes, 0,
+            "remote delete must be skipped when token failed to load"
+        );
+        drop(state);
+
+        // PushDisabled emitted — UX promise that disconnect "succeeded".
+        assert!(
+            recorder.events().contains(&GcalEvent::PushDisabled),
+            "push_disabled must be emitted even when keyring load fails, got {:?}",
+            recorder.events()
+        );
     }
 
     // ── force_gcal_resync_inner ────────────────────────────────────

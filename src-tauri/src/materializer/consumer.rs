@@ -139,15 +139,15 @@ pub(super) async fn process_single_foreground_task(
     metrics: &Arc<QueueMetrics>,
     gcal_handle: &Arc<OnceLock<GcalConnectorHandle>>,
 ) {
-    if matches!(&task, MaterializeTask::Barrier(_)) {
-        let pool_clone = pool.clone();
-        let metrics_clone = Arc::clone(metrics);
-        let gcal_clone = Arc::clone(gcal_handle);
-        let result = tokio::task::spawn(async move {
-            handle_foreground_task(&pool_clone, &task, &metrics_clone, &gcal_clone).await
-        })
-        .await;
-        log_consumer_result("fg", &result);
+    // L-10: Barriers carry a `tokio::sync::Notify`; the only work is
+    // `notify.notify_one()`. There is no DB read, no fallible step, no
+    // retry semantic worth preserving — wrapping it in `tokio::spawn`
+    // (with the pool / metrics / gcal Arc clones the rest of this
+    // function needs) was leftover panic-isolation scaffolding from
+    // the real handler arms. Inline it here, mirroring the bg-side
+    // pattern at `run_background` (consumer.rs ~217-223).
+    if let MaterializeTask::Barrier(notify) = task {
+        notify.notify_one();
         metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
         return;
     }
@@ -225,6 +225,8 @@ pub(super) async fn run_background(
                 const MAX_RETRIES: u32 = 2;
                 // Increased from 50ms to reduce retry churn on transient WAL
                 // lock contention; background tasks tolerate longer delays.
+                // docs: ARCHITECTURE.md §5 ("Materializer / Retry behaviour"
+                // — Background backoff schedule: 150ms, 300ms).
                 const INITIAL_BACKOFF_MS: u64 = 150;
                 let mut succeeded = false;
                 let mut panicked = false;

@@ -114,7 +114,10 @@ impl SyncConnection {
                 }
                 serde_json::from_str(&text).map_err(|e| sync_err(format!("deserialize: {e}")))
             }
-            other => Err(sync_err(format!("expected text message, got {:?}", other))),
+            other => Err(sync_err(format!(
+                "expected text message, got {}",
+                describe_message(&other)
+            ))),
         }
     }
 
@@ -139,8 +142,8 @@ impl SyncConnection {
                 Ok(data.into())
             }
             other => Err(sync_err(format!(
-                "expected binary message, got {:?}",
-                other
+                "expected binary message, got {}",
+                describe_message(&other)
             ))),
         }
     }
@@ -234,6 +237,108 @@ impl SyncConnection {
             Ok(None) => Err(sync_err("connection closed")),
             Err(_elapsed) => Err(sync_err("recv timed out after 30s")),
         }
+    }
+}
+
+/// I-Sync-2: Render a clipped, human-friendly description of a tungstenite
+/// `Message` for log/error strings.
+///
+/// The default `Debug` impl on `Message::Binary(Vec<u8>)` renders the entire
+/// byte buffer; on a 5 MB binary frame received in a place expecting JSON,
+/// that explodes the error string. This helper renders binary as
+/// `Binary(<{n} bytes>)` and text as `Text(<{n} chars>: "{first 80 chars}…")`,
+/// keeping the discriminant useful while bounding the size.
+fn describe_message(msg: &Message) -> String {
+    /// Maximum number of leading characters of a text payload to include in
+    /// the description.
+    const TEXT_PREVIEW_CHARS: usize = 80;
+
+    match msg {
+        Message::Binary(data) => format!("Binary(<{} bytes>)", data.len()),
+        Message::Text(text) => {
+            let n_chars = text.chars().count();
+            let preview: String = text.chars().take(TEXT_PREVIEW_CHARS).collect();
+            if n_chars > TEXT_PREVIEW_CHARS {
+                format!("Text(<{n_chars} chars>: {preview:?}…)")
+            } else {
+                format!("Text(<{n_chars} chars>: {preview:?})")
+            }
+        }
+        // Ping/Pong/Close are small or trivially-bounded; Debug is fine.
+        Message::Ping(_) | Message::Pong(_) | Message::Close(_) | Message::Frame(_) => {
+            format!("{msg:?}")
+        }
+    }
+}
+
+#[cfg(test)]
+mod describe_message_tests {
+    use super::describe_message;
+    use tokio_tungstenite::tungstenite::Message;
+
+    #[test]
+    fn binary_5mb_frame_is_clipped() {
+        let payload = vec![0u8; 5 * 1024 * 1024];
+        let msg = Message::Binary(payload.into());
+        let s = describe_message(&msg);
+        assert_eq!(
+            s, "Binary(<5242880 bytes>)",
+            "5MB binary frame must render as a short summary, got: {s}"
+        );
+        assert!(
+            s.len() < 64,
+            "rendered description must be short, got {} chars",
+            s.len()
+        );
+    }
+
+    #[test]
+    fn binary_empty_is_clipped() {
+        let msg = Message::Binary(Vec::<u8>::new().into());
+        assert_eq!(describe_message(&msg), "Binary(<0 bytes>)");
+    }
+
+    #[test]
+    fn short_text_is_rendered_verbatim() {
+        let msg = Message::Text("hello".into());
+        let s = describe_message(&msg);
+        assert!(
+            s.contains("Text(<5 chars>"),
+            "short text must include length prefix, got: {s}"
+        );
+        assert!(s.contains("hello"), "short text body must appear, got: {s}");
+        assert!(
+            !s.contains('…'),
+            "short text must not be truncated, got: {s}"
+        );
+    }
+
+    #[test]
+    fn long_text_is_truncated_with_ellipsis() {
+        // 200 'a' chars; preview budget is 80.
+        let body: String = "a".repeat(200);
+        let msg = Message::Text(body.into());
+        let s = describe_message(&msg);
+        assert!(
+            s.contains("Text(<200 chars>"),
+            "long text must include length prefix, got: {s}"
+        );
+        assert!(
+            s.ends_with("…)"),
+            "long text must end with ellipsis, got: {s}"
+        );
+        assert!(
+            s.len() < 200,
+            "rendered description must be shorter than the body, got {} chars",
+            s.len()
+        );
+    }
+
+    #[test]
+    fn ping_uses_debug() {
+        let msg = Message::Ping(Vec::<u8>::new().into());
+        let s = describe_message(&msg);
+        assert!(s.starts_with("Ping"), "ping must start with Ping, got: {s}");
     }
 }
 

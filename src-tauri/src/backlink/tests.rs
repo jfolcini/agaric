@@ -2704,6 +2704,79 @@ async fn resolve_root_pages_excludes_conflict_pages() {
     );
 }
 
+/// Regression for M-60: `resolve_root_pages_cte` (the recursive-CTE oracle
+/// used in test parity assertions) must bound `depth < 100` on the
+/// recursive walk and filter `is_conflict = 0` on the recursive member +
+/// final projection. A synthetic depth-101 chain must therefore not
+/// surface a root page; a conflict-copy ancestor must not redirect a
+/// block's root.
+#[tokio::test]
+async fn resolve_root_pages_cte_bounds_depth_and_filters_conflicts() {
+    let (pool, _dir) = test_pool().await;
+
+    // Build a 101-deep ancestry chain: PAGE -> N0 -> N1 -> ... -> N100
+    insert_block_with_parent(&pool, "DBOUND_PAGE", "page", "deep page", None, None).await;
+    let mut prev = "DBOUND_PAGE".to_string();
+    for i in 0..=100 {
+        let id = format!("DBOUND_N{i:03}");
+        insert_block_with_parent(
+            &pool,
+            &id,
+            "content",
+            &format!("level {i}"),
+            Some(prev.as_str()),
+            Some(1),
+        )
+        .await;
+        prev = id;
+    }
+
+    // Run the oracle on the leaf — depth bound must terminate the walk
+    // before reaching the page root, so the leaf is omitted from the result.
+    let mut ids = FxHashSet::default();
+    ids.insert(prev.clone()); // leaf at depth 101 from the page
+    let result = resolve_root_pages_cte(&pool, &ids).await.unwrap();
+    assert!(
+        !result.contains_key(prev.as_str()),
+        "depth>100 chain must not return a root page from the oracle, got: {result:?}"
+    );
+
+    // Now exercise the conflict-skip behaviour: an in-tree ancestor flagged
+    // as a conflict must short-circuit the walk, so the leaf is not rooted
+    // on the (real) page above it.
+    insert_block_with_parent(&pool, "CFROOT_PAGE", "page", "root", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "CFMID",
+        "content",
+        "conflict mid",
+        Some("CFROOT_PAGE"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(
+        &pool,
+        "CFLEAF",
+        "content",
+        "leaf under conflict",
+        Some("CFMID"),
+        Some(1),
+    )
+    .await;
+    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = 'CFMID'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut cf_ids = FxHashSet::default();
+    cf_ids.insert("CFLEAF".to_string());
+    let cf_result = resolve_root_pages_cte(&pool, &cf_ids).await.unwrap();
+    assert!(
+        !cf_result.contains_key("CFLEAF"),
+        "leaf with a conflict-copy ancestor must not be rooted on the real page"
+    );
+}
+
 // ======================================================================
 // #538 — eval_backlink_query_grouped tests
 // ======================================================================

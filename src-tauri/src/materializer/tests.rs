@@ -3166,6 +3166,88 @@ async fn dispatch_background_or_warn_handles_unknown_op_type_gracefully() {
     mat.shutdown();
 }
 
+/// M-11: `dispatch_background_or_warn`'s `tracing::warn!` must include
+/// `seq` and `device_id` so triage on the user's own device can find
+/// the offending row in `op_log` (mirrors the `dedup.rs` parse-error
+/// pattern). With a malformed `create_block` payload `enqueue_background_tasks`
+/// returns `Err` from the inner `serde_json::from_str::<CreateBlockHint>`
+/// — exercising the warn branch — and the captured log output must
+/// surface both fields.
+#[tokio::test]
+async fn dispatch_background_or_warn_logs_seq_and_device_id_on_serde_error() {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    /// Thread-safe buffered writer for in-process log capture (mirrors
+    /// the helper in `sync_protocol/tests.rs` and `db.rs` tests; see
+    /// AGENTS.md § "Test helper duplication is intentional").
+    #[derive(Clone, Default)]
+    struct WarnBufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for WarnBufWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for WarnBufWriter {
+        type Writer = WarnBufWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+
+    let writer = WarnBufWriter::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("agaric=warn"))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false),
+        );
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    // A `create_block` op with malformed JSON payload trips the
+    // `serde_json::from_str::<CreateBlockHint>(&record.payload)?` at
+    // `dispatch.rs:111` and surfaces an `Err` to `dispatch_background_or_warn`.
+    let record = fake_op_record("create_block", "{not valid json");
+
+    // Sanity: confirm the inner dispatch actually errors so the warn
+    // branch is exercised rather than the silent Ok path.
+    assert!(
+        mat.dispatch_background(&record).is_err(),
+        "malformed create_block payload must trip serde and return Err so the warn arm is exercised"
+    );
+    mat.dispatch_background_or_warn(&record);
+
+    let contents = {
+        let bytes = writer.0.lock().unwrap();
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
+    assert!(
+        contents.contains(&format!("seq={}", record.seq)),
+        "warn log must include seq={}, got: {contents:?}",
+        record.seq
+    );
+    assert!(
+        contents.contains(&format!("device_id={}", record.device_id)),
+        "warn log must include device_id={}, got: {contents:?}",
+        record.device_id
+    );
+    assert!(
+        contents.contains("op_type=create_block"),
+        "warn log must include op_type=create_block, got: {contents:?}"
+    );
+
+    mat.shutdown();
+}
+
 // ---------------------------------------------------------------------------
 // MAINT-39: enqueue_full_cache_rebuild helper
 // ---------------------------------------------------------------------------

@@ -9,7 +9,16 @@ pub struct QueueMetrics {
     pub fts_edits_since_optimize: AtomicU64,
     pub fts_last_optimize_ms: AtomicU64,
     pub cached_block_count: AtomicU64,
+    /// High-water mark of the foreground queue depth observed since the
+    /// last metrics-snapshot dump. Reset to 0 every 5 minutes (or every
+    /// dump tick) by `metrics_snapshot_task`, so this is a *windowed*
+    /// peak — not an all-time peak. Surface it via `StatusInfo`
+    /// understanding that consumers see the peak within the current
+    /// snapshot window only.
     pub fg_high_water: AtomicU64,
+    /// High-water mark of the background queue depth observed since the
+    /// last metrics-snapshot dump. Same windowed-reset semantics as
+    /// `fg_high_water`.
     pub bg_high_water: AtomicU64,
     pub fg_errors: AtomicU64,
     pub bg_errors: AtomicU64,
@@ -68,7 +77,13 @@ pub struct StatusInfo {
     pub background_queue_depth: usize,
     pub total_ops_dispatched: u64,
     pub total_background_dispatched: u64,
+    /// Peak foreground queue depth observed in the current 5-minute
+    /// metrics-snapshot window. Resets every dump tick (see
+    /// `metrics_snapshot_task` in `coordinator.rs`); not an all-time peak.
     pub fg_high_water: u64,
+    /// Peak background queue depth observed in the current 5-minute
+    /// metrics-snapshot window. Same windowed-reset semantics as
+    /// `fg_high_water`.
     pub bg_high_water: u64,
     pub fg_errors: u64,
     pub bg_errors: u64,

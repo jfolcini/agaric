@@ -186,11 +186,18 @@ impl PairingSession {
     ///
     /// The IDs are sorted before concatenation so that both sides derive the
     /// same key regardless of which is "local" vs "remote".
+    ///
+    /// L-60: A `\x00` byte is inserted between the two IDs so that
+    /// `build_salt("AB", "CD")` ≠ `build_salt("A", "BCD")` regardless of
+    /// future ID format changes. Crockford ULIDs only use the alphabet
+    /// `0123456789ABCDEFGHJKMNPQRSTVWXYZ`, so `\x00` cannot appear inside
+    /// any well-formed device ID and remains a safe separator.
     fn build_salt(id_a: &str, id_b: &str) -> Vec<u8> {
         let mut ids = [id_a, id_b];
         ids.sort();
-        let mut salt = Vec::with_capacity(ids[0].len() + ids[1].len());
+        let mut salt = Vec::with_capacity(ids[0].len() + 1 + ids[1].len());
         salt.extend_from_slice(ids[0].as_bytes());
+        salt.push(0);
         salt.extend_from_slice(ids[1].as_bytes());
         salt
     }
@@ -406,6 +413,26 @@ mod tests {
         assert_eq!(
             s1.session_key, s2.session_key,
             "key derivation must be independent of local/remote ordering"
+        );
+    }
+
+    /// L-60: With the `\x00` separator, two ID pairs that previously
+    /// concatenated to the same byte sequence must now produce distinct
+    /// salts and therefore distinct session keys.
+    #[test]
+    fn build_salt_separator_disambiguates_concatenation_collisions() {
+        let salt1 = PairingSession::build_salt("AB", "CD");
+        let salt2 = PairingSession::build_salt("A", "BCD");
+        assert_ne!(
+            salt1, salt2,
+            "salts for (\"AB\",\"CD\") and (\"A\",\"BCD\") must differ"
+        );
+        // And the corresponding session keys must also differ.
+        let k1 = derive_session_key("alpha bravo charlie delta", &salt1);
+        let k2 = derive_session_key("alpha bravo charlie delta", &salt2);
+        assert_ne!(
+            k1, k2,
+            "session keys derived from those distinct salts must differ"
         );
     }
 

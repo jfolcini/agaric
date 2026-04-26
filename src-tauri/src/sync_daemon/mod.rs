@@ -80,7 +80,6 @@ impl SyncEventSink for SharedEventSink {
 /// task will clean up mDNS announcements and the WebSocket server before
 /// exiting.
 pub struct SyncDaemon {
-    shutdown: Arc<AtomicBool>,
     shutdown_notify: Arc<Notify>,
     cancel: Arc<AtomicBool>,
     #[allow(dead_code)]
@@ -238,7 +237,6 @@ impl SyncDaemon {
         cancel: Arc<AtomicBool>,
         lifecycle: LifecycleHooks,
     ) -> Result<Self, AppError> {
-        let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_notify = Arc::new(Notify::new());
         let shutdown_notify_task = shutdown_notify.clone();
         let cancel_flag = cancel.clone();
@@ -291,7 +289,6 @@ impl SyncDaemon {
         });
 
         Ok(Self {
-            shutdown,
             shutdown_notify,
             cancel,
             handle: Some(handle),
@@ -344,7 +341,6 @@ impl SyncDaemon {
         cancel: Arc<AtomicBool>,
         lifecycle: LifecycleHooks,
     ) -> Result<Self, AppError> {
-        let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_notify = Arc::new(Notify::new());
         let shutdown_notify_flag = shutdown_notify.clone();
         let cancel_flag = cancel.clone();
@@ -368,7 +364,6 @@ impl SyncDaemon {
         });
 
         Ok(Self {
-            shutdown,
             shutdown_notify,
             cancel,
             handle: Some(handle),
@@ -377,7 +372,6 @@ impl SyncDaemon {
 
     /// Signal the daemon to shut down gracefully.
     pub fn shutdown(&self) {
-        self.shutdown.store(true, Ordering::Release);
         self.shutdown_notify.notify_one();
     }
 

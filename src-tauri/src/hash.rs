@@ -41,20 +41,25 @@ pub fn compute_op_hash(
 ) -> String {
     let parent_seqs_canonical = parent_seqs.unwrap_or("");
 
-    debug_assert!(
+    // L-4 — These four `\0` invariants are the wire-format contract
+    // for the hash preimage. They MUST hold in release builds too:
+    // a raw `\0` in any field would produce an ambiguous preimage and
+    // break cross-device hash determinism. The four `memchr`-style
+    // scans cost negligible compared to blake3 itself.
+    assert!(
         !device_id.contains('\0'),
         "device_id must not contain null bytes"
     );
-    debug_assert!(
+    assert!(
         !parent_seqs_canonical.contains('\0'),
         "parent_seqs must not contain null bytes"
     );
-    debug_assert!(
+    assert!(
         !op_type.contains('\0'),
         "op_type must not contain null bytes"
     );
     // payload: serde_json serializes \0 as \\u0000, so raw \0 indicates corruption
-    debug_assert!(
+    assert!(
         !payload.contains('\0'),
         "serialized payload must not contain raw null bytes"
     );
@@ -313,24 +318,14 @@ mod tests {
         );
     }
 
-    /// In debug builds the null-byte debug_assert fires before hashing,
-    /// so we expect a panic.
+    /// L-4 — The null-byte invariants are now `assert!` (not
+    /// `debug_assert!`), so they fire in both debug and release builds.
+    /// The hash preimage uses `\0` as a field separator, so a raw `\0`
+    /// in any input would produce an ambiguous preimage.
     #[test]
     #[should_panic(expected = "serialized payload must not contain raw null bytes")]
-    #[cfg(debug_assertions)]
-    fn payload_with_embedded_null_bytes_is_distinct() {
+    fn payload_with_embedded_null_byte_panics() {
         let _ = compute_op_hash(DEV_1, 1, None, OP_CREATE, "abc\0def");
-    }
-
-    /// In release builds (no debug_assertions) the null byte is hashed
-    /// normally and must produce a distinct hash from the non-null version.
-    #[test]
-    #[cfg(not(debug_assertions))]
-    fn payload_with_embedded_null_bytes_is_distinct() {
-        let h1 = compute_op_hash(DEV_1, 1, None, OP_CREATE, "abc\0def");
-        let h2 = compute_op_hash(DEV_1, 1, None, OP_CREATE, "abcdef");
-        assert_valid_hash(&h1, "null-byte payload");
-        assert_ne!(h1, h2, "embedded null byte must affect the hash");
     }
 
     // ── verify_op_hash ─────────────────────────────────────────────────
@@ -470,27 +465,30 @@ mod tests {
         assert!(constant_time_eq(b"", b""));
     }
 
-    // ── debug_assert: null-byte separator ──────────────────────────────
+    // ── assert: null-byte separator (release-build enforced, L-4) ─────
 
     #[test]
     #[should_panic(expected = "device_id must not contain null bytes")]
-    #[cfg(debug_assertions)]
-    fn null_byte_debug_assert_fires_for_device_id() {
+    fn null_byte_assert_fires_for_device_id() {
         let _ = compute_op_hash("dev\0ice", 1, None, "create_block", "{}");
     }
 
     #[test]
     #[should_panic(expected = "parent_seqs must not contain null bytes")]
-    #[cfg(debug_assertions)]
-    fn null_byte_debug_assert_fires_for_parent_seqs() {
+    fn null_byte_assert_fires_for_parent_seqs() {
         let _ = compute_op_hash("dev", 1, Some("abc\0def"), "create_block", "{}");
     }
 
     #[test]
     #[should_panic(expected = "op_type must not contain null bytes")]
-    #[cfg(debug_assertions)]
-    fn null_byte_debug_assert_fires_for_op_type() {
+    fn null_byte_assert_fires_for_op_type() {
         let _ = compute_op_hash("dev", 1, None, "create\0block", "{}");
+    }
+
+    #[test]
+    #[should_panic(expected = "serialized payload must not contain raw null bytes")]
+    fn null_byte_assert_fires_for_payload() {
+        let _ = compute_op_hash("dev", 1, None, "create_block", "abc\0def");
     }
 }
 

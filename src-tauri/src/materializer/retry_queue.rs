@@ -87,6 +87,20 @@ pub(crate) fn backoff_delay_for(attempts: i64) -> chrono::Duration {
 /// Record a task that failed all in-memory retries. Inserts a new row or
 /// updates the existing row (incrementing `attempts`, extending the
 /// backoff). Non-retryable tasks are silently ignored.
+///
+/// L-11: Implemented as a single `INSERT ... ON CONFLICT(block_id,
+/// task_type) DO UPDATE` that increments `attempts` SQL-side via
+/// `materializer_retry_queue.attempts + 1` (instead of binding the new
+/// value from a prior `SELECT`). This eliminates the SELECT-then-INSERT
+/// race where two concurrent failure inserts both observe `prior = None`,
+/// both compute `attempts = 1`, and both INSERT — the second triggering
+/// `ON CONFLICT` and overwriting with the same `excluded.attempts = 1`,
+/// silently losing one increment. The backoff schedule depends on
+/// `attempts`, so we use `RETURNING attempts` to learn the actual
+/// post-update value and (only on the escalation path) issue a
+/// follow-up `UPDATE` to set the correct `next_attempt_at`. The
+/// common-case first failure stays at one round-trip; the escalation
+/// case is two round-trips, matching the previous SELECT+INSERT cost.
 pub(crate) async fn record_failure(
     pool: &SqlitePool,
     task: &MaterializeTask,
@@ -97,39 +111,55 @@ pub(crate) async fn record_failure(
     };
     let kind_str = kind.as_str();
 
-    // Fetch existing row to compute new attempts count.
-    let prior: Option<i64> = sqlx::query_scalar!(
-        "SELECT attempts FROM materializer_retry_queue WHERE block_id = ? AND task_type = ?",
-        block_id,
-        kind_str,
-    )
-    .fetch_optional(pool)
-    .await?;
-    let new_attempts = prior.unwrap_or(0) + 1;
-    let backoff = backoff_delay_for(new_attempts);
-    let next_attempt =
-        (chrono::Utc::now() + backoff).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    // Optimistic next_attempt_at for the INSERT (first-failure) case.
+    // The DO UPDATE side reuses this value verbatim; if the SQL-side
+    // increment escalates `attempts` past 1 we follow up below to fix
+    // it to the correct backoff step.
+    let initial_next_attempt = (chrono::Utc::now() + backoff_delay_for(1))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
-    sqlx::query!(
+    let attempts_after = sqlx::query_scalar!(
         "INSERT INTO materializer_retry_queue \
              (block_id, task_type, attempts, last_error, next_attempt_at) \
-         VALUES (?, ?, ?, ?, ?) \
+         VALUES (?, ?, 1, ?, ?) \
          ON CONFLICT(block_id, task_type) DO UPDATE SET \
-             attempts = excluded.attempts, \
+             attempts = materializer_retry_queue.attempts + 1, \
              last_error = excluded.last_error, \
-             next_attempt_at = excluded.next_attempt_at",
+             next_attempt_at = ? \
+         RETURNING attempts AS \"attempts!: i64\"",
         block_id,
         kind_str,
-        new_attempts,
         last_error,
-        next_attempt,
+        initial_next_attempt,
+        initial_next_attempt,
     )
-    .execute(pool)
+    .fetch_one(pool)
     .await?;
+
+    // For the escalation path (attempts > 1) the optimistic
+    // `backoff_delay_for(1)` is too short. Recompute against the
+    // actual `attempts_after` returned by the UPSERT and patch the row.
+    let next_attempt = if attempts_after > 1 {
+        let escalated = (chrono::Utc::now() + backoff_delay_for(attempts_after))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        sqlx::query!(
+            "UPDATE materializer_retry_queue SET next_attempt_at = ? \
+             WHERE block_id = ? AND task_type = ?",
+            escalated,
+            block_id,
+            kind_str,
+        )
+        .execute(pool)
+        .await?;
+        escalated
+    } else {
+        initial_next_attempt
+    };
+
     tracing::warn!(
         block_id = %block_id,
         task_type = kind_str,
-        attempts = new_attempts,
+        attempts = attempts_after,
         next_attempt_at = %next_attempt,
         "persisted failed background task to retry queue"
     );
@@ -138,7 +168,17 @@ pub(crate) async fn record_failure(
 
 /// Count of pending retry rows — used for observability (MAINT-24 via
 /// `bg_dropped` / `StatusInfo`).
-pub async fn pending_count(pool: &SqlitePool) -> Result<i64, AppError> {
+///
+/// I-Materializer-2: visibility tightened from `pub` to `pub(crate)` to
+/// match the sibling helpers in this module (`record_failure`,
+/// `fetch_due`, `clear_entry`, `task_from_row`, `RetryKind`). Only
+/// `sweep_once` and `spawn_sweeper` retain `pub` because they are the
+/// documented integration points for the rest of the crate. The
+/// `cfg_attr(not(test), allow(dead_code))` keeps lib-only builds quiet
+/// while preserving the function for the planned `StatusInfo` wiring;
+/// it is exercised by the unit tests in this module.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) async fn pending_count(pool: &SqlitePool) -> Result<i64, AppError> {
     let n = sqlx::query_scalar!("SELECT COUNT(*) as \"n!: i64\" FROM materializer_retry_queue")
         .fetch_one(pool)
         .await?;
@@ -489,6 +529,53 @@ mod tests {
         assert!(
             task_from_row(&unknown).is_none(),
             "unknown task_type rows must be silently skipped for migration-forward safety"
+        );
+    }
+
+    /// L-11 regression: the SQL-side `attempts = materializer_retry_queue.attempts + 1`
+    /// increment must be atomic vs. concurrent callers. Two `record_failure`
+    /// invocations issued in parallel for the same `(block_id, task_type)`
+    /// MUST produce `attempts == 2` — never `attempts == 1` (which would
+    /// happen with the old SELECT-then-INSERT, where both readers see
+    /// `prior = None`, both compute `attempts = 1`, and the second
+    /// triggers `ON CONFLICT` overwriting with `excluded.attempts = 1`).
+    ///
+    /// SQLite serialises writers, but the test still pins the invariant
+    /// at the SQL level so any future attempt to swap the increment back
+    /// to a Rust-side computation gets caught by the join semantics
+    /// alone (no need for genuine wall-clock interleaving).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn record_failure_concurrent_calls_accumulate_attempts() {
+        let (pool, _dir) = test_pool().await;
+        let task = MaterializeTask::UpdateFtsBlock {
+            block_id: "BLK_RACE".into(),
+        };
+
+        // Fire two failures back-to-back from independent tasks. The
+        // SQL-side increment guarantees the second call observes the
+        // first's INSERT/UPDATE atomically.
+        let p1 = pool.clone();
+        let t1 = task.clone();
+        let h1 = tokio::spawn(async move { record_failure(&p1, &t1, "err-A").await });
+        let p2 = pool.clone();
+        let t2 = task.clone();
+        let h2 = tokio::spawn(async move { record_failure(&p2, &t2, "err-B").await });
+        h1.await.unwrap().unwrap();
+        h2.await.unwrap().unwrap();
+
+        let attempts: i64 = sqlx::query_scalar!(
+            "SELECT attempts FROM materializer_retry_queue \
+             WHERE block_id = ? AND task_type = ?",
+            "BLK_RACE",
+            "UpdateFtsBlock",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            attempts, 2,
+            "L-11: SQL-side increment must accumulate across concurrent record_failure calls; \
+             a regression to SELECT-then-INSERT would race and drop one increment (attempts == 1)"
         );
     }
 

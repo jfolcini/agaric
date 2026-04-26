@@ -186,6 +186,7 @@ url = "2"
 # Dependency Updates" — move in lockstep with the rest of the
 # tauri-plugin-* crates.
 tauri-plugin-global-shortcut = "2"
+dirs = { version = "6.0.0", default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["async_tokio"] }

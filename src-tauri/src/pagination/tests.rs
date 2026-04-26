@@ -2254,6 +2254,88 @@ async fn test_list_backlinks_excludes_deleted() {
     assert_eq!(resp.items[1].id, "SOURCE03", "second alive backlink source");
 }
 
+/// Regression for L-20: `list_agenda`, `list_agenda_range`, and
+/// `list_backlinks` must filter `b.is_conflict = 0` defensively. The cache
+/// rebuilds already exclude conflict rows, but during the TOCTOU window
+/// between `set_conflict` and the background rebuild the cache row can
+/// still join to a `is_conflict = 1` block. We simulate that window here
+/// by flipping the flag directly via SQL without rebuilding.
+#[tokio::test]
+async fn list_agenda_and_backlinks_exclude_in_flight_conflict_blocks() {
+    let (pool, _dir) = test_pool().await;
+
+    // Three agenda blocks for the same date; flip BLOCK002 to conflict
+    // *after* writing the cache rows, simulating the rebuild window.
+    insert_block(&pool, "BLOCK001", "content", "alive", None, None).await;
+    insert_block(
+        &pool,
+        "BLOCK002",
+        "content",
+        "in-flight conflict",
+        None,
+        None,
+    )
+    .await;
+    insert_block(&pool, "BLOCK003", "content", "alive too", None, None).await;
+    insert_agenda_entry(&pool, "2025-03-15", "BLOCK001", "property:scheduled").await;
+    insert_agenda_entry(&pool, "2025-03-15", "BLOCK002", "property:scheduled").await;
+    insert_agenda_entry(&pool, "2025-03-15", "BLOCK003", "property:scheduled").await;
+
+    // Set due_date so the range query has something to filter on too.
+    sqlx::query(
+        "UPDATE blocks SET due_date = '2025-03-15' WHERE id IN ('BLOCK001','BLOCK002','BLOCK003')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = 'BLOCK002'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+
+    // list_agenda excludes the in-flight conflict.
+    let agenda = list_agenda(&pool, "2025-03-15", None, &page).await.unwrap();
+    let ids: Vec<&str> = agenda.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["BLOCK001", "BLOCK003"],
+        "list_agenda must skip blocks where is_conflict = 1"
+    );
+
+    // list_agenda_range likewise.
+    let range = list_agenda_range(&pool, "2025-03-01", "2025-03-31", None, &page)
+        .await
+        .unwrap();
+    let range_ids: Vec<&str> = range.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        range_ids,
+        vec!["BLOCK001", "BLOCK003"],
+        "list_agenda_range must skip blocks where is_conflict = 1"
+    );
+
+    // list_backlinks: separate setup — flip the source to conflict directly.
+    insert_block(&pool, "TARGETXX", "page", "target", None, None).await;
+    insert_block(&pool, "SRCALIVE", "content", "alive source", None, None).await;
+    insert_block(&pool, "SRCCONFL", "content", "conflict source", None, None).await;
+    insert_block_link(&pool, "SRCALIVE", "TARGETXX").await;
+    insert_block_link(&pool, "SRCCONFL", "TARGETXX").await;
+    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = 'SRCCONFL'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let bl = list_backlinks(&pool, "TARGETXX", &page).await.unwrap();
+    let bl_ids: Vec<&str> = bl.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        bl_ids,
+        vec!["SRCALIVE"],
+        "list_backlinks must skip source blocks where is_conflict = 1"
+    );
+}
+
 #[tokio::test]
 async fn test_list_backlinks_empty() {
     let (pool, _dir) = test_pool().await;
