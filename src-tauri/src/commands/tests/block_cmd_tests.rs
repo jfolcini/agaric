@@ -2557,6 +2557,18 @@ async fn add_attachment_returns_io_error_when_file_missing_on_disk() {
 async fn save_and_flush_draft() {
     let (pool, _dir) = test_pool().await;
 
+    // H-12a precondition: target block must exist + not be soft-deleted for the
+    // flush to actually emit an edit_block op. Without this row, flush_draft_inner
+    // (correctly) drops the orphan draft and returns Ok with zero ops appended.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'content', 'initial', NULL, 1)",
+    )
+    .bind("01HZ000000000000000000DRF01")
+    .execute(&pool)
+    .await
+    .unwrap();
+
     // Save a draft
     draft::save_draft(&pool, "01HZ000000000000000000DRF01", "draft content")
         .await
