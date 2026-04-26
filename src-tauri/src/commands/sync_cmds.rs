@@ -12,7 +12,7 @@ use crate::db::{ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::pairing::PairingSession;
-use crate::pairing::{generate_qr_svg, pairing_qr_payload};
+use crate::pairing::{generate_qr_svg, pairing_qr_payload, verify_device_exchange, PairingMessage};
 use crate::peer_refs::{self, PeerRef};
 use crate::sync_scheduler::SyncScheduler;
 
@@ -110,8 +110,22 @@ pub fn start_pairing_inner(
 
 /// Confirm pairing with a remote device.
 ///
-/// Validates the passphrase against the current session, stores the peer
-/// reference in the database, and clears the pairing session.
+/// H-1: validates the supplied `passphrase` against the active
+/// `pairing_state` slot via [`verify_device_exchange`]. Before H-1 the
+/// passphrase was accepted as-is and the entire `PairingMessage` +
+/// `verify_device_exchange` machinery was dead code.
+///
+/// Failure modes (all use `AppError::Validation` so they pass through
+/// `sanitize_internal_error` unchanged and reach the frontend with a
+/// stable, machine-readable tag in `message`):
+///
+/// - `pairing.no_active_session` — the user pressed Confirm without an
+///   active pairing session (slot is empty, e.g. cancelled or expired).
+/// - `pairing.passphrase.mismatch` — the typed passphrase does not
+///   match the one stored in the active slot. The slot is preserved so
+///   the user can retry without re-displaying the QR.
+///
+/// On success: stores the peer reference and clears the slot.
 ///
 /// PERF-25: After persisting the peer, signals the scheduler so the
 /// dormant sync daemon (if any) transitions to active mode without
@@ -125,9 +139,38 @@ pub async fn confirm_pairing_inner(
     passphrase: String,
     remote_device_id: String,
 ) -> Result<(), AppError> {
-    // Derive a session from the passphrase to verify the key derivation
-    // path works (the actual shared key will be used for future encrypted
-    // exchanges).
+    // H-1: pull the expected passphrase out of the active slot before
+    // any await. Holding a std `Mutex` across `.await` is unsound under
+    // tokio's single-threaded scheduler and would also be lock-order
+    // hostile — so we clone the field and drop the guard before the
+    // network/db call below.
+    let expected_passphrase = {
+        let guard = pairing_state
+            .lock()
+            .map_err(|_| AppError::InvalidOperation("pairing state lock poisoned".into()))?;
+        guard
+            .as_ref()
+            .ok_or_else(|| AppError::Validation("pairing.no_active_session".into()))?
+            .passphrase
+            .clone()
+    };
+
+    // H-1: build the device-exchange message representing the joining
+    // device's response and route it through `verify_device_exchange`.
+    // `cert_hash` is empty here — the actual TLS cert pin happens later
+    // in the daemon path; this layer only authenticates "the typed
+    // passphrase matches what we generated".
+    let msg = PairingMessage::DeviceOffer {
+        device_id: remote_device_id.clone(),
+        cert_hash: String::new(),
+        passphrase: passphrase.clone(),
+    };
+    verify_device_exchange(&msg, None, Some(&expected_passphrase))?;
+
+    // Derive a session from the (now-verified) passphrase to keep the
+    // key derivation path exercised. The actual shared key will be used
+    // for future encrypted exchanges; today we just confirm the HKDF
+    // path is reachable.
     let _session = PairingSession::from_passphrase(&passphrase, device_id, &remote_device_id);
 
     // Store the peer ref

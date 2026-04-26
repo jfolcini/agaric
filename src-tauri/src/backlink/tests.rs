@@ -1277,6 +1277,188 @@ async fn pagination_total_count_correct_with_filters() {
 }
 
 // ======================================================================
+// H-10 — Created { Desc } cursor pagination must not silently empty
+// after page 1.
+//
+// Regression: prior to the fix, `eval_backlink_query` used
+// `binary_search_by(|s| s.cmp(after_id))` on the sorted slice without
+// adjusting the comparator for descending order. On a descending slice
+// the natural comparator is monotonically *wrong*, so for any cursor
+// whose ID is greater than the slice's first element, `binary_search_by`
+// returns `Err(0)` and pagination starts at index 0 — yielding the same
+// page-1 contents on page 2 (or worse, an empty page once the limit+1
+// guard eats the duplicates).
+//
+// The fix uses `partition_point` with a direction-aware predicate so
+// the cursor lookup respects whichever order `sort_ids` produced.
+//
+// Each test seeds N ≥ 30 backlinks with strictly distinct, lex-sortable
+// IDs (stand-ins for ULIDs whose timestamps differ by 1 s — the same
+// abstraction used throughout this module's existing Created-sort tests).
+// ======================================================================
+
+/// Helper: insert N source blocks with zero-padded IDs that link to
+/// `target_id`. IDs sort lexicographically in ascending order, mirroring
+/// ULID time-order. Returns the inserted IDs in ascending order.
+async fn seed_n_backlinks(pool: &SqlitePool, target_id: &str, n: usize) -> Vec<String> {
+    let mut ids = Vec::with_capacity(n);
+    for i in 1..=n {
+        let id = format!("BLK_{i:04}");
+        insert_block(pool, &id, "content", &format!("source {i}")).await;
+        insert_block_link(pool, &id, target_id).await;
+        ids.push(id);
+    }
+    ids
+}
+
+#[tokio::test]
+async fn eval_backlink_query_created_desc_page_2_returns_remaining_results() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TARGET", "page", "Target Page").await;
+    let asc_ids = seed_n_backlinks(&pool, "TARGET", 30).await;
+
+    // Page 1: Created Desc, limit = 10.
+    let page1 = PageRequest::new(None, Some(10)).unwrap();
+    let resp1 = eval_backlink_query(
+        &pool,
+        "TARGET",
+        None,
+        Some(BacklinkSort::Created { dir: SortDir::Desc }),
+        &page1,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resp1.items.len(), 10, "page 1 returns 10 items");
+    assert!(resp1.has_more, "page 1 must indicate more pages");
+    assert!(
+        resp1.next_cursor.is_some(),
+        "page 1 must provide a next cursor"
+    );
+    // Descending order: highest IDs first → BLK_0030 .. BLK_0021.
+    let desc_all: Vec<&str> = asc_ids.iter().rev().map(String::as_str).collect();
+    let page1_actual: Vec<&str> = resp1.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        page1_actual,
+        desc_all[..10].to_vec(),
+        "page 1 in descending order"
+    );
+
+    // Page 2: same sort, cursor from page 1.
+    //
+    // Pre-fix this returned an empty page because `binary_search_by` on
+    // a descending slice with `after_id = BLK_0021` returned `Err(0)`,
+    // re-yielding page 1 then trimming to nothing once the +1 fetch
+    // limit detected duplicates.
+    let page2 = PageRequest::new(resp1.next_cursor, Some(10)).unwrap();
+    let resp2 = eval_backlink_query(
+        &pool,
+        "TARGET",
+        None,
+        Some(BacklinkSort::Created { dir: SortDir::Desc }),
+        &page2,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        resp2.items.len(),
+        10,
+        "page 2 must return the next 10 items, not be empty (H-10)"
+    );
+    let page2_actual: Vec<&str> = resp2.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        page2_actual,
+        desc_all[10..20].to_vec(),
+        "page 2 continues the descending sequence after page 1"
+    );
+    assert!(resp2.has_more, "page 2 has more (1 page left)");
+}
+
+#[tokio::test]
+async fn eval_backlink_query_created_desc_page_3_returns_remaining_results() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TARGET", "page", "Target Page").await;
+    let asc_ids = seed_n_backlinks(&pool, "TARGET", 30).await;
+    let desc_all: Vec<&str> = asc_ids.iter().rev().map(String::as_str).collect();
+
+    let sort = BacklinkSort::Created { dir: SortDir::Desc };
+
+    // Page 1
+    let page1 = PageRequest::new(None, Some(10)).unwrap();
+    let resp1 = eval_backlink_query(&pool, "TARGET", None, Some(sort.clone()), &page1)
+        .await
+        .unwrap();
+    let actual1: Vec<&str> = resp1.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(actual1, desc_all[..10].to_vec(), "page 1 desc[0..10]");
+
+    // Page 2
+    let page2 = PageRequest::new(resp1.next_cursor, Some(10)).unwrap();
+    let resp2 = eval_backlink_query(&pool, "TARGET", None, Some(sort.clone()), &page2)
+        .await
+        .unwrap();
+    let actual2: Vec<&str> = resp2.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(actual2, desc_all[10..20].to_vec(), "page 2 desc[10..20]");
+
+    // Page 3: must yield the final 10 items, not empty.
+    let page3 = PageRequest::new(resp2.next_cursor, Some(10)).unwrap();
+    let resp3 = eval_backlink_query(&pool, "TARGET", None, Some(sort), &page3)
+        .await
+        .unwrap();
+    let actual3: Vec<&str> = resp3.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        actual3,
+        desc_all[20..30].to_vec(),
+        "page 3 must return desc[20..30], not be empty (H-10)"
+    );
+    assert!(!resp3.has_more, "page 3 is the last page");
+    assert!(resp3.next_cursor.is_none(), "no cursor on last page");
+}
+
+#[tokio::test]
+async fn eval_backlink_query_created_asc_pagination_unchanged() {
+    // Regression guard: the H-10 fix swaps `binary_search_by` for
+    // `partition_point`. The Asc path must still walk the full pagination
+    // sequence in lex order — this test pins that behaviour so we cannot
+    // accidentally regress the formerly-working Asc direction while
+    // fixing the Desc direction.
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TARGET", "page", "Target Page").await;
+    let asc_ids = seed_n_backlinks(&pool, "TARGET", 30).await;
+    let asc_all: Vec<&str> = asc_ids.iter().map(String::as_str).collect();
+
+    let sort = BacklinkSort::Created { dir: SortDir::Asc };
+
+    // Page 1
+    let page1 = PageRequest::new(None, Some(10)).unwrap();
+    let resp1 = eval_backlink_query(&pool, "TARGET", None, Some(sort.clone()), &page1)
+        .await
+        .unwrap();
+    let actual1: Vec<&str> = resp1.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(actual1, asc_all[..10].to_vec(), "page 1 asc[0..10]");
+    assert!(resp1.has_more);
+
+    // Page 2
+    let page2 = PageRequest::new(resp1.next_cursor, Some(10)).unwrap();
+    let resp2 = eval_backlink_query(&pool, "TARGET", None, Some(sort.clone()), &page2)
+        .await
+        .unwrap();
+    let actual2: Vec<&str> = resp2.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(actual2, asc_all[10..20].to_vec(), "page 2 asc[10..20]");
+    assert!(resp2.has_more);
+
+    // Page 3
+    let page3 = PageRequest::new(resp2.next_cursor, Some(10)).unwrap();
+    let resp3 = eval_backlink_query(&pool, "TARGET", None, Some(sort), &page3)
+        .await
+        .unwrap();
+    let actual3: Vec<&str> = resp3.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(actual3, asc_all[20..30].to_vec(), "page 3 asc[20..30]");
+    assert!(!resp3.has_more, "page 3 is the last page");
+    assert!(resp3.next_cursor.is_none(), "no cursor on last page");
+}
+
+// ======================================================================
 // Empty filters = all backlinks (backward compat)
 // ======================================================================
 
@@ -2955,6 +3137,238 @@ async fn eval_grouped_respects_filters() {
     assert_eq!(
         resp.groups[0].page_id, "PAGE_A",
         "PAGE_A group should match filter"
+    );
+}
+
+// ======================================================================
+// H-11 — eval_backlink_query_grouped: total_count / filtered_count must
+// be computed AFTER self-reference + orphan filtering.
+//
+// Regression: pre-fix `total_count` was set to `base_ids.len()` *before*
+// any orphan or self-reference exclusion, so the UI badge reported more
+// items than the response actually contained. Per AGENTS.md "Backend
+// Patterns" #4, post-filter count is mandatory.
+//
+// "Self-reference" here mirrors the convention used by
+// `eval_unlinked_references`: a source whose root page equals the target
+// block's root page. For a target that is itself a page, this collapses
+// to "child blocks of the target page" — those should not appear in the
+// grouped backlink listing because the user is already viewing that page.
+//
+// "Orphan source block" means a source block whose `page_id` is NULL or
+// whose denormalized `page_id` no longer references a non-conflict page
+// row — `resolve_root_pages` returns no entry for those IDs, so they
+// would be silently dropped from the rendered groups while still
+// inflating `total_count`.
+// ======================================================================
+
+#[tokio::test]
+async fn eval_backlink_query_grouped_total_count_excludes_self_references() {
+    let (pool, _dir) = test_pool().await;
+    // Target page.
+    insert_block_with_parent(&pool, "TARGET", "page", "Target Page", None, None).await;
+
+    // Two legitimate cross-page backlinks (root_page = PAGE_A ≠ TARGET).
+    insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_A1",
+        "content",
+        "block a1",
+        Some("PAGE_A"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_A2",
+        "content",
+        "block a2",
+        Some("PAGE_A"),
+        Some(2),
+    )
+    .await;
+    insert_block_link(&pool, "BLK_A1", "TARGET").await;
+    insert_block_link(&pool, "BLK_A2", "TARGET").await;
+
+    // Two self-references: blocks living on TARGET that link back to it.
+    insert_block_with_parent(
+        &pool,
+        "BLK_T1",
+        "content",
+        "self ref 1",
+        Some("TARGET"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_T2",
+        "content",
+        "self ref 2",
+        Some("TARGET"),
+        Some(2),
+    )
+    .await;
+    insert_block_link(&pool, "BLK_T1", "TARGET").await;
+    insert_block_link(&pool, "BLK_T2", "TARGET").await;
+
+    // N = 4 backlinks total in `block_links`, M = 2 self-references.
+    // Post-filter expectation: total_count = N - M = 2.
+    let page = default_page();
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.total_count, 2,
+        "total_count must exclude self-references (H-11)"
+    );
+    assert_eq!(
+        resp.filtered_count, 2,
+        "filtered_count tracks total_count when no user filter is applied"
+    );
+    assert_eq!(
+        resp.groups.len(),
+        1,
+        "only the cross-page group survives; the would-be TARGET self-group is dropped"
+    );
+    assert_eq!(resp.groups[0].page_id, "PAGE_A");
+    let block_ids: std::collections::HashSet<&str> = resp.groups[0]
+        .blocks
+        .iter()
+        .map(|b| b.id.as_str())
+        .collect();
+    assert!(block_ids.contains("BLK_A1"));
+    assert!(block_ids.contains("BLK_A2"));
+    assert!(
+        !block_ids.contains("BLK_T1") && !block_ids.contains("BLK_T2"),
+        "self-reference blocks must not appear in the rendered groups"
+    );
+}
+
+#[tokio::test]
+async fn eval_backlink_query_grouped_total_count_excludes_orphan_source_blocks() {
+    let (pool, _dir) = test_pool().await;
+    // Target page.
+    insert_block_with_parent(&pool, "TARGET", "page", "Target Page", None, None).await;
+
+    // One legitimate source on PAGE_A.
+    insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_A1",
+        "content",
+        "block a1",
+        Some("PAGE_A"),
+        Some(1),
+    )
+    .await;
+    insert_block_link(&pool, "BLK_A1", "TARGET").await;
+
+    // Three orphan source blocks: `block_type = 'content'` with no
+    // parent_id => `page_id` is NULL (see `insert_block_with_parent`),
+    // which is exactly the shape `resolve_root_pages` cannot resolve.
+    for orphan_id in ["ORPHAN_1", "ORPHAN_2", "ORPHAN_3"] {
+        insert_block_with_parent(&pool, orphan_id, "content", "no page", None, None).await;
+        insert_block_link(&pool, orphan_id, "TARGET").await;
+    }
+
+    // N = 4 base backlinks, K = 3 orphans => total_count = 1.
+    let page = default_page();
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.total_count, 1,
+        "total_count must exclude orphan source blocks (H-11)"
+    );
+    assert_eq!(resp.filtered_count, 1);
+    assert_eq!(resp.groups.len(), 1, "only the PAGE_A group is rendered");
+    assert_eq!(resp.groups[0].page_id, "PAGE_A");
+    assert_eq!(resp.groups[0].blocks.len(), 1);
+    assert_eq!(resp.groups[0].blocks[0].id, "BLK_A1");
+}
+
+#[tokio::test]
+async fn eval_backlink_query_grouped_total_count_matches_visible_results() {
+    // Combined scenario: N total backlinks, M self-references, K orphans.
+    // The post-filter `total_count` must equal `N - M - K`, and it must
+    // also equal the sum of `groups[*].blocks.len()` so the UI badge and
+    // the rendered list cannot drift (AGENTS.md "Backend Patterns" #4).
+    let (pool, _dir) = test_pool().await;
+
+    // Target page.
+    insert_block_with_parent(&pool, "TARGET", "page", "Target Page", None, None).await;
+
+    // 5 legitimate cross-page backlinks across PAGE_A and PAGE_B.
+    insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+    insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+    let cross_page = [
+        ("BLK_A1", "PAGE_A", 1_i64),
+        ("BLK_A2", "PAGE_A", 2),
+        ("BLK_A3", "PAGE_A", 3),
+        ("BLK_B1", "PAGE_B", 1),
+        ("BLK_B2", "PAGE_B", 2),
+    ];
+    for (blk, parent, pos) in cross_page {
+        insert_block_with_parent(&pool, blk, "content", "src", Some(parent), Some(pos)).await;
+        insert_block_link(&pool, blk, "TARGET").await;
+    }
+
+    // 2 self-references (root_page == TARGET).
+    for (idx, blk) in ["BLK_T1", "BLK_T2"].iter().enumerate() {
+        insert_block_with_parent(
+            &pool,
+            blk,
+            "content",
+            "self",
+            Some("TARGET"),
+            Some(idx as i64 + 1),
+        )
+        .await;
+        insert_block_link(&pool, blk, "TARGET").await;
+    }
+
+    // 3 orphans.
+    for blk in ["ORPHAN_1", "ORPHAN_2", "ORPHAN_3"] {
+        insert_block_with_parent(&pool, blk, "content", "orphan", None, None).await;
+        insert_block_link(&pool, blk, "TARGET").await;
+    }
+
+    // N = 10, M = 2, K = 3 => expected total_count = 5.
+    let page = default_page();
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.total_count, 5,
+        "total_count must equal N - M - K (10 - 2 - 3)"
+    );
+    assert_eq!(
+        resp.filtered_count, 5,
+        "filtered_count == total_count when no user filter is applied"
+    );
+
+    let visible: usize = resp.groups.iter().map(|g| g.blocks.len()).sum();
+    assert_eq!(
+        visible,
+        usize::try_from(resp.total_count).unwrap(),
+        "total_count must equal the sum of rendered group blocks (no badge/render drift)"
+    );
+
+    // The two source pages remain; the would-be TARGET self-group and any
+    // orphan-only group are absent.
+    let group_ids: std::collections::HashSet<&str> =
+        resp.groups.iter().map(|g| g.page_id.as_str()).collect();
+    assert_eq!(group_ids.len(), 2);
+    assert!(group_ids.contains("PAGE_A"));
+    assert!(group_ids.contains("PAGE_B"));
+    assert!(
+        !group_ids.contains("TARGET"),
+        "self-reference group must be excluded"
     );
 }
 

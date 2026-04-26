@@ -96,9 +96,14 @@ pub fn mcp_disconnect_all_inner(lifecycle: &McpLifecycle) {
 ///   is `false` — this helper only owns the on-disk state so it is
 ///   trivially testable without a Tauri runtime.
 /// - `enabled=false`: removes the marker (if present) and fires
-///   `disconnect_all()` so every current connection wakes and is dropped.
+///   [`McpLifecycle::shutdown`]. Shutdown stores `enabled = false` into
+///   the lifecycle gate so the accept loop's next iteration drops its
+///   listener and returns (releasing the OS socket file / named pipe),
+///   then notifies every in-flight per-connection task so each observes
+///   the disconnect signal via its `select!` and drops its stream.
 ///   Subsequent `bind_socket` calls (e.g. at next app startup with the
-///   marker absent) will skip binding.
+///   marker absent, or via a follow-up `mcp_set_enabled(true)`) get a
+///   fresh listener.
 ///
 /// Returns `Ok(true)` when the marker file state actually changed and
 /// `Ok(false)` when the requested state was already in effect (so the
@@ -146,9 +151,16 @@ pub fn mcp_set_enabled_inner(
             }
             Err(e) => return Err(AppError::Io(e)),
         }
-        // Kick every in-flight connection so the UI sees `active = 0`
-        // immediately rather than lagging until the agent reconnects.
-        lifecycle.disconnect_all();
+        // H-2: tell the accept loop to drop its listener AND kick every
+        // in-flight connection. The single `disconnect_signal.notify_waiters()`
+        // inside `shutdown` wakes both — the per-connection `run_connection`
+        // tasks observe it via their existing `select!`, and the accept
+        // loop observes it via the new `serve_unix` / `serve_pipe` select.
+        // Without `shutdown`'s `enabled = false` store the loop would just
+        // re-arm `accept()` on the next iteration; with it the loop's
+        // gate check fires before another `accept()` call and the function
+        // returns, dropping the listener.
+        lifecycle.shutdown();
     }
 
     Ok(true)
@@ -290,7 +302,9 @@ pub fn mcp_rw_disconnect_all_inner(lifecycle: &McpLifecycle) {
 /// Toggle the `mcp-rw-enabled` marker file under `app_data_dir`. Same
 /// shape and semantics as [`mcp_set_enabled_inner`] but for the RW
 /// marker; the caller is responsible for re-spawning the RW task if
-/// `lifecycle.is_running()` is `false` after a fresh enable.
+/// `lifecycle.is_running()` is `false` after a fresh enable. The disable
+/// path also fires [`McpLifecycle::shutdown`] (H-2) so the RW accept
+/// loop drops its listener instead of staying open until app restart.
 pub fn mcp_rw_set_enabled_inner(
     app_data_dir: &Path,
     lifecycle: &McpLifecycle,
@@ -327,7 +341,11 @@ pub fn mcp_rw_set_enabled_inner(
             }
             Err(e) => return Err(AppError::Io(e)),
         }
-        lifecycle.disconnect_all();
+        // H-2: see `mcp_set_enabled_inner` for the rationale — the RW
+        // path needs the same treatment so disabling the RW toggle
+        // actually closes the listener instead of just kicking
+        // in-flight connections.
+        lifecycle.shutdown();
     }
 
     Ok(true)

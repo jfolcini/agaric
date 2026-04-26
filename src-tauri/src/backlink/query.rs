@@ -110,21 +110,38 @@ pub async fn eval_backlink_query(
     // 5. Apply cursor pagination
     let start_after = page.after.as_ref().map(|c| c.id.as_str());
     let start_idx = if let Some(after_id) = start_after {
-        if matches!(sort, BacklinkSort::Created { .. }) {
-            // Created sort uses ULID order which is lexicographic — binary
-            // search is a valid O(log n) replacement for the linear scan.
-            match sorted_ids.binary_search_by(|s| s.as_str().cmp(after_id)) {
-                Ok(i) => i + 1, // found: start after it
-                Err(i) => i,    // not found: start at insertion point
+        match sort {
+            // Created sort uses ULID order which is lexicographic. Use
+            // `partition_point` so the predicate respects the slice
+            // direction — `binary_search_by` with the natural `cmp` on a
+            // descending slice returns `Err(0)` for any cursor target
+            // greater than the first element, silently emptying every
+            // page past page 1 in `Created { Desc }` mode (H-10).
+            //
+            // For Asc: predicate `s <= after_id` partitions the sorted
+            // slice into [≤ after_id | > after_id], and the partition
+            // index is the first position strictly greater than the
+            // cursor — i.e. the next item to return.
+            //
+            // For Desc: the slice is sorted high-to-low, so the
+            // predicate inverts to `s >= after_id`, and the partition
+            // index is the first position strictly less than the
+            // cursor — same semantics on the inverted ordering.
+            BacklinkSort::Created { dir: SortDir::Asc } => {
+                sorted_ids.partition_point(|s| s.as_str() <= after_id)
             }
-        } else {
-            // Property sorts are ordered by property value, not by ID, so
-            // binary search on ID is invalid. Fall back to O(n) position scan.
-            sorted_ids
-                .iter()
-                .position(|s| s.as_str() == after_id)
-                .map(|i| i + 1)
-                .unwrap_or(sorted_ids.len())
+            BacklinkSort::Created { dir: SortDir::Desc } => {
+                sorted_ids.partition_point(|s| s.as_str() >= after_id)
+            }
+            _ => {
+                // Property sorts are ordered by property value, not by ID, so
+                // binary search on ID is invalid. Fall back to O(n) position scan.
+                sorted_ids
+                    .iter()
+                    .position(|s| s.as_str() == after_id)
+                    .map(|i| i + 1)
+                    .unwrap_or(sorted_ids.len())
+            }
         }
     } else {
         0

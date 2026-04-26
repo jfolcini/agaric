@@ -794,8 +794,8 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 | Severity-downgraded by Pass 2 | 49 |
 | Already-tracked in REVIEW-LATER (PERF-19, PERF-20, PERF-23) | 3 |
 | Net findings in this report | 333 |
-| **Critical** | **2** |
-| **High** | **17** |
+| **Critical** | **1** |
+| **High** | **12** |
 | **Medium** | **62** |
 | **Low** | **126** |
 | **Info / nits** | **125** |
@@ -803,10 +803,10 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 ### Top-5 highest-priority items (Impact ÷ Cost)
 
 1. **C-2b** — Boot-time op-log replay path for unmaterialized ops; op_log diverges from materialized state with no automatic remediation (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/materializer/consumer.rs" />). C-2a (divergence detection) shipped — divergence is now visible via `fg_apply_dropped` in `StatusInfo`; C-2b remains as the actual replay path.
-2. **C-3c** — `cleanup_orphaned_attachments` GC pass for retroactive file leak recovery (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/materializer/handlers.rs" />). C-3a + C-3b shipped — the ongoing leak is closed; C-3c reconciles files leaked before that change.
-3. **H-1** — Pairing passphrase is never cryptographically verified; `confirm_pairing_inner` accepts any string (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/sync_cmds.rs" />).
-4. **H-2** — `mcp_set_enabled(false)` does not close the accept loop; new connections accepted until app restart (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/mcp.rs" />).
-5. **H-3** — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/blocks.rs" />).
+2. **H-3** — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated daily. Split into H-3a (backend IPC enforcement), H-3b (frontend callsites), H-3c (property test) (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/blocks/crud.rs" />).
+3. **H-9a** — Bug-report redaction allow-list misses GCal email + peer device IDs + generic email regex; reports cross the public-GitHub trust boundary (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/bug_report.rs" />).
+4. **H-4** — `set_todo_state_inner` runs state change + timestamp writes + recurrence sibling creation across separate transactions; crash mid-sequence leaves recurring task stuck (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/properties.rs" />).
+5. **H-13** — Op-log immutability has zero database-level enforcement; only application-level invariant (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/op_log.rs" />).
 
 ### Findings by Domain × Severity
 
@@ -814,13 +814,13 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 |---|---|---|---|---|---|
 | Core data layer | 0 | 1 | 6 | 9 | 11 |
 | Materializer | 1 | 2 | 6 | 8 | 4 |
-| Cache + Pagination | 0 | 1 | 6 | 12 | 6 |
-| Commands (CRUD) | 0 | 2 | 8 | 10 | 13 |
-| Commands (System) | 1 | 2 | 13 | 13 | 6 |
-| Sync stack | 0 | 4 | 17 | 25 | 5 |
-| Search & Links | 0 | 4 | 4 | 16 | 19 |
+| Cache + Pagination | 0 | 0 | 6 | 12 | 6 |
+| Commands (CRUD) | 0 | 1 | 8 | 10 | 13 |
+| Commands (System) | 0 | 2 | 13 | 13 | 6 |
+| Sync stack | 0 | 3 | 17 | 25 | 5 |
+| Search & Links | 0 | 2 | 4 | 16 | 19 |
 | Lifecycle / Snapshots | 0 | 0 | 18 | 16 | 8 |
-| MCP | 0 | 1 | 6 | 12 | 8 |
+| MCP | 0 | 0 | 6 | 12 | 8 |
 | GCal / Spaces / Drafts | 0 | 0 | 9 | 11 | 9 |
 
 (Numbers approximate; some findings span domains and are listed under the primary one.)
@@ -846,10 +846,8 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 
 | ID | Title | Why |
 |---|---|---|
-| **H-1** | Validate pairing passphrase against `pairing_state` slot | Pairing security; passphrase machinery is currently dead |
-| **H-2** | Make `mcp_set_enabled(false)` close the listener | Toggle works as-advertised |
 | **H-3** | Fix `create_page_in_space` bypass in journal/templates/`create_block` | "Nothing outside of spaces" invariant |
-| **H-7** | Add `is_conflict = 0` + `depth < 100` to `move_block_inner` cycle CTE | One-line SQL change; data integrity |
+| **H-9a** | Bug-report redaction: GCal email + peer device IDs + email regex | PII leak vector; bug reports cross to public GitHub |
 | **M-3** | `set_page_aliases_inner` wrap in BEGIN IMMEDIATE | One-line atomicity fix |
 | **M-4** | `journal::resolve_or_create_journal_page` wrap in BEGIN IMMEDIATE | TOCTOU dup-page fix |
 | **M-7** | `set_priority_inner` honor user-extended priority options (1..10 not 1..3) | One-line; matches ARCHITECTURE.md §20 (UX-201b) |
@@ -858,7 +856,7 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 
 ---
 
-## CRITICAL findings (2)
+## CRITICAL findings (1)
 
 ### C-2b — Boot-time op-log replay path for unmaterialized ops
 - **Domain:** Materializer / Recovery
@@ -868,45 +866,12 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Cost:** M–L
 - **Risk:** Medium (idempotency must be verified end-to-end across every op handler; replay needs progress markers so a partial replay survives a second crash)
 - **Impact:** High (closes the last automatic-divergence gap in CQRS)
-- **Recommendation:** Build on the existing `recover_at_boot` infrastructure. Each derived table tracks a "materialized through seq N" cursor; the replay walks `op_log WHERE seq > cursor`. Add an integration test that injects ApplyOp failure mid-batch, restarts the pool, and asserts state convergence post-replay.
-- **Status:** Open. No dependencies (C-2a shipped).
-
-### C-3c — Implement `cleanup_orphaned_attachments` (FS ↔ DB reconciliation)
-- **Domain:** Materializer / Lifecycle
-- **Location:** `src-tauri/src/materializer/handlers.rs::cleanup_orphaned_attachments`
-- **What:** Replace the no-op TODO with a real GC pass: scan the attachments directory, list every file, query `attachments.fs_path` for matches, and remove files that are not referenced. Schedule the pass at boot and after compaction. Bound the scan with a directory-listing chunk size so vaults with many files do not block.
-- **Why it matters:** Recovers files leaked before C-3a / C-3b shipped (the `DeleteAttachment` payload now carries `fs_path` and `delete_attachment_inner` calls `tokio::fs::remove_file` after the IMMEDIATE tx commits — so the ongoing leak is closed). C-3c also provides ongoing defense-in-depth for any future code path that drops `fs_path` from a payload, and reconciles files left behind when remote `DeleteAttachment` ops are applied via the materializer (which still operates pure-SQL — adding fs unlink to the materializer side requires plumbing `app_data_dir` through, which C-3c subsumes via the GC pass).
-- **Cost:** S–M
-- **Risk:** Medium — accidental deletion of a still-referenced file would be data loss. Test exhaustively.
-- **Impact:** Medium — recovers space; defense in depth for future bugs.
-- **Recommendation:** Add an exhaustive test set (file referenced + not referenced + referenced by an op that compacted out + referenced by the upcoming compaction). Consider a "dry-run" mode that logs what would be deleted before enabling actual deletion in production.
-- **Status:** Open. No dependencies (C-3a + C-3b shipped).
+- **Recommendation:** Build on the existing `recover_at_boot` infrastructure. Each derived table tracks a "materialized through seq N" cursor; the replay walks `op_log WHERE seq > cursor`. Add an integration test that injects ApplyOp failure mid-batch, restarts the pool, and asserts state convergence post-replay. **Schema migration required** (per-table cursor tracking) — needs explicit user approval before implementing per AGENTS.md "Architectural Stability".
+- **Status:** Open. No dependencies (C-2a shipped). Schema migration approval required.
 
 ---
 
-## HIGH findings (17)
-
-### H-1 — Pairing passphrase is never cryptographically verified
-- **Domain:** Sync / Commands
-- **Location:** `src-tauri/src/commands/sync_cmds.rs::confirm_pairing_inner`; `src-tauri/src/pairing.rs::verify_device_exchange` (dead code); ARCHITECTURE.md §18 line ~1737 says "Validate passphrase"
-- **What:** `confirm_pairing_inner` does not validate the supplied passphrase against the active `pairing_state` slot. Any string succeeds. The entire `PairingMessage` + `verify_device_exchange` machinery is dead code.
-- **Why it matters:** Even within the single-user threat model, pairing-time MITM detection is the one place where adversarial input matters because the user has typed the passphrase from a trusted out-of-band channel. A bug here defeats the only check that confirms "this peer is the device that scanned my QR".
-- **Cost:** S
-- **Risk:** Medium (must keep pairing UX intact while fixing)
-- **Impact:** High
-- **Recommendation:** Wire `confirm_pairing_inner` to `pairing.rs::verify_device_exchange` against the active `pairing_state` slot; add a test that asserts a wrong passphrase fails.
-- **Pass-1 source:** 06-sync / F1; 05-commands-system / F16 (downgraded to Medium by Pass 2 commands-system but kept High by sync reviewer; we keep High).
-
-### H-2 — `mcp_set_enabled(false)` does not stop the accept loop
-- **Domain:** MCP / Commands
-- **Location:** `src-tauri/src/commands/mcp.rs::mcp_set_enabled`; `src-tauri/src/mcp/server.rs` accept loop
-- **What:** `notify_waiters()` is one-shot and edge-triggered. New connections after the disable register a fresh waiter and proceed normally; the listener stays open until app restart.
-- **Why it matters:** Toggle does not actually disable the surface. Users who flip the switch off still expose MCP RW tools to local clients.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** High (user trust in toggle)
-- **Recommendation:** Replace one-shot `Notify` with an `AtomicBool` checked in the accept loop AND drop the listener bind on disable. Add an integration test asserting that a connection attempt after `set_enabled(false)` fails.
-- **Pass-1 source:** 09-mcp / F2; 05-commands-system / F21
+## HIGH findings (12)
 
 ### H-3 — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated daily (parent — split into H-3a, H-3b, H-3c)
 - **Domain:** Spaces / Commands
@@ -982,17 +947,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Recommendation:** Either split BatchApplyOps into per-block-id sub-batches at dispatch time, or compute a multi-key grouping (HashSet of all block_ids; serialize batches whose key sets overlap). Pass 2 confirmed the pass-1 "return None" remediation does NOT serialize because the None bucket still races with other groups via JoinSet.
 - **Pass-1 source:** 02-materializer / F3
 
-### H-7 — `move_block_inner` cycle-detection CTE missing `is_conflict = 0` and `depth < 100`
-- **Domain:** Commands / CRUD
-- **Location:** `src-tauri/src/commands/blocks/move_ops.rs::move_block_inner`
-- **What:** The recursive cycle-detection CTE has neither the conflict filter nor the depth bound, contradicting AGENTS.md invariant #9.
-- **Why it matters:** Conflict copies leak into the cycle check (false positives blocking a legitimate move); a corrupted parent_id chain runs unbounded recursion.
-- **Cost:** S (one SQL line)
-- **Risk:** Low
-- **Impact:** High (data correctness + DoS-against-self)
-- **Recommendation:** Add `AND is_conflict = 0 AND depth < 100` to the recursive member.
-- **Pass-1 source:** 04-commands-crud / F1
-
 ### H-8 — `list_agenda_range` cursor encodes `b.due_date`/`b.scheduled_date`, not `ac.date`
 - **Domain:** Cache + Pagination
 - **Location:** `src-tauri/src/pagination/agenda.rs::list_agenda_range`
@@ -1044,28 +998,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** High (user trust in the bug-report feature)
 - **Recommendation:** Tauri command `bug_report_preview()` returns the same redacted bundle as the existing submit, but does not upload. The dialog renders it via the existing `ScrollArea` + diff viewer primitives. Cross-references UX-277 (`BugReportDialog` polish — adding "no log-content preview before submit" was already filed there at S cost; this finding promotes it to H-9c with a richer scope).
 - **Status:** Open. Independent of H-9a / H-9b. May supersede the "no log-content preview" item in UX-277 — when H-9c lands, drop the preview bullet from UX-277.
-
-### H-10 — `Created { Desc }` cursor pagination silently empty past page 1
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/query.rs::eval_backlink_query`
-- **What:** Uses `binary_search_by` on a descending slice — returns `Err(0)` for any cursor target greater than first element, producing empty page.
-- **Why it matters:** Backlink browsing in Created-Desc mode loses everything past the first page. User-visible.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** High
-- **Recommendation:** Use `partition_point` or invert the comparator to handle descending slices; add a regression test.
-- **Pass-1 source:** 07-search-links / F3
-
-### H-11 — Backlink grouped query: `total_count` / `filtered_count` drift for orphan source blocks
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/query.rs::eval_backlink_query_grouped`
-- **What:** Self-reference filtering happens after the IN-clause fetch; `total_count` set from pre-filter length so it reports more results than the user actually sees, and orphan source blocks (no resolvable page) inflate the count further.
-- **Why it matters:** UI badge shows "23 backlinks" but only 19 render. AGENTS.md "Backend Patterns" #4 explicitly mandates post-filter count.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** High
-- **Recommendation:** Compute `total_count` after self-reference + orphan filtering.
-- **Pass-1 source:** 07-search-links / F4
 
 ### H-12 — `flush_draft` bypasses `MAX_CONTENT_LENGTH` and never validates target block exists (parent — split into H-12a, H-12b)
 - **Domain:** Drafts / Commands

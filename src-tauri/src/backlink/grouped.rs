@@ -35,17 +35,67 @@ pub async fn eval_backlink_query_grouped(
     sort: Option<BacklinkSort>,
     page: &PageRequest,
 ) -> Result<GroupedBacklinkResponse, AppError> {
-    // 1. Get base backlink set
+    // 1. Get base backlink set.
+    //    Exclude `source_id == block_id` self-links at the SQL layer so
+    //    they never enter the count or grouping pipeline (H-11). Sources
+    //    that happen to live on the *same* root page as the target are
+    //    treated separately below — they are still backlinks, but for the
+    //    grouped view we drop them so the user does not see "their own
+    //    page" listed as a source group, mirroring the convention used by
+    //    `eval_unlinked_references`.
     let base_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
         "SELECT bl.source_id FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
-         WHERE bl.target_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
+         WHERE bl.target_id = ?1 \
+           AND bl.source_id != ?1 \
+           AND b.deleted_at IS NULL AND b.is_conflict = 0",
     )
     .bind(block_id)
     .fetch_all(pool)
     .await?
     .into_iter()
     .collect();
+
+    if base_ids.is_empty() {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count: 0,
+            filtered_count: 0,
+            truncated: false,
+        });
+    }
+
+    // 1a. Resolve the target's own root page once so we can drop
+    //     same-page self-references below. If the target has no
+    //     resolvable root page (orphan target), nothing matches the
+    //     self-reference predicate and we behave as before.
+    let target_root_page_id: Option<String> = {
+        let mut target_set = FxHashSet::default();
+        target_set.insert(block_id.to_string());
+        let target_map = resolve_root_pages(pool, &target_set).await?;
+        target_map.get(block_id).map(|(pid, _)| pid.clone())
+    };
+
+    // 1b. Resolve root pages for the entire base set up front.
+    //     Orphan source blocks (no resolvable root page) and
+    //     same-page self-references must be filtered out *before*
+    //     `total_count` / `filtered_count` are computed — otherwise the
+    //     UI badge reports more items than we actually render
+    //     (AGENTS.md "Backend Patterns" #4: post-filter count is
+    //     mandatory). Reusing this `root_map` downstream also avoids a
+    //     second pass over the database.
+    let root_map = resolve_root_pages(pool, &base_ids).await?;
+    let base_ids: FxHashSet<String> = base_ids
+        .into_iter()
+        .filter(|id| match root_map.get(id) {
+            // Orphan: no resolvable root page → drop.
+            None => false,
+            // Self-reference: source's root page == target's root page → drop.
+            Some((page_id, _)) => target_root_page_id.as_deref() != Some(page_id.as_str()),
+        })
+        .collect();
 
     let total_count = base_ids.len();
 
@@ -90,10 +140,13 @@ pub async fn eval_backlink_query_grouped(
         });
     }
 
-    // 3. Resolve root pages for all filtered IDs
-    let root_map = resolve_root_pages(pool, &filtered_ids).await?;
+    // 3. (Root pages already resolved in step 1b — `root_map` covers
+    //     `base_ids ⊇ filtered_ids`, so every entry in `filtered_ids` has
+    //     a corresponding root-page mapping.)
 
-    // 4. Group blocks by root page (skip orphans with no page ancestor)
+    // 4. Group blocks by root page. After step 1b every survivor has a
+    //    valid root-page entry, so the `if let Some(...)` here is now
+    //    purely defensive against a race between resolve and group.
     let mut page_groups: std::collections::HashMap<String, (Option<String>, Vec<String>)> =
         std::collections::HashMap::new();
     for block_id_item in &filtered_ids {
