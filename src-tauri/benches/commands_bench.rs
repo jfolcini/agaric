@@ -519,11 +519,39 @@ fn bench_batch_resolve(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("batch_resolve");
 
+    // FEAT-3 Phase 7 — batch_resolve_inner takes a required space_id.
+    // The bench seeds a synthetic space block + assigns every seeded
+    // block to it so the membership filter doesn't drop the entire
+    // result set (which would skew the throughput numbers).
+    const BENCH_SPACE_ID: &str = "01BENCHSPACE00000000000001";
+
     for size in [10, 100, 500] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("batch_resolve_{size}")));
         let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
         let ids = rt.block_on(seed_blocks(&pool, &materializer, size));
+
+        rt.block_on(async {
+            sqlx::query(
+                "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'page', 'BenchSpace', NULL, NULL)",
+            )
+            .bind(BENCH_SPACE_ID)
+            .execute(&pool)
+            .await
+            .unwrap();
+            for id in &ids {
+                sqlx::query(
+                    "INSERT INTO block_properties (block_id, key, value_ref) \
+                     VALUES (?, 'space', ?)",
+                )
+                .bind(id)
+                .bind(BENCH_SPACE_ID)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        });
 
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(
@@ -533,7 +561,11 @@ fn bench_batch_resolve(c: &mut Criterion) {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
                     let ids = ids.clone();
-                    async move { batch_resolve_inner(&pool, ids).await.unwrap() }
+                    async move {
+                        batch_resolve_inner(&pool, ids, BENCH_SPACE_ID.to_string())
+                            .await
+                            .unwrap()
+                    }
                 })
             },
         );

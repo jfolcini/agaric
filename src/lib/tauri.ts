@@ -217,9 +217,30 @@ export interface ResolvedBlock {
   deleted: boolean
 }
 
-/** Batch-resolve block metadata for multiple IDs in a single call. */
-export function batchResolve(ids: string[]): Promise<ResolvedBlock[]> {
-  return invoke('batch_resolve', { ids })
+/** Batch-resolve block metadata for multiple IDs in a single call.
+ *
+ * `spaceId` (FEAT-3p7) — when set, restricts resolution to blocks
+ * whose owning page carries `space = <spaceId>`. Foreign-space targets
+ * simply do not appear in the response, which is what makes the chip
+ * fall into the "unknown id" branch and render via the broken-link
+ * UX (locked-in policy: no live links between spaces, ever).
+ *
+ * The wrapper keeps `spaceId` optional at the TypeScript boundary so
+ * legacy cross-space callers (TrashView breadcrumbs, SearchPanel
+ * results, agenda panels, dependency chips) compile unchanged; in the
+ * generated `bindings.ts` `space_id` is required, so leaving it
+ * `undefined` passes JSON `null` to the backend, which rejects at
+ * runtime. The intent is to migrate every call site to pass the
+ * active `currentSpaceId` (or an explicit override for genuinely
+ * cross-space surfaces like the trash) before the backend tightens
+ * `Option<String>` → `String`. Mirrors the optional `spaceId` shape
+ * used by `listBlocks` / `searchBlocks`.
+ */
+export function batchResolve(
+  ids: string[],
+  spaceId?: string | undefined,
+): Promise<ResolvedBlock[]> {
+  return invoke('batch_resolve', { ids, spaceId: spaceId ?? null })
 }
 
 /** Move a block to a new parent and/or position. */
@@ -1057,14 +1078,18 @@ function isMobilePlatform(): boolean {
 }
 
 /**
- * FEAT-12: drop a single content block onto today's journal page.
+ * FEAT-12 + FEAT-3p5: drop a single content block onto today's journal
+ * page in the active space.
  *
- * Resolves today's journal page on the backend (creating it if missing)
- * and appends a content block as a child. Used by the global-shortcut
- * quick-capture flow (`QuickCaptureDialog` → `quickCaptureBlock`).
+ * Resolves today's journal page in `spaceId` on the backend (creating it
+ * if missing) and appends a content block as a child. Used by the
+ * global-shortcut quick-capture flow (`QuickCaptureDialog` →
+ * `quickCaptureBlock`). The space scoping is required: every journal
+ * page belongs to a space, so two devices in different spaces capture
+ * into their own daily notes without colliding.
  */
-export function quickCaptureBlock(content: string): Promise<BlockRow> {
-  return invoke<BlockRow>('quick_capture_block', { content })
+export function quickCaptureBlock(content: string, spaceId: string): Promise<BlockRow> {
+  return invoke<BlockRow>('quick_capture_block', { content, spaceId })
 }
 
 /**

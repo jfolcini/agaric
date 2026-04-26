@@ -15,7 +15,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useResolveStore } from '../../stores/resolve'
+import { keyFor, useResolveStore } from '../../stores/resolve'
+import { useSpaceStore } from '../../stores/space'
 import { usePageDelete } from '../usePageDelete'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -27,6 +28,13 @@ beforeEach(() => {
     pagesList: [],
     version: 0,
     _preloaded: false,
+  })
+  // FEAT-3p7 — pin the active space so `useResolveStore.set` composes
+  // its cache key with a deterministic prefix.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
   })
 })
 
@@ -95,7 +103,7 @@ describe('usePageDelete', () => {
       await result.current.handleDeletePage('P1')
     })
 
-    const cached = useResolveStore.getState().cache.get('P1')
+    const cached = useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'P1'))
     expect(cached).toEqual({ title: '(deleted)', deleted: true })
   })
 

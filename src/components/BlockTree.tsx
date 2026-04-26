@@ -53,7 +53,8 @@ import {
 import { getDragDescendants } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
 import { usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
-import { useResolveStore } from '../stores/resolve'
+import { keyFor, useResolveStore } from '../stores/resolve'
+import { useSpaceStore } from '../stores/space'
 import { useUndoStore } from '../stores/undo'
 import { BlockHistorySheet } from './BlockHistorySheet'
 import { BlockListRenderer } from './BlockListRenderer'
@@ -78,18 +79,24 @@ const DND_MEASURING = {
 const ULID_LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
 
 /**
- * Scan the provided blocks for `[[ULID]]` tokens whose ids are not yet in
- * the resolve cache. Pure module-scope helper so BlockTree's useEffect body
- * stays trivial (keeps cognitive complexity <35).
+ * Scan the provided blocks for `[[ULID]]` tokens whose ids are not yet
+ * cached for the active space. The cache is keyed by
+ * `${spaceId}::${ulid}` (FEAT-3p7) so the membership check has to use
+ * the same composite key — a bare-id lookup would treat a previous-
+ * space cache hit as "already cached" and skip the (now space-scoped)
+ * batch resolve, leaking the foreign title into the chip render.
  */
-function collectUncachedLinkIds(blocks: ReadonlyArray<{ content: string | null }>): Set<string> {
+function collectUncachedLinkIds(
+  blocks: ReadonlyArray<{ content: string | null }>,
+  spaceId: string | null,
+): Set<string> {
   const uncached = new Set<string>()
   const currentCache = useResolveStore.getState().cache
   for (const b of blocks) {
     if (!b.content) continue
     for (const m of b.content.matchAll(ULID_LINK_RE)) {
       const id = m[1] as string
-      if (!currentCache.has(id)) uncached.add(id)
+      if (!currentCache.has(keyFor(spaceId, id))) uncached.add(id)
     }
   }
   return uncached
@@ -99,17 +106,34 @@ function collectUncachedLinkIds(blocks: ReadonlyArray<{ content: string | null }
  * Batch-resolve the given ids and write results back to the resolve store.
  * Logs and swallows transport errors; honours a cancellation predicate so
  * the caller can abort on unmount without an extra flag at the call site.
+ *
+ * FEAT-3p7 — pass `spaceId` to scope the resolve to the active space.
+ * Foreign-space targets are filtered out by the backend; we mark them
+ * as `deleted: true` placeholders here so the chip's `resolveStatus`
+ * lookup hits a cached entry and renders via the broken-link UX
+ * instead of the active default.
  */
 async function fetchAndCacheLinks(
   ids: ReadonlySet<string>,
+  spaceId: string | null,
   isCancelled: () => boolean,
 ): Promise<void> {
   try {
-    const resolved = await batchResolve([...ids])
+    const resolved = await batchResolve([...ids], spaceId ?? undefined)
     if (isCancelled()) return
     const store = useResolveStore.getState()
+    const resolvedIds = new Set(resolved.map((r) => r.id))
     for (const r of resolved) {
       store.set(r.id, r.title?.slice(0, 60) || `[[${r.id.slice(0, 8)}...]]`, r.deleted)
+    }
+    // FEAT-3p7 — every requested id the backend did not return is a
+    // foreign-space (or genuinely unknown) target. Cache a deleted
+    // placeholder so the chip's resolveStatus hits and the broken-link
+    // styling fires; without this, an unknown id falls through to the
+    // 'active' default and the chip silently renders as live.
+    for (const id of ids) {
+      if (resolvedIds.has(id)) continue
+      store.set(id, `[[${id.slice(0, 8)}...]]`, true)
     }
   } catch (err) {
     logger.warn('BlockTree', 'Batch resolve failed for uncached block links', undefined, err)
@@ -368,13 +392,20 @@ export function BlockTree({
   // and batch-fetch them.  Pages + tags are already preloaded by App.tsx
   // via useResolveStore.preload(); this effect only handles block-link
   // references that may not be in the cache (e.g. links to content blocks).
+  //
+  // FEAT-3p7 — `spaceId` is threaded through to both the cache-membership
+  // check and the `batchResolve` IPC call so a foreign-space target is
+  // (a) treated as uncached even if a prior space's resolution still
+  // sits in the global Map, and (b) filtered out at the backend so the
+  // chip falls into the broken-link branch.
   useEffect(() => {
     let cancelled = false
     async function resolveUncachedLinks() {
       try {
-        const uncached = collectUncachedLinkIds(blocks)
+        const spaceId = useSpaceStore.getState().currentSpaceId
+        const uncached = collectUncachedLinkIds(blocks, spaceId)
         if (uncached.size === 0) return
-        await fetchAndCacheLinks(uncached, () => cancelled)
+        await fetchAndCacheLinks(uncached, spaceId, () => cancelled)
       } catch (err) {
         logger.warn(
           'BlockTree',

@@ -170,10 +170,15 @@ beforeEach(() => {
     focusedBlockId: null,
     selectedBlockIds: [],
   })
-  // Reset journal store to defaults
+  // Reset journal store to defaults — FEAT-3p5 adds per-space slices
+  // that we also reset so each test starts from a clean state.
   useJournalStore.setState({
     mode: 'daily',
     currentDate: new Date(),
+    currentDateBySpace: {},
+    modeBySpace: {},
+    scrollToDate: null,
+    scrollToPanel: null,
   })
   // BUG-1 / H-3b — JournalPage now routes page creation through
   // `createPageInSpace`, which reads `useSpaceStore.getState().currentSpaceId`.
@@ -3352,6 +3357,95 @@ describe('JournalPage', () => {
 
         expect(screen.getByRole('tab', { name: /agenda view/i })).toBeInTheDocument()
       })
+    })
+  })
+
+  // ── FEAT-3p5 — per-space currentDate / mode integration ─────────────
+  //
+  // The journal store's space-switch subscriber flushes the outgoing
+  // space's flat fields into a slice and pulls the incoming space's
+  // slice back into the flat fields. JournalPage renders straight from
+  // the flat fields, so the date display + mode tab tracking should
+  // follow the active space without any prop-drilling.
+
+  describe('per-space slices (FEAT-3p5)', () => {
+    it('switching from a space at 2025-01-15 to a fresh space falls back to today', async () => {
+      // Arrange: Personal active, viewing 2025-01-15 in weekly mode.
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_PERSONAL',
+        availableSpaces: [
+          { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null },
+          { id: 'SPACE_WORK', name: 'Work', accent_color: null },
+        ],
+        isReady: true,
+      })
+      useJournalStore.getState().navigateToDate(new Date(2025, 0, 15), 'weekly')
+      mockedInvoke.mockResolvedValue(emptyPage)
+      renderJournal()
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      // Act: switch to Work — a space that has no slice yet.
+      act(() => {
+        useSpaceStore.setState({ currentSpaceId: 'SPACE_WORK' })
+      })
+
+      // Assert: store fell back to today + daily for the fresh space.
+      const state = useJournalStore.getState()
+      expect(state.mode).toBe('daily')
+      // currentDate is "today" — match by ISO string instead of pinning
+      // a calendar day so the test is stable across timezones / CI clocks.
+      const today = new Date()
+      const todayISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+      const flatISO = `${state.currentDate.getFullYear()}-${String(state.currentDate.getMonth() + 1).padStart(2, '0')}-${String(state.currentDate.getDate()).padStart(2, '0')}`
+      expect(flatISO).toBe(todayISO)
+
+      // The outgoing Personal slice was flushed and round-trips correctly.
+      expect(state.currentDateBySpace['SPACE_PERSONAL']).toBe('2025-01-15')
+      expect(state.modeBySpace['SPACE_PERSONAL']).toBe('weekly')
+    })
+
+    it('switching back to a space restores its prior date + mode slice', async () => {
+      // Arrange: visit Personal at 2025-01-15 weekly, then Work, then
+      // back to Personal — the slice must round-trip.
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_PERSONAL',
+        availableSpaces: [
+          { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null },
+          { id: 'SPACE_WORK', name: 'Work', accent_color: null },
+        ],
+        isReady: true,
+      })
+      useJournalStore.getState().navigateToDate(new Date(2025, 0, 15), 'weekly')
+      mockedInvoke.mockResolvedValue(emptyPage)
+      renderJournal()
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      // Visit Work, change date inside it.
+      act(() => {
+        useSpaceStore.setState({ currentSpaceId: 'SPACE_WORK' })
+      })
+      act(() => {
+        useJournalStore.getState().navigateToDate(new Date(2026, 5, 10), 'monthly')
+      })
+
+      // Switch back to Personal — flat fields must restore 2025-01-15 weekly.
+      act(() => {
+        useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      })
+
+      const state = useJournalStore.getState()
+      expect(state.mode).toBe('weekly')
+      expect(state.currentDate.getFullYear()).toBe(2025)
+      expect(state.currentDate.getMonth()).toBe(0) // January
+      expect(state.currentDate.getDate()).toBe(15)
+
+      // And Work's slice still holds the 2026-06-10 monthly view.
+      expect(state.currentDateBySpace['SPACE_WORK']).toBe('2026-06-10')
+      expect(state.modeBySpace['SPACE_WORK']).toBe('monthly')
     })
   })
 })

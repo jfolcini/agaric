@@ -10,7 +10,8 @@
 import { useCallback, useState } from 'react'
 import { toast } from 'sonner'
 import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '../lib/template-utils'
-import { useResolveStore } from '../stores/resolve'
+import { keyFor, useResolveStore } from '../stores/resolve'
+import { useSpaceStore } from '../stores/space'
 
 export type TemplatePagePreview = { id: string; content: string; preview: string | null }
 
@@ -66,7 +67,10 @@ export function useTemplateSelection({
       try {
         const parentId = block.parent_id ?? rootParentId
         if (!parentId) return
-        const pageTitle = useResolveStore.getState().cache.get(rootParentId ?? '')?.title ?? ''
+        // FEAT-3p7 — cache is composite-keyed (`${spaceId}::${ulid}`).
+        const tplSpaceId = useSpaceStore.getState().currentSpaceId
+        const pageTitle =
+          useResolveStore.getState().cache.get(keyFor(tplSpaceId, rootParentId ?? ''))?.title ?? ''
         const ids = await insertTemplateBlocks(templatePageId, parentId, {
           pageTitle,
         })

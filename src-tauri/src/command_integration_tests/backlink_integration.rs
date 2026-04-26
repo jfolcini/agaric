@@ -1464,10 +1464,16 @@ async fn batch_resolve_returns_matching_blocks() {
     )
     .await
     .unwrap();
+    // FEAT-3 Phase 7: batch_resolve_inner filters by space; assign both
+    // blocks to the synthetic test space so the membership filter keeps
+    // them in scope.
+    assign_to_test_space(&pool, &b1.id).await;
+    assign_to_test_space(&pool, &b2.id).await;
 
     let resolved = batch_resolve_inner(
         &pool,
         vec![b1.id.clone(), b2.id.clone(), "NONEXISTENT".into()],
+        Some(TEST_SPACE_ID.to_string()),
     )
     .await
     .unwrap();
@@ -1494,15 +1500,22 @@ async fn batch_resolve_marks_deleted_block() {
     )
     .await
     .unwrap();
+    // Content block has no page_id (top-level), so COALESCE(page_id, id) = id —
+    // assign the synthetic space directly to keep it in scope.
+    assign_to_test_space(&pool, &block.id).await;
 
     delete_block_inner(&pool, DEV, &mat, block.id.clone())
         .await
         .unwrap();
     settle(&mat).await;
 
-    let resolved = batch_resolve_inner(&pool, vec![block.id.clone()])
-        .await
-        .unwrap();
+    let resolved = batch_resolve_inner(
+        &pool,
+        vec![block.id.clone()],
+        Some(TEST_SPACE_ID.to_string()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resolved.len(), 1, "deleted block should still be resolved");
     assert!(resolved[0].deleted, "deleted flag must be true");

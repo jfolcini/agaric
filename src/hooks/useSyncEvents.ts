@@ -21,6 +21,7 @@ import { logger } from '@/lib/logger'
 import { getConflicts } from '@/lib/tauri'
 import { pageBlockRegistry } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
 
 /** Payload shapes from the Rust backend sync_events.rs */
@@ -118,7 +119,14 @@ export function useSyncEvents(): void {
           for (const store of pageBlockRegistry.values()) {
             store.getState().load()
           }
-          useResolveStore.getState().preload(true)
+          // FEAT-3p7 — preload now takes the active space id so the
+          // post-sync re-fetch only re-keys current-space pages into
+          // the cache. Foreign-space rows that were synced from the
+          // peer never land in the cache here; they will be filtered
+          // by the next BlockTree-level batchResolve and rendered as
+          // broken-link chips.
+          const refreshSpaceId = useSpaceStore.getState().currentSpaceId
+          useResolveStore.getState().preload(refreshSpaceId ?? undefined, true)
         }
 
         // Check for conflicts after sync (#438)

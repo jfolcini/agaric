@@ -162,6 +162,11 @@ struct GetAgendaArgs {
 #[serde(deny_unknown_fields)]
 struct JournalForDateArgs {
     date: String,
+    /// FEAT-3p5 — the active space's ULID. Required: every journal page
+    /// belongs to a space. Agents that do not yet track a "current
+    /// space" must pick one explicitly (typically the first space
+    /// surfaced via `list_spaces`).
+    space_id: String,
 }
 
 /// Convert a serde-json deserialization error into an
@@ -476,14 +481,18 @@ fn tool_desc_journal_for_date() -> ToolDescription {
     ToolDescription {
         name: "journal_for_date".to_string(),
         description:
-            "Return the journal page for a specific date, creating it if missing. Idempotent."
+            "Return the journal page for a specific date in the given space, creating it if missing. Idempotent per-space."
                 .to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
-            "required": ["date"],
+            "required": ["date", "space_id"],
             "properties": {
                 "date": { "type": "string", "description": "YYYY-MM-DD date string." },
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space the daily journal belongs to (FEAT-3p5)."
+                },
             },
         }),
     }
@@ -509,7 +518,38 @@ async fn handle_list_pages(pool: &SqlitePool, args: Value) -> Result<Value, AppE
 async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetPageArgs = parse_args("get_page", args)?;
     let limit = args.limit.map(|l| l.clamp(1, LIST_RESULT_CAP));
-    let resp = get_page_inner(pool, &args.page_id, args.cursor, limit).await?;
+    // FEAT-3 Phase 7: `get_page_inner` requires a `space_id` and rejects
+    // requests for pages outside that space. MCP agents are intentionally
+    // unscoped (see search/list comments above), so we look up the page's
+    // own `space` property and pass it — making the membership check a
+    // trivial pass for any page the agent can name.
+    //
+    // Order of error checks preserves pre-Phase-7 contract:
+    //   - unknown ids → `NotFound` (via `get_block_inner` inside
+    //     `get_page_inner` once we have a space_id, OR via the explicit
+    //     existence check below when the page lacks a space property).
+    //   - non-page block_type → `Validation` (via `get_block_inner` +
+    //     block_type check inside `get_page_inner`).
+    //   - page exists but has no space property → `Validation`.
+    let space_id: Option<String> = sqlx::query_scalar!(
+        r#"SELECT value_ref FROM block_properties
+           WHERE block_id = ? AND key = 'space'"#,
+        args.page_id,
+    )
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+    let Some(space_id) = space_id else {
+        // No space property — distinguish "unknown id" (NotFound) from
+        // "exists but unscoped" (Validation) so the MCP error code
+        // contract matches what the agent would have seen pre-Phase-7.
+        crate::commands::get_block_inner(pool, args.page_id.clone()).await?;
+        return Err(AppError::Validation(format!(
+            "page '{}' has no space property",
+            args.page_id
+        )));
+    };
+    let resp = get_page_inner(pool, &args.page_id, &space_id, args.cursor, limit).await?;
     Ok(serde_json::to_value(resp)?)
 }
 
@@ -595,7 +635,7 @@ async fn handle_journal_for_date(
             "tool `journal_for_date`: `date` must be YYYY-MM-DD — {e}"
         ))
     })?;
-    let resp = journal_for_date_inner(pool, device_id, materializer, date).await?;
+    let resp = journal_for_date_inner(pool, device_id, materializer, date, &args.space_id).await?;
     Ok(serde_json::to_value(resp)?)
 }
 
@@ -606,7 +646,7 @@ async fn handle_journal_for_date(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::create_block_inner;
+    use crate::commands::{create_block_inner, create_space_inner};
     use crate::db::init_pool;
     use crate::materializer::Materializer;
     use crate::mcp::actor::Actor;
@@ -622,6 +662,16 @@ mod tests {
         let db_path: PathBuf = dir.path().join("test.db");
         let pool = init_pool(&db_path).await.unwrap();
         (pool, dir)
+    }
+
+    /// FEAT-3p5: create a single space and return its ULID. Used by the
+    /// journal_for_date MCP tests so the per-space lookup has a valid
+    /// space to scope under.
+    async fn mk_space(pool: &SqlitePool, name: &str) -> String {
+        create_space_inner(pool, DEV, name.into(), None)
+            .await
+            .expect("create_space must succeed")
+            .into_string()
     }
 
     fn test_ctx() -> ActorContext {
@@ -806,6 +856,12 @@ mod tests {
         .await
         .unwrap();
         settle(&mat).await;
+        // FEAT-3 Phase 7 — MCP `handle_get_page` looks up the page's own
+        // `space` property and threads it through `get_page_inner`. Run
+        // bootstrap so the page lands in Personal via the back-fill sweep.
+        crate::spaces::bootstrap_spaces(&tools.pool, DEV)
+            .await
+            .unwrap();
 
         let result = tools
             .call_tool("get_page", json!({"page_id": page.id.clone()}), &test_ctx())
@@ -1180,10 +1236,11 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn journal_for_date_happy_path_creates_page() {
         let (tools, mat, _dir) = mk_tools().await;
+        let space = mk_space(&tools.pool, "Personal").await;
         let result = tools
             .call_tool(
                 "journal_for_date",
-                json!({"date": "2025-06-15"}),
+                json!({"date": "2025-06-15", "space_id": space}),
                 &test_ctx(),
             )
             .await
@@ -1196,7 +1253,7 @@ mod tests {
         let again = tools
             .call_tool(
                 "journal_for_date",
-                json!({"date": "2025-06-15"}),
+                json!({"date": "2025-06-15", "space_id": space}),
                 &test_ctx(),
             )
             .await
@@ -1211,10 +1268,11 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn journal_for_date_invalid_date_validation() {
         let (tools, _mat, _dir) = mk_tools().await;
+        let space = mk_space(&tools.pool, "Personal").await;
         let err = tools
             .call_tool(
                 "journal_for_date",
-                json!({"date": "2025-13-99"}),
+                json!({"date": "2025-13-99", "space_id": space}),
                 &test_ctx(),
             )
             .await
@@ -1521,10 +1579,20 @@ mod tests {
         .await
         .unwrap();
         settle(&mat).await;
+        // FEAT-3 Phase 7 — `get_page_inner` enforces space membership.
+        // Bootstrap seeds Personal + Work and back-fills any pages missing a
+        // `space` property into Personal, which is exactly what we want.
+        crate::spaces::bootstrap_spaces(&pool, DEV).await.unwrap();
 
-        let resp = get_page_inner(&pool, &page.id, None, Some(10))
-            .await
-            .unwrap();
+        let resp = get_page_inner(
+            &pool,
+            &page.id,
+            crate::spaces::SPACE_PERSONAL_ULID,
+            None,
+            Some(10),
+        )
+        .await
+        .unwrap();
         assert_eq!(resp.page.id, page.id);
         assert_eq!(resp.children.len(), 1);
     }
@@ -1532,9 +1600,18 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn inner_get_page_unknown_id_not_found() {
         let (pool, _dir) = test_pool().await;
-        let err = get_page_inner(&pool, "NOPE", None, Some(10))
-            .await
-            .expect_err("unknown id");
+        // Even with no bootstrap, `get_page_inner` resolves NotFound first
+        // (via `get_block_inner`) before reaching the space-membership
+        // check, so the error category is unchanged for unknown IDs.
+        let err = get_page_inner(
+            &pool,
+            "NOPE",
+            crate::spaces::SPACE_PERSONAL_ULID,
+            None,
+            Some(10),
+        )
+        .await
+        .expect_err("unknown id");
         assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
     }
 
@@ -1565,12 +1642,13 @@ mod tests {
     async fn inner_journal_for_date_idempotent() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
         let date = chrono::NaiveDate::from_ymd_opt(2025, 7, 20).unwrap();
-        let first = journal_for_date_inner(&pool, DEV, &mat, date)
+        let first = journal_for_date_inner(&pool, DEV, &mat, date, &space)
             .await
             .unwrap();
         settle(&mat).await;
-        let again = journal_for_date_inner(&pool, DEV, &mat, date)
+        let again = journal_for_date_inner(&pool, DEV, &mat, date, &space)
             .await
             .unwrap();
         assert_eq!(
@@ -1587,13 +1665,19 @@ mod tests {
         use crate::commands::navigate_journal_inner;
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
         let date = chrono::NaiveDate::from_ymd_opt(2025, 8, 10).unwrap();
-        let via_navigate =
-            navigate_journal_inner(&pool, DEV, &mat, date.format("%Y-%m-%d").to_string())
-                .await
-                .unwrap();
+        let via_navigate = navigate_journal_inner(
+            &pool,
+            DEV,
+            &mat,
+            date.format("%Y-%m-%d").to_string(),
+            &space,
+        )
+        .await
+        .unwrap();
         settle(&mat).await;
-        let via_typed = journal_for_date_inner(&pool, DEV, &mat, date)
+        let via_typed = journal_for_date_inner(&pool, DEV, &mat, date, &space)
             .await
             .unwrap();
         assert_eq!(
@@ -1662,6 +1746,12 @@ mod tests {
         .await
         .unwrap();
         settle(&mat).await;
+        // FEAT-3 Phase 7 — bootstrap so the page lands in Personal via the
+        // back-fill sweep; otherwise `handle_get_page` rejects pages with
+        // no `space` property.
+        crate::spaces::bootstrap_spaces(&tools.pool, DEV)
+            .await
+            .unwrap();
         let result = tools
             .call_tool("get_page", json!({"page_id": page.id}), &test_ctx())
             .await
@@ -1809,10 +1899,11 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn snapshot_journal_for_date_response_shape() {
         let (tools, _mat, _dir) = mk_tools().await;
+        let space = mk_space(&tools.pool, "Personal").await;
         let result = tools
             .call_tool(
                 "journal_for_date",
-                json!({"date": "2025-09-09"}),
+                json!({"date": "2025-09-09", "space_id": space}),
                 &test_ctx(),
             )
             .await
@@ -1865,11 +1956,12 @@ mod tests {
 #[cfg(test)]
 mod tests_m82 {
     use super::*;
-    use crate::commands::create_block_inner;
+    use crate::commands::{create_page_in_space_inner, create_space_inner};
     use crate::db::init_pools;
     use crate::materializer::Materializer;
     use crate::mcp::actor::{Actor, ActorContext};
     use serde_json::json;
+    use sqlx::SqlitePool;
     use tempfile::TempDir;
 
     const DEV: &str = "test-mcp-dev-m82";
@@ -1881,6 +1973,16 @@ mod tests_m82 {
             },
             request_id: "req-test-m82".to_string(),
         }
+    }
+
+    /// FEAT-3p5 helper for the M-82 split-pool fixture: create a single
+    /// space on the *writer* pool (the reader pool is `query_only = ON`
+    /// and would reject the CreateBlock op).
+    async fn mk_space(write_pool: &SqlitePool, name: &str) -> String {
+        create_space_inner(write_pool, DEV, name.into(), None)
+            .await
+            .expect("create_space must succeed")
+            .into_string()
     }
 
     /// Build production-style split pools — a reader pool with
@@ -1913,6 +2015,9 @@ mod tests_m82 {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn journal_for_date_uses_writer_pool_for_missing_date() {
         let (tools, _mat, _dir) = mk_split_tools().await;
+        // FEAT-3p5: seed a space on the writer pool so the lookup has
+        // somewhere to scope under.
+        let space = mk_space(&tools.writer_pool, "Personal").await;
 
         // No journal page exists for this date — the call must hit the
         // create branch, which is the path that previously failed on the
@@ -1920,7 +2025,7 @@ mod tests_m82 {
         let result = tools
             .call_tool(
                 "journal_for_date",
-                json!({"date": "2025-09-09"}),
+                json!({"date": "2025-09-09", "space_id": space}),
                 &test_ctx(),
             )
             .await;
@@ -1957,11 +2062,16 @@ mod tests_m82 {
     async fn journal_for_date_finds_existing_page_via_either_pool() {
         // ── Wiring A — production split via init_pools() ──────────────
         let (tools_split, mat_split, _dir_split) = mk_split_tools().await;
+        let space_split = mk_space(&tools_split.writer_pool, "Personal").await;
         let date = "2025-09-10";
 
         // First call creates the page via the writer pool.
         let first = tools_split
-            .call_tool("journal_for_date", json!({"date": date}), &test_ctx())
+            .call_tool(
+                "journal_for_date",
+                json!({"date": date, "space_id": space_split}),
+                &test_ctx(),
+            )
             .await
             .expect("first journal_for_date call must succeed (creates the page)");
         let first_id = first
@@ -1974,7 +2084,11 @@ mod tests_m82 {
         // Second call finds the same page via the lookup branch — no
         // INSERT runs, the BEGIN IMMEDIATE transaction commits empty.
         let second = tools_split
-            .call_tool("journal_for_date", json!({"date": date}), &test_ctx())
+            .call_tool(
+                "journal_for_date",
+                json!({"date": date, "space_id": space_split}),
+                &test_ctx(),
+            )
             .await
             .expect(
                 "lookup branch must succeed on the production split wiring when the page exists",
@@ -1987,29 +2101,27 @@ mod tests_m82 {
 
         // ── Wiring B — legacy combined-pool wiring (init_pool) ─────────
         // Mirrors the in-tree `mk_tools()` fixture: a single pool wired
-        // into both slots. Pre-create the page via the same pool so the
-        // subsequent `call_tool` exercises the lookup branch.
+        // into both slots. Pre-create the page (with its space property)
+        // via the same pool so the subsequent `call_tool` exercises the
+        // lookup branch.
         let combined_dir = TempDir::new().unwrap();
         let combined_path = combined_dir.path().join("m82-combined.db");
         let combined = crate::db::init_pool(&combined_path).await.unwrap();
         let mat_combined = Materializer::new(combined.clone());
-        create_block_inner(
-            &combined,
-            DEV,
-            &mat_combined,
-            "page".into(),
-            date.into(),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        let space_combined = mk_space(&combined, "Personal").await;
+        create_page_in_space_inner(&combined, DEV, None, date.into(), space_combined.clone())
+            .await
+            .unwrap();
         mat_combined.flush_background().await.unwrap();
         let tools_combined =
             ReadOnlyTools::new(combined.clone(), combined, mat_combined, DEV.to_string());
 
         let combined_resp = tools_combined
-            .call_tool("journal_for_date", json!({"date": date}), &test_ctx())
+            .call_tool(
+                "journal_for_date",
+                json!({"date": date, "space_id": space_combined}),
+                &test_ctx(),
+            )
             .await
             .expect("lookup branch must succeed on the combined-pool wiring when the page exists");
         assert_eq!(

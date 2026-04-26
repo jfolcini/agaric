@@ -2128,3 +2128,40 @@ describe('UX-281: unknown-node toast', () => {
     warn.mockRestore()
   })
 })
+
+// -- FEAT-3p7 — foreign-space [[ULID]] round-trip stability -------------------
+
+/**
+ * FEAT-3p7 regression: a `block_link` whose target lives in a different
+ * space than the user is currently viewing must serialize to the
+ * literal `[[ULID]]` text, NOT a "Loading…" placeholder or the chip's
+ * resolved title. The serializer never consults `useResolveStore` —
+ * it emits the ULID by node attr directly — so the round-trip is
+ * stable across ANY resolution state (foreign-space, deleted, never-
+ * resolved). The test pins this contract so a future "smart"
+ * serializer that tries to inline the title can't regress quietly.
+ */
+describe('FEAT-3p7: foreign-space block_link round-trip is stable', () => {
+  const FOREIGN_ULID = '01H8XYABCDEFGHJKMNPQRSTVWX'
+
+  it('serialize emits literal [[ULID]] regardless of any external title state', () => {
+    const md = serialize(doc(paragraph(text('See '), blockLink(FOREIGN_ULID), text(' for more'))))
+    expect(md).toBe(`See [[${FOREIGN_ULID}]] for more`)
+    // No "Loading…" / unresolved-title placeholder leaks into the wire format.
+    expect(md).not.toMatch(/Loading/i)
+  })
+
+  it('two-pass round-trip is idempotent (no title flicker)', () => {
+    const original = doc(paragraph(text('a '), blockLink(FOREIGN_ULID), text(' b')))
+
+    // Pass 1
+    const md1 = serialize(original)
+    const parsed1 = parse(md1)
+
+    // Pass 2 — must produce identical text
+    const md2 = serialize(parsed1)
+    expect(md2).toBe(md1)
+    // Also structurally equivalent
+    expect(parsed1).toEqual(original)
+  })
+})

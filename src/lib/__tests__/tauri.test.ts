@@ -677,7 +677,7 @@ describe('listTagsByPrefix', () => {
 // ---------------------------------------------------------------------------
 
 describe('batchResolve', () => {
-  it('invokes batch_resolve with ids', async () => {
+  it('invokes batch_resolve with ids and a null spaceId by default', async () => {
     const expected = [
       { id: 'B1', title: 'Block 1', block_type: 'content', deleted: false },
       { id: 'B2', title: null, block_type: 'page', deleted: true },
@@ -687,8 +687,23 @@ describe('batchResolve', () => {
     const result = await batchResolve(['B1', 'B2'])
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', { ids: ['B1', 'B2'] })
+    // FEAT-3p7 — wrapper always forwards `spaceId`; null when omitted.
+    expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', {
+      ids: ['B1', 'B2'],
+      spaceId: null,
+    })
     expect(result).toEqual(expected)
+  })
+
+  it('forwards spaceId when provided (FEAT-3p7)', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    await batchResolve(['B1'], 'SPACE_X')
+
+    expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', {
+      ids: ['B1'],
+      spaceId: 'SPACE_X',
+    })
   })
 })
 
@@ -2916,7 +2931,7 @@ async function importGlobalShortcutWrappers() {
 }
 
 describe('quickCaptureBlock', () => {
-  it('invokes quick_capture_block with the captured content', async () => {
+  it('invokes quick_capture_block with the captured content and active space', async () => {
     const expected = {
       id: 'BLK_QC1',
       block_type: 'content',
@@ -2927,11 +2942,14 @@ describe('quickCaptureBlock', () => {
     }
     mockedInvoke.mockResolvedValueOnce(expected)
 
-    const result = await quickCaptureBlock('captured note')
+    const result = await quickCaptureBlock('captured note', 'SPACE_PERSONAL')
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
+    // FEAT-3p5: spaceId is required so quick-capture lands on the
+    // active-space's daily journal page.
     expect(mockedInvoke).toHaveBeenCalledWith('quick_capture_block', {
       content: 'captured note',
+      spaceId: 'SPACE_PERSONAL',
     })
     expect(result).toEqual(expected)
   })
@@ -2940,7 +2958,9 @@ describe('quickCaptureBlock', () => {
   // test so the failure path is covered.
   it('propagates errors from invoke', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('quick_capture_block failed'))
-    await expect(quickCaptureBlock('foo')).rejects.toThrow('quick_capture_block failed')
+    await expect(quickCaptureBlock('foo', 'SPACE_PERSONAL')).rejects.toThrow(
+      'quick_capture_block failed',
+    )
   })
 })
 

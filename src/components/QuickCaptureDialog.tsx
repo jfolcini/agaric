@@ -42,6 +42,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { logger } from '@/lib/logger'
 import { quickCaptureBlock } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 interface QuickCaptureDialogProps {
   open: boolean
@@ -79,7 +80,16 @@ export function QuickCaptureDialog({
     if (isEmpty || submitting) return
     setSubmitting(true)
     try {
-      await quickCaptureBlock(trimmed)
+      // FEAT-3p5: quick-capture lands on today's journal page in the
+      // active space. The space store should always be hydrated by the
+      // time the global shortcut fires (boot is gated on
+      // `useSpaceStore.isReady`), but we surface a user-visible failure
+      // if it isn't, rather than capturing into an unscoped page.
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      if (spaceId == null) {
+        throw new Error('No active space; cannot quick-capture')
+      }
+      await quickCaptureBlock(trimmed, spaceId)
       toast.success(t('quickCapture.successToast'))
       onOpenChange(false)
     } catch (err) {

@@ -32,7 +32,7 @@ import {
   resolvePageByAlias,
   searchBlocks,
 } from '../../lib/tauri'
-import { useResolveStore } from '../../stores/resolve'
+import { keyFor, useResolveStore } from '../../stores/resolve'
 import { useSpaceStore } from '../../stores/space'
 import { useBlockResolve } from '../useBlockResolve'
 
@@ -302,10 +302,11 @@ describe('searchTags', () => {
       await result.current.searchTags('imp')
     })
 
-    // Verify the resolve store cache was populated
+    // Verify the resolve store cache was populated.
+    // FEAT-3p7 — cache is composite-keyed (`${spaceId}::${ulid}`).
     const cache = useResolveStore.getState().cache
-    expect(cache.get('T10')).toEqual({ title: 'important', deleted: false })
-    expect(cache.get('T11')).toEqual({ title: 'urgent', deleted: false })
+    expect(cache.get(keyFor('SPACE_TEST', 'T10'))).toEqual({ title: 'important', deleted: false })
+    expect(cache.get(keyFor('SPACE_TEST', 'T11'))).toEqual({ title: 'urgent', deleted: false })
   })
 
   it('does not call batchSet when no tags match', async () => {
@@ -446,7 +447,7 @@ describe('onCreateTag', () => {
       await result.current.onCreateTag('important')
     })
 
-    const cached = useResolveStore.getState().cache.get('NEW_TAG_2')
+    const cached = useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'NEW_TAG_2'))
     expect(cached).toEqual({ title: 'important', deleted: false })
   })
 
@@ -1317,7 +1318,7 @@ describe('onCreatePage', () => {
       await result.current.onCreatePage('Store Updated Page')
     })
 
-    const cached = useResolveStore.getState().cache.get('NEW_PAGE_2')
+    const cached = useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'NEW_PAGE_2'))
     expect(cached).toEqual({ title: 'Store Updated Page', deleted: false })
   })
 
@@ -1704,9 +1705,13 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
     // Cache population happens BEFORE alias lookup and BEFORE create option,
     // so only FTS/cache-strategy matches should be in the resolve store,
     // never the "__create__" synthetic id.
+    // FEAT-3p7 — cache is composite-keyed (`${spaceId}::${ulid}`).
     const cache = useResolveStore.getState().cache
-    expect(cache.get('CACHE_POP_1')).toEqual({ title: 'Sample Page', deleted: false })
-    expect(cache.get('__create__')).toBeUndefined()
+    expect(cache.get(keyFor('SPACE_TEST', 'CACHE_POP_1'))).toEqual({
+      title: 'Sample Page',
+      deleted: false,
+    })
+    expect(cache.get(keyFor('SPACE_TEST', '__create__'))).toBeUndefined()
   })
 
   it('short-query strategy handles namespaced titles via formatNamespacedLabel', async () => {

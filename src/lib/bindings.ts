@@ -44,8 +44,14 @@ export const commands = {
 } | null, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, showDeleted, agenda, cursor, limit, spaceId })),
 	// Tauri command: fetch a single block by ID. Delegates to [`get_block_inner`].
 	getBlock: (blockId: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("get_block", { blockId })),
-	// Tauri command: batch-resolve block metadata. Delegates to [`batch_resolve_inner`].
-	batchResolve: (ids: string[]) => typedError<ResolvedBlock[], AppErrorSchema>(__TAURI_INVOKE("batch_resolve", { ids })),
+	/**
+	 *  Tauri command: batch-resolve block metadata. Delegates to [`batch_resolve_inner`].
+	 *
+	 *  FEAT-3 Phase 7 — `space_id` is required so the resolve store cannot
+	 *  surface foreign-space titles. The frontend always knows the current
+	 *  space and threads it through `useResolveStore.preload(spaceId)`.
+	 */
+	batchResolve: (ids: string[], spaceId: string | null) => typedError<ResolvedBlock[], AppErrorSchema>(__TAURI_INVOKE("batch_resolve", { ids, spaceId })),
 	// Tauri command: add a tag to a block. Delegates to [`add_tag_inner`].
 	addTag: (blockId: string, tagId: string) => typedError<TagResponse, AppErrorSchema>(__TAURI_INVOKE("add_tag", { blockId, tagId })),
 	// Tauri command: remove a tag from a block. Delegates to [`remove_tag_inner`].
@@ -329,9 +335,9 @@ export const commands = {
 	createSpace: (name: string, accentColor: string | null) => typedError<string, AppErrorSchema>(__TAURI_INVOKE("create_space", { name, accentColor })),
 	/**
 	 *  Tauri command: quick-capture a single content block onto today's
-	 *  journal page. Delegates to [`quick_capture_block_inner`].
+	 *  journal page in `space_id`. Delegates to [`quick_capture_block_inner`].
 	 */
-	quickCaptureBlock: (content: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("quick_capture_block", { content })),
+	quickCaptureBlock: (content: string, spaceId: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("quick_capture_block", { content, spaceId })),
 };
 
 /* Types */

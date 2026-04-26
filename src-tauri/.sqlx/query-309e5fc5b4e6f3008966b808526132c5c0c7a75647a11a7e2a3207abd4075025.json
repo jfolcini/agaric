@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) as \"count: i64\" FROM blocks b\n               WHERE b.block_type = 'page'\n                 AND b.content = ?\n                 AND b.deleted_at IS NULL\n                 AND b.is_conflict = 0\n                 AND EXISTS (\n                     SELECT 1 FROM block_properties bp\n                     WHERE bp.block_id = b.id\n                       AND bp.key = 'space'\n                       AND bp.value_ref = ?\n                 )",
+  "describe": {
+    "columns": [
+      {
+        "name": "count: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "309e5fc5b4e6f3008966b808526132c5c0c7a75647a11a7e2a3207abd4075025"
+}

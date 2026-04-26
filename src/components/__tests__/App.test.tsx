@@ -27,7 +27,7 @@ import { useBootStore } from '../../stores/boot'
 import { useJournalStore } from '../../stores/journal'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { useRecentPagesStore } from '../../stores/recent-pages'
-import { useResolveStore } from '../../stores/resolve'
+import { keyFor, useResolveStore } from '../../stores/resolve'
 import { useSpaceStore } from '../../stores/space'
 import { useSyncStore } from '../../stores/sync'
 
@@ -2168,15 +2168,23 @@ describe('App', () => {
     })
   })
 
-  // FEAT-3 Phase 2 — when the active space changes, the global
-  // `pagesList` (preloaded with every page at boot for the link picker's
-  // short-query path) must be wiped so the picker can't surface
-  // other-space matches. The ULID→title resolver `cache` is kept intact
-  // so existing cross-space `[[ULID]]` chips still render their names.
-  describe('FEAT-3 Phase 2 — pagesList cache on space switch', () => {
-    it('App_clears_pagesList_on_space_switch', async () => {
+  // FEAT-3p7 — Cross-space link enforcement. When the active space
+  // changes, the App-level subscriber must:
+  //   1. Wipe the `pagesList` short-query cache (so the link picker
+  //      cannot surface previous-space pages).
+  //   2. Flush every cache entry keyed under the previous space (so
+  //      a stale chip resolution can't leak across the boundary —
+  //      foreign chips fall through to the broken-link UX instead).
+  //
+  // The previous Phase 2 behaviour kept the cache intact and relied
+  // on the chip resolver to render foreign titles "for continuity";
+  // the locked-in policy (FEAT-3p7) inverts this — no live links
+  // between spaces, ever.
+  describe('FEAT-3p7 — cross-space cache flush on space switch', () => {
+    it('flushes both pagesList and the previous space cache when currentSpaceId changes', async () => {
       // Override the default mock so `preload()` populates
-      // `useResolveStore.pagesList` with a deterministic entry.
+      // `useResolveStore.pagesList` with a deterministic entry, and
+      // the ULID→title `cache` lands keyed under SPACE_A.
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_spaces') {
           return [
@@ -2205,12 +2213,17 @@ describe('App', () => {
 
       render(<App />)
 
-      // Wait for `preload()` to resolve and populate `pagesList`. The
-      // clear-on-mount of the space-change effect runs synchronously
-      // first (against an empty list); `preload()` is async and fills
-      // the list afterwards.
+      // Wait for `preload()` to resolve and populate the cache + pagesList
+      // for SPACE_A. The clear-on-mount effect runs synchronously first
+      // (against an empty list); `preload()` is async and fills in next.
       await waitFor(() => {
         expect(useResolveStore.getState().pagesList.length).toBeGreaterThan(0)
+      })
+      // FEAT-3p7 — composite keys: SPACE_A's preload writes
+      // `${SPACE_A}::PAGE_A1`.
+      expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_A1'))).toEqual({
+        title: 'Page A1',
+        deleted: false,
       })
 
       act(() => {
@@ -2220,12 +2233,65 @@ describe('App', () => {
       await waitFor(() => {
         expect(useResolveStore.getState().pagesList.length).toBe(0)
       })
-      // `cache` must remain populated so cross-space `[[ULID]]` chips
-      // still resolve to their titles.
-      expect(useResolveStore.getState().cache.get('PAGE_A1')).toEqual({
-        title: 'Page A1',
-        deleted: false,
+      // FEAT-3p7 — `clearAllForSpace('SPACE_A')` flushes every
+      // `${SPACE_A}::*` entry so a foreign-space chip doesn't
+      // continue resolving to its old title from a stale cache hit.
+      await waitFor(() => {
+        expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_A1'))).toBeUndefined()
       })
+    })
+
+    it('invokes clearAllForSpace with the OUTGOING space id on switch', async () => {
+      // Spy on the resolve store action so we can assert exactly which
+      // space id the App-level subscriber forwarded. The spy must be
+      // installed BEFORE `render(<App />)` because the subscriber
+      // captures `clearAllForSpace` via `useResolveStore.getState()`
+      // and we want every call (including the boot pass) observable.
+      const clearAllForSpaceSpy = vi.spyOn(useResolveStore.getState(), 'clearAllForSpace')
+
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_spaces') {
+          return [
+            { id: 'SPACE_A', name: 'A', accent_color: null },
+            { id: 'SPACE_B', name: 'B', accent_color: null },
+          ]
+        }
+        if (cmd === 'list_blocks') {
+          return { items: [], next_cursor: null, has_more: false }
+        }
+        if (cmd === 'list_tags_by_prefix') return []
+        return emptyPage
+      })
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_A',
+        availableSpaces: [
+          { id: 'SPACE_A', name: 'A', accent_color: null },
+          { id: 'SPACE_B', name: 'B', accent_color: null },
+        ],
+        isReady: true,
+      })
+
+      render(<App />)
+
+      // First pass (App mount with currentSpaceId === SPACE_A): no
+      // outgoing space yet, so `clearAllForSpace` should NOT have been
+      // called. Wait for the App tree to settle.
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+      expect(clearAllForSpaceSpy).not.toHaveBeenCalled()
+
+      // Switch to SPACE_B — the subscriber must fire
+      // `clearAllForSpace('SPACE_A')` with the OUTGOING id.
+      act(() => {
+        useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+      })
+
+      await waitFor(() => {
+        expect(clearAllForSpaceSpy).toHaveBeenCalledWith('SPACE_A')
+      })
+
+      clearAllForSpaceSpy.mockRestore()
     })
   })
 
