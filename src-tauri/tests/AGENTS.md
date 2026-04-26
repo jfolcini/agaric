@@ -14,6 +14,14 @@ Additionally: `src/lib.rs` contains `specta_tests` for TypeScript binding verifi
 
 ## Running Tests
 
+> **Package name vs lib target:** the cargo **package** is named `agaric`
+> (per `Cargo.toml` `[package].name`), the **lib target** is named
+> `agaric_lib` (per `[lib].name`). Use `-p agaric` (or `package(agaric)` in
+> nextest filter expressions) — `-p agaric-lib` and `package(agaric-lib)`
+> are NOT valid and will error with `package ID specification ... did not
+> match any packages`. The `agaric_lib` token only appears as a Rust
+> import path (`use agaric_lib::...`) inside benches / integration tests.
+
 ```bash
 # Source cargo env first (required on this machine)
 . "$HOME/.cargo/env"
@@ -25,24 +33,24 @@ cd src-tauri && cargo nextest run
 cd src-tauri && cargo test
 
 # Specific test by name substring
-cargo nextest run -p agaric-lib create_block_returns
-cargo test -p agaric-lib -- create_block_returns
+cargo nextest run -p agaric create_block_returns
+cargo test -p agaric -- create_block_returns
 
 # All tests in one module
-cargo nextest run -p agaric-lib -E 'test(::op_log::)'
-cargo test -p agaric-lib -- op_log::tests
+cargo nextest run -p agaric -E 'test(::op_log::)'
+cargo test -p agaric -- op_log::tests
 
 # Only integration tests
-cargo test -p agaric-lib -- integration_tests
-cargo test -p agaric-lib -- command_integration_tests
-cargo test -p agaric-lib -- sync_integration_tests
+cargo test -p agaric -- integration_tests
+cargo test -p agaric -- command_integration_tests
+cargo test -p agaric -- sync_integration_tests
 
 # Snapshot review after changes
 cargo insta test          # run tests, save pending snapshots
 cargo insta review        # interactive accept/reject
 
 # Regenerate TypeScript bindings (ignored by default)
-cargo test -p agaric-lib -- specta_tests --ignored
+cargo test -p agaric -- specta_tests --ignored
 
 # Benchmarks (local only, never CI)
 cargo bench --bench hash_bench
@@ -440,7 +448,7 @@ criterion_main!(benches);
 
 5. **`cargo sqlx prepare` after SQL changes** — The project uses compile-time checked SQL queries (`query!` macros). Changing SQL in source requires regenerating the offline cache: `cargo sqlx prepare -- --tests`. Tests will fail to compile otherwise.
 
-6. **Specta bindings drift** — If you change Rust types used in Tauri commands, the `ts_bindings_up_to_date` test will fail. Regenerate: `cargo test -p agaric-lib -- specta_tests --ignored`.
+6. **Specta bindings drift** — If you change Rust types used in Tauri commands, the `ts_bindings_up_to_date` test will fail. Regenerate: `cargo test -p agaric -- specta_tests --ignored`.
 
 7. **Integration test files are `mod` includes, not separate binaries** — `integration_tests.rs`, the `command_integration_tests/` module directory (11 files), and `sync_integration_tests.rs` are `#[cfg(test)] mod` in `lib.rs`. They share the same test binary as unit tests.
 
