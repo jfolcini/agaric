@@ -13,6 +13,44 @@ afterEach(() => {
   cleanup()
 })
 
+// Defensive cleanup for `window.visualViewport`. jsdom does not provide this
+// API (it stays `undefined`), but several positioning tests redefine it as a
+// plain `{ height, width }` object — without an `addEventListener` method —
+// and were not restoring it. Floating-UI's `autoUpdate` (used internally by
+// every Radix Popover/Tooltip via `@radix-ui/react-popper`) calls
+// `getOverflowAncestors(...)` which concatenates `win.visualViewport` into
+// the ancestor list and then iterates with `.addEventListener('scroll', …)`.
+// Once a test left a polluted mock behind, every subsequent Tooltip mount in
+// the same worker process threw `TypeError: ancestor.addEventListener is not
+// a function` from a `useLayoutEffect`, which interrupted the user-event
+// click sequence and caused intermittent JournalPage / SearchPanel flakes
+// under full-suite load. Restoring the property after every test prevents
+// this whole class of cross-test pollution.
+afterEach(() => {
+  if ('visualViewport' in window) {
+    try {
+      // Reset to the jsdom default (the property does not exist by default,
+      // so deleting is the correct restoration).
+      // biome-ignore lint/performance/noDelete: restoring jsdom default
+      delete (window as { visualViewport?: unknown }).visualViewport
+    } catch {
+      // If the property was defined as non-configurable by a test, fall back
+      // to overwriting it with `undefined` so floating-ui's `win.visualViewport
+      // || []` short-circuits to an empty array.
+      try {
+        Object.defineProperty(window, 'visualViewport', {
+          value: undefined,
+          writable: true,
+          configurable: true,
+        })
+      } catch {
+        // Best-effort — if we can't restore, the next test will at least see
+        // a deterministic value rather than a leaked mock.
+      }
+    }
+  }
+})
+
 // jsdom stubs — APIs missing from jsdom that Radix UI and shadcn/ui components need.
 if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = class ResizeObserver {

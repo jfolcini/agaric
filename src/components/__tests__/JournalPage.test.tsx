@@ -1045,25 +1045,36 @@ describe('JournalPage', () => {
         toJSON: () => {},
       })
 
-      // Simulate small viewport
+      // Simulate small viewport. The mock object intentionally lacks
+      // `addEventListener` — we only need `height` for the flip-detection
+      // logic in JournalCalendarDropdown. Floating-UI's `autoUpdate`
+      // iterates `win.visualViewport` and calls `.addEventListener('scroll',
+      // …)` on it; if this mock leaks into a later test that mounts a
+      // Radix Tooltip/Popover, that test crashes in a `useLayoutEffect`.
+      // The global `afterEach` in test-setup.ts cleans this up, but we
+      // also restore it here for defence in depth.
       Object.defineProperty(window, 'visualViewport', {
         value: { height: 600, width: 1024 },
         writable: true,
         configurable: true,
       })
 
-      const calButton = screen.getByRole('button', { name: /open calendar picker/i })
-      await user.click(calButton)
+      try {
+        const calButton = screen.getByRole('button', { name: /open calendar picker/i })
+        await user.click(calButton)
 
-      // The calendar dropdown should have 'bottom-full' class (flipped above)
-      await waitFor(() => {
-        const dropdown = document.querySelector('.absolute.z-50.rounded-md')
-        expect(dropdown).not.toBeNull()
-        expect(dropdown?.className).toContain('bottom-full')
-      })
-
-      // Cleanup
-      Element.prototype.getBoundingClientRect = originalGBCR
+        // The calendar dropdown should have 'bottom-full' class (flipped above)
+        await waitFor(() => {
+          const dropdown = document.querySelector('.absolute.z-50.rounded-md')
+          expect(dropdown).not.toBeNull()
+          expect(dropdown?.className).toContain('bottom-full')
+        })
+      } finally {
+        // Cleanup — restore prototypes and remove the visualViewport mock.
+        Element.prototype.getBoundingClientRect = originalGBCR
+        // biome-ignore lint/performance/noDelete: restoring jsdom default (undefined)
+        delete (window as { visualViewport?: unknown }).visualViewport
+      }
     })
 
     it('shifts right when calendar overflows left edge on narrow viewport', async () => {
@@ -1090,24 +1101,30 @@ describe('JournalPage', () => {
         toJSON: () => {},
       })
 
+      // See the comment in the previous test about why this mock must be
+      // cleaned up — it lacks `addEventListener` and would break floating-ui
+      // for any subsequent Radix Tooltip/Popover mount.
       Object.defineProperty(window, 'visualViewport', {
         value: { height: 800, width: 300 },
         writable: true,
         configurable: true,
       })
 
-      const calButton = screen.getByRole('button', { name: /open calendar picker/i })
-      await user.click(calButton)
+      try {
+        const calButton = screen.getByRole('button', { name: /open calendar picker/i })
+        await user.click(calButton)
 
-      // The calendar dropdown should have a translateX transform to shift right
-      await waitFor(() => {
-        const dropdown = document.querySelector('.absolute.z-50.rounded-md') as HTMLElement | null
-        expect(dropdown).not.toBeNull()
-        expect(dropdown?.style.transform).toBe('translateX(28px)')
-      })
-
-      // Cleanup
-      Element.prototype.getBoundingClientRect = originalGBCR
+        // The calendar dropdown should have a translateX transform to shift right
+        await waitFor(() => {
+          const dropdown = document.querySelector('.absolute.z-50.rounded-md') as HTMLElement | null
+          expect(dropdown).not.toBeNull()
+          expect(dropdown?.style.transform).toBe('translateX(28px)')
+        })
+      } finally {
+        Element.prototype.getBoundingClientRect = originalGBCR
+        // biome-ignore lint/performance/noDelete: restoring jsdom default (undefined)
+        delete (window as { visualViewport?: unknown }).visualViewport
+      }
     })
   })
 

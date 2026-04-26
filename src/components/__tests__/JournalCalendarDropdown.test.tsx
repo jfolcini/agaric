@@ -216,18 +216,26 @@ describe('JournalCalendarDropdown', () => {
       y: 500,
       toJSON: () => {},
     })
+    // The mock object intentionally lacks `addEventListener`. If left in
+    // place, floating-ui's `autoUpdate` will crash on the next Radix
+    // Tooltip/Popover mount (see the matching test in JournalPage.test.tsx
+    // and the global afterEach in test-setup.ts for the full story).
     Object.defineProperty(window, 'visualViewport', {
       value: { height: 600, width: 1024 },
       writable: true,
       configurable: true,
     })
 
-    render(<JournalCalendarDropdown {...defaultProps} />)
+    try {
+      render(<JournalCalendarDropdown {...defaultProps} />)
 
-    const dropdown = screen.getByRole('dialog')
-    expect(dropdown.className).toContain('bottom-full')
-
-    Element.prototype.getBoundingClientRect = originalGBCR
+      const dropdown = screen.getByRole('dialog')
+      expect(dropdown.className).toContain('bottom-full')
+    } finally {
+      Element.prototype.getBoundingClientRect = originalGBCR
+      // biome-ignore lint/performance/noDelete: restoring jsdom default (undefined)
+      delete (window as { visualViewport?: unknown }).visualViewport
+    }
   })
 
   it('shifts right when calendar overflows left edge', () => {
@@ -249,12 +257,16 @@ describe('JournalCalendarDropdown', () => {
       configurable: true,
     })
 
-    render(<JournalCalendarDropdown {...defaultProps} />)
+    try {
+      render(<JournalCalendarDropdown {...defaultProps} />)
 
-    const dropdown = screen.getByRole('dialog') as HTMLElement
-    expect(dropdown.style.transform).toBe('translateX(28px)')
-
-    Element.prototype.getBoundingClientRect = originalGBCR
+      const dropdown = screen.getByRole('dialog') as HTMLElement
+      expect(dropdown.style.transform).toBe('translateX(28px)')
+    } finally {
+      Element.prototype.getBoundingClientRect = originalGBCR
+      // biome-ignore lint/performance/noDelete: restoring jsdom default (undefined)
+      delete (window as { visualViewport?: unknown }).visualViewport
+    }
   })
 
   it('passes custom DayButton component to Calendar instead of inline styles', () => {

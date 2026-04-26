@@ -4310,3 +4310,236 @@ async fn eval_unlinked_refs_total_count_reflects_post_filter() {
     );
     assert_eq!(filtered.filtered_count, 2);
 }
+
+// ======================================================================
+// L-81 (R2 follow-up) — eval_unlinked_references must skip the page-title
+// row of a conflict-marked page. The fix added `AND is_conflict = 0` to
+// the page-title query in `grouped::eval_unlinked_references`; this test
+// pins the regression so future refactors cannot quietly drop the filter.
+//
+// The test flips `is_conflict = 1` on the target page directly via SQL —
+// no cache rebuild — so we exercise *only* the page-title query path,
+// not any downstream cache invalidation logic.
+// ======================================================================
+
+#[tokio::test]
+async fn eval_unlinked_references_excludes_conflict_page_title() {
+    let (pool, _dir) = test_pool().await;
+
+    // Create the target page "Foo" and a content block on a different
+    // page that mentions "Foo" by name (no [[Foo]] link).
+    insert_block_with_parent(&pool, "FOO", "page", "Foo", None, None).await;
+    insert_block_with_parent(&pool, "OTHER_PAGE", "page", "Other Page", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "MENTION_BLK",
+        "content",
+        "this block mentions Foo by name",
+        Some("OTHER_PAGE"),
+        Some(1),
+    )
+    .await;
+    insert_fts(&pool, "MENTION_BLK", "this block mentions Foo by name").await;
+
+    // Sanity-check: before flipping the conflict flag, the helper must
+    // surface the unlinked mention. Without this assertion, a bug that
+    // makes `eval_unlinked_references` *always* return empty would also
+    // make the post-flip assertion vacuously pass.
+    let page = default_page();
+    let before = eval_unlinked_references(&pool, "FOO", None, None, &page)
+        .await
+        .unwrap();
+    assert_eq!(
+        before.groups.len(),
+        1,
+        "sanity: non-conflict page should yield the unlinked mention; got {} groups",
+        before.groups.len()
+    );
+
+    // Now mark FOO as a conflict copy directly via SQL — no cache rebuild,
+    // no materializer dispatch. The page-title query in
+    // `eval_unlinked_references` (the L-81 regression site) must skip
+    // this row, returning an empty title and therefore an empty response.
+    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
+        .bind("FOO")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let after = eval_unlinked_references(&pool, "FOO", None, None, &page)
+        .await
+        .unwrap();
+    assert!(
+        after.groups.is_empty(),
+        "conflict-marked page must not drive the unlinked-references search; \
+         got {} groups",
+        after.groups.len(),
+    );
+    assert_eq!(
+        after.total_count, 0,
+        "total_count must be 0 when the page-title query is filtered out"
+    );
+    assert_eq!(
+        after.filtered_count, 0,
+        "filtered_count must be 0 when the page-title query is filtered out"
+    );
+    assert!(
+        !after.truncated,
+        "no rows examined => truncated must be false"
+    );
+}
+
+// ======================================================================
+// I-Search-3 (R2 follow-up) — eval_unlinked_references truncates at
+// FTS_ROW_CAP (10 000) when the FTS query would return more rows. The
+// previous batch replaced the inline `LIMIT 10001` with
+// `format!("… LIMIT {}", FTS_ROW_CAP + 1)`; this test pins the
+// truncation behaviour at and just above the cap.
+//
+// Bulk-inserts 10 001 / 10 000 blocks via a recursive-CTE INSERT so the
+// runtime stays well under the 5 s unit-test budget (single
+// statement → one parse + one transaction in SQLite).
+//
+// Note: every matching block is parented to a single page so the
+// helper produces exactly one group, which keeps the post-FTS path
+// simple to assert against. The `WHERE id IN (?, ?, …)` re-fetch
+// stays comfortably below SQLite's `SQLITE_LIMIT_VARIABLE_NUMBER`
+// (32 766 in the bundled build).
+// ======================================================================
+
+/// Bulk-insert `n` content blocks under a single parent page, plus
+/// matching FTS rows, all containing the literal title token so the
+/// unlinked-references FTS query matches every one.
+///
+/// Uses two `INSERT … WITH RECURSIVE` statements so the entire fixture
+/// lands in milliseconds even for 10 000+ rows.
+async fn bulk_insert_unlinked_match_blocks(
+    pool: &SqlitePool,
+    parent_page_id: &str,
+    title_token: &str,
+    n: i64,
+) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         WITH RECURSIVE seq(k) AS ( \
+             SELECT 1 UNION ALL SELECT k + 1 FROM seq WHERE k < ?1 \
+         ) \
+         SELECT \
+             'BLK_' || printf('%06d', k), \
+             'content', \
+             ?2 || ' ' || k, \
+             ?3, \
+             k, \
+             ?3 \
+         FROM seq",
+    )
+    .bind(n)
+    .bind(format!("mentions {title_token}"))
+    .bind(parent_page_id)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO fts_blocks (block_id, stripped) \
+         WITH RECURSIVE seq(k) AS ( \
+             SELECT 1 UNION ALL SELECT k + 1 FROM seq WHERE k < ?1 \
+         ) \
+         SELECT \
+             'BLK_' || printf('%06d', k), \
+             ?2 || ' ' || k \
+         FROM seq",
+    )
+    .bind(n)
+    .bind(format!("mentions {title_token}"))
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn eval_unlinked_references_truncates_at_fts_row_cap() {
+    let (pool, _dir) = test_pool().await;
+
+    // Target page whose title drives the FTS query, plus a parent page
+    // that owns the 10 001 mentioning content blocks.
+    insert_block_with_parent(&pool, "TARGET", "page", "Foobar", None, None).await;
+    insert_block_with_parent(&pool, "PARENT_PAGE", "page", "Parent Page", None, None).await;
+
+    // FTS_ROW_CAP + 1 = 10 001 matching blocks: the LIMIT 10001 query in
+    // `eval_unlinked_references` returns 10 001 rows, the helper detects
+    // truncation, and trims the result set to FTS_ROW_CAP (10 000).
+    bulk_insert_unlinked_match_blocks(&pool, "PARENT_PAGE", "Foobar", 10_001).await;
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+        .await
+        .unwrap();
+
+    assert!(
+        resp.truncated,
+        "with FTS_ROW_CAP + 1 matching rows, response must report truncated = true"
+    );
+    assert_eq!(
+        resp.total_count, 10_000,
+        "total_count must be exactly FTS_ROW_CAP after truncation"
+    );
+    assert_eq!(
+        resp.filtered_count, 10_000,
+        "filtered_count must be exactly FTS_ROW_CAP after truncation"
+    );
+
+    // All 10 000 blocks share PARENT_PAGE, so we get exactly one group
+    // whose blocks list mirrors the trimmed match set.
+    assert_eq!(
+        resp.groups.len(),
+        1,
+        "all matches share PARENT_PAGE => exactly one group"
+    );
+    assert_eq!(
+        resp.groups[0].blocks.len(),
+        10_000,
+        "the single group must carry all FTS_ROW_CAP rows"
+    );
+}
+
+#[tokio::test]
+async fn eval_unlinked_references_does_not_truncate_at_exactly_fts_row_cap() {
+    // Companion to `_truncates_at_fts_row_cap`: at exactly FTS_ROW_CAP
+    // matching rows the LIMIT FTS_ROW_CAP+1 query returns FTS_ROW_CAP
+    // rows, which is *not* > FTS_ROW_CAP, so `truncated` must be false.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block_with_parent(&pool, "TARGET", "page", "Foobar", None, None).await;
+    insert_block_with_parent(&pool, "PARENT_PAGE", "page", "Parent Page", None, None).await;
+
+    bulk_insert_unlinked_match_blocks(&pool, "PARENT_PAGE", "Foobar", 10_000).await;
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+        .await
+        .unwrap();
+
+    assert!(
+        !resp.truncated,
+        "with exactly FTS_ROW_CAP matching rows, response must report truncated = false"
+    );
+    assert_eq!(
+        resp.total_count, 10_000,
+        "total_count must equal the full FTS_ROW_CAP match count"
+    );
+    assert_eq!(
+        resp.filtered_count, 10_000,
+        "filtered_count must equal the full FTS_ROW_CAP match count"
+    );
+    assert_eq!(
+        resp.groups.len(),
+        1,
+        "all matches share PARENT_PAGE => exactly one group"
+    );
+    assert_eq!(
+        resp.groups[0].blocks.len(),
+        10_000,
+        "the single group must carry every match below the cap"
+    );
+}
