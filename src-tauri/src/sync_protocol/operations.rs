@@ -378,13 +378,19 @@ pub async fn merge_diverged_blocks(
                 // `materializer/handlers.rs::OpType::SetProperty`); branch
                 // on `is_reserved_property_key` so the read goes to the
                 // right table.
+                // Type aliases keep clippy::type_complexity happy on the
+                // four-Option SELECT result tuples (otherwise each call
+                // site triggers `-D warnings`).
+                type ReservedRow = (
+                    Option<String>,
+                    Option<String>,
+                    Option<String>,
+                    Option<String>,
+                );
+                type PropertyRow = (Option<String>, Option<f64>, Option<String>, Option<String>);
+
                 let materialized_matches = if crate::op::is_reserved_property_key(&pk) {
-                    let row: Option<(
-                        Option<String>,
-                        Option<String>,
-                        Option<String>,
-                        Option<String>,
-                    )> = sqlx::query_as(
+                    let row: Option<ReservedRow> = sqlx::query_as(
                         "SELECT todo_state, priority, due_date, scheduled_date \
                          FROM blocks WHERE id = ?",
                     )
@@ -400,12 +406,7 @@ pub async fn merge_diverged_blocks(
                     })
                     .unwrap_or(false)
                 } else {
-                    let materialized: Option<(
-                        Option<String>,
-                        Option<f64>,
-                        Option<String>,
-                        Option<String>,
-                    )> = sqlx::query_as(
+                    let materialized: Option<PropertyRow> = sqlx::query_as(
                         "SELECT value_text, value_num, value_date, value_ref \
                          FROM block_properties WHERE block_id = ? AND key = ?",
                     )
