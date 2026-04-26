@@ -17,17 +17,15 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-10 open items.
+9 open items.
 
-Previously resolved: 535+ items across 156 sessions.
+Previously resolved: 537+ items across 157 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
 | FEAT-3 | FEAT | Spaces — parent / umbrella (Phases 1 + 2 + 3 shipped; Phases 4–11 split into FEAT-3p4..FEAT-3p11) | S |
 | FEAT-3p4 | FEAT | Spaces Phase 4: agenda / graph / backlinks / tags / properties scoping (+ promote `space_id` to required on `list_blocks` / `search_blocks`, page-membership check in `get_page_inner`, per-space `currentView`) | L |
-| FEAT-3p5 | FEAT | Spaces Phase 5: per-space journal (J1) + per-space journal templates + per-space `currentDate` slice in `useJournalStore` | M |
 | FEAT-3p5b | FEAT | Spaces Phase 5b: per-space journal templates — `journal_template` text property on space blocks, render via existing `insertTemplateBlocks`, SpaceManageDialog affordance to set it | S |
-| FEAT-3p7 | FEAT | Spaces Phase 7: cross-space link enforcement — resolve store + `get_page_inner` scoped to current space; cross-space `[[ULID]]` chips render via existing broken-link UX. **No links between spaces, ever.** | M |
 | FEAT-3p9 | FEAT | Spaces Phase 9: per-space external integrations — per-space GCal calendar IDs / OAuth / push pipeline + space-name prefix on OS notifications (FEAT-11 coupling) | L |
 | FEAT-4 | FEAT | Agent access: expose notes to external agents via an MCP server — parent / umbrella | L |
 | FEAT-4i | FEAT | MCP v3 — Mobile (HTTPS/LAN via mTLS reuse from `sync_cert.rs`, agent-pairing flow) — DEFERRED pending v2 | L |
@@ -195,26 +193,6 @@ Fresh installs and upgrades both run a boot-time Rust bootstrap (`src-tauri/src/
 **Cost:** L — biggest remaining FEAT-3 slice (10+ commands × backend + 7+ frontend areas + property tests + the three additional items above). Realistic estimate: 2 focused sessions.
 **Status:** Open. Depends on FEAT-3 Phases 1 + 2 + 3 (shipped). Independent of FEAT-3p5, FEAT-3p6, FEAT-3p7, FEAT-3p8, FEAT-3p9, FEAT-3p10, FEAT-3p11.
 
-### FEAT-3p5 — Spaces Phase 5: per-space journal (J1) + per-space journal templates
-
-**Problem:** `commands/journal.rs::resolve_or_create_journal_page` still finds journal pages by `title = YYYY-MM-DD` only. With multiple spaces, two devices in different spaces both create a "today's journal" page that collides on title and (if hash-equal) on materialized state. Per the locked-in J1 decision: each space owns its own daily note.
-
-**Scope:**
-- `commands/journal.rs::resolve_or_create_journal_page` daily-page lookup changes from "find page where `title = YYYY-MM-DD`" to "find page where `title = YYYY-MM-DD` AND `space = current`".
-- Atomic-creation path: when creating today's journal page, set its `space` property in the same `BEGIN IMMEDIATE` transaction. Routes through `create_page_in_space` (this phase formalizes the route; H-3 from the backend review tracks the bypass cleanup).
-- Per-space journal templates via a `journal_template` property on each space block. No new schema — properties extension point.
-- Frontend: `JournalPage`'s 4 internal `createBlock({blockType: 'page'})` callsites route through `createPageInSpace`. (H-3a/H-3b cover the broader bypass cleanup; this phase covers the specific journal callsites.)
-- **Per-space `useJournalStore.currentDate` slice.** Today `currentDate: string` and `mode: JournalMode` are global. Switching from Personal viewing 2026-04-15 to Work leaves Work on 2026-04-15, which may not be where the user wants to land (e.g. Work has no entry for that date). Add `currentDateBySpace: Record<SpaceId, string>` and `modeBySpace: Record<SpaceId, JournalMode>` mirroring the Phase 3 `tabsBySpace` pattern. Same flush/pull subscriber on `useSpaceStore`. Fresh-space default: today's date in `daily` mode.
-
-**Testing:**
-- Journal per-space lookup, including the transition from "no journal today" to "journal created in current space".
-- Two spaces with the same date both have their own daily note; switching space swaps which one shows.
-- Journal template fetched per-space.
-- `useJournalStore` per-space `currentDate` + `mode` flush/pull on space switch; rehydrate after space deletion falls back to `today` for unknown space ids.
-
-**Cost:** M — single focused session.
-**Status:** Per-space lookup + per-space `useJournalStore` slice **shipped** (per-space `currentDate` / `mode` slices, space-switch flush/pull subscriber, `quick_capture_block` IPC threads `space_id`, MCP `journal_for_date` adds required `space_id` arg). Per-space journal templates **deferred to FEAT-3p5b** (see below). Depends on FEAT-3 Phases 1 + 2 + 3 (shipped). Couples loosely with H-3a / H-3b (backend `create_block` IPC enforcement) — recommend landing H-3a first, then this.
-
 ### FEAT-3p5b — Spaces Phase 5b: per-space journal templates
 
 **Problem:** FEAT-3p5 shipped per-space daily journal pages but deliberately deferred per-space journal templates so the lookup work could land cleanly in one session. Today the journal-template lookup still uses the global `journal-template = 'true'` page-property indirection (`src/lib/template-utils.ts::loadJournalTemplate`), so every space shares the same template — the user cannot have a "Work standup" template distinct from a "Personal" template.
@@ -228,55 +206,6 @@ Fresh installs and upgrades both run a boot-time Rust bootstrap (`src-tauri/src/
 
 **Cost:** S — single focused session, additive on top of FEAT-3p5.
 **Status:** Open. Depends on FEAT-3p5 (shipped). Independent of FEAT-3p4 / FEAT-3p7.
-
-### FEAT-3p7 — Spaces Phase 7: cross-space link enforcement (broken-chip rendering)
-
-**Problem:** The shipped `[[ULID]]` resolution path does not honour the locked-in "no links between spaces" decision. `useResolveStore.preload()` calls `listBlocks({ blockType: 'page', limit: 1000 })` with no `spaceId`, so the global title cache contains pages from every space. When a chip renders a `[[ULID]]` whose target lives in a different space, the chip resolves to the foreign page's title and clicking it silently navigates into the current-space tab stack — **the user crosses a space boundary with no UI signal and no auto-switch**, contradicting the locked-in design intent.
-
-The picker is already current-space-only (Phase 2 shipped), so cross-space links cannot be authored fresh from inside the editor. But three paths still produce them in practice:
-
-1. **Legacy text** — pages migrated from a pre-Phase-2 vault carry `[[ULID]]` text written before scoping landed.
-2. **Post-"Move to space" stale references** — when a page moves from space A to space B, inbound `[[ULID]]` references in space A become foreign-target chips.
-3. **Manually-pasted ULIDs** — power users / agent writes / cross-device sync replay can land foreign-target text in a block.
-
-**Locked-in policy (do NOT re-litigate — reaffirms the umbrella decision):**
-
-- **Spaces are physically separate vaults from the user's perspective. NO live links between spaces, ever.**
-- **Same page title in both spaces is fine and stays distinct** (different ULIDs); titles are not a cross-space resolution surface.
-- **Cross-space `[[ULID]]` chips render as broken-link chips** using the existing broken-link UX (`block-link-deleted` class, "Broken link — click to remove" tooltip, click deletes the chip — undoable).
-- **No auto-switch on click.** The broken chip is a removable artifact, not a teleporter. If the user genuinely wants to view the foreign page, they switch spaces explicitly via the SpaceSwitcher / FEAT-3p11 hotkey.
-- **No "show-link-anyway" toggle, no opt-in setting, no developer override.** Single behaviour.
-
-**Backend scope:**
-
-- `batch_resolve_inner` (and the `listBlocks` call in `useResolveStore.preload()`) gain `space_id: String` (required, not optional — see FEAT-3p4 promotion) and apply the same `COALESCE(b.page_id, b.id) IN (SELECT bp.block_id FROM block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?)` filter that Phase 2 established. Targets in other spaces simply don't appear in the resolution result, so the chip falls into the "unknown id" branch — which already renders broken.
-- `get_page_inner` (the single-page fetch used by the page editor / deep-link / journal navigation) gains a space-membership check: if the requested page's `space` property does not match the passed `space_id`, return `AppError::Validation("page not in current space")`. Same check applied to `get_block_with_children_inner`. (This item also appears in FEAT-3p4 — keep it on whichever phase ships first; the other phase removes the duplicate at landing.)
-- Verify that `list_block_history` and any other single-block fetch path either inherits the membership check or is documented as intentionally allowed (e.g. backend admin tooling).
-
-**Frontend scope:**
-
-- `useResolveStore.preload(spaceId)` — pass `currentSpaceId` from the call site (`App.tsx`, `PageEditor` mount, every backlink panel).
-- `useResolveStore.cache` is keyed by `(space_id, ulid)` not just `ulid`, so a switch from Personal → Work doesn't surface cached Personal entries when resolving a Work page. The existing cache invalidation on space switch (today: `clearPagesList()` only) extends to a full per-space cache flush via a new `clearAllForSpace(prevSpaceId)` action, fired in the same `App.tsx` subscriber that already fires `clearPagesList()`.
-- `BlockLink` extension's `resolveStatus` callback is unchanged in shape — the data layer simply stops returning foreign blocks, so the chip naturally falls into the broken branch via the existing code path.
-- Click handler on broken chip already deletes the chip (existing broken-link UX); no change needed.
-- Markdown serializer (`src/editor/markdown-serializer.ts`) already emits `[[ULID]]` text for unresolved targets; verify export round-trip through the broken-chip path produces the same text and not a "Loading…" placeholder.
-
-**Migration safety:**
-
-- Existing legacy cross-space `[[ULID]]` text in saved blocks renders broken on first load and continues to render broken after edit/save round-trip. **Stored block content is never silently rewritten** — the user explicitly deletes the chip if they want to remove it.
-- No op-log changes. No schema changes. No bootstrap step.
-
-**Testing:**
-
-- Property test (`fast-check`): for any two non-empty spaces and any ULID from one of them, `batch_resolve(ulid, space_of_other)` returns `None`.
-- Vitest: `BlockLink` rendered for a foreign-space ULID shows `block-link-deleted` styling and the broken-link tooltip; clicking removes the chip and the deletion is undoable.
-- Vitest: `useResolveStore.cache` keyed correctly; switching from Personal → Work does not surface Personal-cached entries when resolving Work-page chips.
-- Rust: `get_page_inner(other_space_page_id, &current_space_id)` returns `Validation`; `get_block_with_children_inner` similarly rejects.
-- Property test: existing markdown export of a block containing a foreign-space `[[ULID]]` produces stable output across two passes (no "Loading…"/title flicker).
-
-**Cost:** M — single focused session. Touches one resolve store, one Rust resolve helper, one Rust page-fetch helper, one Tauri command signature, plus property + vitest tests. No schema changes, no new op types, no migration.
-
-**Status:** Open. Independent of FEAT-3p4 / p5 / p6 / p8 / p9 / p10 / p11. **Recommend landing alongside or before FEAT-3p10** so the visual-identity work is not undermined by silent cross-space navigation via clickable foreign chips.
 
 ### FEAT-3p9 — Spaces Phase 9: per-space external integrations (GCal, OS notifications)
 
