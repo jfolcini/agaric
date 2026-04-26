@@ -3,4 +3,5 @@ source: src/op.rs
 expression: json
 ---
 attachment_id: A1
+fs_path: /tmp/photo.png
 op_type: delete_attachment

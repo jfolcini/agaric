@@ -24,6 +24,25 @@ pub struct QueueMetrics {
     pub bg_errors: AtomicU64,
     pub fg_panics: AtomicU64,
     pub bg_panics: AtomicU64,
+    /// Foreground `ApplyOp` / `BatchApplyOps` tasks dropped after the
+    /// 100ms in-memory retry exhausted (REVIEW-LATER C-2a).
+    ///
+    /// The foreground queue intentionally retries failing apply tasks
+    /// only once before dropping them — the assumption is that a
+    /// transient WAL contention will clear within 100ms and any
+    /// persistent error indicates materializer divergence that the
+    /// background reconciler / restart-time replay will eventually fix.
+    /// Without an explicit counter the drop is invisible (only
+    /// `fg_errors` gets bumped, and that lumps in non-Apply failures
+    /// too), so a divergence between the op log and the materialized
+    /// `blocks` table cannot be detected from the status endpoint.
+    /// A non-zero value is the single observability signal that an
+    /// apply-op task was silently discarded — pair with the
+    /// `kind=ApplyOp` / `kind=BatchApplyOps` warn lines in the log
+    /// (which include `seq` / `device_id` / `op_type`) for triage.
+    /// Each `BatchApplyOps` drop is counted once regardless of batch
+    /// size; the rest of the batch is implicitly dropped together.
+    pub fg_apply_dropped: AtomicU64,
     /// Background tasks that exhausted all in-memory retries (per-block
     /// tasks persisted to `materializer_retry_queue`, or global rebuilds
     /// that are re-dispatched elsewhere — see BUG-22), **and** tasks
@@ -65,6 +84,7 @@ impl Default for QueueMetrics {
             bg_errors: AtomicU64::new(0),
             fg_panics: AtomicU64::new(0),
             bg_panics: AtomicU64::new(0),
+            fg_apply_dropped: AtomicU64::new(0),
             bg_dropped: AtomicU64::new(0),
             fg_full_waits: AtomicU64::new(0),
             last_materialize_ms: AtomicU64::new(0),
@@ -93,6 +113,15 @@ pub struct StatusInfo {
     pub bg_errors: u64,
     pub fg_panics: u64,
     pub bg_panics: u64,
+    /// Foreground `ApplyOp` / `BatchApplyOps` tasks dropped after the
+    /// 100ms in-memory retry exhausted (REVIEW-LATER C-2a). Surfaces
+    /// silent materializer divergence: a non-zero value means an
+    /// apply-op landed in the op log but never reached the
+    /// materialized `blocks` table on this run. Pair with the
+    /// `kind=ApplyOp` / `kind=BatchApplyOps` warn lines in the log
+    /// (which carry `seq` / `device_id` / `op_type`) for triage.
+    /// Each `BatchApplyOps` drop counts once regardless of batch size.
+    pub fg_apply_dropped: u64,
     // --- MAINT-24 additions ---
     /// Number of background tasks that were either persisted to the retry
     /// queue or silently dropped after exhausting retries.

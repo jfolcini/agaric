@@ -1984,7 +1984,7 @@ async fn delete_attachment_removes_row() {
     .unwrap();
 
     // Delete it
-    delete_attachment_inner(&pool, DEV, &mat, att.id.clone())
+    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone())
         .await
         .unwrap();
 
@@ -1997,6 +1997,178 @@ async fn delete_attachment_removes_row() {
     .await
     .unwrap();
     assert!(maybe.is_none(), "attachment should be deleted from DB");
+
+    // C-3b: file should be unlinked from disk too.
+    assert!(
+        !app_data_dir.join("attachments/doc.pdf").exists(),
+        "attachment file should be removed from disk after delete_attachment_inner"
+    );
+
+    mat.shutdown();
+}
+
+/// C-3a/b happy path: `delete_attachment_inner` must (a) commit a
+/// `DeleteAttachment` op-log entry whose `fs_path` matches the original
+/// `add_attachment` fs_path, and (b) unlink the on-disk file under
+/// `app_data_dir`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "with attachment".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    let bytes: Vec<u8> = vec![0u8; 64];
+    let rel_path = "attachments/c3b_happy.pdf";
+    let full_path = app_data_dir.join(rel_path);
+    std::fs::write(&full_path, &bytes).unwrap();
+
+    let att = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "c3b_happy.pdf".into(),
+        "application/pdf".into(),
+        64,
+        rel_path.into(),
+    )
+    .await
+    .unwrap();
+
+    // Sanity: file is present before delete.
+    assert!(
+        full_path.exists(),
+        "fixture file must be on disk before delete"
+    );
+
+    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone())
+        .await
+        .expect("delete_attachment_inner happy path must succeed");
+
+    // (a) DB row gone.
+    let maybe = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM attachments WHERE id = ?"#,
+        att.id
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(maybe.is_none(), "attachment row must be deleted from DB");
+
+    // (b) On-disk file gone.
+    assert!(
+        !full_path.exists(),
+        "attachment file at {} must be unlinked",
+        full_path.display()
+    );
+
+    // (c) Op log contains a `delete_attachment` whose payload carries the
+    // expected `fs_path`. Walk the log directly so we check the persisted
+    // shape (this is what remote peers and the C-3c GC pass will see).
+    let ops = crate::op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let del_op = ops
+        .iter()
+        .find(|o| o.op_type == "delete_attachment")
+        .expect("op log must contain a delete_attachment entry");
+    let parsed: crate::op::DeleteAttachmentPayload =
+        serde_json::from_str(&del_op.payload).expect("delete_attachment payload must parse");
+    assert_eq!(
+        parsed.attachment_id, att.id,
+        "op-log payload attachment_id must match"
+    );
+    assert_eq!(
+        parsed.fs_path, rel_path,
+        "C-3a: op-log payload fs_path must match the original add_attachment fs_path"
+    );
+
+    mat.shutdown();
+}
+
+/// C-3b: when the on-disk file has already been removed (e.g., the user
+/// pruned the attachments directory by hand, or a previous failed delete
+/// already unlinked it), `delete_attachment_inner` must still succeed —
+/// the op-log entry is authoritative, the missing file is logged at info
+/// level, and the row is removed from the DB.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_attachment_succeeds_when_file_already_missing_on_disk() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "ghost".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    let rel_path = "attachments/c3b_ghost.pdf";
+    let full_path = app_data_dir.join(rel_path);
+    std::fs::write(&full_path, b"x").unwrap();
+
+    let att = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "c3b_ghost.pdf".into(),
+        "application/pdf".into(),
+        1,
+        rel_path.into(),
+    )
+    .await
+    .unwrap();
+
+    // Simulate the user (or a previous botched delete) removing the file
+    // out from under us.
+    std::fs::remove_file(&full_path).unwrap();
+    assert!(
+        !full_path.exists(),
+        "precondition: file must be missing before delete"
+    );
+
+    // Must still succeed: missing file is non-fatal.
+    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone())
+        .await
+        .expect("delete must succeed even if the on-disk file is already gone");
+
+    // DB row is gone.
+    let maybe = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM attachments WHERE id = ?"#,
+        att.id
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(maybe.is_none(), "DB row must be deleted");
+
+    // Op log entry was still written.
+    let ops = crate::op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    assert!(
+        ops.iter().any(|o| o.op_type == "delete_attachment"),
+        "op-log must contain a delete_attachment entry"
+    );
 
     mat.shutdown();
 }

@@ -794,7 +794,7 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 | Severity-downgraded by Pass 2 | 49 |
 | Already-tracked in REVIEW-LATER (PERF-19, PERF-20, PERF-23) | 3 |
 | Net findings in this report | 333 |
-| **Critical** | **3** |
+| **Critical** | **2** |
 | **High** | **17** |
 | **Medium** | **62** |
 | **Low** | **126** |
@@ -802,11 +802,11 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 
 ### Top-5 highest-priority items (Impact ÷ Cost)
 
-1. **C-2** — Materializer drops permanent ApplyOp failures after 1 in-memory retry; op_log diverges from materialized state with no boot-time replay (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/materializer/consumer.rs" />).
-2. **C-1** — `gcal_push::connector::run_task_loop` is a non-functional stub never wired up; the entire FEAT-5e push pipeline is dead code (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/gcal_push/connector.rs" />).
-3. **C-3** — `delete_attachment` never unlinks the file on disk + the `DeleteAttachment` payload drops `fs_path`, so files become unrecoverable after compaction (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/attachments.rs" />).
-4. **H-1** — Pairing passphrase is never cryptographically verified; `confirm_pairing_inner` accepts any string (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/sync_cmds.rs" />).
-5. **H-2** — `mcp_set_enabled(false)` does not close the accept loop; new connections accepted until app restart (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/mcp.rs" />).
+1. **C-2b** — Boot-time op-log replay path for unmaterialized ops; op_log diverges from materialized state with no automatic remediation (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/materializer/consumer.rs" />). C-2a (divergence detection) shipped — divergence is now visible via `fg_apply_dropped` in `StatusInfo`; C-2b remains as the actual replay path.
+2. **C-3c** — `cleanup_orphaned_attachments` GC pass for retroactive file leak recovery (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/materializer/handlers.rs" />). C-3a + C-3b shipped — the ongoing leak is closed; C-3c reconciles files leaked before that change.
+3. **H-1** — Pairing passphrase is never cryptographically verified; `confirm_pairing_inner` accepts any string (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/sync_cmds.rs" />).
+4. **H-2** — `mcp_set_enabled(false)` does not close the accept loop; new connections accepted until app restart (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/mcp.rs" />).
+5. **H-3** — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/blocks.rs" />).
 
 ### Findings by Domain × Severity
 
@@ -821,7 +821,7 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 | Search & Links | 0 | 4 | 4 | 16 | 19 |
 | Lifecycle / Snapshots | 0 | 0 | 18 | 16 | 8 |
 | MCP | 0 | 1 | 6 | 12 | 8 |
-| GCal / Spaces / Drafts | 1 | 0 | 9 | 11 | 9 |
+| GCal / Spaces / Drafts | 0 | 0 | 9 | 11 | 9 |
 
 (Numbers approximate; some findings span domains and are listed under the primary one.)
 
@@ -846,7 +846,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 
 | ID | Title | Why |
 |---|---|---|
-| **C-3** | Unlink attachment file on `delete_attachment` | One-line fix; unrecoverable file leak |
 | **H-1** | Validate pairing passphrase against `pairing_state` slot | Pairing security; passphrase machinery is currently dead |
 | **H-2** | Make `mcp_set_enabled(false)` close the listener | Toggle works as-advertised |
 | **H-3** | Fix `create_page_in_space` bypass in journal/templates/`create_block` | "Nothing outside of spaces" invariant |
@@ -859,89 +858,29 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 
 ---
 
-## CRITICAL findings (3)
-
-### C-1 — `gcal_push::connector::run_task_loop` is a non-functional stub never invoked from production
-- **Domain:** GCal
-- **Location:** `src-tauri/src/gcal_push/connector.rs` (run_task_loop / run_cycle); see also `src-tauri/src/lib.rs` boot-spawn calls
-- **What:** The production task-loop never calls `run_cycle`. The whole FEAT-5e push pipeline ships as dead code; tests pass because they exercise `run_cycle` directly.
-- **Why it matters:** Users who connect GCal see "connected" but no events ever reach the calendar. Silent feature breakage.
-- **Cost:** S–M
-- **Risk:** Low (re-wiring an already-tested cycle into the spawned loop)
-- **Impact:** High (the only thing FEAT-5 ships)
-- **Recommendation:** Wire the existing tested `run_cycle` into the spawned task loop with the documented poll/backoff cadence; add a smoke test that exercises the spawn path.
-- **Pass-1 source:** 10-gcal-spaces-misc / F1
-
-### C-2 — Foreground `ApplyOp` / `BatchApplyOps` permanent failures lose state with no retry (parent — split into C-2a, C-2b)
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/consumer.rs:177-179`; `src-tauri/src/materializer/retry_queue.rs:59-72`; `src-tauri/src/recovery/boot.rs:43-126`
-- **What:** After a single 100ms in-memory retry, `ApplyOp`/`BatchApplyOps` failures only bump `fg_errors` and the task is dropped. `RetryKind::from_task` excludes both task types, so the persistent retry queue is bypassed. There is no boot-time op-log replay path — `recover_at_boot` only handles drafts and pending snapshots.
-- **Why it matters:** Op log is durable but materialized core tables silently diverge from it. Data correctness depends entirely on every apply succeeding within ~100ms; a transient FK violation, lock contention, or disk hiccup leaves the user with phantom blocks. There is no automatic remediation.
-- **Cost:** L (combined) — split into C-2a (S, defense-in-depth detection) + C-2b (M-L, the actual replay path). C-2a should land first; C-2b can be scheduled separately when the user is ready for the larger change.
-- **Pass-1 source:** 02-materializer / F1 (verdict: CONFIRMED at Critical)
-
-### C-2a — Detect & log materializer divergence (no semantic change)
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/consumer.rs:177-179`; `src-tauri/src/materializer/metrics.rs`
-- **What:** When the foreground retry exhausts (`Ok(Err(_)) | Err(_)` after the 100ms attempt), log the failed task with `op_log` seq + device_id + payload type at warn level, increment a new `fg_apply_dropped` metric, and emit a Tauri event so the StatusInfo banner can surface "N ops failed to materialize" to the user. Does NOT change retry semantics — purely observability.
-- **Why it matters:** Until C-2b lands, divergence is invisible. C-2a makes it visible to the user and to the integration test harness so future regressions don't go unnoticed.
-- **Cost:** S
-- **Risk:** Low (additive logging + metric)
-- **Impact:** Medium (visibility, blocks C-2b reviewer being unable to verify "before/after" without it)
-- **Recommendation:** Land C-2a first as a defense-in-depth slice. Once we're confident in the divergence rate observed in the wild, decide whether to schedule C-2b.
-- **Status:** Open. No dependencies.
+## CRITICAL findings (2)
 
 ### C-2b — Boot-time op-log replay path for unmaterialized ops
 - **Domain:** Materializer / Recovery
 - **Location:** `src-tauri/src/recovery/boot.rs:43-126`; `src-tauri/src/materializer/coordinator.rs`
 - **What:** On boot, identify ops whose materialized state is missing or stale (e.g., compare `op_log` max-seq vs each derived table's high-water mark) and re-enqueue them through the materializer foreground queue. Idempotent: every existing op handler is already idempotent or trivially convertible (the materializer ALREADY uses `INSERT OR IGNORE` / UPSERT on the convergence path).
-- **Why it matters:** This is the actual fix for C-2. With it, op log truly is the source of truth: even after a crash mid-apply or a transient FK contention drop, the next boot reconciles automatically.
+- **Why it matters:** This is the actual fix for the C-2 family of findings: foreground `ApplyOp` / `BatchApplyOps` failures only bump `fg_errors` + `fg_apply_dropped` and the task is dropped after a single 100ms in-memory retry — there is no persistent retry queue (`RetryKind::from_task` excludes both task types) and no boot-time op-log replay path (`recover_at_boot` only handles drafts and pending snapshots). With C-2b in place, op log truly is the source of truth: even after a crash mid-apply or a transient FK contention drop, the next boot reconciles automatically. C-2a (divergence detection — `fg_apply_dropped` metric + warn line) shipped, so the divergence rate is now observable in `StatusInfo`.
 - **Cost:** M–L
 - **Risk:** Medium (idempotency must be verified end-to-end across every op handler; replay needs progress markers so a partial replay survives a second crash)
 - **Impact:** High (closes the last automatic-divergence gap in CQRS)
 - **Recommendation:** Build on the existing `recover_at_boot` infrastructure. Each derived table tracks a "materialized through seq N" cursor; the replay walks `op_log WHERE seq > cursor`. Add an integration test that injects ApplyOp failure mid-batch, restarts the pool, and asserts state convergence post-replay.
-- **Status:** Open. Depends on C-2a (need divergence visibility before changing retry semantics).
-
-### C-3 — `delete_attachment` leaks the on-disk file forever; non-reversible op drops `fs_path` (parent — split into C-3a, C-3b, C-3c)
-- **Domain:** Commands / Attachments
-- **Location:** `src-tauri/src/commands/attachments.rs:138-179` (`delete_attachment_inner`); `src-tauri/src/materializer/handlers.rs:508-514`
-- **What:** `delete_attachment_inner` runs an op-log append + `DELETE FROM attachments` inside one IMMEDIATE tx but never calls `remove_file`. The materializer handler is also pure SQL. The `DeleteAttachment` op payload drops `fs_path`; combined with the op being non-reversible and the materializer's `cleanup_orphaned_attachments` being an explicit no-op, the file is unrecoverable + untrackable after compaction.
-- **Why it matters:** Permanent storage leak and impossible to garbage-collect even with a full vault scan because the op log no longer remembers the path.
-- **Cost:** M (combined) — split into C-3a (S, payload extension), C-3b (S, fs unlink), C-3c (S–M, GC pass). C-3a + C-3b should land in the same session; C-3c can be a separate slice.
-- **Pass-1 source:** 05-commands-system / F1
-
-### C-3a — Extend `DeleteAttachment` payload to carry `fs_path`
-- **Domain:** Commands / Op log schema
-- **Location:** `src-tauri/src/op.rs` (`DeleteAttachmentPayload`); `src-tauri/src/commands/attachments.rs::delete_attachment_inner`
-- **What:** Add `fs_path: String` to the `DeleteAttachment` op payload. Serialize/deserialize forward-compatibly (skip on missing during deserialization for backwards compat with existing op-log entries written before this change).
-- **Why it matters:** Without `fs_path` in the payload, no GC pass can correlate op-log delete events with on-disk files. This is the prerequisite for C-3b and C-3c.
-- **Cost:** S
-- **Risk:** Low — extending an existing op payload (additive field, default on missing). Per AGENTS.md "Architectural Stability": op-payload extension is allowed within the existing op-type and DOES NOT require user approval.
-- **Impact:** Medium (unblocks C-3b + C-3c)
-- **Recommendation:** Add the field, regenerate `.sqlx/` cache, run `cargo sqlx prepare`, snapshot test the new payload shape. Update `commands/attachments.rs::delete_attachment_inner` to populate the field from the just-fetched attachment row.
-- **Status:** Open. No dependencies.
-
-### C-3b — Call `fs::remove_file` inside `delete_attachment_inner`
-- **Domain:** Commands / Attachments
-- **Location:** `src-tauri/src/commands/attachments.rs::delete_attachment_inner`
-- **What:** After the DB delete inside the existing IMMEDIATE tx, call `tokio::fs::remove_file(fs_path)`. If the file is already missing (e.g. user deleted it manually), log at info level and continue — do not fail the command. If the remove fails for another reason (e.g. permission denied), log at warn level and continue — the op-log entry is still authoritative; C-3c will GC the orphan.
-- **Why it matters:** Closes the immediate leak for new deletes. Existing leaked files (pre-this-change) are recovered by C-3c.
-- **Cost:** S
-- **Risk:** Low — `remove_file` failures are non-fatal and logged; no FK or schema impact.
-- **Impact:** High — closes the leak going forward.
-- **Recommendation:** Land in the same session as C-3a. Add a Rust test that verifies the file is removed on success and that a missing-file scenario logs but does not error.
-- **Status:** Open. Depends on C-3a (needs `fs_path` in the payload to be reliable across compaction).
+- **Status:** Open. No dependencies (C-2a shipped).
 
 ### C-3c — Implement `cleanup_orphaned_attachments` (FS ↔ DB reconciliation)
 - **Domain:** Materializer / Lifecycle
 - **Location:** `src-tauri/src/materializer/handlers.rs::cleanup_orphaned_attachments`
 - **What:** Replace the no-op TODO with a real GC pass: scan the attachments directory, list every file, query `attachments.fs_path` for matches, and remove files that are not referenced. Schedule the pass at boot and after compaction. Bound the scan with a directory-listing chunk size so vaults with many files do not block.
-- **Why it matters:** Recovers files leaked before C-3a/C-3b shipped; provides ongoing defense-in-depth for any future code path that drops `fs_path` from a payload.
+- **Why it matters:** Recovers files leaked before C-3a / C-3b shipped (the `DeleteAttachment` payload now carries `fs_path` and `delete_attachment_inner` calls `tokio::fs::remove_file` after the IMMEDIATE tx commits — so the ongoing leak is closed). C-3c also provides ongoing defense-in-depth for any future code path that drops `fs_path` from a payload, and reconciles files left behind when remote `DeleteAttachment` ops are applied via the materializer (which still operates pure-SQL — adding fs unlink to the materializer side requires plumbing `app_data_dir` through, which C-3c subsumes via the GC pass).
 - **Cost:** S–M
 - **Risk:** Medium — accidental deletion of a still-referenced file would be data loss. Test exhaustively.
 - **Impact:** Medium — recovers space; defense in depth for future bugs.
 - **Recommendation:** Add an exhaustive test set (file referenced + not referenced + referenced by an op that compacted out + referenced by the upcoming compaction). Consider a "dry-run" mode that logs what would be deleted before enabling actual deletion in production.
-- **Status:** Open. Depends on C-3a + C-3b having shipped (so the ongoing path is correct before retroactive GC runs).
+- **Status:** Open. No dependencies (C-3a + C-3b shipped).
 
 ---
 

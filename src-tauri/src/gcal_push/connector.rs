@@ -887,21 +887,65 @@ pub fn spawn_connector(
 async fn run_task_loop<C: GcalClient + ?Sized>(
     pool: SqlitePool,
     client: Arc<C>,
-    _token_store: Arc<dyn TokenStore>,
-    _emitter: Arc<dyn GcalEventEmitter>,
+    token_store: Arc<dyn TokenStore>,
+    emitter: Arc<dyn GcalEventEmitter>,
     device_id: String,
     clock: impl Clock,
     mut dirty_rx: mpsc::UnboundedReceiver<DirtyEvent>,
     force_sweep: Arc<Notify>,
     shutdown: Arc<Notify>,
 ) {
-    // Production outer loop is intentionally minimal in this slice —
-    // the wiring of `fetch_with_auto_refresh` + bounded backoff + lease
-    // renewal cadence is exercised through the unit tests on
-    // `run_cycle` / `push_date`.  The loop below keeps `_token_store`
-    // and `_emitter` alive for future wiring.
+    // `run_cycle` is generic over `C: GcalClient` (Sized).  The outer
+    // task loop accepts an `Arc<dyn GcalClient>` (?Sized) coming out
+    // of `spawn_connector`, so we wrap `&C` in this thin sized adapter
+    // before each cycle dispatch.  The adapter is only ever held for
+    // the duration of a single `run_cycle` call.
+    struct ClientAdapter<'a, C: GcalClient + ?Sized> {
+        inner: &'a C,
+    }
+
+    #[async_trait]
+    impl<'a, C: GcalClient + ?Sized> GcalClient for ClientAdapter<'a, C> {
+        async fn create_calendar(&self, token: &Token, name: &str) -> Result<String, AppError> {
+            self.inner.create_calendar(token, name).await
+        }
+        async fn delete_calendar(&self, token: &Token, calendar_id: &str) -> Result<(), AppError> {
+            self.inner.delete_calendar(token, calendar_id).await
+        }
+        async fn insert_event(
+            &self,
+            token: &Token,
+            calendar_id: &str,
+            event: &Event,
+        ) -> Result<EventId, AppError> {
+            self.inner.insert_event(token, calendar_id, event).await
+        }
+        async fn patch_event(
+            &self,
+            token: &Token,
+            calendar_id: &str,
+            event_id: &str,
+            event: &Event,
+        ) -> Result<(), AppError> {
+            self.inner
+                .patch_event(token, calendar_id, event_id, event)
+                .await
+        }
+        async fn delete_event(
+            &self,
+            token: &Token,
+            calendar_id: &str,
+            event_id: &str,
+        ) -> Result<(), AppError> {
+            self.inner.delete_event(token, calendar_id, event_id).await
+        }
+    }
+
     let mut dirty: DirtySet = DirtySet::new();
-    let _ = (&client, &pool, &device_id, &clock); // keep the bindings live
+    // `None` means no flush is currently armed.  Reconcile / force-sweep
+    // / dirty arrivals all set this to `Now + DEBOUNCE_WINDOW`; the
+    // dedicated `sleep_until` arm in the `select!` fires the cycle.
+    let mut next_flush_at: Option<tokio::time::Instant> = None;
 
     let mut reconcile = tokio::time::interval(RECONCILE_INTERVAL);
     reconcile.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -920,13 +964,93 @@ async fn run_task_loop<C: GcalClient + ?Sized>(
                     primed = dirty.len(),
                     "force_resync: primed full-window dirty set",
                 );
+                next_flush_at = Some(tokio::time::Instant::now() + DEBOUNCE_WINDOW);
             }
             maybe_ev = dirty_rx.recv() => match maybe_ev {
-                Some(ev) => dirty.extend(ev.affected()),
+                Some(ev) => {
+                    dirty.extend(ev.affected());
+                    next_flush_at =
+                        Some(tokio::time::Instant::now() + DEBOUNCE_WINDOW);
+                }
                 None => break,
             },
             _ = reconcile.tick() => {
-                tracing::debug!(target: "gcal", "reconcile tick");
+                handle_force_resync(&mut dirty, clock.today());
+                tracing::debug!(
+                    target: "gcal",
+                    primed = dirty.len(),
+                    "reconcile tick: primed full-window dirty set",
+                );
+                next_flush_at = Some(tokio::time::Instant::now() + DEBOUNCE_WINDOW);
+            }
+            () = async {
+                match next_flush_at {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                next_flush_at = None;
+                if dirty.is_empty() {
+                    continue;
+                }
+                match token_store.load().await {
+                    Ok(None) => {
+                        tracing::debug!(
+                            target: "gcal",
+                            "gcal: no token loaded — idle",
+                        );
+                        // User has not connected GCal yet — drop this
+                        // batch; a future `dirty_producer` event will
+                        // re-arm the debounce once a token is stored.
+                        dirty.clear();
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "gcal",
+                            error = %e,
+                            "gcal: failed to load token — skipping cycle",
+                        );
+                        // Keep `dirty` populated so the next reconcile
+                        // tick / dirty arrival retries once the token
+                        // store recovers.
+                    }
+                    Ok(Some(token)) => {
+                        let adapter = ClientAdapter { inner: &*client };
+                        match run_cycle(
+                            &pool,
+                            &adapter,
+                            &emitter,
+                            &device_id,
+                            &clock,
+                            &token,
+                            &dirty,
+                        )
+                        .await
+                        {
+                            Ok(CycleOutcome::Ok)
+                            | Ok(CycleOutcome::LeaseUnavailable) => {
+                                dirty.clear();
+                            }
+                            Ok(CycleOutcome::HardFailure(reason)) => {
+                                tracing::warn!(
+                                    target: "gcal",
+                                    reason = %reason,
+                                    "gcal: hard failure — clearing dirty set; \
+                                     emitter has surfaced reauth/push-disabled",
+                                );
+                                dirty.clear();
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    target: "gcal",
+                                    error = ?e,
+                                    "gcal: cycle error — keeping dirty set \
+                                     for next reconcile tick",
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1922,5 +2046,78 @@ mod tests {
         .unwrap();
         assert_eq!(outcome, CycleOutcome::Ok);
         assert_eq!(client.create_calendar_call_count().await, 1);
+    }
+
+    // ── REVIEW-LATER C-1 — wired task loop dispatches `run_cycle` ──
+    //
+    // Smoke test: spawning the connector and pushing a `DirtyEvent`
+    // through the channel must result in `run_cycle` actually running
+    // (observed here as at least one `create_calendar` or
+    // `insert_event` call on the mock).  Before C-1 the loop only
+    // collected events and ticked, so the entire FEAT-5e push pipeline
+    // was dead; this test catches a regression to that state.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn task_loop_dispatches_run_cycle_on_dirty_event() {
+        use crate::gcal_push::keyring_store::{MockTokenStore, TokenStore};
+        use std::time::Duration as StdDuration;
+
+        let (pool, _dir) = test_pool().await;
+
+        // Seed a block due on the date we're about to mark dirty so
+        // run_cycle has actual work to push (ensures `insert_event`
+        // fires after the first-connect `create_calendar`).
+        let _ = seed_block_due_on(&pool, "Smoke C-1", "2026-04-22").await;
+        let date = NaiveDate::from_ymd_opt(2026, 4, 22).unwrap();
+
+        // Build doubles — keep an `Arc<MockGcalClient>` for assertions
+        // and pass an `Arc<dyn GcalClient>` (the production shape) into
+        // `spawn_connector`.
+        let client: Arc<MockGcalClient> = Arc::new(MockGcalClient::new());
+        let dyn_client: Arc<dyn GcalClient> = client.clone();
+
+        let token_store: Arc<MockTokenStore> = Arc::new(MockTokenStore::new());
+        token_store.store(&dummy_token()).await.unwrap();
+        let dyn_token_store: Arc<dyn TokenStore> = token_store;
+
+        let recorder = Arc::new(RecordingEventEmitter::new());
+        let dyn_emitter: Arc<dyn GcalEventEmitter> = recorder;
+
+        let task = spawn_connector(
+            pool.clone(),
+            dyn_client,
+            dyn_token_store,
+            dyn_emitter,
+            DEV_A.to_owned(),
+        );
+
+        // Trigger a cycle — debounce is 500 ms so the cycle should
+        // fire well within the 1.5 s budget below.
+        task.handle.notify_dirty(DirtyEvent::single(date));
+
+        let observed = tokio::time::timeout(StdDuration::from_millis(1500), async {
+            loop {
+                let calls = client.create_calendar_call_count().await
+                    + client.event_ops_for_date(&date).await;
+                if calls > 0 {
+                    return calls;
+                }
+                tokio::time::sleep(StdDuration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect(
+            "run_cycle must run within 1.5s of a DirtyEvent — \
+             the spawned task loop is not dispatching cycles (C-1 regression)",
+        );
+        assert!(
+            observed > 0,
+            "expected at least one create_calendar or insert_event call",
+        );
+
+        // Drop the task handle so the connector's spawned future is
+        // released before the runtime tears down.  (`ConnectorTask`
+        // does not currently expose a graceful-shutdown trigger; the
+        // drop relies on tokio cancelling the task on runtime shutdown.)
+        drop(task);
     }
 }
