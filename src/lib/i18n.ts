@@ -78,6 +78,9 @@ const resources = {
         'Spaces keep separate contexts (e.g. work, personal) physically apart. Pages, journals, tags, and links never cross between spaces. Switch with the dropdown above.',
       'space.onboardingDismiss': 'Got it',
       'space.onboardingSeenKey': 'agaric:space-onboarding-seen-v1',
+      // Spaces — Phase 10 visual identity
+      'space.accentBadge': '{{name}} space — click to switch',
+      'space.statusChip': 'Active space: {{name}}. Click to switch space.',
 
       // Empty states
       'empty.noBlocks': 'No blocks yet. Click + Add block below to start writing.',

@@ -34,30 +34,50 @@ use crate::ulid::BlockId;
 
 use super::sanitize_internal_error;
 
-/// A space row returned by [`list_spaces_inner`] — just the pieces the
-/// frontend needs to render the switcher (ULID + display name).
+/// A space row returned by [`list_spaces_inner`] — the pieces the
+/// frontend needs to render the switcher (ULID + display name) plus
+/// the FEAT-3p10 visual-identity surface (`accent_color`).
+///
+/// `accent_color` carries the free-form palette token (e.g.
+/// `accent-emerald`, `accent-blue`) stored under
+/// `block_properties(key='accent_color', value_text=…)`. `None` means
+/// the space has no explicit accent — the frontend falls back to the
+/// brand default. Joined via LEFT JOIN so an unset accent never hides
+/// the row.
 #[derive(Serialize, Deserialize, Type, Clone, Debug)]
 pub struct SpaceRow {
     pub id: String,
     pub name: String,
+    /// FEAT-3p10 — accent palette token, or `None` if unset.
+    pub accent_color: Option<String>,
 }
 
-/// Return every space block (live, non-conflict) as a `{ id, name }`
-/// row, ordered alphabetically by name.
+/// Return every space block (live, non-conflict) as a
+/// `{ id, name, accent_color }` row, ordered alphabetically by name.
 ///
 /// A space is identified by the presence of a `block_properties` row
 /// with `key = 'is_space'` and `value_text = 'true'`. The `content`
 /// column on the block row is the user-facing name.
+///
+/// FEAT-3p10 — the optional `accent_color` property is pulled in via a
+/// LEFT JOIN on `block_properties` so spaces without an explicit
+/// accent token still surface (with `accent_color = None`).
 #[instrument(skip(pool), err)]
 pub async fn list_spaces_inner(pool: &SqlitePool) -> Result<Vec<SpaceRow>, AppError> {
     let rows = sqlx::query_as!(
         SpaceRow,
-        r#"SELECT b.id as "id!: String", COALESCE(b.content, '') as "name!: String"
+        r#"SELECT
+               b.id as "id!: String",
+               COALESCE(b.content, '') as "name!: String",
+               accent.value_text as "accent_color: String"
            FROM blocks b
            INNER JOIN block_properties p
                ON p.block_id = b.id
               AND p.key = 'is_space'
               AND p.value_text = 'true'
+           LEFT JOIN block_properties accent
+               ON accent.block_id = b.id
+              AND accent.key = 'accent_color'
            WHERE b.deleted_at IS NULL
              AND b.is_conflict = 0
            ORDER BY COALESCE(b.content, '') ASC, b.id ASC"#,

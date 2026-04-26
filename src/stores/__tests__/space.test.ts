@@ -28,8 +28,8 @@ const mockedListSpaces = vi.mocked(listSpaces)
 
 const STORAGE_KEY = 'agaric:space'
 
-const PERSONAL: SpaceRow = { id: 'SPACE_AAAA', name: 'Personal' }
-const WORK: SpaceRow = { id: 'SPACE_ZZZZ', name: 'Work' }
+const PERSONAL: SpaceRow = { id: 'SPACE_AAAA', name: 'Personal', accent_color: 'accent-emerald' }
+const WORK: SpaceRow = { id: 'SPACE_ZZZZ', name: 'Work', accent_color: 'accent-blue' }
 
 beforeEach(() => {
   useSpaceStore.setState({
@@ -191,6 +191,81 @@ describe('useSpaceStore', () => {
       // partialize() excludes availableSpaces + isReady.
       expect(parsed.state).not.toHaveProperty('availableSpaces')
       expect(parsed.state).not.toHaveProperty('isReady')
+    })
+  })
+
+  describe('getCurrentAccent (FEAT-3p10)', () => {
+    it('returns the active space accent token', () => {
+      useSpaceStore.setState({
+        currentSpaceId: PERSONAL.id,
+        availableSpaces: [PERSONAL, WORK],
+        isReady: true,
+      })
+      expect(useSpaceStore.getState().getCurrentAccent()).toBe('accent-emerald')
+    })
+
+    it('updates when the active space changes', () => {
+      useSpaceStore.setState({
+        currentSpaceId: PERSONAL.id,
+        availableSpaces: [PERSONAL, WORK],
+        isReady: true,
+      })
+      expect(useSpaceStore.getState().getCurrentAccent()).toBe('accent-emerald')
+      useSpaceStore.getState().setCurrentSpace(WORK.id)
+      expect(useSpaceStore.getState().getCurrentAccent()).toBe('accent-blue')
+    })
+
+    it('returns the fallback token when no space is active', () => {
+      useSpaceStore.setState({
+        currentSpaceId: null,
+        availableSpaces: [],
+        isReady: false,
+      })
+      // The fallback (`accent-blue`) lines up with Work's seed default
+      // and the brand `--primary`. Defined as `DEFAULT_ACCENT_TOKEN`
+      // in the store.
+      expect(useSpaceStore.getState().getCurrentAccent()).toBe('accent-blue')
+    })
+
+    it('returns the fallback token when the active space has no accent_color', () => {
+      const noAccent: SpaceRow = { id: 'SPACE_NA', name: 'NA', accent_color: null }
+      useSpaceStore.setState({
+        currentSpaceId: noAccent.id,
+        availableSpaces: [noAccent],
+        isReady: true,
+      })
+      expect(useSpaceStore.getState().getCurrentAccent()).toBe('accent-blue')
+    })
+
+    it('returns the fallback token when accent_color is an empty string', () => {
+      const blankAccent: SpaceRow = { id: 'SPACE_B', name: 'Blank', accent_color: '' }
+      useSpaceStore.setState({
+        currentSpaceId: blankAccent.id,
+        availableSpaces: [blankAccent],
+        isReady: true,
+      })
+      expect(useSpaceStore.getState().getCurrentAccent()).toBe('accent-blue')
+    })
+
+    it('refreshes the selector after a refresh that changes the accent', async () => {
+      // Initial state: Personal carries emerald.
+      useSpaceStore.setState({
+        currentSpaceId: PERSONAL.id,
+        availableSpaces: [PERSONAL, WORK],
+        isReady: true,
+      })
+      expect(useSpaceStore.getState().getCurrentAccent()).toBe('accent-emerald')
+
+      // Sync brings down a recoloured Personal (emerald → violet).
+      const recoloured: SpaceRow = {
+        id: PERSONAL.id,
+        name: PERSONAL.name,
+        accent_color: 'accent-violet',
+      }
+      mockedListSpaces.mockResolvedValueOnce([recoloured, WORK])
+      await useSpaceStore.getState().refreshAvailableSpaces()
+
+      expect(useSpaceStore.getState().getCurrentAccent()).toBe('accent-violet')
     })
   })
 

@@ -150,7 +150,7 @@ export const HANDLERS: Record<string, Handler> = {
   // `currentSpaceId` non-null so page-creation flows (Ctrl+N, the
   // PageBrowser input, the `[[` picker) don't bail out at the
   // `if (!isReady || currentSpaceId == null) return` guard in `App.tsx`.
-  list_spaces: () => [{ id: 'SPACE_PERSONAL', name: 'Personal' }],
+  list_spaces: () => [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }],
 
   // FEAT-3 Phase 2 atomic page-creation IPC. Accepts `parentId` (null for a
   // top-level page), `content`, and `spaceId`. Returns the new page's ULID

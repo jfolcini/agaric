@@ -5,7 +5,7 @@ import type { StoreApi } from 'zustand'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { announce } from '../lib/announcer'
 import {
-  createBlock,
+  createPageInSpace,
   listBlocks,
   setDueDate as setDueDateCmd,
   setProperty,
@@ -13,6 +13,7 @@ import {
 } from '../lib/tauri'
 import type { PageBlockState } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
+import { useSpaceStore } from '../stores/space'
 import { useUndoStore } from '../stores/undo'
 
 export type DatePickerMode = 'date' | 'due' | 'schedule' | 'repeat-until'
@@ -133,10 +134,21 @@ async function handleDateMode(ctx: DatePickContext): Promise<void> {
   const existing = resp.items.find((b) => b.content === ctx.dateStr || b.content === ctx.legacyStr)
   let datePageId = existing?.id
   if (!datePageId) {
-    const newPage = await createBlock({ blockType: 'page', content: ctx.dateStr })
-    datePageId = newPage.id
-    useResolveStore.getState().set(newPage.id, ctx.dateStr, false)
-    ctx.pagesListRef.current = [...ctx.pagesListRef.current, { id: newPage.id, title: ctx.dateStr }]
+    // BUG-1 / H-3b — date pages must own a `space` property to surface
+    // in PageBrowser. The legacy `createBlock({ blockType: 'page' })`
+    // path leaks pages without `space`, so route through the atomic
+    // `createPageInSpace` helper using the active space from the store.
+    const currentSpaceId = useSpaceStore.getState().currentSpaceId
+    if (currentSpaceId === null || currentSpaceId === undefined) {
+      throw new Error('No active space; cannot create date page')
+    }
+    const newPageId = await createPageInSpace({
+      content: ctx.dateStr,
+      spaceId: currentSpaceId,
+    })
+    datePageId = newPageId
+    useResolveStore.getState().set(newPageId, ctx.dateStr, false)
+    ctx.pagesListRef.current = [...ctx.pagesListRef.current, { id: newPageId, title: ctx.dateStr }]
   }
 
   if (ctx.rovingEditor.editor && datePageId) {

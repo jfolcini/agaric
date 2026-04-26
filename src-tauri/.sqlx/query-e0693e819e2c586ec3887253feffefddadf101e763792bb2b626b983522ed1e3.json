@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 as \"v: i32\" FROM block_properties\n           WHERE block_id = ? AND key = 'accent_color'",
+  "describe": {
+    "columns": [
+      {
+        "name": "v: i32",
+        "ordinal": 0,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "e0693e819e2c586ec3887253feffefddadf101e763792bb2b626b983522ed1e3"
+}

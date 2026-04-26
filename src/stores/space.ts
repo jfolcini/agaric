@@ -23,6 +23,15 @@ import { listSpaces } from '../lib/tauri'
 
 const LOG_MODULE = 'stores/space'
 
+/**
+ * FEAT-3p10 — fallback accent token used when no space is active yet
+ * (boot pre-bootstrap edge case) or when the active space carries no
+ * `accent_color` property. `accent-blue` matches the Work seed default
+ * and lines up with the brand `--primary` so the UI feels coherent
+ * when nothing has been picked.
+ */
+export const DEFAULT_ACCENT_TOKEN = 'accent-blue'
+
 interface SpaceState {
   /** ULID of the active space, or `null` until the first refresh completes. */
   currentSpaceId: string | null
@@ -35,6 +44,16 @@ interface SpaceState {
   setCurrentSpace: (id: string) => void
   /** Fetch every space and reconcile `currentSpaceId` against the result. */
   refreshAvailableSpaces: () => Promise<void>
+  /**
+   * FEAT-3p10 — derived selector returning the active space's
+   * `accent_color` token (e.g. `accent-emerald`, `accent-blue`), or
+   * [`DEFAULT_ACCENT_TOKEN`] when no space is active or the active
+   * space has no explicit accent. Reads `availableSpaces` so the
+   * value refreshes for free whenever `refreshAvailableSpaces()` is
+   * called (e.g. after the user recolours a space via the manage
+   * dialog). Pure selector — no side effects, no IPC.
+   */
+  getCurrentAccent: () => string
 }
 
 /**
@@ -62,6 +81,20 @@ export const useSpaceStore = create<SpaceState>()(
 
       setCurrentSpace: (id: string) => {
         set({ currentSpaceId: id })
+      },
+
+      getCurrentAccent: () => {
+        const { currentSpaceId, availableSpaces } = get()
+        if (currentSpaceId === null) return DEFAULT_ACCENT_TOKEN
+        const active = availableSpaces.find((s) => s.id === currentSpaceId)
+        // `accent_color` is `string | null` on the wire — fall back to
+        // the default when unset (or when the row was filtered out
+        // between the IPC and the selector call). Empty string is also
+        // treated as "unset" so a malformed payload doesn't blank the
+        // chip.
+        const token = active?.accent_color
+        if (token == null || token === '') return DEFAULT_ACCENT_TOKEN
+        return token
       },
 
       refreshAvailableSpaces: async () => {

@@ -216,6 +216,22 @@
   /* Sync status */
   --sync-idle: oklch(0.7 0.17 162);
   --sync-active: oklch(0.77 0.19 70);
+  /* FEAT-3p10 — per-space accent palette tokens.
+   * Each space stores a free-form palette token (e.g. `accent-emerald`)
+   * in `block_properties(key='accent_color', …)`. The active space's
+   * token is bridged to `--accent-current` by the App-level effect on
+   * every space change; downstream consumers (SpaceSwitcher trigger,
+   * status-bar chip, accent badge) read `var(--accent-current, …)`.
+   * Default fallback is the brand `--primary` so an unscoped boot
+   * still shows something sensible. */
+  --accent-emerald: oklch(0.7 0.16 162);
+  --accent-blue: oklch(0.62 0.17 252);
+  --accent-violet: oklch(0.62 0.2 295);
+  --accent-amber: oklch(0.78 0.16 80);
+  --accent-rose: oklch(0.65 0.21 12);
+  --accent-slate: oklch(0.55 0.04 257);
+  --accent-orange: oklch(0.7 0.18 50);
+  --accent-current: var(--primary);
   /* Animation/transition tokens */
   --duration-fast: 100ms;
   --duration-normal: 150ms;
@@ -344,6 +360,17 @@
   /* Sync status */
   --sync-idle: oklch(0.7 0.17 162);
   --sync-active: oklch(0.77 0.19 70);
+  /* FEAT-3p10 — per-space accent palette tokens (dark theme).
+   * Same palette as light, slightly lifted lightness so swatches keep
+   * adequate contrast against the dark surface backgrounds. */
+  --accent-emerald: oklch(0.74 0.17 162);
+  --accent-blue: oklch(0.7 0.18 252);
+  --accent-violet: oklch(0.7 0.21 295);
+  --accent-amber: oklch(0.82 0.17 80);
+  --accent-rose: oklch(0.72 0.21 12);
+  --accent-slate: oklch(0.7 0.04 257);
+  --accent-orange: oklch(0.76 0.18 50);
+  --accent-current: var(--primary);
 }
 
 /* ── Solarized Light theme (UX-203) ────────────────────────────────── */
@@ -1059,6 +1086,24 @@
   :focus-visible {
     outline: 3px solid currentColor;
     outline-offset: 2px;
+  }
+
+  /* FEAT-3p10 — high-contrast siblings for the per-space accent palette.
+   * Boost chroma + push lightness toward the extremes so the
+   * SpaceAccentBadge and SpaceStatusChip stay distinguishable for
+   * users who request high-contrast UI (Windows High Contrast Mode,
+   * macOS Increase Contrast, etc.). Mirrors the existing semantic-token
+   * convention where the bare `:root` definition is the default and
+   * `prefers-contrast: more` overrides with bolder colour. */
+  :root,
+  .dark {
+    --accent-emerald: oklch(0.55 0.22 162);
+    --accent-blue: oklch(0.5 0.24 252);
+    --accent-violet: oklch(0.5 0.25 295);
+    --accent-amber: oklch(0.65 0.2 80);
+    --accent-rose: oklch(0.55 0.25 12);
+    --accent-slate: oklch(0.4 0.06 257);
+    --accent-orange: oklch(0.6 0.22 50);
   }
 }
 

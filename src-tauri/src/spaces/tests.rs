@@ -11,7 +11,7 @@ use tempfile::TempDir;
 
 use super::bootstrap::{
     bootstrap_spaces, migrate_personal_pages_to_work, MIGRATION_THRESHOLD_ULID,
-    SPACE_PERSONAL_ULID, SPACE_WORK_ULID,
+    SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID, SPACE_WORK_DEFAULT_ACCENT, SPACE_WORK_ULID,
 };
 use crate::db::init_pool;
 use crate::ulid::BlockId;
@@ -197,8 +197,8 @@ async fn bootstrap_on_fresh_db_creates_two_spaces_and_no_other_state() {
     .await
     .unwrap();
     assert_eq!(
-        set_prop_ops, 2,
-        "exactly 2 SetProperty ops (is_space on Personal + Work) on fresh bootstrap"
+        set_prop_ops, 4,
+        "exactly 4 SetProperty ops (is_space + accent_color on Personal + Work) on fresh bootstrap"
     );
 }
 
@@ -404,6 +404,397 @@ async fn bootstrap_resumes_after_partial_state() {
             .as_deref(),
         Some(SPACE_PERSONAL_ULID),
         "existing page must be migrated"
+    );
+}
+
+// ---------------------------------------------------------------------
+// FEAT-3p10 — Default accent_color seeding for Personal + Work.
+// ---------------------------------------------------------------------
+
+/// Read the `value_text` of the `accent_color` property on `block_id`,
+/// or `None` if the property does not exist.
+async fn accent_color_property(pool: &SqlitePool, block_id: &str) -> Option<String> {
+    sqlx::query_scalar!(
+        r#"SELECT value_text FROM block_properties
+           WHERE block_id = ? AND key = 'accent_color'"#,
+        block_id,
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+    .flatten()
+}
+
+/// Count `op_log` rows whose `op_type = 'set_property'` AND whose
+/// payload key matches `key` AND whose `block_id` extraction matches
+/// the supplied `block_id`. Used to verify the per-space op-count
+/// invariant (each accent_color op is emitted at most once per
+/// seeded block).
+async fn count_set_property_ops_for_block_and_key(
+    pool: &SqlitePool,
+    block_id: &str,
+    key: &str,
+) -> i64 {
+    let pattern = format!("%\"key\":\"{}\"%", key);
+    sqlx::query_scalar::<_, i64>(
+        r#"SELECT COUNT(*) FROM op_log
+           WHERE op_type = 'set_property'
+             AND block_id = ?
+             AND payload LIKE ?"#,
+    )
+    .bind(block_id)
+    .bind(pattern)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// FEAT-3p10 — fresh bootstrap seeds the two default accent tokens
+/// (`accent-emerald` for Personal, `accent-blue` for Work).
+#[tokio::test]
+async fn bootstrap_seeds_default_accent_colors_for_personal_and_work() {
+    let (pool, _dir) = test_pool().await;
+
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    assert_eq!(
+        accent_color_property(&pool, SPACE_PERSONAL_ULID)
+            .await
+            .as_deref(),
+        Some(SPACE_PERSONAL_DEFAULT_ACCENT),
+        "Personal must seed accent_color = '{}'",
+        SPACE_PERSONAL_DEFAULT_ACCENT
+    );
+    assert_eq!(
+        accent_color_property(&pool, SPACE_WORK_ULID)
+            .await
+            .as_deref(),
+        Some(SPACE_WORK_DEFAULT_ACCENT),
+        "Work must seed accent_color = '{}'",
+        SPACE_WORK_DEFAULT_ACCENT
+    );
+
+    // Sanity check that bootstrap is operating in a valid steady state
+    // — the seeded tokens must differ so the visual identity is
+    // distinguishable at a glance (the spec rationale for FEAT-3p10).
+    assert_ne!(
+        SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_WORK_DEFAULT_ACCENT,
+        "seeded defaults must differ to give the two spaces distinct identity"
+    );
+}
+
+/// FEAT-3p10 — running bootstrap twice on a vanilla install must not
+/// pile up duplicate `accent_color` ops in the op_log. Each seeded
+/// block gets exactly ONE accent_color SetProperty op across both
+/// boots (the fast-path skip is the load-bearing guard; the
+/// `ensure_accent_color_property` helper is the defence-in-depth
+/// guard for partial-resume scenarios).
+#[tokio::test]
+async fn bootstrap_does_not_re_emit_accent_color_on_second_boot() {
+    let (pool, _dir) = test_pool().await;
+
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+    // Second boot: must short-circuit via the fast-path (every seeded
+    // block already has is_space = "true"). The accent_color helper
+    // also short-circuits if the fast-path were ever loosened in a
+    // future bootstrap revision.
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    let personal_accent_ops =
+        count_set_property_ops_for_block_and_key(&pool, SPACE_PERSONAL_ULID, "accent_color").await;
+    assert_eq!(
+        personal_accent_ops, 1,
+        "exactly one accent_color op for Personal across two boots; got {personal_accent_ops}"
+    );
+    let work_accent_ops =
+        count_set_property_ops_for_block_and_key(&pool, SPACE_WORK_ULID, "accent_color").await;
+    assert_eq!(
+        work_accent_ops, 1,
+        "exactly one accent_color op for Work across two boots; got {work_accent_ops}"
+    );
+
+    // The seeded tokens must still match the defaults (no overwrite of
+    // the original values on the second boot — the helper short-circuits).
+    assert_eq!(
+        accent_color_property(&pool, SPACE_PERSONAL_ULID)
+            .await
+            .as_deref(),
+        Some(SPACE_PERSONAL_DEFAULT_ACCENT),
+    );
+    assert_eq!(
+        accent_color_property(&pool, SPACE_WORK_ULID)
+            .await
+            .as_deref(),
+        Some(SPACE_WORK_DEFAULT_ACCENT),
+    );
+}
+
+// ---------------------------------------------------------------------
+// BUG-1 / L-133 — bootstrap re-runs `pages_without_space` every boot.
+// ---------------------------------------------------------------------
+//
+// Pages that arrive without a `space` property — via a misbehaving
+// frontend, a sync replay from a peer that bypassed the invariant, or
+// any other path — are captured by the every-boot backfill and
+// assigned to the seeded Personal space. The seeded-block fast-path
+// (which avoids re-emitting `is_space` / `accent_color` ops) is
+// preserved.
+
+/// FEAT-3p10 keeps `is_space` ops fast-pathed to "emit once". This
+/// counter is the load-bearing assertion for the second-boot test —
+/// `is_space` SetProperty ops should fire on the first boot only.
+async fn count_is_space_ops_for_block(pool: &SqlitePool, block_id: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        r#"SELECT COUNT(*) FROM op_log
+           WHERE op_type = 'set_property'
+             AND block_id = ?
+             AND payload LIKE '%"key":"is_space"%'"#,
+    )
+    .bind(block_id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// BUG-1 / L-133 regression — after the bootstrap-complete marker
+/// is set (i.e. on every boot AFTER the first), a freshly-arrived
+/// page WITHOUT a `space` property must STILL be migrated to the
+/// Personal space on the next boot. Before the fix the fast-path
+/// short-circuit returned early and left the page invisible to
+/// `list_blocks(blockType='page', spaceId=Personal)`.
+#[tokio::test]
+async fn bootstrap_re_runs_pages_without_space_after_marker_set() {
+    let (pool, _dir) = test_pool().await;
+
+    // Boot 1 — seeds Personal + Work, leaves the marker state set.
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    // Simulate a page that arrives between boot 1 and boot 2 WITHOUT
+    // a `space` property — exactly the bypass-path scenario BUG-1
+    // captures: `JournalPage`'s old `createBlock({ blockType: 'page' })`
+    // call, a peer-synced page from a device on stale code, etc.
+    insert_page(&pool, "01JABCD0000000000000000001", "Leaked page").await;
+
+    // Pre-fix: the fast-path skip would short-circuit here and the page
+    // would stay unscoped forever. Post-fix: the backfill runs and
+    // assigns it to Personal.
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    assert_eq!(
+        space_property(&pool, "01JABCD0000000000000000001")
+            .await
+            .as_deref(),
+        Some(SPACE_PERSONAL_ULID),
+        "a page without `space` arriving after first boot must be migrated on the next boot"
+    );
+
+    // Boot 3 — idempotent. The page is now scoped, so no further
+    // SetProperty(space=…) op is appended for it.
+    let space_ops_before_third = count_set_property_ops_for_key(&pool, "space").await;
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+    let space_ops_after_third = count_set_property_ops_for_key(&pool, "space").await;
+    assert_eq!(
+        space_ops_after_third, space_ops_before_third,
+        "second backfill run must be a pure no-op (no candidate pages)"
+    );
+}
+
+/// BUG-1 / L-133 — the seeded-block fast path is intentionally
+/// preserved. `is_space = "true"` SetProperty ops must fire ONLY on
+/// the first boot (FEAT-3p10 invariant). This test pins the fact
+/// that loosening the fast-path was scoped to the
+/// `pages_without_space` step, NOT the seeded `is_space` /
+/// `accent_color` op emission.
+#[tokio::test]
+async fn bootstrap_does_not_re_emit_is_space_ops_on_second_boot() {
+    let (pool, _dir) = test_pool().await;
+
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    let personal_after_first = count_is_space_ops_for_block(&pool, SPACE_PERSONAL_ULID).await;
+    let work_after_first = count_is_space_ops_for_block(&pool, SPACE_WORK_ULID).await;
+    assert_eq!(
+        personal_after_first, 1,
+        "exactly one is_space op for Personal after first boot"
+    );
+    assert_eq!(
+        work_after_first, 1,
+        "exactly one is_space op for Work after first boot"
+    );
+
+    // Snapshot total op_log count before the second boot. With no new
+    // pages-without-space candidates, the second boot must add zero
+    // ops at all.
+    let total_ops_before = count_rows(&pool, "op_log").await;
+
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    let personal_after_second = count_is_space_ops_for_block(&pool, SPACE_PERSONAL_ULID).await;
+    let work_after_second = count_is_space_ops_for_block(&pool, SPACE_WORK_ULID).await;
+    assert_eq!(
+        personal_after_second, 1,
+        "is_space op count for Personal must NOT increase on second boot"
+    );
+    assert_eq!(
+        work_after_second, 1,
+        "is_space op count for Work must NOT increase on second boot"
+    );
+
+    let total_ops_after = count_rows(&pool, "op_log").await;
+    assert_eq!(
+        total_ops_after, total_ops_before,
+        "second boot with no candidate pages must append zero ops to op_log"
+    );
+}
+
+// ---------------------------------------------------------------------
+// BUG-1 / H-3c — Property-test-style invariant: every page block has a
+// `space` property.
+// ---------------------------------------------------------------------
+//
+// Rust uses neither `proptest` nor `quickcheck` in this repo, so we
+// ship a deterministic regression-style scenario test instead. The
+// scenarios cover the three documented bypass paths:
+//
+//   1. Legacy `create_block(page)` direct IPC call — refused at the
+//      IPC boundary by the H-3a tightening (see `block_cmd_tests.rs`).
+//   2. `create_page_in_space` — emits the page WITH its `space`
+//      property atomically.
+//   3. Sync replay of legacy ops (or any path that lands a page row
+//      without `space` post-bootstrap) — caught by the L-133
+//      every-boot backfill.
+//
+// The invariant: AFTER `bootstrap_spaces` has run, EVERY live,
+// non-conflict page block in the materialized state has either a
+// `space` property pointing at a valid space block, OR carries
+// `is_space = "true"` (i.e. is itself a space block).
+
+/// Helper: assert the BUG-1 invariant holds for the entire pool.
+async fn assert_every_page_has_space_or_is_space(pool: &SqlitePool) {
+    let leaks: Vec<String> = sqlx::query_scalar!(
+        r#"SELECT id as "id!: String" FROM blocks b
+           WHERE b.block_type = 'page'
+             AND b.deleted_at IS NULL
+             AND b.is_conflict = 0
+             AND NOT EXISTS (
+                 SELECT 1 FROM block_properties p
+                 WHERE p.block_id = b.id AND p.key = 'space'
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM block_properties p
+                 WHERE p.block_id = b.id
+                   AND p.key = 'is_space'
+                   AND p.value_text = 'true'
+             )"#,
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+
+    assert!(
+        leaks.is_empty(),
+        "BUG-1 invariant violated: pages missing `space` AND `is_space`: {leaks:?}"
+    );
+}
+
+/// Property-style regression: scenario sequence covering every BUG-1
+/// bypass path. Models the user's daily workflow under the fix:
+///
+/// 1. Bootstrap fresh DB → Personal + Work seeded.
+/// 2. `create_page_in_space_inner` → page lands with `space = Personal`.
+///    (Simulates the post-fix `JournalPage` / `TemplatesView` /
+///    `WelcomeModal` callsites.)
+/// 3. Legacy bypass: a peer device synced an old `CreateBlock` op
+///    that materialized a page WITHOUT a `space` property (modelled
+///    via direct INSERT into `blocks`, mirroring the apply-op path).
+/// 4. Reboot → bootstrap re-run sweeps the leak into Personal.
+/// 5. Final invariant check: every page is scoped.
+#[tokio::test]
+async fn property_every_page_has_space_after_bootstrap_under_mixed_create_paths() {
+    use crate::commands::create_page_in_space_inner;
+
+    let (pool, _dir) = test_pool().await;
+
+    // 1. Bootstrap.
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+    assert_every_page_has_space_or_is_space(&pool).await;
+
+    // 2. Production callsite — atomic page-create with space.
+    let p1 = create_page_in_space_inner(
+        &pool,
+        DEV,
+        None,
+        "Notes from JournalPage".into(),
+        SPACE_PERSONAL_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+    assert_every_page_has_space_or_is_space(&pool).await;
+
+    // 3. Multiple pages across both spaces.
+    let p2 = create_page_in_space_inner(
+        &pool,
+        DEV,
+        None,
+        "Work brief".into(),
+        SPACE_WORK_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+    let _p3 = create_page_in_space_inner(
+        &pool,
+        DEV,
+        Some(p1.as_str().to_owned()),
+        "Sub-page".into(),
+        SPACE_PERSONAL_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+    assert_every_page_has_space_or_is_space(&pool).await;
+
+    // 4. Sync replay bypass: insert a page row WITHOUT a `space`
+    //    property — simulates what would happen if a peer device on
+    //    stale code synced over a `CreateBlock` op for a page block
+    //    where the materialized row exists but the property never
+    //    arrived. The materializer would have inserted the row from
+    //    the op; the test inserts directly to keep the fixture
+    //    minimal. Same outcome.
+    insert_page(&pool, "01JABCD0000000000000000001", "Leaked from peer").await;
+
+    // 5. Reboot — bootstrap's every-boot backfill captures the leak.
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+    assert_every_page_has_space_or_is_space(&pool).await;
+
+    // Final spot-check: every materialized page can be enumerated by
+    // `list_blocks(blockType='page', spaceId=…)` for one of the two
+    // seeded spaces.
+    let personal_pages: Vec<String> = sqlx::query_scalar!(
+        r#"SELECT block_id as "id!: String" FROM block_properties
+           WHERE key = 'space' AND value_ref = ?"#,
+        SPACE_PERSONAL_ULID,
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let work_pages: Vec<String> = sqlx::query_scalar!(
+        r#"SELECT block_id as "id!: String" FROM block_properties
+           WHERE key = 'space' AND value_ref = ?"#,
+        SPACE_WORK_ULID,
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(
+        personal_pages.contains(&p1.as_str().to_owned()),
+        "Personal-created page must surface under Personal in `space` props"
+    );
+    assert!(
+        work_pages.contains(&p2.as_str().to_owned()),
+        "Work-created page must surface under Work in `space` props"
+    );
+    assert!(
+        personal_pages.contains(&"01JABCD0000000000000000001".to_owned()),
+        "the leaked-from-peer page must end up scoped to Personal via the backfill"
     );
 }
 

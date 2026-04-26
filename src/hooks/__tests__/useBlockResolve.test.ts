@@ -56,7 +56,7 @@ beforeEach(() => {
   // exercise the real code instead of the defensive `!isReady` guard.
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_TEST',
-    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test' }],
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
     isReady: true,
   })
 })

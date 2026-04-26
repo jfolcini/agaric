@@ -5,8 +5,14 @@ import { invoke as __TAURI_INVOKE } from "@tauri-apps/api/core";
 
 /** Commands */
 export const commands = {
-	// Tauri command: create a new block. Delegates to [`create_block_inner`].
-	createBlock: (blockType: string, content: string, parentId: string | null, position: number | null) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("create_block", { blockType, content, parentId, position })),
+	/**
+	 *  Tauri command: create a new block. Delegates to
+	 *  [`create_block_inner_with_space`] which enforces the FEAT-3
+	 *  "every page has a space" invariant at the IPC boundary
+	 *  (BUG-1 / H-3a). The optional `space_id` is required when
+	 *  `block_type == "page"` and ignored otherwise.
+	 */
+	createBlock: (blockType: string, content: string, parentId: string | null, position: number | null, spaceId: string | null) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("create_block", { blockType, content, parentId, position, spaceId })),
 	// Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
 	editBlock: (blockId: string, toText: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("edit_block", { blockId, toText })),
 	// Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
@@ -716,12 +722,22 @@ export type RestoreToOpResult = {
 export type SortDir = "Asc" | "Desc";
 
 /**
- *  A space row returned by [`list_spaces_inner`] — just the pieces the
- *  frontend needs to render the switcher (ULID + display name).
+ *  A space row returned by [`list_spaces_inner`] — the pieces the
+ *  frontend needs to render the switcher (ULID + display name) plus
+ *  the FEAT-3p10 visual-identity surface (`accent_color`).
+ *
+ *  `accent_color` carries the free-form palette token (e.g.
+ *  `accent-emerald`, `accent-blue`) stored under
+ *  `block_properties(key='accent_color', value_text=…)`. `None` means
+ *  the space has no explicit accent — the frontend falls back to the
+ *  brand default. Joined via LEFT JOIN so an unset accent never hides
+ *  the row.
  */
 export type SpaceRow = {
 	id: string,
 	name: string,
+	// FEAT-3p10 — accent palette token, or `None` if unset.
+	accent_color: string | null,
 };
 
 /**

@@ -132,6 +132,7 @@ vi.mock('../journal/MonthlyDayCell', () => ({
 import { useBlockStore } from '../../stores/blocks'
 import { useJournalStore } from '../../stores/journal'
 import { useNavigationStore } from '../../stores/navigation'
+import { useSpaceStore } from '../../stores/space'
 import {
   GlobalDateControls,
   JournalControls,
@@ -173,6 +174,14 @@ beforeEach(() => {
   useJournalStore.setState({
     mode: 'daily',
     currentDate: new Date(),
+  })
+  // BUG-1 / H-3b — JournalPage now routes page creation through
+  // `createPageInSpace`, which reads `useSpaceStore.getState().currentSpaceId`.
+  // Seed the store so the addBlock path doesn't bail with "No active space".
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
   })
 })
 
@@ -237,10 +246,13 @@ function templateQueryByPropertyResponse(args: unknown): unknown {
   return emptyPage
 }
 
-/** `create_block` response — daily page or a content block derived from it. */
+/** `create_block` response for non-page blocks created under the daily page. */
 function templateCreateBlockResponse(args: unknown, todayStr: string): unknown {
   const params = args as { blockType: string; content?: string; parentId?: string }
   if (params.blockType === 'page') {
+    // Legacy path retained for the helper unit tests below; the
+    // production callsite now routes pages through
+    // `create_page_in_space`.
     return {
       id: 'DP-TMPL',
       block_type: 'page',
@@ -266,6 +278,10 @@ function makeJournalTemplateMockImpl(todayStr: string) {
   return async (cmd: string, args?: unknown): Promise<unknown> => {
     if (cmd === 'list_blocks') return templateListBlocksResponse(args)
     if (cmd === 'query_by_property') return templateQueryByPropertyResponse(args)
+    // BUG-1 / H-3b — JournalPage now routes page creation through
+    // `create_page_in_space`. The IPC returns the new page ULID as a
+    // plain string (see backend `create_page_in_space` Tauri command).
+    if (cmd === 'create_page_in_space') return 'DP-TMPL'
     if (cmd === 'create_block') return templateCreateBlockResponse(args, todayStr)
     return emptyPage
   }
@@ -660,38 +676,42 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      // Set up mocks: create daily page + journal-template query + create child block + load(pageId)
-      mockedInvoke
-        .mockResolvedValueOnce({
-          id: 'DP1',
-          block_type: 'page',
-          content: todayStr,
-          parent_id: null,
-          position: null,
-        })
-        .mockResolvedValueOnce(emptyPage) // query_by_property for journal-template → none
-        .mockResolvedValueOnce({
-          id: 'B1',
-          block_type: 'text',
-          content: '',
-          parent_id: 'DP1',
-          position: 0,
-        })
-        .mockResolvedValueOnce({
-          items: [
-            {
-              id: 'B1',
-              block_type: 'text',
-              content: '',
-              parent_id: 'DP1',
-              position: 0,
-              deleted_at: null,
-              is_conflict: false,
-            },
-          ],
-          next_cursor: null,
-          has_more: false,
-        })
+      // BUG-1 / H-3b — page creation routes through `create_page_in_space`
+      // (returns the new page ULID as a plain string), not `create_block`.
+      // Use a command-dispatched implementation so the responses are
+      // deterministic regardless of call order.
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'create_page_in_space') return 'DP1'
+        if (cmd === 'query_by_property') return emptyPage
+        if (cmd === 'create_block') {
+          const params = args as { blockType: string; content?: string; parentId?: string }
+          return {
+            id: 'B1',
+            block_type: params.blockType,
+            content: params.content ?? '',
+            parent_id: params.parentId ?? null,
+            position: 0,
+          }
+        }
+        if (cmd === 'list_blocks') {
+          return {
+            items: [
+              {
+                id: 'B1',
+                block_type: 'text',
+                content: '',
+                parent_id: 'DP1',
+                position: 0,
+                deleted_at: null,
+                is_conflict: false,
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        return emptyPage
+      })
 
       // Click the "Add block" button in today's section
       const sections = screen.getAllByRole('region')
@@ -700,11 +720,10 @@ describe('JournalPage', () => {
       await user.click(addBtn)
 
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'page',
-          content: todayStr,
+        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
           parentId: null,
-          position: null,
+          content: todayStr,
+          spaceId: 'SPACE_TEST',
         })
       })
       expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
@@ -712,6 +731,7 @@ describe('JournalPage', () => {
         content: '',
         parentId: 'DP1',
         position: null,
+        spaceId: null,
       })
     })
 
@@ -757,12 +777,16 @@ describe('JournalPage', () => {
           content: '',
           parentId: 'DP1',
           position: null,
+          spaceId: null,
         })
       })
 
+      // BUG-1 / H-3b — page creation now routes through `create_page_in_space`,
+      // so a `create_block({blockType:'page'})` call is impossible
+      // by construction. Verify no `create_page_in_space` call fired
+      // (the page already existed).
       const createPageCalls = mockedInvoke.mock.calls.filter(
-        ([cmd, args]) =>
-          cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
+        ([cmd]) => cmd === 'create_page_in_space',
       )
       expect(createPageCalls).toHaveLength(0)
     })
@@ -2271,17 +2295,11 @@ describe('JournalPage', () => {
         if (cmd === 'list_blocks') {
           return emptyPage
         }
+        // BUG-1 / H-3b — page creation goes through `create_page_in_space`,
+        // returning the new ULID as a string.
+        if (cmd === 'create_page_in_space') return 'DP-AUTO'
         if (cmd === 'create_block') {
           const params = args as { blockType: string }
-          if (params.blockType === 'page') {
-            return {
-              id: 'DP-AUTO',
-              block_type: 'page',
-              content: todayStr,
-              parent_id: null,
-              position: null,
-            }
-          }
           if (params.blockType === 'content') {
             return {
               id: 'B-AUTO',
@@ -2298,11 +2316,10 @@ describe('JournalPage', () => {
       renderJournal()
 
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'page',
-          content: todayStr,
+        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
           parentId: null,
-          position: null,
+          content: todayStr,
+          spaceId: 'SPACE_TEST',
         })
       })
 
@@ -2312,6 +2329,7 @@ describe('JournalPage', () => {
           content: '',
           parentId: 'DP-AUTO',
           position: null,
+          spaceId: null,
         })
       })
     })
@@ -2332,8 +2350,7 @@ describe('JournalPage', () => {
       })
 
       const createPageCalls = mockedInvoke.mock.calls.filter(
-        ([cmd, args]) =>
-          cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
+        ([cmd]) => cmd === 'create_page_in_space',
       )
       expect(createPageCalls).toHaveLength(0)
     })
@@ -2346,11 +2363,10 @@ describe('JournalPage', () => {
       renderJournal()
 
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'page',
-          content: todayStr,
+        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
           parentId: null,
-          position: null,
+          content: todayStr,
+          spaceId: 'SPACE_TEST',
         })
       })
 
@@ -2422,46 +2438,30 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      mockedInvoke
-        .mockResolvedValueOnce({
-          id: 'DP-KEY',
-          block_type: 'page',
-          content: yesterdayStr,
-          parent_id: null,
-          position: null,
-        })
-        .mockResolvedValueOnce(emptyPage) // query_by_property for journal-template → none
-        .mockResolvedValueOnce({
-          id: 'B-KEY',
-          block_type: 'content',
-          content: '',
-          parent_id: 'DP-KEY',
-          position: 0,
-        })
-        .mockResolvedValueOnce({
-          items: [
-            {
-              id: 'B-KEY',
-              block_type: 'content',
-              content: '',
-              parent_id: 'DP-KEY',
-              position: 0,
-              deleted_at: null,
-              is_conflict: false,
-            },
-          ],
-          next_cursor: null,
-          has_more: false,
-        })
+      // BUG-1 / H-3b — page creation routes through `create_page_in_space`.
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'create_page_in_space') return 'DP-KEY'
+        if (cmd === 'query_by_property') return emptyPage
+        if (cmd === 'create_block') {
+          return {
+            id: 'B-KEY',
+            block_type: 'content',
+            content: '',
+            parent_id: 'DP-KEY',
+            position: 0,
+          }
+        }
+        if (cmd === 'list_blocks') return emptyPage
+        return emptyPage
+      })
 
       fireEvent.keyDown(document, { key: 'Enter' })
 
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'page',
-          content: yesterdayStr,
+        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
           parentId: null,
-          position: null,
+          content: yesterdayStr,
+          spaceId: 'SPACE_TEST',
         })
       })
     })
@@ -2482,18 +2482,16 @@ describe('JournalPage', () => {
 
       // Auto-creation now fires for any date in daily mode, wait for it
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'page',
-          content: yesterdayStr,
+        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
           parentId: null,
-          position: null,
+          content: yesterdayStr,
+          spaceId: 'SPACE_TEST',
         })
       })
 
       // Clear mocks to track only keyboard-triggered calls
       const callsBefore = mockedInvoke.mock.calls.filter(
-        ([cmd, args]) =>
-          cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
+        ([cmd]) => cmd === 'create_page_in_space',
       ).length
 
       const input = document.createElement('input')
@@ -2503,8 +2501,7 @@ describe('JournalPage', () => {
       fireEvent.keyDown(input, { key: 'Enter' })
 
       const createPageCallsAfter = mockedInvoke.mock.calls.filter(
-        ([cmd, args]) =>
-          cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
+        ([cmd]) => cmd === 'create_page_in_space',
       ).length
       // No additional page creation from keyboard shortcut
       expect(createPageCallsAfter).toBe(callsBefore)
@@ -2548,6 +2545,8 @@ describe('JournalPage', () => {
   // ── H-1: Auto-creation for any date in daily mode ───────────────────
 
   describe('auto-creation of first block', () => {
+    // BUG-1 / H-3b — page creation routes through `create_page_in_space`.
+    // All tests in this group assert the new IPC name + payload shape.
     it('auto-creates page+block for today in daily mode', async () => {
       const todayStr = formatDate(new Date())
 
@@ -2560,11 +2559,10 @@ describe('JournalPage', () => {
       })
 
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'page',
-          content: todayStr,
+        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
           parentId: null,
-          position: null,
+          content: todayStr,
+          spaceId: 'SPACE_TEST',
         })
       })
     })
@@ -2584,11 +2582,10 @@ describe('JournalPage', () => {
       })
 
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'page',
-          content: pastStr,
+        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
           parentId: null,
-          position: null,
+          content: pastStr,
+          spaceId: 'SPACE_TEST',
         })
       })
     })
@@ -2607,11 +2604,10 @@ describe('JournalPage', () => {
       })
 
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'page',
-          content: futureStr,
+        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
           parentId: null,
-          position: null,
+          content: futureStr,
+          spaceId: 'SPACE_TEST',
         })
       })
     })
@@ -2633,8 +2629,7 @@ describe('JournalPage', () => {
 
       // No page creation should have occurred from auto-create
       const createPageCalls = mockedInvoke.mock.calls.filter(
-        ([cmd, args]) =>
-          cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
+        ([cmd]) => cmd === 'create_page_in_space',
       )
       expect(createPageCalls).toHaveLength(0)
     })
@@ -2656,8 +2651,7 @@ describe('JournalPage', () => {
 
       // No page creation should have occurred from auto-create
       const createPageCalls = mockedInvoke.mock.calls.filter(
-        ([cmd, args]) =>
-          cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
+        ([cmd]) => cmd === 'create_page_in_space',
       )
       expect(createPageCalls).toHaveLength(0)
     })
@@ -2684,8 +2678,7 @@ describe('JournalPage', () => {
 
       // Should not create a page since one already exists
       const createPageCalls = mockedInvoke.mock.calls.filter(
-        ([cmd, args]) =>
-          cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
+        ([cmd]) => cmd === 'create_page_in_space',
       )
       expect(createPageCalls).toHaveLength(0)
     })
@@ -2697,15 +2690,7 @@ describe('JournalPage', () => {
 
       // Start with empty pages — today will be auto-created
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'create_block') {
-          return {
-            id: 'DP_AUTO',
-            block_type: 'page',
-            content: todayStr,
-            parent_id: null,
-            position: null,
-          }
-        }
+        if (cmd === 'create_page_in_space') return 'DP_AUTO'
         return emptyPage
       })
 
@@ -2717,26 +2702,17 @@ describe('JournalPage', () => {
 
       // Wait for today's auto-creation
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'page',
-          content: todayStr,
+        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
           parentId: null,
-          position: null,
+          content: todayStr,
+          spaceId: 'SPACE_TEST',
         })
       })
 
       // Clear mocks to track new calls
       mockedInvoke.mockClear()
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'create_block') {
-          return {
-            id: 'DP_YESTERDAY',
-            block_type: 'page',
-            content: yesterdayStr,
-            parent_id: null,
-            position: null,
-          }
-        }
+        if (cmd === 'create_page_in_space') return 'DP_YESTERDAY'
         return emptyPage
       })
 
@@ -2746,11 +2722,10 @@ describe('JournalPage', () => {
 
       // Should auto-create for yesterday too
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'page',
-          content: yesterdayStr,
+        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
           parentId: null,
-          position: null,
+          content: yesterdayStr,
+          spaceId: 'SPACE_TEST',
         })
       })
     })

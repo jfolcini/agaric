@@ -454,6 +454,7 @@ describe('useBlockTags handleCreateTag', () => {
       content: 'NewTag',
       parentId: null,
       position: null,
+      spaceId: null,
     })
 
     expect(mockedInvoke).toHaveBeenCalledWith('add_tag', {
@@ -493,6 +494,7 @@ describe('useBlockTags handleCreateTag', () => {
       content: 'Trimmed',
       parentId: null,
       position: null,
+      spaceId: null,
     })
   })
 
@@ -541,6 +543,7 @@ describe('useBlockTags handleCreateTag', () => {
       content: 'Solo',
       parentId: null,
       position: null,
+      spaceId: null,
     })
 
     // addTag should NOT be called

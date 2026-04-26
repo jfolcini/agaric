@@ -30,6 +30,8 @@ import { LoadingSkeleton } from './components/LoadingSkeleton'
 import { NoPeersDialog } from './components/NoPeersDialog'
 import { QuickCaptureDialog } from './components/QuickCaptureDialog'
 import { RecentPagesStrip } from './components/RecentPagesStrip'
+import { SpaceAccentBadge } from './components/SpaceAccentBadge'
+import { SpaceStatusChip } from './components/SpaceStatusChip'
 import { SpaceSwitcher } from './components/SpaceSwitcher'
 import { TabBar } from './components/TabBar'
 import { ScrollArea } from './components/ui/scroll-area'
@@ -82,6 +84,7 @@ import {
   listPeerRefs,
   listPropertyDefs,
   registerGlobalShortcut,
+  setWindowTitle,
   unregisterGlobalShortcut,
 } from './lib/tauri'
 import { setSettingsTabInUrl } from './lib/url-state'
@@ -538,6 +541,12 @@ function App() {
   // `clearPagesList` effect below re-runs whenever the active space
   // changes (e.g. the user picks a different space in `SpaceSwitcher`).
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  // FEAT-3p10 — subscribe to `availableSpaces` so the visual-identity
+  // effect re-runs after `refreshAvailableSpaces()` finishes (boot
+  // path: the persisted `currentSpaceId` is set BEFORE the IPC
+  // resolves, so without this dep the title / accent stay stale until
+  // the next user-driven space switch).
+  const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const { syncing, syncAll } = useSyncTrigger()
   const isOnline = useOnlineStatus()
   const isMobile = useIsMobile()
@@ -601,6 +610,34 @@ function App() {
     void currentSpaceId
     useResolveStore.getState().clearPagesList()
   }, [currentSpaceId])
+
+  // FEAT-3p10 — visual identity. On every space change:
+  //   1. Update the `--accent-current` CSS variable on
+  //      `document.documentElement` so the SpaceSwitcher trigger,
+  //      SpaceStatusChip, and SpaceAccentBadge re-tint to the active
+  //      space's accent color.
+  //   2. Re-stamp the OS window title as `"<SpaceName> · Agaric"` so
+  //      the user gets a glance-able cue from the taskbar / window
+  //      menu / notification centre.
+  //
+  // Kept in its own effect (not folded into the `clearPagesList`
+  // effect above) so the two concerns stay decoupled — FEAT-3p7 is
+  // separately extending the resolve cache effect, and merging the
+  // two would couple their lifecycles.
+  //
+  // `setWindowTitle` is a no-op in non-Tauri runtimes (vitest jsdom,
+  // storybook); the dynamic-import / try-catch lives in the wrapper.
+  useEffect(() => {
+    const accentToken = useSpaceStore.getState().getCurrentAccent()
+    document.documentElement.style.setProperty('--accent-current', `var(--${accentToken})`)
+
+    const activeSpace = availableSpaces.find((s) => s.id === currentSpaceId) ?? null
+    const titleText =
+      activeSpace != null && activeSpace.name !== ''
+        ? `${activeSpace.name} \u00b7 Agaric`
+        : 'Agaric'
+    void setWindowTitle(titleText)
+  }, [currentSpaceId, availableSpaces])
 
   // ── Boot recovery: flush orphaned drafts from previous crash ──────
   useEffect(() => {
@@ -1121,7 +1158,20 @@ function App() {
              * It is hidden when the sidebar collapses to icon mode to
              * preserve the compact rail layout (the switcher
              * re-appears on expand).
+             *
+             * FEAT-3p10: when the sidebar collapses, the SpaceSwitcher
+             * dropdown disappears and the user loses the only visual
+             * cue of which space is active. The SpaceAccentBadge takes
+             * its place in the icon rail — a 32px circle with the
+             * first letter of the space name on top of the accent
+             * color. Click cycles to the next space.
              */}
+            <div className="hidden justify-center group-data-[collapsible=icon]:flex">
+              {(() => {
+                const active = availableSpaces.find((s) => s.id === currentSpaceId) ?? null
+                return active != null ? <SpaceAccentBadge space={active} /> : null
+              })()}
+            </div>
             <div className="group-data-[collapsible=icon]:hidden">
               <SpaceSwitcher />
             </div>
@@ -1219,6 +1269,18 @@ function App() {
                     ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t) })
                     : t('sidebar.lastSyncedNever')}
                 </span>
+                {/*
+                 * FEAT-3p10 — visual identity status chip. Sits next to
+                 * the sync chip so the sidebar footer carries one
+                 * cohesive "what is active" surface. Click forwards
+                 * focus to the SpaceSwitcher trigger so the user can
+                 * pick a different space without hunting for the
+                 * dropdown. Auto-hides when no space is active (boot
+                 * pre-bootstrap edge case).
+                 */}
+                <div className="px-2 pt-1 group-data-[collapsible=icon]:hidden">
+                  <SpaceStatusChip />
+                </div>
               </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton

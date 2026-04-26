@@ -19,9 +19,10 @@ import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
-import { createBlock, deleteProperty, queryByProperty, setProperty } from '../lib/tauri'
+import { createPageInSpace, deleteProperty, queryByProperty, setProperty } from '../lib/tauri'
 import { loadTemplatePagesWithPreview } from '../lib/template-utils'
 import { useNavigationStore } from '../stores/navigation'
+import { useSpaceStore } from '../stores/space'
 import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
 
@@ -74,10 +75,22 @@ export function TemplatesView(): React.ReactElement {
     if (!name) return
     setIsCreating(true)
     try {
-      const page = await createBlock({ blockType: 'page', content: name })
-      await setProperty({ blockId: page.id, key: 'template', valueText: 'true' })
+      // BUG-1 / H-3b — route page creation through `createPageInSpace`
+      // so templates land with their `space` ref property set
+      // atomically. The legacy `createBlock({ blockType: 'page' })`
+      // call leaked unscoped templates that disappeared from the
+      // PageBrowser list (and the Templates list once filtered by
+      // space).
+      const currentSpaceId = useSpaceStore.getState().currentSpaceId
+      if (currentSpaceId == null) {
+        toast.error(t('templates.createFailed'))
+        setIsCreating(false)
+        return
+      }
+      const newId = await createPageInSpace({ content: name, spaceId: currentSpaceId })
+      await setProperty({ blockId: newId, key: 'template', valueText: 'true' })
       setTemplates((prev) => [
-        { id: page.id, content: name, preview: null, isJournalTemplate: false },
+        { id: newId, content: name, preview: null, isJournalTemplate: false },
         ...prev,
       ])
       setNewTemplateName('')

@@ -22,6 +22,7 @@ import { t } from '../../lib/i18n'
 import { logger } from '../../lib/logger'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../../lib/overlay-events'
 import { __resetPriorityLevelsForTests, getPriorityLevels } from '../../lib/priority-levels'
+import { setWindowTitle } from '../../lib/tauri'
 import { useBootStore } from '../../stores/boot'
 import { useJournalStore } from '../../stores/journal'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
@@ -29,6 +30,18 @@ import { useRecentPagesStore } from '../../stores/recent-pages'
 import { useResolveStore } from '../../stores/resolve'
 import { useSpaceStore } from '../../stores/space'
 import { useSyncStore } from '../../stores/sync'
+
+// FEAT-3p10 — partial mock: replace `setWindowTitle` with a vitest spy
+// so we can assert the App-level effect calls it with
+// `"<SpaceName> · Agaric"`. Every other lib/tauri export passes
+// through unchanged via `importActual`.
+vi.mock('../../lib/tauri', async (importActual) => {
+  const actual = await importActual<typeof import('../../lib/tauri')>()
+  return {
+    ...actual,
+    setWindowTitle: vi.fn().mockResolvedValue(undefined),
+  }
+})
 
 // FEAT-9: controllable mobile mock so we can flip the breakpoint per-test
 // without fiddling with window.innerWidth + matchMedia polyfills.
@@ -116,7 +129,7 @@ beforeEach(() => {
   // locally in their own `beforeEach`.
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_PERSONAL',
-    availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal' }],
+    availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }],
     isReady: true,
   })
 
@@ -155,7 +168,8 @@ beforeEach(() => {
   // boot-time `refreshAvailableSpaces()` call reconciles against a
   // non-empty list and leaves `currentSpaceId` intact.
   mockedInvoke.mockImplementation(async (cmd: string) => {
-    if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+    if (cmd === 'list_spaces')
+      return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }]
     return emptyPage
   })
 })
@@ -437,7 +451,8 @@ describe('App', () => {
   it('Ctrl+N creates a new page and navigates to it', async () => {
     // Mock create_page_in_space to return the new page's ULID (FEAT-3 Phase 2).
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+      if (cmd === 'list_spaces')
+        return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
       if (cmd === 'create_page_in_space') {
         return 'NEW_PAGE_ID_00000000000000'
       }
@@ -553,7 +568,8 @@ describe('App', () => {
 
   it('Ctrl+N announces "New page created"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+      if (cmd === 'list_spaces')
+        return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
       if (cmd === 'create_page_in_space') {
         return 'NEW_PAGE_ID_00000000000000'
       }
@@ -810,7 +826,8 @@ describe('App', () => {
       // now used instead of create_block for top-level pages. The IPC
       // returns the new page's ULID (a string), not a BlockRow.
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+        if (cmd === 'list_spaces')
+          return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
         if (cmd === 'create_page_in_space') {
           return 'NEW_PAGE_1'
         }
@@ -1164,7 +1181,8 @@ describe('App', () => {
       it('opens NoPeersDialog when sidebar Sync is clicked with zero peers', async () => {
         const user = userEvent.setup()
         mockedInvoke.mockImplementation(async (cmd: string) => {
-          if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+          if (cmd === 'list_spaces')
+            return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
           if (cmd === 'list_peer_refs') return []
           return emptyPage
         })
@@ -1195,7 +1213,8 @@ describe('App', () => {
       it('does NOT open NoPeersDialog when at least one peer is paired', async () => {
         const user = userEvent.setup()
         mockedInvoke.mockImplementation(async (cmd: string) => {
-          if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+          if (cmd === 'list_spaces')
+            return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
           if (cmd === 'list_peer_refs') {
             return [
               {
@@ -1244,7 +1263,8 @@ describe('App', () => {
       it('falls through to syncAll() when listPeerRefs() rejects', async () => {
         const user = userEvent.setup()
         mockedInvoke.mockImplementation(async (cmd: string) => {
-          if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+          if (cmd === 'list_spaces')
+            return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
           if (cmd === 'list_peer_refs') throw new Error('IPC unavailable')
           return emptyPage
         })
@@ -1274,7 +1294,8 @@ describe('App', () => {
       it('navigates to Settings with the Sync tab pre-selected when CTA is clicked', async () => {
         const user = userEvent.setup()
         mockedInvoke.mockImplementation(async (cmd: string) => {
-          if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+          if (cmd === 'list_spaces')
+            return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
           if (cmd === 'list_peer_refs') return []
           return emptyPage
         })
@@ -1303,7 +1324,8 @@ describe('App', () => {
       it('closes the dialog and stays on the current view when Cancel is clicked', async () => {
         const user = userEvent.setup()
         mockedInvoke.mockImplementation(async (cmd: string) => {
-          if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+          if (cmd === 'list_spaces')
+            return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
           if (cmd === 'list_peer_refs') return []
           return emptyPage
         })
@@ -1623,7 +1645,8 @@ describe('App', () => {
 
     it('Ctrl+N shows error toast when page creation fails', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+        if (cmd === 'list_spaces')
+          return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
         if (cmd === 'create_page_in_space') {
           throw new Error('Disk full')
         }
@@ -1650,7 +1673,8 @@ describe('App', () => {
     it('New Page sidebar button shows error toast when creation fails', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+        if (cmd === 'list_spaces')
+          return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
         if (cmd === 'create_page_in_space') {
           throw new Error('Disk full')
         }
@@ -2156,8 +2180,8 @@ describe('App', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_spaces') {
           return [
-            { id: 'SPACE_A', name: 'A' },
-            { id: 'SPACE_B', name: 'B' },
+            { id: 'SPACE_A', name: 'A', accent_color: null },
+            { id: 'SPACE_B', name: 'B', accent_color: null },
           ]
         }
         if (cmd === 'list_blocks') {
@@ -2173,8 +2197,8 @@ describe('App', () => {
       useSpaceStore.setState({
         currentSpaceId: 'SPACE_A',
         availableSpaces: [
-          { id: 'SPACE_A', name: 'A' },
-          { id: 'SPACE_B', name: 'B' },
+          { id: 'SPACE_A', name: 'A', accent_color: null },
+          { id: 'SPACE_B', name: 'B', accent_color: null },
         ],
         isReady: true,
       })
@@ -2224,7 +2248,8 @@ describe('App', () => {
       // a warning and keeps the form blank, which obscures the prefill
       // assertion below). Everything else keeps the empty-page default.
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+        if (cmd === 'list_spaces')
+          return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
         if (cmd === 'collect_bug_report_metadata') return sampleMetadata
         if (cmd === 'read_logs_for_report') return []
         return emptyPage
@@ -2301,8 +2326,8 @@ describe('App', () => {
   // no-ops, and the handler is suppressed while the user is typing in an
   // input/textarea/contenteditable so it never steals keystrokes.
   describe('FEAT-3p11 — space digit hotkeys', () => {
-    const PERSONAL = { id: 'SPACE_PERSONAL', name: 'Personal' }
-    const WORK = { id: 'SPACE_WORK', name: 'Work' }
+    const PERSONAL = { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }
+    const WORK = { id: 'SPACE_WORK', name: 'Work', accent_color: null }
 
     beforeEach(() => {
       // Two seeded spaces in alphabetical order matches the v1 onboarding
@@ -2342,6 +2367,16 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
+      // Clear any toast.error / logger.error calls fired during the
+      // App's mount-time effects (e.g. JournalPage auto-create using
+      // a default-mocked `create_page_in_space` result) so the
+      // assertions below scope cleanly to the Ctrl+5 keydown alone.
+      // FEAT-3p11's intent is "Ctrl+5 is a silent no-op" — not "the
+      // App shell never fires any toast at any point during its
+      // boot-time auto-create wiring".
+      mockedToastError.mockClear()
+      vi.mocked(logger.error).mockClear()
+
       // Capture the active id so we can assert it never moved.
       const before = useSpaceStore.getState().currentSpaceId
 
@@ -2374,6 +2409,114 @@ describe('App', () => {
       } finally {
         document.body.removeChild(textarea)
       }
+    })
+  })
+
+  // FEAT-3p10 — visual identity. On every space change:
+  //   1. The `--accent-current` CSS variable on
+  //      `document.documentElement` is rebound to the active space's
+  //      accent token.
+  //   2. The OS window title is updated to `"<SpaceName> · Agaric"`
+  //      via the `setWindowTitle` wrapper (mocked at file scope).
+  //
+  // Falls back to plain `Agaric` when no space is active.
+  describe('FEAT-3p10 — visual identity (accent + window title)', () => {
+    const PERSONAL = { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }
+    const WORK = { id: 'SPACE_WORK', name: 'Work', accent_color: 'accent-blue' }
+
+    beforeEach(() => {
+      // Hand the store a deterministic starting set so the assertions
+      // don't race the boot-time `refreshAvailableSpaces()`.
+      useSpaceStore.setState({
+        currentSpaceId: PERSONAL.id,
+        availableSpaces: [PERSONAL, WORK],
+        isReady: true,
+      })
+      // Override the mocked `list_spaces` so the boot-time refresh
+      // returns BOTH spaces (the outer beforeEach only seeds Personal).
+      // Without this, switching to Work would leave `availableSpaces`
+      // missing the row and `find()` would return undefined.
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_spaces') return [PERSONAL, WORK]
+        return emptyPage
+      })
+      // Reset any stray inline style left over from prior tests so the
+      // assertion that runs immediately after mount is meaningful.
+      document.documentElement.style.removeProperty('--accent-current')
+      vi.mocked(setWindowTitle).mockClear()
+    })
+
+    it('sets --accent-current to the active space accent on initial mount', async () => {
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      // The effect runs synchronously on mount; the inline-style
+      // setter pushes `var(--<token>)` onto the documentElement.
+      expect(document.documentElement.style.getPropertyValue('--accent-current')).toBe(
+        'var(--accent-emerald)',
+      )
+    })
+
+    it('calls setWindowTitle("Personal · Agaric") on initial mount', async () => {
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      await waitFor(() => {
+        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Personal \u00b7 Agaric')
+      })
+    })
+
+    it('rebinds --accent-current and re-stamps the title when the active space changes', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      // Initial assert so we know the baseline call landed.
+      await waitFor(() => {
+        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Personal \u00b7 Agaric')
+      })
+      vi.mocked(setWindowTitle).mockClear()
+
+      // Switch to Work — the effect re-runs because currentSpaceId is
+      // a useSpaceStore subscription dep.
+      act(() => {
+        useSpaceStore.getState().setCurrentSpace(WORK.id)
+      })
+
+      await waitFor(() => {
+        expect(document.documentElement.style.getPropertyValue('--accent-current')).toBe(
+          'var(--accent-blue)',
+        )
+      })
+      await waitFor(() => {
+        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Work \u00b7 Agaric')
+      })
+    })
+
+    it('falls back to plain "Agaric" when no space is active', async () => {
+      // Override the boot mock so list_spaces returns an empty array;
+      // that pushes the store into the unhydrated state.
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_spaces') return []
+        return emptyPage
+      })
+      useSpaceStore.setState({
+        currentSpaceId: null,
+        availableSpaces: [],
+        isReady: true,
+      })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Agaric')
+      })
     })
   })
 })

@@ -19,7 +19,7 @@ pub mod bootstrap;
 
 pub use bootstrap::{
     bootstrap_spaces, migrate_personal_pages_to_work, MIGRATION_THRESHOLD_ULID,
-    SPACE_PERSONAL_ULID, SPACE_WORK_ULID,
+    SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID, SPACE_WORK_DEFAULT_ACCENT, SPACE_WORK_ULID,
 };
 
 #[cfg(test)]

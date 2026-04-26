@@ -275,7 +275,7 @@ beforeEach(() => {
   // guard can override this in their own `beforeEach`.
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_TEST',
-    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test' }],
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
     isReady: true,
   })
 })
@@ -3932,37 +3932,37 @@ describe('BlockTree handleDatePick date format', () => {
       has_more: false,
     })
 
-    // Mock createBlock response for the new date page
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'DATE_PAGE_1',
-      block_type: 'page',
-      content: '2025-03-15',
-      parent_id: null,
-      position: 0,
-    })
+    // Mock create_page_in_space response for the new date page
+    // (BUG-1 / H-3b: date pages route through `createPageInSpace` so
+    // they own a `space` property and surface in PageBrowser).
+    mockedInvoke.mockResolvedValueOnce('DATE_PAGE_1')
 
     // Simulate selecting March 15, 2025 from the calendar
     await act(async () => {
       mockCalendarOnSelect?.(new Date(2025, 2, 15)) // month is 0-indexed
     })
 
-    // Verify createBlock was called with YYYY-MM-DD format
+    // Verify the new IPC was called with YYYY-MM-DD format + the active space.
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-        blockType: 'page',
+      expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
         content: '2025-03-15',
         parentId: null,
-        position: null,
+        spaceId: 'SPACE_TEST',
       })
     })
 
-    // Ensure it was NOT called with the old DD/MM/YYYY format
-    expect(mockedInvoke).not.toHaveBeenCalledWith('create_block', {
-      blockType: 'page',
-      content: '15/03/2025',
-      parentId: null,
-      position: null,
-    })
+    // Ensure it was NOT called with the old DD/MM/YYYY format.
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'create_page_in_space',
+      expect.objectContaining({ content: '15/03/2025' }),
+    )
+    // And ensure the legacy bypass path is NOT taken.
+    const legacyCalls = mockedInvoke.mock.calls.filter(
+      ([cmd, args]) =>
+        cmd === 'create_block' &&
+        (args as { blockType?: string } | undefined)?.blockType === 'page',
+    )
+    expect(legacyCalls).toHaveLength(0)
   })
 
   it('finds existing date page by YYYY-MM-DD format', async () => {
@@ -4706,6 +4706,7 @@ describe('BlockTree Enter creates new sibling block', () => {
         content: '',
         parentId: null,
         position: 1,
+        spaceId: null,
       })
     })
 
@@ -5652,6 +5653,7 @@ describe('H-9: auto-create first block on empty page', () => {
         content: '',
         parentId: 'PAGE_1',
         position: null,
+        spaceId: null,
       })
     })
   })
@@ -5813,6 +5815,7 @@ describe('H-9: auto-create first block on empty page', () => {
         content: '',
         parentId: 'PAGE_1',
         position: null,
+        spaceId: null,
       })
     })
   })
@@ -5836,6 +5839,7 @@ describe('H-9: auto-create first block on empty page', () => {
         content: '',
         parentId: 'PAGE_1',
         position: null,
+        spaceId: null,
       })
     })
 

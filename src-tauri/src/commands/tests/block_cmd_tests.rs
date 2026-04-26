@@ -409,6 +409,203 @@ async fn create_block_position_negative_returns_validation_error() {
 }
 
 // ======================================================================
+// BUG-1 / H-3a — `create_block_inner_with_space` (IPC tightening)
+// ======================================================================
+//
+// The IPC `create_block` Tauri command delegates to
+// `create_block_inner_with_space`, which enforces the FEAT-3
+// "every page belongs to a space" invariant at the IPC boundary so a
+// misbehaving frontend (e.g. a stale `createBlock({ blockType: 'page' })`
+// callsite) cannot leak unscoped pages into the materialized state.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_rejects_page_without_space_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    crate::spaces::bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    let before_ops: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // `block_type = "page"` AND `space_id is None` → Validation error.
+    // The page must NEVER be created, never appended to op_log.
+    let result = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Untitled leak".into(),
+        None,
+        None,
+        None, // <-- no space_id
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(ref msg))
+            if msg.contains("page") && msg.contains("space")),
+        "page block without space_id must yield Validation, got {result:?}"
+    );
+
+    let after_ops: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        after_ops, before_ops,
+        "atomicity: validation failure must NOT append any ops to op_log"
+    );
+
+    // No `page` row must have been materialized either.
+    let leaked_pages: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = 'Untitled leak'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        leaked_pages, 0,
+        "no page row must be inserted when validation fails"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_with_page_and_space_id_emits_two_ops_atomically() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    crate::spaces::bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    let before_ops: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let block = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Hello space".into(),
+        None,
+        None,
+        Some(crate::spaces::bootstrap::SPACE_PERSONAL_ULID.to_owned()),
+    )
+    .await
+    .expect("create_block(page, spaceId=Personal) must succeed");
+
+    assert_eq!(block.block_type, "page");
+    assert_eq!(block.content.as_deref(), Some("Hello space"));
+    assert_eq!(
+        block.page_id.as_deref(),
+        Some(block.id.as_str()),
+        "page block must materialize page_id = self"
+    );
+
+    let after_ops: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        after_ops - before_ops,
+        2,
+        "exactly two ops must be appended (CreateBlock + SetProperty(space))"
+    );
+
+    let per_block: i64 =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log WHERE block_id = ?")
+            .bind(&block.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        per_block, 2,
+        "both appended ops must reference the new page id"
+    );
+
+    // The space property is materialized inline by `set_property_in_tx`.
+    let space_ref: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
+    )
+    .bind(&block.id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap()
+    .flatten();
+    assert_eq!(
+        space_ref.as_deref(),
+        Some(crate::spaces::bootstrap::SPACE_PERSONAL_ULID),
+        "space property must point at the Personal space"
+    );
+
+    // The page must surface from `list_blocks(blockType='page', spaceId=Personal)` —
+    // the very pagination path PageBrowser uses. Without the space property
+    // it would silently disappear (BUG-1 root cause).
+    let page = list_blocks_inner(
+        &pool,
+        None,
+        Some("page".into()),
+        None, // tag_id
+        None, // show_deleted
+        None, // agenda_date
+        None, // agenda_date_start
+        None, // agenda_date_end
+        None, // agenda_source
+        None, // cursor
+        None, // limit
+        Some(crate::spaces::bootstrap::SPACE_PERSONAL_ULID.into()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        page.items.iter().any(|b| b.id == block.id),
+        "newly-created page must surface in scoped list_blocks(page, Personal); got {} items",
+        page.items.len(),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_non_page_ignores_space_id() {
+    // Other block types pass through to `create_block_inner` unchanged
+    // — `space_id` (when supplied) is ignored, no validation error.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    crate::spaces::bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    // First create a page parent so the content block has somewhere to go.
+    let page = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Parent".into(),
+        None,
+        None,
+        Some(crate::spaces::bootstrap::SPACE_PERSONAL_ULID.into()),
+    )
+    .await
+    .unwrap();
+
+    // Content blocks are unaffected by the `space_id` parameter — pass
+    // None or Some, behavior is identical.
+    let block = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child".into(),
+        Some(page.id.clone()),
+        None,
+        None,
+    )
+    .await
+    .expect("content block create must succeed without space_id");
+    assert_eq!(block.block_type, "content");
+    assert_eq!(block.content.as_deref(), Some("child"));
+}
+
+// ======================================================================
 // edit_block
 // ======================================================================
 

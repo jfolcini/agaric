@@ -24,6 +24,16 @@ pub const SPACE_PERSONAL_ULID: &str = "00000000000000000AGAR1CPER";
 /// Reserved ULID for the seeded "Work" space.
 pub const SPACE_WORK_ULID: &str = "00000000000000000AGAR1CWRK";
 
+/// FEAT-3p10 — default accent color token for the seeded "Personal" space.
+///
+/// The value is a free-form palette token (matching `index.css`'s
+/// `--accent-emerald` etc.). Stored on the space block as
+/// `block_properties(key='accent_color', value_text=…)`.
+pub const SPACE_PERSONAL_DEFAULT_ACCENT: &str = "accent-emerald";
+
+/// FEAT-3p10 — default accent color token for the seeded "Work" space.
+pub const SPACE_WORK_DEFAULT_ACCENT: &str = "accent-blue";
+
 /// MAINT-1 — One-shot migration threshold.
 ///
 /// ULID corresponding to the UTC timestamp `2026-04-26T22:00:00Z`
@@ -45,10 +55,20 @@ pub const MIGRATION_THRESHOLD_ULID: &str = "01KQ5WWYR00000000000000000";
 
 /// Bootstrap the two seeded spaces and migrate existing pages into Personal.
 ///
-/// Safe to call repeatedly — the fast-path check returns early when both
-/// space blocks already exist with `is_space = "true"`. Inside the
-/// transaction every step is individually idempotent so a crashed
-/// bootstrap can be resumed on the next boot.
+/// Safe to call repeatedly. The seeded-space-block creation step is
+/// fast-pathed when both space blocks already exist with
+/// `is_space = "true"` (skipping it avoids re-emitting redundant
+/// `is_space = "true"` `SetProperty` ops every boot). The
+/// `pages_without_space` backfill, however, runs on EVERY boot so any
+/// page that arrives without a `space` property — via a misbehaving
+/// frontend, sync replay from a peer that bypassed the invariant, or
+/// any other path — is captured and assigned to the Personal space
+/// (BUG-1 / L-133).
+///
+/// The backfill is naturally idempotent: only fires for pages WITHOUT
+/// a `space` property, so steady-state boots emit zero new ops. The
+/// scan uses the `idx_block_properties_space` index already in place,
+/// so the per-boot cost is one indexed `NOT EXISTS` lookup per page.
 ///
 /// # Errors
 ///
@@ -56,25 +76,72 @@ pub const MIGRATION_THRESHOLD_ULID: &str = "01KQ5WWYR00000000000000000";
 /// app cannot honour the "every page belongs to a space" invariant
 /// without completing this step.
 pub async fn bootstrap_spaces(pool: &SqlitePool, device_id: &str) -> Result<(), AppError> {
-    // Fast-path: if both space blocks are already present in the derived
-    // state AND both have `is_space = "true"`, bootstrap completed on a
-    // prior boot. Any pages missing a `space` property from that point
-    // onward are a bug somewhere else — not this bootstrap's concern.
-    if is_bootstrap_complete(pool).await? {
-        tracing::debug!("spaces bootstrap already complete; skipping");
-        return Ok(());
-    }
+    // BUG-1 / L-133 — split the seeded-block creation fast-path from
+    // the `pages_without_space` backfill. The seeded-block path stays
+    // gated on `is_bootstrap_complete` (so we don't re-emit `is_space`
+    // / `accent_color` ops every boot); the backfill runs every boot
+    // to catch any page that slipped through `create_block`'s
+    // page+space invariant (legacy callsites, sync replay, etc.).
+    let seeded_blocks_already_done = is_bootstrap_complete(pool).await?;
 
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    let personal_created =
-        ensure_space_block(&mut tx, device_id, SPACE_PERSONAL_ULID, "Personal").await?;
-    let personal_is_space_set =
-        ensure_is_space_property(&mut tx, device_id, SPACE_PERSONAL_ULID).await?;
+    let (
+        personal_created,
+        personal_is_space_set,
+        personal_accent_set,
+        work_created,
+        work_is_space_set,
+        work_accent_set,
+    ) = if seeded_blocks_already_done {
+        tracing::debug!(
+            "spaces bootstrap: seeded-space blocks already in place; \
+             skipping is_space/accent op emission and only running pages_without_space backfill"
+        );
+        (false, false, false, false, false, false)
+    } else {
+        let personal_created =
+            ensure_space_block(&mut tx, device_id, SPACE_PERSONAL_ULID, "Personal").await?;
+        let personal_is_space_set =
+            ensure_is_space_property(&mut tx, device_id, SPACE_PERSONAL_ULID).await?;
+        // FEAT-3p10 — seed the default `accent_color` for Personal. The
+        // helper short-circuits when the property already exists so a
+        // re-run / partial-resume never piles up duplicate ops.
+        let personal_accent_set = ensure_accent_color_property(
+            &mut tx,
+            device_id,
+            SPACE_PERSONAL_ULID,
+            SPACE_PERSONAL_DEFAULT_ACCENT,
+        )
+        .await?;
 
-    let work_created = ensure_space_block(&mut tx, device_id, SPACE_WORK_ULID, "Work").await?;
-    let work_is_space_set = ensure_is_space_property(&mut tx, device_id, SPACE_WORK_ULID).await?;
+        let work_created = ensure_space_block(&mut tx, device_id, SPACE_WORK_ULID, "Work").await?;
+        let work_is_space_set =
+            ensure_is_space_property(&mut tx, device_id, SPACE_WORK_ULID).await?;
+        // FEAT-3p10 — seed the default `accent_color` for Work. Same
+        // idempotency guard as Personal above.
+        let work_accent_set = ensure_accent_color_property(
+            &mut tx,
+            device_id,
+            SPACE_WORK_ULID,
+            SPACE_WORK_DEFAULT_ACCENT,
+        )
+        .await?;
 
+        (
+            personal_created,
+            personal_is_space_set,
+            personal_accent_set,
+            work_created,
+            work_is_space_set,
+            work_accent_set,
+        )
+    };
+
+    // BUG-1 / L-133 — always run, even when the seeded-block fast-path
+    // skipped above. Naturally idempotent (only fires for pages
+    // WITHOUT a `space` property). Index `idx_block_properties_space`
+    // keeps the cost bounded.
     let pages_to_migrate = pages_without_space(&mut tx).await?;
     let migrated = pages_to_migrate.len();
     for page_id in pages_to_migrate {
@@ -95,10 +162,13 @@ pub async fn bootstrap_spaces(pool: &SqlitePool, device_id: &str) -> Result<(), 
 
     let spaces_created = i32::from(personal_created) + i32::from(work_created);
     let is_space_props_set = i32::from(personal_is_space_set) + i32::from(work_is_space_set);
+    let accent_props_set = i32::from(personal_accent_set) + i32::from(work_accent_set);
     tracing::info!(
         spaces_created,
         is_space_props_set,
+        accent_props_set,
         pages_migrated = migrated,
+        seeded_blocks_already_done,
         "spaces bootstrap complete"
     );
     Ok(())
@@ -211,6 +281,50 @@ async fn ensure_is_space_property(
         block_id.to_owned(),
         "is_space",
         Some("true".to_owned()),
+        None,
+        None,
+        None,
+    )
+    .await?;
+    Ok(true)
+}
+
+/// FEAT-3p10 — Ensure the seeded space block carries an `accent_color`
+/// property pointing at the supplied default token (e.g.
+/// `accent-emerald`, `accent-blue`).
+///
+/// Mirrors [`ensure_is_space_property`]'s idempotency contract: when
+/// the block already has any `accent_color` value, this function is a
+/// pure no-op and emits no op. Returns `true` when a fresh op was
+/// appended, `false` when the property was already present.
+///
+/// User-driven recolouring via the FEAT-3p6 "Manage spaces…" UI flows
+/// through `set_property` and updates the same row — this seed never
+/// overwrites a user choice on a re-run.
+async fn ensure_accent_color_property(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: &str,
+    block_id: &str,
+    default_token: &str,
+) -> Result<bool, AppError> {
+    let already_set = sqlx::query_scalar!(
+        r#"SELECT 1 as "v: i32" FROM block_properties
+           WHERE block_id = ? AND key = 'accent_color'"#,
+        block_id,
+    )
+    .fetch_optional(&mut **tx)
+    .await?
+    .is_some();
+    if already_set {
+        return Ok(false);
+    }
+
+    set_property_in_tx(
+        tx,
+        device_id,
+        block_id.to_owned(),
+        "accent_color",
+        Some(default_token.to_owned()),
         None,
         None,
         None,

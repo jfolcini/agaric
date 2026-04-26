@@ -19,6 +19,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
+import { useSpaceStore } from '../../stores/space'
 import { TemplatesView } from '../TemplatesView'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -66,6 +67,14 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
     selectedBlockId: null,
+  })
+  // BUG-1 / H-3b — TemplatesView routes page creation through
+  // `createPageInSpace`, which reads `useSpaceStore.getState().currentSpaceId`.
+  // Seed the store so the create-template path doesn't bail.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
   })
 })
 
@@ -618,22 +627,14 @@ describe('TemplatesView', () => {
       expect(createBtn).toBeDisabled()
     })
 
-    it('valid submit calls createBlock then setProperty with template=true', async () => {
+    it('valid submit calls create_page_in_space then setProperty with template=true', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      // BUG-1 / H-3b — TemplatesView routes page creation through
+      // `create_page_in_space` (returns the new ULID as a plain string).
+      mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
-        if (cmd === 'create_block') {
-          return {
-            id: 'T_NEW',
-            block_type: 'page',
-            content: (args as { content: string }).content,
-            parent_id: null,
-            position: null,
-            deleted_at: null,
-            is_conflict: false,
-          }
-        }
+        if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') {
           return {
             id: 'T_NEW',
@@ -657,11 +658,10 @@ describe('TemplatesView', () => {
       await user.click(createBtn)
 
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'page',
-          content: 'My Template',
+        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
           parentId: null,
-          position: null,
+          content: 'My Template',
+          spaceId: 'SPACE_TEST',
         })
       })
 
@@ -673,6 +673,14 @@ describe('TemplatesView', () => {
         valueDate: null,
         valueRef: null,
       })
+
+      // Negative assertion: NO `create_block` IPC fired for the page
+      // (would indicate the legacy bypass path crept back in).
+      const legacyCreateBlockPageCalls = mockedInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === 'create_block' && (args as { blockType?: string }).blockType === 'page',
+      )
+      expect(legacyCreateBlockPageCalls).toHaveLength(0)
     })
 
     it('resets input after successful creation', async () => {
@@ -680,17 +688,7 @@ describe('TemplatesView', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
-        if (cmd === 'create_block') {
-          return {
-            id: 'T_NEW',
-            block_type: 'page',
-            content: 'My Template',
-            parent_id: null,
-            position: null,
-            deleted_at: null,
-            is_conflict: false,
-          }
-        }
+        if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') {
           return {
             id: 'T_NEW',
@@ -724,17 +722,7 @@ describe('TemplatesView', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
-        if (cmd === 'create_block') {
-          return {
-            id: 'T_NEW',
-            block_type: 'page',
-            content: 'My Template',
-            parent_id: null,
-            position: null,
-            deleted_at: null,
-            is_conflict: false,
-          }
-        }
+        if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') {
           return {
             id: 'T_NEW',
@@ -758,13 +746,13 @@ describe('TemplatesView', () => {
       expect(await screen.findByText('My Template')).toBeInTheDocument()
     })
 
-    it('shows error toast and preserves input when createBlock fails', async () => {
+    it('shows error toast and preserves input when create_page_in_space fails', async () => {
       const user = userEvent.setup()
       const mockedToastError = vi.mocked(toast.error)
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
-        if (cmd === 'create_block') throw new Error('backend fail')
+        if (cmd === 'create_page_in_space') throw new Error('backend fail')
         return emptyPage
       })
 
@@ -787,17 +775,7 @@ describe('TemplatesView', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
-        if (cmd === 'create_block') {
-          return {
-            id: 'T_NEW',
-            block_type: 'page',
-            content: 'My Template',
-            parent_id: null,
-            position: null,
-            deleted_at: null,
-            is_conflict: false,
-          }
-        }
+        if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') throw new Error('property fail')
         return emptyPage
       })

@@ -1493,7 +1493,7 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
     it('passes the current space id to the IPC by default', async () => {
       useSpaceStore.setState({
         currentSpaceId: 'SPACE_PERSONAL',
-        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal' }],
+        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
         isReady: true,
       })
       mockedInvoke.mockResolvedValueOnce(emptyPage)
@@ -1515,7 +1515,7 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
       const user = userEvent.setup()
       useSpaceStore.setState({
         currentSpaceId: 'SPACE_PERSONAL',
-        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal' }],
+        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
         isReady: true,
       })
       mockedInvoke.mockResolvedValue(emptyPage)
@@ -1554,7 +1554,7 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
       const user = userEvent.setup()
       useSpaceStore.setState({
         currentSpaceId: 'SPACE_PERSONAL',
-        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal' }],
+        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
         isReady: true,
       })
       // Both the initial scoped query AND the post-toggle "All spaces"
