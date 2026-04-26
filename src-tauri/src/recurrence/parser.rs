@@ -222,12 +222,7 @@ mod tests_m80 {
                 "+0y returns None (matches m/w/d zero-count behaviour)",
             ),
             // Negative count: matches `+-1d` etc., rejected at parse time.
-            (
-                "2025-04-26",
-                "+-1y",
-                None,
-                "+-1y (negative) returns None",
-            ),
+            ("2025-04-26", "+-1y", None, "+-1y (negative) returns None"),
             // Malformed numeric portion
             (
                 "2025-04-26",
