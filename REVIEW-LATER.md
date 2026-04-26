@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-16 open items.
+20 open items.
 
 Previously resolved: 504+ items across 152 sessions.
 
@@ -32,6 +32,10 @@ Previously resolved: 504+ items across 152 sessions.
 | FEAT-5 | FEAT | Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar) — parent / umbrella | L |
 | FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L |
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L |
+| FEAT-12 | FEAT | PageBrowser: group starred pages on top instead of filtering — drop the toolbar "show starred only" toggle, always show all pages with starred bubbled to the top | S |
+| FEAT-13 | FEAT | Breadcrumb visual redesign — strip button styling from path-style `<Breadcrumb>` (BlockZoomBar + PageHeader namespace), render crumbs as inline text-links with `hover:underline` + thin focus underline | S |
+| BUG-1 | BUG | PageBrowser silently hides pages that lack a `space` property — journal pages, templates, WelcomeModal samples, and peer-synced pages disappear from the Pages view (rolls up the existing deep-CR H-3a / H-3b / H-3c + L-133) | S–M |
+| MAINT-1 | MAINT | One-shot migration to move all existing pages from Personal → Work space (maintainer-only / single-user deployment; pre-publish-threshold ULIDs only, idempotent, op-emitting so peer devices converge) | S |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
@@ -597,6 +601,168 @@ Part of the FEAT-5 family. **Not scheduled.** Blocked on explicit design-review 
 **Risk:** M — wrong-time notifications and notification spam are both real failure modes; needs careful dedupe and "do not re-fire on materialize replay" guard.
 **Impact:** L — closes a recognised feature gap with Org-mode / Logseq parity; especially valuable on mobile where the user is unlikely to have the app foregrounded when a task is due.
 
+### FEAT-12 — PageBrowser: group starred pages on top instead of filtering
+
+**Problem:** Today the PageBrowser carries a toolbar Star toggle (with a count badge) that, when active, *filters* the list down to starred pages only. Users have to flip the toggle every time they want their pinned pages to surface, and lose all other pages while doing it. Starred ought to be a soft hint about prominence, not a hard filter — the natural representation is grouping starred pages on top of the unstarred ones, always.
+
+**User decisions locked in (do NOT re-litigate):**
+- Drop the `showStarredOnly` filter toggle entirely. No new toggle replaces it.
+- Always render the full page list with starred pages grouped on top, non-starred below.
+- Grouping is orthogonal to the existing `sortOption` (alphabetical / recent / created) — sort applies *within* each group.
+- Tree mode (when any title contains `/`) stays untouched — namespace hierarchy wins, no grouping is overlaid on it.
+- Search input still narrows the list; an empty group hides its own header but the other group keeps rendering.
+- Star/unstar moves the page between groups immediately (no debounce).
+
+**UX design:**
+- **Two section headers**: "Starred" (with count) on top, "Other pages" (with count) below, separated by a thin divider (`border-t` on the second header). Section containers use `role="group"` + `aria-labelledby` per the WAI-ARIA listbox pattern.
+- **Header collapse rules**: zero starred → hide the Starred header (no empty section); all starred → hide the Other-pages header; only 1 page total → render flat with no headers (avoid noise on a brand-new vault).
+- **Within-group sort**: `sortOption` runs independently per group. "Recent" inside the starred group sorts the user's pinned pages by recent visit; same logic for the unstarred group.
+- **Tree mode**: when `isTreeMode === true`, skip grouping entirely. Tree structure is hierarchical-by-namespace; layering "starred-on-top" on it would conflict with the tree shape and confuse users about why a child appears before its parent. Keep the existing tree rendering as-is.
+- **Search**: grouping persists during search; group headers show live counts that reflect filtered results. If both groups end up empty, the existing `pageBrowser.noMatches` empty state still applies.
+- **Accessibility**: viewport `aria-label` shifts from "Page list" → "Page list, grouped by starred". Section headers carry the count in their accessible name (e.g. "Starred, 3 pages"). Row-level `Star page` / `Unstar page` labels stay.
+
+**Technical design:**
+- **Single virtualizer, sentinel header rows.** Build a typed union row array `Array<{ kind: 'header'; section: 'starred' | 'other'; count: number } | { kind: 'page'; page: BlockRow }>` and feed it to `useVirtualizer`. `estimateSize` returns ~36px for headers, ~44px for pages. Stable keys: `header:<section>` for headers, `page:<id>` for pages.
+- **Keyboard nav stays page-indexed.** `useListKeyboardNavigation` keeps iterating over the page-only array (`filteredPages`); headers render as non-focusable rows. Arrow keys naturally skip them; Home/End/PageUp/PageDown still target page rows. No hook changes required.
+- **State to remove from `PageBrowser.tsx`:**
+  - `showStarredOnly` + `setShowStarredOnly` state.
+  - The toolbar Star Button (current lines 397–416) and its `starredCount` Badge.
+  - The `showStarredOnly` clause in `isFiltering` (line 335) → just `filterText.trim().length > 0`.
+  - The `pageBrowser.noStarredPages` branch in the empty-state (lines 458–463).
+- **Reactivity unchanged.** `starredRevision` bump on `toggleStarred` keeps re-running the grouping memo. localStorage stays the source of truth (per-device, no sync — see Out of scope).
+- **i18n:**
+  - **Add** `pageBrowser.starredSection` ("Starred"), `pageBrowser.otherPagesSection` ("Other pages"), `pageBrowser.starredSectionLabel` ("Starred, {{count}} pages") and `pageBrowser.otherPagesSectionLabel` ("Other pages, {{count}} pages") for the accessible names. Follow the existing `_one` / count-suffix pluralization pattern already used elsewhere in `i18n.ts`.
+  - **Remove** `pageBrowser.showStarred`, `pageBrowser.showAll`, `pageBrowser.noStarredPages` (only consumers are the deleted toolbar button + empty state).
+
+**Files touched:**
+- `src/components/PageBrowser.tsx` — primary surgery.
+- `src/lib/i18n.ts` — add 4 keys, remove 3.
+- `src/components/__tests__/PageBrowser.test.tsx` — see test plan (~6 cases deleted, ~3 updated, ~10 added).
+- `e2e/starred-pages.spec.ts` — NEW spec file (no existing e2e coverage for the starred flow today).
+- `FEATURE-MAP.md` — update the PageBrowser entry (line ~574/579 mentions the "starred filter") to describe grouping instead.
+- `src/lib/page-tree.ts` — no change (tree mode bypasses grouping).
+- `src/lib/starred-pages.ts` — no change.
+
+**Test plan:**
+
+*Unit (`src/components/__tests__/PageBrowser.test.tsx`):*
+- DELETE the 6 cases that exercised the removed filter toggle: `starred filter shows only starred pages`, `starred filter toggle shows "Show all" when active`, `filter badge shows count of starred pages`, `no badge shown when no pages are starred`, `shows empty state when starred filter active but no starred pages`, `starred filter has aria-pressed attribute`.
+- UPDATE: `clicking star toggles starred state` → assert the row jumps to the top of the list and into the "Starred" group instead of being filter-toggled.
+- ADD: starred-above-unstarred ordering; sort applies within each group (alphabetical + recent + created variants); toggle star round-trips (page → starred group → back); tree mode renders without grouping headers; zero-starred hides the Starred header; all-starred hides the Other-pages header; single-page vault renders flat with no headers; search narrows both groups and hides empty group header; keyboard nav skips headers (Arrow / Home / End); `axe(container)` passes on grouped + tree + filtered states.
+
+*E2E (`e2e/starred-pages.spec.ts`, new file):*
+- Open Pages view → verify both group headers absent on a small vault.
+- Star a page (selector: `[data-page-item]:has-text("Beta") .star-toggle`) → verify it moves to the top, `data-starred="true"`, "Starred" header appears.
+- `page.reload()` → verify the starred page remains on top (localStorage persistence at `starred-pages`).
+- Star a second page → verify ordering inside the starred group respects the active sort.
+- Unstar one → it falls back into "Other pages".
+- Type into the search input → verify both group counts update and an emptied group's header hides.
+- Tree mode (titles with `/`) → verify no grouping headers and the tree structure is intact.
+- Read `localStorage.getItem('starred-pages')` via `page.evaluate(...)` to assert persistence directly.
+
+*Manual sanity:*
+- 5-page vault, star 2 with alphabetical sort, confirm in-group ordering.
+- Search a term matching only non-starred pages, confirm Starred header disappears and Other-pages count is filtered.
+- Switch to tree mode, star one node, confirm tree shape is unaffected.
+
+**Out of scope (deliberately deferred):**
+- Promoting starred to a synced property (today it's per-device localStorage). Cross-device "starred everywhere" would require a new property + materializer wiring + sync round-trip — separate FEAT.
+- Per-space starred (today the localStorage key is global; on space switch, starred set is shared).
+- User-pinned ordering inside the starred group (drag-to-reorder). Today within-group sort follows `sortOption`.
+
+**Cost:** S — net-negative LOC in the component (~20 lines of state + button removed, ~40 lines of grouping/header logic added), 1 new e2e spec, ~20 unit-test cases churned. No backend changes, no schema, no sync.
+
+**Status:** Open. No dependencies.
+
+### FEAT-13 — Breadcrumb visual redesign: text-link feel, less button-like
+
+**Problem:** Each non-active crumb in the path-style `<Breadcrumb>` primitive renders as a real `<button>` with `rounded-sm`, `px-1`, hover-color shift, and a 3 px `focus-visible:ring-[3px] ring-ring/50`. The trail visually reads as a button-bar instead of as wayfinding chrome — heavy, busy, and inconsistent with the lightweight text-link language used elsewhere (e.g. `PageLink` in the editor). Breadcrumbs should look like a path, not a toolbar.
+
+**Scope clarification:** Two unrelated surfaces in the app are called "breadcrumb":
+1. **Path-style `<Breadcrumb>` primitive** at `src/components/ui/breadcrumb.tsx`, rendered by `BlockZoomBar` (zoomed-block ancestor trail `Home › Ancestor › … › Current`) and `PageHeader` (namespace path for `/`-separated page titles, e.g. `Work › Project › Page A`). **This is the redesign target.**
+2. **`BlockListItem` mini "→ PageTitle" chip** at the right end of agenda / search / query / done / due result rows (already minimal, just a `→` + `<PageLink>`). **OUT of scope** — already text-link styled and not what the user is complaining about.
+
+**User decisions locked in (do NOT re-litigate):**
+- Crumbs must remain keyboard-navigable (existing ArrowLeft/ArrowRight/Home/End handlers stay) and clickable.
+- Overflow `…` popover behavior unchanged (threshold stays at 5; touch-specific lowering to 3 deferred as a follow-up if mobile wrap becomes a problem in practice).
+- `BlockZoomBar`'s leading Home icon stays (it semantically maps to "zoom out to root page"); `PageHeader` namespace breadcrumb continues to render WITHOUT a Home (already correct in the code — only segments).
+- Test selectors `data-breadcrumb-crumb` and the consumer-specific `data-zoom-crumb` both continue to be emitted so existing test suites keep working.
+
+**UX redesign:**
+
+- **Crumb visual treatment.** Strip everything button-y: drop `rounded-sm`, `px-1`, hover-bg, and the 3 px focus ring. Keep `<button>` semantics (a11y / keyboard / click). Replace the three class constants in `breadcrumb.tsx` with text-link variants:
+  - `itemButtonClass` → `cn('inline-flex max-w-[160px] items-center truncate text-muted-foreground transition-colors hover:underline focus-visible:underline focus-visible:outline-hidden')`
+  - `homeButtonClass` and `overflowTriggerClass` → same treatment minus the `max-w-[160px]` (icon-only).
+- **Active crumb.** Stays `font-medium text-foreground` non-clickable span. No pill, no badge — bold text is enough; the user already knows where they are because it's the last item.
+- **Hover.** Underline (option a — classic web breadcrumb / link convention). Pairs with the existing `PageLink` text-link style and reads as "this is a link, not a chip".
+- **Separator.** Keep `ChevronRight` at `h-3 w-3 text-muted-foreground/50` — already minimal, no UX win from switching to `/` or `›` (and a `/` would conflict with namespace titles that contain `/`).
+- **Home icon.** Keep in BlockZoomBar; reuse the same `homeButtonClass` (text-link styling, no rounded pill).
+- **Overflow `…` trigger.** Keep `MoreHorizontal` icon, restyle with the same text-link `overflowTriggerClass`. Popover interior stays as today (popover items can keep their `hover:bg-accent` rounded look — they're inside a menu surface, not on the trail).
+- **Density.** `min-h-7` → `min-h-6` (28 px → 24 px) for a sleeker line. Keep `px-2 py-1` desktop; bump to `py-2` on `[@media(pointer:coarse)]` for the 44 px touch target (per AGENTS.md).
+- **Truncation.** Intermediate crumbs stay at `max-w-[160px]`; final crumb tightens from `max-w-[320px]` to `max-w-[280px]` (the page title above is the focal point).
+- **Color tokens.** Existing only — `--muted-foreground` (non-active), `--foreground` (active), `--muted-foreground/50` (separator), `--ring` (no longer used by breadcrumb after the focus change). No new tokens.
+- **Border below BlockZoomBar.** Keep `border-b border-border/40` — separates the zoom trail from the editor below.
+- **Tooltip.** Keep the native `title={label}` attribute on truncated crumbs. Do NOT upgrade to the Radix `Tooltip` — it adds visual noise to a chrome surface.
+- **Mobile.** No change for now. If a 5-deep namespace wraps on phones, lower `OVERFLOW_THRESHOLD` to 3 inside `[@media(pointer:coarse)]` as a follow-up.
+- **A11y.** Change `aria-current="location"` → `aria-current="page"` on the final crumb (line 174 of `breadcrumb.tsx`) — `page` is the conventional ARIA value for breadcrumb final segments. Keep `<nav>` + `<div role="toolbar">` structure (the in-file comment correctly notes `<ol>` would re-open an axe `listitem` violation; this isn't worth re-litigating). Container `aria-label` unchanged.
+
+**Technical design:**
+
+- **No CVA refactor.** Two visual states (active/non-active) plus optional touch-coarse padding — inline `cn()` strings stay. CVA would add weight without benefit here.
+- **DOM structure unchanged.** `<nav><div role="toolbar"><button data-breadcrumb-crumb></button></div></nav>` stays. Switching to `<ol><li>` is rejected (axe regression risk per the existing in-file comment).
+- **Keyboard nav stays.** `focusIndex` + `handleKeyDown` (ArrowLeft/Right/Home/End) keep working — UX-215 already shipped them and users may rely on them. Native Tab traversal continues to work too.
+- **Focus-visible deviation from AGENTS.md.** AGENTS.md "Mandatory patterns" calls for `focus-visible:ring-[3px] focus-visible:ring-ring/50` "consistently". This entry deliberately deviates: now that crumbs render as text-links, the conventional focus indicator for text-links is an underline, not a form-control ring. The ring rule applies to interactive form controls (Button, Input, Select); breadcrumb crumbs are wayfinding text. Document this rationale inline in the file's top doc comment so reviewers don't try to "fix" it back to a ring.
+- **Selectors preserved.** `data-breadcrumb-crumb` (every crumb), `data-zoom-crumb` (BlockZoomBar's pass-through), and the popover's `data-breadcrumb-overflow-item` all continue to be emitted unchanged — existing unit + e2e tests keep working without selector churn.
+
+**Files touched:**
+- `src/components/ui/breadcrumb.tsx` — primary surgery (~3 class constants rewritten, `min-h-7` → `min-h-6`, `aria-current` value bump, top-of-file doc comment updated to record the focus-style deviation).
+- `src/components/BlockZoomBar.tsx` — no change (styling inherits from primitive).
+- `src/components/PageHeader.tsx` — no change (mounting unchanged).
+- `src/components/ui/__tests__/breadcrumb.test.tsx` — see test plan.
+- `src/components/__tests__/BlockZoomBar.test.tsx` — bump `aria-current="location"` → `"page"` in the one test that asserts it.
+- `src/components/__tests__/PageHeader.test.tsx` — same one-line bump in the namespace-breadcrumb test block (lines ~870–940).
+- `src/lib/i18n.ts` — no change (the existing `'Show hidden breadcrumbs'` overflow label stays).
+- `e2e/breadcrumb-navigation.spec.ts` — NEW spec file (today there is zero e2e coverage for breadcrumbs; `grep -ri "breadcrumb\|zoom-crumb\|data-breadcrumb" e2e/` returns empty).
+- `UX.md` (lines ~1100, ~1300) — minor wording refresh to describe the new text-link treatment.
+
+**Test plan:**
+
+*Unit (`src/components/ui/__tests__/breadcrumb.test.tsx`):*
+- UPDATE: any test asserting `hover:text-foreground` color shift on non-active crumbs → assert `hover:underline` instead.
+- UPDATE: any test asserting `focus-visible:ring-[3px]` / `ring-ring/50` on crumb buttons → assert `focus-visible:underline` and `focus-visible:outline-hidden` instead.
+- UPDATE: the `aria-current="location"` assertion → `aria-current="page"`.
+- UPDATE: the `max-w-[320px]` assertion on the final-crumb class → `max-w-[280px]`.
+- UPDATE: the `min-h-7` toolbar-height assertion → `min-h-6`.
+- ADD: regression assertions that non-active crumbs DO NOT carry `rounded-sm` and DO NOT carry `focus-visible:ring-[3px]` (catch future "fix-it-back" PRs).
+- ADD: regression assertion that the final crumb has `aria-current="page"` and is rendered as a `<span>` (not a button).
+- ADD: `axe(container)` after the focus-style change (the rule deviation should not trigger any axe violation; verify).
+- KEEP: all UX-215 keyboard-navigation tests (ArrowLeft/Right/Home/End) — behavior unchanged.
+- Estimated churn: ~6 updates, ~4 additions, 0 deletions.
+
+*Unit (BlockZoomBar / PageHeader tests):*
+- BlockZoomBar.test.tsx: ~1 test updated (`aria-current` value).
+- PageHeader.test.tsx: ~1 test updated (`aria-current` value, possibly an extra one if any test snapshots breadcrumb classnames).
+
+*E2E (`e2e/breadcrumb-navigation.spec.ts`, NEW):*
+- Test 1 (BlockZoomBar): create a 4-deep block trail, zoom into the leaf, assert breadcrumb renders with Home + intermediate crumbs, click an intermediate crumb (`page.locator('[data-zoom-crumb]').nth(1).click()`), assert the zoom level moves to that ancestor.
+- Test 2 (PageHeader namespace): create a page titled `Work/Project/Page A`, open it, assert the breadcrumb has 3 crumbs, click `Work`, assert the navigation handler fires (route changes / namespace filter applied).
+- Visual smoke: assert the final crumb has `aria-current="page"` and that the focused crumb has the `focus-visible:underline` class applied (via `page.evaluate` / focus + getComputedStyle if Playwright cannot match Tailwind classes directly; otherwise just assert `[aria-current="page"]` is present).
+
+*Manual sanity:*
+- Desktop (light + dark): zoom into a 5-deep trail, hover and Tab through crumbs, verify text-link feel (no rounded pill, underline on hover/focus, sleeker line height).
+- Touch (Android): same trail, verify per-crumb tap target hits 44 px (touch-coarse `py-2` kicks in) without re-introducing button visuals on desktop.
+- RTL locale: confirm chevron separator still reads sensibly (`ChevronRight` already flips via `dir="rtl"` on the document; verify in app).
+
+**Out of scope (deliberately deferred):**
+- `BlockListItem` `→ PageTitle` chip (different abstraction, already minimal).
+- A global app-shell breadcrumb above `ViewHeader` (not requested; uncommon for note apps).
+- Animated crumb add/remove transitions (pure CSS hover/focus only).
+- Lowering overflow threshold on touch (file as a follow-up if mobile wrapping shows up in practice).
+
+**Cost:** S — ~40 lines of class + role-attribute changes in one primitive, ~10 unit-test deltas, 1 new e2e spec (2 cases). No backend, no schema, no new dependency, no new tokens.
+**Risk:** Low — purely visual + a single ARIA value change. Keyboard handlers and click wiring are unchanged. The one principled deviation (focus underline instead of ring) is documented inline so reviewers don't unwind it.
+**Status:** Open. No dependencies.
+
 ## PERF — Performance items
 
 ### PERF-19 — Backlink pagination cursor uses linear scan for non-Created sorts (2 sites)
@@ -660,7 +826,185 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 
 ## BUG — Correctness items surfaced during review
 
+### BUG-1 — PageBrowser silently hides pages that lack a `space` property
+
+**User-visible symptom:** "The Pages view does not bring all pages." Some pages that exist in the vault simply do not appear in the PageBrowser list, with no error toast and no log line — they're invisible. The user only notices because pages they remember creating (a journal day, a template, an onboarding sample) are missing, or because the count is lower than expected.
+
+**Root cause (confirmed):** `pagination::list_by_type` requires every page to carry a `space` property pointing at the current space. The SQL filter at `src-tauri/src/pagination/hierarchy.rs:113-134` is:
+```sql
+AND (?5 IS NULL OR COALESCE(b.page_id, b.id) IN (
+        SELECT bp.block_id FROM block_properties bp
+        WHERE bp.key = 'space' AND bp.value_ref = ?5))
+```
+Any page without a `space` property is excluded — silently. Once the boot-time bootstrap has run once (`spaces::bootstrap::is_bootstrap_complete` returns true at `src-tauri/src/spaces/bootstrap.rs:44`), the migration that backfills `space = Personal` on `pages_without_space` never runs again. Pages that arrive AFTER that point and lack a `space` property are permanently invisible.
+
+**Confirmed bypass paths that produce pages without a `space` property:**
+1. **`JournalPage.tsx:170-176`** — `handleAddBlock` calls `createBlock({ blockType: 'page', content: dateStr })` directly. No space assigned. Every new daily page created via "Add block to today" leaks.
+2. **`TemplatesView.tsx:75-79`** — `createBlock({ blockType: 'page', content: name })` then `setProperty('template', 'true')`. Space property never set. Every new template leaks.
+3. **`WelcomeModal.tsx:56-103`** — first-boot onboarding `createSamplePages` creates "Getting Started" + "Quick Tips" via `createBlock({ blockType: 'page' })`. Both onboarding pages leak. (Note: the bootstrap migration backfills these on the same first boot only if the WelcomeModal's `createBlock` calls are observed by the materializer BEFORE bootstrap's `pages_without_space` snapshot reads; depending on ordering this may or may not catch them. Even when it does, all subsequent creations don't get backfilled.)
+4. **Backend `create_block` IPC accepts `block_type='page'` without enforcing space atomicity.** Same root issue, IPC-level.
+5. **Peer-synced pages.** A page authored on a different device that took any of the bypass paths above syncs over carrying no `space` property. The receiving device's bootstrap has already short-circuited via the fast-path → no re-run → page is permanently hidden.
+
+**Why this is a real, daily issue (not theoretical):** The journal flow is the worst offender. Every "Add block to today" on an empty journal day creates a leaked page. The user adds blocks to the journal multiple times a day; over weeks the Pages view diverges from reality. This isn't an edge case — it's the bug the user is reporting.
+
+**Cross-reference to deep-CR findings:** This bug is already filed in the appendix as a stack of related items, but none are surfaced as a user-visible bug. BUG-1 rolls them up:
+- **H-3** (parent) — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated daily.
+- **H-3a** — Backend `create_block` IPC: enforce space property atomicity for `block_type='page'`. Fix the IPC so the invariant cannot be violated even from a misbehaving frontend or sync replay.
+- **H-3b** — Frontend journal/templates/`createBlock` callsites switch to `create_page_in_space` / `createPageInSpace`. JournalPage, TemplatesView, WelcomeModal — all four bypass sites.
+- **H-3c** — Property test: every page block has a non-null `space` property. Acts as a regression net.
+- **L-133** — `space` ref-property invariant relies on bootstrap migration but never re-runs. The defense-in-depth fix.
+
+**Fix scope (in priority order):**
+
+1. **Backend hardening (H-3a — highest leverage).** Modify `create_block` IPC to refuse `block_type='page'` without a `space_id` argument; or, internally, require the same atomic transaction `create_page_in_space` uses (BEGIN IMMEDIATE → CreateBlock op → SetProperty('space', current_space) op → commit). The IPC is the single chokepoint; once it's tight, future bypass paths cannot leak pages — the cure is structural rather than per-callsite. **Approval needed:** if we choose to require `space_id` on the IPC argument list, that's a backwards-incompatible IPC change and three frontend callsites need to flip in lockstep.
+
+2. **Frontend callsite migration (H-3b).** Three concrete sites:
+   - `src/components/JournalPage.tsx:171, 192, 201` — daily-page creation.
+   - `src/components/TemplatesView.tsx:77` — template creation.
+   - `src/components/WelcomeModal.tsx:58, 82` — onboarding samples.
+   Route every one through the `createPageInSpace` wrapper that already exists in `src/lib/tauri.ts`. Each is a 1-line swap.
+
+3. **Bootstrap re-runs the migration (L-133).** Loosen the fast-path check in `bootstrap_spaces` so `pages_without_space` is queried on EVERY boot (not just when the seeded space blocks are missing `is_space="true"`). Cost is one indexed `NOT EXISTS` scan against `block_properties` per boot — cheap, since the index `idx_block_properties_space` is already in place. This catches anything that slipped through paths 1, 2, 3, plus all peer-synced bypass-path pages.
+
+4. **Property test (H-3c).** `fast-check` property: for any sequence of `createBlock` / `create_page_in_space` calls + sync replay, every page block in the materialized state has a `space` property pointing at a valid space block. A failing test is the regression net.
+
+5. **Defensive UX in PageBrowser (optional).** Even with the four backend/frontend fixes above, consider one of two safety nets so future bypasses surface visibly instead of silently:
+   - Log a warn line in the backend when `list_by_type(block_type='page')` is called WITH a `space_id` AND the unscoped count exceeds the scoped count. Operationally observable in the bug-report bundle, no UI change.
+   - Surface a one-time toast in the frontend when `count(unscoped pages) > count(scoped pages)` — helps the user notice the divergence even before a fix lands. Lean toward the backend log line only (frontend toast is too noisy for a bug that should be impossible after the fix).
+
+**Files touched (final state):**
+- `src-tauri/src/commands/blocks/crud.rs` — tighten `create_block` (H-3a).
+- `src-tauri/src/spaces/bootstrap.rs` — drop the fast-path skip on `pages_without_space`, run it every boot (L-133).
+- `src/components/JournalPage.tsx` — switch 3 callsites to `createPageInSpace` (H-3b).
+- `src/components/TemplatesView.tsx` — switch 1 callsite (H-3b).
+- `src/components/WelcomeModal.tsx` — switch 2 callsites (H-3b).
+- `src-tauri/src/spaces/tests.rs` — add property test (H-3c) + a regression test that creates a page via the legacy `create_block` path then asserts `list_by_type` finds it under the current space.
+- `src-tauri/src/pagination/tests.rs` — regression test: a page lacking `space` is hidden by `list_by_type(spaceId=<x>)` BEFORE the fix; visible AFTER the bootstrap re-run.
+- `src/components/__tests__/JournalPage.test.tsx`, `TemplatesView.test.tsx`, `WelcomeModal.test.tsx` — assert each calls `create_page_in_space` (or the wrapper that does), not bare `create_block`.
+- `e2e/spaces-coverage.spec.ts` (new or extend an existing spec) — create a journal day, create a template, run through the welcome flow, then confirm all of those pages show up in the Pages view of the active space.
+
+**Test plan:**
+
+*Unit:*
+- Backend regression: `create_block(block_type='page')` without `space_id` either errors (preferred) or auto-attaches the current space inside the same `BEGIN IMMEDIATE`. Then `list_blocks(blockType='page', spaceId=<personal>)` finds the page. Assert exact-count, not `>=`.
+- Bootstrap re-run: seed a page directly via SQL with no `space` property → call `bootstrap_spaces` → assert the page now has `space = Personal`. Repeat across two boots to confirm idempotency.
+- Property test (`fast-check`): random sequence of page creations + sync ops → every materialized page has a `space` property.
+- Frontend tests: each of the three migrated components calls the `createPageInSpace` IPC, not the bare `create_block`.
+
+*E2E:*
+- Open Welcome modal on a fresh vault → after onboarding, navigate to Pages → assert "Getting Started" + "Quick Tips" appear in the active space.
+- Create a journal day via "Add block to today" → navigate to Pages → assert the day's page is listed.
+- Create a template via Templates view → navigate to Pages → assert the template page is listed.
+- Multi-device (where the e2e harness supports a second pool): on device A take a bypass path, sync to device B, on device B reboot the app once, then open Pages → assert the page is listed.
+
+*Manual sanity:*
+- Open existing vault that has the bug → confirm the missing pages exist in the DB via the SQL helper (`SELECT id, content FROM blocks WHERE block_type = 'page' AND deleted_at IS NULL`) → after the fix lands and the app reboots once, open Pages → confirm all are visible.
+
+**Out of scope (deliberately deferred):**
+- Cross-space visibility surface — there is no plan to allow "show pages from any space"; that's been ruled out per FEAT-3's "nothing outside of spaces" decision. This entry only restores the invariant; it does not relax it.
+- Surfacing the unscoped vs scoped count divergence as a UI affordance — file as a follow-up only if the fix above proves insufficient in practice.
+
+**Cost:** S–M — backend IPC tightening + bootstrap loosening (~80 lines), 6 frontend callsites swapped (~6 lines each), ~10-15 new/updated tests, 1 e2e flow. No schema migration; no new tables; the property test framework (`fast-check`) is already in the project.
+**Risk:** Medium — the IPC tightening is a structural change to `create_block`. If any callsite (especially in tests, mocks, or sync paths) silently relies on the legacy behaviour, those will fail loudly rather than silently corrupt data — preferred direction. The bootstrap re-run is low-risk (pure additive backfill, idempotent) but must keep the fast-path skip for the `is_space` properties to avoid re-emitting redundant `is_space` ops every boot.
+**Status:** Open. Schedule the four fixes (H-3a + L-133 + H-3b + H-3c) together — partial fixes leave the silent-divergence behaviour partially in place.
+
 ## MAINT — Tooling / dev-experience maintenance / code quality
+
+### MAINT-1 — One-shot migration: move existing pages from Personal → Work space (maintainer-only)
+
+**Context:** The repo today is single-user — the maintainer is the only user — and the seeded spaces are "Personal" + "Work". The boot-time `bootstrap_spaces` migration (`src-tauri/src/spaces/bootstrap.rs`) backfills `space = Personal` on every existing page that didn't have one. The maintainer wants their existing data to live under the **Work** space instead. Since no other user has installed the app yet, the migration only affects the maintainer's vault(s) in practice — but the implementation must be safe enough that fresh installs after this ships are NOT impacted (their newly-created Personal pages must not be dragged into Work).
+
+**Decisions locked in:**
+- Move every page currently scoped to **Personal** AND created **before this migration ships** into **Work**.
+- Fresh installs are unaffected: pages created after the migration's publish timestamp stay in Personal (or wherever the user puts them).
+- The default space for fresh installs stays **Personal** — no change to bootstrap defaults, no change to the SpaceSwitcher initial selection.
+- The migration is **idempotent** — re-running yields zero ops once the page set has fully shifted.
+- The migration emits **ops via the op log** (not a raw SQL `UPDATE`) so peer devices that later sync converge naturally and the change is durable across snapshot/restore.
+
+**Approach: time-gated, op-emitting, runs at boot once.**
+
+Add a sibling routine to `bootstrap_spaces` (e.g. `migrate_personal_pages_to_work`) that runs on every boot AFTER `bootstrap_spaces` has completed and has the same shape:
+
+1. **Guard #1 — fast-path skip.** Read a marker property from a stable seed block (the `SPACE_PERSONAL_ULID` block itself): `personal_to_work_migration_v1 = "true"`. If present, return early. This is the same idempotency-marker pattern `bootstrap_spaces` already uses (e.g. `is_space = "true"` on the seeded blocks).
+2. **Guard #2 — time-gate.** Hard-code a `MIGRATION_THRESHOLD_ULID` constant in the routine — the ULID of the moment this code is published (a 26-char string like `01J3XYZABCDEFGHJKMNPQRSTVW0`). Only consider pages whose `id < THRESHOLD_ULID` (i.e., created before this migration shipped). This is the protection for fresh installs: a brand-new install's pages will all have `id >= THRESHOLD_ULID` and the move is a no-op.
+3. **Inside one `BEGIN IMMEDIATE`:** for every page satisfying:
+   - `block_type = 'page'`
+   - `deleted_at IS NULL`
+   - `is_conflict = 0`
+   - `id < ?MIGRATION_THRESHOLD_ULID`
+   - currently has a `space` property pointing at `SPACE_PERSONAL_ULID`
+   - is NOT itself a space block (`is_space != "true"`)
+   - emit `set_property_in_tx(device_id, page_id, "space", value_ref = SPACE_WORK_ULID)`. The materializer will UPSERT on `(block_id, key)` so the local row converges immediately, and the op replicates to peers via the normal sync path.
+4. **Mark complete:** on the same transaction, set `personal_to_work_migration_v1 = "true"` on the `SPACE_PERSONAL_ULID` block (the marker for guard #1) and commit.
+5. **Telemetry:** emit a `tracing::info!` with `pages_moved = N, threshold = MIGRATION_THRESHOLD_ULID, marker_set = bool` so the bug-report bundle records the run.
+
+**Why this is safe across the install matrix:**
+
+| Install scenario | Behaviour |
+|---|---|
+| Maintainer's existing vault, first boot after migration ships | All existing Personal pages have `id < THRESHOLD` → all move to Work. Marker set. |
+| Maintainer's existing vault, second boot | Marker present → fast-path skip. No ops emitted. |
+| Maintainer's second device that syncs later | Same op set arrives via sync; materializer UPSERTs converge. Local routine runs once and finds nothing to do (peer's ops already moved them) → marker set. |
+| Fresh install of the published app | No pages older than THRESHOLD exist → loop body never fires → marker set. Zero ops. Zero impact. |
+| Fresh install + maintainer imports a backup | Imported pages WITH `id < THRESHOLD` move to Work (correct — those are old maintainer pages). Pages with `id >= THRESHOLD` (new) stay where they are. |
+| Two devices, one bumps the migration first | First device emits ops; second device's local routine on next boot finds zero pages still pointing at Personal-with-id-below-threshold → no-op. Marker set on both. |
+
+**Why op-emitting (not raw SQL UPDATE):**
+- AGENTS.md invariant #1: "Op log is strictly append-only — never mutate, never delete (except compaction)." A raw SQL `UPDATE block_properties` would mutate materialized state without a corresponding op-log entry, violating CQRS. Subsequent `compute_reverse` walks (undo / restore) would reverse-translate against state that has no op-log provenance → divergence between what the user sees and what undo would do.
+- The sync path replicates ops, not materialized state. A raw SQL update on device A would not reach device B.
+- The bootstrap precedent (`pages_without_space` → emits `SetProperty` ops, not raw UPDATEs) is the correct model.
+
+**Files touched:**
+- `src-tauri/src/spaces/bootstrap.rs` — add `migrate_personal_pages_to_work` (sibling of `bootstrap_spaces`); call it from the same boot wiring after `bootstrap_spaces` returns Ok.
+- `src-tauri/src/spaces/mod.rs` — re-export the new symbol.
+- `src-tauri/src/lib.rs` (or wherever `bootstrap_spaces` is currently invoked at boot) — add the second call.
+- `src-tauri/src/spaces/tests.rs` — see test plan.
+- No new migration SQL file. No schema changes. No new tables. No new property defs (the `space` ref-type and `is_space` text-type are already defined; the `personal_to_work_migration_v1` marker re-uses the `text` value type — no `property_definitions` row needed because property defs are advisory for the UI, not enforced at the property write level for system-internal markers).
+- No frontend changes — purely backend / boot-time.
+
+**Open questions to settle BEFORE implementation:**
+1. **Pages currently in Work already.** The maintainer may have already moved some pages to Work manually via the kebab "Move to space". Those should be left alone (they have `space = Work` already, so the WHERE clause naturally skips them).
+2. **Conflict copies.** Conflict-copy pages should NOT be moved (they're already filtered by `is_conflict = 0`).
+3. **Templates vs regular pages.** Templates have `template = "true"`. Move them too? **Yes** — the maintainer wants ALL existing data moved. The WHERE clause doesn't discriminate on `template`.
+4. **Deleted pages (in trash).** Skip them via `deleted_at IS NULL` (already in the WHERE clause). If the maintainer restores a trashed page later, the migration won't run again (marker set), so the restored page stays under whatever `space` it had at deletion time — Personal — which is intentional: the user can move it manually.
+5. **The Personal space block itself.** Filtered by `is_space != "true"` — it stays as Personal (it IS Personal).
+6. **Per-space tabs / per-space recent pages (FEAT-3 Phase 3).** Today still global per the table at the top of the file (FEAT-3p3 hasn't shipped). Once Phase 3 lands, this migration should also rewrite `tabsBySpace[Personal]` → `tabsBySpace[Work]` and same for recent. **Until Phase 3 ships, this is a non-issue.** If Phase 3 ships first, MAINT-1 needs an addendum — file it as MAINT-1a.
+7. **Threshold value.** Pick the threshold as `BlockId::now()` evaluated at the time the commit lands. The constant goes in `migrate_personal_pages_to_work` at the top: `const MIGRATION_THRESHOLD_ULID: &str = "01<…26 chars>";`. The same `seeded_ulids_parse_as_valid_ulids` test pattern catches typos.
+
+**Test plan:**
+
+*Unit (`src-tauri/src/spaces/tests.rs`):*
+- `migrate_personal_pages_to_work_moves_pre_threshold_pages_to_work` — seed three pages: A with `id < THRESHOLD` and `space = Personal`; B with `id >= THRESHOLD` and `space = Personal`; C with `id < THRESHOLD` and `space = Work`. Run migration. Assert A is now under Work, B stays under Personal, C unchanged. Assert ops in op_log: exactly one `SetProperty` op for A.
+- `migrate_personal_pages_to_work_is_idempotent` — run twice; assert second run emits zero ops and the marker is unchanged.
+- `migrate_personal_pages_to_work_skips_when_marker_present` — set the marker first; run; assert no scan, no ops.
+- `migrate_personal_pages_to_work_skips_conflict_copies` — seed a conflict-copy page with `is_conflict = 1` AND old `id` AND `space = Personal`. Assert it stays in Personal.
+- `migrate_personal_pages_to_work_skips_deleted` — seed a soft-deleted page; assert unchanged.
+- `migrate_personal_pages_to_work_skips_space_blocks` — assert SPACE_PERSONAL_ULID's own block isn't moved.
+- `migrate_personal_pages_to_work_fresh_install_is_noop` — seed only post-threshold pages; assert zero ops, marker set.
+- Property test (`fast-check`): random page sets straddling the threshold → invariant: every pre-threshold page that was in Personal ends up in Work; every post-threshold page is unchanged; the marker is always set after a successful run.
+
+*Sync convergence:*
+- Two-pool integration test (use the existing `tests/sync_*` harness): pool A runs the migration, replicates ops to pool B (which has the same seeded pages), assert pool B's state converges to the same Work scoping AFTER applying the synced ops. Pool B's local migration on next boot should be a no-op (it already saw the ops).
+
+*E2E:*
+- Skip — this is a one-shot data migration. The post-migration end state is exercised by FEAT-3 Phase 2's existing PageBrowser space-scoping tests.
+
+*Manual sanity (maintainer's actual vault):*
+- Before deploying: dump `SELECT id, content FROM blocks WHERE block_type='page' AND deleted_at IS NULL` and the matching `space` properties as a baseline.
+- Deploy. Boot once.
+- Re-dump. Assert every pre-deploy page now has `space = SPACE_WORK_ULID`.
+- Open the SpaceSwitcher → switch to "Work" → confirm every expected page is listed in PageBrowser.
+- Open the SpaceSwitcher → switch to "Personal" → expected to be empty (or contain only the post-threshold pages created since deploy).
+
+**Out of scope (deliberately deferred):**
+- Flipping the bootstrap default for fresh installs from Personal → Work. Out of scope — would change UX for any new user, and Personal is a more universally appropriate default name. If the maintainer later wants to flip the default, it's a separate decision.
+- Per-space tabs / per-space recent pages migration (depends on FEAT-3p3 shipping first; file as MAINT-1a if needed when Phase 3 lands).
+- A general "rename / merge / split spaces" UI. Out of scope; this is a one-shot data move, not a feature.
+- A user-facing "move all my pages from X to Y" operation. Could be a future FEAT but would need a confirmation dialog, undo support, and a cancel path — none of those apply to this maintainer-only one-shot.
+
+**Cost:** S — one new boot-time routine (~80 lines mirroring `bootstrap_spaces`'s shape), ~6 unit tests + 1 property test + 1 sync-convergence test (~150 lines of test code). No schema migration, no new tables, no IPC change, no frontend change.
+**Risk:** Low — the routine is gated by both a marker AND a time-threshold; the worst-case "runs twice / runs on a fresh install / runs on a peer that already saw the ops" scenarios all degrade to a no-op with zero data loss. The op-emitting design preserves all CQRS / sync invariants.
+**Status:** Open. Schedule independently from BUG-1 (which fixes the upstream "pages without `space` are invisible" issue). Order doesn't matter, but BUG-1 first is cleaner: it ensures every page HAS a `space` before this migration tries to rewrite it. If MAINT-1 ships first on a vault still leaking pages via the bypass paths, those leaked pages won't be moved (they have no `space` to match in the WHERE clause) and will remain invisible until BUG-1 fixes them.
 
 ### PUB-2 — Git author email across all history is corporate (`javier.folcini@avature.net`)
 
