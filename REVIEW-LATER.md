@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 14 open items.
 
-Previously resolved: 515+ items across 153 sessions.
+Previously resolved: 526+ items across 153 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -1335,8 +1335,8 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Net findings in this report | 333 |
 | **Critical** | **1** |
 | **High** | **8** |
-| **Medium** | **51** |
-| **Low** | **125** |
+| **Medium** | **41** |
+| **Low** | **124** |
 | **Info / nits** | **125** |
 
 ### Top-5 highest-priority items (Impact ÷ Cost)
@@ -1546,7 +1546,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Recommendation:** Detect `(device_id, seq)` collision before INSERT; on hash mismatch, log + emit a sync warning event + persist a fork record for diagnostics.
 - **Pass-1 source:** 06-sync / F4
 
-## MEDIUM findings (54 — expanded)
+## MEDIUM findings (44 — expanded)
 
 > Each entry is now a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status) ready to be picked up.
 
@@ -1678,18 +1678,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Commands (CRUD)
 
-### M-23 — `flush_draft_inner` reads `prev_edit` outside the flush transaction
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/drafts.rs:18-45`
-- **What:** The command looks up the draft and queries `op_log` for the most recent `edit_block`/`create_block` op against the bare pool, then passes that `prev_edit` into `draft::flush_draft`, which only then opens its atomic transaction. A foreground `edit_block` (or sync replay) firing between the read and the flush leaves the draft carrying a stale `prev_edit`, undermining conflict detection.
-- **Why it matters:** `prev_edit` is the foundation of the conflict model (see `recovery::find_prev_edit`); the equivalent lookup in `edit_block_inner` correctly runs inside its tx (`crud.rs:249-258`), so the drafts path is the asymmetry.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Push the `prev_edit` query inside `draft::flush_draft` (which already owns the tx) or expose a `flush_draft_in_tx` so the command layer can open one `BEGIN IMMEDIATE` and thread `&mut tx` through both reads and writes.
-- **Pass-1 source:** 04/F6
-- **Status:** Open
-
 ### M-25 — `list_projected_agenda_inner` returns hard-capped `Vec<>` without cursor pagination
 - **Domain:** Commands (CRUD)
 - **Location:** `src-tauri/src/commands/agenda.rs:111-214`, Tauri wrapper at `src-tauri/src/commands/agenda.rs:467-476`
@@ -1802,30 +1790,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Sync stack
 
-### M-43 — Property LWW idempotency guard reads latest local op, not materialized property value
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_protocol/operations.rs:339-374` (within `merge_diverged_blocks`)
-- **What:** The "skip if local already has the winning value" early-exit parses `op_a.payload` (the latest local `set_property` op for `(block_id, key)`, selected via `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY o.seq DESC)` at lines 289-293) and compares to `resolution.winner_value`. It does not consult `block_properties` — i.e., the materialized state. After the user re-edits the property locally between syncs, `op_a` is the *newer* op and the comparison is decoupled from whether the LWW resolution has actually been applied.
-- **Why it matters:** Re-edits on the local device after a remote sync can either (a) cause spurious "already integrated" early-exits — LWW would have flipped the value but we skip, or (b) cause the LWW op to be re-emitted on every subsequent sync (extra ops in the log forever). Both are subtle convergence regressions for the user's own re-edit workflow.
-- **Cost:** M
-- **Risk:** Medium (touches merge correctness invariant — needs careful test coverage)
-- **Impact:** Medium
-- **Recommendation:** Compare `resolution.winner_value` against the materialized value in `block_properties` (the actual LWW state), mirroring the existing `has_merge_for_heads`-style helper used for `edit_block`. Pair the patch with M-44 since both share the failure mode.
-- **Pass-1 source:** 06/F6
-- **Status:** Open
-
-### M-44 — Same idempotency-guard problem for move LWW
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_protocol/operations.rs:455-465`
-- **What:** Identical pattern as M-43 for `move_block`: `local_move` is parsed from `op_a.payload` (latest local `move_block` op) and compared to `winner_move`. The materialized state in `blocks.parent_id` / `blocks.position` is not consulted.
-- **Why it matters:** Same convergence bug as M-43 in the move dimension. Tends to manifest as repeated re-issuance of the same LWW move on each sync round if the user has subsequently re-arranged the block locally.
-- **Cost:** S (fix together with M-43 in one patch)
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** Compare `winner_move` against `blocks.parent_id` + `blocks.position` rather than the latest-op payload. Land in the same commit as M-43.
-- **Pass-1 source:** 06/F7
-- **Status:** Open
-
 ### M-46 — `try_sync_with_peer` drops the cancel flag after each peer; cancellation only stops the current peer
 - **Domain:** Sync
 - **Location:** `src-tauri/src/sync_daemon/orchestrator.rs:196-218 (Branch B), 244-260 (Branch C), 383-389 (CancelGuard)`
@@ -1884,18 +1848,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Best fix: drop the `.hash` file entirely (it's deterministically derivable from `.pem` — see L-Sync-related cleanup), removing the multi-file invariant. Failing that: write to `.pem.tmp` + `.hash.tmp` then `rename` both before declaring success, or have `read_existing_cert` recover by deleting an orphaned `.pem` and re-running `get_or_create_sync_cert`.
 - **Pass-1 source:** 06/F20
-- **Status:** Open
-
-### M-55 — `sync_cert.rs` does not fsync the parent directory after creating files
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_cert.rs:62-65, 76-100`
-- **What:** `pem_file.sync_all()` and `hash_file.sync_all()` flush each file's data + metadata, but POSIX guarantees the directory entry only after `fsync(parent_dir_fd)`. Depending on filesystem (ext4 default vs `data=ordered`, etc.) the `.pem` and `.hash` files may be invisible after a power loss despite their data being on stable storage.
-- **Why it matters:** Same recovery story as M-54 — app launches, files invisible, regenerates a new cert with a new hash, all peers have to re-pin via TOFU. Annoying but bounded.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** After both files are written, open the parent directory and call `fsync(parent_dir_fd)` once. On Windows, the `FlushFileBuffers` equivalent is unnecessary because directory entries are journaled differently — guard with `#[cfg(unix)]`.
-- **Pass-1 source:** 06/F21
 - **Status:** Open
 
 ### M-56 — `connect_to_peer` does not bind TLS handshake to the expected device's CN
@@ -1986,54 +1938,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 08/F12
 - **Status:** Open
 
-### M-72 — `merge_text` no-LCA fallback walks ONE side only
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/merge/detect.rs:43-95`
-- **What:** When `find_lca` returns `None`, the function walks back from `op_ours` through `prev_edit` until it hits a `create_block` and uses that block's content as the ancestor for the three-way merge. It never validates `op_theirs` traces to the same `create_block`. If both heads share a block_id but trace to different create ops (compaction-induced chain truncation, or corrupted `prev_edit`), one side's root is used as ancestor for both and the merge is biased.
-- **Why it matters:** Defensive concern: in Agaric's model each block has exactly one `create_block`, so the divergent-roots scenario requires real chain corruption. Test `merge_missing_lca_falls_back_to_create_content` (line 2561) only exercises the common-root case.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Low
-- **Recommendation:** Walk both sides to their roots; require they match (return Err so the caller drops to "create conflict copy") or prefer the older (smaller-ULID) create_block content as the canonical ancestor. Add a regression test for the divergent-roots case using a hand-built op_log fixture.
-- **Pass-1 source:** 08/F13
-- **Status:** Open
-
-### M-73 — `merge_block` orchestrator does not call `resolve_property_conflict`
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/merge/apply.rs:21-25`
-- **What:** The TODO comment is honest: text merge is wired in, but property LWW (`merge/resolve.rs::resolve_property_conflict`) is only invoked from `sync_protocol/operations.rs:341` inside `merge_diverged_blocks`. `merge_block` itself silently no-ops on property conflicts that surface from any other call site.
-- **Why it matters:** A future caller of `merge_block` will assume the function is a complete three-way merge and silently drop property conflicts. If the sync orchestrator is renamed or refactored, the property path is easy to forget.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Cheapest honest fix is to rename `merge_block` → `merge_block_text_only` so the next reader does not assume otherwise. Alternative: take a `resolve_property_conflicts: bool` flag and delegate to property resolution explicitly when set.
-- **Pass-1 source:** 08/F14
-- **Status:** Open
-
-### M-74 — `create_conflict_copy` does not copy `block_links`
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/merge/resolve.rs:91-128`
-- **What:** Block tags (lines 110-117) and properties (lines 119-128) are copied to the conflict block, but `block_links` (forward + backlinks) are not. The conflict copy starts with no graph context until the materializer's periodic re-index picks up the new content via the `#[ULID]`/`[[ULID]]` tokens.
-- **Why it matters:** UX: when the user clicks the conflict copy in Status View, no references / backlinks display until the next reindex cycle, making it hard to compare against the original.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** After `tx.commit()`, enqueue `MaterializeTask::ReindexBlockLinks { block_id: new_block_id }` (mirrors the synthetic-edit handling in `recovery/cache_refresh.rs:44-48`). No new tables or op types required.
-- **Pass-1 source:** 08/F15
-- **Status:** Open
-
-### M-76 — `create_conflict_copy` does not validate the parent block is still alive
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/merge/resolve.rs:28-46`
-- **What:** `parent_id` is read from the original row and propagated to the new conflict block without checking `blocks.deleted_at IS NULL` on the parent. `recovery/draft_recovery.rs:46-64` performs the symmetric F08 guard for synthetic edit_block recovery; merge resolution does not.
-- **Why it matters:** A merge that creates a conflict copy whose parent has been concurrently soft-deleted produces an orphan-under-tombstone block. FK passes (parent row exists with `deleted_at` set), but `cascade_soft_delete` won't reach the new copy unless the user later re-deletes the parent — phantom blocks in the trash hierarchy.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Refuse to create the conflict copy when the parent is soft-deleted (`Err(AppError::*)` so the caller can fall back); add a regression test mirroring the F08 fixture in `recovery/tests.rs`.
-- **Pass-1 source:** 08/F17
-- **Status:** Open
-
 ### M-81 — `cascade_soft_delete` ignores conflict copies — orphaned
 - **Domain:** Lifecycle
 - **Location:** `src-tauri/src/soft_delete/trash.rs:46-55`
@@ -2047,30 +1951,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### MCP
-
-### M-82 — `journal_for_date` writes through the read pool with `query_only = ON`
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/tools_ro.rs:550-564` (handler), `src-tauri/src/mcp/tools_ro.rs:257` (dispatch), `src-tauri/src/lib.rs:568,696` (production wiring), `src-tauri/src/db.rs:145-150` (`query_only = ON`), `src-tauri/src/commands/journal.rs:62-121` and `src-tauri/src/commands/blocks/crud.rs:184` (write path).
-- **What:** `ReadOnlyTools::new` is wired with `pools.read.clone()` in `lib.rs`, and `handle_journal_for_date` forwards that pool to `journal_for_date_inner` → `create_block_inner`, which opens `BEGIN IMMEDIATE` and INSERTs into `op_log` + `blocks`. Because the read pool sets `PRAGMA query_only = ON`, the very first agent call to `journal_for_date` for a missing date fails with `SQLITE_READONLY`, surfaced to the agent as JSON-RPC `-32603`. The matching unit test passes only because it uses `init_pool` (single combined pool) instead of `init_pools`.
-- **Why it matters:** This is the only RO tool with a write side-effect, so it is also the only RO tool that is broken end-to-end in production. Even in the local-only deployment model, the first time the user enables MCP and asks Claude/Cursor for "today's journal" they will get a hard error every subsequent day they have no pre-existing page — i.e., immediately on first real use.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** High
-- **Recommendation:** Either expose `Materializer::write_pool()` and use it inside `handle_journal_for_date`, or add a writer-pool field to `ReadOnlyTools` populated from `pools.write.clone()` in `lib.rs`. Add an integration test that constructs `ReadOnlyTools` via `init_pools().read` and asserts `journal_for_date` succeeds for a fresh date.
-- **Pass-1 source:** 09/F1
-- **Status:** Open
-
-### M-83 — Windows RW server's accept loop hard-codes `MCP_RO_PIPE_PATH`
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/server.rs:680-700` (`serve_pipe`, in particular line 685), `src-tauri/src/mcp/mod.rs:152` (`MCP_RO_PIPE_PATH`), `src-tauri/src/mcp/mod.rs:194-197` (`MCP_RW_PIPE_PATH`, never used inside `serve_pipe`).
-- **What:** After accepting the first client on a Windows named pipe, `serve_pipe` recreates the next server instance with `ServerOptions::new().create(pipe_path)`, where `pipe_path` is hard-coded to `super::MCP_RO_PIPE_PATH`. The same `serve_pipe` is invoked from both RO and RW spawn paths, so once the RW server accepts its first connection it begins creating subsequent server instances on the **RO** pipe namespace instead of `MCP_RW_PIPE_PATH`.
-- **Why it matters:** Windows operators running RO + RW concurrently (FEAT-4h slice 2) collide on the second RW connection — at best it competes with the RO server, at worst the RW socket silently stops accepting. The bug is invisible in the existing test suite because all integration tests are gated `#[cfg(unix)]`.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** High (Windows-only; zero on Linux/macOS)
-- **Recommendation:** Thread the bound pipe path through `serve` / `serve_pipe` from `bind_socket` (e.g. capture it on the `SocketKind::Pipe` variant or pass as a sibling argument) instead of recovering it from a constant. Add a Windows-gated test that re-creates the pipe instance after the first hand-off.
-- **Pass-1 source:** 09/F3
-- **Status:** Open
 
 ### M-85 — `list_tags` / `list_property_defs` / `get_agenda` lack cursor pagination
 - **Domain:** MCP
@@ -2182,7 +2062,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (102 — expanded)
+## LOW findings (101 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2234,18 +2114,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Copy the `sqlx::query("PRAGMA optimize").execute(&pool).await?;` invocation into `init_pool` immediately after `sqlx::migrate!("./migrations").run(&pool).await?;`. No test changes needed; it's idempotent.
 - **Pass-1 source:** 01/F14
-- **Status:** Open
-
-### L-9 — `import.rs` YAML frontmatter terminator is `\n---` only — CRLF files keep their frontmatter as content
-- **Domain:** Core
-- **Location:** `src-tauri/src/import.rs:46-58`
-- **What:** The parser strips frontmatter by looking for `\n---` after a leading `---` prefix. `find("\n---")` does not match `\r\n---`. A markdown file that originated on Windows (or was saved by a cross-platform editor that writes CRLF) keeps its frontmatter intact in the imported blocks. The existing test `parse_yaml_frontmatter_unclosed_treated_as_content` documents the unclosed case but there is no CRLF-positive test.
-- **Why it matters:** Import is a documented user-facing feature (Logseq/Markdown). Frontmatter stripping that works on macOS/Linux but leaks YAML as content blocks on Windows imports is silently broken UX.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Normalize line endings up front in `parse_logseq_markdown`: `let normalized = content.replace("\r\n", "\n").replace('\t', "  ");`. Add a regression test with a CRLF fixture that matches `parse_yaml_frontmatter_stripped`.
-- **Pass-1 source:** 01/F15
 - **Status:** Open
 
 ### Materializer
