@@ -24,10 +24,113 @@ declare global {
 
 export const test = baseTest
 
+// ---------------------------------------------------------------------------
+// Console-error watcher (TEST-4).
+//
+// Every spec gets a `page.on('console', ...)` + `page.on('pageerror', ...)`
+// listener registered automatically by the global `beforeEach` below, and
+// the global `afterEach` asserts no errors leaked through. The smoke spec
+// pioneered the pattern; this lifts it to every spec for free so backend
+// failures, IPC handler crashes, error-boundary fall-throughs, and
+// unhandled rejections cannot pass silently in any E2E suite.
+//
+// Per-spec opt-out for tests that *deliberately* exercise error paths
+// (e.g. `error-scenarios.spec.ts` injects backend failures via the mock):
+//   - `getConsoleErrors(page)` returns the live captured array. The test
+//     may inspect it and then call `clearConsoleErrors(page)` before the
+//     global afterEach runs so the deliberate noise does not fail the
+//     suite.
+//
+// Whitelist patterns are deliberately conservative — favicon noise only.
+// New entries require a comment with a rationale.
+// ---------------------------------------------------------------------------
+
+/**
+ * Patterns the watcher silently drops. Each entry MUST cite *why* the noise
+ * is benign so the next session can re-evaluate. Adding to this list is the
+ * exception; fixing the source is the rule.
+ */
+const IGNORED_CONSOLE_ERROR_PATTERNS: RegExp[] = [
+  // Vite dev server does not serve `/favicon.ico`; chromium logs a 404 on
+  // every page load. Same filter as the original `smoke.spec.ts` listener.
+  /favicon/,
+  // Generic "Failed to load resource: the server responded with a status of
+  // 404 (Not Found)" wrapper that accompanies the favicon 404 above.
+  /Failed to load resource/,
+]
+
+const consoleErrorsByPage = new WeakMap<Page, string[]>()
+
+function isIgnoredConsoleError(text: string): boolean {
+  return IGNORED_CONSOLE_ERROR_PATTERNS.some((re) => re.test(text))
+}
+
+/**
+ * Register the per-page console + pageerror listeners. Called automatically
+ * by the global `beforeEach`; safe to call again (no-ops on the second call
+ * for the same page).
+ *
+ * Listeners are attached *before* any `page.goto()` in the test body so
+ * pre-load errors (e.g. early script-tag failures) are captured.
+ */
+export function registerConsoleErrorWatcher(page: Page): void {
+  if (consoleErrorsByPage.has(page)) return
+  const errors: string[] = []
+  consoleErrorsByPage.set(page, errors)
+
+  page.on('console', (msg) => {
+    if (msg.type() !== 'error') return
+    const text = msg.text()
+    if (isIgnoredConsoleError(text)) return
+    errors.push(text)
+  })
+
+  page.on('pageerror', (err) => {
+    const text = `pageerror: ${err.message}`
+    if (isIgnoredConsoleError(text)) return
+    errors.push(text)
+  })
+}
+
+/**
+ * Get the live array of console errors captured for this page. Mutating
+ * the returned array (e.g. `.length = 0`) clears the buffer for the
+ * global afterEach assertion.
+ */
+export function getConsoleErrors(page: Page): string[] {
+  return consoleErrorsByPage.get(page) ?? []
+}
+
+/** Clear the captured-errors buffer for this page. */
+export function clearConsoleErrors(page: Page): void {
+  const errors = consoleErrorsByPage.get(page)
+  if (errors) errors.length = 0
+}
+
+/**
+ * Assert no unexpected console errors were captured. Invoked automatically
+ * by the global afterEach below.
+ */
+export function expectNoConsoleErrors(page: Page): void {
+  const errors = consoleErrorsByPage.get(page) ?? []
+  expect(
+    errors,
+    `Unexpected console errors captured during test:\n  - ${errors.join('\n  - ')}`,
+  ).toEqual([])
+}
+
 test.beforeEach(async ({ page }) => {
+  // Register the console-error watcher BEFORE any page activity so the
+  // mock-reset evaluate (and any subsequent goto in the test body) are
+  // covered.
+  registerConsoleErrorWatcher(page)
   // Best-effort: the page may or may not have navigated yet. When it has,
   // this re-seeds the mock. When it hasn't, the optional chain no-ops.
   await page.evaluate(() => window.__resetTauriMock__?.()).catch(() => {})
+})
+
+test.afterEach(({ page }) => {
+  expectNoConsoleErrors(page)
 })
 
 export { expect }

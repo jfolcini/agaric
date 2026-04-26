@@ -41,6 +41,7 @@ export function HistorySelectionToolbar({
     <BatchActionToolbar
       selectedCount={selectedCount}
       className="history-selection-toolbar gap-3 p-3"
+      suppressRangeSelectHint
     >
       <Button
         variant="outline"

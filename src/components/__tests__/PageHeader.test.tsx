@@ -46,7 +46,7 @@ vi.mock('lucide-react', () => ({
   CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
   CheckCircle2: () => <svg data-testid="check-circle2-icon" />,
   ChevronDown: () => <svg data-testid="chevron-down" />,
-  ChevronRight: () => <svg data-testid="chevron-right" />,
+  ChevronRight: (props: Record<string, unknown>) => <svg data-testid="chevron-right" {...props} />,
   Clock: () => <svg data-testid="clock-icon" />,
   Download: () => <svg data-testid="download-icon" />,
   ExternalLink: () => <svg data-testid="external-link-icon" />,
@@ -873,7 +873,7 @@ describe('PageHeader page-level undo/redo buttons', () => {
   })
 })
 
-// ── Breadcrumb navigation for namespaced pages ────────────────────────────
+// ── Breadcrumb navigation for namespaced pages (UX-257) ──────────────────
 
 describe('PageHeader breadcrumb', () => {
   it('shows breadcrumb for namespaced page title', () => {
@@ -891,6 +891,26 @@ describe('PageHeader breadcrumb', () => {
     const buttons = nav.querySelectorAll('button')
     const buttonTexts = Array.from(buttons).map((b) => b.textContent)
     expect(buttonTexts).not.toContain('tasks')
+  })
+
+  // UX-257 — slashes are replaced with the canonical chevron separator from
+  // the shared Breadcrumb primitive. Verify the chevron is present and no
+  // visible `/` glyph remains in the bar.
+  it('uses chevron separators between segments (not slashes)', () => {
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="work/project-alpha/tasks" />)
+    const nav = screen.getByRole('navigation', { name: /page breadcrumb/i })
+
+    const seps = nav.querySelectorAll('[data-slot="breadcrumb-separator"]')
+    // 3 segments → 2 separators (no home in PageHeader)
+    expect(seps.length).toBe(2)
+
+    // Each separator is the mocked ChevronRight stub (svg with the testid).
+    for (const sep of seps) {
+      expect(sep.getAttribute('data-testid')).toBe('chevron-right')
+    }
+
+    // The bar must not render `/` as a visible separator.
+    expect(nav.textContent ?? '').not.toContain('/')
   })
 
   it('does not show breadcrumb for flat page title', () => {
@@ -914,10 +934,13 @@ describe('PageHeader breadcrumb', () => {
       <PageHeader pageId="PAGE_1" title="work/project-alpha/tasks" onBack={() => {}} />,
     )
 
-    await waitFor(async () => {
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
-    })
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
   })
 })
 

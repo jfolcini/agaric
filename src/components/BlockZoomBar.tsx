@@ -1,26 +1,24 @@
 /**
  * BlockZoomBar — breadcrumb navigation bar for zoomed block view.
  *
- * Renders a clickable breadcrumb trail: Home > Ancestor > ... > Current.
- * Extracted from BlockTree's inline breadcrumb JSX.
+ * Renders a clickable breadcrumb trail: Home › Ancestor › … › Current.
+ * Thin data adapter over the `Breadcrumb` design-system primitive
+ * (`src/components/ui/breadcrumb.tsx`).
  *
- * Keyboard navigation (UX-215):
- * - ArrowLeft / ArrowRight move focus across breadcrumb buttons.
- * - Home / End jump to the first / last breadcrumb (including the Home button).
- * - The container is `role="toolbar"` so AT announces the grouping.
- * - The last breadcrumb carries `aria-current="location"` to indicate the
- *   current zoom level.
+ * Per UX-257, breadcrumb crumbs render plain stripped-text labels — never
+ * inline `[[ULID]]` chips or rich content. Markdown markers are stripped and
+ * `[[id]]` / `((id))` references are resolved via `useRichContentCallbacks`
+ * (with a truncated-id fallback when the resolve cache is cold).
+ *
+ * Keyboard navigation (UX-215) and overflow handling live in the primitive.
  */
 
-import { ChevronRight, Home } from 'lucide-react'
 import type React from 'react'
-import { Fragment, useCallback, useRef } from 'react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
 import type { BreadcrumbItem } from '../hooks/useBlockZoom'
-import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
-import { cn } from '../lib/utils'
-import { renderRichContent } from './StaticBlock'
+import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 
 export interface BlockZoomBarProps {
   breadcrumbs: BreadcrumbItem[]
@@ -30,118 +28,78 @@ export interface BlockZoomBarProps {
   onZoomToRoot: () => void
 }
 
+/**
+ * Strip lightweight markdown markup from a block's raw content for display
+ * inside a breadcrumb. Resolves `[[id]]` / `((id))` references via
+ * `resolveBlockTitle` (cache hit) or falls back to a truncated-id
+ * placeholder. Strips `#`, `**`, `__`, `~~`, `==`, leading `>` markers so
+ * crumbs read as plain navigation chrome rather than rich content.
+ */
+function stripBreadcrumbMarkup(
+  raw: string,
+  resolveBlockTitle: (id: string) => string | undefined,
+): string {
+  let s = raw
+  // [[ULID]] block-link tokens
+  s = s.replace(/\[\[([^\]]+)\]\]/g, (_match, id: string) => {
+    const trimmed = id.trim()
+    const resolved = resolveBlockTitle(trimmed)
+    if (resolved) return resolved
+    return trimmed.length > 8 ? `${trimmed.slice(0, 8)}...` : trimmed
+  })
+  // ((ULID)) block-ref tokens
+  s = s.replace(/\(\(([^)]+)\)\)/g, (_match, id: string) => {
+    const trimmed = id.trim()
+    const resolved = resolveBlockTitle(trimmed)
+    if (resolved) return resolved
+    return trimmed.length > 8 ? `${trimmed.slice(0, 8)}...` : trimmed
+  })
+  // Leading blockquote / heading markers
+  s = s.replace(/^[\s>#]+/, '')
+  // Pair-wrapped marks: **bold**, __underline__, ~~strike~~, ==highlight==
+  s = s.replace(/(\*\*|__|~~|==)([\s\S]*?)\1/g, '$2')
+  return s.trim()
+}
+
 export function BlockZoomBar({
   breadcrumbs,
   onNavigate,
   onZoomToRoot,
 }: BlockZoomBarProps): React.ReactElement | null {
   const { t } = useTranslation()
-  const richCallbacks = useRichContentCallbacks()
-  const onTagClick = useTagClickHandler()
-  const toolbarRef = useRef<HTMLDivElement | null>(null)
+  const { resolveBlockTitle } = useRichContentCallbacks()
 
-  const focusIndex = useCallback((index: number) => {
-    const root = toolbarRef.current
-    if (!root) return
-    const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>('button[data-zoom-crumb]'))
-    if (buttons.length === 0) return
-    const clamped = Math.max(0, Math.min(buttons.length - 1, index))
-    buttons[clamped]?.focus()
-  }, [])
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLDivElement>) => {
-      const root = toolbarRef.current
-      if (!root) return
-      const buttons = Array.from(
-        root.querySelectorAll<HTMLButtonElement>('button[data-zoom-crumb]'),
-      )
-      if (buttons.length === 0) return
-      const active = document.activeElement as HTMLElement | null
-      const currentIndex = active ? buttons.indexOf(active as HTMLButtonElement) : -1
-      switch (e.key) {
-        case 'ArrowRight': {
-          e.preventDefault()
-          const next = currentIndex < 0 ? 0 : Math.min(buttons.length - 1, currentIndex + 1)
-          focusIndex(next)
-          break
-        }
-        case 'ArrowLeft': {
-          e.preventDefault()
-          const prev = currentIndex < 0 ? 0 : Math.max(0, currentIndex - 1)
-          focusIndex(prev)
-          break
-        }
-        case 'Home': {
-          e.preventDefault()
-          focusIndex(0)
-          break
-        }
-        case 'End': {
-          e.preventDefault()
-          focusIndex(buttons.length - 1)
-          break
-        }
-        default:
-          break
+  const items = useMemo<BreadcrumbCrumb[]>(() => {
+    return breadcrumbs.map((item, i) => {
+      const isLast = i === breadcrumbs.length - 1
+      const stripped = stripBreadcrumbMarkup(item.content, resolveBlockTitle)
+      const label = stripped.length > 0 ? stripped : t('block.untitled')
+      return {
+        id: item.id,
+        label,
+        ...(isLast ? {} : { onSelect: () => onNavigate(item.id) }),
+        testId: item.id,
+        // UX-215 callers historically targeted `data-zoom-crumb` for keyboard
+        // and a11y assertions; preserve it alongside the primitive's generic
+        // `data-breadcrumb-crumb` to avoid breaking those selectors.
+        dataAttributes: { 'data-zoom-crumb': item.id },
       }
-    },
-    [focusIndex],
-  )
+    })
+  }, [breadcrumbs, resolveBlockTitle, t, onNavigate])
 
   if (breadcrumbs.length === 0) return null
 
   return (
-    <ScrollArea className="border-b border-border/40">
-      <div
-        ref={toolbarRef}
-        role="toolbar"
-        aria-label={t('blockZoom.breadcrumbs')}
-        aria-orientation="horizontal"
-        onKeyDown={handleKeyDown}
-        className="flex items-center gap-1 px-2 py-1.5 text-sm text-muted-foreground"
-      >
-        <button
-          type="button"
-          data-zoom-crumb="home"
-          className="flex-shrink-0 hover:text-foreground transition-colors"
-          onClick={onZoomToRoot}
-          aria-label={t('block.zoomToRoot')}
-        >
-          <Home className="h-3.5 w-3.5" />
-        </button>
-        {breadcrumbs.map((item, i) => {
-          const isLast = i === breadcrumbs.length - 1
-          return (
-            <Fragment key={item.id}>
-              <ChevronRight className="h-3 w-3 flex-shrink-0 text-muted-foreground/50" />
-              <button
-                type="button"
-                data-zoom-crumb={item.id}
-                aria-current={isLast ? 'location' : undefined}
-                className={cn(
-                  'truncate max-w-[200px] hover:text-foreground transition-colors',
-                  isLast && 'text-foreground font-medium',
-                )}
-                onClick={() => (isLast ? undefined : onNavigate(item.id))}
-              >
-                {item.content
-                  ? renderRichContent(item.content, {
-                      // Breadcrumb is wrapped in `<button>`; keep chips inert
-                      // (no nested role=link / tabIndex) to avoid
-                      // nested-interactive. `onTagClick` is still threaded so
-                      // the gate can be flipped on later without a plumbing
-                      // pass. See UX-249 for the caller-audit rationale.
-                      interactive: false,
-                      onTagClick,
-                      ...richCallbacks,
-                    })
-                  : t('block.untitled')}
-              </button>
-            </Fragment>
-          )
-        })}
-      </div>
-    </ScrollArea>
+    <Breadcrumb
+      items={items}
+      ariaLabel={t('blockZoom.breadcrumbs')}
+      home={{
+        onClick: onZoomToRoot,
+        ariaLabel: t('block.zoomToRoot'),
+        testId: 'home',
+        dataAttributes: { 'data-zoom-crumb': 'home' },
+      }}
+      className="border-b border-border/40"
+    />
   )
 }

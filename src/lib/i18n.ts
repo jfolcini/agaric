@@ -826,6 +826,8 @@ const resources = {
       'shortcuts.syntaxSection': 'Syntax',
 
       // Keyboard shortcuts — sheet UI
+      // UX-260 sub-fix 7: link from KeyboardShortcuts sheet into Settings → Keyboard.
+      'keyboard.customizeButton': 'Customize shortcuts',
       'keyboard.sheetDescription':
         'Available keyboard shortcuts and syntax reference for the editor.',
       'keyboard.shortcutHeader': 'Shortcut',
@@ -1462,6 +1464,10 @@ const resources = {
       'status.importingMessage': 'Importing...',
 
       // Undo shortcuts
+      // UX-260 sub-fix 3: explanatory tip on the page-header undo tooltip so
+      // users understand which tier (page-op-log) the Ctrl+Z fires.
+      'undo.tipEditor': 'Inside an editor: undoes the current edit',
+      'undo.tipPage': 'Outside an editor: undoes the last page operation',
       'undo.undoneMessage': 'Undone',
       'undo.undoFailedMessage': 'Undo failed',
       'undo.redoneMessage': 'Redone',
@@ -2012,6 +2018,8 @@ const resources = {
 
       // UX-162: Batch actions
       'batch.selectedCount': '{{count}} selected',
+      // UX-260 sub-fix 4: shared range-select hint surfaced inside BatchActionToolbar.
+      'list.rangeSelectHint': 'Tip: Shift+click to select a range',
 
       // UX-162: Conflict announcements
       'conflict.resolvedAnnounce': 'Conflict resolved \u2014 kept incoming version',

@@ -6,6 +6,12 @@
  * passed as children.
  *
  * Used by HistorySelectionToolbar and ConflictBatchToolbar.
+ *
+ * UX-260 sub-fix 4: a desktop-only Shift+Click range-select hint is
+ * appended to the right of the toolbar, mirroring the
+ * HistorySelectionToolbar:63-65 pattern, so the gesture surfaces in
+ * every batch context (history, conflicts, trash). Hidden on touch
+ * via `hidden sm:inline` so we don't show a desktop-only affordance.
  */
 
 import type React from 'react'
@@ -21,6 +27,13 @@ export interface BatchActionToolbarProps {
   selectedCount: number
   children: React.ReactNode
   className?: string
+  /**
+   * Whether to suppress the Shift+Click range-select hint. Defaults to
+   * `false` (hint shown). Callers that already render their own hint
+   * (e.g., `TrashView` shipped one in session 483) pass `true` to avoid
+   * duplication.
+   */
+  suppressRangeSelectHint?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -31,6 +44,7 @@ export function BatchActionToolbar({
   selectedCount,
   children,
   className,
+  suppressRangeSelectHint,
 }: BatchActionToolbarProps): React.ReactElement {
   const { t } = useTranslation()
   return (
@@ -41,6 +55,14 @@ export function BatchActionToolbar({
     >
       <Badge variant="secondary">{t('batch.selectedCount', { count: selectedCount })}</Badge>
       {children}
+      {!suppressRangeSelectHint && (
+        <span
+          className="ml-auto hidden text-xs text-muted-foreground sm:inline"
+          data-testid="batch-range-select-hint"
+        >
+          {t('list.rangeSelectHint')}
+        </span>
+      )}
     </div>
   )
 }

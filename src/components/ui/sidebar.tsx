@@ -250,6 +250,19 @@ const SidebarProvider = ({
           )}
           {...props}
         >
+          {/*
+            UX-260 sub-fix 1: 3px coarse-pointer-only edge gradient hint that
+            tells touch users a sidebar lives behind the left edge.
+            `pointer:coarse` only — desktop layout unaffected. Hidden when
+            the sidebar is already open on mobile.
+          */}
+          {isMobile && !openMobile && (
+            <div
+              aria-hidden="true"
+              data-testid="sidebar-swipe-hint"
+              className="pointer-events-none fixed left-0 inset-y-0 z-40 hidden w-[3px] bg-foreground/10 [@media(pointer:coarse)]:block"
+            />
+          )}
           {children}
         </div>
       </TooltipProvider>

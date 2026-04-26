@@ -500,6 +500,7 @@ export function TrashView(): React.ReactElement {
         <BatchActionToolbar
           selectedCount={selected.size}
           className="trash-selection-toolbar gap-3 p-3"
+          suppressRangeSelectHint
         >
           <Button variant="outline" size="sm" onClick={selectAll}>
             {t('trash.selectAllButton')}

@@ -126,6 +126,51 @@ language = "system"
 pass_filenames = false
 types = ["markdown"]
 
+# axe-presence: every `src/components/__tests__/*.test.tsx` must include
+# at least one axe(...) audit, per src/__tests__/AGENTS.md:227. Without
+# this, accessibility regressions slip through component additions
+# because reviewers can't catch the missing audit by eye on every PR.
+# Easy half of MAINT-99.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "axe-presence"
+name = "axe-presence in component tests"
+entry = "bash scripts/check-axe-presence.sh"
+language = "system"
+pass_filenames = false
+files = "^src/components/__tests__/.*\\.test\\.tsx$"
+
+# test-file-naming: enforce the convention from src/__tests__/AGENTS.md:81
+# (Vitest → .test.ts/.test.tsx in src/, Playwright → .spec.ts in e2e/).
+# Mixing the suffixes silently routes a file to the wrong runner.
+# Rust tests are out of scope (rule is frontend-only). Easy half of MAINT-99.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "test-file-naming"
+name = "test file naming convention"
+entry = "bash scripts/check-test-file-naming.sh"
+language = "system"
+pass_filenames = false
+types_or = ["ts", "tsx"]
+
+# agents-md-count-tables: keep the "<N>+ tests" / "<N> files" claims
+# in AGENTS.md and src/__tests__/AGENTS.md within ±50% of reality.
+# Tolerance is intentionally loose — the docs use round numbers
+# ("7300+", not "7917") so equality checks would force doc churn on
+# every test add. ±50% catches the "doc says 100, actual is 1" class
+# of drift that MAINT-97 / MAINT-99 are aimed at. Easy half of MAINT-99.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "agents-md-count-tables"
+name = "AGENTS.md test-count drift"
+entry = "node scripts/check-agents-md-counts.mjs"
+language = "system"
+pass_filenames = false
+files = "(AGENTS\\.md$|\\.test\\.(ts|tsx)$|\\.spec\\.ts$|^src-tauri/src/.*\\.rs$)"
+
 # JS: better-npm-audit (security advisories)
 [[repos]]
 repo = "local"

@@ -1846,7 +1846,6 @@ describe('SearchPanel', () => {
       // DOM order: cjk-notice precedes filter-chip-bar.
       const position = cjk.compareDocumentPosition(chipBar)
       // DOCUMENT_POSITION_FOLLOWING (4) means chipBar follows cjk.
-      // biome-ignore lint/suspicious/noBitwiseOperators: standard DOM API
       expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
