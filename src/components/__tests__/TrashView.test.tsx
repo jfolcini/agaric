@@ -1384,7 +1384,7 @@ describe('TrashView', () => {
     await screen.findByText('root with kids')
 
     // Exactly one badge rendered — for R1 (count 3), not R2 (not in map).
-    const badges = await screen.findAllByTestId('trash-item-batch-count')
+    const badges = await screen.findAllByTestId('trash-descendant-badge')
     expect(badges).toHaveLength(1)
     expect(badges[0]).toHaveTextContent('+3 blocks')
   })
@@ -1400,7 +1400,7 @@ describe('TrashView', () => {
 
     render(<TrashView />)
 
-    const badge = await screen.findByTestId('trash-item-batch-count')
+    const badge = await screen.findByTestId('trash-descendant-badge')
     expect(badge).toHaveTextContent('+1 block')
   })
 
@@ -1416,7 +1416,7 @@ describe('TrashView', () => {
     render(<TrashView />)
 
     await screen.findByText('root')
-    expect(screen.queryByTestId('trash-item-batch-count')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('trash-descendant-badge')).not.toBeInTheDocument()
   })
 
   it('per-row restore fires with the root id when badge is visible', async () => {
@@ -1433,7 +1433,7 @@ describe('TrashView', () => {
     render(<TrashView />)
 
     // Badge is rendered; action target is still the root id.
-    await screen.findByTestId('trash-item-batch-count')
+    await screen.findByTestId('trash-descendant-badge')
     await user.click(screen.getByTestId('trash-restore-btn'))
 
     await waitFor(() => {
@@ -1457,7 +1457,7 @@ describe('TrashView', () => {
 
     // List still renders, no badge.
     await screen.findByText('root')
-    expect(screen.queryByTestId('trash-item-batch-count')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('trash-descendant-badge')).not.toBeInTheDocument()
   })
 })
 
@@ -1567,5 +1567,251 @@ describe('TrashView screen reader announcements (UX-282)', () => {
     await waitFor(() => {
       expect(mockedAnnounce).toHaveBeenCalledWith('Empty trash failed')
     })
+  })
+})
+
+// =========================================================================
+// UX-275 sub-fix 2/3/8: descendant badge stability, batch toolbar
+// keyboard shortcuts, and large-batch restore confirmation.
+// =========================================================================
+
+describe('TrashView UX-275 batch toolbar interaction', () => {
+  // -- sub-fix 2: badge testid + nowrap utility ----------------------------
+  it('descendant badge carries the stable testid and whitespace-nowrap', async () => {
+    const block = makeBlock('R1', 'root with kids', '2025-01-15T00:00:00Z')
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') return { R1: 4 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    const badge = await screen.findByTestId('trash-descendant-badge')
+    expect(badge).toHaveTextContent('+4 blocks')
+    // The defensive whitespace-nowrap utility is on the badge regardless of
+    // any future Badge variant changes.
+    expect(badge.className).toContain('whitespace-nowrap')
+  })
+
+  // -- sub-fix 3: keyboard shortcuts ---------------------------------------
+  it('Shift+R triggers batch restore (gated by the >5 confirm)', async () => {
+    const user = userEvent.setup()
+    const blocks = [
+      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+    ]
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') return {}
+      if (cmd === 'restore_block') return { block_id: 'XX', restored_count: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 1')
+
+    // Select both items via the row checkboxes.
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
+
+    // The keydown handler ignores events while focus is in an INPUT — move
+    // focus to the document body to mimic the user releasing the checkbox.
+    ;(document.activeElement as HTMLElement)?.blur()
+
+    // Selection ≤ 5 → Shift+R restores immediately, no confirmation dialog.
+    await user.keyboard('{Shift>}R{/Shift}')
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'restore_block',
+        expect.objectContaining({ blockId: 'B1' }),
+      )
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'restore_block',
+        expect.objectContaining({ blockId: 'B2' }),
+      )
+    })
+  })
+
+  it('Shift+Delete opens the batch purge confirmation dialog', async () => {
+    const user = userEvent.setup()
+    const blocks = [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')]
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') return {}
+      return undefined
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 1')
+
+    await user.click(screen.getByTestId('trash-item-checkbox'))
+    ;(document.activeElement as HTMLElement)?.blur()
+
+    // Trigger the shortcut.
+    await user.keyboard('{Shift>}{Delete}{/Shift}')
+
+    // Batch purge confirmation should be visible.
+    expect(await screen.findByText(/Permanently delete 1 items?/i)).toBeInTheDocument()
+  })
+
+  it('toolbar shortcuts do nothing when nothing is selected', async () => {
+    const user = userEvent.setup()
+    const blocks = [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')]
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') return {}
+      if (cmd === 'restore_block') return { block_id: 'XX', restored_count: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 1')
+
+    await user.keyboard('{Shift>}R{/Shift}')
+    await user.keyboard('{Shift>}{Delete}{/Shift}')
+
+    // Neither shortcut should have produced a side-effect: no restore_block,
+    // no batch purge confirmation dialog mounted.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('restore_block', expect.anything())
+    expect(screen.queryByText(/Permanently delete \d+ items\?/i)).not.toBeInTheDocument()
+  })
+
+  it('aria-keyshortcuts are advertised on the batch action buttons', async () => {
+    const user = userEvent.setup()
+    const block = makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') return {}
+      return undefined
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 1')
+
+    await user.click(screen.getByTestId('trash-item-checkbox'))
+
+    expect(screen.getByTestId('trash-batch-restore-btn')).toHaveAttribute(
+      'aria-keyshortcuts',
+      'Shift+R',
+    )
+    expect(screen.getByTestId('trash-batch-purge-btn')).toHaveAttribute(
+      'aria-keyshortcuts',
+      'Shift+Delete',
+    )
+  })
+
+  // -- sub-fix 8: large-batch restore confirmation -------------------------
+  it('large batch restore (>5) opens a confirmation dialog before restoring', async () => {
+    const user = userEvent.setup()
+    const blocks = Array.from({ length: 6 }, (_, i) =>
+      makeBlock(`B${i}`, `item ${i}`, '2025-01-15T00:00:00Z'),
+    )
+    let restoreCalls = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') return {}
+      if (cmd === 'restore_block') {
+        restoreCalls++
+        return { block_id: 'XX', restored_count: 1 }
+      }
+      return undefined
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 0')
+
+    // Click the first checkbox to mount the batch toolbar (Select all lives there).
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: /^Select all$/i }))
+
+    // Click Restore — this should open the confirmation dialog, NOT restore yet.
+    await user.click(screen.getByTestId('trash-batch-restore-btn'))
+
+    // Dialog open, no restore call yet.
+    expect(await screen.findByTestId('trash-batch-restore-confirm')).toBeInTheDocument()
+    expect(restoreCalls).toBe(0)
+
+    // Confirm — now the actual batch restore fires.
+    await user.click(screen.getByTestId('trash-batch-restore-yes'))
+
+    await waitFor(() => {
+      expect(restoreCalls).toBe(6)
+    })
+  })
+
+  it('small batch restore (<=5) skips the confirmation dialog', async () => {
+    const user = userEvent.setup()
+    const blocks = Array.from({ length: 3 }, (_, i) =>
+      makeBlock(`B${i}`, `item ${i}`, '2025-01-15T00:00:00Z'),
+    )
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') return {}
+      if (cmd === 'restore_block') return { block_id: 'XX', restored_count: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 0')
+
+    // Select all 3 items.
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    for (const cb of checkboxes) {
+      await user.click(cb as HTMLElement)
+    }
+
+    // Click Restore — should fire immediately (no confirmation dialog).
+    await user.click(screen.getByTestId('trash-batch-restore-btn'))
+
+    expect(screen.queryByTestId('trash-batch-restore-confirm')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'restore_block',
+        expect.objectContaining({ blockId: 'B0' }),
+      )
+    })
+  })
+
+  it('cancelling the large-batch restore dialog leaves selection untouched', async () => {
+    const user = userEvent.setup()
+    const blocks = Array.from({ length: 6 }, (_, i) =>
+      makeBlock(`B${i}`, `item ${i}`, '2025-01-15T00:00:00Z'),
+    )
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') return {}
+      if (cmd === 'restore_block') return { block_id: 'XX', restored_count: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 0')
+
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: /^Select all$/i }))
+
+    await user.click(screen.getByTestId('trash-batch-restore-btn'))
+    expect(await screen.findByTestId('trash-batch-restore-confirm')).toBeInTheDocument()
+
+    // Cancel.
+    await user.click(screen.getByTestId('trash-batch-restore-no'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('trash-batch-restore-confirm')).not.toBeInTheDocument()
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('restore_block', expect.anything())
   })
 })

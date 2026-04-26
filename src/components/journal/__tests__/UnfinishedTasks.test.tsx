@@ -422,6 +422,136 @@ describe('UnfinishedTasks', () => {
     expect(within(olderGroup).getByText('Older task')).toBeInTheDocument()
   })
 
+  // UX-274: per-group collapse state persists to localStorage
+  describe('per-group collapse persistence', () => {
+    const STORAGE_KEY = 'agaric:unfinishedTasks.groupCollapsed'
+
+    it('writes per-group collapse state to localStorage on toggle', async () => {
+      const user = userEvent.setup()
+      const blocks = [makeYesterdayBlock(), makeOlderBlock()]
+      mockInvokeForBlocks(blocks)
+
+      render(<UnfinishedTasks />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+
+      // Expand main section
+      await user.click(screen.getByRole('button', { expanded: false }))
+
+      // Collapse the yesterday group
+      const yesterdayGroup = screen.getByTestId('unfinished-group-yesterday')
+      const yesterdayHeader = within(yesterdayGroup).getByRole('button', { expanded: true })
+      await user.click(yesterdayHeader)
+
+      // Storage now has the per-group state
+      const stored = localStorage.getItem(STORAGE_KEY)
+      expect(stored).not.toBeNull()
+      const parsed = JSON.parse(stored as string)
+      expect(parsed).toEqual({ yesterday: true })
+    })
+
+    it('round-trip: state survives an unmount + remount', async () => {
+      const user = userEvent.setup()
+      const blocks = [makeYesterdayBlock(), makeOlderBlock()]
+      mockInvokeForBlocks(blocks)
+
+      // Pre-seed the main-section storage to "expanded" so the second mount
+      // skips the expand click and exposes only the per-group state we care
+      // about. (`writeGroupCollapsedState` is the unit under test here.)
+      localStorage.setItem('unfinishedTasks.collapsed', 'false')
+
+      const { unmount } = render(<UnfinishedTasks />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+
+      // Section is already expanded — collapse the yesterday group directly.
+      const yesterdayGroup = screen.getByTestId('unfinished-group-yesterday')
+      const yesterdayHeader = within(yesterdayGroup).getByRole('button', { expanded: true })
+      await user.click(yesterdayHeader)
+
+      // Storage round-trip check
+      const stored = localStorage.getItem(STORAGE_KEY)
+      expect(stored).not.toBeNull()
+      expect(JSON.parse(stored as string)).toEqual({ yesterday: true })
+
+      // Unmount + re-mount fresh (the new render re-reads localStorage).
+      unmount()
+      mockInvokeForBlocks(blocks)
+      render(<UnfinishedTasks />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+
+      // Yesterday should be collapsed (expanded=false), older expanded.
+      const yesterdayGroupB = screen.getByTestId('unfinished-group-yesterday')
+      const olderGroupB = screen.getByTestId('unfinished-group-older')
+      expect(within(yesterdayGroupB).getByRole('button', { expanded: false })).toBeInTheDocument()
+      expect(within(olderGroupB).getByRole('button', { expanded: true })).toBeInTheDocument()
+    })
+
+    it('tolerates corrupted JSON without crashing', async () => {
+      localStorage.setItem(STORAGE_KEY, '{not-json')
+      mockInvokeForBlocks([makeYesterdayBlock()])
+
+      render(<UnfinishedTasks />)
+
+      // Should still render normally (default groupCollapsed = {})
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+    })
+
+    it('tolerates a non-object stored value', async () => {
+      localStorage.setItem(STORAGE_KEY, '"not-an-object"')
+      mockInvokeForBlocks([makeYesterdayBlock()])
+
+      render(<UnfinishedTasks />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+    })
+
+    it('drops non-boolean values from stored JSON', async () => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ yesterday: true, thisWeek: 'collapsed', older: false }),
+      )
+      const user = userEvent.setup()
+      mockInvokeForBlocks([makeYesterdayBlock(), makeThisWeekBlock(), makeOlderBlock()])
+
+      render(<UnfinishedTasks />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole('button', { expanded: false }))
+
+      // yesterday => true (collapsed), thisWeek => dropped (default expanded), older => false (expanded)
+      expect(
+        within(screen.getByTestId('unfinished-group-yesterday')).getByRole('button', {
+          expanded: false,
+        }),
+      ).toBeInTheDocument()
+      expect(
+        within(screen.getByTestId('unfinished-group-thisWeek')).getByRole('button', {
+          expanded: true,
+        }),
+      ).toBeInTheDocument()
+      expect(
+        within(screen.getByTestId('unfinished-group-older')).getByRole('button', {
+          expanded: true,
+        }),
+      ).toBeInTheDocument()
+    })
+  })
+
   // --- Error paths ---
   describe('error paths', () => {
     it('queryByProperty rejects — shows empty state', async () => {

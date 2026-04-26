@@ -281,10 +281,13 @@ const resources = {
       'contextMenu.copyUrlFailed': 'Failed to copy URL',
 
       // Block
+      'block.actionsSheetDescription': 'Choose an action to perform on this block.',
+      'block.actionsSheetTitle': 'Block actions',
       'block.reorder': 'Reorder block (drag or use keyboard)',
       'block.reorderTip': 'Reorder (drag or keyboard)',
       'block.delete': 'Delete block',
       'block.history': 'Block history',
+      'block.moreActionsLabel': 'More block actions',
       'block.collapseChildren': 'Collapse children',
       'block.expandChildren': 'Expand children',
       'block.collapseTip': 'Collapse (Ctrl+.)',
@@ -691,6 +694,8 @@ const resources = {
       'queryBuilder.tagPrefixPlaceholder': 'e.g. work, project/active',
       'queryBuilder.propertyKey': 'Property key',
       'queryBuilder.propertyKeyPlaceholder': 'e.g. priority, due_date',
+      'queryBuilder.propertyKeyUnknown':
+        '"{{key}}" is not yet defined on this device. The query will still run; matches appear once the property exists.',
       'queryBuilder.propertyOperator': 'Operator',
       'queryBuilder.propertyValue': 'Value',
       'queryBuilder.propertyValuePlaceholder': 'e.g. 1, 2025-04-01',
@@ -1042,6 +1047,12 @@ const resources = {
       'conflict.diffShowMore_other': 'Show full diff ({{count}} hidden)',
       'conflict.diffCollapse': 'Collapse diff',
 
+      // Diff — hunk navigation (UX-275 sub-fix 1)
+      'diff.hunkCounter': '{{current}} of {{total}} changes',
+      'diff.nextHunk': 'Next change',
+      'diff.prevHunk': 'Previous change',
+      'diff.regionLabel': 'Diff content',
+
       // Device (UX-120)
       'device.thisDevice': 'This device',
       'device.unpairConfirmTitle': 'Unpair device?',
@@ -1281,9 +1292,13 @@ const resources = {
       'trash.deletedPage': '(deleted page)',
       'trash.batchRestored': '{{count}} blocks restored',
       'trash.batchPurged': '{{count}} blocks permanently deleted',
-      'trash.batchPurgeTitle': 'Permanently delete {{count}} items?',
       'trash.batchPurgeDescription':
         'This action cannot be undone. {{count}} blocks will be permanently deleted.',
+      'trash.batchPurgeTitle': 'Permanently delete {{count}} items?',
+      // UX-275 sub-fix 8: bulk restore confirmation copy
+      'trash.batchRestoreConfirmDescription':
+        '{{count}} blocks (and any descendants soft-deleted with them) will be restored to their original locations.',
+      'trash.batchRestoreConfirmTitle': 'Restore {{count}} items?',
       'trash.regionLabel': 'Trash',
       'trash.filterPlaceholder': 'Filter deleted items (root content)...',
       'trash.showingCount': 'Showing {{filtered}} of {{total}} deleted items',
@@ -1325,6 +1340,7 @@ const resources = {
       'duePanel.scheduledHideFutureButton': 'Scheduled: hide future',
       'duePanel.scheduledShowAllButton': 'Scheduled: show all',
       'duePanel.overdueTitle': 'Overdue',
+      'duePanel.projectedListLabel': 'Projected entries',
       'duePanel.upcomingTitle': 'Upcoming',
 
       // QR scanner
@@ -1546,10 +1562,23 @@ const resources = {
       'device.deviceNameLabel': 'Device name',
 
       // History toasts + aria-labels
+      // UX-275 sub-fix 7: categorised error banner copy.
+      'history.errorNetwork':
+        'A connection problem prevented the history from loading. Check your network and retry.',
+      'history.errorServer':
+        'The local backend returned an error while fetching history. Retry, or restart the app if it persists.',
+      'history.errorUnknown':
+        'Something unexpected went wrong while loading history. Retry, and check the logs if the problem persists.',
       'history.loadFailed': 'Failed to load history',
       'history.revertFailed': 'Failed to revert operations',
+      // UX-275 sub-fix 4: undo of a restore action.
+      'history.restoreUndoFailed': 'Could not undo the restore',
+      'history.restoreUndone': 'Restore undone',
       'history.restoreToHereLabel': 'Restore to this point',
       'history.restoreToHereTooltip': 'Revert all operations after this point',
+      // UX-275 sub-fix 6: visible label rendered next to the icon on
+      // pointer:coarse devices where tooltips don't fire.
+      'history.restoreToHereTouchLabel': 'Restore',
       'history.restoreToTitle': 'Restore to {{timestamp}}?',
       'history.restoreToDescription':
         'All operations after this point will be reverted. Non-reversible operations (purge) will be skipped. This action itself can be undone, and the original operations remain in history.',
@@ -2048,8 +2077,12 @@ const resources = {
       'bugReport.redactLabel': 'Redact file paths and device ID',
       'bugReport.redactHint':
         'Replaces your home directory with ~ and blanks the device ID in every log line.',
-      'bugReport.previewTitle': 'Preview',
+      'bugReport.previewError': 'Failed to read log for preview',
       'bugReport.previewHint': 'This is exactly what will be placed in the GitHub issue body.',
+      'bugReport.previewLabel': 'Preview {{filename}}',
+      'bugReport.previewLoading': 'Loading preview…',
+      'bugReport.previewTitle': 'Preview',
+      'bugReport.previewTruncated': 'Showing first {{shown}} of {{total}} bytes…',
       'bugReport.logsListTitle': 'Log files included in the ZIP',
       'bugReport.logsListEmpty': 'No log files to include.',
       'bugReport.logsSize': '{{size}} bytes',

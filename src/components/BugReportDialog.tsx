@@ -20,6 +20,7 @@
  * `logger.warn` per AGENTS.md's "no silent catch" rule.
  */
 
+import { Eye } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -49,6 +50,10 @@ import { logger } from '@/lib/logger'
 import { openUrl } from '@/lib/open-url'
 import type { BugReport, LogFileEntry } from '@/lib/tauri'
 import { collectBugReportMetadata, readLogsForReport } from '@/lib/tauri'
+import { cn } from '@/lib/utils'
+
+/** Maximum chars rendered in the per-log preview sub-dialog. */
+const PREVIEW_MAX_CHARS = 500
 
 interface BugReportDialogProps {
   open: boolean
@@ -81,6 +86,17 @@ export function BugReportDialog({
   const [loadingLogs, setLoadingLogs] = useState<boolean>(false)
   const [submitting, setSubmitting] = useState<boolean>(false)
 
+  // Per-log preview sub-dialog state. UX-277: lets the user inspect log
+  // contents before the report leaves the device. Falls back to a fresh
+  // `readLogsForReport(redact)` call per click so loading + error UX is
+  // observable; H-9c (`bug_report_preview` IPC) will eventually replace
+  // this with a server-rendered redacted bundle.
+  const [previewOpen, setPreviewOpen] = useState<boolean>(false)
+  const [previewFilename, setPreviewFilename] = useState<string | null>(null)
+  const [previewContents, setPreviewContents] = useState<string | null>(null)
+  const [previewLoading, setPreviewLoading] = useState<boolean>(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+
   // Reset form when re-opening, and load metadata lazily on open.
   useEffect(() => {
     if (!open) return
@@ -90,6 +106,11 @@ export function BugReportDialog({
     setRedact(true)
     setConfirmed(false)
     setLogs([])
+    setPreviewOpen(false)
+    setPreviewFilename(null)
+    setPreviewContents(null)
+    setPreviewError(null)
+    setPreviewLoading(false)
 
     setLoadingMetadata(true)
     collectBugReportMetadata()
@@ -192,6 +213,40 @@ export function BugReportDialog({
       setSubmitting(false)
     }
   }, [submitting, includeLogs, metadata, redact, zipFileName, issueUrl, onOpenChange, t])
+
+  const handleOpenPreview = useCallback(
+    async (filename: string) => {
+      setPreviewFilename(filename)
+      setPreviewContents(null)
+      setPreviewError(null)
+      setPreviewLoading(true)
+      setPreviewOpen(true)
+      try {
+        const entries = await readLogsForReport(redact)
+        const entry = entries.find((e) => e.name === filename)
+        if (entry == null) {
+          throw new Error(`log entry not found: ${filename}`)
+        }
+        setPreviewContents(entry.contents)
+      } catch (err) {
+        logger.error(MODULE, 'failed to read log for preview', { filename, redact }, err)
+        setPreviewError(t('bugReport.previewError'))
+      } finally {
+        setPreviewLoading(false)
+      }
+    },
+    [redact, t],
+  )
+
+  const handlePreviewOpenChange = useCallback((next: boolean) => {
+    setPreviewOpen(next)
+    if (!next) {
+      setPreviewFilename(null)
+      setPreviewContents(null)
+      setPreviewError(null)
+      setPreviewLoading(false)
+    }
+  }, [])
 
   const logsSectionId = 'bug-report-logs-list'
   const previewSectionId = 'bug-report-preview'
@@ -305,10 +360,20 @@ export function BugReportDialog({
                   {!loadingLogs &&
                     logs.map((entry) => (
                       <li key={entry.name} className="flex items-center justify-between gap-3">
-                        <span className="font-mono break-all">{entry.name}</span>
+                        <span className="font-mono break-all flex-1 min-w-0">{entry.name}</span>
                         <span className="text-muted-foreground shrink-0">
                           {t('bugReport.logsSize', { size: entry.contents.length })}
                         </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={t('bugReport.previewLabel', { filename: entry.name })}
+                          onClick={() => {
+                            void handleOpenPreview(entry.name)
+                          }}
+                        >
+                          <Eye />
+                        </Button>
                       </li>
                     ))}
                 </ul>
@@ -355,6 +420,77 @@ export function BugReportDialog({
             {t('bugReport.openIssue')}
           </Button>
         </DialogFooter>
+
+        {/* UX-277: per-log preview sub-dialog. Radix portals this to
+            document.body so it stacks correctly above the parent dialog. */}
+        <Dialog open={previewOpen} onOpenChange={handlePreviewOpenChange}>
+          <DialogContent
+            className="max-w-2xl"
+            data-testid="bug-report-log-preview"
+            aria-busy={previewLoading}
+          >
+            <DialogHeader>
+              <DialogTitle>{t('bugReport.previewTitle')}</DialogTitle>
+              {previewFilename != null && (
+                <DialogDescription className="font-mono break-all">
+                  {previewFilename}
+                </DialogDescription>
+              )}
+            </DialogHeader>
+
+            {previewLoading && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="flex items-center gap-2 text-sm text-muted-foreground"
+              >
+                <Spinner />
+                <span>{t('bugReport.previewLoading')}</span>
+              </div>
+            )}
+
+            {!previewLoading && previewError != null && (
+              <p role="alert" className="text-sm text-destructive">
+                {previewError}
+              </p>
+            )}
+
+            {!previewLoading && previewError == null && previewContents != null && (
+              <div className="space-y-2">
+                <ScrollArea
+                  className={cn('max-h-96 rounded-md border bg-muted/30')}
+                  viewportClassName="p-3"
+                >
+                  <pre
+                    data-testid="bug-report-log-preview-content"
+                    className="text-xs leading-5 whitespace-pre-wrap break-words font-mono"
+                  >
+                    {previewContents.slice(0, PREVIEW_MAX_CHARS)}
+                  </pre>
+                </ScrollArea>
+                {previewContents.length > PREVIEW_MAX_CHARS && (
+                  <p className="text-xs text-muted-foreground">
+                    {t('bugReport.previewTruncated', {
+                      shown: PREVIEW_MAX_CHARS,
+                      total: previewContents.length,
+                    })}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  handlePreviewOpenChange(false)
+                }}
+              >
+                {t('bugReport.cancel')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </DialogContent>
     </Dialog>
   )

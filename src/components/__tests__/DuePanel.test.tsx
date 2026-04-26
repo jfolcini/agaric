@@ -801,6 +801,97 @@ describe('DuePanel', () => {
       })
     })
 
+    // UX-274: keyboard nav threads projected entries into the flat-items array
+    it('keyboard nav reaches projected entries via ArrowDown', async () => {
+      // 2 real (TODO) + 1 projected → flat-items length 3.
+      // focusedIndex starts at 0. ArrowDown ArrowDown lands on index 2 (projected).
+      mockedListBlocks.mockResolvedValue({
+        items: [
+          makeBlock({
+            id: 'R1',
+            content: 'Real task one',
+            todo_state: 'TODO',
+            parent_id: 'PAGE_R1',
+            page_id: 'PAGE_R1',
+          }),
+          makeBlock({
+            id: 'R2',
+            content: 'Real task two',
+            todo_state: 'TODO',
+            parent_id: 'PAGE_R2',
+            page_id: 'PAGE_R2',
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+      mockedListProjectedAgenda.mockResolvedValue([
+        {
+          block: makeBlock({
+            id: 'PROJ_KB',
+            content: 'Projected nav target',
+            parent_id: 'PAGE2',
+            page_id: 'PAGE2',
+            todo_state: 'TODO',
+            due_date: '2026-04-13',
+          }),
+          projected_date: '2026-04-13',
+          source: 'due_date',
+        },
+      ])
+      mockedBatchResolve.mockResolvedValue([
+        { id: 'PAGE2', title: 'Projected Page', block_type: 'page', deleted: false },
+      ])
+
+      const onNavigate = vi.fn()
+      const user = userEvent.setup()
+      render(<DuePanel date="2026-04-13" onNavigateToPage={onNavigate} />)
+
+      // Wait for real + projected items to render
+      await screen.findByText('Real task one')
+      await screen.findByText(/Projected nav target/)
+
+      // Projected entry has data-block-list-item so the scroll-into-view loop sees it
+      const projectedItem = screen.getByTestId('projected-entry')
+      expect(projectedItem.hasAttribute('data-block-list-item')).toBe(true)
+
+      // The keyboard nav container is the .due-panel-content div with tabIndex=0
+      const navContainer = document.querySelector('.due-panel-content') as HTMLElement
+      expect(navContainer).toBeInTheDocument()
+      navContainer.focus()
+
+      // flat-items order: [R1 (0), R2 (1), PROJ_KB (2)]. focusedIndex=0 initially.
+      // ArrowDown → 1, ArrowDown → 2 (projected), Enter selects.
+      await user.keyboard('{ArrowDown}{ArrowDown}{Enter}')
+
+      expect(onNavigate).toHaveBeenCalledWith('PAGE2', 'Projected Page', 'PROJ_KB')
+    })
+
+    it('focused projected entry receives focus ring class', async () => {
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedListProjectedAgenda.mockResolvedValue([
+        {
+          block: makeBlock({
+            id: 'PROJ_FOCUS',
+            content: 'Focus target',
+            parent_id: 'PAGE_F',
+            page_id: 'PAGE_F',
+            todo_state: 'TODO',
+            due_date: '2026-04-13',
+          }),
+          projected_date: '2026-04-13',
+          source: 'due_date',
+        },
+      ])
+
+      render(<DuePanel date="2026-04-13" />)
+      await screen.findByText(/Focus target/)
+
+      // The single projected entry should be focused (index 0) by default
+      const li = screen.getByTestId('projected-entry')
+      expect(li.className).toContain('ring-2')
+    })
+
     it('projected entries are deduplicated against real blocks', async () => {
       // Real block B1 appears in normal agenda
       mockedListBlocks.mockResolvedValue({

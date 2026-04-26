@@ -7,6 +7,26 @@
  *
  * Coexists with dnd-kit (which handles same-page block reordering) because
  * this uses native HTML5 drag/drop events, not dnd-kit's pointer system.
+ *
+ * ## Keyboard accessibility (UX-274)
+ *
+ * Drag-and-drop is intentionally pointer-only — keyboard users do **not**
+ * need to interact with this drop zone. The keyboard-equivalent path for
+ * rescheduling a task lives on the date chip itself:
+ *
+ *   1. Tab / arrow-navigate to the task's due-date chip
+ *      (`DateChip` → opens a Popover containing `DateChipEditor`).
+ *   2. The popover exposes:
+ *        - A natural-language `Input` (`today`, `+3d`, `Apr 15`, …)
+ *        - Quick-action `Button`s (Today, Tomorrow, Next Week, Clear)
+ *      All controls are reachable with Tab / Enter / Space.
+ *   3. Pressing Enter on the input or activating any quick action calls
+ *      `setDueDate` / `setScheduledDate` — the same backend command this
+ *      drop zone calls — and triggers a screen-reader announcement.
+ *
+ * The `biome-ignore` for `noStaticElementInteractions` below is therefore
+ * justified: the static `<div>` is a passive HTML5 drop surface, and the
+ * accessible reschedule path is fully covered by `DateChipEditor`.
  */
 
 import type React from 'react'

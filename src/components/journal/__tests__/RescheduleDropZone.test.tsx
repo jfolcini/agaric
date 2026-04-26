@@ -338,6 +338,20 @@ describe('RescheduleDropZone', () => {
     })
   })
 
+  // UX-274: keyboard-equivalent path is documented in the source JSDoc.
+  // Drag-only is OK because users can reschedule via DateChip → DateChipEditor.
+  // This guards against an accidental removal of the JSDoc that explains why
+  // the noStaticElementInteractions biome-ignore is justified.
+  it('source documents keyboard-equivalent reschedule path (UX-274)', async () => {
+    expect(typeof RescheduleDropZone).toBe('function')
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const sourcePath = path.resolve(process.cwd(), 'src/components/journal/RescheduleDropZone.tsx')
+    const source = fs.readFileSync(sourcePath, 'utf-8')
+    expect(source).toMatch(/DateChipEditor/)
+    expect(source).toMatch(/Keyboard accessibility/i)
+  })
+
   // UX-282: screen-reader announcement when reschedule fails
   it('announces reschedule failed when setDueDate rejects', async () => {
     mockSetDueDate.mockRejectedValueOnce(new Error('Network error'))

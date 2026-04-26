@@ -160,6 +160,16 @@ function drawNodes(g: GSel, simNodes: GraphNode[]): NodeSel {
   return node
 }
 
+/**
+ * Attach click + keyboard activation to graph nodes (UX-270).
+ *
+ * Each node `<g>` gets `tabindex="0"` + `role="button"` in `drawNodes`,
+ * so it joins the page's tab order as an activatable widget. This handler
+ * mirrors the native button activation contract: Enter and Space both
+ * navigate to the underlying page (with `preventDefault` on Space to
+ * suppress page-scroll). Click parity comes from the `click` listener so
+ * pointer + keyboard paths converge on `navigateToPage`.
+ */
 function attachNodeClickAndKeyboard(
   node: NodeSel,
   navigateToPage: (id: string, label: string) => void,

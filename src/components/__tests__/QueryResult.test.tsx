@@ -401,6 +401,77 @@ describe('QueryResult', () => {
     })
   })
 
+  // UX-274: error path renders a Retry button that re-fetches results
+  it('renders a Retry button alongside the error message', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') throw new Error('boom')
+      return {}
+    })
+
+    render(<QueryResult expression="type:tag expr:test" />)
+
+    const retryBtn = await screen.findByRole('button', { name: 'Retry' })
+    expect(retryBtn).toBeInTheDocument()
+    // Error region is announced as an alert
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+  })
+
+  it('Retry button re-invokes the query on click', async () => {
+    let callCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        callCount++
+        if (callCount === 1) throw new Error('first failure')
+        return {
+          items: [
+            {
+              id: 'B1',
+              block_type: 'content',
+              content: 'Recovered',
+              parent_id: null,
+              position: 1,
+              deleted_at: null,
+              is_conflict: false,
+              conflict_type: null,
+              todo_state: null,
+              priority: null,
+              due_date: null,
+              scheduled_date: null,
+              page_id: null,
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'batch_resolve') return []
+      return {}
+    })
+
+    const user = userEvent.setup()
+    render(<QueryResult expression="type:tag expr:test" />)
+
+    const retryBtn = await screen.findByRole('button', { name: 'Retry' })
+    await user.click(retryBtn)
+
+    expect(await screen.findByText(/Recovered/)).toBeInTheDocument()
+    expect(callCount).toBeGreaterThanOrEqual(2)
+  })
+
+  it('error region with Retry button has no a11y violations', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') throw new Error('boom')
+      return {}
+    })
+
+    const { container } = render(<QueryResult expression="type:tag expr:test" />)
+
+    await screen.findByRole('button', { name: 'Retry' })
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
   // PageLink breadcrumb navigation
   it('clicking page title in breadcrumb navigates to the page via PageLink', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {

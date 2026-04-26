@@ -25,6 +25,7 @@ import { BlockListItem } from '../BlockListItem'
 // ── Constants ──────────────────────────────────────────────────────────
 
 const STORAGE_KEY = 'unfinishedTasks.collapsed'
+const GROUP_STORAGE_KEY = 'agaric:unfinishedTasks.groupCollapsed'
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -114,6 +115,37 @@ function writeCollapsedState(collapsed: boolean): void {
   }
 }
 
+/**
+ * Read per-group collapsed state from localStorage. SSR-safe; returns an
+ * empty map if `localStorage` is unavailable or the stored JSON is corrupt.
+ */
+function readGroupCollapsedState(): Record<string, boolean> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const stored = window.localStorage.getItem(GROUP_STORAGE_KEY)
+    if (stored === null) return {}
+    const parsed = JSON.parse(stored) as unknown
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const result: Record<string, boolean> = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === 'boolean') result[key] = value
+    }
+    return result
+  } catch {
+    return {}
+  }
+}
+
+/** Persist per-group collapsed state to localStorage. */
+function writeGroupCollapsedState(state: Record<string, boolean>): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify(state))
+  } catch {
+    // Silently ignore storage errors
+  }
+}
+
 /** Merge two result pages and filter to unfinished tasks before today. */
 function mergeAndFilterUnfinished(items: BlockRow[], todayStr: string): BlockRow[] {
   const seen = new Set<string>()
@@ -158,7 +190,8 @@ export function UnfinishedTasks({
   const [collapsed, setCollapsed] = useState(readCollapsedState)
   const [blocks, setBlocks] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [groupCollapsed, setGroupCollapsed] = useState<Record<string, boolean>>({})
+  const [groupCollapsed, setGroupCollapsed] =
+    useState<Record<string, boolean>>(readGroupCollapsedState)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
 
   const todayStr = useMemo(() => getTodayString(), [])
@@ -220,7 +253,11 @@ export function UnfinishedTasks({
   }, [])
 
   const handleGroupToggle = useCallback((key: string) => {
-    setGroupCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
+    setGroupCollapsed((prev) => {
+      const next = { ...prev, [key]: !prev[key] }
+      writeGroupCollapsedState(next)
+      return next
+    })
   }, [])
 
   // Don't render anything while loading

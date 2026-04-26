@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { getTodayString } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
+import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useDuePanelData } from '../hooks/useDuePanelData'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
@@ -151,7 +152,17 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     return { state, label: state ? (groupLabels[state] ?? state) : t('duePanel.groupOther'), items }
   }).filter((g) => g.items.length > 0)
 
-  const flatItems = grouped.flatMap((g) => g.items)
+  // Deduplicate: exclude projected entries whose block already appears in real
+  // agenda. Computed once here so the result is shared by the keyboard nav
+  // flat-items array AND the rendered projected `<li>`s (UX-274).
+  const uniqueProjected = useMemo(() => {
+    const realBlockIds = new Set(blocks.map((b) => b.id))
+    return projectedEntries.filter((e) => !realBlockIds.has(e.block.id))
+  }, [blocks, projectedEntries])
+
+  // Flat-items array threads grouped blocks AND projected entries so arrow-key
+  // navigation can reach the projected `<li>` items at the bottom of the list.
+  const flatItems = [...grouped.flatMap((g) => g.items), ...uniqueProjected.map((e) => e.block)]
 
   const {
     focusedIndex,
@@ -327,23 +338,29 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                   </div>
                 ))}
 
-                {/* Projected future occurrences from repeating tasks */}
-                {(() => {
-                  // Deduplicate: exclude projected entries whose block already appears in real agenda
-                  const realBlockIds = new Set(blocks.map((b) => b.id))
-                  const uniqueProjected = projectedEntries.filter(
-                    (e) => !realBlockIds.has(e.block.id),
-                  )
-                  return uniqueProjected.length > 0 ? (
-                    <div className="mt-3 border-t border-dashed border-muted-foreground/30 pt-3">
-                      <p className="text-xs [@media(pointer:coarse)]:text-sm font-medium text-muted-foreground mb-2">
-                        {t('due.projected', { defaultValue: 'Projected' })}
-                      </p>
-                      <ul className="space-y-1">
-                        {uniqueProjected.map((entry) => (
+                {/* Projected future occurrences from repeating tasks.
+                    UX-274: each `<li>` is part of the keyboard-nav flat-items
+                    array so arrow keys reach projected entries at the tail. */}
+                {uniqueProjected.length > 0 && (
+                  <div className="mt-3 border-t border-dashed border-muted-foreground/30 pt-3">
+                    <p className="text-xs [@media(pointer:coarse)]:text-sm font-medium text-muted-foreground mb-2">
+                      {t('due.projected', { defaultValue: 'Projected' })}
+                    </p>
+                    <ul className="space-y-1" aria-label={t('duePanel.projectedListLabel')}>
+                      {uniqueProjected.map((entry) => {
+                        const currentFlatIndex = flatIndex++
+                        const projectedFocused = focusedIndex === currentFlatIndex
+                        return (
                           <li
                             key={`projected-${entry.block.id}-${entry.source}`}
-                            className="flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 active:bg-muted/70 transition-colors"
+                            data-block-list-item
+                            data-testid="projected-entry"
+                            // biome-ignore lint/a11y/noNoninteractiveTabindex: projected-entry needs to be a keyboard-nav target
+                            tabIndex={0}
+                            className={cn(
+                              'flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 active:bg-muted/70 transition-colors',
+                              projectedFocused && 'ring-2 ring-ring/50 bg-accent/30',
+                            )}
                             onClick={() => {
                               if (!entry.block.page_id || !onNavigateToPage) return
                               const title = pageTitles.get(entry.block.page_id) ?? ''
@@ -373,11 +390,11 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                               <PriorityBadge priority={entry.block.priority} />
                             )}
                           </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null
-                })()}
+                        )
+                      })}
+                    </ul>
+                  </div>
+                )}
 
                 {/* Load more */}
                 <LoadMoreButton

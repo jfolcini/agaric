@@ -22,6 +22,7 @@ import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { announce } from '../lib/announcer'
 import { formatTimestamp } from '../lib/format'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
+import { logger } from '../lib/logger'
 import type { HistoryEntry } from '../lib/tauri'
 import { listPageHistory, restorePageToOp, revertOps } from '../lib/tauri'
 import { CompactionCard } from './CompactionCard'
@@ -42,6 +43,54 @@ const NON_REVERSIBLE_OPS = new Set(['purge_block', 'delete_attachment'])
 /** Unique key for a history entry. */
 function entryKey(entry: HistoryEntry): string {
   return `${entry.device_id}:${entry.seq}`
+}
+
+/**
+ * UX-275 sub-fix 7: classify a load failure into a user-meaningful bucket
+ * so the error banner can show actionable context instead of a generic
+ * message. The detection is best-effort and falls back to `unknown`.
+ *
+ *  - `network` — fetch / connectivity / timeout / offline
+ *  - `server`  — backend error (HTTP 5xx, sqlx, IPC reject)
+ *  - `unknown` — anything else
+ */
+type HistoryErrorCategory = 'network' | 'server' | 'unknown'
+
+function categorizeHistoryError(err: unknown): HistoryErrorCategory {
+  if (err == null) return 'unknown'
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  // Inspect HTTP-shaped errors first ({ status: 5xx } or { code: '5xx...' })
+  if (typeof err === 'object' && err != null) {
+    const obj = err as { status?: number; code?: string | number }
+    if (typeof obj.status === 'number' && obj.status >= 500 && obj.status < 600) {
+      return 'server'
+    }
+    if (typeof obj.code === 'string' && /^5\d\d/.test(obj.code)) {
+      return 'server'
+    }
+  }
+  if (
+    msg.includes('fetch') ||
+    msg.includes('network') ||
+    msg.includes('timeout') ||
+    msg.includes('offline') ||
+    msg.includes('econnrefused') ||
+    msg.includes('etimedout')
+  ) {
+    return 'network'
+  }
+  if (
+    msg.includes('500') ||
+    msg.includes('502') ||
+    msg.includes('503') ||
+    msg.includes('504') ||
+    msg.includes('internal server') ||
+    msg.includes('database') ||
+    msg.includes('sqlx')
+  ) {
+    return 'server'
+  }
+  return 'unknown'
 }
 
 // ---------------------------------------------------------------------------
@@ -68,14 +117,32 @@ export function HistoryView(): React.ReactElement {
   useRegisterPrimaryFocus(listRef)
 
   // ── Data loading ─────────────────────────────────────────────────
+  // UX-275 sub-fix 7: track the categorised failure so the error banner can
+  // show network/server/unknown-specific copy alongside the generic title.
+  const [errorCategory, setErrorCategory] = useState<HistoryErrorCategory | null>(null)
   const queryFn = useCallback(
-    (cursor?: string) =>
-      listPageHistory({
-        pageId: '__all__',
-        ...(opTypeFilter != null && { opTypeFilter }),
-        ...(cursor != null && { cursor }),
-        limit: 50,
-      }),
+    async (cursor?: string) => {
+      try {
+        const result = await listPageHistory({
+          pageId: '__all__',
+          ...(opTypeFilter != null && { opTypeFilter }),
+          ...(cursor != null && { cursor }),
+          limit: 50,
+        })
+        setErrorCategory(null)
+        return result
+      } catch (err) {
+        const category = categorizeHistoryError(err)
+        setErrorCategory(category)
+        logger.error(
+          'HistoryView',
+          'Failed to load history page',
+          { category, opTypeFilter: opTypeFilter ?? null, cursor: cursor ?? null },
+          err,
+        )
+        throw err
+      }
+    },
     [opTypeFilter],
   )
   const {
@@ -313,13 +380,26 @@ export function HistoryView(): React.ReactElement {
         <LoadingSkeleton count={3} height="h-16" className="history-view-loading" />
       )}
 
-      {/* Error banner */}
+      {/* Error banner.
+          UX-275 sub-fix 7: keep the existing `history.loadFailed` heading
+          (so screen-readers and existing tests still see it) and append a
+          category-specific detail line so users get actionable context. */}
       {error && (
         <div
-          className="history-error flex items-center justify-between rounded-lg border border-destructive/50 bg-destructive/5 p-4"
+          className="history-error flex items-start justify-between gap-3 rounded-lg border border-destructive/50 bg-destructive/5 p-4"
           role="alert"
+          data-error-category={errorCategory ?? 'unknown'}
         >
-          <p className="text-sm text-destructive">{error}</p>
+          <div className="flex flex-col gap-1">
+            <p className="text-sm font-medium text-destructive">{error}</p>
+            <p className="text-xs text-muted-foreground" data-testid="history-error-detail">
+              {errorCategory === 'network'
+                ? t('history.errorNetwork')
+                : errorCategory === 'server'
+                  ? t('history.errorServer')
+                  : t('history.errorUnknown')}
+            </p>
+          </div>
           <Button variant="outline" size="sm" onClick={() => reload()}>
             {t('history.retryButton')}
           </Button>

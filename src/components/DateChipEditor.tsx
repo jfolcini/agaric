@@ -9,6 +9,7 @@
  *   - Calls onSuccess so the parent can close the popover and refresh
  */
 
+import { AlertCircle } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -18,6 +19,7 @@ import { Input } from '@/components/ui/input'
 import { announce } from '@/lib/announcer'
 import { formatDate } from '@/lib/date-utils'
 import { setDueDate, setScheduledDate } from '@/lib/tauri'
+import { cn } from '@/lib/utils'
 import { useDateInput } from '../hooks/useDateInput'
 
 export type DateType = 'due' | 'scheduled'
@@ -43,6 +45,11 @@ export function DateChipEditor({
 
   // Date input hook (M-29) — manages input state + NL preview
   const { dateInput, datePreview, handleChange } = useDateInput()
+
+  // Parse-fail flag — drives aria-invalid + border-destructive on the input.
+  // datePreview is null while typing (debounced parse) and the visible error
+  // message uses the same condition: a non-empty input that has no preview.
+  const parseError = dateInput.length > 0 && datePreview === null
 
   const applyDate = useCallback(
     async (newDate: string | null) => {
@@ -92,7 +99,7 @@ export function DateChipEditor({
       <div>
         <Input
           type="text"
-          className="text-sm"
+          className={cn('text-sm', parseError && 'border-destructive')}
           placeholder={t('dateChip.placeholder')}
           value={dateInput}
           onChange={handleChange}
@@ -103,6 +110,7 @@ export function DateChipEditor({
             }
           }}
           aria-label={t('dateChip.inputLabel')}
+          aria-invalid={parseError}
           autoFocus
         />
         {dateInput && (
@@ -113,7 +121,10 @@ export function DateChipEditor({
                 {t('datePicker.pressEnter')})
               </>
             ) : (
-              <span className="text-destructive">{t('property.dateParseError')}</span>
+              <span className="inline-flex items-center gap-1 text-destructive">
+                <AlertCircle className="h-3 w-3" aria-hidden="true" />
+                {t('property.dateParseError')}
+              </span>
             )}
           </p>
         )}

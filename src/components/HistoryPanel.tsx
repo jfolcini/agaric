@@ -16,7 +16,7 @@ import { logger } from '@/lib/logger'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import { formatTimestamp } from '../lib/format'
 import type { HistoryEntry } from '../lib/tauri'
-import { editBlock, getBlockHistory } from '../lib/tauri'
+import { editBlock, getBlock, getBlockHistory } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
 import { HistoryFilterBar } from './HistoryFilterBar'
 import { BlockHistoryItem } from './HistoryListItem'
@@ -80,15 +80,60 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
 
   const filteredEntries = opTypeFilter ? entries.filter((e) => e.op_type === opTypeFilter) : entries
 
+  // UX-275 sub-fix 4: restore is reversible — capture the current block
+  // content BEFORE applying the historical version so the success toast can
+  // offer a one-click "Undo" that re-applies the captured snapshot.
+  const handleUndoRestore = useCallback(
+    async (targetBlockId: string, previousContent: string) => {
+      try {
+        await editBlock(targetBlockId, previousContent)
+        toast.success(t('history.restoreUndone'))
+      } catch (err) {
+        logger.error('HistoryPanel', 'Failed to undo restore', { blockId: targetBlockId }, err)
+        toast.error(t('history.restoreUndoFailed'))
+      }
+    },
+    [t],
+  )
+
   const handleRestore = useCallback(
     async (entry: HistoryEntry) => {
       if (!blockId) return
       try {
         const parsed = JSON.parse(entry.payload) as { to_text?: string }
-        if (parsed.to_text != null) {
-          await editBlock(blockId, parsed.to_text)
+        if (parsed.to_text == null) return
+
+        // Snapshot the current block content for the toast's Undo action.
+        // We tolerate a missing snapshot (e.g. fresh block, transient IPC
+        // glitch) — the restore still proceeds, just without an Undo offer.
+        let previousContent: string | null = null
+        try {
+          const current = await getBlock(blockId)
+          previousContent = current.content ?? ''
+        } catch (snapshotErr) {
+          logger.warn(
+            'HistoryPanel',
+            'Could not snapshot block before restore — Undo will be unavailable',
+            { blockId, opId: entry.seq },
+            snapshotErr,
+          )
         }
-        toast.success(t('history.revertedSuccessfully'))
+
+        await editBlock(blockId, parsed.to_text)
+
+        if (previousContent != null) {
+          const captured = previousContent
+          toast.success(t('history.revertedSuccessfully'), {
+            action: {
+              label: t('action.undo'),
+              onClick: () => {
+                handleUndoRestore(blockId, captured)
+              },
+            },
+          })
+        } else {
+          toast.success(t('history.revertedSuccessfully'))
+        }
       } catch (err) {
         logger.error(
           'HistoryPanel',
@@ -99,7 +144,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         toast.error(t('history.revertPanelFailed'))
       }
     },
-    [blockId, t],
+    [blockId, t, handleUndoRestore],
   )
 
   if (!blockId) {

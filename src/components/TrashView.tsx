@@ -93,8 +93,14 @@ export function TrashView(): React.ReactElement {
       getItemId: (b: BlockRow) => b.id,
     })
   const [confirmBatchPurge, setConfirmBatchPurge] = useState(false)
+  const [confirmBatchRestore, setConfirmBatchRestore] = useState(false)
   const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false)
   const [confirmRestoreAll, setConfirmRestoreAll] = useState(false)
+
+  // UX-275 sub-fix 8: prompt before restoring large batches (>5) so the user
+  // doesn't unwind a long cascade with a misclick. Mirrors the existing
+  // batch-purge confirmation flow.
+  const BATCH_RESTORE_CONFIRM_THRESHOLD = 5
 
   // ── List keyboard navigation ─────────────────────────────────────
   const {
@@ -175,60 +181,6 @@ export function TrashView(): React.ReactElement {
     }
   }, [rootIds])
 
-  // ── Keyboard shortcuts ───────────────────────────────────────────
-
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      const target = e.target as HTMLElement
-      if (
-        target.tagName === 'INPUT' ||
-        target.tagName === 'SELECT' ||
-        target.tagName === 'TEXTAREA'
-      )
-        return
-
-      // Delegate to list keyboard navigation (ArrowUp/Down, Home/End, PageUp/Down)
-      if (navHandleKeyDown(e)) {
-        e.preventDefault()
-        return
-      }
-
-      // Space — toggle focused item
-      if (matchesShortcutBinding(e, 'listToggleSelection') && focusedIndex >= 0) {
-        const block = filteredBlocks[focusedIndex]
-        if (block) {
-          e.preventDefault()
-          toggleSelection(block.id)
-        }
-        return
-      }
-
-      // Ctrl/Cmd+A — select all visible
-      if (matchesShortcutBinding(e, 'listSelectAll')) {
-        e.preventDefault()
-        selectAll()
-        return
-      }
-
-      // Escape — clear selection
-      if (matchesShortcutBinding(e, 'listClearSelection') && selected.size > 0) {
-        e.preventDefault()
-        clearSelection()
-      }
-    }
-
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [
-    navHandleKeyDown,
-    focusedIndex,
-    filteredBlocks,
-    toggleSelection,
-    selectAll,
-    selected.size,
-    clearSelection,
-  ])
-
   // ── Single-item actions ──────────────────────────────────────────
 
   const handleRestore = useCallback(
@@ -288,11 +240,106 @@ export function TrashView(): React.ReactElement {
     }
     reload()
     clearSelection()
+    setConfirmBatchRestore(false)
     if (restored > 0) {
       toast.success(t('trash.batchRestored', { count: restored }))
       announce(t('announce.batchRestored', { count: restored }))
     }
   }, [blocks, selected, reload, clearSelection, t])
+
+  // UX-275 sub-fix 8: gated entry point for the batch restore action.
+  // Restores immediately for small selections; surfaces a confirmation
+  // dialog when the batch exceeds {@link BATCH_RESTORE_CONFIRM_THRESHOLD}.
+  const requestBatchRestore = useCallback(() => {
+    if (selected.size > BATCH_RESTORE_CONFIRM_THRESHOLD) {
+      setConfirmBatchRestore(true)
+    } else {
+      handleBatchRestore()
+    }
+  }, [selected.size, handleBatchRestore])
+
+  // ── Keyboard shortcuts ───────────────────────────────────────────
+  // NOTE: this effect is intentionally placed *after* requestBatchRestore /
+  // handleBatchPurge are declared — the dep array references them and a
+  // forward reference would hit the TDZ on render.
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'SELECT' ||
+        target.tagName === 'TEXTAREA'
+      )
+        return
+
+      // Delegate to list keyboard navigation (ArrowUp/Down, Home/End, PageUp/Down)
+      if (navHandleKeyDown(e)) {
+        e.preventDefault()
+        return
+      }
+
+      // Space — toggle focused item
+      if (matchesShortcutBinding(e, 'listToggleSelection') && focusedIndex >= 0) {
+        const block = filteredBlocks[focusedIndex]
+        if (block) {
+          e.preventDefault()
+          toggleSelection(block.id)
+        }
+        return
+      }
+
+      // Ctrl/Cmd+A — select all visible
+      if (matchesShortcutBinding(e, 'listSelectAll')) {
+        e.preventDefault()
+        selectAll()
+        return
+      }
+
+      // Escape — clear selection
+      if (matchesShortcutBinding(e, 'listClearSelection') && selected.size > 0) {
+        e.preventDefault()
+        clearSelection()
+        return
+      }
+
+      // UX-275 sub-fix 3: batch toolbar shortcuts. Delegated to a helper so
+      // this effect stays under Biome's cognitive-complexity ceiling.
+      tryBatchShortcut(e)
+    }
+
+    // UX-275 sub-fix 3: batch toolbar shortcuts. Mirrors the keyboard-hint
+    // pattern surfaced by HistorySelectionToolbar — fires only while the
+    // batch toolbar is mounted (selected.size > 0). Shift+R restores the
+    // selection (gated by the >5 confirm), Shift+Delete purges (always
+    // gated). Plain R / Delete are intentionally unbound to avoid
+    // hijacking single-key navigation.
+    function tryBatchShortcut(e: KeyboardEvent) {
+      if (selected.size === 0) return
+      if (!e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return
+      if (e.key === 'R' || e.key === 'r') {
+        e.preventDefault()
+        requestBatchRestore()
+        return
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        setConfirmBatchPurge(true)
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [
+    navHandleKeyDown,
+    focusedIndex,
+    filteredBlocks,
+    toggleSelection,
+    selectAll,
+    selected.size,
+    clearSelection,
+    requestBatchRestore,
+  ])
 
   const handleBatchPurge = useCallback(async () => {
     const selectedIds = Array.from(selected)
@@ -460,11 +507,23 @@ export function TrashView(): React.ReactElement {
           <Button variant="ghost" size="sm" onClick={clearSelection}>
             {t('trash.deselectAllButton')}
           </Button>
-          <Button variant="outline" size="sm" onClick={handleBatchRestore}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={requestBatchRestore}
+            data-testid="trash-batch-restore-btn"
+            aria-keyshortcuts="Shift+R"
+          >
             <RotateCcw className="h-3.5 w-3.5" />
             {t('trash.restoreSelectedButton')}
           </Button>
-          <Button variant="destructive" size="sm" onClick={() => setConfirmBatchPurge(true)}>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setConfirmBatchPurge(true)}
+            data-testid="trash-batch-purge-btn"
+            aria-keyshortcuts="Shift+Delete"
+          >
             <Trash2 className="h-3.5 w-3.5" />
             {t('trash.purgeSelectedButton')}
           </Button>
@@ -563,8 +622,8 @@ export function TrashView(): React.ReactElement {
                       {descendantCount > 0 && (
                         <Badge
                           variant="outline"
-                          className="trash-item-batch-count shrink-0"
-                          data-testid="trash-item-batch-count"
+                          className="trash-item-batch-count shrink-0 whitespace-nowrap"
+                          data-testid="trash-descendant-badge"
                         >
                           {t('trash.itemsInBatch', { count: descendantCount })}
                         </Badge>
@@ -681,6 +740,22 @@ export function TrashView(): React.ReactElement {
         actionVariant="destructive"
         onAction={handleBatchPurge}
         className="trash-batch-purge-confirm"
+      />
+
+      {/* UX-275 sub-fix 8: batch restore confirmation dialog (only fires
+          when the selection exceeds BATCH_RESTORE_CONFIRM_THRESHOLD). */}
+      <ConfirmDialog
+        open={confirmBatchRestore}
+        onOpenChange={setConfirmBatchRestore}
+        title={t('trash.batchRestoreConfirmTitle', { count: selected.size })}
+        description={t('trash.batchRestoreConfirmDescription', { count: selected.size })}
+        cancelLabel={t('trash.noButton')}
+        actionLabel={t('trash.restoreButton')}
+        onAction={handleBatchRestore}
+        className="trash-batch-restore-confirm"
+        contentTestId="trash-batch-restore-confirm"
+        actionTestId="trash-batch-restore-yes"
+        cancelTestId="trash-batch-restore-no"
       />
 
       {/* Empty trash confirmation dialog */}

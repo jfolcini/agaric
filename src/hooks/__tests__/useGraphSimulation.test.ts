@@ -10,6 +10,7 @@
 
 import { act, render } from '@testing-library/react'
 import { forceSimulation } from 'd3-force'
+import { select } from 'd3-selection'
 import { zoom } from 'd3-zoom'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -436,5 +437,51 @@ describe('useGraphSimulation', () => {
     expect(observer.disconnected).toBe(false)
     unmount()
     expect(observer.disconnected).toBe(true)
+  })
+
+  // UX-270: the keyboard-navigation pattern (tabindex=0 + role=button +
+  // Enter/Space activation) is now documented in `attachNodeClickAndKeyboard`.
+  // These regression tests pin the contract:
+  //   1. node `<g>` elements get `tabindex='0'` and `role='button'`
+  //   2. both 'click' and 'keydown' handlers are registered on every node
+  describe('keyboard navigation pattern (UX-270)', () => {
+    // biome-ignore lint/suspicious/noExplicitAny: drilling into the mocked d3-selection chain
+    function getNodeSelectionMock(): any {
+      // The select(svg) chain → append('g') returns the parent group, on
+      // which selectAll('g.node').data(simNodes).join('g').attr(...) etc.
+      // chains return the same mock via mockReturnThis. Every .attr / .on
+      // call on the node selection lands on that returned object.
+      // biome-ignore lint/suspicious/noExplicitAny: mock results shape
+      const selectResult = vi.mocked(select).mock.results[0]?.value as any
+      // The inner `.append('g')` returns the chainable node-selection mock.
+      return selectResult.append.mock.results[0]?.value
+    }
+
+    it('marks node groups with tabindex=0 and role=button', () => {
+      render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+        }),
+      )
+      const nodeSel = getNodeSelectionMock()
+      expect(nodeSel.attr).toHaveBeenCalledWith('tabindex', '0')
+      expect(nodeSel.attr).toHaveBeenCalledWith('role', 'button')
+    })
+
+    it('registers click and keydown handlers on each node', () => {
+      render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+        }),
+      )
+      const nodeSel = getNodeSelectionMock()
+      const onCallTypes = (nodeSel.on.mock.calls as Array<[string, unknown]>).map((call) => call[0])
+      expect(onCallTypes).toContain('click')
+      expect(onCallTypes).toContain('keydown')
+    })
   })
 })

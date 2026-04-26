@@ -1406,4 +1406,61 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
       expect(mockedAnnounce).toHaveBeenCalledWith('Revert failed')
     })
   })
+
+  // ===========================================================================
+  // UX-275 sub-fix 7: error-banner categorization (network / server / unknown).
+  // ===========================================================================
+  describe('UX-275 error categorization', () => {
+    it('classifies a network failure and shows network-specific copy', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('failed to fetch — network error'))
+
+      render(<HistoryView />)
+
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveAttribute('data-error-category', 'network')
+      // Heading remains the generic title; detail line is category-specific.
+      expect(alert).toHaveTextContent(t('history.loadFailed'))
+      expect(screen.getByTestId('history-error-detail')).toHaveTextContent(/connection problem/i)
+    })
+
+    it('classifies a server failure (5xx) and shows server-specific copy', async () => {
+      // Object-shaped error with HTTP status — exercises the obj.status path.
+      mockedInvoke.mockRejectedValueOnce({ status: 503, message: 'service unavailable' })
+
+      render(<HistoryView />)
+
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveAttribute('data-error-category', 'server')
+      expect(screen.getByTestId('history-error-detail')).toHaveTextContent(/local backend/i)
+    })
+
+    it('falls back to "unknown" when the error message is opaque', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('something weird happened'))
+
+      render(<HistoryView />)
+
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveAttribute('data-error-category', 'unknown')
+      expect(screen.getByTestId('history-error-detail')).toHaveTextContent(/unexpected/i)
+    })
+
+    it('clears the categorised banner after a successful retry', async () => {
+      const user = userEvent.setup()
+      mockedInvoke
+        .mockRejectedValueOnce(new Error('network failure')) // initial load fails (network)
+        .mockResolvedValueOnce(emptyPage) // retry succeeds
+
+      render(<HistoryView />)
+
+      // Wait for the initial network-error banner.
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveAttribute('data-error-category', 'network')
+
+      await user.click(screen.getByRole('button', { name: /Retry/i }))
+
+      await waitFor(() => {
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      })
+    })
+  })
 })

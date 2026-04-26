@@ -204,11 +204,20 @@ export function GraphView(): React.ReactElement {
        * the same layout model and stacks via source order (SVG first → z-0,
        * overlays after → above).
        */}
+      {/*
+       * UX-270: dropped `role="img"` from the SVG wrapper. The graph's nodes
+       * are interactive (`role="button"` + `tabindex=0` + Enter/Space handlers
+       * via `useGraphSimulation`), and `role="img"` on a container of
+       * interactive descendants is incorrect — ATs treat it as one opaque
+       * graphic and hide the buttons. The accessible name lives on the
+       * `aria-label`, which still gives the SVG a label when ATs surface it
+       * via its default graphics role.
+       */}
       <svg
         ref={svgRef}
         className="absolute inset-0 h-full w-full"
-        role="img"
         aria-label={t('graph.title')}
+        data-testid="graph-svg"
       />
       <div className="absolute bottom-3 right-3 flex flex-col gap-1">
         <Button variant="outline" size="icon" onClick={zoomIn} aria-label={t('graph.zoomIn')}>
