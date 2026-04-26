@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-15 open items.
+12 open items.
 
-Previously resolved: 526+ items across 153 sessions.
+Previously resolved: 529+ items across 154 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -37,10 +37,7 @@ Previously resolved: 526+ items across 153 sessions.
 | FEAT-5 | FEAT | Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar) — parent / umbrella | L |
 | FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L |
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L |
-| FEAT-12 | FEAT | PageBrowser: group starred pages on top instead of filtering — drop the toolbar "show starred only" toggle, always show all pages with starred bubbled to the top | S |
-| FEAT-13 | FEAT | Breadcrumb visual redesign — strip button styling from path-style `<Breadcrumb>` (BlockZoomBar + PageHeader namespace), render crumbs as inline text-links with `hover:underline` + thin focus underline | S |
 | BUG-1 | BUG | PageBrowser silently hides pages that lack a `space` property — journal pages, templates, WelcomeModal samples, and peer-synced pages disappear from the Pages view (rolls up the existing deep-CR H-3a / H-3b / H-3c + L-133) | S–M |
-| BUG-2 | BUG | Sidebar Sync button silently no-ops when no peer is paired — clicking does nothing, no toast / dialog / log; should show a "no devices paired" dialog with a CTA that takes the user straight to Settings → Sync to pair a new device | S |
 | MAINT-1 | MAINT | One-shot migration to move all existing pages from Personal → Work space (maintainer-only / single-user deployment; pre-publish-threshold ULIDs only, idempotent, op-emitting so peer devices converge) | S |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
@@ -817,168 +814,6 @@ Part of the FEAT-5 family. **Not scheduled.** Blocked on explicit design-review 
 **Risk:** M — wrong-time notifications and notification spam are both real failure modes; needs careful dedupe and "do not re-fire on materialize replay" guard.
 **Impact:** L — closes a recognised feature gap with Org-mode / Logseq parity; especially valuable on mobile where the user is unlikely to have the app foregrounded when a task is due.
 
-### FEAT-12 — PageBrowser: group starred pages on top instead of filtering
-
-**Problem:** Today the PageBrowser carries a toolbar Star toggle (with a count badge) that, when active, *filters* the list down to starred pages only. Users have to flip the toggle every time they want their pinned pages to surface, and lose all other pages while doing it. Starred ought to be a soft hint about prominence, not a hard filter — the natural representation is grouping starred pages on top of the unstarred ones, always.
-
-**User decisions locked in (do NOT re-litigate):**
-- Drop the `showStarredOnly` filter toggle entirely. No new toggle replaces it.
-- Always render the full page list with starred pages grouped on top, non-starred below.
-- Grouping is orthogonal to the existing `sortOption` (alphabetical / recent / created) — sort applies *within* each group.
-- Tree mode (when any title contains `/`) stays untouched — namespace hierarchy wins, no grouping is overlaid on it.
-- Search input still narrows the list; an empty group hides its own header but the other group keeps rendering.
-- Star/unstar moves the page between groups immediately (no debounce).
-
-**UX design:**
-- **Two section headers**: "Starred" (with count) on top, "Other pages" (with count) below, separated by a thin divider (`border-t` on the second header). Section containers use `role="group"` + `aria-labelledby` per the WAI-ARIA listbox pattern.
-- **Header collapse rules**: zero starred → hide the Starred header (no empty section); all starred → hide the Other-pages header; only 1 page total → render flat with no headers (avoid noise on a brand-new vault).
-- **Within-group sort**: `sortOption` runs independently per group. "Recent" inside the starred group sorts the user's pinned pages by recent visit; same logic for the unstarred group.
-- **Tree mode**: when `isTreeMode === true`, skip grouping entirely. Tree structure is hierarchical-by-namespace; layering "starred-on-top" on it would conflict with the tree shape and confuse users about why a child appears before its parent. Keep the existing tree rendering as-is.
-- **Search**: grouping persists during search; group headers show live counts that reflect filtered results. If both groups end up empty, the existing `pageBrowser.noMatches` empty state still applies.
-- **Accessibility**: viewport `aria-label` shifts from "Page list" → "Page list, grouped by starred". Section headers carry the count in their accessible name (e.g. "Starred, 3 pages"). Row-level `Star page` / `Unstar page` labels stay.
-
-**Technical design:**
-- **Single virtualizer, sentinel header rows.** Build a typed union row array `Array<{ kind: 'header'; section: 'starred' | 'other'; count: number } | { kind: 'page'; page: BlockRow }>` and feed it to `useVirtualizer`. `estimateSize` returns ~36px for headers, ~44px for pages. Stable keys: `header:<section>` for headers, `page:<id>` for pages.
-- **Keyboard nav stays page-indexed.** `useListKeyboardNavigation` keeps iterating over the page-only array (`filteredPages`); headers render as non-focusable rows. Arrow keys naturally skip them; Home/End/PageUp/PageDown still target page rows. No hook changes required.
-- **State to remove from `PageBrowser.tsx`:**
-  - `showStarredOnly` + `setShowStarredOnly` state.
-  - The toolbar Star Button (current lines 397–416) and its `starredCount` Badge.
-  - The `showStarredOnly` clause in `isFiltering` (line 335) → just `filterText.trim().length > 0`.
-  - The `pageBrowser.noStarredPages` branch in the empty-state (lines 458–463).
-- **Reactivity unchanged.** `starredRevision` bump on `toggleStarred` keeps re-running the grouping memo. localStorage stays the source of truth (per-device, no sync — see Out of scope).
-- **i18n:**
-  - **Add** `pageBrowser.starredSection` ("Starred"), `pageBrowser.otherPagesSection` ("Other pages"), `pageBrowser.starredSectionLabel` ("Starred, {{count}} pages") and `pageBrowser.otherPagesSectionLabel` ("Other pages, {{count}} pages") for the accessible names. Follow the existing `_one` / count-suffix pluralization pattern already used elsewhere in `i18n.ts`.
-  - **Remove** `pageBrowser.showStarred`, `pageBrowser.showAll`, `pageBrowser.noStarredPages` (only consumers are the deleted toolbar button + empty state).
-
-**Files touched:**
-- `src/components/PageBrowser.tsx` — primary surgery.
-- `src/lib/i18n.ts` — add 4 keys, remove 3.
-- `src/components/__tests__/PageBrowser.test.tsx` — see test plan (~6 cases deleted, ~3 updated, ~10 added).
-- `e2e/starred-pages.spec.ts` — NEW spec file (no existing e2e coverage for the starred flow today).
-- `FEATURE-MAP.md` — update the PageBrowser entry (line ~574/579 mentions the "starred filter") to describe grouping instead.
-- `src/lib/page-tree.ts` — no change (tree mode bypasses grouping).
-- `src/lib/starred-pages.ts` — no change.
-
-**Test plan:**
-
-*Unit (`src/components/__tests__/PageBrowser.test.tsx`):*
-- DELETE the 6 cases that exercised the removed filter toggle: `starred filter shows only starred pages`, `starred filter toggle shows "Show all" when active`, `filter badge shows count of starred pages`, `no badge shown when no pages are starred`, `shows empty state when starred filter active but no starred pages`, `starred filter has aria-pressed attribute`.
-- UPDATE: `clicking star toggles starred state` → assert the row jumps to the top of the list and into the "Starred" group instead of being filter-toggled.
-- ADD: starred-above-unstarred ordering; sort applies within each group (alphabetical + recent + created variants); toggle star round-trips (page → starred group → back); tree mode renders without grouping headers; zero-starred hides the Starred header; all-starred hides the Other-pages header; single-page vault renders flat with no headers; search narrows both groups and hides empty group header; keyboard nav skips headers (Arrow / Home / End); `axe(container)` passes on grouped + tree + filtered states.
-
-*E2E (`e2e/starred-pages.spec.ts`, new file):*
-- Open Pages view → verify both group headers absent on a small vault.
-- Star a page (selector: `[data-page-item]:has-text("Beta") .star-toggle`) → verify it moves to the top, `data-starred="true"`, "Starred" header appears.
-- `page.reload()` → verify the starred page remains on top (localStorage persistence at `starred-pages`).
-- Star a second page → verify ordering inside the starred group respects the active sort.
-- Unstar one → it falls back into "Other pages".
-- Type into the search input → verify both group counts update and an emptied group's header hides.
-- Tree mode (titles with `/`) → verify no grouping headers and the tree structure is intact.
-- Read `localStorage.getItem('starred-pages')` via `page.evaluate(...)` to assert persistence directly.
-
-*Manual sanity:*
-- 5-page vault, star 2 with alphabetical sort, confirm in-group ordering.
-- Search a term matching only non-starred pages, confirm Starred header disappears and Other-pages count is filtered.
-- Switch to tree mode, star one node, confirm tree shape is unaffected.
-
-**Out of scope (deliberately deferred):**
-- Promoting starred to a synced property (today it's per-device localStorage). Cross-device "starred everywhere" would require a new property + materializer wiring + sync round-trip — separate FEAT.
-- Per-space starred (today the localStorage key is global; on space switch, starred set is shared).
-- User-pinned ordering inside the starred group (drag-to-reorder). Today within-group sort follows `sortOption`.
-
-**Cost:** S — net-negative LOC in the component (~20 lines of state + button removed, ~40 lines of grouping/header logic added), 1 new e2e spec, ~20 unit-test cases churned. No backend changes, no schema, no sync.
-
-**Status:** Open. No dependencies.
-
-### FEAT-13 — Breadcrumb visual redesign: text-link feel, less button-like
-
-**Problem:** Each non-active crumb in the path-style `<Breadcrumb>` primitive renders as a real `<button>` with `rounded-sm`, `px-1`, hover-color shift, and a 3 px `focus-visible:ring-[3px] ring-ring/50`. The trail visually reads as a button-bar instead of as wayfinding chrome — heavy, busy, and inconsistent with the lightweight text-link language used elsewhere (e.g. `PageLink` in the editor). Breadcrumbs should look like a path, not a toolbar.
-
-**Scope clarification:** Two unrelated surfaces in the app are called "breadcrumb":
-1. **Path-style `<Breadcrumb>` primitive** at `src/components/ui/breadcrumb.tsx`, rendered by `BlockZoomBar` (zoomed-block ancestor trail `Home › Ancestor › … › Current`) and `PageHeader` (namespace path for `/`-separated page titles, e.g. `Work › Project › Page A`). **This is the redesign target.**
-2. **`BlockListItem` mini "→ PageTitle" chip** at the right end of agenda / search / query / done / due result rows (already minimal, just a `→` + `<PageLink>`). **OUT of scope** — already text-link styled and not what the user is complaining about.
-
-**User decisions locked in (do NOT re-litigate):**
-- Crumbs must remain keyboard-navigable (existing ArrowLeft/ArrowRight/Home/End handlers stay) and clickable.
-- Overflow `…` popover behavior unchanged (threshold stays at 5; touch-specific lowering to 3 deferred as a follow-up if mobile wrap becomes a problem in practice).
-- `BlockZoomBar`'s leading Home icon stays (it semantically maps to "zoom out to root page"); `PageHeader` namespace breadcrumb continues to render WITHOUT a Home (already correct in the code — only segments).
-- Test selectors `data-breadcrumb-crumb` and the consumer-specific `data-zoom-crumb` both continue to be emitted so existing test suites keep working.
-
-**UX redesign:**
-
-- **Crumb visual treatment.** Strip everything button-y: drop `rounded-sm`, `px-1`, hover-bg, and the 3 px focus ring. Keep `<button>` semantics (a11y / keyboard / click). Replace the three class constants in `breadcrumb.tsx` with text-link variants:
-  - `itemButtonClass` → `cn('inline-flex max-w-[160px] items-center truncate text-muted-foreground transition-colors hover:underline focus-visible:underline focus-visible:outline-hidden')`
-  - `homeButtonClass` and `overflowTriggerClass` → same treatment minus the `max-w-[160px]` (icon-only).
-- **Active crumb.** Stays `font-medium text-foreground` non-clickable span. No pill, no badge — bold text is enough; the user already knows where they are because it's the last item.
-- **Hover.** Underline (option a — classic web breadcrumb / link convention). Pairs with the existing `PageLink` text-link style and reads as "this is a link, not a chip".
-- **Separator.** Keep `ChevronRight` at `h-3 w-3 text-muted-foreground/50` — already minimal, no UX win from switching to `/` or `›` (and a `/` would conflict with namespace titles that contain `/`).
-- **Home icon.** Keep in BlockZoomBar; reuse the same `homeButtonClass` (text-link styling, no rounded pill).
-- **Overflow `…` trigger.** Keep `MoreHorizontal` icon, restyle with the same text-link `overflowTriggerClass`. Popover interior stays as today (popover items can keep their `hover:bg-accent` rounded look — they're inside a menu surface, not on the trail).
-- **Density.** `min-h-7` → `min-h-6` (28 px → 24 px) for a sleeker line. Keep `px-2 py-1` desktop; bump to `py-2` on `[@media(pointer:coarse)]` for the 44 px touch target (per AGENTS.md).
-- **Truncation.** Intermediate crumbs stay at `max-w-[160px]`; final crumb tightens from `max-w-[320px]` to `max-w-[280px]` (the page title above is the focal point).
-- **Color tokens.** Existing only — `--muted-foreground` (non-active), `--foreground` (active), `--muted-foreground/50` (separator), `--ring` (no longer used by breadcrumb after the focus change). No new tokens.
-- **Border below BlockZoomBar.** Keep `border-b border-border/40` — separates the zoom trail from the editor below.
-- **Tooltip.** Keep the native `title={label}` attribute on truncated crumbs. Do NOT upgrade to the Radix `Tooltip` — it adds visual noise to a chrome surface.
-- **Mobile.** No change for now. If a 5-deep namespace wraps on phones, lower `OVERFLOW_THRESHOLD` to 3 inside `[@media(pointer:coarse)]` as a follow-up.
-- **A11y.** Change `aria-current="location"` → `aria-current="page"` on the final crumb (line 174 of `breadcrumb.tsx`) — `page` is the conventional ARIA value for breadcrumb final segments. Keep `<nav>` + `<div role="toolbar">` structure (the in-file comment correctly notes `<ol>` would re-open an axe `listitem` violation; this isn't worth re-litigating). Container `aria-label` unchanged.
-
-**Technical design:**
-
-- **No CVA refactor.** Two visual states (active/non-active) plus optional touch-coarse padding — inline `cn()` strings stay. CVA would add weight without benefit here.
-- **DOM structure unchanged.** `<nav><div role="toolbar"><button data-breadcrumb-crumb></button></div></nav>` stays. Switching to `<ol><li>` is rejected (axe regression risk per the existing in-file comment).
-- **Keyboard nav stays.** `focusIndex` + `handleKeyDown` (ArrowLeft/Right/Home/End) keep working — UX-215 already shipped them and users may rely on them. Native Tab traversal continues to work too.
-- **Focus-visible deviation from AGENTS.md.** AGENTS.md "Mandatory patterns" calls for `focus-visible:ring-[3px] focus-visible:ring-ring/50` "consistently". This entry deliberately deviates: now that crumbs render as text-links, the conventional focus indicator for text-links is an underline, not a form-control ring. The ring rule applies to interactive form controls (Button, Input, Select); breadcrumb crumbs are wayfinding text. Document this rationale inline in the file's top doc comment so reviewers don't try to "fix" it back to a ring.
-- **Selectors preserved.** `data-breadcrumb-crumb` (every crumb), `data-zoom-crumb` (BlockZoomBar's pass-through), and the popover's `data-breadcrumb-overflow-item` all continue to be emitted unchanged — existing unit + e2e tests keep working without selector churn.
-
-**Files touched:**
-- `src/components/ui/breadcrumb.tsx` — primary surgery (~3 class constants rewritten, `min-h-7` → `min-h-6`, `aria-current` value bump, top-of-file doc comment updated to record the focus-style deviation).
-- `src/components/BlockZoomBar.tsx` — no change (styling inherits from primitive).
-- `src/components/PageHeader.tsx` — no change (mounting unchanged).
-- `src/components/ui/__tests__/breadcrumb.test.tsx` — see test plan.
-- `src/components/__tests__/BlockZoomBar.test.tsx` — bump `aria-current="location"` → `"page"` in the one test that asserts it.
-- `src/components/__tests__/PageHeader.test.tsx` — same one-line bump in the namespace-breadcrumb test block (lines ~870–940).
-- `src/lib/i18n.ts` — no change (the existing `'Show hidden breadcrumbs'` overflow label stays).
-- `e2e/breadcrumb-navigation.spec.ts` — NEW spec file (today there is zero e2e coverage for breadcrumbs; `grep -ri "breadcrumb\|zoom-crumb\|data-breadcrumb" e2e/` returns empty).
-- `UX.md` (lines ~1100, ~1300) — minor wording refresh to describe the new text-link treatment.
-
-**Test plan:**
-
-*Unit (`src/components/ui/__tests__/breadcrumb.test.tsx`):*
-- UPDATE: any test asserting `hover:text-foreground` color shift on non-active crumbs → assert `hover:underline` instead.
-- UPDATE: any test asserting `focus-visible:ring-[3px]` / `ring-ring/50` on crumb buttons → assert `focus-visible:underline` and `focus-visible:outline-hidden` instead.
-- UPDATE: the `aria-current="location"` assertion → `aria-current="page"`.
-- UPDATE: the `max-w-[320px]` assertion on the final-crumb class → `max-w-[280px]`.
-- UPDATE: the `min-h-7` toolbar-height assertion → `min-h-6`.
-- ADD: regression assertions that non-active crumbs DO NOT carry `rounded-sm` and DO NOT carry `focus-visible:ring-[3px]` (catch future "fix-it-back" PRs).
-- ADD: regression assertion that the final crumb has `aria-current="page"` and is rendered as a `<span>` (not a button).
-- ADD: `axe(container)` after the focus-style change (the rule deviation should not trigger any axe violation; verify).
-- KEEP: all UX-215 keyboard-navigation tests (ArrowLeft/Right/Home/End) — behavior unchanged.
-- Estimated churn: ~6 updates, ~4 additions, 0 deletions.
-
-*Unit (BlockZoomBar / PageHeader tests):*
-- BlockZoomBar.test.tsx: ~1 test updated (`aria-current` value).
-- PageHeader.test.tsx: ~1 test updated (`aria-current` value, possibly an extra one if any test snapshots breadcrumb classnames).
-
-*E2E (`e2e/breadcrumb-navigation.spec.ts`, NEW):*
-- Test 1 (BlockZoomBar): create a 4-deep block trail, zoom into the leaf, assert breadcrumb renders with Home + intermediate crumbs, click an intermediate crumb (`page.locator('[data-zoom-crumb]').nth(1).click()`), assert the zoom level moves to that ancestor.
-- Test 2 (PageHeader namespace): create a page titled `Work/Project/Page A`, open it, assert the breadcrumb has 3 crumbs, click `Work`, assert the navigation handler fires (route changes / namespace filter applied).
-- Visual smoke: assert the final crumb has `aria-current="page"` and that the focused crumb has the `focus-visible:underline` class applied (via `page.evaluate` / focus + getComputedStyle if Playwright cannot match Tailwind classes directly; otherwise just assert `[aria-current="page"]` is present).
-
-*Manual sanity:*
-- Desktop (light + dark): zoom into a 5-deep trail, hover and Tab through crumbs, verify text-link feel (no rounded pill, underline on hover/focus, sleeker line height).
-- Touch (Android): same trail, verify per-crumb tap target hits 44 px (touch-coarse `py-2` kicks in) without re-introducing button visuals on desktop.
-- RTL locale: confirm chevron separator still reads sensibly (`ChevronRight` already flips via `dir="rtl"` on the document; verify in app).
-
-**Out of scope (deliberately deferred):**
-- `BlockListItem` `→ PageTitle` chip (different abstraction, already minimal).
-- A global app-shell breadcrumb above `ViewHeader` (not requested; uncommon for note apps).
-- Animated crumb add/remove transitions (pure CSS hover/focus only).
-- Lowering overflow threshold on touch (file as a follow-up if mobile wrapping shows up in practice).
-
-**Cost:** S — ~40 lines of class + role-attribute changes in one primitive, ~10 unit-test deltas, 1 new e2e spec (2 cases). No backend, no schema, no new dependency, no new tokens.
-**Risk:** Low — purely visual + a single ARIA value change. Keyboard handlers and click wiring are unchanged. The one principled deviation (focus underline instead of ring) is documented inline so reviewers don't unwind it.
-**Status:** Open. No dependencies.
-
 ## PERF — Performance items
 
 ### PERF-19 — Backlink pagination cursor uses linear scan for non-Created sorts (2 sites)
@@ -1123,58 +958,6 @@ Any page without a `space` property is excluded — silently. Once the boot-time
 **Cost:** S–M — backend IPC tightening + bootstrap loosening (~80 lines), 6 frontend callsites swapped (~6 lines each), ~10-15 new/updated tests, 1 e2e flow. No schema migration; no new tables; the property test framework (`fast-check`) is already in the project.
 **Risk:** Medium — the IPC tightening is a structural change to `create_block`. If any callsite (especially in tests, mocks, or sync paths) silently relies on the legacy behaviour, those will fail loudly rather than silently corrupt data — preferred direction. The bootstrap re-run is low-risk (pure additive backfill, idempotent) but must keep the fast-path skip for the `is_space` properties to avoid re-emitting redundant `is_space` ops every boot.
 **Status:** Open. Schedule the four fixes (H-3a + L-133 + H-3b + H-3c) together — partial fixes leave the silent-divergence behaviour partially in place.
-
-### BUG-2 — Sidebar Sync button silently no-ops when no peer is paired
-
-**User-visible symptom:** The user clicks the "Sync" button in the sidebar (the `RefreshCw` icon next to the offline/syncing/synced status dot). On a vault with **no paired devices**, nothing visible happens — no toast, no dialog, no log line. The button doesn't even briefly spin. The user is left wondering whether the click was registered, whether sync is broken, or whether they need to do something to enable sync. There is no signpost to the **Settings → Sync** tab where pairing is actually performed.
-
-**Root cause (confirmed):** `useSyncTrigger.syncAll()` short-circuits on the empty-peers branch:
-
-```ts
-const peers = await listPeerRefs()
-if (peers.length === 0) {
-  setState('idle')
-  return
-}
-```
-
-(`src/hooks/useSyncTrigger.ts:113-117`). Setting state to `'idle'` is silent — the chip stays grey (or "synced"), the button never enters the `syncing` arm, and `syncAll` returns `Ok` with no user feedback. The sidebar button at `src/App.tsx:1097-1124` happily forwards every click here; the empty-peers UX simply was never designed.
-
-**Desired behaviour:**
-
-- On click, if `peers.length === 0`: show a small dialog (or `AlertDialog` / `Dialog` from `src/components/ui/`) explaining that no devices are paired and offering a primary CTA "Open sync settings" that navigates the user to the Settings view, Sync tab, focus on the pairing flow.
-- A secondary action "Cancel" / "Dismiss" closes the dialog with no side-effects.
-- The dialog should be **discoverable, accessible, and i18n-keyed** — `aria-label`, `t('sync.noPeersTitle')`, `t('sync.noPeersBody')`, `t('sync.noPeersCta')`, etc. — same conventions as `ConfirmDialog` / `UnpairConfirmDialog` already in the codebase.
-- Optional: if Settings supports an explicit Sync-tab anchor (e.g. a `?tab=sync` query param or a Zustand `settingsActiveTab` state), navigating should pre-select that tab so the user lands directly on the pairing UI without an extra click. If the settings router doesn't yet support tab pre-selection, that's a tiny follow-up — file a `MAINT-*` item or accept the user navigating one extra step.
-
-**Implementation sketch:**
-
-- New shared component `src/components/NoPeersDialog.tsx` (or extend `src/components/PairingDialog.tsx` since pairing is the natural neighbour). Renders an `AlertDialog` with title, body, "Cancel" + "Open sync settings" actions. Uses the existing `cn()` + Radix conventions per `AGENTS.md` frontend guidelines.
-- `src/App.tsx:1105` (`onClick={syncAll}`): change to a small wrapper `handleSyncClick` that:
-  1. If offline → keep the existing offline tooltip behaviour (no dialog).
-  2. Otherwise, calls `listPeerRefs()` (or reads from `useSyncStore`'s cached peer count if it's already populated for the status chip) — if empty, opens the new dialog and bails.
-  3. Otherwise, calls `syncAll()` as today.
-- Alternative shape: keep `syncAll` as-is, but add `peers.length === 0` → emit a Tauri event / set a Zustand `useSyncStore.noPeers = true` flag → the App reacts by mounting the dialog. Cleaner for future testability but more wiring; either is acceptable.
-- The Settings router lookup: check `src/components/SettingsView.tsx` for the existing tab list — if there's a Sync/Devices tab already (the codebase has `DeviceManagement.tsx`), the dialog's CTA navigates to that route + focuses the pairing entry. If not, navigate to Settings without a specific anchor — still better than nothing.
-
-**Tests:**
-- `src/components/__tests__/App.test.tsx` — render the App, mock `listPeerRefs` to return `[]`, click the sidebar Sync button, assert the dialog appears with the right title/body. Click "Open sync settings" — assert navigation to Settings (and the Sync tab if pre-selection is wired). Click "Cancel" — assert dialog closes.
-- New `NoPeersDialog.test.tsx` — render + interaction + `axe(container)` a11y audit per `src/__tests__/AGENTS.md`.
-- e2e (optional but useful): on a fresh vault, open the app, click Sync from the sidebar, confirm the dialog appears, navigate via the CTA to the Sync tab, confirm the pairing UI is visible.
-
-**Files touched (estimate):**
-- `src/App.tsx` — `onClick={syncAll}` → `onClick={handleSyncClick}` (small wrapper).
-- `src/components/NoPeersDialog.tsx` — new component (~80 lines).
-- `src/components/__tests__/App.test.tsx` — extend the existing sidebar Sync click tests.
-- `src/components/__tests__/NoPeersDialog.test.tsx` — new test file (~120 lines).
-- `src/i18n/en.json` (and other locale files) — 3-4 new strings.
-- Optional: `src/stores/useSettingsStore.ts` (or wherever the active tab lives) — add a `setActiveTab('sync')` selector if not present.
-
-**Risk:** Low. Pure UI affordance; no schema, no IPC, no sync-protocol change. The existing `syncAll` continues to short-circuit on empty peers but the user always sees the dialog first, so the silent-success path is never reached.
-
-**Cost:** S — single focused session.
-
-**Status:** Open. Schedulable independently — no dependencies on other items in this file.
 
 ## MAINT — Tooling / dev-experience maintenance / code quality
 
