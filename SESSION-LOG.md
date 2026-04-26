@@ -1,5 +1,50 @@
 # Session Log
 
+## Session 488 — Spaces Phase 3 + publish prep: per-space tabs/recent-pages + updater URL pinned + CODE_OF_CONDUCT.md pointer fix (FEAT-3p3 / PUB-5 partial / PUB-7) (2026-04-26)
+
+**2 REVIEW-LATER items fully resolved + 1 partially advanced.** Open items: 13 → 11. Mixed batch: a frontend-only Zustand refactor that finally lands per-space tabs + recent pages (FEAT-3p3 — third overall attempt, succeeded with a hybrid keep-flat-mirror approach the prior subagents didn't consider), the agent-actionable mechanical bits of PUB-5 (updater URL pinned to `jfolcini/agaric`; keypair + secrets remain user-only), and PUB-7 closed by recognising that SECURITY.md was already comprehensive and just updating the Code of Conduct's stale pointer to it. Tech reviewer flagged 1 HIGH (cross-store rehydration race in the new module-load subscriptions) + 1 MEDIUM (`BUG_TRACKER` const in `src/lib/config.ts` still pointed at the old `agaric-app/...` URL — bug-report dialog would 404) + 5 LOW/NIT polish notes; both BLOCKER-tier findings fixed in-session.
+
+Batch composition (3 items):
+
+- **FEAT-3p3** — Spaces Phase 3 (third attempt; subagents in sessions 485 and 486 both stalled). The successful approach was a **hybrid** rather than the strict "tabs → tabsBySpace replacement" the spec called for:
+  - Added `tabsBySpace: Record<string, Tab[]>` and `activeTabIndexBySpace: Record<string, number>` as the per-space partitioned source of truth.
+  - **Kept** the flat `tabs` / `activeTabIndex` fields as the active-space mirror — this avoided rewriting hundreds of `setState({ tabs: [...] })` test-fixture lines across `TabBar.test.tsx`, `App.test.tsx`, `navigation.test.ts`, etc.
+  - Every action that mutates tabs writes BOTH (via a `spliceTabs` helper) keyed by `useSpaceStore.getState().currentSpaceId ?? '__legacy__'`.
+  - A `useSpaceStore.subscribe` registered at module load handles space switches: flush flat → outgoing slice, pull incoming slice → flat, plus reset `selectedBlockId`.
+  - New selectors `selectTabsForSpace` / `selectActiveTabIndexForSpace` + the equivalent `selectRecentPagesForSpace` for `useRecentPagesStore`.
+  - Persistence migration: bumped both stores from version `0 → 1`. The migrate body moves legacy flat fields into `*BySpace.__legacy__` while preserving the flat fields themselves.
+  - 11 new tests (+7 in `navigation.test.ts`, +4 in `recent-pages.test.ts`) cover persistence round-trip for the new maps, the v0→v1 migration, stale-`currentSpaceId` rehydrate fallback, per-space dedup invariants, and cross-space tab-open isolation.
+  - Files touched: `src/stores/{navigation.ts,recent-pages.ts}`, `src/components/{TabBar.tsx,RecentPagesStrip.tsx}`, `src/App.tsx` (TAB_SHORTCUTS callbacks read through the new selectors), and the corresponding tests.
+
+- **PUB-5 partial** — orchestrator updated `src-tauri/tauri.conf.json:30` so the updater endpoint now points at `https://github.com/jfolcini/agaric/releases/latest/download/latest.json` (the publish target was decided in a prior session). The `pubkey` in `tauri.conf.json` is still empty and the `TAURI_SIGNING_PRIVATE_KEY*` env vars in `release.yml:93-95` remain commented out — the agent intentionally did not uncomment them because uncommenting before the secrets exist would cause tauri-action to attempt signing with empty inputs. REVIEW-LATER PUB-5 entry retitled to reflect the now user-only remaining work.
+
+- **PUB-7** — SECURITY.md was already comprehensive (it was added in a prior session that the SESSION-LOG didn't cover). Just updated `CODE_OF_CONDUCT.md:39` so the stale "Contact details will be published in `SECURITY.md` before the first public release" placeholder now resolves to a concrete pointer at `[SECURITY.md § How to report]`. PUB-7 closed.
+
+**Quality gate:** `npx tsc -b` clean. `npm test` → 312 files / 8341 tests passed (11 new in this batch). `cargo nextest run` → 2747 tests passed (2 skipped). `prek run --all-files` → all 31 hooks green.
+
+**Reviewer findings (2 actionable, both fixed in-session):**
+
+- *Tech reviewer (HIGH):* `src/stores/navigation.ts:500` and `src/stores/recent-pages.ts:135` initialised `prevSpaceKey` from `useSpaceStore.getState().currentSpaceId` at module-load time. Zustand's persist middleware rehydrates asynchronously; if `useSpaceStore` rehydrates AFTER the navigation/recent-pages stores, the first subscriber fire sees a stale → rehydrated change and incorrectly flushes the just-rehydrated flat tabs into the wrong slice (the `__legacy__` slot rather than the active space). For returning users with v0→v1-migrated data this would have meant their tabs disappeared from the active-space view. **Fix:** lazy-initialise `prevSpaceKey` to `undefined`; on the first subscriber fire, treat it as an initialisation pass — if `tabsBySpace[newKey]` is missing, seed it from the rehydrated flat tabs (so a user migrated from v0 keeps their tabs accessible from the active space) and set `prevSpaceKey` without flushing. Subsequent fires take the real flush+pull path.
+- *Tech reviewer (MEDIUM):* `src/lib/config.ts:13-17` and `src/lib/__tests__/bug-report.test.ts:20-26` still hardcoded the old `agaric-app/org-mode-for-the-rest-of-us` owner/repo. The bug-report dialog (FEAT-5) would have built a 404 GitHub-issues URL because the `BUG_TRACKER` constant has to stay in sync with the updater endpoint changed in PUB-5. **Fix:** updated both files to `{ owner: 'jfolcini', repo: 'agaric' }` and rewrote the test assertion's expected URL prefix.
+
+**Reviewer findings deferred (low-impact polish):**
+
+- LOW (`prevSpaceKey` not reset between test runs) — fragile but currently works because tests reset stores in `beforeEach` and the lazy-init means stale `prevSpaceKey` from a prior test still triggers the right code path (post-init real flush+pull).
+- LOW (`nextTabId` derivation silently ignores NaN tab IDs) — defensive logging would be nice but not a real bug; tab IDs are integer-stringified, NaN can only appear if persisted state was hand-edited.
+- LOW (selector fallback `tabsBySpace[spaceId] ?? state.tabs` returns previous space's tabs for a never-visited space, briefly, before the subscriber pulls) — by design; the alternative (return empty) would cause a flash of empty UI on every space switch.
+- MEDIUM (migration doesn't validate tab element shape beyond `Array.isArray`) — defensive validation would catch hand-edited corruption but doesn't fix any current path.
+- NIT (migration `as NavigationState` cast is loose) — same; would benefit from a runtime schema validator if one is ever introduced.
+- NIT (Code of Conduct `[SECURITY.md § How to report](SECURITY.md#how-to-report)` anchor link assumes GitHub's auto-generated heading anchor) — works on github.com renders.
+
+**Architectural notes:**
+- The hybrid keep-flat-mirror approach is a pragmatic alternative to a strict "lift state into a per-space map" refactor. It's defensible because:
+  - The flat field is the canonical "what the user sees right now" projection.
+  - Per-space slices are the source of truth for cross-space invariants (verified by the cross-space invariant test).
+  - The space-switch subscriber is the single point that keeps the two in sync.
+  - Existing tests + consumers don't need to thread the space id through every read.
+- The lazy-init fix to the subscriber registration is a generally useful pattern for module-level Zustand subscriptions that depend on another store's persisted state. Worth recording for future cross-store coordination.
+- AGENTS.md "Architectural Stability" — this stays inside existing abstractions: no new tables, no new IPC commands, no new stores, no schema migration. The persistence-version bump is internal to the existing Zustand persist middleware contract.
+
 ## Session 487 — Tauri plugin trio: deep-link + global-shortcut quick-capture + autostart (FEAT-10 / FEAT-12 / FEAT-13) (2026-04-25)
 
 **3 REVIEW-LATER items fully resolved.** Open items: 16 → 13. Three Tauri plugin adoptions in parallel — the `tauri-plugin-*` and `@tauri-apps/plugin-*` versions follow AGENTS.md "Coupled Dependency Updates" by adding the new plugins at the existing major (`2`) without bumping any pinned slice. Three build subagents in parallel coordinated their writes to shared files (`Cargo.toml`, `package.json`, `lib.rs`, `capabilities/default.json`, `tauri.conf.json`, `SettingsView.tsx`) by appending to existing blocks rather than inserting; no merge conflicts. Tech reviewer flagged 2 BLOCKERs (chord re-bind via storage event was a no-op stub) + 1 MEDIUM (frontend ULID case normalisation gap vs Rust router) + 1 HIGH from UX (autostart toggle silently hidden) and 11 LOW/MEDIUM UX polish items. The 2 BLOCKERs and the MEDIUM tech finding were fixed in-session; the rest deferred as future polish.
