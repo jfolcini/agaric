@@ -11,6 +11,7 @@ import { Camera } from 'lucide-react'
 import type React from 'react'
 import { lazy, Suspense, useCallback, useEffect, useId, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -111,6 +112,15 @@ export function PairingEntryForm({
     [notifyTyping, armTypingDebounce, onWordChange],
   )
 
+  // UX-264: when the QR scanner fails to acquire the camera (typically a
+  // permission denial), auto-switch back to manual word entry and surface
+  // a toast so the user understands what happened. Without this fallback
+  // the user would be stuck looking at an in-scanner error.
+  const handleCameraDenied = useCallback(() => {
+    onEntryModeChange('manual')
+    toast.info(t('pairing.cameraDeniedFallback'))
+  }, [onEntryModeChange, t])
+
   // UX-263: Cleanup — if the form unmounts while the user is mid-typing
   // (e.g. parent closes the dialog), clear the pending debounce and tell
   // the parent typing has ended so the countdown isn't left paused.
@@ -201,7 +211,11 @@ export function PairingEntryForm({
               </div>
             }
           >
-            <LazyQrScanner onScan={onQrScan} onError={(err) => onQrError(err)} />
+            <LazyQrScanner
+              onScan={onQrScan}
+              onError={(err) => onQrError(err)}
+              onCameraDenied={handleCameraDenied}
+            />
           </Suspense>
         </div>
       )}

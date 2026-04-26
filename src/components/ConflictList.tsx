@@ -26,11 +26,19 @@
 import { listen } from '@tauri-apps/api/event'
 import { GitMerge, RefreshCw } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { ulidToDate } from '@/lib/format'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
@@ -50,11 +58,18 @@ import {
 } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { ConflictBatchToolbar } from './ConflictBatchToolbar'
-import { ConflictListItem } from './ConflictListItem'
+import { ConflictListItem, inferConflictType } from './ConflictListItem'
 import { EmptyState } from './EmptyState'
 import { LoadingSkeleton } from './LoadingSkeleton'
 import { LoadMoreButton } from './LoadMoreButton'
 import { ViewHeader } from './ViewHeader'
+
+/** Available conflict-type filter values, mapped to ConflictListItem's inferred types. */
+type TypeFilter = 'all' | 'Text' | 'Property' | 'Move'
+/** Available date-range filter values. UX-265 keeps the range coarse to stay in scope. */
+type DateFilter = 'all' | 'last7Days'
+/** 7 days in milliseconds — used for the "last 7 days" cutoff. */
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
 
 /** Truncate long content for dialog previews. */
 function truncatePreview(text: string, max = 120): string {
@@ -90,9 +105,47 @@ export function ConflictList(): React.ReactElement {
     getItemId: (b: BlockRow) => b.id,
   })
   const [batchAction, setBatchAction] = useState<'keep' | 'discard' | null>(null)
+  // UX-264: progress counter shown while a batch keep/discard is iterating
+  // through selected conflicts. `null` while no batch is running.
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(
+    null,
+  )
   const [deviceNames, setDeviceNames] = useState<Map<string, string>>(new Map())
   const fetchedParentsRef = useRef(new Set<string>())
   const listRef = useRef<HTMLDivElement>(null)
+
+  // UX-265 sub-fix 2 — filter bar state.
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
+  const [deviceFilter, setDeviceFilter] = useState<string>('all')
+  const [dateFilter, setDateFilter] = useState<DateFilter>('all')
+
+  // Unique device names available for the device filter dropdown.
+  const uniqueDeviceNames = useMemo(() => {
+    const set = new Set<string>()
+    for (const name of deviceNames.values()) set.add(name)
+    return [...set].sort()
+  }, [deviceNames])
+
+  // Apply filters to the conflict list. Falls back to full list when every
+  // filter is "all" (the default), so existing behaviour is preserved.
+  const filteredBlocks = useMemo(() => {
+    if (typeFilter === 'all' && deviceFilter === 'all' && dateFilter === 'all') return blocks
+    const cutoff = dateFilter === 'last7Days' ? Date.now() - SEVEN_DAYS_MS : null
+    return blocks.filter((block) => {
+      if (typeFilter !== 'all' && inferConflictType(block) !== typeFilter) return false
+      if (deviceFilter !== 'all') {
+        const name = deviceNames.get(block.id)
+        if (name !== deviceFilter) return false
+      }
+      if (cutoff != null) {
+        const ts = ulidToDate(block.id)
+        // ULIDs that don't decode to a valid date are kept (we cannot prove
+        // they are old, and dropping them would silently hide data).
+        if (ts && ts.getTime() < cutoff) return false
+      }
+      return true
+    })
+  }, [blocks, typeFilter, deviceFilter, dateFilter, deviceNames])
 
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
@@ -222,9 +275,9 @@ export function ConflictList(): React.ReactElement {
   }, [])
 
   const { focusedIndex, handleKeyDown } = useListKeyboardNavigation({
-    itemCount: blocks.length,
+    itemCount: filteredBlocks.length,
     onSelect: (idx) => {
-      const block = blocks[idx]
+      const block = filteredBlocks[idx]
       if (block) toggleExpanded(block.id)
     },
     vim: false,
@@ -237,14 +290,14 @@ export function ConflictList(): React.ReactElement {
     if (!listRef.current) return
     const items = listRef.current.querySelectorAll<HTMLLIElement>(':scope > .conflict-item')
     items.forEach((item, index) => {
-      const block = blocks[index]
+      const block = filteredBlocks[index]
       if (block) {
         item.id = `conflict-${block.id}`
         item.setAttribute('role', 'option')
         item.setAttribute('aria-selected', String(index === focusedIndex))
       }
     })
-  }, [blocks, focusedIndex])
+  }, [filteredBlocks, focusedIndex])
 
   const handleToggleSelectAll = useCallback(() => {
     if (selectedIds.size === blocks.length) {
@@ -368,7 +421,13 @@ export function ConflictList(): React.ReactElement {
     const selectedBlocks = blocks.filter((b) => selectedIds.has(b.id))
     let failCount = 0
     const savedBatchAction = batchAction
-    for (const block of selectedBlocks) {
+    const total = selectedBlocks.length
+    // UX-264: surface progress as we iterate so users with 50+ conflicts see
+    // "Resolving 3 of 50…" rather than just a spinner.
+    setBatchProgress({ current: 0, total })
+    for (let i = 0; i < selectedBlocks.length; i++) {
+      const block = selectedBlocks[i] as BlockRow
+      setBatchProgress({ current: i + 1, total })
       try {
         if (savedBatchAction === 'keep') {
           if (block.parent_id && block.content != null) {
@@ -384,6 +443,7 @@ export function ConflictList(): React.ReactElement {
         failCount++
       }
     }
+    setBatchProgress(null)
     clearSelection()
     setBatchAction(null)
     if (failCount > 0) {
@@ -433,6 +493,58 @@ export function ConflictList(): React.ReactElement {
               </Button>
             </div>
 
+            {/* UX-265 sub-fix 2 — filter bar (type / device / date) */}
+            <div
+              className="conflict-filter-bar flex flex-wrap items-center gap-2"
+              data-testid="conflict-filter-bar"
+            >
+              <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as TypeFilter)}>
+                <SelectTrigger
+                  size="sm"
+                  className="conflict-filter-type w-[10rem]"
+                  aria-label={t('conflict.filterByType')}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('conflict.allTypes')}</SelectItem>
+                  <SelectItem value="Text">{t('conflict.typeText')}</SelectItem>
+                  <SelectItem value="Property">{t('conflict.typeProperty')}</SelectItem>
+                  <SelectItem value="Move">{t('conflict.typeMove')}</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={deviceFilter} onValueChange={setDeviceFilter}>
+                <SelectTrigger
+                  size="sm"
+                  className="conflict-filter-device w-[10rem]"
+                  aria-label={t('conflict.filterByDevice')}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('conflict.allDevices')}</SelectItem>
+                  {uniqueDeviceNames.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={dateFilter} onValueChange={(v) => setDateFilter(v as DateFilter)}>
+                <SelectTrigger
+                  size="sm"
+                  className="conflict-filter-date w-[10rem]"
+                  aria-label={t('conflict.filterByDate')}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('conflict.allTime')}</SelectItem>
+                  <SelectItem value="last7Days">{t('conflict.last7Days')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             {selectedIds.size > 0 && (
               <ConflictBatchToolbar
                 selectedCount={selectedIds.size}
@@ -441,6 +553,21 @@ export function ConflictList(): React.ReactElement {
                 onKeepAll={() => setBatchAction('keep')}
                 onDiscardAll={() => setBatchAction('discard')}
               />
+            )}
+
+            {/* UX-264: visible progress while batch keep/discard is iterating */}
+            {batchProgress && (
+              <p
+                className="conflict-batch-progress text-sm text-muted-foreground"
+                role="status"
+                aria-live="polite"
+                data-testid="conflict-batch-progress"
+              >
+                {t('conflicts.batchProgress', {
+                  current: batchProgress.current,
+                  total: batchProgress.total,
+                })}
+              </p>
             )}
           </div>
         </ViewHeader>
@@ -453,13 +580,13 @@ export function ConflictList(): React.ReactElement {
         role="listbox"
         aria-label={t('conflicts.listLabel')}
         aria-activedescendant={
-          blocks[focusedIndex] ? `conflict-${blocks[focusedIndex].id}` : undefined
+          filteredBlocks[focusedIndex] ? `conflict-${filteredBlocks[focusedIndex].id}` : undefined
         }
         onKeyDown={(e) => {
           if (handleKeyDown(e)) e.preventDefault()
         }}
       >
-        {blocks.map((block) => {
+        {filteredBlocks.map((block) => {
           const original = block.parent_id ? originals.get(block.parent_id) : undefined
           return (
             <ConflictListItem
@@ -478,6 +605,17 @@ export function ConflictList(): React.ReactElement {
           )
         })}
       </div>
+
+      {/* UX-265 sub-fix 2 — empty state for filtered-but-no-match. */}
+      {blocks.length > 0 && filteredBlocks.length === 0 && (
+        <p
+          className="conflict-no-match text-sm text-muted-foreground italic"
+          data-testid="conflict-no-match"
+          role="status"
+        >
+          {t('conflict.noMatchingFilters')}
+        </p>
+      )}
 
       <LoadMoreButton
         hasMore={hasMore}

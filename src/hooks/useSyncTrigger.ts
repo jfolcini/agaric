@@ -39,13 +39,27 @@ export function runWithTimeout<T>(p: Promise<T>, ms: number, err: Error): Promis
 /**
  * Syncs a single peer with a timeout guard. Shows a toast on failure.
  * Returns `true` on success, `false` on failure.
+ *
+ * UX-264: per-peer failures are transient (network, peer-offline, timeout)
+ * so the failure toast carries a Retry action that re-runs `startSync`
+ * for the same peer. Permanent failures (protocol mismatch, etc.) are
+ * surfaced via separate channels and not routed through this helper.
  */
 async function syncOnePeerWithToast(peerId: string): Promise<boolean> {
   try {
     await runWithTimeout(startSync(peerId), SYNC_TIMEOUT_MS, new Error('Sync timeout'))
     return true
   } catch {
-    toast.error(i18n.t('sync.failedForDevice', { deviceId: peerId.slice(0, 12) }))
+    toast.error(i18n.t('sync.failedForDevice', { deviceId: peerId.slice(0, 12) }), {
+      duration: 5000,
+      action: {
+        label: i18n.t('sync.retryAction'),
+        onClick: () => {
+          // Fire-and-forget — a fresh toast surfaces on subsequent failure.
+          void syncOnePeerWithToast(peerId)
+        },
+      },
+    })
     return false
   }
 }
@@ -153,9 +167,15 @@ export function useSyncTrigger() {
     }
   }, [syncAll, scheduleNext])
 
-  // Trigger immediate sync when coming back online (#667)
+  // Trigger immediate sync when coming back online (#667).
+  // UX-264: surface a `toast.info` when transitioning offline → online,
+  // gated by the prior `offline` sync-store state so we don't fire on
+  // benign repeats (some browsers dispatch multiple `online` events).
   useEffect(() => {
     const handleOnline = () => {
+      if (useSyncStore.getState().state === 'offline') {
+        toast.info(i18n.t('sync.backOnline'))
+      }
       syncAll()
     }
     window.addEventListener('online', handleOnline)

@@ -366,6 +366,55 @@ describe('ConflictTypeRenderer', () => {
     })
   })
 
+  // -- UX-265 sub-fix 4: original-block-missing fallback rendering -------
+  describe('UX-265 fallback rendering when original is undefined', () => {
+    it('Property conflict with no original falls through to text view', () => {
+      const block = makeConflict({
+        id: 'C1',
+        content: 'incoming',
+        conflict_type: 'Property',
+        todo_state: 'DONE',
+      })
+
+      const { container } = render(
+        <ConflictTypeRenderer
+          conflictType="Property"
+          block={block}
+          original={undefined}
+          isExpanded={false}
+        />,
+      )
+
+      // No property-diff section because we couldn't compute diffs.
+      expect(container.querySelector('.conflict-property-diff')).toBeNull()
+      // Text-conflict labels appear instead.
+      expect(screen.getByText('Current:')).toBeInTheDocument()
+      expect(screen.getByText('Incoming:')).toBeInTheDocument()
+      expect(screen.getByText('(original not available)')).toBeInTheDocument()
+    })
+
+    it('Move conflict with no original falls through to text view', () => {
+      const block = makeConflict({
+        id: 'C1',
+        content: 'incoming',
+        conflict_type: 'Move',
+      })
+
+      const { container } = render(
+        <ConflictTypeRenderer
+          conflictType="Move"
+          block={block}
+          original={undefined}
+          isExpanded={false}
+        />,
+      )
+
+      expect(container.querySelector('.conflict-move-diff')).toBeNull()
+      expect(screen.getByText('Current:')).toBeInTheDocument()
+      expect(screen.getByText('(original not available)')).toBeInTheDocument()
+    })
+  })
+
   describe('a11y', () => {
     it('has no a11y violations for text conflict', async () => {
       const block = makeConflict({ id: 'C1', content: 'incoming text' })

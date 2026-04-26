@@ -62,7 +62,7 @@ test.describe('Batch block operations', () => {
     page,
   }) => {
     const blocks = page.locator('[data-testid="sortable-block"]')
-    const batchToolbar = page.locator('.batch-toolbar')
+    const batchToolbar = page.getByTestId('batch-toolbar')
 
     // No batch toolbar initially
     await expect(batchToolbar).not.toBeVisible()
@@ -93,7 +93,7 @@ test.describe('Batch block operations', () => {
 
   test('bulk TODO state change sets TODO on all selected blocks', async ({ page }) => {
     const blocks = page.locator('[data-testid="sortable-block"]')
-    const batchToolbar = page.locator('.batch-toolbar')
+    const batchToolbar = page.getByTestId('batch-toolbar')
 
     // Select two blocks via Ctrl+Click
     await blocks
@@ -126,7 +126,7 @@ test.describe('Batch block operations', () => {
     const blockCount = await blocks.count()
     expect(blockCount).toBe(5)
 
-    const batchToolbar = page.locator('.batch-toolbar')
+    const batchToolbar = page.getByTestId('batch-toolbar')
 
     // No toolbar initially
     await expect(batchToolbar).not.toBeVisible()

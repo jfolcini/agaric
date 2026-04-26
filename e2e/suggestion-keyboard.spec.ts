@@ -185,7 +185,9 @@ test.describe('Escape key with suggestion popup', () => {
     await expect(activeSuggestionPopup(page)).not.toBeVisible()
 
     // Editor should still be mounted (contenteditable visible)
-    await expect(page.locator('.block-editor [contenteditable="true"]')).toBeVisible()
+    await expect(
+      page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
+    ).toBeVisible()
   })
 
   test('second Escape after popup dismissed closes the editor', async ({ page }) => {
@@ -198,7 +200,9 @@ test.describe('Escape key with suggestion popup', () => {
 
     // Second Escape: close editor (return to static block)
     await page.keyboard.press('Escape')
-    await expect(page.locator('.block-editor [contenteditable="true"]')).not.toBeVisible()
+    await expect(
+      page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
+    ).not.toBeVisible()
   })
 })
 

@@ -13,6 +13,7 @@
  */
 
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { DiffSpan } from '../../lib/tauri'
@@ -186,5 +187,81 @@ describe('DiffDisplay', () => {
     // Diff semantics preserved
     expect((container.querySelector('del') as Element).textContent).toContain('old text')
     expect((container.querySelector('ins') as Element).textContent).toContain('new text')
+  })
+
+  // -- UX-265 sub-fix 5: large-diff toggle --------------------------------
+  describe('UX-265 large-diff toggle', () => {
+    /** Build a span list that exceeds the LARGE_DIFF_THRESHOLD (500). */
+    function makeLargeSpans(count: number): DiffSpan[] {
+      return Array.from({ length: count }, (_, i) =>
+        makeSpan(i % 3 === 0 ? 'Insert' : i % 3 === 1 ? 'Delete' : 'Equal', `tok${i}`),
+      )
+    }
+
+    it('does not render the toggle for diffs below the threshold', () => {
+      // 500 spans is the threshold; 500 should NOT trigger the toggle.
+      const spans = makeLargeSpans(500)
+
+      const { container } = render(<DiffDisplay spans={spans} />)
+
+      expect(container.querySelector('[data-testid="diff-toggle-btn"]')).toBeNull()
+      const p = container.querySelector('p.diff-display') as HTMLElement
+      expect(p.children.length).toBe(500)
+    })
+
+    it('renders the Show full diff toggle when spans exceed the threshold', () => {
+      const spans = makeLargeSpans(750)
+
+      const { container } = render(<DiffDisplay spans={spans} />)
+
+      const toggle = container.querySelector('[data-testid="diff-toggle-btn"]') as HTMLElement
+      expect(toggle).toBeTruthy()
+      expect(toggle.textContent).toMatch(/Show full diff/i)
+      // Hidden count is total - visible (100 visible by default) = 650.
+      expect(toggle.textContent).toContain('650')
+    })
+
+    it('default state shows only the first 100 spans when diff is large', () => {
+      const spans = makeLargeSpans(750)
+
+      const { container } = render(<DiffDisplay spans={spans} />)
+
+      const p = container.querySelector('p.diff-display') as HTMLElement
+      expect(p.children.length).toBe(100)
+    })
+
+    it('expanding the toggle reveals all spans and switches to Collapse label', async () => {
+      const user = userEvent.setup()
+      const spans = makeLargeSpans(750)
+
+      const { container } = render(<DiffDisplay spans={spans} />)
+
+      const toggle = container.querySelector('[data-testid="diff-toggle-btn"]') as HTMLElement
+      expect(toggle.getAttribute('aria-expanded')).toBe('false')
+
+      await user.click(toggle)
+
+      const p = container.querySelector('p.diff-display') as HTMLElement
+      expect(p.children.length).toBe(750)
+      expect(toggle.getAttribute('aria-expanded')).toBe('true')
+      expect(toggle.textContent).toMatch(/Collapse diff/i)
+
+      // Re-collapse round-trips back to 100 visible.
+      await user.click(toggle)
+      const p2 = container.querySelector('p.diff-display') as HTMLElement
+      expect(p2.children.length).toBe(100)
+      expect(toggle.textContent).toMatch(/Show full diff/i)
+    })
+
+    it('hidden count in toggle label tracks span total', () => {
+      // 501 spans → 100 visible, 401 hidden. Just over the threshold
+      // exercises the i18n plural template's count interpolation.
+      const spans = makeLargeSpans(501)
+
+      const { container } = render(<DiffDisplay spans={spans} />)
+
+      const toggle = container.querySelector('[data-testid="diff-toggle-btn"]') as HTMLElement
+      expect(toggle.textContent).toContain('401')
+    })
   })
 })

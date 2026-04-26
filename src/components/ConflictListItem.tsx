@@ -6,14 +6,21 @@
  * and the selection checkbox.
  *
  * Extracted from ConflictList.tsx for testability (#651-R3).
+ *
+ * UX-265 (sub-fixes 1, 3, 4):
+ *  - Keep/Discard wrapped in Tooltip showing the action's effect.
+ *  - Conflict-type badge wrapped in Tooltip showing a longer description.
+ *  - When parent_id is set but the original block could not be loaded,
+ *    show a warning banner and disable the Keep action.
  */
 
-import { Check, ExternalLink, X } from 'lucide-react'
+import { AlertTriangle, Check, ExternalLink, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTimestamp, truncateId, ulidToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { BlockRow } from '../lib/tauri'
@@ -75,6 +82,14 @@ export function ConflictListItem({
 }: ConflictListItemProps): React.ReactElement {
   const { t } = useTranslation()
   const conflictType = inferConflictType(block, original)
+  // UX-265 sub-fix 4: original block expected (parent_id set) but not loaded.
+  const originalMissing = block.parent_id != null && original == null
+  const keepDisabled = originalMissing
+  // The full aria-description string used both for the disabled-keep tooltip
+  // and as aria-description on the Keep button.
+  const keepAriaDescription = keepDisabled
+    ? t('conflict.keepDisabledNoOriginal')
+    : t('conflict.keepTooltip')
 
   return (
     <li
@@ -108,13 +123,25 @@ export function ConflictListItem({
           <Badge variant="secondary" className="conflict-item-type shrink-0">
             {block.block_type}
           </Badge>
-          <Badge
-            variant="outline"
-            className={cn('conflict-type-badge shrink-0', conflictTypeBadgeClass(conflictType))}
-            aria-label={t(`conflict.type${conflictType}`)}
-          >
-            {conflictType}
-          </Badge>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    'conflict-type-badge shrink-0',
+                    conflictTypeBadgeClass(conflictType),
+                  )}
+                  aria-label={t(`conflict.type${conflictType}`)}
+                >
+                  {conflictType}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{t(`conflict.type${conflictType}Description`)}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
         <div className="conflict-metadata flex items-center gap-2 text-xs text-muted-foreground">
           <span className="conflict-source-id font-mono" title={block.id}>
@@ -127,6 +154,16 @@ export function ConflictListItem({
             </span>
           )}
         </div>
+        {originalMissing && (
+          <div
+            className="conflict-original-missing-banner flex items-start gap-2 rounded-md border border-dashed border-status-overdue/40 bg-status-overdue/5 p-2 text-xs text-status-overdue"
+            data-testid="conflict-original-missing"
+            role="alert"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden="true" />
+            <span>{t('conflict.originalNotFound')}</span>
+          </div>
+        )}
         <ConflictTypeRenderer
           conflictType={conflictType}
           block={block}
@@ -144,31 +181,54 @@ export function ConflictListItem({
             onClick={() => onViewOriginal(block.parent_id as string, block.content ?? 'Untitled')}
           >
             <ExternalLink className="h-3.5 w-3.5" />
-            View original
+            {t('conflict.viewOriginalButton')}
           </Button>
         )}
-        <Button
-          variant="outline"
-          size="sm"
-          className="conflict-keep-btn touch-target"
-          data-testid="conflict-keep-btn"
-          onClick={() => onKeep(block)}
-          aria-label={t('conflict.keepIncomingLabel', { id: truncateId(block.id) })}
-        >
-          <Check className="h-3.5 w-3.5" />
-          {t('conflict.keepLabel')}
-        </Button>
-        <Button
-          variant="destructive"
-          size="sm"
-          className="conflict-discard-btn touch-target"
-          data-testid="conflict-discard-btn"
-          onClick={() => onDiscard(block.id)}
-          aria-label={t('conflict.discardConflictLabel', { id: truncateId(block.id) })}
-        >
-          <X className="h-3.5 w-3.5" />
-          {t('conflict.discardLabel')}
-        </Button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="conflict-keep-btn touch-target"
+                  data-testid="conflict-keep-btn"
+                  onClick={() => onKeep(block)}
+                  disabled={keepDisabled}
+                  aria-label={t('conflict.keepIncomingLabel', { id: truncateId(block.id) })}
+                  aria-description={keepAriaDescription}
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  {t('conflict.keepLabel')}
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{keepAriaDescription}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="conflict-discard-btn touch-target"
+                data-testid="conflict-discard-btn"
+                onClick={() => onDiscard(block.id)}
+                aria-label={t('conflict.discardConflictLabel', { id: truncateId(block.id) })}
+                aria-description={t('conflict.discardTooltip')}
+              >
+                <X className="h-3.5 w-3.5" />
+                {t('conflict.discardLabel')}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('conflict.discardTooltip')}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
     </li>
   )

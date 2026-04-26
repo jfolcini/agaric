@@ -76,7 +76,7 @@ test.describe('Inner links — rendering', () => {
     // Should have: 1 block_link chip, 2 tag_ref chips, 1 bold element inside the
     // block tree. The linked-references panel below the tree also renders
     // chips (for backlink previews) and must be excluded from these counts.
-    const blockTree = page.locator('.block-tree')
+    const blockTree = page.getByTestId('block-tree')
     await expect(blockTree.locator('[data-testid="block-link-chip"]')).toHaveCount(1)
     const tagChips = blockTree.locator('[data-testid="tag-ref-chip"]')
     expect(await tagChips.count()).toBeGreaterThanOrEqual(2)
@@ -330,7 +330,9 @@ test.describe('Inner links — link persistence', () => {
 
     // Should have one MORE "Quick Notes" chip than before (inside the block tree).
     await expect(
-      page.locator('.block-tree [data-testid="block-link-chip"]', { hasText: 'Quick Notes' }),
+      page.locator('[data-testid="block-tree"] [data-testid="block-link-chip"]', {
+        hasText: 'Quick Notes',
+      }),
     ).toHaveCount(chipsBefore + 1)
   })
 
@@ -373,7 +375,7 @@ test.describe('Inner links — Add block button position', () => {
     // The linked-references ("References") panel is always rendered at the
     // bottom of the page editor now — it replaced the former tabbed detail
     // panel. Both elements should be visible simultaneously.
-    const referencesPanel = page.locator('.linked-references')
+    const referencesPanel = page.getByTestId('linked-references')
     await expect(referencesPanel).toBeVisible()
 
     // Add block button should be ABOVE the linked-references panel visually

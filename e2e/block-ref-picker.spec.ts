@@ -97,7 +97,9 @@ test.describe('Block ref picker — (( trigger', () => {
     // No block-ref chip should have been inserted
     await expect(page.locator('[data-testid="block-ref-chip"]')).not.toBeVisible()
     // Editor should still be active
-    await expect(page.locator('.block-editor [contenteditable="true"]')).toBeVisible()
+    await expect(
+      page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
+    ).toBeVisible()
   })
 
   test('ArrowDown navigates suggestion items', async ({ page }) => {

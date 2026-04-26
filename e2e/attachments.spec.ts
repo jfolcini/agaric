@@ -59,7 +59,7 @@ test.describe('Attachment empty state', () => {
   test('no attachment badges when blocks have no attachments', async ({ page }) => {
     await openPage(page, 'Getting Started')
     // When no block has attachments, no attachment badges should render
-    await expect(page.locator('.attachment-badge')).toHaveCount(0)
+    await expect(page.getByTestId('attachment-badge')).toHaveCount(0)
   })
 })
 
@@ -79,7 +79,7 @@ test.describe('Attachment section exists', () => {
     await openPage(page, 'Getting Started')
 
     // Badge should be visible on the first block
-    const badge = page.locator('.attachment-badge').first()
+    const badge = page.getByTestId('attachment-badge').first()
     await expect(badge).toBeVisible()
     await expect(badge).toContainText('1')
   })
@@ -89,7 +89,7 @@ test.describe('Attachment section exists', () => {
 
     await openPage(page, 'Getting Started')
 
-    const badge = page.locator('.attachment-badge').first()
+    const badge = page.getByTestId('attachment-badge').first()
     await expect(badge).toBeVisible()
 
     // aria-expanded should be false before clicking
@@ -114,7 +114,7 @@ test.describe('Attachment section exists', () => {
     await openPage(page, 'Getting Started')
 
     // Expand attachment list
-    await page.locator('.attachment-badge').first().click()
+    await page.getByTestId('attachment-badge').first().click()
 
     const list = page.getByRole('list', { name: 'Attachments' })
     await expect(list).toBeVisible()
@@ -143,7 +143,7 @@ test.describe('Delete attachment', () => {
     await openPage(page, 'Getting Started')
 
     // Expand attachment list
-    await page.locator('.attachment-badge').first().click()
+    await page.getByTestId('attachment-badge').first().click()
 
     const list = page.getByRole('list', { name: 'Attachments' })
     await expect(list.getByText('report.pdf')).toBeVisible()

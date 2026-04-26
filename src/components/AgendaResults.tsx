@@ -275,6 +275,7 @@ export function AgendaResults({
         className="agenda-results-item hover:bg-accent/50 active:bg-accent/70"
         contentClassName="agenda-results-text"
         breadcrumbClassName="agenda-results-breadcrumb"
+        testId="agenda-results-item"
         onClick={() => handleItemClick(block)}
         onKeyDown={(e) => handleItemKeyDown(e, block)}
         isFocused={focusedIndex === currentFlatIndex}
@@ -322,6 +323,7 @@ export function AgendaResults({
                   'agenda-group-header text-xs [@media(pointer:coarse)]:text-sm font-semibold uppercase tracking-wide px-3 py-1',
                   group.className ?? 'text-muted-foreground',
                 )}
+                data-testid="agenda-group-header"
               >
                 {displayLabel}
                 <span className="ml-1.5 text-muted-foreground font-normal">

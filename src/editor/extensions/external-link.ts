@@ -101,6 +101,7 @@ export const ExternalLink = Link.extend({
   validate: (url: string) => isValidHttpUrl(url),
   HTMLAttributes: {
     class: 'external-link',
+    'data-testid': 'external-link',
     rel: 'noopener noreferrer',
   },
 })

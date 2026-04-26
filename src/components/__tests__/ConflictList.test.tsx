@@ -22,7 +22,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -2297,7 +2297,10 @@ describe('ConflictList', () => {
     // attributes has not always run when the findByText above resolves
     // (React 19 microtask timing — TEST-3 flake). Use findAllByRole so
     // the query retries until the effect flushes.
-    const options = await screen.findAllByRole('option')
+    //
+    // UX-265: scope the lookup to the listbox so native <option> elements
+    // inside the new filter <select>s don't pollute the result.
+    const options = await within(list).findAllByRole('option')
     expect(options).toHaveLength(2)
     for (const item of options) {
       expect(item.className).toContain('conflict-item')
@@ -2465,11 +2468,14 @@ describe('ConflictList', () => {
     // ConflictList items (see ConflictList.tsx), and under React 19 microtask
     // timing the effect may not have run when findByText('conflict 1')
     // resolves. Matches the TEST-3 fix applied to the listbox-role test.
-    const options = await screen.findAllByRole('option')
+    //
+    // UX-265: scope to the listbox so the new filter <select>s' <option>
+    // children don't appear in the result set.
+    const listbox = screen.getByRole('listbox', { name: 'Conflict list' })
+    const options = await within(listbox).findAllByRole('option')
     expect(options[0]?.getAttribute('aria-selected')).toBe('true')
     expect(options[1]?.getAttribute('aria-selected')).toBe('false')
 
-    const listbox = screen.getByRole('listbox', { name: 'Conflict list' })
     listbox.focus()
     await user.keyboard('{ArrowDown}')
 
@@ -2768,6 +2774,76 @@ describe('ConflictList', () => {
     expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block')).toHaveLength(0)
   })
 
+  // UX-264: while a batch keep/discard is iterating through 50+ conflicts,
+  // users should see "Resolving N of M…" rather than just a spinner.
+  it('shows batch progress text while iterating (UX-264)', async () => {
+    const user = userEvent.setup()
+    const conflicts = [
+      makeConflict({ id: 'C1', content: 'c1' }),
+      makeConflict({ id: 'C2', content: 'c2' }),
+      makeConflict({ id: 'C3', content: 'c3' }),
+      makeConflict({ id: 'C4', content: 'c4' }),
+      makeConflict({ id: 'C5', content: 'c5' }),
+    ]
+    const page = { items: conflicts, next_cursor: null, has_more: false }
+
+    // Hold the FIRST delete_block so we can observe the progress mid-flight
+    // before any block is removed (which would mutate the items list and
+    // trigger useListMultiSelect's auto-clear effect).
+    let resolveFirstDelete: (() => void) | undefined
+    const firstDeletePromise = new Promise<{
+      block_id: string
+      deleted_at: string
+      descendants_affected: number
+    }>((resolve) => {
+      resolveFirstDelete = () =>
+        resolve({ block_id: 'C1', deleted_at: '2025-01-15T00:00:00Z', descendants_affected: 0 })
+    })
+
+    let deleteCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_conflicts') return page
+      if (cmd === 'get_block') return originalBlock
+      if (cmd === 'delete_block') {
+        deleteCount++
+        if (deleteCount === 1) return firstDeletePromise
+        return { block_id: 'CX', deleted_at: '2025-01-15T00:00:00Z', descendants_affected: 0 }
+      }
+      return undefined
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText('c1')
+
+    // Select one then "Select all" to grab all five.
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    const selectAllBtn = screen.getByRole('button', { name: /Select all/i })
+    await user.click(selectAllBtn)
+
+    // Open + confirm the Discard-all batch dialog (Discard path is simpler:
+    // only delete_block is awaited per item, so the deferred-delete trick
+    // pauses the loop deterministically).
+    await user.click(screen.getByRole('button', { name: /Discard all/i }))
+    expect(screen.getByText(t('conflict.discardAllSelectedTitle'))).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Yes, discard all/i }))
+
+    // The 1st delete is hung, so progress must show "Resolving 1 of 5…".
+    const progress = await screen.findByTestId('conflict-batch-progress')
+    expect(progress).toHaveTextContent(t('conflicts.batchProgress', { current: 1, total: 5 }))
+    expect(progress.getAttribute('role')).toBe('status')
+    expect(progress.getAttribute('aria-live')).toBe('polite')
+
+    // Release the hung delete to let the rest finish.
+    resolveFirstDelete?.()
+
+    // Progress disappears once the batch completes.
+    await waitFor(() => {
+      expect(screen.queryByTestId('conflict-batch-progress')).not.toBeInTheDocument()
+    })
+  })
+
   // UX-198: the conflict-list toolbar header used to sit inside a
   // `sticky top-0` wrapper. It's now hoisted to the App-level outlet via
   // <ViewHeader>. The toolbar must still render (via ViewHeader's inline
@@ -2788,5 +2864,152 @@ describe('ConflictList', () => {
     // Old sticky wrapper is gone.
     const sticky = container.querySelector('.sticky.top-0')
     expect(sticky).toBeNull()
+  })
+
+  // -- UX-265 sub-fix 2: filter bar ---------------------------------------
+  describe('UX-265 filter bar', () => {
+    it('renders the filter bar when conflicts exist', async () => {
+      const page = {
+        items: [makeConflict({ id: 'C1', content: 'filter renders' })],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+      render(<ConflictList />)
+      await screen.findByText('filter renders')
+
+      expect(screen.getByTestId('conflict-filter-bar')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: t('conflict.filterByType') })).toBeInTheDocument()
+      expect(
+        screen.getByRole('combobox', { name: t('conflict.filterByDevice') }),
+      ).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: t('conflict.filterByDate') })).toBeInTheDocument()
+    })
+
+    it('does not render the filter bar when no conflicts', async () => {
+      mockInvokeByCommand({ get_conflicts: emptyPage })
+
+      render(<ConflictList />)
+      await screen.findByText(/No conflicts/)
+
+      expect(screen.queryByTestId('conflict-filter-bar')).not.toBeInTheDocument()
+    })
+
+    it('selecting a type filter hides non-matching conflicts', async () => {
+      const user = userEvent.setup()
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      vi.mocked(invoke).mockImplementation(async (cmd: string, _args?: any) => {
+        if (cmd === 'get_conflicts') {
+          return {
+            items: [
+              // Text conflict — its content text "text-conflict-row" is
+              // shown verbatim by TextConflictView.
+              {
+                id: 'CTEXT01',
+                block_type: 'content',
+                content: 'text-conflict-row',
+                parent_id: 'P1',
+                position: 1,
+                deleted_at: null,
+                is_conflict: true,
+                conflict_type: null,
+                todo_state: null,
+                priority: null,
+                due_date: null,
+                scheduled_date: null,
+              },
+              // Move conflict — no content shown; identify by data-testid
+              // and the type badge instead.
+              {
+                id: 'CMOVE01',
+                block_type: 'content',
+                content: 'move-conflict-row',
+                parent_id: 'P2',
+                position: 2,
+                deleted_at: null,
+                is_conflict: true,
+                conflict_type: 'Move',
+                todo_state: null,
+                priority: null,
+                due_date: null,
+                scheduled_date: null,
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'get_block') {
+          return {
+            id: 'P1',
+            block_type: 'content',
+            content: 'orig',
+            parent_id: null,
+            position: 1,
+            deleted_at: null,
+            is_conflict: false,
+            conflict_type: null,
+            todo_state: null,
+            priority: null,
+            due_date: null,
+            scheduled_date: null,
+          }
+        }
+        return null
+      })
+
+      const { container } = render(<ConflictList />)
+
+      // Both conflicts must be rendered before we apply a filter — otherwise
+      // we'd be observing the pre-render state, not the filter behaviour.
+      await waitFor(() => {
+        expect(screen.getAllByTestId('conflict-item')).toHaveLength(2)
+      })
+      // Text conflict's content is rendered.
+      expect(screen.getByText('text-conflict-row')).toBeInTheDocument()
+      // Move conflict's badge is rendered (Move conflicts don't show content).
+      const typeBadges = container.querySelectorAll('.conflict-type-badge')
+      const badgeTexts = Array.from(typeBadges).map((b) => b.textContent)
+      expect(badgeTexts).toContain('Text')
+      expect(badgeTexts).toContain('Move')
+
+      // Radix Select falls back to a native <select> in jsdom (no pointer
+      // events). Use userEvent.selectOptions on the labelled element.
+      const typeFilter = screen.getByLabelText(t('conflict.filterByType')) as HTMLSelectElement
+      await user.selectOptions(typeFilter, 'Move')
+
+      // After filter: only the Move conflict remains.
+      await waitFor(() => {
+        expect(screen.getAllByTestId('conflict-item')).toHaveLength(1)
+      })
+      expect(screen.queryByText('text-conflict-row')).not.toBeInTheDocument()
+      const remainingBadges = container.querySelectorAll('.conflict-type-badge')
+      expect(remainingBadges).toHaveLength(1)
+      expect(remainingBadges[0]?.textContent).toBe('Move')
+    })
+
+    it('shows a no-match message when filters reduce list to zero', async () => {
+      const user = userEvent.setup()
+      // Single Text conflict, then user selects "Move" filter → 0 matches.
+      const page = {
+        items: [makeConflict({ id: 'C1', content: 'only-text-row' })],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+      render(<ConflictList />)
+      await screen.findByText('only-text-row')
+
+      const typeFilter = screen.getByLabelText(t('conflict.filterByType')) as HTMLSelectElement
+      await user.selectOptions(typeFilter, 'Move')
+
+      await waitFor(() => {
+        expect(screen.getByTestId('conflict-no-match')).toBeInTheDocument()
+      })
+      expect(screen.getByText(t('conflict.noMatchingFilters'))).toBeInTheDocument()
+      expect(screen.queryByText('only-text-row')).not.toBeInTheDocument()
+    })
   })
 })

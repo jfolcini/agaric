@@ -291,7 +291,11 @@ export function LinkedReferences({
   }
 
   return (
-    <section className="linked-references" aria-label={t('references.panelLabel')}>
+    <section
+      className="linked-references"
+      data-testid="linked-references"
+      aria-label={t('references.panelLabel')}
+    >
       {/* Main header -- always visible, outside ListViewState, with inline filter toggle */}
       <div className="flex flex-nowrap items-center gap-1 min-w-0">
         <CollapsiblePanelHeader

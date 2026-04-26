@@ -397,7 +397,8 @@ export function TrashView(): React.ReactElement {
 
   return (
     <section className="trash-view space-y-4" aria-label={t('trash.regionLabel')}>
-      {/* Filter input */}
+      {/* Filter input — SearchInput already provides an inline ✕ clear button
+          (UX-221) with proper touch-target + focus-ring + a11y per AGENTS.md. */}
       {blocks.length > 0 && (
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -411,6 +412,7 @@ export function TrashView(): React.ReactElement {
             }}
             className="pl-9"
             data-testid="trash-filter-input"
+            clearAriaLabelKey="trash.searchClear"
           />
         </div>
       )}
@@ -466,6 +468,13 @@ export function TrashView(): React.ReactElement {
             <Trash2 className="h-3.5 w-3.5" />
             {t('trash.purgeSelectedButton')}
           </Button>
+          {/* UX-275 sub-fix 6: surface Shift+Click range-select hint inside the toolbar. */}
+          <span
+            className="ml-auto hidden text-xs text-muted-foreground sm:inline"
+            data-testid="trash-batch-hint"
+          >
+            {t('trash.batchHint')}
+          </span>
         </BatchActionToolbar>
       )}
 

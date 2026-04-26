@@ -257,7 +257,7 @@ describe('HistoryListItem', () => {
       }),
     )
 
-    expect(screen.getByLabelText('Non-reversible')).toBeInTheDocument()
+    expect(screen.getByLabelText(/Non-reversible/)).toBeInTheDocument()
   })
 
   it('does not show lock icon for reversible ops', () => {
@@ -268,7 +268,7 @@ describe('HistoryListItem', () => {
       }),
     )
 
-    expect(screen.queryByLabelText('Non-reversible')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Non-reversible/)).not.toBeInTheDocument()
   })
 
   // -- Diff display ----------------------------------------------------------
