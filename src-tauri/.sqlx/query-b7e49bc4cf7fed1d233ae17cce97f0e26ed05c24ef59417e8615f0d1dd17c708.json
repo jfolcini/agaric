@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) as \"count: i64\" FROM blocks\n               WHERE block_type = 'page' AND content = ? AND deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "count: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b7e49bc4cf7fed1d233ae17cce97f0e26ed05c24ef59417e8615f0d1dd17c708"
+}

@@ -85,6 +85,36 @@ pub(crate) async fn create_block_in_tx(
         if exists.is_none() {
             return Err(AppError::NotFound(format!("parent block '{pid}'")));
         }
+
+        // L-37: Enforce `MAX_BLOCK_DEPTH` on the create path. The new block
+        // will live at depth = parent_depth + 1, so reject when that exceeds
+        // the documented limit (ARCHITECTURE.md §20). Without this guard
+        // a user could repeatedly create blocks under the deepest leaf and
+        // drift past the bound — `move_block_inner` already enforces the
+        // same limit; the asymmetry was the loophole.
+        //
+        // The recursive member filters `is_conflict = 0` and bounds
+        // `depth < 100` (invariant #9) — same shape as the depth-check CTE
+        // in `move_block_inner` (move_ops.rs).
+        let parent_depth = sqlx::query_scalar!(
+            r#"WITH RECURSIVE path(id, depth) AS (
+                 SELECT ?, 0
+                 UNION ALL
+                 SELECT b.parent_id, p.depth + 1
+                 FROM path p JOIN blocks b ON b.id = p.id
+                 WHERE b.parent_id IS NOT NULL AND b.is_conflict = 0 AND p.depth < 100
+               )
+               SELECT MAX(depth) as "depth: i64" FROM path"#,
+            pid,
+        )
+        .fetch_one(&mut **tx)
+        .await?;
+
+        if parent_depth + 1 > MAX_BLOCK_DEPTH {
+            return Err(AppError::Validation(format!(
+                "maximum nesting depth of {MAX_BLOCK_DEPTH} exceeded"
+            )));
+        }
     }
 
     // Compute next position when none provided: append after last sibling

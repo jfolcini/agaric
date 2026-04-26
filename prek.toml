@@ -224,7 +224,7 @@ repo = "local"
 [[repos.hooks]]
 id = "license-checker"
 name = "license check"
-entry = "npx license-checker --onlyAllow 'MIT;ISC;Apache-2.0;BSD-3-Clause;BSD-2-Clause;MPL-2.0;MIT-0;CC0-1.0;Python-2.0;BlueOak-1.0.0;CC-BY-3.0;CC-BY-4.0;0BSD;Unlicense' --excludePackages 'agaric@0.1.0' --production"
+entry = "npx license-checker --onlyAllow 'MIT;ISC;Apache-2.0;BSD-3-Clause;BSD-2-Clause;MPL-2.0;MIT-0;CC0-1.0;Python-2.0;BlueOak-1.0.0;CC-BY-3.0;CC-BY-4.0;0BSD;Unlicense' --excludePrivatePackages --production"
 language = "system"
 pass_filenames = false
 files = "(^package\\.json$|^package-lock\\.json$)"

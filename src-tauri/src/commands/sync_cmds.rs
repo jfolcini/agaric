@@ -224,11 +224,15 @@ pub fn start_sync_inner(
         AppError::InvalidOperation("Sync already in progress for this peer".into())
     })?;
 
-    // Wake the SyncDaemon to sync now (#382)
+    // Wake the SyncDaemon to sync now (#382). The wrapper does NOT
+    // pre-credit `record_success` — the daemon's own success path calls
+    // `scheduler.record_success(peer_id)` after a real network sync
+    // succeeds. Pre-crediting here (M-32) wiped per-peer backoff state
+    // before the daemon had even attempted the sync, defeating the
+    // backoff invariant documented in ARCHITECTURE.md §18 ("`record_failure(id)`
+    // Doubles backoff: 1s → 2s → 4s → … → 60s max"). The wrapper's job
+    // is to *trigger* a sync, not to mark it successful.
     scheduler.notify_change();
-
-    // Record success so the backoff state stays clean.
-    scheduler.record_success(&peer_id);
 
     Ok(SyncSessionInfo {
         state: "complete".into(),

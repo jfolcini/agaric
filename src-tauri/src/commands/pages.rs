@@ -47,10 +47,18 @@ pub async fn set_page_aliases_inner(
         return Err(AppError::NotFound("page not found".into()));
     }
 
+    // M-21: wrap the DELETE + per-alias INSERT loop in a single
+    // `BEGIN IMMEDIATE` transaction so that a crash, pool-acquire
+    // failure, or per-row INSERT error mid-loop rolls the page back to
+    // its prior alias set instead of leaving a partial replacement.
+    // Concurrent callers for the same page also serialize on the
+    // immediate write lock instead of interleaving their phases.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
     // Delete existing aliases
     sqlx::query("DELETE FROM page_aliases WHERE page_id = ?1")
         .bind(page_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
     // Insert new aliases (skip empty, trim whitespace, deduplicate)
@@ -65,12 +73,14 @@ pub async fn set_page_aliases_inner(
             sqlx::query("INSERT OR IGNORE INTO page_aliases (page_id, alias) VALUES (?1, ?2)")
                 .bind(page_id)
                 .bind(&trimmed)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
         if result.rows_affected() > 0 {
             inserted.push(trimmed);
         }
     }
+
+    tx.commit().await?;
 
     Ok(inserted)
 }

@@ -101,6 +101,147 @@ async fn set_page_aliases_skips_empty_and_duplicates() {
     );
 }
 
+// M-21: `set_page_aliases_inner` wraps DELETE + INSERT in a single
+// `BEGIN IMMEDIATE` transaction so that a mid-loop failure rolls the
+// page back to its prior alias set instead of leaving a partial
+// replacement. The three tests below exercise:
+//   1. atomic full-set replacement (existing semantics preserved)
+//   2. empty input clears all aliases
+//   3. mid-loop failure rolls back to the original aliases
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_atomic_replaces_full_set() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "page-tx-1", "page", "Page Tx 1", None, Some(0)).await;
+
+    // Initial set: A, B, C
+    set_page_aliases_inner(&pool, "page-tx-1", vec!["A".into(), "B".into(), "C".into()])
+        .await
+        .unwrap();
+    let initial = get_page_aliases_inner(&pool, "page-tx-1").await.unwrap();
+    assert_eq!(initial, vec!["A", "B", "C"], "initial set should be A,B,C");
+
+    // Replace with: D, E
+    let inserted = set_page_aliases_inner(&pool, "page-tx-1", vec!["D".into(), "E".into()])
+        .await
+        .unwrap();
+    assert_eq!(inserted.len(), 2, "should insert exactly 2 new aliases");
+
+    // Final state must be EXACTLY D, E — no leftovers from the prior set.
+    let final_state = get_page_aliases_inner(&pool, "page-tx-1").await.unwrap();
+    assert_eq!(
+        final_state,
+        vec!["D", "E"],
+        "transactional replace should leave exactly the new set"
+    );
+
+    // And the prior aliases must no longer resolve.
+    for old in ["A", "B", "C"] {
+        let r = resolve_page_by_alias_inner(&pool, old).await.unwrap();
+        assert!(
+            r.is_none(),
+            "old alias {old} must not resolve after replace"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_empty_clears_all() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "page-tx-2", "page", "Page Tx 2", None, Some(0)).await;
+
+    set_page_aliases_inner(&pool, "page-tx-2", vec!["A".into(), "B".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        get_page_aliases_inner(&pool, "page-tx-2").await.unwrap(),
+        vec!["A", "B"],
+        "preconditions: aliases A, B should be set"
+    );
+
+    // Pass an empty list — should clear the set entirely.
+    let inserted = set_page_aliases_inner(&pool, "page-tx-2", vec![])
+        .await
+        .unwrap();
+    assert!(inserted.is_empty(), "empty input should insert nothing");
+
+    let after = get_page_aliases_inner(&pool, "page-tx-2").await.unwrap();
+    assert!(
+        after.is_empty(),
+        "alias set must be empty after empty replace"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_in_transaction() {
+    // Regression for M-21: if a per-row INSERT fails mid-loop, the
+    // entire DELETE + INSERT sequence must roll back so the page
+    // retains its original alias set. We force the failure with a
+    // temporary BEFORE-INSERT trigger that calls RAISE(ABORT) on a
+    // sentinel alias value.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "page-tx-3", "page", "Page Tx 3", None, Some(0)).await;
+
+    // Prior set: A, B
+    set_page_aliases_inner(&pool, "page-tx-3", vec!["A".into(), "B".into()])
+        .await
+        .unwrap();
+    let before = get_page_aliases_inner(&pool, "page-tx-3").await.unwrap();
+    assert_eq!(before, vec!["A", "B"], "preconditions: prior set is A, B");
+
+    // Install a trigger that aborts the INSERT when alias = '__FAIL__'.
+    sqlx::query(
+        "CREATE TRIGGER test_m21_fail_mid_loop \
+         BEFORE INSERT ON page_aliases \
+         WHEN NEW.alias = '__FAIL__' \
+         BEGIN \
+            SELECT RAISE(ABORT, 'simulated mid-loop failure'); \
+         END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Try to replace with C, __FAIL__, D. The INSERT for __FAIL__ fires
+    // RAISE(ABORT), which propagates as a sqlx error. Without the
+    // transaction, the DELETE + the C insert would already be committed
+    // and the page would be left with just C (or empty).
+    let result = set_page_aliases_inner(
+        &pool,
+        "page-tx-3",
+        vec!["C".into(), "__FAIL__".into(), "D".into()],
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "expected the trigger to abort the insert, got: {:?}",
+        result.as_ref().ok()
+    );
+
+    // Drop the trigger before re-querying so any future writes succeed.
+    sqlx::query("DROP TRIGGER test_m21_fail_mid_loop")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The original aliases must still be present — DELETE rolled back.
+    let after = get_page_aliases_inner(&pool, "page-tx-3").await.unwrap();
+    assert_eq!(
+        after, before,
+        "transaction rollback must restore the original alias set"
+    );
+    // And the partially-attempted new aliases must not have leaked through.
+    for leaked in ["C", "D", "__FAIL__"] {
+        let r = resolve_page_by_alias_inner(&pool, leaked).await.unwrap();
+        assert!(
+            r.is_none(),
+            "alias '{leaked}' must not be resolvable after rollback"
+        );
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_page_aliases_returns_sorted_list() {
     let (pool, _dir) = test_pool().await;
