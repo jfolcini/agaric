@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-10 open items.
+9 open items.
 
-Previously resolved: 514+ items across 153 sessions.
+Previously resolved: 515+ items across 153 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -1119,7 +1119,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Already-tracked in REVIEW-LATER (PERF-19, PERF-20, PERF-23) | 3 |
 | Net findings in this report | 333 |
 | **Critical** | **1** |
-| **High** | **9** |
+| **High** | **8** |
 | **Medium** | **51** |
 | **Low** | **125** |
 | **Info / nits** | **125** |
@@ -1192,7 +1192,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ---
 
-## HIGH findings (9)
+## HIGH findings (8)
 
 ### H-3 — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated daily (parent — split into H-3a, H-3b, H-3c)
 - **Domain:** Spaces / Commands
@@ -1308,36 +1308,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** High (user trust in the bug-report feature)
 - **Recommendation:** Tauri command `bug_report_preview()` returns the same redacted bundle as the existing submit, but does not upload. The dialog renders it via the existing `ScrollArea` + diff viewer primitives. Cross-references UX-277 (`BugReportDialog` polish — adding "no log-content preview before submit" was already filed there at S cost; this finding promotes it to H-9c with a richer scope).
 - **Status:** Open. Independent of H-9a / H-9b. May supersede the "no log-content preview" item in UX-277 — when H-9c lands, drop the preview bullet from UX-277.
-
-### H-12 — `flush_draft` bypasses `MAX_CONTENT_LENGTH` and never validates target block exists (parent — split into H-12a, H-12b)
-- **Domain:** Drafts / Commands
-- **Location:** `src-tauri/src/commands/drafts.rs::flush_draft_inner`
-- **What:** Two issues conflate: oversized content and orphan target. `flush_draft` doesn't check the 256 KB cap and doesn't verify the target block_id exists; combined with the missing FK on `block_drafts.block_id` (see M-93), a stale draft can flush an `edit_block` op pointing nowhere.
-- **Why it matters:** A single user action lets oversized or orphan ops enter the append-only log. Op log is supposed to be the source of truth — invalid entries persist forever.
-- **Cost:** M (combined) — split into H-12a (S, validate target) + H-12b (S, enforce size cap). Land both in one session.
-- **Pass-1 source:** 10-gcal-spaces-misc / F6, F7
-
-### H-12a — `flush_draft_inner`: validate target block exists before op-log append
-- **Domain:** Drafts / Commands
-- **Location:** `src-tauri/src/commands/drafts.rs::flush_draft_inner`
-- **What:** Before constructing and appending the `EditBlock` op, verify the target block_id is present in `blocks` AND `deleted_at IS NULL`. If absent, drop the draft (with a warn log + tracing event) instead of writing the orphan op. Run inside the existing tx so the check and the append are atomic.
-- **Why it matters:** Closes the orphan-op leak vector: stale drafts (e.g., user deleted the block on another device, then this device's connector flushed an old draft) no longer pollute the op log.
-- **Cost:** S
-- **Risk:** Low — strictly defensive; refusing to flush an orphan is the correct behavior.
-- **Impact:** High
-- **Recommendation:** Use `query_scalar!` for the existence check inside the same `BEGIN IMMEDIATE` tx. Drop the draft row if the target is missing — same UX as a successful flush that produces no observable change.
-- **Status:** Open. Independent of H-12b.
-
-### H-12b — `flush_draft_inner`: enforce `MAX_CONTENT_LENGTH` (256 KB)
-- **Domain:** Drafts / Commands
-- **Location:** `src-tauri/src/commands/drafts.rs::flush_draft_inner`
-- **What:** Before constructing the `EditBlock` op, check that the draft content's UTF-8 byte length does not exceed `MAX_CONTENT_LENGTH` (the same constant the regular edit path enforces). If exceeded, return an error to the user and KEEP the draft (so the user can edit it down) — DO NOT silently truncate.
-- **Why it matters:** Closes the oversized-op leak vector. Op log integrity preserved.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** High
-- **Recommendation:** Reuse the existing `MAX_CONTENT_LENGTH` constant. The same UX as the regular edit path: a clear error, the draft survives, the user can decide how to shrink it. Add a test asserting that a 257 KB draft errors out and stays unflushed.
-- **Status:** Open. Independent of H-12a.
 
 ### H-13 — `Op-log immutability has zero database-level enforcement
 - **Domain:** Core
