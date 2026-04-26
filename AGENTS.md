@@ -193,6 +193,25 @@ cd src-tauri && cargo test -- specta_tests --ignored
 - **Pre-commit:** `prek.toml` — 25 file-type-aware hooks (Rust hooks skip when no `.rs` staged, etc.) covering 9 builtin file checks, gitleaks (secret scanning), biome, tsc, `no-hsl-rgb-var-wrap`, vitest, npm-audit, license-checker, depcheck, knip, markdownlint, lychee, cargo fmt/clippy/nextest/deny/machete
 - **CI:** `.github/workflows/ci.yml` — 3 jobs: `check` (lint/test on Linux), `build` (matrix: Linux + Windows + macOS), `android-build`
 
+## Releases
+
+The Release workflow (`.github/workflows/release.yml`) fires on tag pushes matching `v*` or `[0-9]*`. The very first job is `verify-version`, which **fails fast** if the tag and the 5 manifests (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `package.json`, `package-lock.json`) disagree. **Never** push a release tag without first bumping all 5 in lockstep — the tag will fail at the gate before any build matrix entry spins up, and you'll have to delete the tag and recreate it on a fresh commit.
+
+**Always use the automation; never hand-edit manifests for a release.** Two equivalent entry points share `scripts/bump-version.sh` as the single source of truth:
+
+- **Local (manual):** `scripts/bump-version.sh <new-version> --commit --tag --push`. Updates the 3 source-of-truth manifests (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`), regenerates the 2 lock files (`package-lock.json` via `npm install --package-lock-only --ignore-scripts`, `src-tauri/Cargo.lock` via `cargo update -p agaric --precise`), commits, tags, and pushes both `main` and the new tag. Each flag is opt-in: omit `--push` for a dry run; omit `--tag` to stop after the commit; omit `--commit` to just stage the diff for manual review. Refuses to run on a dirty tree (when `--commit` is passed) and refuses to clobber an existing tag.
+
+- **GitHub Actions (one-click):** `gh workflow run release-tag.yml -f version=<new-version>` (or `Actions → "Release Tag" → "Run workflow"` in the UI). The `release-tag` workflow checks out main, sets up Rust + Node, runs the same `scripts/bump-version.sh` with `--commit --tag --push`, and exits. The push of the new tag fires the existing `Release` workflow, which then runs the verify-version → validate → build matrix → desktop bundles → Android APK → draft GitHub Release pipeline. The maintainer types the new version once; everything else is automated.
+
+**Direct `git tag X.Y.Z && git push origin X.Y.Z` will reliably fail at the verify-version gate if you forgot to bump the manifests first.** The script + workflow exist to make sure that doesn't happen.
+
+The 5-manifest lockstep rule is non-negotiable because:
+1. `verify-version` greps Cargo.lock with `awk '/^name = "agaric"$/{getline; print; exit}'` and compares to the tag.
+2. SemVer drift between manifests would silently produce installers labeled with the wrong version on the artifact page.
+3. The `package-lock.json` mirror of `package.json` is enforced by `npm` itself; pushing a tag without regenerating it leaves the lock at the previous version and `verify-version` fails.
+
+If a release tag fails at `verify-version`: delete it (`git push --delete origin <tag> && git tag -d <tag>`), run `scripts/bump-version.sh <tag> --commit --tag --push` on a clean main, done.
+
 ## Testing Conventions
 
 - **Minimum bar:** Every exported function gets happy-path + error-path tests. Components get render + interaction + `axe(container)` a11y tests. **Every component with Tauri IPC calls must have error-path tests** — mock invoke rejection and verify graceful degradation (toast, fallback UI, no crash).
