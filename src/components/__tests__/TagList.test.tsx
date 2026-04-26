@@ -155,6 +155,7 @@ describe('TagList', () => {
       content: 'my-new-tag',
       parentId: null,
       position: null,
+      spaceId: null,
     })
 
     // Input should be cleared

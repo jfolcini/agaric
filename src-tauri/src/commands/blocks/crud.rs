@@ -219,6 +219,126 @@ pub async fn create_block_inner(
     Ok(block)
 }
 
+/// BUG-1 / H-3a — IPC-tightened `create_block`.
+///
+/// Wraps [`create_block_inner`] with the FEAT-3 invariant
+/// "every page belongs to a space". When `block_type == "page"`:
+///
+/// * `space_id is None` → return [`AppError::Validation`]; the caller
+///   must use [`create_page_in_space_inner`] semantics or pass the
+///   active space's ULID through this IPC. No op is appended, the
+///   page is rejected at the IPC boundary so a misbehaving frontend
+///   (e.g. a stale `createBlock({ blockType: 'page' })` callsite)
+///   cannot leak unscoped pages into the materialized state.
+/// * `space_id is Some(sid)` → delegates to
+///   [`crate::commands::spaces::create_page_in_space_inner`] which
+///   emits `CreateBlock` + `SetProperty(space=<sid>)` inside a single
+///   `BEGIN IMMEDIATE` transaction.
+///
+/// Other block types (`content`, `tag`) ignore the parameter and
+/// pass through to [`create_block_inner`] unchanged.
+///
+/// Returns a [`BlockRow`] for the new block — for the page path, the
+/// row is re-fetched after the transaction commits so it carries the
+/// freshly-materialized state (`page_id = self`, etc.).
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — `block_type == "page"` AND
+///   `space_id is None`, or `space_id` does not refer to a live space
+///   block (propagated from `create_page_in_space_inner`).
+/// - All errors from [`create_block_inner`] propagate unchanged for
+///   non-page block types.
+// 8 args (one over the clippy threshold of 7) — adding `space_id` to the
+// existing 7-arg `create_block_inner` shape is the cleanest way to satisfy
+// the BUG-1 invariant without forcing every non-page caller to flip to a
+// builder pattern. Restructuring into an args struct would touch hundreds
+// of callsites for zero behavioural gain.
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(pool, device_id, materializer, content), err)]
+pub async fn create_block_inner_with_space(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_type: String,
+    content: String,
+    parent_id: Option<String>,
+    position: Option<i64>,
+    space_id: Option<String>,
+) -> Result<BlockRow, AppError> {
+    if block_type == "page" {
+        let Some(sid) = space_id else {
+            return Err(AppError::Validation(
+                "page blocks require space_id (BUG-1 / H-3a): \
+                 use createPageInSpace or pass the active space's ULID"
+                    .to_owned(),
+            ));
+        };
+
+        // Delegate to the atomic 2-op helper. It emits `CreateBlock` +
+        // `SetProperty(space = <sid>)` inside a single
+        // `BEGIN IMMEDIATE` transaction so a page never exists without
+        // its space property — the FEAT-3 "nothing outside of spaces"
+        // invariant. `position` is intentionally NOT threaded through:
+        // `create_page_in_space_inner` mirrors PageBrowser's "New page"
+        // semantics (append after last sibling). If a future caller
+        // needs explicit positioning for top-level pages we can extend
+        // the helper; today no callsite uses it.
+        let _position = position;
+        let new_page_id =
+            crate::commands::create_page_in_space_inner(pool, device_id, parent_id, content, sid)
+                .await?;
+
+        // Dispatch background cache rebuilds for both ops
+        // (CreateBlock + SetProperty). Re-read the freshly-appended op
+        // log rows so the materializer sees the canonical
+        // `OpRecord` shape.
+        let new_page_id_str = new_page_id.as_str().to_owned();
+        let rows = sqlx::query_as!(
+            crate::op_log::OpRecord,
+            r#"SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at
+               FROM op_log
+               WHERE block_id = ?
+               ORDER BY seq ASC"#,
+            new_page_id_str,
+        )
+        .fetch_all(pool)
+        .await;
+        match rows {
+            Ok(rows) => {
+                for rec in &rows {
+                    materializer.dispatch_background_or_warn(rec);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    page_id = new_page_id.as_str(),
+                    error = %e,
+                    "create_block (page path): failed to re-fetch op records for background dispatch"
+                );
+            }
+        }
+
+        // Re-fetch the materialized BlockRow so the caller (Tauri IPC)
+        // can return the same shape `create_block_inner` would.
+        return get_block_inner(pool, new_page_id.into_string()).await;
+    }
+
+    // Non-page block types ignore `space_id` and follow the legacy
+    // path — `content`, `tag` blocks have no space invariant.
+    let _ignore_space_id = space_id;
+    create_block_inner(
+        pool,
+        device_id,
+        materializer,
+        block_type,
+        content,
+        parent_id,
+        position,
+    )
+    .await
+}
+
 /// Edit a block's content.
 ///
 /// Validates the block exists and is not deleted, looks up the previous edit
@@ -1393,7 +1513,15 @@ pub(crate) async fn set_property_in_tx(
     ))
 }
 
-/// Tauri command: create a new block. Delegates to [`create_block_inner`].
+/// Tauri command: create a new block. Delegates to
+/// [`create_block_inner_with_space`] which enforces the FEAT-3
+/// "every page has a space" invariant at the IPC boundary
+/// (BUG-1 / H-3a). The optional `space_id` is required when
+/// `block_type == "page"` and ignored otherwise.
+// Same 8-arg justification as the inner — see the comment above
+// `create_block_inner_with_space`. Tauri command signatures match
+// `_inner` shapes 1:1 by convention.
+#[allow(clippy::too_many_arguments)]
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1405,8 +1533,9 @@ pub async fn create_block(
     content: String,
     parent_id: Option<String>,
     position: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    create_block_inner(
+    create_block_inner_with_space(
         &pool.0,
         device_id.as_str(),
         &materializer,
@@ -1414,6 +1543,7 @@ pub async fn create_block(
         content,
         parent_id,
         position,
+        space_id,
     )
     .await
     .map_err(sanitize_internal_error)

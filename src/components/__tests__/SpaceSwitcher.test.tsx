@@ -44,8 +44,8 @@ vi.mock('../SpaceManageDialog', () => ({
 
 const mockedListSpaces = vi.mocked(listSpaces)
 
-const PERSONAL: SpaceRow = { id: 'SPACE_AAAA', name: 'Personal' }
-const WORK: SpaceRow = { id: 'SPACE_ZZZZ', name: 'Work' }
+const PERSONAL: SpaceRow = { id: 'SPACE_AAAA', name: 'Personal', accent_color: null }
+const WORK: SpaceRow = { id: 'SPACE_ZZZZ', name: 'Work', accent_color: null }
 
 beforeEach(() => {
   useSpaceStore.setState({

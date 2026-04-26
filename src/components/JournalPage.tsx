@@ -44,13 +44,14 @@ import {
   MAX_JOURNAL_DATE,
   MIN_JOURNAL_DATE,
 } from '../lib/date-utils'
-import { createBlock, listBlocks } from '../lib/tauri'
+import { createBlock, createPageInSpace, listBlocks } from '../lib/tauri'
 import { insertTemplateBlocks, loadJournalTemplate } from '../lib/template-utils'
 import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
 import { useNavigationStore } from '../stores/navigation'
 import { pageBlockRegistry } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
+import { useSpaceStore } from '../stores/space'
 import { AgendaView } from './journal/AgendaView'
 import { DailyView } from './journal/DailyView'
 import { JournalCalendarDropdown } from './journal/JournalCalendarDropdown'
@@ -168,11 +169,30 @@ export function JournalPage({
         const isNewPage = !pageId
 
         if (!pageId) {
-          const page = await createBlock({ blockType: 'page', content: dateStr })
-          pageId = page.id
+          // BUG-1 / H-3b — route page creation through `createPageInSpace`
+          // so the new daily journal page lands with its `space` ref
+          // property set atomically (CreateBlock + SetProperty in one tx).
+          // The legacy `createBlock({ blockType: 'page' })` path leaked
+          // unscoped pages that disappeared from the PageBrowser list.
+          const currentSpaceId = useSpaceStore.getState().currentSpaceId
+          if (currentSpaceId == null) {
+            // SpaceStore not yet hydrated — surface the failure instead
+            // of silently creating an unscoped page (the symptom we are
+            // fixing). The boot path normally hydrates space store
+            // before Journal mounts; this branch is a defence-in-depth.
+            throw new Error('No active space; cannot create journal page')
+          }
+          const newId = await createPageInSpace({ content: dateStr, spaceId: currentSpaceId })
+          // Defensive: if the IPC returned a non-string (mock leak, schema
+          // drift, …) treat it as a failure so we don't seed `createdPages`
+          // with a non-string and render a phantom page.
+          if (typeof newId !== 'string' || newId.length === 0) {
+            throw new Error('createPageInSpace returned no page ULID')
+          }
+          pageId = newId
           setCreatedPages((prev) => new Map(prev).set(dateStr, pageId as string))
           setPageMap((prev) => new Map(prev).set(dateStr, pageId as string))
-          useResolveStore.getState().set(page.id, dateStr, false)
+          useResolveStore.getState().set(newId, dateStr, false)
         }
 
         if (isNewPage) {

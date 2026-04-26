@@ -32,8 +32,8 @@ import { SpaceManageDialog } from '../SpaceManageDialog'
 
 const mockedInvoke = vi.mocked(invoke)
 
-const PERSONAL: SpaceRow = { id: 'SPACE_PERSON_AAAA', name: 'Personal' }
-const WORK: SpaceRow = { id: 'SPACE_WORK_ZZZZZZ', name: 'Work' }
+const PERSONAL: SpaceRow = { id: 'SPACE_PERSON_AAAA', name: 'Personal', accent_color: null }
+const WORK: SpaceRow = { id: 'SPACE_WORK_ZZZZZZ', name: 'Work', accent_color: null }
 
 const ONBOARDING_KEY = t('space.onboardingSeenKey')
 
@@ -350,7 +350,7 @@ describe('SpaceManageDialog', () => {
   it('does not show the onboarding hint when more than two spaces exist', async () => {
     useSpaceStore.setState({
       currentSpaceId: PERSONAL.id,
-      availableSpaces: [PERSONAL, WORK, { id: 'SPACE_3', name: 'Side' }],
+      availableSpaces: [PERSONAL, WORK, { id: 'SPACE_3', name: 'Side', accent_color: null }],
       isReady: true,
     })
     render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)

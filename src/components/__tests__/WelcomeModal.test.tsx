@@ -5,7 +5,7 @@
  *  - Shows when localStorage has no onboarding flag
  *  - Does NOT show when onboarding flag is set
  *  - "Get Started" dismisses and sets localStorage
- *  - "Create sample pages" calls createBlock
+ *  - "Create sample pages" routes through createPageInSpace + createBlock
  *  - Does not show during boot loading state
  *  - a11y compliance
  */
@@ -36,6 +36,7 @@ vi.mock('lucide-react', () => ({
 
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../../lib/overlay-events'
 import { useBootStore } from '../../stores/boot'
+import { useSpaceStore } from '../../stores/space'
 import { WelcomeModal } from '../WelcomeModal'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -47,6 +48,17 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   useBootStore.setState({ state: 'ready', error: null, boot: noopBoot })
+  // BUG-1 / H-3b — WelcomeModal routes onboarding sample-page creation
+  // through `createPageInSpace`, which reads
+  // `useSpaceStore.getState().currentSpaceId`. On a fresh first boot the
+  // SpaceStore has hydrated to whichever space sorts first
+  // alphabetically (Personal by default); seed the test store so the
+  // sample-pages flow doesn't bail.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
+  })
 })
 
 describe('WelcomeModal', () => {
@@ -101,17 +113,27 @@ describe('WelcomeModal', () => {
     expect(localStorage.getItem('agaric-onboarding-done')).toBe('true')
   })
 
-  it('"Create sample pages" calls createBlock and dismisses', async () => {
+  // BUG-1 / H-3b — page creation routes through `create_page_in_space`
+  // (returns the new ULID as a plain string). Content blocks still use
+  // `create_block`. So the sequence is:
+  //   2× `create_page_in_space` (Getting Started + Quick Tips)
+  // + 6× `create_block` (3 content children for each page)
+  // = 8 IPC invocations total.
+  it('"Create sample pages" calls create_page_in_space + create_block and dismisses', async () => {
     const user = userEvent.setup()
 
-    // Mock createBlock calls — returns a fake block with an id
-    let callCount = 0
+    let pageCount = 0
+    let blockCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_page_in_space') {
+        pageCount++
+        return `page-${pageCount}`
+      }
       if (cmd === 'create_block') {
-        callCount++
+        blockCount++
         return {
-          id: `block-${callCount}`,
-          block_type: 'page',
+          id: `block-${blockCount}`,
+          block_type: 'content',
           content: '',
           parent_id: null,
           position: 0,
@@ -129,26 +151,34 @@ describe('WelcomeModal', () => {
     await user.click(sampleBtn)
 
     await waitFor(() => {
-      // 2 pages + 3 child blocks each = 8 createBlock calls
+      // 2 page creates + 6 child block creates = 8 total IPCs.
       expect(mockedInvoke).toHaveBeenCalledTimes(8)
     })
 
-    // Verify it created the two pages — assert via i18n keys (UX-278) so
-    // a locale change cannot silently break the assertion.
+    // Verify it created the two pages via the new IPC — assert via i18n
+    // keys (UX-278) so a locale change cannot silently break the test.
     expect(mockedInvoke).toHaveBeenCalledWith(
-      'create_block',
+      'create_page_in_space',
       expect.objectContaining({
-        blockType: 'page',
+        spaceId: 'SPACE_TEST',
         content: i18n.t('welcome.sampleGettingStartedTitle'),
       }),
     )
     expect(mockedInvoke).toHaveBeenCalledWith(
-      'create_block',
+      'create_page_in_space',
       expect.objectContaining({
-        blockType: 'page',
+        spaceId: 'SPACE_TEST',
         content: i18n.t('welcome.sampleQuickTipsTitle'),
       }),
     )
+
+    // Negative assertion: NO `create_block` IPC fired with `blockType=page`
+    // (would mean the legacy bypass path crept back in).
+    const legacyCreatePageCalls = mockedInvoke.mock.calls.filter(
+      ([cmd, args]) =>
+        cmd === 'create_block' && (args as { blockType?: string }).blockType === 'page',
+    )
+    expect(legacyCreatePageCalls).toHaveLength(0)
 
     // Dialog should be dismissed
     await waitFor(() => {
@@ -162,13 +192,18 @@ describe('WelcomeModal', () => {
   it('"Create sample pages" uses i18n strings for every block content', async () => {
     const user = userEvent.setup()
 
-    let callCount = 0
+    let pageCount = 0
+    let blockCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_page_in_space') {
+        pageCount++
+        return `page-${pageCount}`
+      }
       if (cmd === 'create_block') {
-        callCount++
+        blockCount++
         return {
-          id: `block-${callCount}`,
-          block_type: 'page',
+          id: `block-${blockCount}`,
+          block_type: 'content',
           content: '',
           parent_id: null,
           position: 0,
@@ -187,19 +222,27 @@ describe('WelcomeModal', () => {
       expect(mockedInvoke).toHaveBeenCalledTimes(8)
     })
 
-    // Every i18n-backed string must appear in the create_block payloads
-    const expectedKeys = [
-      'welcome.sampleGettingStartedTitle',
+    // Page titles ride on `create_page_in_space`.
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'create_page_in_space',
+      expect.objectContaining({ content: i18n.t('welcome.sampleGettingStartedTitle') }),
+    )
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'create_page_in_space',
+      expect.objectContaining({ content: i18n.t('welcome.sampleQuickTipsTitle') }),
+    )
+
+    // Body content blocks ride on `create_block`.
+    const bodyKeys = [
       'welcome.sampleGettingStartedBody1',
       'welcome.sampleGettingStartedBody2',
       'welcome.sampleGettingStartedBody3',
-      'welcome.sampleQuickTipsTitle',
       'welcome.sampleQuickTipsBody1',
       'welcome.sampleQuickTipsBody2',
       'welcome.sampleQuickTipsBody3',
     ] as const
 
-    for (const key of expectedKeys) {
+    for (const key of bodyKeys) {
       expect(mockedInvoke).toHaveBeenCalledWith(
         'create_block',
         expect.objectContaining({ content: i18n.t(key) }),
@@ -208,17 +251,17 @@ describe('WelcomeModal', () => {
   })
 
   // MAINT-99: IPC error-path coverage. The "Create sample pages" flow
-  // wraps the createBlock chain in try/catch and surfaces failures via
+  // wraps the create-page chain in try/catch and surfaces failures via
   // toast.error. A regression where the catch block is dropped (or the
   // toast call goes missing) would leave the user staring at a stuck
   // dialog with no signal — this test pins the contract: rejection →
   // error toast, modal stays open, onboarding flag is NOT persisted.
-  it('shows an error toast and keeps the modal open when createBlock rejects', async () => {
+  it('shows an error toast and keeps the modal open when create_page_in_space rejects', async () => {
     const user = userEvent.setup()
     const mockedToastError = vi.mocked(toast.error)
 
-    // First create_block call (Getting Started page) rejects — the
-    // remaining 7 calls are short-circuited by the try/catch.
+    // First create_page_in_space call (Getting Started page) rejects —
+    // the remaining calls are short-circuited by the try/catch.
     mockedInvoke.mockRejectedValueOnce(new Error('database is locked'))
 
     render(<WelcomeModal />)

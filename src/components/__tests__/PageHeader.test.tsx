@@ -113,8 +113,8 @@ beforeEach(() => {
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_PERSONAL',
     availableSpaces: [
-      { id: 'SPACE_PERSONAL', name: 'Personal' },
-      { id: 'SPACE_WORK', name: 'Work' },
+      { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null },
+      { id: 'SPACE_WORK', name: 'Work', accent_color: null },
     ],
     isReady: true,
   })
@@ -441,6 +441,7 @@ describe('PageHeader tag management', () => {
         content: 'newtag',
         parentId: null,
         position: null,
+        spaceId: null,
       })
     })
   })

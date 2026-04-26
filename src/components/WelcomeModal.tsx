@@ -14,8 +14,9 @@ import {
 } from '@/components/ui/dialog'
 import { logger } from '@/lib/logger'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
-import { createBlock } from '@/lib/tauri'
+import { createBlock, createPageInSpace } from '@/lib/tauri'
 import { useBootStore } from '@/stores/boot'
+import { useSpaceStore } from '@/stores/space'
 
 const STORAGE_KEY = 'agaric-onboarding-done'
 
@@ -54,51 +55,63 @@ const FEATURES = [
 ] as const
 
 async function createSamplePages(t: TFunction): Promise<void> {
+  // BUG-1 / H-3b — onboarding sample pages must land with a `space`
+  // ref property so they show up in the PageBrowser. At first boot
+  // the bootstrap has just seeded Personal + Work; the active space
+  // is whichever one the SpaceStore reconciled to (Personal by
+  // default since it sorts first alphabetically). If the SpaceStore
+  // has not hydrated yet (rare race on fresh installs), bail with a
+  // descriptive error instead of leaking unscoped pages.
+  const currentSpaceId = useSpaceStore.getState().currentSpaceId
+  if (currentSpaceId == null) {
+    throw new Error('No active space; cannot create sample pages')
+  }
+
   // Create "Getting Started" page with child blocks
-  const gettingStarted = await createBlock({
-    blockType: 'page',
+  const gettingStartedId = await createPageInSpace({
     content: t('welcome.sampleGettingStartedTitle'),
+    spaceId: currentSpaceId,
   })
   await createBlock({
     blockType: 'content',
     content: t('welcome.sampleGettingStartedBody1'),
-    parentId: gettingStarted.id,
+    parentId: gettingStartedId,
     position: 0,
   })
   await createBlock({
     blockType: 'content',
     content: t('welcome.sampleGettingStartedBody2'),
-    parentId: gettingStarted.id,
+    parentId: gettingStartedId,
     position: 1,
   })
   await createBlock({
     blockType: 'content',
     content: t('welcome.sampleGettingStartedBody3'),
-    parentId: gettingStarted.id,
+    parentId: gettingStartedId,
     position: 2,
   })
 
   // Create "Quick Tips" page with keyboard shortcut highlights
-  const quickTips = await createBlock({
-    blockType: 'page',
+  const quickTipsId = await createPageInSpace({
     content: t('welcome.sampleQuickTipsTitle'),
+    spaceId: currentSpaceId,
   })
   await createBlock({
     blockType: 'content',
     content: t('welcome.sampleQuickTipsBody1'),
-    parentId: quickTips.id,
+    parentId: quickTipsId,
     position: 0,
   })
   await createBlock({
     blockType: 'content',
     content: t('welcome.sampleQuickTipsBody2'),
-    parentId: quickTips.id,
+    parentId: quickTipsId,
     position: 1,
   })
   await createBlock({
     blockType: 'content',
     content: t('welcome.sampleQuickTipsBody3'),
-    parentId: quickTips.id,
+    parentId: quickTipsId,
     position: 2,
   })
 }

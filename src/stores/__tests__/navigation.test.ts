@@ -1126,8 +1126,8 @@ describe('useNavigationStore', () => {
       useSpaceStore.setState({
         currentSpaceId: 'space-1',
         availableSpaces: [
-          { id: 'space-1', name: 'One' },
-          { id: 'space-2', name: 'Two' },
+          { id: 'space-1', name: 'One', accent_color: null },
+          { id: 'space-2', name: 'Two', accent_color: null },
         ],
         isReady: true,
       })
@@ -1149,8 +1149,8 @@ describe('useNavigationStore', () => {
       useSpaceStore.setState({
         currentSpaceId: 'space-1',
         availableSpaces: [
-          { id: 'space-1', name: 'One' },
-          { id: 'space-2', name: 'Two' },
+          { id: 'space-1', name: 'One', accent_color: null },
+          { id: 'space-2', name: 'Two', accent_color: null },
         ],
         isReady: true,
       })
@@ -1214,7 +1214,7 @@ describe('useNavigationStore', () => {
 
       useSpaceStore.setState({
         currentSpaceId: 'space-1',
-        availableSpaces: [{ id: 'space-1', name: 'One' }],
+        availableSpaces: [{ id: 'space-1', name: 'One', accent_color: null }],
         isReady: true,
       })
       useNavigationStore.getState().openInNewTab('PAGE_A', 'Alpha')

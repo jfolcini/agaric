@@ -59,18 +59,32 @@ export interface ProjectedAgendaEntry {
 // Command wrappers — type-safe Tauri invoke layer
 // ---------------------------------------------------------------------------
 
-/** Create a new block. Returns the created block with its generated ID. */
+/** Create a new block. Returns the created block with its generated ID.
+ *
+ * BUG-1 / H-3a — when `blockType === 'page'`, `spaceId` is REQUIRED.
+ * The backend rejects page-typed creates without a space ULID with
+ * `AppError::Validation`. For page creation, prefer the explicit
+ * `createPageInSpace` helper below — it makes the invariant readable
+ * at the callsite and routes through the dedicated `create_page_in_space`
+ * IPC. The optional `spaceId` here exists so callers stuck on
+ * `createBlock` can still satisfy the invariant if needed (and so the
+ * specta-bound IPC parameter list matches the Rust signature).
+ *
+ * Other block types (`content`, `tag`) ignore `spaceId`.
+ */
 export function createBlock(params: {
   blockType: string
   content: string
   parentId?: string | undefined
   position?: number | undefined
+  spaceId?: string | undefined
 }): Promise<BlockRow> {
   return invoke('create_block', {
     blockType: params.blockType,
     content: params.content,
     parentId: params.parentId ?? null,
     position: params.position ?? null,
+    spaceId: params.spaceId ?? null,
   })
 }
 
@@ -1200,5 +1214,38 @@ export async function getCurrentDeepLink(): Promise<string[] | null> {
   } catch (err) {
     logger.warn('deeplink', 'getCurrent() failed or plugin unavailable', undefined, err)
     return null
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Window title (FEAT-3p10) — visual-identity surface
+// ---------------------------------------------------------------------------
+//
+// Wrapper around `@tauri-apps/api/window`'s
+// `getCurrentWindow().setTitle(title)`. Used by the App-level effect
+// that runs on every space change to re-stamp the OS window title as
+// `"<SpaceName> · Agaric"` so the user gets a glance-able cue from the
+// taskbar, the OS notification centre, and the macOS window menu.
+//
+// No-op fallback for non-Tauri runtimes (vitest jsdom, storybook,
+// plain-browser dev sessions) so callers don't need to gate every
+// `setWindowTitle(...)` call on `__TAURI_INTERNALS__` themselves. The
+// dynamic import + try/catch matches the `getCurrentDeepLink` /
+// `enableAutostart` pattern.
+
+/**
+ * Set the OS window title to `title`. No-op when the Tauri window
+ * plugin is unavailable (jsdom, storybook, browser dev fallback).
+ *
+ * Failures are logged at warn level via the shared logger and
+ * swallowed — a stale window title is not user-fatal and the next
+ * space switch will retry.
+ */
+export async function setWindowTitle(title: string): Promise<void> {
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    await getCurrentWindow().setTitle(title)
+  } catch (err) {
+    logger.warn('window', 'setTitle() failed or window plugin unavailable', { title }, err)
   }
 }

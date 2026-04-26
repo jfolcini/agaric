@@ -10,6 +10,7 @@ import {
   PageBlockContext,
   type PageBlockState,
 } from '../../stores/page-blocks'
+import { useSpaceStore } from '../../stores/space'
 import { useUndoStore } from '../../stores/undo'
 import { useBlockDatePicker } from '../useBlockDatePicker'
 
@@ -59,6 +60,14 @@ beforeEach(() => {
   mockedInvoke.mockResolvedValue(undefined)
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+  // BUG-1 / H-3b — `handleDateMode` now routes through `createPageInSpace`,
+  // which reads `currentSpaceId` from the space store. Seed a deterministic
+  // active space so the date-mode flow has a target.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
+  })
 })
 
 describe('useBlockDatePicker initial state', () => {
@@ -275,8 +284,10 @@ describe('useBlockDatePicker handleDatePick — repeat-until mode', () => {
 
 describe('useBlockDatePicker handleDatePick — date mode', () => {
   it('creates date page when none exists', async () => {
+    // 1st invoke = list_blocks (no existing page); 2nd = create_page_in_space
+    // (returns the new page's ULID as a plain string per BUG-1's contract).
     mockedInvoke.mockResolvedValueOnce({ items: [] })
-    mockedInvoke.mockResolvedValueOnce({ id: 'DATE_PAGE_1', content: '2025-01-15' })
+    mockedInvoke.mockResolvedValueOnce('DATE_PAGE_1')
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
 
@@ -290,13 +301,23 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
         blockType: 'page',
       }),
     )
+    // BUG-1 / H-3b — date pages route through `create_page_in_space` so
+    // they own a `space` property and surface in PageBrowser. The
+    // legacy `create_block(blockType: 'page')` path is no longer used.
     expect(mockedInvoke).toHaveBeenCalledWith(
-      'create_block',
+      'create_page_in_space',
       expect.objectContaining({
-        blockType: 'page',
         content: '2025-01-15',
+        spaceId: 'SPACE_TEST',
       }),
     )
+    // Negative: ensure the legacy bypass path is NOT taken.
+    const legacyCalls = mockedInvoke.mock.calls.filter(
+      ([cmd, args]) =>
+        cmd === 'create_block' &&
+        (args as { blockType?: string } | undefined)?.blockType === 'page',
+    )
+    expect(legacyCalls).toHaveLength(0)
   })
 
   it('uses existing date page if found', async () => {
@@ -310,12 +331,13 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
       await result.current.handleDatePick(new Date(2025, 0, 15))
     })
 
+    expect(mockedInvoke).not.toHaveBeenCalledWith('create_page_in_space', expect.anything())
     expect(mockedInvoke).not.toHaveBeenCalledWith('create_block', expect.anything())
   })
 
   it('updates pagesListRef when creating new page', async () => {
     mockedInvoke.mockResolvedValueOnce({ items: [] })
-    mockedInvoke.mockResolvedValueOnce({ id: 'NEW_PAGE', content: '2025-06-01' })
+    mockedInvoke.mockResolvedValueOnce('NEW_PAGE')
     const pagesListRef = { current: [] as Array<{ id: string; title: string }> }
     const params = makeDefaultParams({ pagesListRef })
     const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })

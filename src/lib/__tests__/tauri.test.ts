@@ -134,6 +134,9 @@ describe('createBlock', () => {
       content: 'hello',
       parentId: 'PARENT01',
       position: 3,
+      // BUG-1 / H-3a: every `create_block` IPC call carries `spaceId`.
+      // For non-page block types `null` is correct (the backend ignores it).
+      spaceId: null,
     })
     expect(result).toEqual(expected)
   })
@@ -155,6 +158,12 @@ describe('createBlock', () => {
       content: 'test',
       parentId: null,
       position: null,
+      // BUG-1 / H-3a: in production a page-typed `createBlock` MUST
+      // pass `spaceId`; this unit test exercises only the wrapper's
+      // payload shape, so `null` here documents that the wrapper
+      // forwards `undefined` → `null` (the backend will then surface
+      // `Validation` for a real call).
+      spaceId: null,
     })
   })
 

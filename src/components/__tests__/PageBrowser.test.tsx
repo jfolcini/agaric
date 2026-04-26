@@ -72,8 +72,8 @@ beforeEach(() => {
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_TEST',
     availableSpaces: [
-      { id: 'SPACE_TEST', name: 'Test' },
-      { id: 'SPACE_OTHER', name: 'Other' },
+      { id: 'SPACE_TEST', name: 'Test', accent_color: null },
+      { id: 'SPACE_OTHER', name: 'Other', accent_color: null },
     ],
     isReady: true,
   })
