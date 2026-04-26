@@ -12,10 +12,11 @@
  *  - a11y: axe audit
  */
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { LinkEditPopover, normalizeUrl } from '../LinkEditPopover'
 
 // ── Mock UI components ───────────────────────────────────────────────────
@@ -422,6 +423,47 @@ describe('LinkEditPopover', () => {
       fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       expect(mockFetchLinkMetadata).toHaveBeenCalledWith('https://example.com')
+    })
+
+    // MAINT-99: IPC error-path coverage. The metadata-prefetch IPC is
+    // fire-and-forget — the apply flow must complete (link inserted,
+    // popover closed) and the rejection must be surfaced through
+    // logger.warn rather than swallowed silently. A regression where
+    // the .catch() is dropped or the logger call goes missing would
+    // be invisible at runtime; this test pins the contract.
+    it('logs a warning when fetchLinkMetadata rejects (apply still completes)', async () => {
+      mockFetchLinkMetadata.mockRejectedValueOnce(new Error('network down'))
+
+      render(
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
+      )
+
+      const input = screen.getByTestId('link-url-input')
+      fireEvent.change(input, { target: { value: 'example.com' } })
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
+
+      // Apply still completed — popover closed, link insert dispatched
+      // (no savedSelection + isEditing=false → insertContent path).
+      expect(onClose).toHaveBeenCalledWith()
+      expect(mockInsertContent).toHaveBeenCalled()
+
+      // Wait for the rejected promise to reach the .catch handler. The
+      // exact arguments mirror LinkEditPopover.tsx — module name +
+      // message + payload object + the captured Error.
+      await waitFor(() => {
+        expect(logger.warn).toHaveBeenCalledWith(
+          'LinkEditPopover',
+          'link metadata prefetch failed',
+          { url: 'https://example.com' },
+          expect.any(Error),
+        )
+      })
     })
 
     it('removes stored link mark after applying link (UX-177)', () => {

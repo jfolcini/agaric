@@ -3433,7 +3433,7 @@ describe('SortableBlock property key rename', () => {
   it('clicking property key label opens key rename input', async () => {
     const user = userEvent.setup()
 
-    const { container } = render(
+    render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
@@ -3446,7 +3446,8 @@ describe('SortableBlock property key rename', () => {
     const keyLabel = screen.getByTestId('property-key-effort')
     await user.click(keyLabel)
 
-    const keyEditor = container.querySelector('.property-key-editor input')
+    // MAINT-103: popup is portaled to document.body, not inside `container`.
+    const keyEditor = document.querySelector('.property-key-editor input')
     expect(keyEditor).toBeInTheDocument()
   })
 
@@ -3454,7 +3455,7 @@ describe('SortableBlock property key rename', () => {
     const user = userEvent.setup()
     mockSetProperty.mockResolvedValue({})
 
-    const { container } = render(
+    render(
       <SortableBlock
         blockId="BLOCK_42"
         content="hello"
@@ -3468,7 +3469,8 @@ describe('SortableBlock property key rename', () => {
     const keyLabel = screen.getByTestId('property-key-effort')
     await user.click(keyLabel)
 
-    const input = container.querySelector('.property-key-editor input') as HTMLInputElement
+    // MAINT-103: popup is portaled to document.body, not inside `container`.
+    const input = document.querySelector('.property-key-editor input') as HTMLInputElement
     expect(input).toBeInTheDocument()
 
     // Clear and type new key name
