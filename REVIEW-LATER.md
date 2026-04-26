@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-14 open items.
+15 open items.
 
 Previously resolved: 526+ items across 153 sessions.
 
@@ -40,6 +40,7 @@ Previously resolved: 526+ items across 153 sessions.
 | FEAT-12 | FEAT | PageBrowser: group starred pages on top instead of filtering — drop the toolbar "show starred only" toggle, always show all pages with starred bubbled to the top | S |
 | FEAT-13 | FEAT | Breadcrumb visual redesign — strip button styling from path-style `<Breadcrumb>` (BlockZoomBar + PageHeader namespace), render crumbs as inline text-links with `hover:underline` + thin focus underline | S |
 | BUG-1 | BUG | PageBrowser silently hides pages that lack a `space` property — journal pages, templates, WelcomeModal samples, and peer-synced pages disappear from the Pages view (rolls up the existing deep-CR H-3a / H-3b / H-3c + L-133) | S–M |
+| BUG-2 | BUG | Sidebar Sync button silently no-ops when no peer is paired — clicking does nothing, no toast / dialog / log; should show a "no devices paired" dialog with a CTA that takes the user straight to Settings → Sync to pair a new device | S |
 | MAINT-1 | MAINT | One-shot migration to move all existing pages from Personal → Work space (maintainer-only / single-user deployment; pre-publish-threshold ULIDs only, idempotent, op-emitting so peer devices converge) | S |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
@@ -1122,6 +1123,58 @@ Any page without a `space` property is excluded — silently. Once the boot-time
 **Cost:** S–M — backend IPC tightening + bootstrap loosening (~80 lines), 6 frontend callsites swapped (~6 lines each), ~10-15 new/updated tests, 1 e2e flow. No schema migration; no new tables; the property test framework (`fast-check`) is already in the project.
 **Risk:** Medium — the IPC tightening is a structural change to `create_block`. If any callsite (especially in tests, mocks, or sync paths) silently relies on the legacy behaviour, those will fail loudly rather than silently corrupt data — preferred direction. The bootstrap re-run is low-risk (pure additive backfill, idempotent) but must keep the fast-path skip for the `is_space` properties to avoid re-emitting redundant `is_space` ops every boot.
 **Status:** Open. Schedule the four fixes (H-3a + L-133 + H-3b + H-3c) together — partial fixes leave the silent-divergence behaviour partially in place.
+
+### BUG-2 — Sidebar Sync button silently no-ops when no peer is paired
+
+**User-visible symptom:** The user clicks the "Sync" button in the sidebar (the `RefreshCw` icon next to the offline/syncing/synced status dot). On a vault with **no paired devices**, nothing visible happens — no toast, no dialog, no log line. The button doesn't even briefly spin. The user is left wondering whether the click was registered, whether sync is broken, or whether they need to do something to enable sync. There is no signpost to the **Settings → Sync** tab where pairing is actually performed.
+
+**Root cause (confirmed):** `useSyncTrigger.syncAll()` short-circuits on the empty-peers branch:
+
+```ts
+const peers = await listPeerRefs()
+if (peers.length === 0) {
+  setState('idle')
+  return
+}
+```
+
+(`src/hooks/useSyncTrigger.ts:113-117`). Setting state to `'idle'` is silent — the chip stays grey (or "synced"), the button never enters the `syncing` arm, and `syncAll` returns `Ok` with no user feedback. The sidebar button at `src/App.tsx:1097-1124` happily forwards every click here; the empty-peers UX simply was never designed.
+
+**Desired behaviour:**
+
+- On click, if `peers.length === 0`: show a small dialog (or `AlertDialog` / `Dialog` from `src/components/ui/`) explaining that no devices are paired and offering a primary CTA "Open sync settings" that navigates the user to the Settings view, Sync tab, focus on the pairing flow.
+- A secondary action "Cancel" / "Dismiss" closes the dialog with no side-effects.
+- The dialog should be **discoverable, accessible, and i18n-keyed** — `aria-label`, `t('sync.noPeersTitle')`, `t('sync.noPeersBody')`, `t('sync.noPeersCta')`, etc. — same conventions as `ConfirmDialog` / `UnpairConfirmDialog` already in the codebase.
+- Optional: if Settings supports an explicit Sync-tab anchor (e.g. a `?tab=sync` query param or a Zustand `settingsActiveTab` state), navigating should pre-select that tab so the user lands directly on the pairing UI without an extra click. If the settings router doesn't yet support tab pre-selection, that's a tiny follow-up — file a `MAINT-*` item or accept the user navigating one extra step.
+
+**Implementation sketch:**
+
+- New shared component `src/components/NoPeersDialog.tsx` (or extend `src/components/PairingDialog.tsx` since pairing is the natural neighbour). Renders an `AlertDialog` with title, body, "Cancel" + "Open sync settings" actions. Uses the existing `cn()` + Radix conventions per `AGENTS.md` frontend guidelines.
+- `src/App.tsx:1105` (`onClick={syncAll}`): change to a small wrapper `handleSyncClick` that:
+  1. If offline → keep the existing offline tooltip behaviour (no dialog).
+  2. Otherwise, calls `listPeerRefs()` (or reads from `useSyncStore`'s cached peer count if it's already populated for the status chip) — if empty, opens the new dialog and bails.
+  3. Otherwise, calls `syncAll()` as today.
+- Alternative shape: keep `syncAll` as-is, but add `peers.length === 0` → emit a Tauri event / set a Zustand `useSyncStore.noPeers = true` flag → the App reacts by mounting the dialog. Cleaner for future testability but more wiring; either is acceptable.
+- The Settings router lookup: check `src/components/SettingsView.tsx` for the existing tab list — if there's a Sync/Devices tab already (the codebase has `DeviceManagement.tsx`), the dialog's CTA navigates to that route + focuses the pairing entry. If not, navigate to Settings without a specific anchor — still better than nothing.
+
+**Tests:**
+- `src/components/__tests__/App.test.tsx` — render the App, mock `listPeerRefs` to return `[]`, click the sidebar Sync button, assert the dialog appears with the right title/body. Click "Open sync settings" — assert navigation to Settings (and the Sync tab if pre-selection is wired). Click "Cancel" — assert dialog closes.
+- New `NoPeersDialog.test.tsx` — render + interaction + `axe(container)` a11y audit per `src/__tests__/AGENTS.md`.
+- e2e (optional but useful): on a fresh vault, open the app, click Sync from the sidebar, confirm the dialog appears, navigate via the CTA to the Sync tab, confirm the pairing UI is visible.
+
+**Files touched (estimate):**
+- `src/App.tsx` — `onClick={syncAll}` → `onClick={handleSyncClick}` (small wrapper).
+- `src/components/NoPeersDialog.tsx` — new component (~80 lines).
+- `src/components/__tests__/App.test.tsx` — extend the existing sidebar Sync click tests.
+- `src/components/__tests__/NoPeersDialog.test.tsx` — new test file (~120 lines).
+- `src/i18n/en.json` (and other locale files) — 3-4 new strings.
+- Optional: `src/stores/useSettingsStore.ts` (or wherever the active tab lives) — add a `setActiveTab('sync')` selector if not present.
+
+**Risk:** Low. Pure UI affordance; no schema, no IPC, no sync-protocol change. The existing `syncAll` continues to short-circuit on empty peers but the user always sees the dialog first, so the silent-success path is never reached.
+
+**Cost:** S — single focused session.
+
+**Status:** Open. Schedulable independently — no dependencies on other items in this file.
 
 ## MAINT — Tooling / dev-experience maintenance / code quality
 
