@@ -979,10 +979,7 @@ async fn merge_property_idempotent_on_repeated_sync() {
     // must let the materializer apply the resolution op before the next
     // merge; otherwise the materialized property/block state lags behind
     // the op_log and the early-exit test would race.
-    materializer
-        .flush()
-        .await
-        .expect("flush after first merge");
+    materializer.flush().await.expect("flush after first merge");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Second merge — idempotent guard should skip
@@ -1074,10 +1071,7 @@ async fn merge_move_idempotent_on_repeated_sync() {
 
     // M-44: materialized blocks.parent_id/position is what the idempotency
     // guard now reads — flush so the resolution op is applied before re-checking.
-    materializer
-        .flush()
-        .await
-        .expect("flush after first merge");
+    materializer.flush().await.expect("flush after first merge");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let r2 = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
@@ -1265,10 +1259,7 @@ async fn batch_conflict_resolution_multiple_properties_and_move() {
     // them.  Without the settle, the consumer can still hold an
     // in-flight transaction not yet committed when flush() returns its
     // barrier (the barrier only guarantees the queue drained).
-    materializer
-        .flush()
-        .await
-        .expect("flush after first merge");
+    materializer.flush().await.expect("flush after first merge");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Second merge should be fully idempotent
@@ -1567,10 +1558,7 @@ async fn merge_property_conflict_equal_timestamps_uses_device_id_tiebreaker() {
 
     // M-43: flush so the materializer applies the resolution op before
     // the idempotency check re-reads block_properties.
-    materializer
-        .flush()
-        .await
-        .expect("flush after first merge");
+    materializer.flush().await.expect("flush after first merge");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // A second merge should be idempotent — the resolution already applied
