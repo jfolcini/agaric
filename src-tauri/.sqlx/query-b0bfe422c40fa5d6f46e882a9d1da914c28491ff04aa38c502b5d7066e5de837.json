@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_text FROM block_properties\n           WHERE block_id = ?\n             AND key = 'personal_to_work_migration_v1'",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_text",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "b0bfe422c40fa5d6f46e882a9d1da914c28491ff04aa38c502b5d7066e5de837"
+}

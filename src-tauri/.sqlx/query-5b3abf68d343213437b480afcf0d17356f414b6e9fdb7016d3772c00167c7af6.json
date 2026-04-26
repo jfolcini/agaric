@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 as \"v: i32\" FROM block_properties\n           WHERE block_id = ?\n             AND key = 'personal_to_work_migration_v1'\n             AND value_text = 'true'",
+  "describe": {
+    "columns": [
+      {
+        "name": "v: i32",
+        "ordinal": 0,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "5b3abf68d343213437b480afcf0d17356f414b6e9fdb7016d3772c00167c7af6"
+}

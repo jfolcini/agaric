@@ -800,6 +800,41 @@ function App() {
     return () => window.removeEventListener('keydown', handleGlobalShortcuts)
   }, [t])
 
+  // ── FEAT-3p11: digit hotkeys for instant space switching ──────────
+  // `Ctrl+1` … `Ctrl+9` (`Cmd+1` … `Cmd+9` on macOS — `matchesShortcutBinding`
+  // already accepts `metaKey` in place of `ctrlKey`) jump directly to the
+  // Nth entry of `availableSpaces`, which the backend serves alphabetical
+  // by name. Out-of-range digits are silent no-ops, matching every other
+  // "digit-per-tab" shortcut users already know from Chrome / Slack /
+  // iTerm. The handler short-circuits when typing in an INPUT, TEXTAREA,
+  // or `[contenteditable]` so it never steals keystrokes from the editor
+  // (which is also where the documentation-only `heading1`-`heading6`
+  // entries live — they share `Ctrl + 1`-`Ctrl + 6` glyphs but aren't
+  // wired to a global handler, so there is no real collision).
+  useEffect(() => {
+    function handleSpaceShortcuts(e: KeyboardEvent) {
+      // MAINT-105: ignore auto-repeat so holding the chord doesn't
+      // re-fire the space-switch on every frame.
+      if (e.repeat) return
+      if (isTypingInField(e.target as HTMLElement | null)) return
+      for (let n = 1; n <= 9; n++) {
+        if (!matchesShortcutBinding(e, `switchSpace${n}`)) continue
+        e.preventDefault()
+        // FEAT-3 Phase 1 — `availableSpaces` is server-truth alphabetical
+        // by name. Out-of-range index is a deliberate silent no-op
+        // (`Ctrl+5` with three spaces does nothing, no toast, no error).
+        const { availableSpaces, currentSpaceId, setCurrentSpace } = useSpaceStore.getState()
+        const target = availableSpaces[n - 1]
+        if (target == null) return
+        if (target.id === currentSpaceId) return
+        setCurrentSpace(target.id)
+        return
+      }
+    }
+    window.addEventListener('keydown', handleSpaceShortcuts)
+    return () => window.removeEventListener('keydown', handleSpaceShortcuts)
+  }, [])
+
   // ── FEAT-12: register the quick-capture global hotkey ─────────────
   // Registers the user-configured chord (default Ctrl+Alt+N on Linux /
   // Windows, Cmd+Option+N on macOS) via `tauri-plugin-global-shortcut`.

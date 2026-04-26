@@ -420,16 +420,24 @@ export function setScheduledDate(blockId: string, date: string | null): Promise<
   return invoke('set_scheduled_date', { blockId, date })
 }
 
-/** List global operation history (page-scoped), paginated (newest first). */
+/** List global operation history (page-scoped), paginated (newest first).
+ *
+ * FEAT-3 Phase 8 — `spaceId` narrows the global (`pageId === '__all__'`)
+ * query to ops whose `payload.block_id` belongs to the requested space.
+ * Pass `undefined` to disable the space filter (cross-space "All spaces"
+ * mode). Ignored in per-page mode — a real ULID `pageId` is already
+ * space-bound. */
 export function listPageHistory(params: {
   pageId: string
   opTypeFilter?: string | undefined
+  spaceId?: string | undefined
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<PageResponse<HistoryEntry>> {
   return invoke('list_page_history', {
     pageId: params.pageId,
     opTypeFilter: params.opTypeFilter ?? null,
+    spaceId: params.spaceId ?? null,
     cursor: params.cursor ?? null,
     limit: params.limit ?? null,
   })
@@ -980,6 +988,32 @@ export function createPageInSpace(params: {
     parentId: params.parentId ?? null,
     content: params.content,
     spaceId: params.spaceId,
+  })
+}
+
+/**
+ * Create a new space (a top-level page block flagged
+ * `is_space = 'true'`).
+ *
+ * FEAT-3 Phase 6 — the backend wraps the `CreateBlock` op, the
+ * `SetProperty(is_space = "true")` op, and the optional
+ * `SetProperty(accent_color = …)` op in a single transaction so a
+ * partial failure never leaves a half-created space (a page block
+ * without its `is_space` flag) in the op log.
+ *
+ * `accentColor` accepts the palette tokens consumed by FEAT-3p10
+ * (e.g. `accent-violet`, `accent-blue`, …). Pass `null` / `undefined`
+ * to skip the accent-color property entirely.
+ *
+ * Returns the new space's ULID.
+ */
+export function createSpace(params: {
+  name: string
+  accentColor?: string | null | undefined
+}): Promise<string> {
+  return invoke<string>('create_space', {
+    name: params.name,
+    accentColor: params.accentColor ?? null,
   })
 }
 

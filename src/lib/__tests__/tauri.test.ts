@@ -999,6 +999,9 @@ describe('listPageHistory', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
       pageId: 'PAGE1',
       opTypeFilter: 'edit_block',
+      // FEAT-3p8: `spaceId` is threaded through every history call;
+      // `null` here means "all spaces" since this test doesn't pass one.
+      spaceId: null,
       cursor: 'cur1',
       limit: 20,
     })
@@ -1013,6 +1016,9 @@ describe('listPageHistory', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
       pageId: 'PAGE1',
       opTypeFilter: null,
+      // FEAT-3p8: `spaceId` defaults to `null` (= all spaces) when the
+      // caller omits it, matching the other optional knobs.
+      spaceId: null,
       cursor: null,
       limit: null,
     })

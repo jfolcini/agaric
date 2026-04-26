@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id as \"id!: String\" FROM blocks b\n           INNER JOIN block_properties p\n               ON p.block_id = b.id\n              AND p.key = 'space'\n              AND p.value_ref = ?\n           WHERE b.block_type = 'page'\n             AND b.deleted_at IS NULL\n             AND b.is_conflict = 0\n             AND b.id < ?\n             AND NOT EXISTS (\n                 SELECT 1 FROM block_properties s\n                 WHERE s.block_id = b.id\n                   AND s.key = 'is_space'\n                   AND s.value_text = 'true'\n             )\n           ORDER BY b.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "238f4121d1a57a812800c2ac2779d0530802c0ef02e9ac08744b83f31d83ca39"
+}

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 AS \"flag!: i64\" FROM block_properties WHERE block_id = ? AND key = 'is_space' AND value_text = 'true'",
+  "describe": {
+    "columns": [
+      {
+        "name": "flag!: i64",
+        "ordinal": 0,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "f582e701be765f84985351fca274f2277e031056f83e65bd18ce355edad56330"
+}

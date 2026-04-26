@@ -23,9 +23,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
+import { useSpaceStore } from '../../stores/space'
 import { HistoryView } from '../HistoryView'
 
 // Mock CompactionCard so it doesn't make extra invoke calls in HistoryView tests
@@ -348,6 +349,7 @@ describe('HistoryView', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
         pageId: '__all__',
         opTypeFilter: null,
+        spaceId: null,
         cursor: 'cursor_page2',
         limit: 50,
       })
@@ -367,6 +369,7 @@ describe('HistoryView', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
         pageId: '__all__',
         opTypeFilter: null,
+        spaceId: null,
         cursor: null,
         limit: 50,
       })
@@ -380,6 +383,7 @@ describe('HistoryView', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
         pageId: '__all__',
         opTypeFilter: 'edit_block',
+        spaceId: null,
         cursor: null,
         limit: 50,
       })
@@ -521,6 +525,7 @@ describe('HistoryView', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
         pageId: '__all__',
         opTypeFilter: null,
+        spaceId: null,
         cursor: null,
         limit: 50,
       })
@@ -1461,6 +1466,116 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
       await waitFor(() => {
         expect(screen.queryByRole('alert')).not.toBeInTheDocument()
       })
+    })
+  })
+
+  // ===========================================================================
+  // FEAT-3 Phase 8 — current-space scoping with "All spaces" toggle.
+  //
+  // The default behaviour is current-space-only: HistoryView reads
+  // `currentSpaceId` from `useSpaceStore` and passes it as `spaceId` on
+  // the IPC. Toggling "All spaces" drops the filter (passes `spaceId:
+  // null` so the backend returns ops from every space). State is NOT
+  // persisted across History sessions — each session starts with the
+  // privacy-preserving default.
+  // ===========================================================================
+  describe('FEAT-3 Phase 8 — space scoping', () => {
+    afterEach(() => {
+      // Reset the space store after each test to avoid bleed across the
+      // rest of the suite (the store is shared module-level state).
+      useSpaceStore.setState({
+        currentSpaceId: null,
+        availableSpaces: [],
+        isReady: false,
+      })
+    })
+
+    it('passes the current space id to the IPC by default', async () => {
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_PERSONAL',
+        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal' }],
+        isReady: true,
+      })
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<HistoryView />)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
+          pageId: '__all__',
+          opTypeFilter: null,
+          spaceId: 'SPACE_PERSONAL',
+          cursor: null,
+          limit: 50,
+        })
+      })
+    })
+
+    it('toggling "All spaces" drops the space filter (passes spaceId: null)', async () => {
+      const user = userEvent.setup()
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_PERSONAL',
+        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal' }],
+        isReady: true,
+      })
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      render(<HistoryView />)
+
+      // First call uses the current space.
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
+          pageId: '__all__',
+          opTypeFilter: null,
+          spaceId: 'SPACE_PERSONAL',
+          cursor: null,
+          limit: 50,
+        })
+      })
+
+      // Flip the "All spaces" Switch ON.
+      const toggle = screen.getByRole('switch', { name: /All spaces/i })
+      await user.click(toggle)
+
+      // After the toggle the IPC must be re-issued WITHOUT the space
+      // filter (spaceId: null in the wire payload).
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
+          pageId: '__all__',
+          opTypeFilter: null,
+          spaceId: null,
+          cursor: null,
+          limit: 50,
+        })
+      })
+    })
+
+    it('shows the "current space" empty-state copy when scoped, and switches to the cross-space copy when toggled', async () => {
+      const user = userEvent.setup()
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_PERSONAL',
+        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal' }],
+        isReady: true,
+      })
+      // Both the initial scoped query AND the post-toggle "All spaces"
+      // query return empty pages so we can compare empty-state copy
+      // either side of the toggle.
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      render(<HistoryView />)
+
+      // Default scoped state ⇒ the FEAT-3 Phase 8 copy nudges the user
+      // toward the toggle.
+      expect(await screen.findByText(t('history.emptyCurrentSpace'))).toBeInTheDocument()
+      expect(screen.queryByText(t('history.noEntriesFound'))).not.toBeInTheDocument()
+
+      // Flip the toggle. The empty state must switch to the generic
+      // cross-space copy — there's no "toggle further" suggestion to
+      // make in the all-spaces view.
+      await user.click(screen.getByRole('switch', { name: /All spaces/i }))
+
+      expect(await screen.findByText(t('history.noEntriesFound'))).toBeInTheDocument()
+      expect(screen.queryByText(t('history.emptyCurrentSpace'))).not.toBeInTheDocument()
     })
   })
 })

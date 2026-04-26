@@ -122,7 +122,8 @@ pub use queries::{
     query_by_property_inner, search_blocks, search_blocks_inner,
 };
 pub use spaces::{
-    create_page_in_space, create_page_in_space_inner, list_spaces, list_spaces_inner, SpaceRow,
+    create_page_in_space, create_page_in_space_inner, create_space, create_space_inner,
+    list_spaces, list_spaces_inner, SpaceRow,
 };
 pub use sync_cmds::{
     cancel_pairing, cancel_pairing_inner, cancel_sync, cancel_sync_inner, confirm_pairing,
@@ -213,7 +214,9 @@ pub use queries::{
     __specta__fn__query_by_property, __specta__fn__search_blocks,
 };
 #[doc(hidden)]
-pub use spaces::{__specta__fn__create_page_in_space, __specta__fn__list_spaces};
+pub use spaces::{
+    __specta__fn__create_page_in_space, __specta__fn__create_space, __specta__fn__list_spaces,
+};
 #[doc(hidden)]
 pub use sync_cmds::{
     __specta__fn__cancel_pairing, __specta__fn__cancel_sync, __specta__fn__confirm_pairing,
@@ -289,7 +292,7 @@ pub use queries::{
     __cmd__query_backlinks_filtered, __cmd__query_by_property, __cmd__search_blocks,
 };
 #[doc(hidden)]
-pub use spaces::{__cmd__create_page_in_space, __cmd__list_spaces};
+pub use spaces::{__cmd__create_page_in_space, __cmd__create_space, __cmd__list_spaces};
 #[doc(hidden)]
 pub use sync_cmds::{
     __cmd__cancel_pairing, __cmd__cancel_sync, __cmd__confirm_pairing, __cmd__delete_peer_ref,

@@ -298,9 +298,10 @@ pub fn run() {
         commands::disconnect_gcal,
         commands::set_gcal_window_days,
         commands::set_gcal_privacy_mode,
-        // Spaces (FEAT-3 Phase 1 + Phase 2)
+        // Spaces (FEAT-3 Phase 1 + Phase 2 + Phase 6)
         commands::list_spaces,
         commands::create_page_in_space,
+        commands::create_space,
         // Quick capture (FEAT-12) — desktop global-shortcut entry point
         commands::quick_capture_block,
     ]);
@@ -624,6 +625,24 @@ pub fn run() {
             )) {
                 tracing::error!(error = %e, "failed to bootstrap spaces — aborting boot");
                 return Err(Box::new(e));
+            }
+
+            // MAINT-1: one-shot migration that moves every pre-existing
+            // Personal page into Work for the maintainer's vault. Gated
+            // by both an idempotency marker on the seeded Personal space
+            // block AND a hardcoded ULID threshold so fresh installs of
+            // the published app are unaffected (their post-threshold
+            // ULIDs make the loop body a no-op). MUST run AFTER
+            // `bootstrap_spaces` so the seeded space blocks exist and
+            // pages already carry a `space` property to rebind. Failure
+            // is non-fatal — log and continue; the next boot will retry.
+            if let Err(e) = tauri::async_runtime::block_on(
+                spaces::migrate_personal_pages_to_work(&pools.write, &device_id),
+            ) {
+                tracing::warn!(
+                    error = %e,
+                    "failed to run personal_to_work_migration_v1 — will retry on next boot",
+                );
             }
 
             // FEAT-1: Rebuild page_id column at boot to ensure consistency.
@@ -1187,9 +1206,10 @@ mod specta_tests {
             crate::commands::disconnect_gcal,
             crate::commands::set_gcal_window_days,
             crate::commands::set_gcal_privacy_mode,
-            // Spaces (FEAT-3 Phase 1 + Phase 2)
+            // Spaces (FEAT-3 Phase 1 + Phase 2 + Phase 6)
             crate::commands::list_spaces,
             crate::commands::create_page_in_space,
+            crate::commands::create_space,
             // Quick capture (FEAT-12) — desktop global-shortcut entry point
             crate::commands::quick_capture_block,
         ])

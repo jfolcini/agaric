@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_text FROM block_properties\n               WHERE block_id = ? AND key = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_text",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "91f903e380e2c67042438c50cc85e2bbf1e3ccbdb25f5809d6a828c18899e6eb"
+}

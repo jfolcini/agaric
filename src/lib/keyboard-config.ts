@@ -459,6 +459,71 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.afterChip',
   },
 
+  // Spaces (FEAT-3p11) — digit hotkeys for instant space switching.
+  // `Ctrl+1`…`Ctrl+9` (`Cmd+1`…`Cmd+9` on macOS — `matchesShortcutBinding`
+  // already accepts `metaKey` in place of `ctrlKey`) jump straight to the
+  // Nth space in the alphabetical `availableSpaces` order. Out-of-range
+  // digits are silent no-ops; the handler short-circuits when typing in
+  // an input/textarea/contenteditable so it never steals keystrokes.
+  // The `Ctrl + 1`-`Ctrl + 6` collision with `heading1`-`heading6` is
+  // benign: the heading entries are documentation-only (not wired to a
+  // global handler) and live in a different category, so `findConflicts`
+  // does not flag them.
+  {
+    id: 'switchSpace1',
+    keys: 'Ctrl + 1',
+    category: 'keyboard.category.spaces',
+    description: 'keyboard.switchSpace1',
+  },
+  {
+    id: 'switchSpace2',
+    keys: 'Ctrl + 2',
+    category: 'keyboard.category.spaces',
+    description: 'keyboard.switchSpace2',
+  },
+  {
+    id: 'switchSpace3',
+    keys: 'Ctrl + 3',
+    category: 'keyboard.category.spaces',
+    description: 'keyboard.switchSpace3',
+  },
+  {
+    id: 'switchSpace4',
+    keys: 'Ctrl + 4',
+    category: 'keyboard.category.spaces',
+    description: 'keyboard.switchSpace4',
+  },
+  {
+    id: 'switchSpace5',
+    keys: 'Ctrl + 5',
+    category: 'keyboard.category.spaces',
+    description: 'keyboard.switchSpace5',
+  },
+  {
+    id: 'switchSpace6',
+    keys: 'Ctrl + 6',
+    category: 'keyboard.category.spaces',
+    description: 'keyboard.switchSpace6',
+  },
+  {
+    id: 'switchSpace7',
+    keys: 'Ctrl + 7',
+    category: 'keyboard.category.spaces',
+    description: 'keyboard.switchSpace7',
+  },
+  {
+    id: 'switchSpace8',
+    keys: 'Ctrl + 8',
+    category: 'keyboard.category.spaces',
+    description: 'keyboard.switchSpace8',
+  },
+  {
+    id: 'switchSpace9',
+    keys: 'Ctrl + 9',
+    category: 'keyboard.category.spaces',
+    description: 'keyboard.switchSpace9',
+  },
+
   // Suggestion Popup
   {
     id: 'suggestionClose',
