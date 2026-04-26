@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-20 open items.
+10 open items.
 
-Previously resolved: 504+ items across 152 sessions.
+Previously resolved: 514+ items across 153 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -1119,8 +1119,8 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Already-tracked in REVIEW-LATER (PERF-19, PERF-20, PERF-23) | 3 |
 | Net findings in this report | 333 |
 | **Critical** | **1** |
-| **High** | **10** |
-| **Medium** | **60** |
+| **High** | **9** |
+| **Medium** | **51** |
 | **Low** | **125** |
 | **Info / nits** | **125** |
 
@@ -1192,7 +1192,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ---
 
-## HIGH findings (10)
+## HIGH findings (9)
 
 ### H-3 — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated daily (parent — split into H-3a, H-3b, H-3c)
 - **Domain:** Spaces / Commands
@@ -1361,20 +1361,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Recommendation:** Detect `(device_id, seq)` collision before INSERT; on hash mismatch, log + emit a sync warning event + persist a fork record for diagnostics.
 - **Pass-1 source:** 06-sync / F4
 
-### H-17 — `recurrence::handle_recurrence` reads counters BEFORE `BEGIN IMMEDIATE` (TOCTOU)
-- **Domain:** Recurrence
-- **Location:** `src-tauri/src/recurrence/handle.rs::handle_recurrence`
-- **What:** Reads `repeat-count` and `repeat-seq` outside the write transaction; concurrent state transitions race the increment.
-- **Why it matters:** Two clicks of "done" on a recurring task can both create a sibling (duplicate next-occurrence) or skip the increment.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** High
-- **Recommendation:** Move the counter reads inside the `BEGIN IMMEDIATE` block.
-- **Pass-1 source:** 08-lifecycle-snapshots / F19
-
----
-
-## MEDIUM findings (63 — expanded)
+## MEDIUM findings (54 — expanded)
 
 > Each entry is now a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status) ready to be picked up.
 
@@ -1518,18 +1505,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 04/F6
 - **Status:** Open
 
-### M-24 — `count_agenda_batch_inner` builds dynamic SQL at runtime, bypassing `sqlx::query!`
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/agenda.rs:25-61`
-- **What:** The function builds a `?1, ?2, ...` placeholder list via `format!` and dispatches through plain `sqlx::query_as` (no `!`). The sibling `count_agenda_batch_by_source_inner` (lines 72-102) already uses the `IN (SELECT value FROM json_each(?1))` pattern with `query_as!`, proving the schema supports the compile-time route.
-- **Why it matters:** AGENTS.md key invariant #6 mandates `query!`/`query_as!`/`query_scalar!` everywhere; the dynamic path silently drifts when the underlying schema changes and pays a `format!` per call.
-- **Cost:** S (refactor is local)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Refactor to a single `sqlx::query_as!` over `IN (SELECT value FROM json_each(?1))` using the JSON-array pattern already in the same file.
-- **Pass-1 source:** 04/F8
-- **Status:** Open
-
 ### M-25 — `list_projected_agenda_inner` returns hard-capped `Vec<>` without cursor pagination
 - **Domain:** Commands (CRUD)
 - **Location:** `src-tauri/src/commands/agenda.rs:111-214`, Tauri wrapper at `src-tauri/src/commands/agenda.rs:467-476`
@@ -1616,18 +1591,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 05/F19 (cross-ref 06/F2)
 - **Status:** Open
 
-### M-35 — `set_peer_address_inner` rejects hostnames despite "host:port" wording
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/sync_cmds.rs:60-77` (function), `src-tauri/src/commands/sync_cmds.rs:65-68` (validator)
-- **What:** Validation is `address.parse::<std::net::SocketAddr>()`, which accepts only `IPv4:port` or `[IPv6]:port`. The error string says "Expected host:port" and the docstring says "host:port socket address", but `myphone.local:12345` (a perfectly valid mDNS host) is rejected.
-- **Why it matters:** The set-peer-address feature is the manual fallback for when mDNS auto-discovery is unavailable — but an mDNS host string is exactly the format users will reach for. Threat model is fine with hostnames; resolution is the daemon's job.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Accept arbitrary `host:port` (split on the last `:`, validate the port is a `u16`, leave the host opaque) — or rename the parameter to `ip_address`, update the doc, and update the FE field label. The former matches user expectation.
-- **Pass-1 source:** 05/F20
-- **Status:** Open
-
 ### M-37 — `disconnect_gcal_inner` is not transactional across its three writes
 - **Domain:** Commands (System)
 - **Location:** `src-tauri/src/commands/gcal.rs:200-217`
@@ -1638,18 +1601,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Reorder to (a) keyring clear (soft-fail per M-36), (b) one `BEGIN IMMEDIATE` wrapping the two `set_setting` calls + the `DELETE FROM gcal_agenda_event_map`, (c) emit `PushDisabled` after commit.
 - **Pass-1 source:** 05/F13
-- **Status:** Open
-
-### M-40 — `log_frontend` has no `inner_*` helper and no tests
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/logging.rs:10-36` (`log_frontend`), `src-tauri/src/commands/logging.rs:44-54` (`get_log_dir`)
-- **What:** AGENTS.md "Backend Patterns" requires every Tauri command to have an `inner_*` function taking testable primitives; `log_frontend` and `get_log_dir` are written entirely as `#[tauri::command]` bodies with no extracted helper, and there is no `#[cfg(test)] mod tests` for either.
-- **Why it matters:** The level-dispatch logic (including the unknown-level fallback to `info` at line 31-33) cannot be unit-tested, and the truncation guard added by M-39 will be untestable as-is. `get_log_dir` similarly cannot be exercised without spinning up Tauri.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Extract `log_frontend_inner(level: &str, module: &str, message: &str, …)` that performs only the dispatch (no Tauri state) and `get_log_dir_inner(app_data_dir: &Path) -> String`, and add unit tests for each level + the unknown-level fallback. Pattern matches `mcp.rs` and `bug_report.rs`.
-- **Pass-1 source:** 05/F25
 - **Status:** Open
 
 ### L-42 — `compact_op_log_cmd_inner` reports a stale `ops_deleted` count
@@ -1802,30 +1753,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Lifecycle / Snapshots / Merge / Recurrence
 
-### M-63 — Reverse `find_prior_text` / `find_prior_position` ignore indexed `block_id` column
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/reverse/block_ops.rs:91-101, 124-134`
-- **What:** Both helpers filter by `json_extract(payload, '$.block_id') = ?1` instead of using the dedicated `block_id` column added by `migrations/0030_op_log_block_id_column.sql` and indexed by `idx_op_log_block_id`. PERF-26 migrated draft recovery (`recovery/draft_recovery.rs:84-94`) to the indexed column but the reverse-op generator was missed; the column is populated unconditionally by `append_local_op_in_tx` and `dag::insert_remote_op`.
-- **Why it matters:** Every undo of an `edit_block` or `move_block` triggers a full-table JSON scan, so undo latency degrades linearly with op count.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** High
-- **Recommendation:** Replace `json_extract(payload, '$.block_id') = ?1` with `block_id = ?1`, uppercasing the bound parameter in Rust to match the indexed column convention (mirrors `recovery/draft_recovery.rs:84`).
-- **Pass-1 source:** 08/F1
-- **Status:** Open
-
-### M-64 — `reverse_set_property` / `reverse_delete_property` use `json_extract` for both block_id and key
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/reverse/property_ops.rs:80-94`
-- **What:** Same JSON-extract-on-`block_id` pattern as M-63, plus a second `json_extract(payload, '$.key') = ?2` predicate. No covering index exists for `(block_id, key)` on `op_log`, so every undo of a property edit performs a JSON-extract pass.
-- **Why it matters:** Property-edit-heavy workloads (agenda planning, repeating tasks emit multiple `set_property` ops per occurrence) have undo latency that scales O(n_ops).
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Switch the block_id predicate to `block_id = ?1` so the index participates; leave the key filter as `json_extract` over the now-block-scoped slice. A future `block_property_key` extracted-column migration would close the gap fully but requires user approval (new column).
-- **Pass-1 source:** 08/F2
-- **Status:** Open
-
 ### M-66 — `apply_snapshot` drops `block_drafts` without surfacing potentially unflushed work
 - **Domain:** Lifecycle
 - **Location:** `src-tauri/src/snapshot/restore.rs:90-92`
@@ -1848,18 +1775,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Use the awaiting `enqueue_background` variant for these post-RESET tasks (the apply path is exactly when stale caches matter), or persist a "needs rebuild" marker (new table — requires user approval per Architectural Stability) and gate startup on it.
 - **Pass-1 source:** 08/F7
-- **Status:** Open
-
-### M-69 — `create_snapshot` is NOT atomic between INSERT(pending) and UPDATE(complete)
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/snapshot/create.rs:142-159`
-- **What:** Standalone `create_snapshot` issues two `pool.execute()` calls outside any transaction; `compact_op_log` (lines 246-264) wraps both in `BEGIN IMMEDIATE`. A failure between the two leaves a `'pending'` row that boot recovery deletes on next startup, even though the row carries valid compressed data and a real `up_to_hash`.
-- **Why it matters:** Production snapshot writes always go through `compact_op_log` (the standalone function is only called from tests today), so the durability gap is theoretical, but the divergence is an inconsistency trap for future callers (e.g., a manual "Export Snapshot" command).
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Fold the INSERT-pending and UPDATE-complete into a single `BEGIN IMMEDIATE` to match `compact_op_log`; alternatively, document explicitly that pending→complete is a *safety* protocol, not a durability protocol.
-- **Pass-1 source:** 08/F10
 - **Status:** Open
 
 ### M-70 — `apply_snapshot` does not anchor the post-snapshot hash chain
@@ -1934,30 +1849,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 08/F17
 - **Status:** Open
 
-### M-77 — `recurrence::handle_recurrence` swallows property-set errors silently
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/recurrence/compute.rs:182-194, 218-229, 245-258, 280-290, 304-315, 332-340`
-- **What:** Six `match set_property_in_tx(…) { Ok((_, op)) => op_records.push(op), Err(e) => tracing::warn!(…) }` blocks log the error and continue with the same `tx`. SQLite typically marks the tx aborted on error, so subsequent statements on that `tx` will fail; even on tolerated errors the user sees a partially populated sibling (e.g., `todo_state` set but `due_date` missing).
-- **Why it matters:** Silent partial-success in the recurrence path is a high-impact bug — the user sees a "next occurrence" with broken metadata in the agenda and assumes it is intentional, with only a `tracing::warn` for diagnostics.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** High
-- **Recommendation:** Replace each silent-warn block with `?` (let the error propagate, the IMMEDIATE tx rolls back). Add a regression test that injects a `set_property` failure and asserts no recurrence sibling rows remain.
-- **Pass-1 source:** 08/F20
-- **Status:** Open
-
-### M-80 — Recurrence parser does not support `+Ny` (years)
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/recurrence/parser.rs:51-72`
-- **What:** The `match unit` arm has only `"d"`, `"w"`, `"m"`, then `_ => return None`. Org-mode recognises `+1y` (yearly); annual reviews / birthdays / etc. cannot be expressed without it.
-- **Why it matters:** Feature gap. Users with org-mode habits will paste `+1y` from existing notes and recurrence silently does nothing (the function returns `None`, the caller skips recurrence with no visible signal).
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add a `"y" => …` arm that shifts by `n*12` months (reuse the month branch's leap-day handling). Add table-driven tests covering Feb-29 → Feb-28 / leap-day edge cases.
-- **Pass-1 source:** 08/F24
-- **Status:** Open
-
 ### M-81 — `cascade_soft_delete` ignores conflict copies — orphaned
 - **Domain:** Lifecycle
 - **Location:** `src-tauri/src/soft_delete/trash.rs:46-55`
@@ -2009,18 +1900,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### GCal / Spaces / Drafts
-
-### M-89 — `recover_calendar_gone` is two unrelated writes, not a transaction
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/gcal_push/connector.rs:727-741`
-- **What:** Recovery from a 404 on the Agaric Agenda calendar performs two separate writes against the writer pool — `DELETE FROM gcal_agenda_event_map`, then `models::set_setting(..., CalendarId, "")` — outside any transaction. A crash between them leaves the event map empty but `calendar_id` still pointing at the gone calendar.
-- **Why it matters:** The next cycle then patches against a stale calendar ID with no map rows, hits 404 → re-enters recovery → finally clears `calendar_id` → next cycle re-creates. Two cycles of noisy 404s and a brief inconsistent state where the connector cannot make progress.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Wrap both writes in one `BEGIN IMMEDIATE` tx (`DELETE FROM gcal_agenda_event_map`; `UPDATE gcal_settings SET value='', updated_at=? WHERE key='calendar_id'`; commit). Add a test that injects a `CalendarGone` mid-cycle and asserts post-state `(map_empty=true, calendar_id="")` after one cycle.
-- **Pass-1 source:** 10/F10
-- **Status:** Open
 
 ### M-90 — `is_space` typed as `text`; equality probed on the literal string `"true"`
 - **Domain:** GCal / Spaces / Drafts
