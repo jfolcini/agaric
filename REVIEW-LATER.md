@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-16 open items.
+13 open items.
 
 Previously resolved: 422+ items across 149 sessions.
 
@@ -32,10 +32,7 @@ Previously resolved: 422+ items across 149 sessions.
 | FEAT-4i | FEAT | MCP v3 — Mobile (HTTPS/LAN via mTLS reuse from `sync_cert.rs`, agent-pairing flow) — DEFERRED pending v2 | L |
 | FEAT-5 | FEAT | Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar) — parent / umbrella | L |
 | FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L |
-| FEAT-10 | FEAT | Adopt `tauri-plugin-deep-link` — Android OAuth callback (unblocks FEAT-5g), `agaric://` URLs, OS-level settings deep-link (composes with UX-276) | M |
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L |
-| FEAT-12 | FEAT | Adopt `tauri-plugin-global-shortcut` — desktop-wide quick-capture hotkey into today's journal | M |
-| FEAT-13 | FEAT | Adopt `tauri-plugin-autostart` — launch on login so sync daemon, agenda, and notifier are warm at boot (desktop only) | S |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
@@ -614,20 +611,6 @@ Part of the FEAT-5 family. **Not scheduled.** Blocked on explicit design-review 
 
 **Status:** DEFERRED. Do NOT start without an explicit design-review session that resolves the four questions above.
 
-### FEAT-10 — Adopt `tauri-plugin-deep-link` (Android OAuth + `agaric://` URLs + settings deep-link)
-
-**Problem:** Three otherwise-unrelated needs all converge on OS-level URL routing:
-
-1. **Android OAuth (FEAT-5g blocker).** REVIEW-LATER FEAT-5g lists `tauri-plugin-oauth`'s loopback HTTP listener as the open Android question — Android sandboxes inbound TCP listeners. The Custom-Tabs + PKCE + App-Link flow that every other Android app uses needs an OS deep-link callback (`agaric://oauth/callback`) that only `tauri-plugin-deep-link` provides cleanly.
-2. **External agent / automation surface.** FEAT-4 (MCP) and the agenda views would benefit from `agaric://block/<ULID>` and `agaric://page/<ULID>` URIs callable from outside the app — terminal scripts, OS notifications, Spotlight/Files context-menu items.
-3. **Settings deep-link (UX-276).** UX-276 is currently scoped to in-app `?settings=keyboard` query params via `useNavigationStore`. Once the OS scheme is registered, `agaric://settings/keyboard` extends the same deep-link path to OS-level shortcuts and shared support links.
-
-**Fix:** Register the `agaric` scheme via `tauri-plugin-deep-link`. Backend: capture inbound deep-links in `lib.rs` setup, dispatch to a small router (`src-tauri/src/deeplink/mod.rs`) that maps schemes to existing commands (`get_block`, navigate-to-page, set-settings-tab). Frontend: a `useDeepLinkRouter` hook that listens on the `deep-link://new-url` event and feeds the navigation / settings stores. Coupled stack (AGENTS.md §"Coupled Dependency Updates") — bump in lockstep with the rest of the Tauri plugin set.
-
-**Cost:** M.
-**Risk:** M — adds an OS-level entry point; needs careful scheme-registration tests on each platform (Linux .desktop, macOS Info.plist, Windows registry, Android intent filter).
-**Impact:** L on Android (unblocks FEAT-5g), M on desktop (UX-276 + automation surface).
-
 ### FEAT-11 — Adopt `tauri-plugin-notification` (OS notifications for due tasks / scheduled events)
 
 **Problem:** The app has agenda + due dates + scheduled dates + repeat properties + projected agenda + the Google Calendar push connector (FEAT-5), but zero OS-level notification path. A user with "buy groceries — DUE 09:00" cannot be notified by the OS unless the GCal push has already fired and their calendar app shows it. Org-mode / Logseq users expect "10 minutes before scheduled" and "due now" to surface as native notifications.
@@ -637,28 +620,6 @@ Part of the FEAT-5 family. **Not scheduled.** Blocked on explicit design-review 
 **Cost:** L — design (which events fire? how to dedupe? snooze semantics?), backend scheduler (~6 files), one Settings sub-tab, mobile permission flow, ~25 tests.
 **Risk:** M — wrong-time notifications and notification spam are both real failure modes; needs careful dedupe and "do not re-fire on materialize replay" guard.
 **Impact:** L — closes a recognised feature gap with Org-mode / Logseq parity; especially valuable on mobile where the user is unlikely to have the app foregrounded when a task is due.
-
-### FEAT-12 — Adopt `tauri-plugin-global-shortcut` (quick capture)
-
-**Problem:** "Press a global hotkey from anywhere → drop a line into the inbox / today's journal" is a canonical feature for Org-mode and Logseq users. Currently the app has no global capture path: the user must focus the window, navigate to the journal, click a block, and type. This is the friction that drives "I gave up on note-taking" stories.
-
-**Fix:** Adopt `@tauri-apps/plugin-global-shortcut` + `tauri-plugin-global-shortcut`. A new "Quick capture" Settings sub-tab with a single shortcut binding (default Ctrl+Alt+N on Linux/Windows, Cmd+Option+N on macOS, configurable). The shortcut focuses the window if hidden, opens a small modal `<QuickCaptureDialog />` (reuse `ui/dialog.tsx`), captures one block of input + optional tags, dispatches `create_block` against today's journal page, and closes. Desktop only (Android / iOS have no global-shortcut concept). Coupled stack — bump with the rest of the Tauri plugins.
-
-**Cost:** M.
-**Risk:** M — global shortcuts collide with OS shortcuts on a per-OS basis; the binding UI must surface conflicts gracefully.
-**Impact:** M — new user-facing capability; the kind of feature returning Org-mode users immediately ask for.
-
-### FEAT-13 — Adopt `tauri-plugin-autostart` (launch on login)
-
-**Problem:** The sync daemon, agenda, and (post-FEAT-11) notifier all benefit from being live whenever the user is logged in, not just when they remember to launch the app. Currently the app must be manually started after every reboot, which means missed notifications, stale agenda, and a sync-window gap between login and first launch.
-
-**Fix:** Adopt `tauri-plugin-autostart` + `@tauri-apps/plugin-autostart`. Settings → General gains a "Launch on login" toggle. Desktop only — Android handles this via foreground service / WorkManager (covered under FEAT-5g for the GCal connector). Coupled stack — bump with the rest of the Tauri plugins.
-
-**Cost:** S.
-**Risk:** S — plugin handles per-OS plumbing (XDG autostart `.desktop`, macOS `LaunchAgents`, Windows registry).
-**Impact:** M — quality-of-life; only fully meaningful once FEAT-11 (notifications) ships.
-
----
 
 ## PERF — Performance items
 
