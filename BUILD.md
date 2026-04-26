@@ -300,6 +300,77 @@ Tauri links the platform's native webview at build time (WebKitGTK on Linux, Web
 
 ---
 
+## Cutting a Release
+
+The `release.yml` workflow fires on tag pushes matching `v*` or `[0-9]*`. Its first job is `verify-version`, which fails fast if the tag doesn't match all 5 of: `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `package.json`, `package-lock.json`. Bumping these by hand is fiddly enough that it's been forgotten before — so use the automation.
+
+There are two entry points; both share `scripts/bump-version.sh` as the single source of truth.
+
+### Option 1: One-click via GitHub Actions (recommended)
+
+```bash
+gh workflow run release-tag.yml -f version=0.1.16
+```
+
+Or in the GitHub UI: **Actions → "Release Tag" → "Run workflow" → enter the new version → "Run workflow"**.
+
+The `release-tag` workflow:
+
+1. Checks out main with full history.
+2. Sets up Rust + Node toolchains.
+3. Runs `scripts/bump-version.sh <version> --commit --tag --push` as `github-actions[bot]`.
+4. The push of the new tag fires the existing `Release` workflow.
+
+You see the new tag in `git fetch && git tag` once the workflow finishes (~30 seconds), and the Release workflow's progress at <https://github.com/jfolcini/agaric/actions/workflows/release.yml>.
+
+### Option 2: Local script
+
+```bash
+# Full automation — bump, commit, tag, push.
+scripts/bump-version.sh 0.1.16 --commit --tag --push
+
+# Or stop earlier and review.
+scripts/bump-version.sh 0.1.16 --commit --tag    # local commit + tag, don't push yet
+scripts/bump-version.sh 0.1.16 --commit          # local commit, don't tag yet
+scripts/bump-version.sh 0.1.16                   # update files, don't commit (review the diff manually)
+```
+
+Behavior:
+
+- Updates `package.json`, `src-tauri/tauri.conf.json` via `jq`.
+- Updates the first `^version = "..."` line in `src-tauri/Cargo.toml` via `sed` (sub-dep `version` lines are left untouched).
+- Regenerates `package-lock.json` via `npm install --package-lock-only --ignore-scripts`.
+- Regenerates `src-tauri/Cargo.lock` via `cd src-tauri && cargo update -p agaric --precise <version>`.
+- Sanity-checks all 5 versions match the new value before committing.
+- Refuses to run on a dirty tree when `--commit` is passed (won't sweep up your in-flight work).
+- Refuses to clobber an existing tag.
+
+### What the Release workflow does on tag push
+
+After the tag lands (whether from Option 1, Option 2, or — if you really insist — the manual `git tag && git push` ritual):
+
+1. **`verify-version`** — re-reads all 5 manifests and the tag, fails fast on drift.
+2. **`validate`** — runs `prek run --all-files` (lint + build + full test suite).
+3. **`build-and-release`** — matrix over Linux + Windows + macOS×2 (x86_64 + aarch64). Builds the Tauri bundle, attaches it to a draft release.
+4. **`android-build-and-release`** — separate Linux runner, builds the aarch64 APK and uploads it (signed if the keystore secrets are configured per `BUILD.md` → "Release signing in CI", otherwise unsigned).
+
+Bundles ship unsigned on macOS + Windows by maintainer choice (see "Desktop code signing in CI" below). Android signing is wired with a self-generated keystore (no paid CA required).
+
+### If a release tag fails at `verify-version`
+
+```bash
+# Delete locally and remotely.
+git tag -d <tag>
+git push --delete origin <tag>
+
+# Re-run the bump script on a clean main.
+scripts/bump-version.sh <tag> --commit --tag --push
+```
+
+The most common cause is a manual `git tag` ahead of a manifest bump. The automation prevents this by tying both into one atomic step.
+
+---
+
 ## Android Builds
 
 ### Debug APK (for development/testing)

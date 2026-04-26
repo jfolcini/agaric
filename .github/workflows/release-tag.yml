@@ -1,0 +1,78 @@
+name: Release Tag
+
+# One-click release entry point: bump all version manifests in lockstep,
+# commit, tag, and push. The push of the tag itself triggers the
+# `Release` workflow (release.yml) which builds the desktop bundles +
+# Android APK + drafts the GitHub Release.
+#
+# Runs ONLY via `workflow_dispatch` — manually triggered from the
+# GitHub Actions UI or via the `gh` CLI. Never fires on pushes /
+# schedules. The maintainer types the new version once; everything
+# else is automated.
+#
+# The heavy lifting lives in `scripts/bump-version.sh` so the same
+# automation works locally (single source of truth). This workflow
+# is a thin wrapper that sets up the toolchain + invokes the script
+# with `--commit --tag --push` flags.
+#
+# Usage
+# -----
+#
+#   gh workflow run release-tag.yml -f version=0.1.16
+#
+# or via the GitHub Actions UI: Actions → "Release Tag" → "Run workflow".
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'New semver version (e.g. 0.1.16, no leading "v")'
+        required: true
+        type: string
+
+permissions:
+  contents: write   # required to push commits + tags back to main
+
+jobs:
+  bump-and-tag:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout (with full history so we can push back)
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          # Use the GITHUB_TOKEN to push back; this only has
+          # `contents: write` and is scoped to this run.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Rust toolchain (for `cargo update`)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node.js (for `npm install --package-lock-only`)
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          # `cache: npm` would require a lock file already in place
+          # before `setup-node` runs, but we're about to mutate it —
+          # skip the cache to keep the step idempotent.
+
+      - name: Configure git author for the bump commit
+        # GitHub's bot identity — same convention used by Dependabot,
+        # release-please, and GitHub's own auto-merge commits. The
+        # maintainer keeps their own identity for hand-authored work.
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Run scripts/bump-version.sh with --commit --tag --push
+        # The script handles validation (semver shape, dirty tree,
+        # no-clobber-existing-tag), bumps the 5 manifests, regenerates
+        # the 2 lock files, and pushes both `main` and the new tag.
+        # Pushing the tag fires the Release workflow on its own runner.
+        run: |
+          chmod +x scripts/bump-version.sh
+          scripts/bump-version.sh "${{ github.event.inputs.version }}" --commit --tag --push
+
+      - name: Summary
+        run: |
+          echo "::notice title=Tagged ${{ github.event.inputs.version }}::Release workflow now running at https://github.com/${{ github.repository }}/actions/workflows/release.yml"
