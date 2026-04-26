@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 11 open items.
 
-Previously resolved: 422+ items across 149 sessions.
+Previously resolved: 460+ items across 150 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -1215,7 +1215,7 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 
 ---
 
-## MEDIUM findings (96 — expanded)
+## MEDIUM findings (82 — expanded)
 
 > Each entry is now a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status) ready to be picked up.
 
@@ -1319,18 +1319,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Pass-1 source:** 02/F5
 - **Status:** Open
 
-### M-9 — Doc drift: backoff timings 50/100ms in docs vs 150/300ms in code
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/consumer.rs:225-228`, `ARCHITECTURE.md:399`
-- **What:** `run_background` uses `const INITIAL_BACKOFF_MS: u64 = 150` with `1 << (attempt - 1)`, producing a 150 ms / 300 ms schedule across `MAX_RETRIES = 2`. `ARCHITECTURE.md §5` still says "Background: up to 2 retries with exponential backoff (50ms, 100ms)." A code comment at `consumer.rs:226-227` already notes "Increased from 50ms to reduce retry churn on transient WAL lock contention." The adaptive FTS-optimize threshold (`max(500, block_count / 10_000)` at `dispatch.rs:200`) is also not documented.
-- **Why it matters:** Contributors reading the architecture doc will write tests, performance budgets, or sync timeout reasoning against the wrong values. The Android sync catch-up path is exactly where transient WAL contention shows up, so the timing matters for triage.
-- **Cost:** S (<2h)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Update `ARCHITECTURE.md` to read "150 ms initial, doubled per attempt (150 ms, 300 ms)" and document the adaptive FTS-optimize threshold formula; add a `// docs: ARCHITECTURE.md §5` cross-link comment next to `INITIAL_BACKOFF_MS` so future bumps stay in sync.
-- **Pass-1 source:** 02/F6
-- **Status:** Open
-
 ### M-10 — `BatchApplyOps` retry clones the entire `Vec<OpRecord>` even on first-attempt success
 - **Domain:** Materializer
 - **Location:** `src-tauri/src/materializer/consumer.rs:154`, `src-tauri/src/materializer/consumer.rs:232`, `src-tauri/src/materializer/consumer.rs:250`
@@ -1341,18 +1329,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** Medium
 - **Recommendation:** Defer the clone to the retry arm only — pass the task by value into the first spawned attempt and only `clone()` when transitioning to retry. Alternatively switch the variant to `Arc<Vec<OpRecord>>` (or wrap the whole `MaterializeTask` in `Arc`) so all clones are cheap refcount bumps.
 - **Pass-1 source:** 02/F7
-- **Status:** Open
-
-### M-11 — `dispatch_background_or_warn` swallows serde errors with no seq / device_id context
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/dispatch.rs:62-70`, with parse sites at `dispatch.rs:111`, `:138`, `:216`, `:225`, `:234`
-- **What:** `enqueue_background_tasks` calls `serde_json::from_str::<CreateBlockHint>(&record.payload)?` (and the `BlockIdHint` variants) and propagates parse errors. `dispatch_background_or_warn` then logs only `op_type` and `error`, with no `seq` or `device_id`. The dedup-side parse at `dedup.rs:71-78` already does the right thing — it logs `op_type`, `seq`, `device_id`, and `error`.
-- **Why it matters:** When a future-version peer (or a corrupt local payload) parses cleanly inside `apply_op_tx` but trips up the lightweight `*Hint` quick-parse here, the cache rebuild is skipped and the only diagnostic lacks the identifying fields needed to find the offending row in `op_log`. Triage on the user's own device becomes guesswork.
-- **Cost:** S (<2h)
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Extend the `tracing::warn!` at `dispatch.rs:64-68` to include `seq = record.seq, device_id = %record.device_id`, mirroring the dedup-side helper at `dedup.rs:71-78`.
-- **Pass-1 source:** 02/F8
 - **Status:** Open
 
 ### M-12 — In-flight tokio tasks not cancelled at shutdown
@@ -1367,43 +1343,7 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Pass-1 source:** 02/F9
 - **Status:** Open
 
-### M-13 — `metrics_snapshot_task` resets `*_high_water` every 5 min, breaking `StatusInfo` semantics
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/coordinator.rs:313-315`
-- **What:** After dumping the metrics snapshot to `tracing::debug!`, the task resets `m.fg_high_water` and `m.bg_high_water` to 0. `StatusInfo.fg_high_water` / `StatusInfo.bg_high_water` (commands/system.rs `status_with_scheduler`) read these atomics directly and surface them as the "high-water mark." A `get_status` consumer polling once per minute will see saw-tooth values that reset every 5 minutes — neither "since boot" nor a clearly-bounded sliding window. Neither the `QueueMetrics` field comments nor the `StatusInfo` doc-comments mention this reset.
-- **Why it matters:** The UI status panel can show 0 for the high-water mark immediately after a 5-minute boundary even when the queue just hit 200/256 thirty seconds before. Users / devs cannot trust the metric to investigate backpressure complaints.
-- **Cost:** S (<2h)
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Either drop the reset and let the high-water atomics be all-time maxima (the 5-min log line then shows the running max, which is fine), **or** publish two separate fields (`*_high_water_since_boot` and `*_high_water_5min_window`) and document each. Whichever direction, update the doc-comments on the `QueueMetrics` and `StatusInfo` fields to match.
-- **Pass-1 source:** 02/F13
-- **Status:** Open
-
 ### Cache + Pagination
-
-### M-14 — `reindex_block_links` does not filter `is_conflict = 0`; conflict copies leak into `list_backlinks`
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/cache/block_links.rs:21-26` and `src-tauri/src/cache/block_links.rs:106-111` (split variant); read by `src-tauri/src/pagination/links.rs:22-37`
-- **What:** Both `reindex_block_links` content reads use `WHERE id = ? AND deleted_at IS NULL` only — no `is_conflict = 0` predicate — so `[[ULID]]`/`((ULID))` tokens from conflict-copy source blocks are inserted into `block_links`. `list_backlinks` then joins to `blocks` filtering only `b.deleted_at IS NULL`, so conflict copies surface to the UI as legitimate backlinks. This is inconsistent with `cache/block_tag_refs.rs:47` and `:127`, which already filter `is_conflict = 0` on the source block.
-- **Why it matters:** The Backlinks panel doubles up entries for any conflicted block until the user resolves the conflict — visible UX confusion (not adversarial), and a stale-cache foot-gun on vaults that have ever held conflicts.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Add `AND is_conflict = 0` to both `reindex_block_links` content reads; optionally mirror `AND b.is_conflict = 0` into `list_backlinks` for defense-in-depth (see L-20). Add a regression test that creates a conflict-copy source containing `[[ULID]]` and asserts it does not appear in `list_backlinks`.
-- **Pass-1 source:** 03/F2
-- **Status:** Open
-
-### M-15 — `rebuild_all_caches` rebuilds agenda before `page_id`, corrupting the template-page filter
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/cache/mod.rs:112-119`; mirrored in `src-tauri/src/snapshot/restore.rs:262-283`
-- **What:** Both `rebuild_agenda_cache` and `rebuild_projected_agenda_cache` consult `b.page_id` to apply the FEAT-5a template-page exclusion (`NOT EXISTS (... tp.block_id = b.page_id AND tp.key = 'template')`), but `rebuild_all_caches` runs them before `rebuild_page_ids`. The snapshot-restore enqueue array uses the same order (positions 3 and 4 vs. 6 for `RebuildPageIds`); the background consumer runs the tasks sequentially.
-- **Why it matters:** After a snapshot restore on a vault that uses templates, the agenda silently includes or excludes template-page blocks until something else triggers another rebuild — eventual consistency, not data loss, but visible to the user.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Move `rebuild_page_ids` to first in `rebuild_all_caches`, and move `("RebuildPageIds", MaterializeTask::RebuildPageIds)` to the front of the `rebuild_tasks` array in `snapshot/restore.rs`. Add a regression test that restores a snapshot containing a template-tagged page and asserts the agenda excludes its blocks immediately after restore.
-- **Pass-1 source:** 03/F3
-- **Status:** Open
 
 ### M-16 — `trash_descendant_counts` joins on `deleted_at` only — over-counts when batches collide
 - **Domain:** Cache + Pagination
@@ -1649,18 +1589,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Pass-1 source:** 05/F20
 - **Status:** Open
 
-### M-36 — `disconnect_gcal_inner` aborts on a transient keyring failure when `delete_calendar=true`
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/gcal.rs:162-222` (function), `src-tauri/src/commands/gcal.rs:172-176` (offending `?` on `token_store.load`)
-- **What:** When `delete_calendar=true`, the first awaited line is `token_store.load().await?`. If the keyring is unavailable (`KeyringBackendError::PlatformUnavailable` from `gcal_push/keyring_store.rs:300-302`), the function returns `AppError::Validation("keyring.unavailable")` and the local cleanup (calendar_id reset, event-map wipe, account_email clear, `PushDisabled` emit) never runs. The docstring (lines 169-176) explicitly promises this is a soft failure.
-- **Why it matters:** A user trying to disconnect *because* the keyring is misbehaving is exactly the user who needs the local cleanup to succeed; instead they end up stuck in a "connected but broken" state. The doc and the implementation disagree.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Replace `token_store.load().await?` with a match-and-log pattern that downgrades the error to `tracing::warn!` and continues with `None`, so local cleanup always runs. Add a regression test using a `MockTokenStore` configured to fail `load` with `keyring.unavailable`.
-- **Pass-1 source:** 05/F12
-- **Status:** Open
-
 ### M-37 — `disconnect_gcal_inner` is not transactional across its three writes
 - **Domain:** Commands (System)
 - **Location:** `src-tauri/src/commands/gcal.rs:200-217`
@@ -1671,18 +1599,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** Medium
 - **Recommendation:** Reorder to (a) keyring clear (soft-fail per M-36), (b) one `BEGIN IMMEDIATE` wrapping the two `set_setting` calls + the `DELETE FROM gcal_agenda_event_map`, (c) emit `PushDisabled` after commit.
 - **Pass-1 source:** 05/F13
-- **Status:** Open
-
-### M-38 — `compact_op_log_cmd_inner` accepts `retention_days = 0`
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/compaction.rs:95-101`, `src-tauri/src/commands/compaction.rs:100` (cutoff calc)
-- **What:** `retention_days: u64` is fed directly to `chrono::Duration::days(retention_days.cast_signed())`. With `0`, the cutoff is `now()`, every op satisfies `created_at < cutoff`, and `compact_op_log` purges the entire op log down to the snapshot frontier. There is no minimum-retention guard at the IPC boundary.
-- **Why it matters:** The op log is the source of truth for undo/redo and page history (AGENTS.md invariant 1: "append-only … except compaction"). The frontend is documented as responsible for confirming with the user (line 158), but a Settings-tab bug or buggy IPC payload supplying `0` gives the user no second chance.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Reject `retention_days < MIN_RETENTION_DAYS` (e.g. 7) with `AppError::Validation("retention_days.too_small")`; optionally also clamp upward via `retention_days.clamp(MIN, MAX)` for symmetry with `set_gcal_window_days_inner`.
-- **Pass-1 source:** 05/F11
 - **Status:** Open
 
 ### M-39 — `log_frontend` has no input-size bounds
@@ -1735,18 +1651,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Pass-1 source:** 06/F3
 - **Status:** Open
 
-### M-42 — Inconsistent error handling in `apply_remote_ops`
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_protocol/operations.rs:100-126`
-- **What:** The upfront `verify_op_record` loop uses `?` so any single hash mismatch rejects the entire batch. A few lines later, inside the per-op loop at line 117-126, an unparseable `payload` JSON triggers `continue` and silently skips that op while the rest of the batch inserts. The header comment at line 100-101 ("Reject the entire batch on the first mismatch") contradicts the per-op JSON branch.
-- **Why it matters:** A buggy peer build emitting one malformed payload (e.g., a serializer regression for a single op type) leaks partial state into the local op log indefinitely without surfacing an error; materialization will silently disagree with the op log. This is exactly the "buggy prior version" robustness goal AGENTS.md cites.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Move JSON-validity checking into the same upfront verification loop as `verify_op_record`, and treat unparseable payloads identically — reject the whole batch with a descriptive `AppError::InvalidOperation`. Update the inline comment to reflect a single all-or-nothing contract.
-- **Pass-1 source:** 06/F5
-- **Status:** Open
-
 ### M-43 — Property LWW idempotency guard reads latest local op, not materialized property value
 - **Domain:** Sync
 - **Location:** `src-tauri/src/sync_protocol/operations.rs:339-374` (within `merge_diverged_blocks`)
@@ -1769,18 +1673,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** Medium
 - **Recommendation:** Compare `winner_move` against `blocks.parent_id` + `blocks.position` rather than the latest-op payload. Land in the same commit as M-43.
 - **Pass-1 source:** 06/F7
-- **Status:** Open
-
-### M-45 — `SyncDaemon::shutdown` AtomicBool is set but never read
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_daemon/mod.rs:82-87, 378-382`; `src-tauri/src/sync_daemon/orchestrator.rs:172-279, 265-268`
-- **What:** `SyncDaemon` carries `shutdown: Arc<AtomicBool>`. `shutdown()` writes `true` via `Ordering::Release` and calls `shutdown_notify.notify_one()`. The `daemon_loop` `select!` and the dormant-waiter only watch `shutdown_notify.notified()`; project-wide grep finds no `shutdown.load(...)` reader. The atomic flag is dead weight.
-- **Why it matters:** Maintainability — readers of the struct expect both the bool and the Notify to participate in shutdown. A future select! branch that reads the bool but not the Notify (or vice versa) would introduce ordering bugs that are easy to miss in review.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low (clarity)
-- **Recommendation:** Either remove the AtomicBool entirely, or read `shutdown.load(Acquire)` at the top of every `daemon_loop` iteration and inside `try_sync_with_peer` so a long-running session can early-exit. The simpler win is to delete it.
-- **Pass-1 source:** 06/F8
 - **Status:** Open
 
 ### M-46 — `try_sync_with_peer` drops the cancel flag after each peer; cancellation only stops the current peer
@@ -1817,18 +1709,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** Medium
 - **Recommendation:** Cheap path: also reject as "missing" when `tokio::fs::metadata(&full_path).await?.len() != attachments.size_bytes`. Better path: add `attachments.blake3_hash` (already inline on the wire `FileOffer`) and verify on read; surface a user-visible repair on mismatch.
 - **Pass-1 source:** 06/F13
-- **Status:** Open
-
-### M-49 — `find_missing_attachments` performs blocking sync I/O inside an async fn
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_files.rs:142-160`
-- **What:** `Path::exists()` syscalls `stat(2)` synchronously. The function is `async fn` and is awaited from `daemon_loop`'s tokio task; with thousands of attachments and a cold filesystem cache, this can stall the runtime.
-- **Why it matters:** On Android with cold FS caches, a few hundred attachments noticeably extends the sync handshake. Not a correctness issue, but a real-world latency regression on the most constrained target.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace `full_path.exists()` with `tokio::fs::metadata(&full_path).await.is_ok()`, or batch the loop into a single `tokio::task::spawn_blocking`. If M-48 is implemented in the same patch, prefer `tokio::fs::metadata` so the size check piggybacks on a single async syscall.
-- **Pass-1 source:** 06/F14
 - **Status:** Open
 
 ### M-50 — `request_and_receive_files` ACKs `FileReceived` even after hash mismatch / write failure
@@ -1941,42 +1821,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 
 ### Search & Links
 
-### M-59 — Tag-query CTE oracle missing `depth < 100` bound
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/tag_query/resolve.rs:179-235` (`#[cfg(test)] resolve_expr_cte`)
-- **What:** The recursive-CTE oracle `tagged_tree` walks descendants via `b.parent_id = tt.id` with no `depth` column and no `depth < 100` predicate. The production rebuild path (`tag_inheritance::rebuild_all`, `tag_inheritance.rs:435-453`) does bound depth, so oracle and prod disagree on the universe of inheritable blocks they will visit on a corrupted DB.
-- **Why it matters:** AGENTS.md invariant #9 requires every recursive CTE over `blocks` to bound `depth < 100`. Without it the oracle can spin forever on a parent-cycle and silently agrees with a buggy prod path past depth 100, defeating the CTE-oracle parity guarantee in `resolve/tests.rs:438-484` and `:870-1008`.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Add a `depth INTEGER` column and `WHERE … AND depth < 100` to both recursive members of `tagged_tree`. Match the depth bound used by `tag_inheritance::rebuild_all`.
-- **Pass-1 source:** 07/F1
-- **Status:** Open
-
-### M-60 — Backlink `resolve_root_pages_cte` oracle missing depth bound and `is_conflict = 0`
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/query.rs:259-301` (`#[cfg(test)] resolve_root_pages_cte`)
-- **What:** The CTE oracle for `resolve_root_pages` walks ancestors via `parent_id` with neither a `depth < 100` bound nor an `is_conflict = 0` filter on the recursive member. The production version at `query.rs:213-249` filters `p.is_conflict = 0` (line 229) and even comments "Defensive consistency with the recursive-CTE oracle" — the oracle itself omits the filter. The final projection (`WHERE b.parent_id IS NULL AND b.block_type = 'page'`) also lacks `b.is_conflict = 0`.
-- **Why it matters:** This is the linchpin oracle for AGENTS.md "Performance Conventions / CTE oracle pattern" exercised by `backlink/tests.rs:2584-2638`. If the optimized path regresses near a conflict ancestor or a 100+ deep chain, the oracle will silently agree with the buggy result; on a corrupted DB the oracle could infinite-loop while the production query terminates.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Add a `depth` column with `WHERE … AND depth < 100` to the recursive member, add `b.is_conflict = 0` alongside the existing `b.parent_id IS NOT NULL`, and add `b.is_conflict = 0` to the final projection so prod and oracle compare like-for-like.
-- **Pass-1 source:** 07/F2
-- **Status:** Open
-
-### M-61 — `strip_for_fts` (async) doesn't filter `is_conflict = 0` for tag/page references
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/fts/strip.rs:77-81, 105-108` (cf. `:185-208` `load_ref_maps`)
-- **What:** The async `strip_for_fts` looks up tag content (lines 77-81) and page content (lines 105-108) with only `block_type = '…' AND deleted_at IS NULL`. The companion sync helper `load_ref_maps` (lines 188-208), used by full rebuild, additionally filters `is_conflict = 0`. Single-block updates therefore embed conflict-copy tag/page content in `fts_blocks` while a subsequent full rebuild produces different stripped text.
-- **Why it matters:** Drift between `update_fts_for_block` / `update_fts_for_block_split` and `rebuild_fts_index` / `rebuild_fts_index_split`. After a `RemoveConflict` op resolution, the per-block reindex path leaves stale conflict-tag content in `fts_blocks` until the next full rebuild — observable as inconsistent search hits across the two paths.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add `AND is_conflict = 0` to both lookup queries in `strip_for_fts` so the async path matches `load_ref_maps`. Add a regression test covering a single-block reindex after a conflict resolution.
-- **Pass-1 source:** 07/F5
-- **Status:** Open
-
 ### M-62 — `eval_unlinked_references` truncates without `ORDER BY` — non-deterministic cursor
 - **Domain:** Search & Links
 - **Location:** `src-tauri/src/backlink/grouped.rs:343-360` (FTS query) and `:551-562` (cursor encode), `:451-462` (skip_while)
@@ -2013,18 +1857,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** Medium
 - **Recommendation:** Switch the block_id predicate to `block_id = ?1` so the index participates; leave the key filter as `json_extract` over the now-block-scoped slice. A future `block_property_key` extracted-column migration would close the gap fully but requires user approval (new column).
 - **Pass-1 source:** 08/F2
-- **Status:** Open
-
-### M-65 — ARCHITECTURE.md says draft recovery uses `>=` but code uses `>`
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/recovery/draft_recovery.rs:86-92`; doc `ARCHITECTURE.md:1168`
-- **What:** The doc states the recovery query uses `created_at >= draft.updated_at`; the code uses strict `created_at > ?`. The strict comparator is intentional per the comment block at `recovery/tests.rs:13-15` (lex-monotonic `Z`-suffix invariant).
-- **Why it matters:** Boundary case where a flushed op shares `updated_at` to the millisecond would be classified "unflushed" and produce a synthetic edit_block — a no-op semantically but adds an op_log row, a `prev_edit` DAG entry, and history-view noise.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Update `ARCHITECTURE.md` line 1168 to read `>` so it matches the deliberate code semantics; do not change the code.
-- **Pass-1 source:** 08/F5
 - **Status:** Open
 
 ### M-66 — `apply_snapshot` drops `block_drafts` without surfacing potentially unflushed work
@@ -2391,7 +2223,7 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (129 — expanded)
+## LOW findings (111 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2421,30 +2253,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Pass-1 source:** 01/F7
 - **Status:** Open
 
-### L-3 — `BlockId::from_trusted` uses Unicode `to_uppercase()`; `Deserialize` uses `to_ascii_uppercase()`
-- **Domain:** Core
-- **Location:** `src-tauri/src/ulid.rs:18-29` vs `src-tauri/src/ulid.rs:63-65`
-- **What:** Three normalization paths disagree on which case-folding helper they use. `Deserialize::deserialize` calls `s.to_ascii_uppercase()`, `from_trusted(&str)` calls `s.to_uppercase()` (Unicode-aware), and `from_string` routes through `ulid::Ulid::from_str` (always-ASCII canonical form). For ASCII inputs (the only valid case) all three behave identically; for non-ASCII they diverge — `from_trusted("ß")` → `"SS"` while round-tripping the same bytes through serde yields `"ß"`.
-- **Why it matters:** AGENTS.md invariant #8 makes ULID uppercase normalization a hash-determinism prerequisite. Today the Crockford alphabet keeps inputs inside ASCII so the bug is theoretical, but the asymmetry is a footgun: any future reuse of `BlockId` for non-ULID identifiers (attachment filenames, sync handshake keys) could split the chain across devices.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Change `from_trusted` (`ulid.rs:63-65`) to use `s.to_ascii_uppercase()`, matching the `Deserialize` path. Add a property test asserting `BlockId::from_trusted(s).as_str() == BlockId::deserialize(serde_json::Value::String(s.clone())).as_str()` for arbitrary `String`.
-- **Pass-1 source:** 01/F8
-- **Status:** Open
-
-### L-4 — `compute_op_hash` null-byte invariant is `debug_assert!` only
-- **Domain:** Core
-- **Location:** `src-tauri/src/hash.rs:35-90` (the four `debug_assert!` calls at 44-60)
-- **What:** The function uses `\0` as a between-field separator and uses `debug_assert!` on `device_id`, `parent_seqs`, `op_type`, and `payload` to enforce the invariant. In `--release` builds those assertions vanish; an input containing a raw `\0` would silently produce an ambiguous preimage (e.g. `device_id = "A\0B"`, `seq = 1` could collide with `device_id = "A"` plus a payload that begins with `B`). The hash.rs module-level docstring describes this format as the "wire format contract".
-- **Why it matters:** The hash chain is the basis of the cross-device identity contract. `debug_assert!` is appropriate for "should never happen during local development", but the contract is invoked during sync between user devices in release builds. The cost of a real `assert!` is four `memchr`-style scans per hash — negligible compared to blake3 itself.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Convert the four `debug_assert!` calls in `hash.rs:44-60` into `assert!` so they fire in release. Optionally add a release-build test exercising `payload_with_embedded_null_bytes_is_distinct` outside `#[cfg(not(debug_assertions))]`.
-- **Pass-1 source:** 01/F9
-- **Status:** Open
-
 ### L-5 — `append_local_op_in_tx` requires `BEGIN IMMEDIATE` but enforces nothing
 - **Domain:** Core
 - **Location:** `src-tauri/src/op_log.rs:76-191` (function), `op_log.rs:209-216` (the only place that gets the lock right)
@@ -2455,18 +2263,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** Medium
 - **Recommendation:** Document the requirement at the top of `append_local_op_in_tx` and add a debug-only sanity check, e.g. by introducing a `pub struct ImmediateTx<'a>` newtype that the helper accepts and that is only constructed by `db::begin_immediate_logged`. Cheaper: a doc-comment + targeted test that opens a `BEGIN DEFERRED` tx and asserts the function returns the expected sqlite-busy classification under contention.
 - **Pass-1 source:** 01/F10
-- **Status:** Open
-
-### L-6 — `validate_set_property` accepts empty strings in `value_text` / `value_date` / `value_ref`
-- **Domain:** Core
-- **Location:** `src-tauri/src/op.rs:365-414` (specifically the field-count check at 394-401, no per-string `trim().is_empty()` guard)
-- **What:** The validator enforces "exactly one of `value_text/num/date/ref` set" and finite-ness for `value_num`, but does not check that the chosen string field is non-empty after trimming. `value_text = Some("")`, `value_date = Some("")`, or `value_ref = Some("")` all pass and land in the op log. `value_date` is later parsed by agenda code as ISO 8601 — an empty string makes that parse fail downstream.
-- **Why it matters:** Defensive validation at the command layer should be authoritative. The frontend already enforces non-empty values, but op-log entries can also originate from MCP tools (`mcp/tools_rw.rs`) and import paths, so a backend-side guard prevents a category of "set property to empty, then everything that touches that property breaks" downstream bugs.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** In `validate_set_property`, reject `Some(s)` where `s.trim().is_empty()` for `value_text`, `value_date`, and `value_ref`, with a clear `AppError::Validation(format!("…{} must not be empty", field_name))`. Add three failing-input unit tests next to the existing `validate_set_property_*` cases.
-- **Pass-1 source:** 01/F12
 - **Status:** Open
 
 ### L-7 — Slow-acquire helpers are wired up in only 2 modules
@@ -2506,30 +2302,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Status:** Open
 
 ### Materializer
-
-### L-10 — Foreground barrier wraps a synchronous `notify_one()` in `tokio::spawn`
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/consumer.rs:142-152`, `src-tauri/src/materializer/handlers.rs:74-77`
-- **What:** For `MaterializeTask::Barrier`, `process_single_foreground_task` clones the pool / metrics / gcal handle and spawns a sub-task whose body just calls `handle_foreground_task`, which in turn calls `notify.notify_one()`. The `run_background` path (consumer.rs:217-223) handles barriers inline — no spawn, no clone. The fg spawn-around-spawn pattern is a leftover from the panic-isolation pattern used for real handlers and is unnecessary for a barrier.
-- **Why it matters:** Every `flush_foreground()` call (and there are several per command in tests + production) pays a `tokio::task::spawn` + `await` round-trip plus the pool/metrics/gcal Arc clones, for nothing. Cumulative cost on a busy device is not large but is pure waste.
-- **Cost:** S (<2h)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Inline the barrier path in `process_single_foreground_task` (mirror the bg-side handling at `consumer.rs:217-223`): match `Barrier(notify)` first, call `notify.notify_one()`, bump `fg_processed`, return.
-- **Pass-1 source:** 02/F14
-- **Status:** Open
-
-### L-11 — `record_failure` does SELECT-then-INSERT instead of one UPSERT
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/retry_queue.rs:101-128`
-- **What:** `record_failure` first runs `SELECT attempts FROM materializer_retry_queue WHERE block_id = ? AND task_type = ?`, computes `new_attempts = prior.unwrap_or(0) + 1`, then UPSERTs the row. The same effect is reachable in one round-trip via `ON CONFLICT(block_id, task_type) DO UPDATE SET attempts = attempts + 1, last_error = excluded.last_error, next_attempt_at = ?`. Two concurrent failure inserts for the same `(block_id, task_type)` can both observe `prior = None`, both compute `attempts = 1`, and both INSERT — the second triggers ON CONFLICT and overwrites with the same `excluded.attempts = 1`, losing one increment.
-- **Why it matters:** The bg consumer is largely single-threaded, so the race is rare in practice, but the off-by-one shifts the backoff schedule by one step and the extra round-trip is unnecessary on the hot retry path.
-- **Cost:** S (<2h)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace the SELECT + INSERT with a single `INSERT … VALUES (1, …) ON CONFLICT(block_id, task_type) DO UPDATE SET attempts = materializer_retry_queue.attempts + 1, last_error = excluded.last_error, next_attempt_at = ?`. Compute `next_attempt_at` from the post-update `attempts` via `RETURNING attempts` if SQLite version permits, otherwise accept a one-step delay.
-- **Pass-1 source:** 02/F15
-- **Status:** Open
 
 ### L-12 — `fg_full_waits` increment via TOCTOU read of `tx.capacity()`
 - **Domain:** Materializer
@@ -2627,18 +2399,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** Low
 - **Recommendation:** Either gate it `#[cfg(test)]` and inline at the test callsite, or fix M-15 and document this function as the canonical sequence so the snapshot-restore enqueue array can mirror it.
 - **Pass-1 source:** 03/F10
-- **Status:** Open
-
-### L-20 — `list_agenda` / `list_agenda_range` / `list_backlinks` do not filter `is_conflict = 0` on `b`
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/pagination/agenda.rs:31-37` and `:86-93`; `src-tauri/src/pagination/links.rs:28-32`
-- **What:** All three queries `JOIN blocks b ON b.id = …` and only filter `b.deleted_at IS NULL`. The cache-side rebuilds exclude `is_conflict = 1` blocks, so under normal operation conflict rows do not reach these queries — but there is a TOCTOU window: when ops mark a block as a conflict via `set_conflict`/`mark_as_conflict` and enqueue the cache rebuild, the cache row remains until the background consumer runs. Other list queries (`list_children`, `list_by_type`, `list_by_tag`, `query_by_property`, `list_undated_tasks`) all add `is_conflict = 0` defensively.
-- **Why it matters:** Conflict copies could briefly appear in agenda or backlinks views during the rebuild window. Single-user threat model: minor UI flicker, not data corruption.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add `AND b.is_conflict = 0` to the WHERE in `list_agenda`, `list_agenda_range`, and `list_backlinks` for consistency with the other list queries. Add a regression test that flips a block to `is_conflict = 1` without rebuilding the cache and asserts it does not appear in agenda/backlinks listings.
-- **Pass-1 source:** 03/F11
 - **Status:** Open
 
 ### L-21 — `list_block_history` cursor uses `c.seq.unwrap_or(0)` — relies on op_log seq ≥ 1
@@ -2787,30 +2547,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Pass-1 source:** 04/F13
 - **Status:** Open
 
-### L-33 — Tauri-emit error in property-mutating commands is silently dropped via `let _ = app.emit(...)`
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/properties.rs:630-636`, `:658-664`, `:702-708`, `:731-737`, `:760-766`
-- **What:** Each command wrapper emits `EVENT_PROPERTY_CHANGED` via `let _ = app.emit(...)`, swallowing any Emitter error. AGENTS.md anti-patterns ban silent `.catch(() => {})` on the frontend; the same logic applies to backend IPC emits — failure here means the frontend store is stale until the next refresh.
-- **Why it matters:** Diagnosing "I changed X but the UI didn't update" is hard with no log trace; a single `tracing::warn!` makes it visible at near-zero cost.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace each `let _ = app.emit(...)` with `if let Err(e) = app.emit(...) { tracing::warn!(error = %e, event = ..., "..."); }`. Apply consistently to all five sites (and the new `set_priority` site once L-38 is fixed).
-- **Pass-1 source:** 04/F15
-- **Status:** Open
-
-### L-34 — `add_tag_inner` allows a block to tag itself
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/tags.rs:34-121`
-- **What:** Aside from confirming `tag_id` is a `tag`-typed block, the function does not reject `block_id == tag_id` (a tag tagging itself), which the downstream `tag_inheritance::propagate_tag_to_descendants` walk could then re-enter if the tag also appears in its own ancestry.
-- **Why it matters:** Edge case, low impact, but worth a one-line guard for defence-in-depth against pathological inputs (MCP tool, sync replay, scripted import).
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add `if block_id == tag_id { return Err(AppError::InvalidOperation("a block cannot tag itself".into())); }` near the top of `add_tag_inner` and cover it with a one-liner test.
-- **Pass-1 source:** 04/F19
-- **Status:** Open
-
 ### L-35 — `dispatch_background_for_page_create` re-reads ops from the op_log instead of threading them through
 - **Domain:** Commands (CRUD)
 - **Location:** `src-tauri/src/commands/spaces.rs:215-249` (and `create_page_in_space_inner` upstream)
@@ -2885,18 +2621,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Pass-1 source:** 05/F7
 - **Status:** Open
 
-### L-41 — `home_dir_string()` only checks `$HOME`, silently no-ops on Windows
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/bug_report.rs:248-250`
-- **What:** Home-path redaction hinges on `std::env::var("HOME").ok()`. Windows does not export `HOME` by default — `USERPROFILE` is the canonical variable. On Windows the function returns `None`, the redaction silently passes through `None`, and the user's full `C:\Users\<name>\…` paths land in the exported log ZIP destined for GitHub.
-- **Why it matters:** Cross-platform privacy regression on the user-export path. The user's Windows username is exposed in every path-bearing log line — this is a real cross-trust-boundary leak (the bug-report ZIP is designed to be uploaded to a public GitHub issue).
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium (closes a leak on Windows; no effect elsewhere)
-- **Recommendation:** Replace the body with `dirs::home_dir().map(|p| p.to_string_lossy().into_owned()).filter(|s| !s.is_empty())` (`dirs` is already a transitive dep via Tauri), or `cfg(windows)` to fall back to `USERPROFILE`. Add a Windows-gated unit test.
-- **Pass-1 source:** 05/F8
-- **Status:** Open
-
 ### L-43 — Compaction wrapper tx is misleading; the comment is factually wrong
 - **Domain:** Commands (System)
 - **Location:** `src-tauri/src/commands/compaction.rs:118-145`
@@ -2907,18 +2631,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** Low
 - **Recommendation:** Combine with L-42: drop the wrapper tx entirely, propagate the real `deleted_count` from `compact_op_log`, leave only the `begin_immediate_logged` slow-acquire telemetry warning, and rewrite the comment to describe what the wrapper actually does.
 - **Pass-1 source:** 05/F10 (downgraded Medium→Low)
-- **Status:** Open
-
-### L-44 — `get_gcal_status_inner` lets keyring transient errors break the Settings tab
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/gcal.rs:106-141`, `src-tauri/src/commands/gcal.rs:111` (offending `?`)
-- **What:** `connected = token_store.load().await?.is_some()` propagates a keyring error to the caller, which surfaces as a toast and an empty Settings tab. The natural mapping for a user-visible status query is "if the keyring is unavailable, show `connected = false` and let the user re-auth" — not "fail the whole status read".
-- **Why it matters:** The user opens Settings → Google Calendar to *fix* a connectivity issue and is shown nothing.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Match on the load result and degrade `connected` to `false` (with a `tracing::warn!`) on `KeyringBackendError::PlatformUnavailable`. Optionally include a `keyring_unavailable: bool` in `GcalStatus` so the FE can render a banner.
-- **Pass-1 source:** 05/F14
 - **Status:** Open
 
 ### L-45 — `GcalStatus.enabled` and `GcalStatus.connected` are duplicate fields
@@ -2967,30 +2679,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** Low (UX consistency)
 - **Recommendation:** Add `.map_err(sanitize_internal_error)` to every Tauri command wrapper in the five files. Optionally add a CI golden-test (e.g. `cargo expand` + regex) asserting every `__cmd__*` calls the sanitizer.
 - **Pass-1 source:** 05/F26 (downgraded High→Low — UX consistency, not security)
-- **Status:** Open
-
-### L-49 — `set_gcal_window_days_inner` has unreachable fallback noise
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/gcal.rs:231-244`
-- **What:** The clamp `i64::from(n).clamp(MIN, MAX)` always produces a value in `[7, 90]`, which always fits in `i32`. The `try_from` therefore cannot fail and the `.unwrap_or_else(... DEFAULT_WINDOW_DAYS)` branch is dead. The comment at lines 237-240 admits this. Extra code, extra cognitive load.
-- **Why it matters:** Pure cleanup — readers must reason about a fallback that cannot be reached.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace with `let clamped: i32 = i64::from(n).clamp(MIN_WINDOW_DAYS, MAX_WINDOW_DAYS).try_into().expect("clamped to [7,90] always fits i32");`.
-- **Pass-1 source:** 05/F28
-- **Status:** Open
-
-### L-50 — `update_peer_name` and `set_peer_address` Tauri wrappers lack `cfg(not(tarpaulin_include))`
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/sync_cmds.rs:243-253` (`update_peer_name`), `src-tauri/src/commands/sync_cmds.rs:256-266` (`set_peer_address`)
-- **What:** Every other Tauri wrapper in this file (and most other command files) carries `#[cfg(not(tarpaulin_include))]` to keep state-resolving boilerplate out of coverage measurements. These two are missing the attribute, so they show up at 0% coverage as a false negative.
-- **Why it matters:** Coverage hygiene. AGENTS.md notes Tarpaulin runs only on coverage-gap work, but inconsistent annotations make those reports noisy when it does run.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add `#[cfg(not(tarpaulin_include))]` to both wrappers, immediately above `#[tauri::command]`.
-- **Pass-1 source:** 05/F29
 - **Status:** Open
 
 ### L-51 — `mcp_disconnect_all` doc says it returns "the connection count" but signature returns `()`
@@ -3101,18 +2789,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** Low
 - **Recommendation:** Add `"v": 1` to the JSON payload now, before any future field additions. Joiner validates the version explicitly and fails fast on unknown versions. Wire-format addition; bundle with any other QR-shape changes that need user approval.
 - **Pass-1 source:** 06/F27
-- **Status:** Open
-
-### L-60 — `build_salt` concatenates IDs without a delimiter
-- **Domain:** Sync
-- **Location:** `src-tauri/src/pairing.rs:189-196`
-- **What:** `salt.extend_from_slice(ids[0].as_bytes()); salt.extend_from_slice(ids[1].as_bytes());` — no separator between the two IDs. ULIDs are fixed-length 26 chars so no ambiguity today, but the invariant is implicit.
-- **Why it matters:** Fragile invariant — any future change to device-ID format (variable-length labels) would silently collide on `("AB","CD")` vs `("ABC","D")`.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Insert a single-byte separator that cannot appear in a Crockford ULID, e.g. `\x00`, between the two IDs. Document the format in a comment.
-- **Pass-1 source:** 06/F28
 - **Status:** Open
 
 ### L-61 — `daemon_loop` Branch B processes peers sequentially
@@ -3309,18 +2985,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 
 ### Search & Links
 
-### L-81 — `eval_unlinked_references` page-title query lacks `is_conflict = 0`
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/grouped.rs:284-294`
-- **What:** Resolution of the target page's title filters `block_type = 'page' AND deleted_at IS NULL` only. If a caller passes a conflict-copy page id, the function returns its title and runs the unlinked-references search against a conflict copy. Sister query `resolve_root_pages` (`query.rs:226-230`) does filter `p.is_conflict = 0`.
-- **Why it matters:** Defense-in-depth and contract consistency. Probably not reachable from the UI today, but the SQL contract should align across the two backlink helpers so future callers don't re-introduce the gap.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add `AND is_conflict = 0` to the title fetch.
-- **Pass-1 source:** 07/F10
-- **Status:** Open
-
 ### L-82 — `eval_backlink_query_grouped` IN-clause unbounded — SQLite variable-limit risk
 - **Domain:** Search & Links
 - **Location:** `src-tauri/src/backlink/grouped.rs:170-189`
@@ -3379,42 +3043,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** Low
 - **Recommendation:** Match the sibling helpers — return `AppError::NotFound(format!("peer_refs ({peer_id})"))` when `rows_affected() == 0`. Alternatively document explicitly that this is a fire-and-forget update.
 - **Pass-1 source:** 07/F17
-- **Status:** Open
-
-### L-87 — `update_last_address` uses raw `sqlx::query` instead of `query!` macro
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/peer_refs.rs:201-205`
-- **What:** Every other write helper in the file uses compile-time-checked `sqlx::query!`. `update_last_address` is the lone outlier using runtime `sqlx::query`, bypassing the `.sqlx/` cache.
-- **Why it matters:** Violates AGENTS.md invariant #6 ("sqlx compile-time queries"). Schema drift on `peer_refs.last_address` would surface at runtime instead of at compile time.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Switch to `sqlx::query!(...)` and re-run `cargo sqlx prepare` to refresh `.sqlx/`.
-- **Pass-1 source:** 07/F18
-- **Status:** Open
-
-### L-88 — Doc comment says "INSERT OR REPLACE"; code uses `ON CONFLICT … DO UPDATE`
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/peer_refs.rs:88, 95-97`
-- **What:** The doc comment on `upsert_peer_ref_with_cert` says "Uses `INSERT OR REPLACE` so an existing peer's cert_hash is updated", but the SQL is `INSERT … ON CONFLICT(peer_id) DO UPDATE SET cert_hash = excluded.cert_hash`. The two constructs differ: `INSERT OR REPLACE` would rewrite ALL columns (zeroing `last_hash`, `synced_at`, `reset_count`, etc.); `ON CONFLICT … DO UPDATE` only touches `cert_hash`. The actual code is correct (as proved by `tests.rs:522-561` `upsert_with_cert_preserves_existing_sync_state`); the doc is wrong.
-- **Why it matters:** Future contributors reading the doc comment may "fix" the SQL to match it and silently zero peer sync state during pairing.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace "INSERT OR REPLACE" with "ON CONFLICT(peer_id) DO UPDATE" in the doc comment, and explicitly state that `last_hash`/`synced_at`/`reset_count` are preserved across re-pairing.
-- **Pass-1 source:** 07/F19
-- **Status:** Open
-
-### L-89 — `update_device_name` error string format inconsistent
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/peer_refs.rs:187` vs `:132, 152, 166`
-- **What:** `update_device_name` returns `format!("peer_ref {peer_id}")` while `update_on_sync`, `increment_reset_count`, and `delete_peer_ref` all return `format!("peer_refs ({peer_id})")` — singular vs plural, no parentheses vs parentheses.
-- **Why it matters:** Consumers that match on the error string format will diverge across helpers; tests asserting one form pass for one helper but not another.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Change `update_device_name`'s error format to `format!("peer_refs ({peer_id})")` to match siblings.
-- **Pass-1 source:** 07/F20
 - **Status:** Open
 
 ### L-90 — `read_body_limited` reads entire response into memory before truncating
@@ -3549,18 +3177,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** Low
 - **Recommendation:** Validate ISO-8601 date shape (`^\d{4}-\d{2}-\d{2}$`) on `repeat-until` before comparison; emit `tracing::warn!` on malformed input and skip recurrence rather than silently looping forever.
 - **Pass-1 source:** 08/F25
-- **Status:** Open
-
-### L-101 — `cascade_soft_delete` uses zero `tracing` — no observability into cascades
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/soft_delete/trash.rs:38-65`
-- **What:** The function emits no tracing events. `compact_op_log` (in `snapshot/create.rs`) is fully instrumented; cascade delete — which can soft-delete thousands of blocks via a recursive CTE in one tx — is opaque.
-- **Why it matters:** When a user reports "I lost a tree of blocks", the only diagnostic is the row count returned, with no log line capturing the seed block_id, cascade size, or timestamp.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add `#[tracing::instrument(skip(pool), err)]` and emit `tracing::info!(block_id, count, "cascade soft-delete")` after `tx.commit()`.
-- **Pass-1 source:** 08/F26
 - **Status:** Open
 
 ### L-102 — `restore_block` does not bound `deleted_at_ref` — wrong-token call is a silent no-op
@@ -3963,7 +3579,7 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Pass-1 source:** 10/F30
 - **Status:** Open
 
-## INFO / nits (79 — expanded)
+## INFO / nits (73 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -4115,18 +3731,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Pass-1 source:** 02/F16
 - **Status:** Open
 
-### I-Materializer-2 — `pending_count` is fully `pub` despite module being `pub mod retry_queue`
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/retry_queue.rs:141-146`, `src-tauri/src/materializer/mod.rs:7`
-- **What:** `pub async fn pending_count` is reachable as `crate::materializer::retry_queue::pending_count` (the module is `pub mod retry_queue;` in `mod.rs:7`). Other helpers in the same module (`record_failure`, `fetch_due`, `clear_entry`, `task_from_row`, `RetryKind`) are `pub(crate)`. Only `pending_count`, `sweep_once`, and `spawn_sweeper` are fully `pub`.
-- **Why it matters:** API stability surface — unnecessarily wider than the module's other helpers. Not a security or correctness issue, but inconsistent with the rest of the module's visibility hygiene.
-- **Cost:** S (<2h)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Tighten `pending_count` to `pub(crate)` to match `record_failure` / `fetch_due` / `clear_entry`. Audit `sweep_once` / `spawn_sweeper` similarly — leave them `pub` only if a concrete crate-external caller exists.
-- **Pass-1 source:** 02/F22
-- **Status:** Open
-
 ### I-Materializer-3 — `MaterializeTask::Clone` clones `String`s on the bg-side hot path
 - **Domain:** Materializer
 - **Location:** `src-tauri/src/materializer/mod.rs:22-57`, `src-tauri/src/materializer/consumer.rs:232`, `src-tauri/src/materializer/consumer.rs:250`
@@ -4140,18 +3744,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Status:** Open
 
 ### Cache
-
-### I-Cache-1 — `Cursor` doc undocuments `list_page_history`'s composite cursor overload
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/pagination/mod.rs:140-150` (Cursor doc); used by `src-tauri/src/pagination/history.rs:71-165`
-- **What:** The Cursor doc-comment enumerates per-field uses up to "`seq` — set by `list_block_history` (keyset on `seq, device_id`)". `list_page_history` also uses `seq`, plus reuses `deleted_at` as a stash for `created_at`, plus uses `id` as a stash for `device_id` — three overloads simultaneously. The doc never mentions the composite usage; the next maintainer extending this would likely add a new field rather than recognise the overload pattern.
-- **Why it matters:** Future cursor-bearing queries (op-log filtering, block-history-by-author) risk adding redundant fields instead of reusing the overload pattern.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Extend the `Cursor` doc block to enumerate `list_page_history` explicitly: "stores `created_at` in `deleted_at`, `seq` in `seq`, and `device_id` in `id`". Better yet, rename `deleted_at` to `secondary_str` or move to a typed enum.
-- **Pass-1 source:** 03/F9
-- **Status:** Open
 
 ### I-Cache-2 — `pagination/mod.rs` doc claims cursor opacity but `Cursor` is `pub`
 - **Domain:** Cache + Pagination
@@ -4411,18 +4003,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Pass-1 source:** 06/F33
 - **Status:** Open
 
-### I-Sync-2 — `expected text/binary message, got {:?}` formats multi-MB binary payloads
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_net/connection.rs:117, 141`
-- **What:** Both `recv_json` and `recv_binary` produce error strings via `format!("expected … got {:?}", other)` where `other: tungstenite::Message`. The `Debug` impl for `Message::Binary(Vec<u8>)` renders the entire byte buffer.
-- **Why it matters:** A 5 MB binary frame received in a place expecting JSON formats ~5 MB of text into the error string. Log explosion on protocol mismatch — observability/footprint nit.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Log the discriminant only: `format!("expected text message, got {:?}", std::mem::discriminant(&other))`. Or build a small helper that prints `Binary({N} bytes)` instead of the full payload.
-- **Pass-1 source:** 06/F34
-- **Status:** Open
-
 ### I-Sync-3 — `is_complete` only checks `Complete`, not the broader terminal set
 - **Domain:** Sync
 - **Location:** `src-tauri/src/sync_protocol/orchestrator.rs:471-483`
@@ -4461,18 +4041,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 
 ### Search & Links
 
-### I-Search-1 — Stale doc comment in `search_fts` claims `unicode61` tokenizer; actually `trigram`
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/fts/search.rs:190-197`
-- **What:** The "Known limitation: CJK tokenization" doc block says "The FTS5 table uses the default `unicode61` tokenizer". Migration `0006_fts5_trigram.sql:13` switched to `tokenize = 'trigram case_sensitive 0'` precisely to fix CJK substring search. The comment is actively misleading.
-- **Why it matters:** Future contributors reading the doc may plan a tokenizer migration that already happened, and may misdescribe FTS behaviour in support replies.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace the comment with a description of the trigram tokenizer (3-char minimum substring, ~3× index size, case-insensitive per `case_sensitive 0`). Match ARCHITECTURE.md §9.
-- **Pass-1 source:** 07/F6
-- **Status:** Open
-
 ### I-Search-2 — `sanitize_fts_query` does not drop tokens shorter than 3 characters
 - **Domain:** Search & Links
 - **Location:** `src-tauri/src/fts/search.rs:113-146`
@@ -4483,18 +4051,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** Medium (search UX)
 - **Recommendation:** Implement the documented behaviour: drop sub-trigram tokens before joining. Whitelist the 2-char operator `OR` (and 3-char `AND`/`NOT`) so they keep their operator semantics. Alternatively amend the doc to state actual semantics.
 - **Pass-1 source:** 07/F7
-- **Status:** Open
-
-### I-Search-3 — Magic literal `LIMIT 10001` not derived from `FTS_ROW_CAP`
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/grouped.rs:344, 355`
-- **What:** `const FTS_ROW_CAP: usize = 10_000;` is defined just above the SQL string, but the SQL embeds the +1 sentinel as inline literal `10001`. Bumping the constant alone leaves the SQL out of sync.
-- **Why it matters:** Trivial maintainability footgun — easy to miss in review and silently breaks truncation detection.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Use `format!("… LIMIT {}", FTS_ROW_CAP + 1)` or bind `(FTS_ROW_CAP + 1) as i64`.
-- **Pass-1 source:** 07/F9
 - **Status:** Open
 
 ### I-Search-4 — `remove_inherited_tag` ancestor-walk consistency note (informational)
@@ -4835,18 +4391,6 @@ If SignPath denies the application (e.g., dual-licensed code, ambiguous OSS stat
 - **Impact:** Low
 - **Recommendation:** Add `fn assert_send_sync<T: Send + Sync>() {} #[test] fn connection_state_is_send_sync() { assert_send_sync::<ConnectionState>(); }` next to the struct.
 - **Pass-1 source:** 09/F25
-- **Status:** Open
-
-### I-MCP-8 — `ActivityResult::Err` 200-char clip lacks a multi-byte UTF-8 boundary test
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/server.rs:478-484` (`let short: String = err.to_string().chars().take(200).collect();`); existing length-only assertion at `src-tauri/src/mcp/server.rs:2072-2076`.
-- **What:** The clip uses `chars().take(200)` so multi-byte characters (emoji, CJK) are preserved correctly, but no test feeds a >200-char emoji-heavy error string to assert the panic-free / non-truncating-mid-codepoint path. Any regression to `String::from_utf8_unchecked` or `&str[..200]` would slip past the existing length test.
-- **Why it matters:** Defensive — current implementation is correct; the test gap means a future "optimization" could regress it.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add one fixture / property test feeding `"💥".repeat(500).into()` (or similar mixed-script payload) and assert the result is exactly 200 `chars().count()` and round-trips cleanly through `serde_json`.
-- **Pass-1 source:** 09/F27
 - **Status:** Open
 
 ### I-MCP-9 — `agaric-mcp` stub-binary integration test is `#[ignore]` and not exercised in CI
