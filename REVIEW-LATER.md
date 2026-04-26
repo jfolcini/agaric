@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-12 open items.
+10 open items.
 
-Previously resolved: 533+ items across 155 sessions.
+Previously resolved: 535+ items across 156 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -28,7 +28,6 @@ Previously resolved: 533+ items across 155 sessions.
 | FEAT-3p5 | FEAT | Spaces Phase 5: per-space journal (J1) + per-space journal templates + per-space `currentDate` slice in `useJournalStore` | M |
 | FEAT-3p7 | FEAT | Spaces Phase 7: cross-space link enforcement — resolve store + `get_page_inner` scoped to current space; cross-space `[[ULID]]` chips render via existing broken-link UX. **No links between spaces, ever.** | M |
 | FEAT-3p9 | FEAT | Spaces Phase 9: per-space external integrations — per-space GCal calendar IDs / OAuth / push pipeline + space-name prefix on OS notifications (FEAT-11 coupling) | L |
-| FEAT-3p10 | FEAT | Spaces Phase 10: visual identity — per-space accent color + status-bar chip + window title prefix + collapsed-sidebar indicator (single highest-priority remaining FEAT-3 work for "fully separated feel") | M |
 | FEAT-4 | FEAT | Agent access: expose notes to external agents via an MCP server — parent / umbrella | L |
 | FEAT-4i | FEAT | MCP v3 — Mobile (HTTPS/LAN via mTLS reuse from `sync_cert.rs`, agent-pairing flow) — DEFERRED pending v2 | L |
 | FEAT-5 | FEAT | Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar) — parent / umbrella | L |
@@ -38,7 +37,6 @@ Previously resolved: 533+ items across 155 sessions.
 | FEAT-14a | FEAT | PageBrowser grouping: refactor memo + virtualizer estimateSize + keyboard-nav row mapping for unified model | M |
 | FEAT-14b | FEAT | PageBrowser grouping: i18n keys + section icons + per-section empty-state visibility flags | S |
 | FEAT-14c | FEAT | PageBrowser grouping: test coverage update (replace FEAT-12 tree-bypasses assertions, add duplication / filter / a11y / keyboard tests) | S–M |
-| BUG-1 | BUG | PageBrowser silently hides pages that lack a `space` property — journal pages, templates, WelcomeModal samples, and peer-synced pages disappear from the Pages view (rolls up the existing deep-CR H-3a / H-3b / H-3c + L-133) | S–M |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
@@ -302,42 +300,6 @@ The picker is already current-space-only (Phase 2 shipped), so cross-space links
 
 **Cost:** L — schema migration + connector refactor + UI refactor + per-space lease handling. Realistic estimate: 2 sessions. Depends on FEAT-3p4 (the push pipeline must already pull space-scoped agenda).
 **Status:** Open. Depends on FEAT-3p4. Independent of FEAT-3p5 / p6 / p7 / p8 / p10 / p11. Notification-prefix sub-task depends on FEAT-11 landing first.
-
-### FEAT-3p10 — Spaces Phase 10: visual identity (status-bar chip, accent color, window title prefix, collapsed-sidebar indicator)
-
-**Problem:** Today the only signal that the user is in a particular space is the SpaceSwitcher dropdown's text label in the sidebar header. When the sidebar is collapsed (icon-only mode, mobile), or when the user glances at the taskbar, the OS notification center, or the window title bar, **there is no visual cue** about which space is active. Two spaces look identical; switching is undetectable at a glance. **This is the single biggest barrier to "fully separated" feeling** — context blur is constant and undermines every other space-scoping effort. A user looking at the screen for a fraction of a second must be able to tell whether they're in Personal or Work without thinking.
-
-**Locked-in policy:**
-
-- **Per-space accent color.** Each space carries an optional `accent_color` text property (oklch token name from `index.css` — e.g. `accent-emerald`, `accent-violet`, `accent-blue`). When set, it overrides one or two CSS custom properties at the document root: a status-bar background tint and the SpaceSwitcher trigger background. Two seeded spaces ship with two distinct defaults (Personal: `accent-emerald`, Work: `accent-blue`). User-renameable + recolorable via the FEAT-3p6 "Manage spaces…" UI.
-- **Window title prefix.** Tauri `setTitle("<SpaceName> · Agaric")` fires on every space change. Regenerated when the space is renamed. Falls back to `Agaric` when no space is active (boot pre-bootstrap edge case).
-- **Status-bar chip** showing the active space name (lifted from FEAT-3p6 to here so visual identity ships as one cohesive surface). Pattern matches the existing sync-status chip; no new component primitives needed. Click on the chip opens the SpaceSwitcher dropdown.
-- **Collapsed-sidebar indicator** (also lifted from FEAT-3p6) — 32px circle with the first letter of the space name on top of the accent color, with an `aria-label` + tooltip showing the full name. Click cycles to the next space (sharing the FEAT-3p11 cycle-shortcut handler).
-- **Notification prefix** (when FEAT-11 lands) is a sub-task of FEAT-3p9, not p10 — listed here only for completeness of the "visual identity" surface.
-- **No per-space full theme.** Only the accent token + the chip + the title prefix + the badge. A full custom theme (per-space typography, density, custom colour palette) is out of scope. File as a future polish item if the user later wants it.
-
-**Frontend scope:**
-
-- New CSS variable `--accent-current` set on `:root` and rebound on every space change via a small effect in `App.tsx`. Two existing tokens (`--brand-accent`, `--status-bar-bg`) consume `var(--accent-current, fallback)`.
-- New `<SpaceAccentBadge>` shared component (`src/components/SpaceAccentBadge.tsx`) — the 32px circle + first letter, used in the collapsed sidebar. Supports hover + focus-visible per AGENTS.md guidelines.
-- New `<SpaceStatusChip>` component (or extend the existing chip primitive) reusing the sync-status-chip pattern. Mounts in `App.tsx`'s status-bar slot. Reads `useSpaceStore((s) => s.availableSpaces.find(x => x.id === s.currentSpaceId)?.name ?? '')`.
-- `useSpaceStore` adds `getCurrentAccent(): string` derived selector reading the active space's `accent_color` property (via a fresh property fetch on space change — small cost, fires only at switch). Cached on the store; refreshed by `refreshAvailableSpaces()`.
-- Tauri call `setWindowTitle("<spaceName> · Agaric")` on every space change. Wrapper in `src/lib/tauri.ts`. No-op fallback for non-Tauri runtime (vitest, storybook).
-
-**Backend scope:**
-
-- New optional property definition `accent_color` (text) — additive migration. Default values seeded by `bootstrap.rs` for Personal + Work. User edits via "Manage spaces…" UI (FEAT-3p6). No new tables, no new op types.
-
-**Testing:**
-
-- Vitest: switching spaces updates `--accent-current`, the status-bar chip text, and (mocked) the window title call.
-- Vitest: collapsed sidebar shows the right letter + accent for each space; click cycles.
-- Vitest: rename → chip + title + badge update without a manual refresh.
-- a11y: chip + badge have `aria-label`s; touch target 44px on `pointer:coarse`; focus-visible ring matches existing patterns.
-- prefers-contrast: accent tokens have high-contrast siblings (mirrors existing semantic-token convention from `index.css`).
-
-**Cost:** M — single focused session. Touches `App.tsx`, `index.css`, two new shared components, one Tauri wrapper, one bootstrap migration adding default accent properties.
-**Status:** Open. **HIGHEST-PRIORITY remaining FEAT-3 work for the stated goal of "fully separated feel"**. Independent of FEAT-3p4 / p5 / p7 / p8 / p9 / p11. Couples with FEAT-3p6 (the management UI surface that lets the user pick the accent for a renamed/new space) — recommend p10 first so p6 has a real consumer to wire up.
 
 ### FEAT-4 — Agent access: expose notes to external agents via an MCP server
 
@@ -863,90 +825,6 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 **Cost:** S–M
 
 ---
-
-## BUG — Correctness items surfaced during review
-
-### BUG-1 — PageBrowser silently hides pages that lack a `space` property
-
-**User-visible symptom:** "The Pages view does not bring all pages." Some pages that exist in the vault simply do not appear in the PageBrowser list, with no error toast and no log line — they're invisible. The user only notices because pages they remember creating (a journal day, a template, an onboarding sample) are missing, or because the count is lower than expected.
-
-**Root cause (confirmed):** `pagination::list_by_type` requires every page to carry a `space` property pointing at the current space. The SQL filter at `src-tauri/src/pagination/hierarchy.rs:113-134` is:
-```sql
-AND (?5 IS NULL OR COALESCE(b.page_id, b.id) IN (
-        SELECT bp.block_id FROM block_properties bp
-        WHERE bp.key = 'space' AND bp.value_ref = ?5))
-```
-Any page without a `space` property is excluded — silently. Once the boot-time bootstrap has run once (`spaces::bootstrap::is_bootstrap_complete` returns true at `src-tauri/src/spaces/bootstrap.rs:44`), the migration that backfills `space = Personal` on `pages_without_space` never runs again. Pages that arrive AFTER that point and lack a `space` property are permanently invisible.
-
-**Confirmed bypass paths that produce pages without a `space` property:**
-1. **`JournalPage.tsx:170-176`** — `handleAddBlock` calls `createBlock({ blockType: 'page', content: dateStr })` directly. No space assigned. Every new daily page created via "Add block to today" leaks.
-2. **`TemplatesView.tsx:75-79`** — `createBlock({ blockType: 'page', content: name })` then `setProperty('template', 'true')`. Space property never set. Every new template leaks.
-3. **`WelcomeModal.tsx:56-103`** — first-boot onboarding `createSamplePages` creates "Getting Started" + "Quick Tips" via `createBlock({ blockType: 'page' })`. Both onboarding pages leak. (Note: the bootstrap migration backfills these on the same first boot only if the WelcomeModal's `createBlock` calls are observed by the materializer BEFORE bootstrap's `pages_without_space` snapshot reads; depending on ordering this may or may not catch them. Even when it does, all subsequent creations don't get backfilled.)
-4. **Backend `create_block` IPC accepts `block_type='page'` without enforcing space atomicity.** Same root issue, IPC-level.
-5. **Peer-synced pages.** A page authored on a different device that took any of the bypass paths above syncs over carrying no `space` property. The receiving device's bootstrap has already short-circuited via the fast-path → no re-run → page is permanently hidden.
-
-**Why this is a real, daily issue (not theoretical):** The journal flow is the worst offender. Every "Add block to today" on an empty journal day creates a leaked page. The user adds blocks to the journal multiple times a day; over weeks the Pages view diverges from reality. This isn't an edge case — it's the bug the user is reporting.
-
-**Cross-reference to deep-CR findings:** This bug is already filed in the appendix as a stack of related items, but none are surfaced as a user-visible bug. BUG-1 rolls them up:
-- **H-3** (parent) — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated daily.
-- **H-3a** — Backend `create_block` IPC: enforce space property atomicity for `block_type='page'`. Fix the IPC so the invariant cannot be violated even from a misbehaving frontend or sync replay.
-- **H-3b** — Frontend journal/templates/`createBlock` callsites switch to `create_page_in_space` / `createPageInSpace`. JournalPage, TemplatesView, WelcomeModal — all four bypass sites.
-- **H-3c** — Property test: every page block has a non-null `space` property. Acts as a regression net.
-- **L-133** — `space` ref-property invariant relies on bootstrap migration but never re-runs. The defense-in-depth fix.
-
-**Fix scope (in priority order):**
-
-1. **Backend hardening (H-3a — highest leverage).** Modify `create_block` IPC to refuse `block_type='page'` without a `space_id` argument; or, internally, require the same atomic transaction `create_page_in_space` uses (BEGIN IMMEDIATE → CreateBlock op → SetProperty('space', current_space) op → commit). The IPC is the single chokepoint; once it's tight, future bypass paths cannot leak pages — the cure is structural rather than per-callsite. **Approval needed:** if we choose to require `space_id` on the IPC argument list, that's a backwards-incompatible IPC change and three frontend callsites need to flip in lockstep.
-
-2. **Frontend callsite migration (H-3b).** Three concrete sites:
-   - `src/components/JournalPage.tsx:171, 192, 201` — daily-page creation.
-   - `src/components/TemplatesView.tsx:77` — template creation.
-   - `src/components/WelcomeModal.tsx:58, 82` — onboarding samples.
-   Route every one through the `createPageInSpace` wrapper that already exists in `src/lib/tauri.ts`. Each is a 1-line swap.
-
-3. **Bootstrap re-runs the migration (L-133).** Loosen the fast-path check in `bootstrap_spaces` so `pages_without_space` is queried on EVERY boot (not just when the seeded space blocks are missing `is_space="true"`). Cost is one indexed `NOT EXISTS` scan against `block_properties` per boot — cheap, since the index `idx_block_properties_space` is already in place. This catches anything that slipped through paths 1, 2, 3, plus all peer-synced bypass-path pages.
-
-4. **Property test (H-3c).** `fast-check` property: for any sequence of `createBlock` / `create_page_in_space` calls + sync replay, every page block in the materialized state has a `space` property pointing at a valid space block. A failing test is the regression net.
-
-5. **Defensive UX in PageBrowser (optional).** Even with the four backend/frontend fixes above, consider one of two safety nets so future bypasses surface visibly instead of silently:
-   - Log a warn line in the backend when `list_by_type(block_type='page')` is called WITH a `space_id` AND the unscoped count exceeds the scoped count. Operationally observable in the bug-report bundle, no UI change.
-   - Surface a one-time toast in the frontend when `count(unscoped pages) > count(scoped pages)` — helps the user notice the divergence even before a fix lands. Lean toward the backend log line only (frontend toast is too noisy for a bug that should be impossible after the fix).
-
-**Files touched (final state):**
-- `src-tauri/src/commands/blocks/crud.rs` — tighten `create_block` (H-3a).
-- `src-tauri/src/spaces/bootstrap.rs` — drop the fast-path skip on `pages_without_space`, run it every boot (L-133).
-- `src/components/JournalPage.tsx` — switch 3 callsites to `createPageInSpace` (H-3b).
-- `src/components/TemplatesView.tsx` — switch 1 callsite (H-3b).
-- `src/components/WelcomeModal.tsx` — switch 2 callsites (H-3b).
-- `src-tauri/src/spaces/tests.rs` — add property test (H-3c) + a regression test that creates a page via the legacy `create_block` path then asserts `list_by_type` finds it under the current space.
-- `src-tauri/src/pagination/tests.rs` — regression test: a page lacking `space` is hidden by `list_by_type(spaceId=<x>)` BEFORE the fix; visible AFTER the bootstrap re-run.
-- `src/components/__tests__/JournalPage.test.tsx`, `TemplatesView.test.tsx`, `WelcomeModal.test.tsx` — assert each calls `create_page_in_space` (or the wrapper that does), not bare `create_block`.
-- `e2e/spaces-coverage.spec.ts` (new or extend an existing spec) — create a journal day, create a template, run through the welcome flow, then confirm all of those pages show up in the Pages view of the active space.
-
-**Test plan:**
-
-*Unit:*
-- Backend regression: `create_block(block_type='page')` without `space_id` either errors (preferred) or auto-attaches the current space inside the same `BEGIN IMMEDIATE`. Then `list_blocks(blockType='page', spaceId=<personal>)` finds the page. Assert exact-count, not `>=`.
-- Bootstrap re-run: seed a page directly via SQL with no `space` property → call `bootstrap_spaces` → assert the page now has `space = Personal`. Repeat across two boots to confirm idempotency.
-- Property test (`fast-check`): random sequence of page creations + sync ops → every materialized page has a `space` property.
-- Frontend tests: each of the three migrated components calls the `createPageInSpace` IPC, not the bare `create_block`.
-
-*E2E:*
-- Open Welcome modal on a fresh vault → after onboarding, navigate to Pages → assert "Getting Started" + "Quick Tips" appear in the active space.
-- Create a journal day via "Add block to today" → navigate to Pages → assert the day's page is listed.
-- Create a template via Templates view → navigate to Pages → assert the template page is listed.
-- Multi-device (where the e2e harness supports a second pool): on device A take a bypass path, sync to device B, on device B reboot the app once, then open Pages → assert the page is listed.
-
-*Manual sanity:*
-- Open existing vault that has the bug → confirm the missing pages exist in the DB via the SQL helper (`SELECT id, content FROM blocks WHERE block_type = 'page' AND deleted_at IS NULL`) → after the fix lands and the app reboots once, open Pages → confirm all are visible.
-
-**Out of scope (deliberately deferred):**
-- Cross-space visibility surface — there is no plan to allow "show pages from any space"; that's been ruled out per FEAT-3's "nothing outside of spaces" decision. This entry only restores the invariant; it does not relax it.
-- Surfacing the unscoped vs scoped count divergence as a UI affordance — file as a follow-up only if the fix above proves insufficient in practice.
-
-**Cost:** S–M — backend IPC tightening + bootstrap loosening (~80 lines), 6 frontend callsites swapped (~6 lines each), ~10-15 new/updated tests, 1 e2e flow. No schema migration; no new tables; the property test framework (`fast-check`) is already in the project.
-**Risk:** Medium — the IPC tightening is a structural change to `create_block`. If any callsite (especially in tests, mocks, or sync paths) silently relies on the legacy behaviour, those will fail loudly rather than silently corrupt data — preferred direction. The bootstrap re-run is low-risk (pure additive backfill, idempotent) but must keep the fast-path skip for the `is_space` properties to avoid re-emitting redundant `is_space` ops every boot.
-**Status:** Open. Schedule the four fixes (H-3a + L-133 + H-3b + H-3c) together — partial fixes leave the silent-divergence behaviour partially in place.
 
 ### PUB-2 — Git author email across all history is corporate (`javier.folcini@avature.net`)
 
