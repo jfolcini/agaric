@@ -39,19 +39,33 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useIsMobile } from '../hooks/use-mobile'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
-import { useNavigationStore } from '../stores/navigation'
-import { type PageRef, useRecentPagesStore } from '../stores/recent-pages'
+import {
+  selectActiveTabIndexForSpace,
+  selectTabsForSpace,
+  useNavigationStore,
+} from '../stores/navigation'
+import {
+  type PageRef,
+  selectRecentPagesForSpace,
+  useRecentPagesStore,
+} from '../stores/recent-pages'
+import { useSpaceStore } from '../stores/space'
 
 export function RecentPagesStrip(): React.ReactElement | null {
   const { t } = useTranslation()
   const isMobile = useIsMobile()
-  const recentPages = useRecentPagesStore((s) => s.recentPages)
+  // FEAT-3 Phase 3 — both the MRU list and the active-page exclusion are
+  // per-space so a recent visit in space-A doesn't surface in space-B.
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const recentPages = useRecentPagesStore((s) => selectRecentPagesForSpace(s, currentSpaceId))
 
   // Derive the currently-open pageId from the active tab's stack top so we
   // can exclude it from the strip. `undefined` when no tab or no stack —
   // in that case we render every recent page (nothing to exclude).
   const activePageId = useNavigationStore((s) => {
-    const active = s.tabs[s.activeTabIndex]
+    const tabs = selectTabsForSpace(s, currentSpaceId)
+    const idx = selectActiveTabIndexForSpace(s, currentSpaceId)
+    const active = tabs[idx]
     return active && active.pageStack.length > 0
       ? active.pageStack[active.pageStack.length - 1]?.pageId
       : undefined

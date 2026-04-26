@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { useRecentPagesStore } from '../recent-pages'
+import { selectRecentPagesForSpace, useRecentPagesStore } from '../recent-pages'
+import { useSpaceStore } from '../space'
 
 const STORAGE_KEY = 'agaric:recent-pages'
 
 describe('useRecentPagesStore', () => {
   beforeEach(() => {
-    useRecentPagesStore.setState({ recentPages: [] })
+    // FEAT-3 Phase 3 — clear both the flat MRU and the per-space slices so
+    // a prior test's per-space write doesn't leak into the active view via
+    // the selector fall-back path.
+    useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
     localStorage.clear()
   })
 
@@ -138,6 +142,99 @@ describe('useRecentPagesStore', () => {
       expect(parsed.state.recentPages).toHaveLength(1)
       expect(parsed.state.recentPages[0]).toHaveProperty('pageId', 'A')
       expect(parsed.state.recentPages[0]).toHaveProperty('title', 'Alpha')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // FEAT-3 Phase 3 — per-space MRU partitioning
+  // ---------------------------------------------------------------------------
+  describe('FEAT-3p3 per-space MRU', () => {
+    beforeEach(() => {
+      useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [], isReady: true })
+    })
+
+    it('recordVisit in space-1 then space-2 keeps each MRU isolated and dedup-correct', () => {
+      // space-1: visit A
+      useSpaceStore.setState({
+        currentSpaceId: 'space-1',
+        availableSpaces: [
+          { id: 'space-1', name: 'One' },
+          { id: 'space-2', name: 'Two' },
+        ],
+        isReady: true,
+      })
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+      // Visit A again in the same space — must NOT duplicate within space-1.
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+
+      // Switch to space-2 and visit A again.
+      useSpaceStore.setState({ currentSpaceId: 'space-2' })
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+
+      const state = useRecentPagesStore.getState()
+      // Both spaces have A in their MRU.
+      expect(state.recentPagesBySpace['space-1']?.some((p) => p.pageId === 'A')).toBe(true)
+      expect(state.recentPagesBySpace['space-2']?.some((p) => p.pageId === 'A')).toBe(true)
+      // Neither space duplicates A within its own slice.
+      expect(state.recentPagesBySpace['space-1']?.filter((p) => p.pageId === 'A')).toHaveLength(1)
+      expect(state.recentPagesBySpace['space-2']?.filter((p) => p.pageId === 'A')).toHaveLength(1)
+    })
+
+    it('persistence round-trips recentPagesBySpace', () => {
+      localStorage.removeItem(STORAGE_KEY)
+
+      useSpaceStore.setState({
+        currentSpaceId: 'space-1',
+        availableSpaces: [{ id: 'space-1', name: 'One' }],
+        isReady: true,
+      })
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+      useRecentPagesStore.getState().recordVisit({ pageId: 'B', title: 'Bravo' })
+
+      const raw = localStorage.getItem(STORAGE_KEY)
+      expect(raw).not.toBeNull()
+      const parsed = JSON.parse(raw as string)
+      expect(parsed.version).toBe(1)
+      expect(parsed.state.recentPagesBySpace['space-1']).toBeDefined()
+      expect(parsed.state.recentPagesBySpace['space-1']).toHaveLength(2)
+      // MRU order: most-recent first.
+      expect(parsed.state.recentPagesBySpace['space-1'][0]).toEqual({
+        pageId: 'B',
+        title: 'Bravo',
+      })
+    })
+
+    it('migration from v0 (flat-only) seeds recentPagesBySpace.__legacy__', async () => {
+      const legacy = {
+        state: {
+          recentPages: [
+            { pageId: 'B', title: 'Bravo' },
+            { pageId: 'A', title: 'Alpha' },
+          ],
+        },
+        version: 0,
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(legacy))
+
+      await useRecentPagesStore.persist.rehydrate()
+
+      const state = useRecentPagesStore.getState()
+      expect(state.recentPagesBySpace['__legacy__']).toBeDefined()
+      expect(state.recentPagesBySpace['__legacy__']).toHaveLength(2)
+      // Flat field is also populated so legacy reads keep working.
+      expect(state.recentPages).toHaveLength(2)
+    })
+
+    it('selectRecentPagesForSpace falls back to flat list when slice is missing', () => {
+      useRecentPagesStore.setState({
+        recentPages: [{ pageId: 'A', title: 'Alpha' }],
+        recentPagesBySpace: {},
+      })
+      const state = useRecentPagesStore.getState()
+      // Null space → flat
+      expect(selectRecentPagesForSpace(state, null)).toHaveLength(1)
+      // Unknown space → fall back to flat (per-space slice missing)
+      expect(selectRecentPagesForSpace(state, 'space-unknown')).toHaveLength(1)
     })
   })
 })

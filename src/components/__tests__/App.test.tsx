@@ -86,15 +86,21 @@ beforeEach(() => {
   useBootStore.setState({ state: 'ready', error: null })
 
   // Reset the navigation store so each test starts at the default view.
+  // FEAT-3 Phase 3 — also clear the per-space slices so tabs from a
+  // previous test don't leak into the current test's active space via
+  // the per-space selector fall-back.
   useNavigationStore.setState({
     currentView: 'journal',
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
+    tabsBySpace: {},
+    activeTabIndexBySpace: {},
     selectedBlockId: null,
   })
 
   // FEAT-9: reset the recent-pages MRU so RecentPagesStrip tests are isolated.
-  useRecentPagesStore.setState({ recentPages: [] })
+  // FEAT-3 Phase 3 — clear the per-space MRU slices for the same reason.
+  useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
 
   // FEAT-3 Phase 1: reset the space store so SpaceSwitcher renders
   // deterministic state regardless of test ordering.

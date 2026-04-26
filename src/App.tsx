@@ -84,7 +84,14 @@ import {
 } from './lib/tauri'
 import { cn } from './lib/utils'
 import { type JournalMode, useJournalStore } from './stores/journal'
-import { type PageEntry, selectPageStack, useNavigationStore, type View } from './stores/navigation'
+import {
+  type PageEntry,
+  selectActiveTabIndexForSpace,
+  selectPageStack,
+  selectTabsForSpace,
+  useNavigationStore,
+  type View,
+} from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
 import { useSpaceStore } from './stores/space'
 import { useSyncStore } from './stores/sync'
@@ -221,12 +228,19 @@ interface TabShortcut {
  * before `nextTab` (Ctrl+Tab) because the Shift+Tab binding is strictly more
  * specific — without the ordering the nextTab matcher would fire first and
  * Shift+Tab would be misrouted once the user rebound one of them.
+ *
+ * FEAT-3 Phase 3 — every action reads tabs through the per-space selectors
+ * (passing the current `currentSpaceId`) so cycling/closing only sees the
+ * tabs that belong to the active space.
  */
 const TAB_SHORTCUTS: ReadonlyArray<TabShortcut> = [
   {
     binding: 'openInNewTab',
     run: (state) => {
-      const activeTab = state.tabs[state.activeTabIndex]
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      const tabs = selectTabsForSpace(state, spaceId)
+      const idx = selectActiveTabIndexForSpace(state, spaceId)
+      const activeTab = tabs[idx]
       const top = activeTab?.pageStack[activeTab.pageStack.length - 1]
       if (top) {
         state.openInNewTab(top.pageId, top.title)
@@ -236,22 +250,29 @@ const TAB_SHORTCUTS: ReadonlyArray<TabShortcut> = [
   {
     binding: 'closeActiveTab',
     run: (state) => {
-      state.closeTab(state.activeTabIndex)
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      state.closeTab(selectActiveTabIndexForSpace(state, spaceId))
     },
   },
   {
     binding: 'previousTab',
     run: (state) => {
-      if (state.tabs.length <= 1) return
-      const prev = state.activeTabIndex === 0 ? state.tabs.length - 1 : state.activeTabIndex - 1
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      const tabs = selectTabsForSpace(state, spaceId)
+      const idx = selectActiveTabIndexForSpace(state, spaceId)
+      if (tabs.length <= 1) return
+      const prev = idx === 0 ? tabs.length - 1 : idx - 1
       state.switchTab(prev)
     },
   },
   {
     binding: 'nextTab',
     run: (state) => {
-      if (state.tabs.length <= 1) return
-      const next = (state.activeTabIndex + 1) % state.tabs.length
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      const tabs = selectTabsForSpace(state, spaceId)
+      const idx = selectActiveTabIndexForSpace(state, spaceId)
+      if (tabs.length <= 1) return
+      const next = (idx + 1) % tabs.length
       state.switchTab(next)
     },
   },
@@ -905,8 +926,14 @@ function App() {
       // silently do nothing. Surface a toast so the user gets feedback
       // instead of a silent failure. The other tab shortcuts (close,
       // next, previous) are well-defined regardless of stack state.
+      // FEAT-3 Phase 3 — read the active tab through the per-space
+      // selector so the toast fires when the active SPACE has no
+      // open page, not just the legacy flat list.
       if (shortcut.binding === 'openInNewTab') {
-        const activeTab = state.tabs[state.activeTabIndex]
+        const spaceId = useSpaceStore.getState().currentSpaceId
+        const tabs = selectTabsForSpace(state, spaceId)
+        const idx = selectActiveTabIndexForSpace(state, spaceId)
+        const activeTab = tabs[idx]
         const top = activeTab?.pageStack[activeTab.pageStack.length - 1]
         if (!top) {
           toast.error(t('tabs.openInNewTabEmpty'))
