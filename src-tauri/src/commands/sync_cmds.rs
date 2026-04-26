@@ -54,18 +54,22 @@ pub async fn update_peer_name_inner(
 
 /// Set (or update) a peer's last-known network address for direct connection.
 ///
-/// Validates the address is a valid `host:port` socket address and that the
-/// peer exists before persisting.
+/// Accepts `host:port` — host may be an IP literal or a hostname (e.g. mDNS
+/// `*.local`). The host string is left opaque; the daemon resolves it at
+/// connect time. The port must be a non-zero `u16`. Verifies the peer exists
+/// before persisting.
 #[instrument(skip(pool), err)]
 pub async fn set_peer_address_inner(
     pool: &SqlitePool,
     peer_id: String,
     address: String,
 ) -> Result<(), AppError> {
-    // Validate the address format
-    address.parse::<std::net::SocketAddr>().map_err(|_| {
-        AppError::Validation(format!("invalid address: {address}. Expected host:port"))
-    })?;
+    // Validate the address format.
+    // M-35: Accepts host:port — host may be an IP literal or a hostname
+    // (e.g. mDNS `*.local`). Splits on the LAST `:` so bracketed IPv6
+    // literals (`[::1]:1234`) parse correctly. Resolution is deferred to
+    // the daemon at connect time.
+    validate_host_port(&address)?;
 
     // Verify peer exists
     let peer = peer_refs::get_peer_ref(pool, &peer_id).await?;
@@ -74,6 +78,31 @@ pub async fn set_peer_address_inner(
     }
 
     peer_refs::update_last_address(pool, &peer_id, &address).await
+}
+
+/// M-35: Validate a `host:port` string for [`set_peer_address_inner`].
+///
+/// Accepts `host:port` — host may be an IP literal or a hostname (e.g. mDNS
+/// `*.local`). Splits on the LAST `:` to handle bracketed IPv6 literals
+/// (`[::1]:1234`) and plain `host:port`. The host string is left opaque so
+/// the daemon can resolve it at connect time; only the port is validated as
+/// a non-zero `u16`.
+fn validate_host_port(address: &str) -> Result<(), AppError> {
+    let invalid = || {
+        AppError::Validation(format!(
+            "invalid address: {address}. Expected host:port \
+             (host may be an IP literal or hostname, e.g. mDNS `*.local`)"
+        ))
+    };
+    let (host, port) = address.rsplit_once(':').ok_or_else(invalid)?;
+    if host.is_empty() || port.is_empty() {
+        return Err(invalid());
+    }
+    let port: u16 = port.parse().map_err(|_| invalid())?;
+    if port == 0 {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 /// Return the local device's persistent UUID.
@@ -386,4 +415,90 @@ pub async fn start_sync(
 #[specta::specta]
 pub async fn cancel_sync(cancel_flag: State<'_, crate::SyncCancelFlag>) -> Result<(), AppError> {
     cancel_sync_inner(&cancel_flag.0).map_err(sanitize_internal_error)
+}
+
+#[cfg(test)]
+mod tests_m35 {
+    //! M-35: `set_peer_address_inner` previously rejected hostnames despite
+    //! advertising "host:port" semantics. The validator now accepts arbitrary
+    //! `host:port` (host opaque, port a non-zero u16), so mDNS `*.local`
+    //! hosts and other DNS names round-trip without resolution at the
+    //! command layer. Resolution is deferred to the daemon.
+    use super::{validate_host_port, AppError};
+
+    fn assert_accepts(addr: &str) {
+        match validate_host_port(addr) {
+            Ok(()) => {}
+            Err(e) => panic!("expected `{addr}` to be accepted, got error: {e:?}"),
+        }
+    }
+
+    fn assert_rejects(addr: &str) {
+        match validate_host_port(addr) {
+            Err(AppError::Validation(msg)) => {
+                assert!(
+                    msg.contains("host:port"),
+                    "validation error for `{addr}` should mention host:port, got: {msg}"
+                );
+            }
+            Err(other) => panic!("expected Validation error for `{addr}`, got: {other:?}"),
+            Ok(()) => panic!("expected `{addr}` to be rejected, but it was accepted"),
+        }
+    }
+
+    #[test]
+    fn m35_accepts_valid_host_port_forms() {
+        // Includes the formats the previous SocketAddr validator accepted
+        // (IPv4:port, [IPv6]:port) plus DNS / mDNS hostnames that the old
+        // validator wrongly rejected.
+        let cases = [
+            "127.0.0.1:8080",
+            "[::1]:1234",
+            "myphone.local:12345",
+            "agaric-deviceA:1024",
+            "hostname.example.com:65535",
+            "a.b.c.d.example:1",
+        ];
+        for addr in cases {
+            assert_accepts(addr);
+        }
+    }
+
+    #[test]
+    fn m35_rejects_malformed_addresses() {
+        // Empty / no port, empty host, empty port, non-numeric port,
+        // zero port, out-of-range ports, negative ports.
+        let cases = [
+            "",
+            "hostonly",
+            ":1234",
+            "host:",
+            "host:abc",
+            "host:0",
+            "host:65536",
+            "host:-1",
+        ];
+        for addr in cases {
+            assert_rejects(addr);
+        }
+    }
+
+    #[test]
+    fn m35_error_message_mentions_hostname_guidance() {
+        // The error should steer the user toward "host may be a hostname",
+        // not the old "Expected host:port" wording that misled callers into
+        // thinking only IP literals were allowed.
+        let err = validate_host_port("host:abc").expect_err("host:abc must fail");
+        let AppError::Validation(msg) = err else {
+            panic!("expected Validation error, got: {err:?}");
+        };
+        assert!(
+            msg.contains("hostname"),
+            "error message should mention hostname guidance, got: {msg}"
+        );
+        assert!(
+            msg.contains("host:port"),
+            "error message should still mention host:port, got: {msg}"
+        );
+    }
 }
