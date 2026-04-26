@@ -64,9 +64,13 @@ vi.mock('../PagePropertyTable', () => ({
   PagePropertyTable: () => <div data-testid="page-property-table" />,
 }))
 
-// Mock useSyncTrigger to prevent automatic sync in tests
+// Mock useSyncTrigger to prevent automatic sync in tests. The `syncAll`
+// spy is hoisted so individual tests can assert on it (BUG-2 — verifies
+// the non-empty-peers branch still forwards to `syncAll()` after the
+// no-peers guard short-circuits the empty branch).
+const { mockSyncAll } = vi.hoisted(() => ({ mockSyncAll: vi.fn() }))
 vi.mock('../../hooks/useSyncTrigger', () => ({
-  useSyncTrigger: () => ({ syncing: false, syncAll: vi.fn() }),
+  useSyncTrigger: () => ({ syncing: false, syncAll: mockSyncAll }),
 }))
 
 const mockedInvoke = vi.mocked(invoke)
@@ -1137,6 +1141,191 @@ describe('App', () => {
         render(<App />)
         const dot = await screen.findByTestId('sync-button-status-dot')
         expect(dot.className).toContain('bg-destructive')
+      })
+    })
+
+    // BUG-2: clicking the sidebar Sync button when no devices are paired
+    // used to silently no-op (the hook's `peers.length === 0` short-circuit
+    // returned `'idle'` with no toast / dialog / log). The shell now
+    // wraps the click in `handleSyncClick` — if `listPeerRefs()` is empty
+    // we open `NoPeersDialog` instead of forwarding to `syncAll()`. The
+    // hook itself is unchanged.
+    describe('sidebar Sync button — no-peers guard (BUG-2)', () => {
+      // Reset the `?settings=...` query param + the persisted Settings
+      // tab so each test starts on a known surface — the no-peers CTA
+      // pre-selects the Sync tab via the URL param mechanism (UX-276)
+      // and we don't want a leftover param from another test polluting
+      // the assertion.
+      beforeEach(() => {
+        window.history.replaceState(window.history.state, '', window.location.pathname)
+        localStorage.removeItem('agaric-settings-active-tab')
+      })
+
+      it('opens NoPeersDialog when sidebar Sync is clicked with zero peers', async () => {
+        const user = userEvent.setup()
+        mockedInvoke.mockImplementation(async (cmd: string) => {
+          if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+          if (cmd === 'list_peer_refs') return []
+          return emptyPage
+        })
+
+        render(<App />)
+        await waitFor(() => {
+          expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+        })
+
+        // Click the sidebar Sync button (the one with text "Sync" inside
+        // the sidebar — there's also a tooltip; scope to the sidebar to
+        // avoid grabbing the tooltip text).
+        const sidebar = getSidebar()
+        await user.click(sidebar.getByText(t('sidebar.sync')))
+
+        // Dialog opens with the i18n-keyed title + body + actions.
+        const dialog = await screen.findByRole('alertdialog')
+        expect(within(dialog).getByText(t('sync.noPeersTitle'))).toBeInTheDocument()
+        expect(within(dialog).getByText(t('sync.noPeersBody'))).toBeInTheDocument()
+        expect(
+          within(dialog).getByRole('button', { name: t('sync.noPeersCta') }),
+        ).toBeInTheDocument()
+        expect(
+          within(dialog).getByRole('button', { name: t('sync.noPeersCancel') }),
+        ).toBeInTheDocument()
+      })
+
+      it('does NOT open NoPeersDialog when at least one peer is paired', async () => {
+        const user = userEvent.setup()
+        mockedInvoke.mockImplementation(async (cmd: string) => {
+          if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+          if (cmd === 'list_peer_refs') {
+            return [
+              {
+                peer_id: 'PEER_1',
+                last_hash: null,
+                last_sent_hash: null,
+                synced_at: null,
+                reset_count: 0,
+                last_reset_at: null,
+                cert_hash: null,
+                device_name: 'Laptop',
+                last_address: null,
+              },
+            ]
+          }
+          return emptyPage
+        })
+
+        render(<App />)
+        await waitFor(() => {
+          expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+        })
+
+        const sidebar = getSidebar()
+        await user.click(sidebar.getByText(t('sidebar.sync')))
+
+        // Give the async listPeerRefs round-trip a tick to settle, then
+        // assert the dialog never mounted. We check the title text rather
+        // than `queryByRole('alertdialog')` because Radix may briefly
+        // mount-then-unmount; `findByRole`-with-timeout would mask a
+        // genuine regression here, so we use a microtask flush + assert
+        // absence.
+        await waitFor(() => {
+          // listPeerRefs invocation completed.
+          expect(mockedInvoke).toHaveBeenCalledWith('list_peer_refs')
+        })
+        expect(screen.queryByText(t('sync.noPeersTitle'))).not.toBeInTheDocument()
+        // The original sync flow still fires when peers are paired —
+        // i.e. the no-peers guard didn't accidentally suppress the
+        // happy path.
+        await waitFor(() => {
+          expect(mockSyncAll).toHaveBeenCalled()
+        })
+      })
+
+      it('falls through to syncAll() when listPeerRefs() rejects', async () => {
+        const user = userEvent.setup()
+        mockedInvoke.mockImplementation(async (cmd: string) => {
+          if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+          if (cmd === 'list_peer_refs') throw new Error('IPC unavailable')
+          return emptyPage
+        })
+
+        render(<App />)
+        await waitFor(() => {
+          expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+        })
+
+        const sidebar = getSidebar()
+        await user.click(sidebar.getByText(t('sidebar.sync')))
+
+        // The listPeerRefs IPC was attempted, so the guard ran. Failure
+        // falls through to syncAll() — the user still gets a sync
+        // attempt rather than a silent no-op.
+        await waitFor(() => {
+          expect(mockedInvoke).toHaveBeenCalledWith('list_peer_refs')
+        })
+        await waitFor(() => {
+          expect(mockSyncAll).toHaveBeenCalled()
+        })
+        // No dialog appeared — the rejection branch must NOT spuriously
+        // open the no-peers dialog.
+        expect(screen.queryByText(t('sync.noPeersTitle'))).not.toBeInTheDocument()
+      })
+
+      it('navigates to Settings with the Sync tab pre-selected when CTA is clicked', async () => {
+        const user = userEvent.setup()
+        mockedInvoke.mockImplementation(async (cmd: string) => {
+          if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+          if (cmd === 'list_peer_refs') return []
+          return emptyPage
+        })
+
+        render(<App />)
+        await waitFor(() => {
+          expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+        })
+
+        const sidebar = getSidebar()
+        await user.click(sidebar.getByText(t('sidebar.sync')))
+
+        const dialog = await screen.findByRole('alertdialog')
+        await user.click(within(dialog).getByRole('button', { name: t('sync.noPeersCta') }))
+
+        // Dialog closes, view switches to Settings, and the URL deep-link
+        // (`?settings=sync`) is set so SettingsView reads it on mount and
+        // lands the user directly on the Sync tab (UX-276).
+        await waitFor(() => {
+          expect(useNavigationStore.getState().currentView).toBe('settings')
+        })
+        expect(window.location.search).toContain('settings=sync')
+        expect(screen.queryByText(t('sync.noPeersTitle'))).not.toBeInTheDocument()
+      })
+
+      it('closes the dialog and stays on the current view when Cancel is clicked', async () => {
+        const user = userEvent.setup()
+        mockedInvoke.mockImplementation(async (cmd: string) => {
+          if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+          if (cmd === 'list_peer_refs') return []
+          return emptyPage
+        })
+
+        render(<App />)
+        await waitFor(() => {
+          expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+        })
+
+        const sidebar = getSidebar()
+        await user.click(sidebar.getByText(t('sidebar.sync')))
+
+        const dialog = await screen.findByRole('alertdialog')
+        await user.click(within(dialog).getByRole('button', { name: t('sync.noPeersCancel') }))
+
+        // Dialog tears down, navigation stays on journal, the URL stays
+        // clean (no `settings=sync` was set on the cancel path).
+        await waitFor(() => {
+          expect(screen.queryByText(t('sync.noPeersTitle'))).not.toBeInTheDocument()
+        })
+        expect(useNavigationStore.getState().currentView).toBe('journal')
+        expect(window.location.search).not.toContain('settings=sync')
       })
     })
   })

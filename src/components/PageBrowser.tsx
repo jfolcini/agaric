@@ -6,17 +6,16 @@
  * Includes delete with confirmation dialog and toast error feedback.
  */
 
-import { useVirtualizer } from '@tanstack/react-virtual'
+import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual'
 import { FileText, Plus, Search, Star, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { HighlightMatch } from '@/components/HighlightMatch'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { PageTreeItem } from '@/components/PageTreeItem'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -47,6 +46,19 @@ import { LoadMoreButton } from './LoadMoreButton'
 import { ViewHeader } from './ViewHeader'
 
 type SortOption = 'alphabetical' | 'recent' | 'created'
+
+/**
+ * Sentinel row type fed to `useVirtualizer`. The flat list renders headers
+ * and pages from a single typed union so the virtualizer can size each row
+ * independently (~36px headers, ~44px pages). Tree mode renders from
+ * `treeNodes` instead and never produces headers.
+ */
+type PageBrowserRow =
+  | { kind: 'header'; section: 'starred' | 'other'; count: number }
+  | { kind: 'page'; page: BlockRow; pageIndex: number }
+
+const HEADER_ROW_HEIGHT = 36
+const PAGE_ROW_HEIGHT = 44
 
 const SORT_STORAGE_KEY = 'page-browser-sort'
 
@@ -111,10 +123,12 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [newPageName, setNewPageName] = useState('')
   const [filterText, setFilterText] = useState('')
   const [sortOption, setSortOption] = useState<SortOption>(readSortPreference)
-  const [showStarredOnly, setShowStarredOnly] = useState(false)
   const [starredRevision, setStarredRevision] = useState(0)
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
   const [aliasMatchId, setAliasMatchId] = useState<string | null>(null)
+  // Stable id base for section header `aria-labelledby` wiring. Two
+  // headers (`starred` and `other`) share the same prefix.
+  const sectionLabelId = useId()
   const formRef = useRef<HTMLFormElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const newPageInputRef = useRef<HTMLInputElement>(null)
@@ -228,58 +242,148 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     setStarredRevision((r) => r + 1)
   }, [])
 
-  const starredCount = useMemo(() => {
-    starredRevision // subscribe to revision changes
-    return getStarredPages().length
-  }, [starredRevision])
+  /**
+   * Sort an array of pages in place by the active sort option.
+   * Same comparator the legacy single-list sort used — extracted so we
+   * can apply it independently inside the starred / other groups.
+   */
+  const sortPages = useCallback(
+    (input: BlockRow[]): BlockRow[] => {
+      const sorted = [...input]
+      if (sortOption === 'alphabetical') {
+        sorted.sort((a, b) => (a.content ?? '').localeCompare(b.content ?? ''))
+      } else if (sortOption === 'created') {
+        sorted.sort((a, b) => b.id.localeCompare(a.id))
+      } else if (sortOption === 'recent') {
+        const recentPages = getRecentPages()
+        const recentMap = new Map(recentPages.map((rp) => [rp.id, rp.visitedAt]))
+        sorted.sort((a, b) => {
+          const aTime = recentMap.get(a.id)
+          const bTime = recentMap.get(b.id)
+          if (aTime && bTime) return bTime.localeCompare(aTime)
+          if (aTime) return -1
+          if (bTime) return 1
+          return (a.content ?? '').localeCompare(b.content ?? '')
+        })
+      }
+      return sorted
+    },
+    [sortOption],
+  )
 
-  const filteredPages = useMemo(() => {
-    let result = pages
+  /**
+   * Pages narrowed by the search input + alias resolver.
+   * Sort/grouping is applied below — this keeps both branches (tree and
+   * grouped flat list) consuming the same filtered pool.
+   */
+  const filteredPagesUnsorted = useMemo(() => {
     const trimmed = filterText.trim()
-    if (trimmed) {
-      // UX-247 — Unicode-aware case- / diacritic-insensitive match so
-      // Turkish (`İstanbul` ↔ `istanbul`), German (`Straße` ↔
-      // `strasse`), and accented (`café` ↔ `cafe`) titles fold
-      // together the way users expect from interactive filters.
-      result = result.filter(
-        (p) => matchesSearchFolded(p.content ?? '', trimmed) || p.id === aliasMatchId,
-      )
-    }
-    if (showStarredOnly) {
-      starredRevision // subscribe to revision changes
-      const starred = getStarredPages()
-      result = result.filter((p) => starred.includes(p.id))
-    }
-
-    const sorted = [...result]
-    if (sortOption === 'alphabetical') {
-      sorted.sort((a, b) => (a.content ?? '').localeCompare(b.content ?? ''))
-    } else if (sortOption === 'created') {
-      sorted.sort((a, b) => b.id.localeCompare(a.id))
-    } else if (sortOption === 'recent') {
-      const recentPages = getRecentPages()
-      const recentMap = new Map(recentPages.map((rp) => [rp.id, rp.visitedAt]))
-      sorted.sort((a, b) => {
-        const aTime = recentMap.get(a.id)
-        const bTime = recentMap.get(b.id)
-        if (aTime && bTime) return bTime.localeCompare(aTime)
-        if (aTime) return -1
-        if (bTime) return 1
-        return (a.content ?? '').localeCompare(b.content ?? '')
-      })
-    }
-    return sorted
-  }, [pages, filterText, sortOption, showStarredOnly, starredRevision, aliasMatchId])
+    if (!trimmed) return pages
+    // UX-247 — Unicode-aware case- / diacritic-insensitive match so
+    // Turkish (`İstanbul` ↔ `istanbul`), German (`Straße` ↔
+    // `strasse`), and accented (`café` ↔ `cafe`) titles fold together
+    // the way users expect from interactive filters.
+    return pages.filter(
+      (p) => matchesSearchFolded(p.content ?? '', trimmed) || p.id === aliasMatchId,
+    )
+  }, [pages, filterText, aliasMatchId])
 
   const isTreeMode = useMemo(
-    () => filteredPages.some((p) => p.content?.includes('/')),
-    [filteredPages],
+    () => filteredPagesUnsorted.some((p) => p.content?.includes('/')),
+    [filteredPagesUnsorted],
   )
+
+  /**
+   * FEAT-12 — starred-on-top grouping for the flat list view.
+   *
+   * Tree mode is intentionally bypassed: namespace hierarchy wins, no
+   * grouping is overlaid on it. A 0- or 1-page vault renders flat with
+   * no headers (avoids visual noise on a brand-new vault).
+   *
+   * `filteredPages` keeps a page-only ordered array so
+   * `useListKeyboardNavigation` (and Home/End/PageUp/PageDown) can keep
+   * iterating page rows without skipping logic. Sentinel header rows
+   * are interspersed only at render time via `groupedRows`.
+   */
+  const { filteredPages, groupedRows, pageIndexToRowIndex, hasGrouping } = useMemo(() => {
+    // Subscribe to starred revisions so toggleStar bumps re-run this
+    // memo and pages move between groups immediately.
+    starredRevision
+
+    // Tree mode: keep legacy flat sort, no grouping.
+    if (isTreeMode) {
+      const sorted = sortPages(filteredPagesUnsorted)
+      return {
+        filteredPages: sorted,
+        groupedRows: [] as PageBrowserRow[],
+        pageIndexToRowIndex: [] as number[],
+        hasGrouping: false,
+      }
+    }
+
+    // Single-page (or empty) vault: flat, no headers.
+    if (pages.length <= 1) {
+      const sorted = sortPages(filteredPagesUnsorted)
+      const rows: PageBrowserRow[] = sorted.map((page, pageIndex) => ({
+        kind: 'page',
+        page,
+        pageIndex,
+      }))
+      const idMap = sorted.map((_, i) => i)
+      return {
+        filteredPages: sorted,
+        groupedRows: rows,
+        pageIndexToRowIndex: idMap,
+        hasGrouping: false,
+      }
+    }
+
+    const starredSet = new Set(getStarredPages())
+    const starred: BlockRow[] = []
+    const other: BlockRow[] = []
+    for (const p of filteredPagesUnsorted) {
+      if (starredSet.has(p.id)) starred.push(p)
+      else other.push(p)
+    }
+    const starredSorted = sortPages(starred)
+    const otherSorted = sortPages(other)
+    const orderedPages = [...starredSorted, ...otherSorted]
+
+    const rows: PageBrowserRow[] = []
+    const idMap: number[] = []
+    let pageIndex = 0
+    if (starredSorted.length > 0) {
+      rows.push({ kind: 'header', section: 'starred', count: starredSorted.length })
+      for (const page of starredSorted) {
+        idMap.push(rows.length)
+        rows.push({ kind: 'page', page, pageIndex })
+        pageIndex += 1
+      }
+    }
+    if (otherSorted.length > 0) {
+      rows.push({ kind: 'header', section: 'other', count: otherSorted.length })
+      for (const page of otherSorted) {
+        idMap.push(rows.length)
+        rows.push({ kind: 'page', page, pageIndex })
+        pageIndex += 1
+      }
+    }
+    return {
+      filteredPages: orderedPages,
+      groupedRows: rows,
+      pageIndexToRowIndex: idMap,
+      // `hasGrouping === true` iff at least one starred page exists in
+      // the filtered set; this is the only signal needed to render the
+      // "Other pages" divider and toggle the grouped viewport label.
+      hasGrouping: starredSorted.length > 0,
+    }
+  }, [pages.length, filteredPagesUnsorted, isTreeMode, sortPages, starredRevision])
+
   const treeNodes = useMemo(
     () => (isTreeMode ? buildPageTree(filteredPages) : []),
     [isTreeMode, filteredPages],
   )
-  const virtualItemCount = isTreeMode ? treeNodes.length : filteredPages.length
+  const virtualItemCount = isTreeMode ? treeNodes.length : groupedRows.length
 
   const {
     focusedIndex,
@@ -304,7 +408,12 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const virtualizer = useVirtualizer({
     count: virtualItemCount,
     getScrollElement: () => listRef.current,
-    estimateSize: () => 44,
+    // Tree mode: every row is a page (44px). Flat mode: header rows
+    // (~36px) sentinel-interspersed between page rows (~44px).
+    estimateSize: (index) => {
+      if (isTreeMode) return PAGE_ROW_HEIGHT
+      return groupedRows[index]?.kind === 'header' ? HEADER_ROW_HEIGHT : PAGE_ROW_HEIGHT
+    },
     overscan: 5,
   })
 
@@ -326,13 +435,169 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [navHandleKeyDown])
 
-  // Scroll focused item into view
+  // Scroll focused item into view. `focusedIndex` indexes into the
+  // page-only `filteredPages` array; sentinel headers shift the row
+  // index in the virtualizer, so map through `pageIndexToRowIndex`.
   useEffect(() => {
     if (focusedIndex < 0 || isTreeMode) return
-    virtualizer.scrollToIndex(focusedIndex, { align: 'auto' })
-  }, [focusedIndex, isTreeMode, virtualizer])
+    const rowIndex = pageIndexToRowIndex[focusedIndex] ?? focusedIndex
+    virtualizer.scrollToIndex(rowIndex, { align: 'auto' })
+  }, [focusedIndex, isTreeMode, virtualizer, pageIndexToRowIndex])
 
-  const isFiltering = filterText.trim().length > 0 || showStarredOnly
+  const isFiltering = filterText.trim().length > 0
+
+  // Row renderers extracted from the virtualizer map to keep the JSX
+  // body's cognitive complexity below biome's threshold. Each renderer
+  // closes over the component's state — they're not pure functions, just
+  // a structural split.
+  const rowStyle = (start: number): React.CSSProperties => ({
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    transform: `translateY(${start}px)`,
+  })
+
+  const renderTreeRow = (virtualRow: VirtualItem): React.ReactElement | null => {
+    const node = treeNodes[virtualRow.index]
+    if (!node) return null
+    return (
+      <div
+        key={virtualRow.key}
+        data-index={virtualRow.index}
+        ref={virtualizer.measureElement}
+        style={rowStyle(virtualRow.start)}
+      >
+        <PageTreeItem
+          node={node}
+          depth={0}
+          onNavigate={(pageId, title) => onPageSelect?.(pageId, title)}
+          onCreateUnder={handleCreateUnder}
+          filterText={filterText.trim()}
+          forceExpand={isFiltering}
+          onDelete={(id, name) => setDeleteTarget({ id, name })}
+        />
+      </div>
+    )
+  }
+
+  const renderHeaderRow = (
+    virtualRow: VirtualItem,
+    row: Extract<PageBrowserRow, { kind: 'header' }>,
+  ): React.ReactElement => {
+    const isStarredHeader = row.section === 'starred'
+    const visibleLabel = isStarredHeader
+      ? t('pageBrowser.starredSection')
+      : t('pageBrowser.otherPagesSection')
+    const accessibleLabel = isStarredHeader
+      ? t('pageBrowser.starredSectionLabel', { count: row.count })
+      : t('pageBrowser.otherPagesSectionLabel', { count: row.count })
+    const labelId = `${sectionLabelId}-${row.section}`
+    // The "Other pages" header gets a thin top divider when it follows
+    // the Starred section, separating the two groups visually without
+    // an extra DOM node.
+    const showDivider = !isStarredHeader && hasGrouping
+    return (
+      // biome-ignore lint/a11y/useSemanticElements: WAI-ARIA listbox-with-groups pattern (`<fieldset>` is a form-control container — wrong semantics inside `role="listbox"`)
+      <div
+        key={virtualRow.key}
+        data-index={virtualRow.index}
+        ref={virtualizer.measureElement}
+        data-page-section={row.section}
+        role="group"
+        aria-labelledby={labelId}
+        className={cn(
+          'page-browser-section flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground',
+          showDivider && 'border-t border-border mt-1',
+        )}
+        style={rowStyle(virtualRow.start)}
+      >
+        {isStarredHeader ? (
+          <Star className="h-3.5 w-3.5 text-star" aria-hidden="true" fill="currentColor" />
+        ) : (
+          <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+        )}
+        <span id={labelId} className="sr-only">
+          {accessibleLabel}
+        </span>
+        <span aria-hidden="true">{visibleLabel}</span>
+        <span aria-hidden="true" className="ml-1 font-normal text-muted-foreground/80">
+          {row.count}
+        </span>
+      </div>
+    )
+  }
+
+  const renderPageRow = (
+    virtualRow: VirtualItem,
+    row: Extract<PageBrowserRow, { kind: 'page' }>,
+  ): React.ReactElement => {
+    const { page, pageIndex } = row
+    const pageStarred = isStarred(page.id)
+    const title = page.content ?? t('pageBrowser.untitled')
+    const trimmedFilter = filterText.trim()
+    const showAliasBadge =
+      aliasMatchId === page.id &&
+      trimmedFilter !== '' &&
+      !matchesSearchFolded(page.content ?? '', trimmedFilter)
+    return (
+      <div
+        key={virtualRow.key}
+        data-index={virtualRow.index}
+        ref={virtualizer.measureElement}
+        role="option"
+        aria-selected={focusedIndex === pageIndex}
+        data-page-item
+        data-starred={pageStarred}
+        tabIndex={-1}
+        className={cn(
+          'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50',
+          focusedIndex === pageIndex && 'ring-2 ring-inset ring-ring/50 bg-accent/30',
+        )}
+        style={rowStyle(virtualRow.start)}
+      >
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={pageStarred ? t('pageBrowser.unstarPage') : t('pageBrowser.starPage')}
+          className="star-toggle shrink-0 h-6 w-6 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
+          data-starred={pageStarred}
+          onClick={(e) => {
+            e.stopPropagation()
+            handleToggleStar(page.id)
+          }}
+        >
+          <Star className="h-3.5 w-3.5" fill={pageStarred ? 'currentColor' : 'none'} />
+        </Button>
+        <button
+          type="button"
+          className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50 focus-visible:outline-hidden"
+          onClick={() => onPageSelect?.(page.id, title)}
+        >
+          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="page-browser-item-title truncate" title={title}>
+            <HighlightMatch text={title} filterText={trimmedFilter} />
+            {showAliasBadge && (
+              <span className="alias-badge text-xs text-muted-foreground">(alias)</span>
+            )}
+          </span>
+        </button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={t('pageBrowser.deleteButton')}
+          className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+          disabled={deletingId === page.id}
+          onClick={(e) => {
+            e.stopPropagation()
+            setDeleteTarget({ id: page.id, name: title })
+          }}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    )
+  }
 
   return (
     <div className="page-browser space-y-4">
@@ -394,26 +659,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                   <SelectItem value="created">{t('pageBrowser.sortCreated')}</SelectItem>
                 </SelectContent>
               </Select>
-              <Button
-                variant={showStarredOnly ? 'default' : 'ghost'}
-                size="icon"
-                onClick={() => setShowStarredOnly((prev) => !prev)}
-                aria-label={
-                  showStarredOnly ? t('pageBrowser.showAll') : t('pageBrowser.showStarred')
-                }
-                aria-pressed={showStarredOnly}
-                className="relative shrink-0"
-              >
-                <Star className="h-4 w-4" fill={showStarredOnly ? 'currentColor' : 'none'} />
-                {starredCount > 0 && (
-                  <Badge
-                    variant="secondary"
-                    className="starred-count absolute -top-1.5 -right-1.5 h-4 min-w-[1rem] px-1 text-xs"
-                  >
-                    {starredCount}
-                  </Badge>
-                )}
-              </Button>
             </div>
           )}
         </div>
@@ -450,18 +695,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         viewportProps={{
           role: 'listbox',
           tabIndex: 0,
-          'aria-label': t('pageBrowser.pageList'),
+          'aria-label': hasGrouping ? t('pageBrowser.pageListGrouped') : t('pageBrowser.pageList'),
         }}
       >
         {isFiltering && filteredPages.length === 0 ? (
-          <EmptyState
-            icon={showStarredOnly ? Star : Search}
-            message={
-              showStarredOnly && !filterText.trim()
-                ? t('pageBrowser.noStarredPages')
-                : t('pageBrowser.noMatches')
-            }
-          />
+          <EmptyState icon={Search} message={t('pageBrowser.noMatches')} />
         ) : (
           <div
             style={{
@@ -471,117 +709,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
             }}
           >
             {virtualizer.getVirtualItems().map((virtualRow) => {
-              if (isTreeMode) {
-                const node = treeNodes[virtualRow.index]
-                if (!node) return null
-                return (
-                  <div
-                    key={virtualRow.key}
-                    data-index={virtualRow.index}
-                    ref={virtualizer.measureElement}
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      transform: `translateY(${virtualRow.start}px)`,
-                    }}
-                  >
-                    <PageTreeItem
-                      node={node}
-                      depth={0}
-                      onNavigate={(pageId, title) => onPageSelect?.(pageId, title)}
-                      onCreateUnder={handleCreateUnder}
-                      filterText={filterText.trim()}
-                      forceExpand={isFiltering}
-                      onDelete={(id, name) => setDeleteTarget({ id, name })}
-                    />
-                  </div>
-                )
-              }
-              const page = filteredPages[virtualRow.index]
-              if (!page) return null
-              const index = virtualRow.index
-              return (
-                <div
-                  key={virtualRow.key}
-                  data-index={virtualRow.index}
-                  ref={virtualizer.measureElement}
-                  role="option"
-                  aria-selected={focusedIndex === index}
-                  data-page-item
-                  tabIndex={-1}
-                  className={cn(
-                    'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50',
-                    focusedIndex === index && 'ring-2 ring-inset ring-ring/50 bg-accent/30',
-                  )}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    transform: `translateY(${virtualRow.start}px)`,
-                  }}
-                >
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={
-                      isStarred(page.id) ? t('pageBrowser.unstarPage') : t('pageBrowser.starPage')
-                    }
-                    className="star-toggle shrink-0 h-6 w-6 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
-                    data-starred={isStarred(page.id)}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleToggleStar(page.id)
-                    }}
-                  >
-                    <Star
-                      className="h-3.5 w-3.5"
-                      fill={isStarred(page.id) ? 'currentColor' : 'none'}
-                    />
-                  </Button>
-                  <button
-                    type="button"
-                    className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50 focus-visible:outline-hidden"
-                    onClick={() =>
-                      onPageSelect?.(page.id, page.content ?? t('pageBrowser.untitled'))
-                    }
-                  >
-                    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <span
-                      className="page-browser-item-title truncate"
-                      title={page.content ?? t('pageBrowser.untitled')}
-                    >
-                      <HighlightMatch
-                        text={page.content ?? t('pageBrowser.untitled')}
-                        filterText={filterText.trim()}
-                      />
-                      {aliasMatchId === page.id &&
-                        filterText.trim() !== '' &&
-                        !matchesSearchFolded(page.content ?? '', filterText.trim()) && (
-                          <span className="alias-badge text-xs text-muted-foreground">(alias)</span>
-                        )}
-                    </span>
-                  </button>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={t('pageBrowser.deleteButton')}
-                    className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
-                    disabled={deletingId === page.id}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setDeleteTarget({
-                        id: page.id,
-                        name: page.content ?? t('pageBrowser.untitled'),
-                      })
-                    }}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              )
+              if (isTreeMode) return renderTreeRow(virtualRow)
+              const row = groupedRows[virtualRow.index]
+              if (!row) return null
+              if (row.kind === 'header') return renderHeaderRow(virtualRow, row)
+              return renderPageRow(virtualRow, row)
             })}
           </div>
         )}

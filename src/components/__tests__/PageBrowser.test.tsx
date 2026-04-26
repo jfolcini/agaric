@@ -1433,7 +1433,10 @@ describe('PageBrowser', () => {
       expect(starButtons).toHaveLength(2)
     })
 
-    it('clicking star toggles starred state', async () => {
+    // FEAT-12: clicking the star toggle moves the page between groups.
+    // With a 1-page vault we render flat (no headers) — so this test
+    // pairs with the multi-page case below which asserts the row jump.
+    it('clicking star toggles starred state and persists to localStorage', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
         items: [makePage({ id: 'P1', content: 'Starrable Page' })],
@@ -1464,10 +1467,389 @@ describe('PageBrowser', () => {
       expect(localStorage.getItem('starred-pages')).toBe(JSON.stringify([]))
     })
 
-    it('starred filter shows only starred pages', async () => {
+    // FEAT-12: starring a page in a multi-page vault moves it to the top
+    // of the list under the "Starred" group header.
+    it('clicking star moves the page to the top under the Starred header (FEAT-12)', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+          makePage({ id: 'P3', content: 'Cherry' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      // Initially flat — no Starred header.
+      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      let titles = within(screen.getByRole('listbox'))
+        .getAllByRole('option')
+        .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
+      expect(titles).toEqual(['Apple', 'Banana', 'Cherry'])
+
+      // Star "Cherry" — its row should jump to the top, into the
+      // newly-rendered Starred group.
+      const cherryRow = screen.getByText('Cherry').closest('.group') as HTMLElement
+      const starBtn = within(cherryRow).getByRole('button', { name: /star page/i })
+      await user.click(starBtn)
+
+      // Starred header now visible.
+      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Other pages')).toBeInTheDocument()
+
+      // Cherry is now first in the page-only listbox.
+      titles = within(screen.getByRole('listbox'))
+        .getAllByRole('option')
+        .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
+      expect(titles).toEqual(['Cherry', 'Apple', 'Banana'])
+
+      // The starred row carries `data-starred="true"`.
+      const starredRow = screen.getByText('Cherry').closest('[data-page-item]') as HTMLElement
+      expect(starredRow).toHaveAttribute('data-starred', 'true')
+    })
+
+    // FEAT-12: starred-above-unstarred ordering with sort applied
+    // independently per group.
+    it('FEAT-12: alphabetical sort applies inside each group independently', async () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P3', 'P1']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Cherry' }),
+          makePage({ id: 'P2', content: 'Apple' }),
+          makePage({ id: 'P3', content: 'Banana' }),
+          makePage({ id: 'P4', content: 'Durian' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      // Default sort is alphabetical. Starred set = {Cherry, Banana};
+      // Other = {Apple, Durian}. Within each group: alphabetical.
+      const titles = within(screen.getByRole('listbox'))
+        .getAllByRole('option')
+        .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
+      expect(titles).toEqual(['Banana', 'Cherry', 'Apple', 'Durian'])
+    })
+
+    it('FEAT-12: created-DESC sort applies inside each group independently', async () => {
+      const user = userEvent.setup()
+      localStorage.setItem('starred-pages', JSON.stringify(['01AAA', '01CCC']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: '01AAA', content: 'OldStar' }),
+          makePage({ id: '01BBB', content: 'MidUnstar' }),
+          makePage({ id: '01CCC', content: 'NewStar' }),
+          makePage({ id: '01DDD', content: 'NewestUnstar' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('OldStar')
+
+      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
+      await user.selectOptions(sortSelect, 'created')
+
+      // Starred (newest-first): NewStar, OldStar
+      // Other (newest-first):   NewestUnstar, MidUnstar
+      const titles = within(screen.getByRole('listbox'))
+        .getAllByRole('option')
+        .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
+      expect(titles).toEqual(['NewStar', 'OldStar', 'NewestUnstar', 'MidUnstar'])
+    })
+
+    it('FEAT-12: recent sort applies inside each group independently', async () => {
+      const user = userEvent.setup()
+      localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
+      mockedGetRecentPages.mockReturnValue([
+        { id: 'P3', title: 'Cherry', visitedAt: '2025-01-15T12:00:00Z' },
+        { id: 'P1', title: 'Apple', visitedAt: '2025-01-14T12:00:00Z' },
+      ])
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+          makePage({ id: 'P3', content: 'Cherry' }),
+          makePage({ id: 'P4', content: 'Durian' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
+      await user.selectOptions(sortSelect, 'recent')
+
+      // Starred = {Apple, Banana} — Apple has a recent visit, Banana does not
+      // (alphabetical fallback). Other = {Cherry, Durian} — Cherry recent, Durian not.
+      const titles = within(screen.getByRole('listbox'))
+        .getAllByRole('option')
+        .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
+      expect(titles).toEqual(['Apple', 'Banana', 'Cherry', 'Durian'])
+    })
+
+    it('FEAT-12: toggling star round-trips a page between groups', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+          makePage({ id: 'P3', content: 'Cherry' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      // Star Banana → moves to top under Starred.
+      const bananaRow = screen.getByText('Banana').closest('.group') as HTMLElement
+      await user.click(within(bananaRow).getByRole('button', { name: /star page/i }))
+
+      expect(screen.getByText('Starred')).toBeInTheDocument()
+      let titles = within(screen.getByRole('listbox'))
+        .getAllByRole('option')
+        .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
+      expect(titles).toEqual(['Banana', 'Apple', 'Cherry'])
+
+      // Unstar Banana → falls back into Other pages, headers disappear
+      // (no starred pages remain).
+      const bananaRowAgain = screen.getByText('Banana').closest('.group') as HTMLElement
+      await user.click(within(bananaRowAgain).getByRole('button', { name: /unstar page/i }))
+
+      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      titles = within(screen.getByRole('listbox'))
+        .getAllByRole('option')
+        .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
+      expect(titles).toEqual(['Apple', 'Banana', 'Cherry'])
+    })
+
+    it('FEAT-12: tree mode renders without grouping headers', async () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'work/project-a' }),
+          makePage({ id: 'P2', content: 'work/project-b' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('project-a')
+
+      // Tree mode bypasses grouping — namespace hierarchy wins.
+      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      expect(screen.queryByText('Other pages')).not.toBeInTheDocument()
+      // Tree shape intact.
+      expect(screen.getByText('work')).toBeInTheDocument()
+    })
+
+    it('FEAT-12: zero-starred hides the Starred header', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      const { container } = render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      // Spec: "zero starred → hide the Starred header (no empty section)".
+      // The non-empty "Other pages" group keeps its own header.
+      expect(container.querySelector('[data-page-section="starred"]')).toBeNull()
+    })
+
+    it('FEAT-12: all-starred hides the Other-pages header', async () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.queryByText('Other pages')).not.toBeInTheDocument()
+    })
+
+    it('FEAT-12: single-page vault renders flat with no headers', async () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'Solo' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Solo')
+
+      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      expect(screen.queryByText('Other pages')).not.toBeInTheDocument()
+    })
+
+    it('FEAT-12: search narrows both groups; emptied group hides its header', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'StarredApple' }),
+          makePage({ id: 'P2', content: 'OtherBanana' }),
+          makePage({ id: 'P3', content: 'OtherCherry' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
 
+      render(<PageBrowser />)
+      await screen.findByText('StarredApple')
+
+      // Both headers visible at start.
+      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Other pages')).toBeInTheDocument()
+
+      // Search for "Other" → starred group becomes empty, only the
+      // "Other pages" header remains.
+      const searchInput = screen.getByPlaceholderText('Search pages...')
+      await user.type(searchInput, 'Other')
+
+      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      expect(screen.getByText('Other pages')).toBeInTheDocument()
+      expect(screen.queryByText('StarredApple')).not.toBeInTheDocument()
+    })
+
+    it('FEAT-12: Starred header carries count in its accessible name', async () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+          makePage({ id: 'P3', content: 'Cherry' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      const { container } = render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const starredGroup = container.querySelector(
+        '[data-page-section="starred"]',
+      ) as HTMLElement | null
+      expect(starredGroup).not.toBeNull()
+      expect(starredGroup).toHaveAttribute('role', 'group')
+      // Accessible name is "Starred, 2 pages" (sr-only span).
+      expect(starredGroup).toHaveAccessibleName('Starred, 2 pages')
+
+      const otherGroup = container.querySelector(
+        '[data-page-section="other"]',
+      ) as HTMLElement | null
+      expect(otherGroup).not.toBeNull()
+      expect(otherGroup).toHaveAccessibleName('Other pages, 1 page')
+    })
+
+    it('FEAT-12: viewport aria-label switches to grouped variant when starred exist', async () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const listbox = screen.getByRole('listbox')
+      expect(listbox).toHaveAttribute('aria-label', 'Page list, grouped by starred')
+    })
+
+    it('FEAT-12: viewport aria-label stays plain when no starred pages', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const listbox = screen.getByRole('listbox')
+      expect(listbox).toHaveAttribute('aria-label', 'Page list')
+    })
+
+    it('FEAT-12: keyboard ArrowDown skips header rows (focus stays page-indexed)', async () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P2']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+          makePage({ id: 'P3', content: 'Cherry' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      // Page-only ordering: [Banana (starred), Apple, Cherry]. Focus
+      // starts at index 0 → Banana.
+      const initialFocused = document.querySelector(
+        '[data-page-item][aria-selected="true"]',
+      ) as HTMLElement | null
+      expect(initialFocused).not.toBeNull()
+      expect(initialFocused?.querySelector('.page-browser-item-title')?.textContent).toBe('Banana')
+
+      // ArrowDown → focus the next page (Apple) — header row is skipped
+      // by the page-only iterator inside `useListKeyboardNavigation`.
+      fireEvent.keyDown(document, { key: 'ArrowDown' })
+      const nextFocused = document.querySelector(
+        '[data-page-item][aria-selected="true"]',
+      ) as HTMLElement | null
+      expect(nextFocused?.querySelector('.page-browser-item-title')?.textContent).toBe('Apple')
+
+      // End → jumps to last page (Cherry).
+      fireEvent.keyDown(document, { key: 'End' })
+      const endFocused = document.querySelector(
+        '[data-page-item][aria-selected="true"]',
+      ) as HTMLElement | null
+      expect(endFocused?.querySelector('.page-browser-item-title')?.textContent).toBe('Cherry')
+
+      // Home → jumps back to first page (Banana).
+      fireEvent.keyDown(document, { key: 'Home' })
+      const homeFocused = document.querySelector(
+        '[data-page-item][aria-selected="true"]',
+      ) as HTMLElement | null
+      expect(homeFocused?.querySelector('.page-browser-item-title')?.textContent).toBe('Banana')
+    })
+
+    it('FEAT-12: a11y audit passes on grouped state', async () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
           makePage({ id: 'P1', content: 'Starred Page' }),
@@ -1477,108 +1859,80 @@ describe('PageBrowser', () => {
         has_more: false,
       })
 
-      render(<PageBrowser />)
-
+      const { container } = render(<PageBrowser />)
       await screen.findByText('Starred Page')
-      expect(screen.getByText('Normal Page')).toBeInTheDocument()
 
-      // Click the starred filter toggle
-      const filterBtn = screen.getByRole('button', { name: /show starred pages/i })
-      await user.click(filterBtn)
+      // Both group headers must render.
+      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Other pages')).toBeInTheDocument()
 
-      // Only starred page should be visible
-      expect(screen.getByText('Starred Page')).toBeInTheDocument()
-      expect(screen.queryByText('Normal Page')).not.toBeInTheDocument()
-    })
-
-    it('starred filter toggle shows "Show all" when active', async () => {
-      const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'A Page' })],
-        next_cursor: null,
-        has_more: false,
+      await waitFor(async () => {
+        const results = await axe(container, {
+          rules: {
+            // listbox+option pattern intentionally nests interactive
+            // star/select/delete buttons in each row.
+            'nested-interactive': { enabled: false },
+          },
+        })
+        expect(results).toHaveNoViolations()
       })
-
-      render(<PageBrowser />)
-
-      await screen.findByText('A Page')
-
-      const filterBtn = screen.getByRole('button', { name: /show starred pages/i })
-      await user.click(filterBtn)
-
-      expect(screen.getByRole('button', { name: /show all pages/i })).toBeInTheDocument()
     })
 
-    it('filter badge shows count of starred pages', async () => {
-      localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
-
+    it('FEAT-12: a11y audit passes on filtered state with grouping', async () => {
+      const user = userEvent.setup()
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
-          makePage({ id: 'P1', content: 'Page One' }),
-          makePage({ id: 'P2', content: 'Page Two' }),
-          makePage({ id: 'P3', content: 'Page Three' }),
+          makePage({ id: 'P1', content: 'Starred Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
         ],
         next_cursor: null,
         has_more: false,
       })
 
       const { container } = render(<PageBrowser />)
+      await screen.findByText('Starred Apple')
 
-      await screen.findByText('Page One')
+      // Filter to only the starred match.
+      const searchInput = screen.getByPlaceholderText('Search pages...')
+      await user.type(searchInput, 'Apple')
 
-      const badge = container.querySelector('.starred-count')
-      expect(badge).toBeInTheDocument()
-      expect(badge?.textContent).toBe('2')
+      await waitFor(async () => {
+        const results = await axe(container, {
+          rules: { 'nested-interactive': { enabled: false } },
+        })
+        expect(results).toHaveNoViolations()
+      })
     })
 
-    it('no badge shown when no pages are starred', async () => {
+    it('FEAT-12: a11y audit passes on tree mode (grouping bypassed)', async () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'Page One' })],
+        items: [
+          makePage({ id: 'P1', content: 'work/project-a' }),
+          makePage({ id: 'P2', content: 'work/project-b' }),
+        ],
         next_cursor: null,
         has_more: false,
       })
 
       const { container } = render(<PageBrowser />)
+      await screen.findByText('project-a')
 
-      await screen.findByText('Page One')
-
-      const badge = container.querySelector('.starred-count')
-      expect(badge).not.toBeInTheDocument()
-    })
-
-    it('shows empty state when starred filter active but no starred pages', async () => {
-      const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'Page One' })],
-        next_cursor: null,
-        has_more: false,
+      await waitFor(async () => {
+        const results = await axe(container, {
+          rules: {
+            // listbox+option pattern intentionally nests interactive
+            // chevron / star / delete buttons in each row.
+            'nested-interactive': { enabled: false },
+            // Tree mode renders `PageTreeItem` (button rows) inside the
+            // listbox viewport — pre-existing pattern that predates
+            // FEAT-12 and is orthogonal to the grouping change.
+            'aria-required-children': { enabled: false },
+          },
+        })
+        expect(results).toHaveNoViolations()
       })
-
-      render(<PageBrowser />)
-
-      await screen.findByText('Page One')
-
-      // Activate starred filter
-      const filterBtn = screen.getByRole('button', { name: /show starred pages/i })
-      await user.click(filterBtn)
-
-      // Should show empty state
-      expect(screen.getByText('No starred pages')).toBeInTheDocument()
-    })
-
-    it('starred filter has aria-pressed attribute', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'Page One' })],
-        next_cursor: null,
-        has_more: false,
-      })
-
-      render(<PageBrowser />)
-
-      await screen.findByText('Page One')
-
-      const filterBtn = screen.getByRole('button', { name: /show starred pages/i })
-      expect(filterBtn).toHaveAttribute('aria-pressed', 'false')
     })
 
     it('star buttons pass a11y audit', async () => {
