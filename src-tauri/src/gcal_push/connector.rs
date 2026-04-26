@@ -743,6 +743,16 @@ fn classify_date_err(err: &AppError, _emitter: &Arc<dyn GcalEventEmitter>) -> Da
 /// Recover from a `CalendarGone` response: wipe the map, reset the
 /// calendar_id, emit `calendar_recreated` so the UI refreshes, and let
 /// the next cycle re-create the calendar.
+///
+/// **M-89:** the event-map wipe and `calendar_id` reset are wrapped in
+/// a single `BEGIN IMMEDIATE` transaction so a crash between the two
+/// writes cannot leave the post-state inconsistent (empty map but
+/// `calendar_id` still pointing at the gone calendar).  The
+/// `models::set_setting` UPDATE for `CalendarId` is inlined against
+/// the same transaction handle — calling the bare helper would either
+/// deadlock against the held write lock or run on a separate
+/// connection (defeating atomicity).  `oauth_account_email` is
+/// intentionally untouched here (that is finding M-95).
 async fn recover_calendar_gone(
     pool: &SqlitePool,
     emitter: &Arc<dyn GcalEventEmitter>,
@@ -751,10 +761,35 @@ async fn recover_calendar_gone(
         target: "gcal",
         "calendar gone — wiping event map, resetting calendar_id",
     );
+    let mut tx = crate::db::begin_immediate_logged(pool, "gcal_recover_calendar_gone").await?;
+
     sqlx::query!("DELETE FROM gcal_agenda_event_map")
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-    models::set_setting(pool, GcalSettingKey::CalendarId, "").await?;
+
+    // Inlined equivalent of `models::set_setting(.., CalendarId, "")`:
+    // same UPDATE shape, same `NotFound` semantics on a missing seed
+    // row.  Kept inline (not factored into a `_in_tx` helper) per the
+    // M-89 brief — the helper would only ever be called from this one
+    // path.
+    let calendar_id_key = GcalSettingKey::CalendarId.as_str();
+    let updated_at = crate::now_rfc3339();
+    let empty_value = "";
+    let result = sqlx::query!(
+        "UPDATE gcal_settings SET value = ?, updated_at = ? WHERE key = ?",
+        empty_value,
+        updated_at,
+        calendar_id_key,
+    )
+    .execute(&mut *tx)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!(
+            "gcal_settings row missing for key '{calendar_id_key}'"
+        )));
+    }
+
+    tx.commit().await?;
     emitter.emit(GcalEvent::CalendarRecreated);
     Ok(())
 }
@@ -2218,5 +2253,146 @@ mod tests {
         // does not currently expose a graceful-shutdown trigger; the
         // drop relies on tokio cancelling the task on runtime shutdown.)
         drop(task);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// M-89 — atomicity of `recover_calendar_gone`
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests_m89 {
+    //! Coverage for REVIEW-LATER item M-89: `recover_calendar_gone`
+    //! must wipe `gcal_agenda_event_map` and reset
+    //! `gcal_settings.calendar_id` in a single `BEGIN IMMEDIATE`
+    //! transaction so a crash between the two writes cannot leave the
+    //! post-state inconsistent.
+    //!
+    //! These tests assert the *post-condition* (zero rows in the map
+    //! AND `calendar_id == ""`) which is what callers actually care
+    //! about.  Crash-injection between the two writes is not testable
+    //! at this layer — the BEGIN IMMEDIATE wrapper is verified
+    //! structurally by inspection of the implementation.
+
+    use super::*;
+    use crate::db::init_pool;
+    use crate::gcal_push::keyring_store::RecordingEventEmitter;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    async fn fresh_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path: PathBuf = dir.path().join("m89.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    /// Insert N synthetic rows into `gcal_agenda_event_map` so the
+    /// `DELETE FROM ...` inside the recovery has something to wipe.
+    async fn seed_map_rows(pool: &SqlitePool, n: usize) {
+        for i in 0..n {
+            // Dates are date-only strings; offset-of-day math is fine
+            // here (no row uses `2026-04-32`).
+            let date = format!("2026-04-{:02}", i + 1);
+            let event_id = format!("evt_seed_{i}");
+            let hash = format!("hash_seed_{i}");
+            let pushed_at = "2026-04-22T10:00:00.000Z";
+            sqlx::query(
+                "INSERT INTO gcal_agenda_event_map \
+                 (date, gcal_event_id, last_pushed_hash, last_pushed_at) \
+                 VALUES (?, ?, ?, ?)",
+            )
+            .bind(&date)
+            .bind(&event_id)
+            .bind(&hash)
+            .bind(pushed_at)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    async fn count_map_rows(pool: &SqlitePool) -> i64 {
+        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM gcal_agenda_event_map")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        row.0
+    }
+
+    #[tokio::test]
+    async fn recover_calendar_gone_is_atomic() {
+        let (pool, _dir) = fresh_pool().await;
+
+        // Pre-state: N rows in the map, calendar_id pointing at a
+        // (now-gone) remote calendar.
+        seed_map_rows(&pool, 5).await;
+        models::set_setting(&pool, GcalSettingKey::CalendarId, "cal_xyz")
+            .await
+            .unwrap();
+
+        assert_eq!(count_map_rows(&pool).await, 5, "pre-state: 5 map rows");
+        assert_eq!(
+            models::get_setting(&pool, GcalSettingKey::CalendarId)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("cal_xyz"),
+            "pre-state: calendar_id must point at the gone calendar"
+        );
+
+        let recorder = Arc::new(RecordingEventEmitter::new());
+        let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
+
+        recover_calendar_gone(&pool, &emitter).await.unwrap();
+
+        // Post-state: map empty, calendar_id reset.
+        assert_eq!(
+            count_map_rows(&pool).await,
+            0,
+            "post-state: gcal_agenda_event_map must be empty"
+        );
+        assert_eq!(
+            models::get_setting(&pool, GcalSettingKey::CalendarId)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(""),
+            "post-state: calendar_id must be reset to empty string"
+        );
+        assert!(
+            recorder.events().contains(&GcalEvent::CalendarRecreated),
+            "calendar_recreated event must fire after a successful recovery"
+        );
+    }
+
+    #[tokio::test]
+    async fn recover_calendar_gone_m89_does_not_clear_oauth_account_email() {
+        // Optional assertion (per the brief) — proves the recovery
+        // does not over-reach and accidentally wipe other settings.
+        // `oauth_account_email` is finding M-95, out of scope here.
+        let (pool, _dir) = fresh_pool().await;
+
+        seed_map_rows(&pool, 2).await;
+        models::set_setting(&pool, GcalSettingKey::CalendarId, "cal_xyz")
+            .await
+            .unwrap();
+        models::set_setting(&pool, GcalSettingKey::OauthAccountEmail, "user@example.com")
+            .await
+            .unwrap();
+
+        let recorder = Arc::new(RecordingEventEmitter::new());
+        let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
+
+        recover_calendar_gone(&pool, &emitter).await.unwrap();
+
+        let email = models::get_setting(&pool, GcalSettingKey::OauthAccountEmail)
+            .await
+            .unwrap();
+        assert_eq!(
+            email.as_deref(),
+            Some("user@example.com"),
+            "oauth_account_email must be untouched by recover_calendar_gone (that is M-95)"
+        );
     }
 }
