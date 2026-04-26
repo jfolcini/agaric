@@ -5,17 +5,20 @@
  * a sidebar button. Uses the Sheet component for a slide-in panel.
  */
 
-import { Keyboard } from 'lucide-react'
+import { Keyboard, Settings as SettingsIcon } from 'lucide-react'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Sheet,
   SheetContent,
   SheetDescription,
+  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { useNavigationStore } from '@/stores/navigation'
 import { getCurrentShortcuts } from '../lib/keyboard-config'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../lib/overlay-events'
 import { modKey } from '../lib/platform'
@@ -229,6 +232,27 @@ export function KeyboardShortcuts({
             </tbody>
           </table>
         </ScrollArea>
+        {/* UX-260 sub-fix 7: footer link into Settings → Keyboard so users
+            discover that shortcuts are customisable. */}
+        <SheetFooter className="border-t">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setOpen(false)
+              try {
+                window.localStorage.setItem('agaric-settings-active-tab', 'keyboard')
+              } catch {
+                // storage may be disabled (private mode etc.) — ignore
+              }
+              useNavigationStore.getState().setView('settings')
+            }}
+            data-testid="keyboard-customize-button"
+          >
+            <SettingsIcon className="h-4 w-4" />
+            {t('keyboard.customizeButton')}
+          </Button>
+        </SheetFooter>
       </SheetContent>
     </Sheet>
   )

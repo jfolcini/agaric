@@ -6,6 +6,9 @@
  *  - Immediate search on form submit (Enter / button click)
  *  - Cursor-based pagination ("Load more") via usePaginatedQuery
  *  - CJK limitation notice (p3-t6)
+ *
+ * Opened via Ctrl+F (see `App.tsx` global handler around line 712, the
+ * `focusSearch` `matchesShortcutBinding` branch — UX-260 sub-fix 6).
  */
 
 import { Search, X } from 'lucide-react'

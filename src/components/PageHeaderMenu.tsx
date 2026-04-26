@@ -105,8 +105,15 @@ export function PageHeaderMenu({
             <Undo2 className="h-3.5 w-3.5" />
           </Button>
         </TooltipTrigger>
+        {/* UX-260 sub-fix 3: tier-aware undo tooltip. The same Ctrl+Z hits
+            either the editor-undo (within current block) when an editable
+            field is focused or the page-undo (last op-log entry) when not.
+            We expose this so users can predict which tier will fire. */}
         <TooltipContent>
-          {t('pageHeader.undoAction')} {getShortcutKeys('undoLastPageOp')}
+          <div>
+            {t('pageHeader.undoAction')} {getShortcutKeys('undoLastPageOp')}
+          </div>
+          <div className="mt-1 text-[10px] opacity-80">{t('undo.tipPage')}</div>
         </TooltipContent>
       </Tooltip>
       <Tooltip>
@@ -122,7 +129,7 @@ export function PageHeaderMenu({
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          {t('pageHeader.redoAction')} {getShortcutKeys('redoLastPageOp')}
+          {t('pageHeader.redoAction')} {getShortcutKeys('redoLastUndoneOp')}
         </TooltipContent>
       </Tooltip>
       <Tooltip>

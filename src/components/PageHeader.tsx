@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
 import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
@@ -516,35 +517,27 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
             />
           </div>
 
-          {/* Breadcrumb for namespaced page titles */}
+          {/* Breadcrumb for namespaced page titles (UX-257). Consumes the
+              shared `Breadcrumb` primitive — chevron separators, no
+              `touch-target` per-crumb (the primitive handles 44 px hit-area
+              on touch via `[@media(pointer:coarse)]:py-2`). */}
           {title.includes('/') &&
             (() => {
               const segments = title.split('/')
+              const items: BreadcrumbCrumb[] = segments.map((segment, i) => {
+                const isLast = i === segments.length - 1
+                return {
+                  id: `${i}-${segment}`,
+                  label: segment,
+                  ...(isLast ? {} : { onSelect: () => navigateToNamespace() }),
+                }
+              })
               return (
-                <nav
-                  className="flex items-center gap-1 text-xs text-muted-foreground px-1 mt-1"
-                  aria-label={t('pageHeader.breadcrumbLabel')}
-                >
-                  {segments.slice(0, -1).map((segment, i) => {
-                    const ancestorPath = segments.slice(0, i + 1).join('/')
-                    return (
-                      <span key={ancestorPath} className="flex items-center gap-1">
-                        {i > 0 && <span className="text-muted-foreground/50">/</span>}
-                        <button
-                          type="button"
-                          className="hover:text-foreground hover:underline transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 rounded touch-target"
-                          onClick={() => navigateToNamespace()}
-                        >
-                          {segment}
-                        </button>
-                      </span>
-                    )
-                  })}
-                  <span className="text-muted-foreground/50">/</span>
-                  <span className="font-medium text-foreground">
-                    {segments[segments.length - 1]}
-                  </span>
-                </nav>
+                <Breadcrumb
+                  items={items}
+                  ariaLabel={t('pageHeader.breadcrumbLabel')}
+                  className="mt-1"
+                />
               )
             })()}
 
