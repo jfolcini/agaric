@@ -906,7 +906,8 @@ async fn merge_block_already_up_to_date() {
     let (pool, _dir) = test_pool().await;
 
     let same_head = (DEV_A.to_owned(), 2);
-    let result = merge_block(&pool, DEV_A, "B1", &same_head, &same_head)
+    let mat = Materializer::new(pool.clone());
+    let result = merge_block(&pool, DEV_A, &mat, "B1", &same_head, &same_head)
         .await
         .unwrap();
 
@@ -960,9 +961,17 @@ async fn merge_block_clean_merge() {
     )
     .await;
 
-    let result = merge_block(&pool, DEV_A, "B1", &(DEV_A.into(), 2), &(DEV_B.into(), 1))
-        .await
-        .unwrap();
+    let mat = Materializer::new(pool.clone());
+    let result = merge_block(
+        &pool,
+        DEV_A,
+        &mat,
+        "B1",
+        &(DEV_A.into(), 2),
+        &(DEV_B.into(), 1),
+    )
+    .await
+    .unwrap();
 
     match result {
         MergeOutcome::Merged(record) => {
@@ -1026,9 +1035,17 @@ async fn merge_block_conflict_creates_copy() {
     // Insert B1 into blocks table
     insert_block(&pool, "B1", "content", "hello world", None, Some(0)).await;
 
-    let result = merge_block(&pool, DEV_A, "B1", &(DEV_A.into(), 2), &(DEV_B.into(), 1))
-        .await
-        .unwrap();
+    let mat = Materializer::new(pool.clone());
+    let result = merge_block(
+        &pool,
+        DEV_A,
+        &mat,
+        "B1",
+        &(DEV_A.into(), 2),
+        &(DEV_B.into(), 1),
+    )
+    .await
+    .unwrap();
 
     match result {
         MergeOutcome::ConflictCopy {
@@ -2026,9 +2043,17 @@ async fn conflict_merge_keeps_ours_not_ancestor() {
 
     insert_block(&pool, "B1", "content", "base", None, Some(0)).await;
 
-    let result = merge_block(&pool, DEV_A, "B1", &(DEV_A.into(), 2), &(DEV_B.into(), 1))
-        .await
-        .unwrap();
+    let mat = Materializer::new(pool.clone());
+    let result = merge_block(
+        &pool,
+        DEV_A,
+        &mat,
+        "B1",
+        &(DEV_A.into(), 2),
+        &(DEV_B.into(), 1),
+    )
+    .await
+    .unwrap();
 
     match result {
         MergeOutcome::ConflictCopy {
@@ -2115,9 +2140,17 @@ async fn merge_block_conflict_original_gets_ours_content() {
     // what the materializer would have set before conflict).
     insert_block(&pool, "B1", "content", "ancestor", None, Some(0)).await;
 
-    let result = merge_block(&pool, DEV_A, "B1", &(DEV_A.into(), 2), &(DEV_B.into(), 1))
-        .await
-        .unwrap();
+    let mat = Materializer::new(pool.clone());
+    let result = merge_block(
+        &pool,
+        DEV_A,
+        &mat,
+        "B1",
+        &(DEV_A.into(), 2),
+        &(DEV_B.into(), 1),
+    )
+    .await
+    .unwrap();
 
     // Confirm we got a ConflictCopy outcome
     assert!(

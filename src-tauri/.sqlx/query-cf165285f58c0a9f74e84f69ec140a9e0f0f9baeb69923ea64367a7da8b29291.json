@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT device_id as \"device_id!: String\",\n                  seq        as \"seq!: i64\",\n                  payload    as \"payload!: String\"\n           FROM op_log\n           WHERE op_type = 'create_block'\n             AND block_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "seq!: i64",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "payload!: String",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "cf165285f58c0a9f74e84f69ec140a9e0f0f9baeb69923ea64367a7da8b29291"
+}
