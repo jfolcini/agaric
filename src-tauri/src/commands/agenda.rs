@@ -33,30 +33,27 @@ pub async fn count_agenda_batch_inner(
     for d in &dates {
         validate_date_format(d)?;
     }
-    // Build IN clause with bind parameters
-    let placeholders: String = dates
-        .iter()
-        .enumerate()
-        .map(|(i, _)| format!("?{}", i + 1))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT ac.date, COUNT(*) as cnt \
-         FROM agenda_cache ac \
-         JOIN blocks b ON b.id = ac.block_id \
-         WHERE ac.date IN ({placeholders}) \
-           AND b.deleted_at IS NULL \
-         GROUP BY ac.date"
-    );
-    let mut query = sqlx::query_as::<_, (String, i64)>(&sql);
-    for d in &dates {
-        query = query.bind(d);
-    }
-    let rows = query.fetch_all(pool).await?;
+    // M-24: marshal the date list into a JSON array and unwrap it inside SQL
+    // via `json_each(?1)`. This replaces the previous runtime-formatted
+    // `?1, ?2, …` placeholder list with a single bind, and lets us drop
+    // through `sqlx::query!` for compile-time SQL verification (AGENTS.md
+    // invariant #6). Mirrors the sibling `count_agenda_batch_by_source_inner`.
+    let dates_json = serde_json::to_string(&dates)?;
+    let rows = sqlx::query!(
+        r#"SELECT ac.date, COUNT(*) AS "cnt!: i64"
+         FROM agenda_cache ac
+         JOIN blocks b ON b.id = ac.block_id
+         WHERE ac.date IN (SELECT value FROM json_each(?1))
+           AND b.deleted_at IS NULL
+         GROUP BY ac.date"#,
+        dates_json
+    )
+    .fetch_all(pool)
+    .await?;
     Ok(rows
         .into_iter()
         // cnt is a non-negative count from SQL; safe to convert
-        .map(|(date, cnt)| (date, usize::try_from(cnt).unwrap_or(0)))
+        .map(|r| (r.date, usize::try_from(r.cnt).unwrap_or(0)))
         .collect())
 }
 
@@ -500,4 +497,166 @@ pub async fn list_undated_tasks(
     list_undated_tasks_inner(&pool.0, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
+}
+
+// ======================================================================
+// M-24 — `count_agenda_batch_inner` json_each refactor regression tests
+// ======================================================================
+//
+// Inline coverage for the migration off the runtime `?1, ?2, …` placeholder
+// list onto the `IN (SELECT value FROM json_each(?1))` pattern. Mirrors the
+// existing coverage for `count_agenda_batch_by_source_inner`.
+#[cfg(test)]
+mod tests_m24 {
+    use super::*;
+    use crate::db::init_pool;
+    use sqlx::SqlitePool;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    /// Build an isolated in-process SQLite pool with all migrations applied.
+    /// The returned `TempDir` must be held by the caller — dropping it deletes
+    /// the underlying database file (see `tests/AGENTS.md`).
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path: PathBuf = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.expect("init pool");
+        (pool, dir)
+    }
+
+    /// Insert a minimal live block (no soft-delete) so `agenda_cache` rows
+    /// survive the `b.deleted_at IS NULL` filter inside the query.
+    async fn insert_live_block(pool: &SqlitePool, id: &str) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, NULL)",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("insert block");
+    }
+
+    /// Insert one `agenda_cache` row.
+    async fn insert_agenda_row(pool: &SqlitePool, date: &str, block_id: &str) {
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind(date)
+            .bind(block_id)
+            .bind("property:due_date")
+            .execute(pool)
+            .await
+            .expect("insert agenda_cache");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn count_agenda_batch_with_empty_input() {
+        let (pool, _dir) = test_pool().await;
+        let result = count_agenda_batch_inner(&pool, vec![])
+            .await
+            .expect("empty input must succeed");
+        assert!(
+            result.is_empty(),
+            "empty dates input must short-circuit to an empty map (no SQL issued)"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn count_agenda_batch_returns_correct_counts() {
+        let (pool, _dir) = test_pool().await;
+
+        // Seed three live blocks.
+        insert_live_block(&pool, "M24_BLK_A").await;
+        insert_live_block(&pool, "M24_BLK_B").await;
+        insert_live_block(&pool, "M24_BLK_C").await;
+
+        // Known counts:
+        //   2025-03-01 → 2 entries
+        //   2025-03-02 → 1 entry
+        //   2025-03-03 → 3 entries (NOT in query input — must NOT appear in result)
+        insert_agenda_row(&pool, "2025-03-01", "M24_BLK_A").await;
+        insert_agenda_row(&pool, "2025-03-01", "M24_BLK_B").await;
+        insert_agenda_row(&pool, "2025-03-02", "M24_BLK_C").await;
+        // Three rows on 2025-03-03 to make sure they do NOT bleed into the
+        // result for a query that does not include that date — i.e. the
+        // `IN (SELECT value FROM json_each(?1))` predicate filters strictly.
+        insert_agenda_row(&pool, "2025-03-03", "M24_BLK_A").await;
+        insert_agenda_row(&pool, "2025-03-03", "M24_BLK_B").await;
+        insert_agenda_row(&pool, "2025-03-03", "M24_BLK_C").await;
+
+        // Query a subset: only the first two dates.
+        let result =
+            count_agenda_batch_inner(&pool, vec!["2025-03-01".into(), "2025-03-02".into()])
+                .await
+                .expect("count_agenda_batch_inner must succeed on valid dates");
+
+        assert_eq!(
+            result.get("2025-03-01"),
+            Some(&2),
+            "2025-03-01 must report exactly 2 entries"
+        );
+        assert_eq!(
+            result.get("2025-03-02"),
+            Some(&1),
+            "2025-03-02 must report exactly 1 entry"
+        );
+        assert!(
+            !result.contains_key("2025-03-03"),
+            "dates not in the query input must be absent from the result \
+             (json_each filter must not leak rows)"
+        );
+        assert_eq!(
+            result.len(),
+            2,
+            "result must contain exactly the dates that have matching rows"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn count_agenda_batch_unknown_block_ids() {
+        let (pool, _dir) = test_pool().await;
+
+        // Seed one live block + one row for a single date so the table is
+        // not entirely empty (defensive: the query path is exercised either
+        // way).
+        insert_live_block(&pool, "M24_BLK_X").await;
+        insert_agenda_row(&pool, "2025-04-01", "M24_BLK_X").await;
+
+        // Query for dates that have NO agenda_cache rows. Per the existing
+        // semantics (`GROUP BY ac.date` over the join), dates with no rows
+        // are simply absent from the returned map — they do NOT show up
+        // with a count of 0.
+        let result =
+            count_agenda_batch_inner(&pool, vec!["2025-05-01".into(), "2025-05-02".into()])
+                .await
+                .expect("unknown dates must not error");
+
+        assert!(
+            !result.contains_key("2025-05-01"),
+            "date with no agenda_cache rows must be absent from the result"
+        );
+        assert!(
+            !result.contains_key("2025-05-02"),
+            "date with no agenda_cache rows must be absent from the result"
+        );
+        assert!(
+            result.is_empty(),
+            "result must be empty when no queried date has any rows; got {result:?}"
+        );
+
+        // Mixed query: one known date (with rows) + one unknown date.
+        // Confirms the unknown date is silently omitted while the known
+        // one still produces the correct count.
+        let mixed = count_agenda_batch_inner(&pool, vec!["2025-04-01".into(), "2025-05-01".into()])
+            .await
+            .expect("mixed known+unknown dates must succeed");
+        assert_eq!(
+            mixed.get("2025-04-01"),
+            Some(&1),
+            "known date must still report its real count in a mixed query"
+        );
+        assert!(
+            !mixed.contains_key("2025-05-01"),
+            "unknown date must remain absent in a mixed query"
+        );
+    }
 }
