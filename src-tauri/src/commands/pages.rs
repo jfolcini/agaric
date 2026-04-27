@@ -9,13 +9,12 @@ use tracing::instrument;
 
 use tauri::State;
 
-use crate::db::{ReadPool, WritePool};
+use crate::db::{CommandTx, ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::import;
 use crate::import::ImportResult;
 use crate::materializer::Materializer;
-use crate::op_log;
 use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse};
 
 use super::*;
@@ -265,8 +264,9 @@ pub async fn import_markdown_inner(
         .unwrap_or_else(|| "Imported Page".to_string());
 
     // --- Single IMMEDIATE transaction for entire import ---
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let mut op_records: Vec<op_log::OpRecord> = Vec::new();
+    // MAINT-112: CommandTx couples commit + post-commit dispatch; op
+    // records enqueue in the loop and drain in FIFO order after commit.
+    let mut tx = CommandTx::begin_immediate(pool, "import_markdown").await?;
 
     // Create the page inside the transaction
     let (page, page_op) = create_block_in_tx(
@@ -278,7 +278,7 @@ pub async fn import_markdown_inner(
         None,
     )
     .await?;
-    op_records.push(page_op);
+    tx.enqueue_background(page_op);
     let page_id = page.id.clone();
 
     let mut blocks_created: i64 = 0;
@@ -312,7 +312,7 @@ pub async fn import_markdown_inner(
         {
             Ok((new_block, block_op)) => {
                 blocks_created += 1;
-                op_records.push(block_op);
+                tx.enqueue_background(block_op);
                 parent_stack.push((block.depth, new_block.id.clone()));
 
                 // Set properties inside the same transaction
@@ -331,7 +331,7 @@ pub async fn import_markdown_inner(
                     {
                         Ok((_block, prop_op)) => {
                             properties_set += 1;
-                            op_records.push(prop_op);
+                            tx.enqueue_background(prop_op);
                         }
                         Err(e) => warnings.push(format!("Property '{key}' on block failed: {e}")),
                     }
@@ -343,13 +343,8 @@ pub async fn import_markdown_inner(
         }
     }
 
-    // Commit the single transaction
-    tx.commit().await?;
-
-    // Dispatch materializer tasks after commit
-    for op_record in &op_records {
-        materializer.dispatch_background_or_warn(op_record);
-    }
+    // Commit + dispatch all queued ops in FIFO order.
+    tx.commit_and_dispatch(materializer).await?;
 
     Ok(ImportResult {
         page_title,

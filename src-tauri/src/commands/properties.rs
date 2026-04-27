@@ -7,7 +7,7 @@ use tauri::State;
 use tracing::instrument;
 
 use crate::backlink;
-use crate::db::{ReadPool, WritePool};
+use crate::db::{CommandTx, ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -37,7 +37,8 @@ pub async fn set_property_inner(
     value_date: Option<String>,
     value_ref: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "set_property").await?;
     // FEAT-5i — snapshot pre-mutation agenda-relevant state so the
     // post-commit `notify_gcal_for_op` call can compute the
     // `old_affected_dates` half of the `DirtyEvent`.  Skip the
@@ -51,8 +52,10 @@ pub async fn set_property_inner(
         &mut tx, device_id, block_id, &key, value_text, value_num, value_date, value_ref,
     )
     .await?;
-    tx.commit().await?;
-    materializer.dispatch_background_or_warn(&op_record);
+    // Clone `op_record` for the dispatch queue so the post-commit
+    // `notify_gcal_for_op` call below still has the original.
+    tx.enqueue_background(op_record.clone());
+    tx.commit_and_dispatch(materializer).await?;
     if let Some(snapshot) = gcal_snapshot {
         materializer.notify_gcal_for_op(&op_record, &snapshot);
     }

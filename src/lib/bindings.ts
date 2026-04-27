@@ -25,7 +25,7 @@ export const commands = {
 	moveBlock: (blockId: string, newParentId: string | null, newPosition: number) => typedError<MoveResponse, AppErrorSchema>(__TAURI_INVOKE("move_block", { blockId, newParentId, newPosition })),
 	/**
 	 *  Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
-	 *
+	 * 
 	 *  The three agenda knobs (`date`, `date_range`, `source`) are bundled
 	 *  into a single [`AgendaQuery`] to keep this wrapper under the
 	 *  `tauri-specta` 10-arg limit after FEAT-3 Phase 2 added `space_id`.
@@ -46,7 +46,7 @@ export const commands = {
 	getBlock: (blockId: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("get_block", { blockId })),
 	/**
 	 *  Tauri command: batch-resolve block metadata. Delegates to [`batch_resolve_inner`].
-	 *
+	 * 
 	 *  FEAT-3 Phase 7 — `space_id` is required so the resolve store cannot
 	 *  surface foreign-space titles. The frontend always knows the current
 	 *  space and threads it through `useResolveStore.preload(spaceId)`.
@@ -80,7 +80,7 @@ export const commands = {
 	setTodoState: (blockId: string, state: string | null) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
 	/**
 	 *  Tauri command: set priority on a block. Delegates to [`set_priority_inner`].
-	 *
+	 * 
 	 *  L-38: emits `EVENT_PROPERTY_CHANGED` after a successful set so the
 	 *  frontend property-change listener fires for priority updates (parity
 	 *  with `set_todo_state` / `set_due_date` / `set_scheduled_date` /
@@ -225,7 +225,7 @@ export const commands = {
 	/**
 	 *  Log a frontend message to the backend's daily-rolling log file.
 	 *  Fire-and-forget — the frontend never awaits this.
-	 *
+	 * 
 	 *  M-39: every `String` / `Option<String>` field is truncated at entry
 	 *  to [`MAX_FRONTEND_LOG_FIELD_BYTES`] (64 KB) so a single oversized
 	 *  payload cannot stall the IPC thread or corrupt the daily log file.
@@ -236,7 +236,7 @@ export const commands = {
 	logFrontend: (level: string, module: string, message: string, stack: string | null, context: string | null, data: string | null) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("log_frontend", { level, module, message, stack, context, data })),
 	/**
 	 *  Return the path to the logs directory.
-	 *
+	 * 
 	 *  Uses [`crate::log_dir_for_app_data`] so the path returned to the
 	 *  frontend ("Open logs folder") is guaranteed to match the directory
 	 *  the tracing-appender writes to — on every platform (BUG-34).
@@ -246,7 +246,7 @@ export const commands = {
 	getCompactionStatus: () => typedError<CompactionStatus, AppErrorSchema>(__TAURI_INVOKE("get_compaction_status")),
 	/**
 	 *  Tauri command: trigger op log compaction.
-	 *
+	 * 
 	 *  The frontend is responsible for confirming with the user before calling
 	 *  this command. `retention_days` controls how far back ops are retained.
 	 */
@@ -284,7 +284,7 @@ export const commands = {
 	mcpSetEnabled: (enabled: boolean) => typedError<boolean, AppErrorSchema>(__TAURI_INVOKE("mcp_set_enabled", { enabled })),
 	/**
 	 *  Tauri command: disconnect every in-flight MCP connection.
-	 *
+	 * 
 	 *  Returns the connection count observed immediately after firing the
 	 *  signal. Reporting a non-zero value is not an error — the signal wakes
 	 *  each connection's `select!` branch asynchronously, so `get_mcp_status`
@@ -315,22 +315,21 @@ export const commands = {
 	listSpaces: () => typedError<SpaceRow[], AppErrorSchema>(__TAURI_INVOKE("list_spaces")),
 	/**
 	 *  Tauri command wrapper around [`create_page_in_space_inner`].
-	 *
+	 * 
 	 *  Returns a plain `String` (the new page's ULID) rather than `BlockId`
 	 *  to keep the specta-generated bindings the simple shape the frontend
 	 *  expects. Background cache tasks (tag-inheritance, block-tag-refs,
-	 *  FTS indexing) are dispatched after the ops are committed — we
-	 *  deliberately wait until the full page-create-plus-set-property pair
-	 *  is durable before scheduling derived-state work.
+	 *  FTS indexing) are dispatched inside `_inner` via `CommandTx` — the
+	 *  wrapper only needs to thread `materializer` through.
 	 */
 	createPageInSpace: (parentId: string | null, content: string, spaceId: string) => typedError<string, AppErrorSchema>(__TAURI_INVOKE("create_page_in_space", { parentId, content, spaceId })),
 	/**
 	 *  Tauri command wrapper around [`create_space_inner`].
-	 *
+	 * 
 	 *  Returns a plain `String` (the new space's ULID). Background cache
 	 *  rebuilds (FTS, tag-inheritance, agenda projection) are dispatched
-	 *  for the two-or-three ops that landed so derived state stays fresh —
-	 *  the helper mirrors `create_page_in_space`'s pattern.
+	 *  inside `_inner` via `CommandTx`; the wrapper only threads
+	 *  `materializer` through.
 	 */
 	createSpace: (name: string, accentColor: string | null) => typedError<string, AppErrorSchema>(__TAURI_INVOKE("create_space", { name, accentColor })),
 	/**
@@ -343,7 +342,7 @@ export const commands = {
 /* Types */
 /**
  *  Bundled agenda filter for the [`list_blocks`] Tauri command.
- *
+ * 
  *  Exists purely to keep `list_blocks`'s argument count under the
  *  `tauri-specta` 10-arg limit after FEAT-3 Phase 2 added `space_id`.
  *  The three sub-fields were previously top-level parameters and are
@@ -352,7 +351,7 @@ export const commands = {
  *  filter applies" (the common case), and each sub-field remains
  *  optional inside the struct so callers can still specify a single
  *  date without the range, etc.
- *
+ * 
  *  Serde `rename_all = "camelCase"` matches the Tauri command-arg
  *  convention (camelCase keys on the IPC boundary), so the hand-written
  *  TS wrapper in `src/lib/tauri.ts` can pass `{ dateRange, source, date }`
@@ -390,17 +389,17 @@ export type AttachmentRow = {
 
 /**
  *  Tagged union of filter predicates for backlink queries.
- *
+ * 
  *  Filters are combined with AND semantics at the top level.
  *  Use `And`/`Or`/`Not` variants for compound boolean logic.
  */
-export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } |
+export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } | 
 // Filter blocks by todo_state column (direct, no block_properties join).
-{ type: "TodoState"; state: string } |
+{ type: "TodoState"; state: string } | 
 // Filter blocks by priority column (direct, no block_properties join).
-{ type: "Priority"; level: string } |
+{ type: "Priority"; level: string } | 
 // Filter blocks by due_date column with comparison operator.
-{ type: "DueDate"; op: CompareOp; value: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } |
+{ type: "DueDate"; op: CompareOp; value: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } | 
 // Filter by source page — include/exclude blocks based on their root page ancestor.
 { type: "SourcePage"; included: string[]; excluded: string[] } | { type: "And"; filters: BacklinkFilter[] } | { type: "Or"; filters: BacklinkFilter[] } | { type: "Not"; filter: BacklinkFilter };
 
@@ -504,7 +503,7 @@ export type Draft = {
  *  the presence of an OAuth token in the keychain; `calendar_id` is
  *  only populated after the first push-cycle has created the
  *  dedicated calendar.
- *
+ * 
  *  L-45: the previous shape carried both `enabled` and `connected`,
  *  populated from the same expression. `connected` is the canonical
  *  field consumed by the frontend (`GoogleCalendarSettingsTab.tsx`);
@@ -594,7 +593,7 @@ export type McpRwStatus = {
 
 /**
  *  Snapshot of the MCP RO server state surfaced to the Settings tab.
- *
+ * 
  *  `socket_path` is a display string on every platform (the Unix socket
  *  filesystem path on Linux / macOS, the named-pipe path on Windows).
  *  `active_connections` reports the instantaneous count from
@@ -627,7 +626,7 @@ export type PageLink = {
 
 /**
  *  Paginated response.
- *
+ * 
  *  `total_count` is intentionally omitted — see module docs.
  */
 export type PageResponse<T> = {
@@ -667,7 +666,7 @@ export type PeerRef = {
 
 /**
  *  A projected future occurrence of a repeating block.
- *
+ * 
  *  Not stored in the database — computed on-the-fly from repeat rules.
  */
 export type ProjectedAgendaEntry = {
@@ -731,7 +730,7 @@ export type SortDir = "Asc" | "Desc";
  *  A space row returned by [`list_spaces_inner`] — the pieces the
  *  frontend needs to render the switcher (ULID + display name) plus
  *  the FEAT-3p10 visual-identity surface (`accent_color`).
- *
+ * 
  *  `accent_color` carries the free-form palette token (e.g.
  *  `accent-emerald`, `accent-blue`) stored under
  *  `block_properties(key='accent_color', value_text=…)`. `None` means
@@ -871,3 +870,4 @@ async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; dat
         return { status: "error", error: e as any };
     }
 }
+

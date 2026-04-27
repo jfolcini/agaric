@@ -668,7 +668,8 @@ mod tests {
     /// journal_for_date MCP tests so the per-space lookup has a valid
     /// space to scope under.
     async fn mk_space(pool: &SqlitePool, name: &str) -> String {
-        create_space_inner(pool, DEV, name.into(), None)
+        let materializer = Materializer::new(pool.clone());
+        create_space_inner(pool, DEV, &materializer, name.into(), None)
             .await
             .expect("create_space must succeed")
             .into_string()
@@ -1932,7 +1933,7 @@ mod tests {
                     .call_tool("list_pages", json!({}), &test_ctx())
                     .await
                     .expect("list_pages ok");
-                LAST_APPEND.with(|c| c.take())
+                LAST_APPEND.with(Cell::take)
             })
             .await;
 
@@ -1979,7 +1980,8 @@ mod tests_m82 {
     /// space on the *writer* pool (the reader pool is `query_only = ON`
     /// and would reject the CreateBlock op).
     async fn mk_space(write_pool: &SqlitePool, name: &str) -> String {
-        create_space_inner(write_pool, DEV, name.into(), None)
+        let materializer = Materializer::new(write_pool.clone());
+        create_space_inner(write_pool, DEV, &materializer, name.into(), None)
             .await
             .expect("create_space must succeed")
             .into_string()
@@ -2109,9 +2111,16 @@ mod tests_m82 {
         let combined = crate::db::init_pool(&combined_path).await.unwrap();
         let mat_combined = Materializer::new(combined.clone());
         let space_combined = mk_space(&combined, "Personal").await;
-        create_page_in_space_inner(&combined, DEV, None, date.into(), space_combined.clone())
-            .await
-            .unwrap();
+        create_page_in_space_inner(
+            &combined,
+            DEV,
+            &mat_combined,
+            None,
+            date.into(),
+            space_combined.clone(),
+        )
+        .await
+        .unwrap();
         mat_combined.flush_background().await.unwrap();
         let tools_combined =
             ReadOnlyTools::new(combined.clone(), combined, mat_combined, DEV.to_string());

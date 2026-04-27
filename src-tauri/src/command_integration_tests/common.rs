@@ -100,7 +100,8 @@ pub async fn settle(mat: &Materializer) {
 /// SetProperty(is_space) op pair as the production
 /// `create_space` command.
 pub async fn test_space(pool: &SqlitePool, name: &str) -> String {
-    create_space_inner(pool, DEV, name.into(), None)
+    let materializer = crate::materializer::Materializer::new(pool.clone());
+    create_space_inner(pool, DEV, &materializer, name.into(), None)
         .await
         .expect("create_space must succeed")
         .into_string()

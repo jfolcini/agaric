@@ -49,14 +49,22 @@ pub(crate) async fn handle_recurrence(
     // the same serialized write transaction. Two concurrent DONE clicks
     // on the same recurring block now queue at the SQLite write lock
     // instead of racing the read-then-increment chain on the bare pool.
-    let mut tx = crate::db::begin_immediate_logged(pool, "recurrence_handle").await?;
+    //
+    // MAINT-112: CommandTx couples commit + post-commit dispatch. The
+    // previous hand-rolled warn included `new_block_id` as an extra
+    // context field; with `commit_and_dispatch`'s
+    // `dispatch_background_or_warn` the warn now logs `op_type`,
+    // `device_id`, `seq`, and `error` — the `(device_id, seq)` pair
+    // uniquely identifies the op so the source block can still be
+    // recovered via the op log.
+    let mut tx = crate::db::CommandTx::begin_immediate(pool, "recurrence_handle").await?;
 
     // Check for repeat property (inside tx)
     let repeat_rule: Option<String> = sqlx::query_scalar(
         "SELECT value_text FROM block_properties WHERE block_id = ?1 AND key = 'repeat'",
     )
     .bind(block_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
 
     let Some(rule) = repeat_rule else {
@@ -75,7 +83,7 @@ pub(crate) async fn handle_recurrence(
            FROM blocks WHERE id = ?"#,
         block_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     let original =
         original.ok_or_else(|| crate::error::AppError::NotFound(format!("block '{block_id}'")))?;
@@ -99,7 +107,7 @@ pub(crate) async fn handle_recurrence(
         "SELECT value_date FROM block_properties WHERE block_id = ?1 AND key = 'repeat-until'",
     )
     .bind(block_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
 
     if let Some(ref until_str) = repeat_until {
@@ -117,14 +125,14 @@ pub(crate) async fn handle_recurrence(
         "SELECT value_num FROM block_properties WHERE block_id = ?1 AND key = 'repeat-count'",
     )
     .bind(block_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
 
     let repeat_seq: Option<f64> = sqlx::query_scalar(
         "SELECT value_num FROM block_properties WHERE block_id = ?1 AND key = 'repeat-seq'",
     )
     .bind(block_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
 
     if let Some(count) = repeat_count {
@@ -144,7 +152,7 @@ pub(crate) async fn handle_recurrence(
         "SELECT value_ref FROM block_properties WHERE block_id = ?1 AND key = 'repeat-origin'",
     )
     .bind(block_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     // Use existing origin, or this block is the first in the chain
     let origin_id = repeat_origin.unwrap_or_else(|| block_id.to_string());
@@ -172,7 +180,7 @@ pub(crate) async fn handle_recurrence(
             )
             .bind(original.parent_id.as_deref())
             .bind(NULL_POSITION_SENTINEL)
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut **tx)
             .await?;
             Some(max_pos.unwrap_or(0) + 1)
         }
@@ -342,22 +350,11 @@ pub(crate) async fn handle_recurrence(
     .await?;
     op_records.push(op);
 
-    tx.commit().await?;
-
-    // Dispatch all ops after commit
-    for op in &op_records {
-        if let Err(e) = materializer.dispatch_background(op) {
-            tracing::warn!(
-                block_id,
-                new_block_id = %new_block.id,
-                device_id = %op.device_id,
-                seq = op.seq,
-                op_type = %op.op_type,
-                error = %e,
-                "failed to dispatch background cache task"
-            );
-        }
+    // Commit + dispatch all ops (fire-and-forget, warn on failure).
+    for op in op_records {
+        tx.enqueue_background(op);
     }
+    tx.commit_and_dispatch(materializer).await?;
 
     Ok(true)
 }
