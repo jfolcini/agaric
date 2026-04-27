@@ -80,6 +80,18 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Release jobs always print "No cache found." on restore — every
+          # tag bumps Cargo.toml and Cargo.lock, so the cache key is unique
+          # per release and the saved cache is never reused on the next
+          # tag. The post-step save, on the other hand, has been failing
+          # silently on Windows (Git Bash `tar.exe` choking on the Tauri
+          # release `target/` tree, see 0.1.16 release run 24999938882).
+          # That post-step failure marks the whole job failed, which in
+          # turn skips `android-build-and-release` (it `needs:` this
+          # matrix), so the APK never gets attached to the draft release.
+          # Keep `restore` (free, in case we ever rerun a failed tag), but
+          # disable `save` so cache flakes can never block a release.
+          save-if: false
 
       - name: Install system dependencies (Linux)
         if: matrix.platform == 'ubuntu-24.04'
@@ -310,6 +322,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Same rationale as the desktop matrix above: release tags get
+          # a fresh cache key every time, so `save` adds risk (silent
+          # post-step failure marks the whole job failed) without any
+          # restore benefit on the next tag. Keep restore, skip save.
+          save-if: false
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
