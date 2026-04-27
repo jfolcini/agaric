@@ -17,11 +17,11 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-81 open items — 54 planned work (FEAT/MAINT/PERF/PUB) + 12 UX-1..UX-12 + 15 test-quality (2 backend TEST-42, TEST-45 + 13 frontend TEST-52..TEST-64).
+75 open items — 49 planned work (FEAT/MAINT/PERF/PUB) + 12 UX-1..UX-12 + 14 test-quality (1 backend TEST-42 + 13 frontend TEST-52..TEST-64).
 
-Previously resolved: 555+ items across 161 sessions.
+Previously resolved: 561+ items across 162 sessions.
 
-> **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. The `TEST-*` items below it (TEST-42, TEST-45) are a separate, targeted review of **backend test quality** — see the block header for scope and methodology.**
+> **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. The remaining backend test-quality item (TEST-42) below it is from the same targeted review — see the block header for scope and methodology.**
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -33,7 +33,6 @@ Previously resolved: 555+ items across 161 sessions.
 | FEAT-5 | FEAT | Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar) — parent / umbrella | L |
 | FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L |
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L |
-| MAINT-110 | MAINT | `pairing.rs` — remove dead ChaCha20-Poly1305 + HKDF machinery (`session_key`, `encrypt_message` / `decrypt_message`, `derive_session_key`); pairing exchange is plaintext JSON over mTLS and the derived key is never read in production. Drops `chacha20poly1305` + `hkdf` crates. | S |
 | MAINT-111 | MAINT | Spike `rmcp` (official Rust MCP SDK) vs the hand-rolled JSON-RPC 2.0 dispatch in `mcp/server.rs` (~492 LOC of framing + `make_success` / `make_error` / `parse_request` / method-dispatch boilerplate); keep existing `ToolRegistry` + activity-feed if the adapter stays thin | M |
 | MAINT-113 | MAINT | `ConflictFreeBlockId` newtype to lift invariant #9 (`is_conflict = 0` + `depth < 100` in every recursive CTE over `blocks`) into the type system — 220 `is_conflict = 0` SQL occurrences across 70 files. LOW-priority refactor for elegance, not correctness; the convention + review + documented invariant are already working. Do NOT do on a deadline. | L |
 | MAINT-114 | MAINT | Audit `.github/workflows/` (4 files — `ci.yml`, `_validate.yml`, `release.yml`, `release-tag.yml`) for consolidation. Minimum wins likely 4 → 3 (fold `release-tag.yml` into `release.yml` as `workflow_dispatch`); full 4 → 2 (validate + release) probably not cleanly achievable without losing the per-push-vs-per-tag split. Spike first, commit only if the merged file is not worse than the pair. | S–M |
@@ -56,16 +55,12 @@ Previously resolved: 555+ items across 161 sessions.
 | MAINT-131 | MAINT | Block-surface Tauri coupling — 8 presentational components in `src/components/` import functions from `src/lib/tauri` directly (`StaticBlock`, `EditableBlock`, `SortableBlock`, `BlockListItem`, `BlockPropertyEditor`, `BlockPropertyDrawer`, `ImageResizeToolbar`, `LinkEditPopover`). Notable double-IPC: `SortableBlock.tsx:155` calls `listAttachments(blockId)` AND `StaticBlock` via `useBlockAttachments` also calls `listAttachments` for every visible block (1 IPC → 2 IPCs per block row on the page). Add backend `get_batch_attachment_counts(block_ids)` (mirrors the existing `json_each`-backed batch patterns in `fts.rs` / `backlink/query.rs`), wrap per-IPC calls in hooks (`usePropertySave` already exists; add `useBlockReschedule`, `useLinkMetadata`). Prevents isolated rendering (Storybook, unit tests w/o full mocks) too. | L |
 | MAINT-132 | MAINT | Consolidate hand-written recursive CTEs. Ancestor walks at `commands/blocks/move_ops.rs:93-109` (cycle detection) + `commands/blocks/crud.rs:99-110` (depth check) and descendant walks at `commands/history.rs:51-64` / `:72-81` (DeleteBlock/RestoreBlock cascades) are still inline. `block_descendants.rs` macros cover descendant walks but not ancestors, and history.rs is not on the documented exception list at `block_descendants.rs:36-38`. Every hand-written CTE risks forgetting invariant #9 (`is_conflict = 0` + `depth < 100`). Extend the macro family to cover ancestor walks + `find_lca` chain-walking; migrate history.rs to the existing `descendants_cte_*!()` macros. | M |
 | MAINT-133 | MAINT | **Possible data-loss bug surfaced by review.** `BlockSnapshot` (`snapshot/types.rs:15-33`), the snapshot SELECT (`snapshot/create.rs:21`), and the restore INSERT (`snapshot/restore.rs:135-154`) all omit the `conflict_type` column that migration `0007_add_conflict_type.sql:3` adds to `blocks` and that `merge/resolve.rs:117-127` populates on every conflict copy (values `Text`/`Property`/`Move`/`DeleteEdit`). On any snapshot round-trip (restore, peer snapshot catch-up) every conflict block's `conflict_type` becomes NULL. **Write a round-trip test first to confirm the regression is reachable**, then add the column to the struct + SELECT + INSERT and bump `snapshot::SCHEMA_VERSION`. | S–M |
-| MAINT-135 | MAINT | Move MCP `parse_args<T>` (duplicated at `mcp/tools_ro.rs:176` and `mcp/tools_rw.rs:111`) plus a new `to_tool_result<T: Serialize>(resp) -> Result<Value, AppError>` into `mcp/mod.rs`. Every RO/RW handler today repeats both bits of ceremony; collapsing them makes each handler ~2 lines. | S |
 | MAINT-136 | MAINT | MCP tool-name centralization + registry-driven privacy guard. Each of ~15 MCP tool names is duplicated across 4 sites (ToolDescription, `call_tool` match, `parse_args` error prefix, `summarise.rs` dispatch) with no compile-time link — drift hazard. The privacy-guard test (`mcp/summarise.rs::privacy_guard_no_summariser_leaks_content_or_value_text`) maintains a separate hand-typed list of 15 names; adding a tool without a summariser silently falls through to bare tool name. Introduce `&'static str` constants (or a `ToolName` enum) and drive the privacy guard by iterating the registry rather than a frozen list. | S–M |
 | MAINT-137 | MAINT | Extract `#[cfg(test)]` mega-blocks to sibling `tests.rs` files. Production / test line counts: `mcp/server.rs` 3053 total / ~915 prod, `mcp/tools_ro.rs` 2138 / ~645, `mcp/tools_rw.rs` 1189 / ~449, `sync_files.rs` 2393 / ~720. Mechanical move; no production refactor required. Matches the already-established pattern in `sync_daemon/`, `sync_protocol/`, `sync_net/`. Immediately reduces scan time on the largest backend files. Do in one commit per file so CI cache invalidation stays bounded. | S–M |
-| MAINT-138 | MAINT | Extract GCal HTTP send helper. All 6 public methods on `GcalApi` (`gcal_push/api.rs:231-466`) — `create_dedicated_calendar`, `delete_calendar`, `insert_event`, `patch_event`, `delete_event`, `get_event` — repeat the same skeleton (`bucket.lock().await.take()` → URL `format!` → `.bearer_auth(token.access.expose_secret())` → `.send()` → `reqwest_to_gcal_err` → status branch → `classify_error`). Introduce `async fn send<B, T>(&self, method, path, token, body, path_kind: PathKind) -> Result<Option<T>, AppError>`; each public method becomes ~5 lines. | S |
 | MAINT-139 | MAINT | Collapse the `GcalClient` trait + `GcalApiAdapter` in `gcal_push/connector.rs:97-212`. The ~115 lines of forwarders exist only so `MockGcalClient` can be substituted in tests, but `GcalApi` already supports a configurable base URL (used by `wiremock` in existing tests), and the parallel API has already drifted (`patch_event` returns `EventResponse` in `api.rs` but `()` through the adapter). Either (a) retire the trait+adapter and test `GcalApi` directly against `wiremock`, or (b) make `GcalApi` itself `impl GcalClient`. Also eliminates the 40-line `ClientAdapter` nested trait impl inside `run_task_loop` (`connector.rs:957-996`) that only exists to paper over generics vs trait object. | M |
 | MAINT-140 | MAINT | Type `CycleOutcome::HardFailure`. Currently `HardFailure(String)` at `gcal_push/connector.rs:442-454, 524-597` discards structured `GcalErrorKind` variants into formatted strings at every call site (`"unauthorized (reauth required)"`, `"rate_limited: retry after {…}ms"`, `"server_error: HTTP {status}"`, `"invalid_request: {msg}"`). Task loop only uses it for logging. Replace with `HardFailure(GcalErrorKind)` (or a narrower `HardFailureReason` enum); keep a `Display` impl for log lines. Also unifies `classify_date_err` + `classify_cycle_failure` which duplicate per-variant arms. | S |
 | MAINT-141 | MAINT | `tag_inheritance.rs` (1324L) embeds **11** `WITH RECURSIVE` blocks and **14** literal `depth < 100` bounds, bypassing the `block_descendants.rs` macro infrastructure. Add `subtree_cte_*!()` macros covering the tag-inheritance walks; replace literal `100` with a named `MAX_TAG_INHERITANCE_DEPTH` constant (or reuse a crate-wide one). Precondition for MAINT-132's broader consolidation. | M |
 | MAINT-142 | MAINT | Split `tag_inheritance.rs` (1324L) into `tag_inheritance/mod.rs` (dispatcher) + `incremental.rs` + `rebuild.rs` + `tests.rs` — matches the pattern used by sibling modules. The file documents `apply_op_tag_inheritance` as "the" single entry point but 7 other `pub async fn` are also callable; demote helpers to `pub(crate)` as part of the split. Deliver after MAINT-141 so the macros move first. | M |
-| MAINT-145 | MAINT | Clarify sync orchestrator boundaries + delete dead protocol-layer arms. `sync_daemon/orchestrator.rs` owns peer discovery, scheduling, per-peer locking, snapshot+file transfer orchestration; `sync_protocol/orchestrator.rs` owns the HeadExchange→OpBatch→Merge→Complete state machine. Add module-level doc comments stating each layer's responsibility explicitly, and delete the file-transfer message arms at `sync_protocol/orchestrator.rs:460-467` that are never reached (file transfer is handled entirely by `sync_files.rs` after `SyncComplete`). Also a good place to document `SyncOrchestrator` invariants (when `remote_device_id` is populated, how `received_ops` accumulates, meaning of `is_terminal`). | S |
-| MAINT-146 | MAINT | LOW cleanup batch — core / op log. (a) `OpPayload::normalize_block_ids()` at `op.rs:329-333` is an empty method whose name misleads — rename `_assert_normalized()` or remove. (b) `serialize_variant!` macro wraps a single 12-arm match at `op_log.rs:46-59` — inline. (c) `dag::find_lca` at `dag.rs:220-346` duplicates two chain-walk loops with the same error message in 4 places — extract `walk_edit_chain(pool, start, max_steps, has_snapshots)`. (d) `insert_remote_op` doesn't verify canonical `parent_seqs` ordering (documentation-only; hash re-verify is self-consistent under current design). (e) Hardcoded `20` import-depth limit at `import.rs:119-126, 198-202` — introduce `const MAX_IMPORT_DEPTH: usize = 20;`. (f) `op_log.rs:128` builds JSON with `format!(r#"[["{}",{}]]"#, …)` — use `serde_json::to_string(&vec![(device_id, prev_seq)])?`. (g) `db.rs` `init_pool` / `init_pools` split would benefit from a short "when to use which" doc comment. | S |
 | MAINT-147 | MAINT | LOW cleanup batch — commands. (a) `purge_block_inner` at `commands/blocks/crud.rs:716-937` is ~221L with ~15 near-identical `DELETE`/`UPDATE` blocks; introduce a `purge_descendants_table!()` macro for the uniform DELETE-by-IN case (~10 of 15 blocks). (b) `prev_edit` lookup duplicated between `crud.rs:398-409` and `drafts.rs:84-95` — extract `find_prev_edit_in_tx`. (c) ~99 `#[tauri::command]` wrappers repeat `State` + `.map_err(sanitize_internal_error)`; add a pre-commit check (not a macro — macros obstruct specta). (d) Two `dispatch_background_for_*` helpers in `commands/spaces.rs` differ only by an error-message string — unify. (e) `set_todo_state_inner` / `set_priority_inner` (`commands/properties.rs:92-104, 253-265`) duplicate the "fetch def → fallback to defaults" validation with different default arrays — extract helper. (f) Unused `_space_id: &str` parameter in `spaces::dispatch_background_for_page_create:246`. (g) Mixed `sanitize_internal_error` vs `super::sanitize_internal_error` import paths in `properties.rs` — normalize. (h) `bug_report.rs` comments reference hardcoded "2 MB" / "7 days" / "8 KB" alongside the named constants — reference the constants by name. (i) `redact_line` growing param list at `bug_report.rs:255-306` — bundle into `RedactionContext` struct. (j) `DEFAULT_RETENTION_DAYS.cast_signed()` in `commands/compaction.rs:70, 129` with no safety comment — add a one-liner or wrap in a helper. (k) Missing doc comments on command wrappers at `link_metadata.rs:60/71`, `gcal.rs:309/320/330/350/360`, `bug_report.rs:178/479`, `sync_cmds.rs:345`. | S–M |
 | MAINT-148 | MAINT | LOW cleanup batch — materializer / cache / pagination / backlink. (a) 10 identical `match read_pool { Some(rp) => ..._split(...), None => ...(...) }` arms in `materializer/handlers.rs::handle_background_task:754-820` — extract split-or-single dispatch helper. (b) Every cache module (`cache/tags.rs`, `pages.rs`, `agenda.rs`, `block_links.rs`, …) repeats "start timer → log 'rebuilding X' → log 'rebuilt X' + duration" boilerplate — provide `rebuild_with_timing(name, closure)` in `cache/mod.rs`. (c) `Cursor { id, position: None, deleted_at: None, seq: None, rank: None }` pattern duplicated across 10 files in `pagination/` — add `cursor_for_id`, `cursor_for_id_and_position`, etc. helpers. (d) `sort_by_property_text`/`_num`/`_date` in `backlink/sort.rs` + their fetch helpers share identical shape — extract a generic parameterized by fetch+comparator. (e) ULID reference regexes (`TAG_REF_RE`, `PAGE_LINK_RE`, `ULID_LINK_RE`) defined in both `fts/strip.rs` and `cache/mod.rs` — canonicalize one definition. (f) Fg/bg retry loops in `materializer/consumer.rs` have different shapes — shared `retry_with_backoff` helper would reduce divergence risk. (g) Unused `_metrics: &QueueMetrics` parameter on `handle_foreground_task:22-26`. (h) Doc-comment passes on ordering invariants (`FULL_CACHE_REBUILD_TASKS` dependencies, retry-schedule rationale, two-tier fg/bg retry semantics, consumer's `INITIAL_BACKOFF_MS` pointing at `retry_queue.rs`'s persistent schedule). | M |
 | MAINT-149 | MAINT | LOW cleanup batch — sync stack. (a) Binary frame chunking duplicated between `sync_daemon/snapshot_transfer.rs:295-304, 463-497` and `sync_files.rs:385-392, 573-592` — extract `send_binary_chunked` / `receive_binary_chunked` in `sync_net/connection.rs`. (b) Sync-wide constants duplicated (120s handshake timeout in `sync_daemon/server.rs:235` + `sync_daemon/orchestrator.rs:649`; 5 MB chunk size in `snapshot_transfer.rs` + `sync_files.rs:35`; others) — consolidate in one `sync_constants.rs` with rationale comments. (c) `SyncOrchestrator` invariants (when `remote_device_id` is populated, how `received_ops` accumulates) undocumented. (d) `SyncMessage` enum in `sync_protocol/types.rs` has no documentation of valid message sequences (HeadExchange → OpBatch → SyncComplete → snapshot/file-transfer). (e) `#[allow(unused_imports)]` / `#[allow(dead_code)]` in `sync_daemon/mod.rs:51-54, 86` are defensible but deserve one-line justifications. (f) `pairing.rs` / `sync_cert.rs` relationship split across three files with no module-level narrative of their role in the pairing flow. (g) `peer_refs::update_on_sync` accepts empty-string `last_sent_hash` sentinel (used by snapshot catch-up) that is undocumented — use `Option<&str>` or comment. (h) File-transfer phase in `sync_files.rs` emits no progress/completion events unlike other sync phases — thread the existing `event_sink` in. | M |
@@ -80,7 +75,6 @@ Previously resolved: 555+ items across 161 sessions.
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S |
 | TEST-42 | TEST | `property_cmd_tests.rs` — happy-path tests for `set_property_inner` + sibling property commands skip op-log verification; only a handful of tests (e.g. `set_todo_state_writes_op_log_entry`) check op_log | M |
-| TEST-45 | TEST | GCal OAuth — no test for the stored-token-has-empty-refresh path; `RefreshToken::new` is called unconditionally on the stored secret | S |
 | TEST-52 | TEST | `useBlockKeyboard` popup-yield for Enter / Escape / Backspace is not unit-tested (pitfall #14 gap; only arrows covered at `use-block-keyboard.test.ts:626-681`) | S |
 | TEST-53 | TEST | `useJournalAutoCreate.test.ts:177-192` "cleans up keyboard listener on unmount" tautological on two axes (pageMap guard + post-mount `opts.handleAddBlock` reassignment that the closure never observes) | S |
 | TEST-54 | TEST | `useSyncTrigger.test.ts:116-128` asserts `expect(toast).not.toHaveBeenCalled()` on a bare `toast(...)` that production code never invokes; sub-mocks (`.success/.error/.info`) are untested | S |
@@ -682,36 +676,6 @@ Part of the FEAT-5 family. **Not scheduled.** Blocked on explicit design-review 
 
 ## MAINT — Maintenance / cleanup
 
-### MAINT-110 — `pairing.rs` carries ~250 LOC of dead ChaCha20-Poly1305 + HKDF machinery
-
-**What:** `src-tauri/src/pairing.rs` exports `derive_session_key` (HKDF-SHA256), `encrypt_message` / `decrypt_message` (ChaCha20-Poly1305), and a `PairingSession { session_key: [u8; 32], ... }` field. `PairingSession::new` and `::from_passphrase` both populate `session_key` via `derive_session_key` (lines 237, 253).
-
-**Evidence that this is dead code in production:**
-
-```text
-$ grep -rn '\.session_key' src-tauri/src/ --include='*.rs' | grep -v tests
-src-tauri/src/pairing.rs:225:    pub session_key: [u8; 32],
-src-tauri/src/pairing.rs:237:        let session_key = derive_session_key(...)
-src-tauri/src/pairing.rs:240:            session_key,
-src-tauri/src/pairing.rs:253:        let session_key = derive_session_key(...)
-src-tauri/src/pairing.rs:256:            session_key,
-$ grep -rn 'hkdf\|chacha20poly1305\|ChaCha20' src-tauri/src/ --include='*.rs' | grep -v tests
-# -> only src-tauri/src/pairing.rs (imports + impls); no other module uses them
-```
-
-All `PairingSession.session_key` reads, all `encrypt_message` / `decrypt_message` invocations outside the `pub fn` definitions themselves live in `pairing.rs`'s own `#[cfg(test)]` module. The actual wire exchange is `PairingMessage::DeviceOffer { device_id, cert_hash, passphrase }` and `::DeviceAccept { ... }` — both plain serde-JSON enums sent over the already-mTLS'd, cert-pinned WebSocket in `sync_net/connection.rs`. Confidentiality + authenticity for the pairing handshake come from rustls (TOFU cert pinning, `PinningCertVerifier`), not from the derived session key.
-
-**Fix:**
-
-1. Remove `PairingSession.session_key` field + its computation in both constructors.
-2. Remove `derive_session_key` / `encrypt_message` / `decrypt_message` + their tests.
-3. Drop `chacha20poly1305` and `hkdf` from `src-tauri/Cargo.toml` (and from the `cargo-machete` `ignored` list). Re-check whether `sha2` / `rand` are still used elsewhere before dropping them.
-4. Update `Cargo.toml` the module-level doc comment at `pairing.rs:4` that still advertises HKDF-SHA256 + ChaCha20-Poly1305 as part of the scheme.
-
-**Cost:** S (<2h) — code removal + Cargo.toml pruning + test module cleanup. No behaviour change, no migration.
-**Risk:** Low — no production code path invokes the removed functions. Must be committed with an explicit "this was dead code since the plaintext-over-mTLS pairing design shipped" note so a future reader does not misread the diff as "ripped out crypto".
-**Impact:** M — ~250 LOC gone, two pure-Rust AEAD/KDF crates off the supply-chain surface, and a misleading doc comment that implied the pairing protocol was crypto-authenticated on the wire goes away (it never was — mTLS + passphrase compare is the actual story).
-
 ### MAINT-111 — MCP server hand-rolls JSON-RPC 2.0 framing; evaluate `rmcp` (official Rust MCP SDK)
 
 **What:** `src-tauri/src/mcp/server.rs` (~492 LOC) implements line-delimited JSON-RPC 2.0 over the Unix-domain socket / Windows named pipe by hand:
@@ -1268,20 +1232,6 @@ On any snapshot round-trip (user-triggered restore, peer snapshot catch-up durin
 **Risk:** Low–Medium — additive struct field; `SCHEMA_VERSION` bump rejects older-format snapshots unless the decoder tolerates missing fields (verify).
 **Impact:** H — restores conflict metadata fidelity across snapshot boundaries; prevents a silent integrity regression on every sync-reset / peer bootstrap.
 
-### MAINT-135 — Move MCP `parse_args<T>` + `to_tool_result<T>` into a shared module
-
-**What:** `parse_args<T: DeserializeOwned>(args: Value) -> Result<T, AppError>` is defined verbatim at both `mcp/tools_ro.rs:176` and `mcp/tools_rw.rs:111`. Every RO/RW handler also repeats `serde_json::to_value(resp).map_err(|e| ...)?`.
-
-**Fix:**
-
-1. Move `parse_args<T>` to `mcp/mod.rs` (or a new `mcp/handler_utils.rs`); both RO and RW tools import it.
-2. Add `fn to_tool_result<T: Serialize>(value: &T) -> Result<serde_json::Value, AppError>` with the same error prefix style used in the existing implementations.
-3. Convert each handler from its current 4-line ceremony to `let args: Args = parse_args(args)?; let resp = impl_fn(&pool, args).await?; to_tool_result(&resp)`.
-
-**Cost:** S — mostly mechanical text edits.
-**Risk:** Low — behaviour-preserving; each handler has a test.
-**Impact:** M — easier to add new handlers; one place to change arg-parsing error shape if MCP spec evolves.
-
 ### MAINT-136 — Centralize MCP tool names; drive privacy guard from the registry
 
 **What:** Each of ~15 MCP tool names is spelled out at 4 unrelated sites with no compile-time link:
@@ -1320,44 +1270,6 @@ The established repo pattern elsewhere (`sync_daemon/tests.rs`, `sync_protocol/t
 **Cost:** S–M — mechanical per file; biggest one is `mcp/server.rs`.
 **Risk:** Low — test-only move; any test-only helpers (`use super::*;`) are preserved by the pattern.
 **Impact:** M — immediately halves the "what does this file do" scan time on the four largest files.
-
-### MAINT-138 — Extract GCal HTTP send helper
-
-**What:** All 6 public methods on `GcalApi` share the same skeleton:
-
-```text
-self.bucket.lock().await.take().await;
-let url = format!(..., self.base_url, ...);
-let resp = self.client
-    .<method>(&url)
-    .bearer_auth(token.access.expose_secret())
-    ...
-    .send().await.map_err(reqwest_to_gcal_err)?;
-let status = resp.status();
-if status.is_success() { ...parse... }
-else { Err(classify_error(status, &resp_headers(&resp), /* on_event */ ...)?) }
-```
-
-Sites: `create_dedicated_calendar`, `delete_calendar`, `insert_event`, `patch_event`, `delete_event`, `get_event` in `gcal_push/api.rs:231-466`.
-
-**Fix:** Private
-
-```rust
-async fn send<B: Serialize, T: DeserializeOwned>(
-    &self,
-    method: reqwest::Method,
-    path: &str,
-    token: &OAuthToken,
-    body: Option<&B>,
-    path_kind: PathKind,   // CalendarPath | EventPath — see MAINT-151(a)
-) -> Result<Option<T>, AppError> { ... }
-```
-
-Each public method shrinks to ~5 lines. Pairs with MAINT-151(a), which replaces the `/*on_event*/ bool` convention with a `PathKind` enum that parameterizes this helper.
-
-**Cost:** S.
-**Risk:** Low — behaviour-preserving; `wiremock`-based tests cover each endpoint.
-**Impact:** M — six near-duplicate bodies collapse; adding a new endpoint is a couple of lines.
 
 ### MAINT-139 — Collapse `GcalClient` trait + `GcalApiAdapter`
 
@@ -1422,44 +1334,6 @@ Precondition for MAINT-132's broader consolidation story.
 **Cost:** M — straight-up file-level refactor; test module moves verbatim.
 **Risk:** Low — no logic change; the call graph (only `materializer/handlers.rs` imports this module) is small.
 **Impact:** M — readable seams for a critical subsystem; discourages new cross-helper coupling.
-
-### MAINT-145 — Clarify sync orchestrator boundaries + delete dead protocol-layer arms
-
-**What:** There are two orchestrators with fuzzy boundaries:
-
-- `sync_daemon/orchestrator.rs` (838 lines) — peer discovery, backoff, per-peer locking, mDNS event routing, snapshot catch-up orchestration, file-transfer orchestration.
-- `sync_protocol/orchestrator.rs` (513 lines) — HeadExchange → OpBatch → Merge → Complete state machine.
-
-The protocol orchestrator at `sync_protocol/orchestrator.rs:460-467` accepts file-transfer message variants (FileRequest / FileOffer / FileReceived / FileTransferComplete) and does nothing with them — file transfer is actually handled entirely by `sync_files.rs` after `SyncComplete`. Those arms are dead code that misleads readers.
-
-In addition, the `SyncOrchestrator` struct has multiple undocumented invariants: when `remote_device_id` becomes `Some`, when `pending_op_transfers` is populated, how `received_ops` accumulates across `OpBatch` messages, and the distinct semantics of the three terminal states (Complete / Failed / ResetRequired).
-
-**Fix:**
-
-1. Add module-level doc comments to both orchestrator files explicitly stating each layer's responsibilities.
-2. Delete the dead file-transfer match arms in `sync_protocol/orchestrator.rs:460-467` (or convert them to `debug_assert!(false, "file-transfer messages must not reach the protocol orchestrator")` if extra paranoia is warranted).
-3. Add a doc comment to `SyncOrchestrator` describing the state lifecycle and each invariant.
-4. Optional: consider moving `sync_daemon/snapshot_transfer.rs` under `sync_protocol/` since it is part of the core protocol (ResetRequired → SnapshotOffer/Accept/Reject) rather than a daemon concern — but only if a follow-up session wants to; this is not required for the documentation fix.
-
-**Cost:** S.
-**Risk:** Low — deleting unreachable match arms; documentation edits only.
-**Impact:** M — eliminates misleading code paths and makes future sync protocol changes safer.
-
-### MAINT-146 — LOW cleanup batch — core / op log
-
-Small, low-risk items. Each is independent; batch only for accounting.
-
-- **(a)** `OpPayload::normalize_block_ids()` at `op.rs:329-333` is an empty method with a doc comment duplicated in the body. Either rename `_assert_normalized()` (contract marker) or remove and rely on `BlockId` deserialization normalization.
-- **(b)** `serialize_variant!` macro at `op_log.rs:46-59` wraps a single 12-arm match that is called once. Inline it at the one call site.
-- **(c)** `dag::find_lca` at `dag.rs:220-346` duplicates two near-identical nested chain-walk loops (chain A then chain B) with the same error message in 4 places. Extract `walk_edit_chain(pool, start, max_steps, has_snapshots)`.
-- **(d)** `dag::insert_remote_op` at `dag.rs:71-95` does not verify canonical lexicographic ordering of `parent_seqs` (hash re-verification is self-consistent under the current scheme, so this is **docs-only**). Add a doc comment or a soft assertion in a future tightening.
-- **(e)** Hardcoded `20` import-depth limit at `import.rs:119-126, 198-202`. Introduce `const MAX_IMPORT_DEPTH: usize = 20;`.
-- **(f)** `op_log.rs:128` builds JSON with `format!(r#"[["{}",{}]]"#, device_id, prev_seq)` instead of `serde_json::to_string(&vec![(device_id, prev_seq)])?`. Premature optimization — Phase 1 has a single parent.
-- **(g)** `db.rs` `init_pool` / `init_pools` split has an unclear "when to use which" story; add a one-paragraph doc comment on `init_pool` clarifying test-only usage.
-
-**Cost:** S.
-**Risk:** Low across the board.
-**Impact:** S–M — each item is minor; the batch is mainly about paying down small drift hazards.
 
 ### MAINT-147 — LOW cleanup batch — commands
 
@@ -1717,16 +1591,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 **Cost:** M (2–4h — roughly 25–30 assertions across the file, plus re-running `cargo nextest run` to confirm).
 **Risk:** Low.
 **Impact:** M — same reasoning as TEST-41, but this file covers the larger surface (TODO state, priority, due date, scheduled date, custom properties, repeat rules, etc.).
-
-### TEST-45 — GCal OAuth: no test for stored empty / missing refresh token
-
-**What:** `src-tauri/src/gcal_push/oauth.rs:488-495` passes the stored refresh token straight into `RefreshToken::new()` without validating non-emptiness. Tests cover `invalid_grant` (revoked), transient network failures, and success, but never the path where the token store returns `SecretString::from("")`. Realistic failure modes: the initial OAuth flow didn't capture a refresh token (Google only returns one on first consent when `access_type=offline` + `prompt=consent`); token store corruption; test-fixture regression.
-
-**Fix:** Either (a) add validation at the read site (`oauth.rs`) that returns a clean `AppError::Auth` when refresh is empty, plus a test; or (b) accept the current behaviour and add a test that documents the panic / error path that occurs today.
-
-**Cost:** S (<1h).
-**Risk:** Low.
-**Impact:** M — silent failure mode in production; a user who somehow loses their refresh token gets an opaque error chain instead of a clear "sign in again" message.
 
 ---
 
