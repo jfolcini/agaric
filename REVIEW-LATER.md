@@ -17,11 +17,11 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-75 open items — 49 planned work (FEAT/MAINT/PERF/PUB) + 12 UX-1..UX-12 + 14 test-quality (1 backend TEST-42 + 13 frontend TEST-52..TEST-64).
+70 open items — 47 planned work (FEAT/MAINT/PERF/PUB) + 10 UX (UX-1, UX-2, UX-4, UX-5, UX-6, UX-8, UX-9, UX-10, UX-11, UX-12) + 13 frontend test-quality (TEST-52..TEST-64). One HIGH backend finding (H-14) closed this session.
 
-Previously resolved: 561+ items across 162 sessions.
+Previously resolved: 567+ items across 163 sessions.
 
-> **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. The remaining backend test-quality item (TEST-42) below it is from the same targeted review — see the block header for scope and methodology.**
+> **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; only frontend test-quality items remain.**
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -38,11 +38,9 @@ Previously resolved: 561+ items across 162 sessions.
 | MAINT-114 | MAINT | Audit `.github/workflows/` (4 files — `ci.yml`, `_validate.yml`, `release.yml`, `release-tag.yml`) for consolidation. Minimum wins likely 4 → 3 (fold `release-tag.yml` into `release.yml` as `workflow_dispatch`); full 4 → 2 (validate + release) probably not cleanly achievable without losing the per-push-vs-per-tag split. Spike first, commit only if the merged file is not worse than the pair. | S–M |
 | MAINT-115 | MAINT | Unified `reportIpcError(module, message, err, t)` utility — replace the `catch { toast.error(...) }` pattern (no `logger.error`) that shows up in ~14 components (`HistoryView`, `BlockPropertyEditor` ×4, `DateChipEditor`, `QueryResult`, `RescheduleDropZone`, `SearchPanel`, `ConflictList`, `DeviceManagement`, `TagList`, `TemplatesView`, `PropertyRowEditor`, `DependencyIndicator`) plus 40 silent `} catch {}` in 14 hook files plus 10 silent catches in `src/lib/` plus 3 silent `.catch(() => {})` in `App.tsx:935-939`. One-pass migration onto one helper. | M |
 | MAINT-116 | MAINT | `useBlockSlashCommands.applyContentEdit` at `src/hooks/useBlockSlashCommands.ts:131-145` bypasses `pageStore.edit()` and omits `notifyUndoNewAction`, so heading / callout / numbered-list / divider slash commands silently leave the redo stack uncleared. Fix as part of adding a `setBlockProperty` action to `src/stores/page-blocks.ts` — also collapses 8 per-hook `pageStore.setState(...)` + rollback + `useUndoStore.getState().onNewAction(rootParentId)` copies across `useBlockProperties`, `useBlockSlashCommands`, `useBlockDatePicker`, `useCheckboxSyntax`. | S+M |
-| MAINT-117 | MAINT | Split `src/editor/markdown-serializer.ts` (1206L) at L459 — zero call-graph crossing between serialize (L48-457) and parse (L459-1184) halves verified, plus a single parse-side helper at L1186-1205. Three files (`markdown-serialize.ts` / `markdown-parse.ts` / `markdown-common.ts`) + a 3-line barrel preserve every existing import path. Highest bang-per-effort in the tree. | S |
 | MAINT-118 | MAINT | Block-surface prop drilling — `BlockListRenderer` / `SortableBlockWrapper` / `SortableBlock` carry 33 / 32 / 32 props each with **14 verbatim-shared callbacks** (`onNavigate` … `onSelect`) + **4 verbatim-shared resolvers**. Deliver via `PageBlockContext`-style provider + 3 hooks (`useBlockActions`, `useBlockResolvers`, `useBlockState`). Kills the memoisation lost to callback identity churn and unblocks every "add a new block action" ticket. | M |
 | MAINT-119 | MAINT | Decompose `src/components/JournalPage.tsx` (728L) — extract `GlobalDateControls` / `JournalControls` to sibling files (currently inlined), extract `useCalendarPageDates()` hook that eliminates a **byte-identical** `listBlocks({blockType:'page',limit:500})` fetch at L356-369 ≡ L490-503 (runs twice on mount today), and extract `useJournalBlockCreation()` for the page-create + template-load + block-insert flow. Target ≤300 lines. | M |
 | MAINT-120 | MAINT | `useIpcCommand<T>(command, options?)` hook to collapse the status-load + optimistic-update + revert + `logger.error` + `toast.error` pattern repeated verbatim across `GoogleCalendarSettingsTab`, `AgentAccessSettingsTab`, `DeviceManagement`, `BugReportDialog`, `PairingDialog`. Returns `{ execute, loading, error }`. | M |
-| MAINT-121 | MAINT | Fill 4 Floating-UI safeguards in `src/components/BlockContextMenu.tsx` — currently missing `autoUpdate`, `isConnected` stale-unmount guard (L184-186), rAF-deferred outside-click registration (L141-150), and positional fallback on `computePosition` rejection (L187-194). These are the exact safeguards `src/editor/suggestion-renderer.ts` and `src/components/BlockPropertyEditor.tsx` carry per AGENTS.md §"Floating UI lifecycle logging" (B-77 / BUG-2 regressions). Same commit should add the matching `logger.debug/warn` lifecycle breadcrumbs to `src/editor/extensions/slash-command.ts:62-107` auto-execute timer which silently clears/reschedules today. | S |
 | MAINT-122 | MAINT | Extract `createSpaceSubscriber(onChange)` helper + `useTauriEventListener(eventName, handler)` hook — the per-space-switch subscriber is duplicated nearly verbatim across `src/stores/navigation.ts:509-549` (41L) ≡ `journal.ts:187-256` (70L) ≡ `recent-pages.ts:140-168` (29L) (same `let prevSpaceKey` + `newKey = state.currentSpaceId ?? LEGACY_SPACE_KEY` + first-fire-seeds-on-undefined pattern). Tauri `listen()` + cleanup boilerplate also duplicated across `useSyncEvents` (×3 `.then/.catch` chains), `useDeepLinkRouter.ts:141-156` (file-local helper), `useBlockPropertyEvents.ts:40-60` (4th shape). | M |
 | MAINT-123 | MAINT | Mock drift — `trash_descendant_counts` is invoked by `TrashView.tsx` via `src/lib/tauri.ts:133` but is missing from the `HANDLERS` map in `src/lib/tauri-mock/handlers.ts`. Also type `HANDLERS: Record<string, Handler>` against `bindings.ts` command names so the compiler catches this drift (today it is only diff-able by hand). Unlocks compile-time mock-drift detection for future commands. | S |
 | MAINT-124 | MAINT | Collapse `src/App.tsx` (1436L) — 20+ effects for independent concerns, keyboard shortcut logic scattered across 5 separate effects (journal / global / space / tab / close-overlays), sidebar tree inlined at L1159-1394 (236L). Extract `useAppKeyboardShortcuts()` (5 effects → 1), `useAppDialogs()`, `<ViewDispatcher>`, `<AppShell>` (sidebar header / menu / footer + main content). Same commit fixes the silent `.catch(() => {})` triplet at `App.tsx:935-939` (`w.unminimize`, `w.show`, `w.setFocus` — outer `try/catch` does not trap because each `.catch` resolves the rejected promise to `undefined`) and standardizes 4 different async styles used in the file. Target ≤500 lines. | L |
@@ -74,7 +72,6 @@ Previously resolved: 561+ items across 162 sessions.
 | PUB-3 | PUB | Employer IP clearance before public release | S |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S |
-| TEST-42 | TEST | `property_cmd_tests.rs` — happy-path tests for `set_property_inner` + sibling property commands skip op-log verification; only a handful of tests (e.g. `set_todo_state_writes_op_log_entry`) check op_log | M |
 | TEST-52 | TEST | `useBlockKeyboard` popup-yield for Enter / Escape / Backspace is not unit-tested (pitfall #14 gap; only arrows covered at `use-block-keyboard.test.ts:626-681`) | S |
 | TEST-53 | TEST | `useJournalAutoCreate.test.ts:177-192` "cleans up keyboard listener on unmount" tautological on two axes (pageMap guard + post-mount `opts.handleAddBlock` reassignment that the closure never observes) | S |
 | TEST-54 | TEST | `useSyncTrigger.test.ts:116-128` asserts `expect(toast).not.toHaveBeenCalled()` on a bare `toast(...)` that production code never invokes; sub-mocks (`.success/.error/.info`) are untested | S |
@@ -90,11 +87,9 @@ Previously resolved: 561+ items across 162 sessions.
 | TEST-64 | TEST | Weak-assertion / vacuous-test / brittle-style cluster — `property-picker.test.ts:288-299` vacuous cancellation test; `useUndoShortcuts.test.ts:442,470,601,725` `setTimeout(10)×4`; `agenda-sort.test.ts:154-164` midnight race; `ImageResizeToolbar.test.tsx:41,48` `fireEvent.click`; `PairingDialog.test.tsx:644-646` focus count; `sonner.test.tsx:20-24` `container.toBeTruthy()`; `attachment-utils.test.ts:20-25` URL format; `tauri-mock.test.ts:51-63` daily-page symmetry; axe `{timeout:5000}` for `BlockInlineControls.test.tsx:519-525` + `BlockPropertyDrawer.test.tsx:219-232` + `Calendar.test.tsx:125-139` | S |
 | UX-1 | UX | Focus-visible ring missing on hand-rolled `<button>` elements that bypass the `Button` primitive (PageTreeItem leaf + namespace + hybrid toggles, PageTagSection list + create buttons, SearchPanel Clear-all, PropertyChip key + value, AddPropertyPopover list items) | S |
 | UX-2 | UX | Touch targets below 44 px on coarse pointers (PageAliasSection X, PageTagSection X, MonthlyDayCell date circle, QueryResultTable content cell) + visual icon-in-big-box mismatch on `ui/close-button.tsx` and `ui/filter-pill.tsx` | S |
-| UX-3 | UX | Empty states rendered as plain `<p>` instead of the `EmptyState` primitive (PageTagSection, PageOutline, DiffDisplay, DaySection compact mode); UnfinishedTasks loading state is `sr-only` so sighted users see a blank section during load | S |
 | UX-4 | UX | Silent error swallowing / missing user feedback — DependencyIndicator two bare `catch {}`, ImageResizeToolbar width revert without toast, AgendaResults inline due-date save with no confirmation, DeadlineWarningSection silent clamping, GoogleCalendarSettingsTab silent clamping | S |
 | UX-5 | UX | Ambiguous or hidden state on important controls — ConflictListItem `originalMissing` banner + disabled-reason hidden inside collapsed panel, ambiguous "Keep" button copy, BlockInlineControls repeat `<button>` with no onClick, AttachmentRenderer interactive `<div>` with no role/aria-label, QueryResultTable `<th>` column-sort is keyboard-inaccessible | S–M |
 | UX-6 | UX | Colour-only signals + high-contrast gaps — AgendaResults overdue chip relies on colour alone, SpaceManageDialog accent swatches have no checkmark indicator, `index.css prefers-contrast: more` block boosts only `--accent-*` (not `--status-*` / `--priority-*` / `--indicator-*`), AddPropertyPopover type hint at `text-[10px] opacity-70` | S |
-| UX-7 | UX | i18n string leaks — `src/lib/repeat-utils.ts` returns hardcoded English `'daily' / 'weekly' / 'every N days' / 'day' / 'days' / 'week' / 'weeks' / 'month' / 'months'`; PairingEntryForm ordinals `['1st','2nd','3rd','4th']` hardcoded | S |
 | UX-8 | UX | ARIA semantics mismatches — QueryResultTable has `role="grid"` without row/cell roles, KeyboardSettingsTab "Empty binding" error not wired via aria-describedby/aria-invalid, QueryBuilderModal warning uses `role="status"` not `aria-live="polite"` and datalist input missing `aria-autocomplete="list"`, BatchActionToolbar hint span not wired via `aria-describedby` | S |
 | UX-9 | UX | Keyboard / discoverability — SearchablePopover list has no roving tabindex or Up/Down navigation (repo already has `useListKeyboardNavigation`), `Ctrl+1..9` space-switch shortcuts invisible outside `?` dialog, `useWeekStart` preference has no Settings UI exposing it (feature is half-shipped), AgendaFilterBuilder dimension picker shows raw names without descriptions | S–M |
 | UX-10 | UX | DuePanel projected (future-recurrence) entries indistinguishable from real tasks — only a dashed border and muted colour; no "Projected" pill per entry; long content is `truncate`d without a `title=` tooltip | S |
@@ -815,30 +810,6 @@ The page-blocks store action list at `src/stores/page-blocks.ts:50-81` declares 
 **Risk:** Low-to-medium — undo semantics change for heading/callout/numbered-list/divider commands. Test with `useUndoShortcuts` + `onNewAction` mocks to confirm redo stack is cleared after each.
 **Impact:** M — closes a real correctness regression (silent) AND removes ~8 duplicated patterns.
 
-### MAINT-117 — Split `src/editor/markdown-serializer.ts` at L459
-
-**What:** `src/editor/markdown-serializer.ts` is **1206 lines** with verified zero call-graph crossing between the serialize half (L48-457) and the parse half (L459-1184 + a single parse-side helper at L1186-1205):
-
-- Serialize-side functions (`notifyUnknownNodeType`, `escapeText`, `emitMarkTransition`, `emitCloseAll`, `getLinkHref`, `stripLinkMark`, `groupByLink`, `escapeUrl`) appear only in L63-453.
-- Parse-side functions (`parseLine`, `parseBlockquote`, `parseHeading`, `parseCodeBlock`, `parseTable`, `parseHorizontalRule`, `parseOrderedList`, `parseParagraph`, `createInlineState`, scan*, `nodeToPlainText`) appear only in L660-1205.
-- No function in either half calls any function in the other half.
-
-**Fix:**
-
-```
-src/editor/markdown/
-├── index.ts          # 3-line barrel: re-export from serialize.ts + parse.ts
-├── common.ts         # shared constants, types (L1-47)
-├── serialize.ts      # L48-457
-└── parse.ts          # L459-1184 + L1186-1205 helper
-```
-
-Then `src/editor/markdown-serializer.ts` becomes a one-line re-export from `./markdown/` for back-compat, or is deleted with all importers updated in the same commit.
-
-**Cost:** S (≤2h).
-**Risk:** Low — pure move; test suite exists for both halves.
-**Impact:** S — the single biggest file in the editor tree goes from one 1200-line monolith to three focused files.
-
 ### MAINT-118 — Block-surface prop drilling (33 / 32 / 32 props across 3 layers)
 
 **What:** `src/components/BlockListRenderer.tsx` / `SortableBlockWrapper.tsx` / `SortableBlock.tsx` each declare interfaces with **exactly 14 verbatim-shared callbacks** (`onNavigate` / `onSelect` / `onFocus` / `onBlur` / `onContentChange` / `onEnter` / `onBackspace` / `onTab` / `onShiftTab` / `onArrowUp` / `onArrowDown` / `onSplitBlock` / `onMergeBlock` / `onDelete`) and **4 verbatim-shared resolve functions** (`resolveBlock` / `resolveAttachment` / `resolveTagName` / `resolveLinkTarget`). Prop counts are 33 / 32 / 32. All 14 callbacks are threaded through all three layers unchanged. Every `BlockTree.tsx:821-855` render drills each prop individually to `<BlockListRenderer …>`.
@@ -917,25 +888,6 @@ Migrate the 5 components to consume it. Pairs naturally with MAINT-115 (`reportI
 **Cost:** M (hook ~50 LOC; migration per-file).
 **Risk:** Low.
 **Impact:** M — removes the single biggest source of component-level boilerplate in the settings area.
-
-### MAINT-121 — `BlockContextMenu` Floating-UI safeguards + slash-command lifecycle logging
-
-**What:** `src/components/BlockContextMenu.tsx` creates a floating DOM element outside the React tree and manages capture-phase outside-click listeners, but skips **three of the four** AGENTS.md §"Floating UI lifecycle logging" safeguards that the reference implementation `src/editor/suggestion-renderer.ts` and the sibling `src/components/BlockPropertyEditor.tsx` carry:
-
-1. **No `autoUpdate` on scroll/resize.** Bare `computePosition(...)` inside `useEffect([position])` at L172-195 — BlockPropertyEditor uses `return autoUpdate(anchor, popup, update)` at L107.
-2. **No `isConnected` stale-unmount guard.** `setComputedPos` at L184-186 resolves without checking that anchor + popup are still in the DOM — BlockPropertyEditor explicitly guards at L77-85.
-3. **No rAF-deferred outside-click registration.** Raw `document.addEventListener('pointerdown', …, true)` at L141-150 — suggestion-renderer defers via `requestAnimationFrame` at L208-214.
-4. **Positional fallback is a no-op.** `.catch` at L187-194 logs warn then leaves the menu at the raw click coords (no viewport clamp, no alternative placement).
-
-These are the exact safeguards added in response to B-77 / BUG-2 regressions; the floating block context menu carries them as latent risk.
-
-Separately, `src/editor/extensions/slash-command.ts:62-107` auto-execute timer lifecycle also bypasses the same logging pattern — `onStart` (L67-75) / `onUpdate` (L77-90) / `onKeyDown` (L91-98) / `onExit` (L99-104) all silently clear or re-schedule `autoExecTimer` without `logger.debug/warn` breadcrumbs.
-
-**Fix:** Mirror suggestion-renderer.ts's structure in both files. Same commit.
-
-**Cost:** S (≤2h).
-**Risk:** Low.
-**Impact:** M — closes a concrete regression class (B-77 / BUG-2) latent in the most-used context menu in the app.
 
 ### MAINT-122 — `createSpaceSubscriber()` helper + `useTauriEventListener()` hook
 
@@ -1574,26 +1526,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ---
 
-## TEST — Backend test-suite gaps — Appended 2026-04-26
-
-> Output of a two-pass review of all ~2100 Rust backend tests (58 test files: 19 dedicated `*/tests.rs`, 15 under `src/commands/tests/`, 11 under `src/command_integration_tests/`, `integration_tests.rs`, `sync_integration_tests.rs`, and ~87 inline `#[cfg(test)] mod tests` blocks across production modules including MCP and GCal).
->
-> Pass 1: 7 parallel domain reviewers produced 78 candidate findings. Pass 2: one verification subagent + manual verification (three verifier subagents died on connection errors) re-checked every candidate against the actual source. 40 confirmed, 23 exaggerated / downgraded, 9 outright FALSE (tests already exist elsewhere, code behaves differently than claimed, etc.). The items below bundle the remaining open findings; grouped where the fix is one batch of mechanically similar edits, kept separate where the risk profile differs.
->
-> Scope note: this is about **test quality** (what would the tests fail to catch if production code regressed), not production code. Production-code findings from the 2026-04-25 review are in the separate block below.
-
-### TEST-42 — `property_cmd_tests.rs` op-log verification is inconsistent
-
-**What:** `src-tauri/src/commands/tests/property_cmd_tests.rs` (4 033 lines) has a few explicit op-log checks (e.g. `set_todo_state_writes_op_log_entry` at line 1761) but the canonical happy-path tests — `set_property_creates_property` (line 11), `delete_property_*`, `set_priority_*`, `set_scheduled_date_*`, `set_completed_at_*` — check only the materialised `block_properties` / blocks columns. Same failure mode as TEST-41 but wider: a drop-the-op-log-append regression in property commands would pass almost every test in this file.
-
-**Fix:** Systematic pass: for each property-mutating `*_inner` function, add one op-log-count assertion to its canonical happy-path test. Not every test needs it — one per mutator is enough to catch the regression.
-
-**Cost:** M (2–4h — roughly 25–30 assertions across the file, plus re-running `cargo nextest run` to confirm).
-**Risk:** Low.
-**Impact:** M — same reasoning as TEST-41, but this file covers the larger surface (TODO state, priority, due date, scheduled date, custom properties, repeat rules, etc.).
-
----
-
 ## TEST — Frontend test-suite quality — Appended 2026-04-26
 
 > Output of a two-pass review of all 317 frontend Vitest files across `src/` (136 component tests, 28 UI-primitive tests, 9 journal subtree tests, 1 block-tree test, 20 editor tests, 53 hook tests, 46 lib/util tests, 11 store tests, 5 root / smoke tests, plus shared fixtures and test-setup).
@@ -1845,23 +1777,6 @@ Separately, two primitives already hit 44 px but the *visible* icon is a tiny `s
 **Risk:** Low.
 **Impact:** M — AGENTS.md "Mandatory patterns" requires 44 px on touch; these sites currently fail it on mobile.
 
-### UX-3 — Empty states rendered as plain `<p>` instead of the `EmptyState` primitive
-
-**What:** AGENTS.md mandates "`EmptyState` component for all empty list/panel states. Never `return null` or show raw text for empty states." Four sites still use bare `<p>`:
-
-- `src/components/PageTagSection.tsx:100-104` — "No more tags".
-- `src/components/PageOutline.tsx:82-84` — "No headings".
-- `src/components/DiffDisplay.tsx:92-94` — diff "No changes" as muted italic (visually indistinguishable from loading / uninitialised).
-- `src/components/journal/DaySection.tsx:190-217` — compact-mode empty uses a bare dashed button, full-mode uses `EmptyState` — two different patterns for the same state.
-
-Separately, `src/components/journal/UnfinishedTasks.tsx:264` returns `<div aria-busy="true" role="status" className="sr-only" />` while loading. Sighted users see a completely blank section during the load, indistinguishable from "no tasks" — this is medium severity because it masquerades as empty.
-
-**Fix:** Replace the four `<p>` sites with `<EmptyState message={...} compact />` (DiffDisplay can use `icon={CheckCircle}` to convey that no-changes is a positive outcome). For `DaySection`, extract the dashed-button into a shared compact variant of `EmptyState`, or render the same `EmptyState` in both branches. For `UnfinishedTasks`, replace the `sr-only` div with `<LoadingSkeleton count={3} />` (see `DonePanel.tsx:202-209` for the reference pattern).
-
-**Cost:** S (<1h).
-**Risk:** Low.
-**Impact:** M for `UnfinishedTasks` (loading state is currently invisible); L for the other four (visual consistency).
-
 ### UX-4 — Silent error swallowing / missing user feedback
 
 **What:** AGENTS.md forbids "Silent `.catch(() => {})` blocks — always use `logger.warn` or `logger.error`. Silent error swallowing masks real bugs." Five sites swallow or under-communicate errors / value changes:
@@ -1918,35 +1833,6 @@ UX-4 was filed against 5 specific UX-visible sites. A later whole-frontend sweep
 **Cost:** S (<1h).
 **Risk:** Low.
 **Impact:** M for the colour-only overdue chip (a real WCAG 1.4.1 concern); L for the others.
-
-### UX-7 — i18n string leaks
-
-**What:** Two user-facing strings bypass the `t()` pipeline and ship in English regardless of the user's locale:
-
-- `src/lib/repeat-utils.ts:1-35` — `formatRepeatLabel` returns literal `'daily'`, `'weekly'`, `'monthly'`, `'yearly'`, `'every ${n} day|days'`, `'every ${n} week|weeks'`, etc. These strings are rendered directly in the BlockInlineControls repeat chip and agenda-row chips.
-- `src/components/PairingEntryForm.tsx:171-200` — ordinal labels computed as `const ordinal = ['1st', '2nd', '3rd', '4th'][i] as string` and passed into `t('pairing.entryFormWord', { ordinal })`. Non-English users see "1st palabra" / "1st mot".
-
-**Fix:** `repeat-utils.ts` is a pure util — either pass `t` in as a parameter (cheapest: `export function formatRepeatLabel(value: string, t: TFunction): string`) or move the formatting into a tiny React component that can `useTranslation()`. PairingEntryForm: introduce `pairing.ordinal1st` / `..2nd` / `..3rd` / `..4th` i18n keys; consider `Intl.PluralRules` (`.select(n)` → `'one' | 'two' | 'few' | 'other'`) for languages with more than four ordinal forms, but the four-key approach is adequate for the current pairing UX (always exactly four slots).
-
-**Cost:** S (<1h).
-**Risk:** Low.
-**Impact:** M — two of the app's most visible labels (repeat chips on every repeating task; pairing ordinal labels on the second-device bootstrap screen) currently leak English.
-
-**Broader i18n-leak inventory (from frontend maintainability review):**
-
-UX-7 was filed against 2 specific sites. A whole-frontend sweep found more leaks in the editor area and in data-layer modules. All render to the user in English regardless of `lng`.
-
-- **Editor — 14 user-visible English strings across 8 files:** `src/editor/use-roving-editor.ts:234-236` placeholder (`'Type / for commands, @ for tags, [[ for links...'`), `:360` `aria-label: 'Block editor'`; `src/editor/extensions/block-link.ts:100` `'Broken link — click to remove'`; `src/editor/extensions/block-ref.ts:100` `'Broken ref — target block deleted'`; `src/editor/suggestion-renderer.ts:158` + `src/editor/SuggestionList.tsx:180` `'Suggestions'` aria-label fallback; 5 `createSuggestionRenderer('Tags' / 'Block links' / 'Block references' / 'Slash commands' / 'Properties', …)` picker titles in `at-tag-picker.ts:144`, `block-link-picker.ts:227`, `block-ref-picker.ts:54`, `slash-command.ts:63`, `property-picker.ts:62`. The ULID-preview resolver fallbacks in `tag-ref.ts:47` / `block-link.ts:42` / `block-ref.ts:42` (`#${id.slice(0,8)}...`) are dev-broken-state signals and can stay English with a comment.
-- **`src/lib/slash-commands.ts` — 64 `label:` values** rendered verbatim by `src/editor/SuggestionList.tsx:120 / 128 / 139`. Contrast `src/lib/toolbar-config.ts` which correctly uses `t()`-keyed labels.
-- **Agenda group labels — 3 coverage gaps in `GROUP_I18N`:** `src/lib/agenda-sort.ts:133` `'No priority'`, `:192 / :222` `'No state'`, and `formatGroupDate` output (`"Mon, Jan 15"`) at `:405-419` are used as `group.label` but are NOT in `AgendaResults.tsx:287-293` `GROUP_I18N` — `t(GROUP_I18N[group.label])` misses and raw English renders at `:318`. The other 5 keys (`Overdue` / `Today` / `Tomorrow` / `No date` / `No page`) ARE translated. Either add the missing keys OR refactor to a symbolic sum type (`AgendaGroupKey`) and translate at the UI layer.
-- **`src/components/AttachmentList.tsx:32-46`** — `relativeTime` hardcodes `'just now'` / `'{minutes}m ago'` / `'{hours}h ago'` / `'{days}d ago'`. Duplicates `src/lib/format-relative-time.ts`; `t` is already in scope (line 60 already calls `useTranslation()`).
-- **`src/components/BlockDndOverlay.tsx:32`** — `{`Moving to depth ${projected.depth}`}` inside `aria-live="polite"` region. Screen readers announce English during drag.
-- **`src/components/QueryResult.tsx`** — column labels `'Status'` / `'Priority'` / `'Due Date'` / `'Scheduled'` at `:36-44`; L173 `${n} result${n !== 1 ? 's' : ''}` bypasses i18n plural rules.
-- **`src/components/ConflictList.tsx:687`** — `<span>Content:</span>` inside discard dialog.
-- **`src/components/CompactionCard.tsx:81 / :87 / :95`** — `t('compaction.totalOps', {count}).split(':')[0]:` post-processes i18n output. Split the key into label / value.
-- **`src/lib/agenda-filters.ts:28-63`** + **`src/lib/filter-dimension-metadata.ts:44-75`** — `toFutureDatePreset` / `toPastDatePreset` switch on English strings (`'Today'`, `'This week'`, `'Next 7 days'`, …) that are also declared verbatim as `choices: []` in the metadata. Coupling filter logic to UI labels.
-
-**Extended fix:** Same pattern for each — pass `t` into pure utils where cheap, lift English literals into i18n keys, split the two `label:value` keys in `CompactionCard`, and refactor `agenda-filters.ts` to key off stable symbols (e.g. enums / discriminated unions) not English labels.
 
 ### UX-8 — ARIA semantics mismatches
 
@@ -2189,17 +2075,6 @@ UX-7 was filed against 2 specific sites. A whole-frontend sweep found more leaks
 - **Impact:** High (this is invariant #1)
 - **Recommendation:** Add `BEFORE UPDATE`/`BEFORE DELETE` triggers on `op_log` that allow only the compaction path (e.g., gated by a session-scoped `PRAGMA application_id` or a transaction-attached audit row). Document the bypass.
 - **Pass-1 source:** 01-core-data / F2
-
-### H-14 — `apply_remote_ops` silently drops fork ops via `INSERT OR IGNORE`
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_protocol/operations.rs::apply_remote_ops`
-- **What:** When a peer sends an op with the same `(device_id, seq)` but a different hash (a fork), `INSERT OR IGNORE` accepts the first one wins; the divergent op is silently dropped with no log, metric, or surfaced fork detection.
-- **Why it matters:** Forks are the canary for a serious bug (clock skew, device-id collision, replay loop). Silent dropping makes them invisible to the user and to the test suite.
-- **Cost:** S–M
-- **Risk:** Low
-- **Impact:** High (data integrity observability)
-- **Recommendation:** Detect `(device_id, seq)` collision before INSERT; on hash mismatch, log + emit a sync warning event + persist a fork record for diagnostics.
-- **Pass-1 source:** 06-sync / F4
 
 ## MEDIUM findings (44 — expanded)
 
