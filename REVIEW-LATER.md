@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-95 open items — 58 planned work (FEAT/MAINT/PERF/PUB) + 12 UX-1..UX-12 + 25 test-quality (12 backend TEST-40..TEST-51 + 13 frontend TEST-52..TEST-64).
+94 open items — 57 planned work (FEAT/MAINT/PERF/PUB) + 12 UX-1..UX-12 + 25 test-quality (12 backend TEST-40..TEST-51 + 13 frontend TEST-52..TEST-64).
 
 Previously resolved: 542+ items across 159 sessions.
 
@@ -35,7 +35,6 @@ Previously resolved: 542+ items across 159 sessions.
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L |
 | MAINT-110 | MAINT | `pairing.rs` — remove dead ChaCha20-Poly1305 + HKDF machinery (`session_key`, `encrypt_message` / `decrypt_message`, `derive_session_key`); pairing exchange is plaintext JSON over mTLS and the derived key is never read in production. Drops `chacha20poly1305` + `hkdf` crates. | S |
 | MAINT-111 | MAINT | Spike `rmcp` (official Rust MCP SDK) vs the hand-rolled JSON-RPC 2.0 dispatch in `mcp/server.rs` (~492 LOC of framing + `make_success` / `make_error` / `parse_request` / method-dispatch boilerplate); keep existing `ToolRegistry` + activity-feed if the adapter stays thin | M |
-| MAINT-112 | MAINT | `CommandTx` newtype around `sqlx::Transaction<'_, Sqlite>` — consolidate the `pool.begin()` + `BEGIN IMMEDIATE` + `_in_tx` helpers + post-commit materializer dispatch dance (115 `BEGIN IMMEDIATE` literals, 5 `*_in_tx` helpers, 140 call sites) behind a single `CommandTx::begin_immediate` + `commit_and_dispatch`. Opportunistic DRY, no behaviour change. | M |
 | MAINT-113 | MAINT | `ConflictFreeBlockId` newtype to lift invariant #9 (`is_conflict = 0` + `depth < 100` in every recursive CTE over `blocks`) into the type system — 220 `is_conflict = 0` SQL occurrences across 70 files. LOW-priority refactor for elegance, not correctness; the convention + review + documented invariant are already working. Do NOT do on a deadline. | L |
 | MAINT-114 | MAINT | Audit `.github/workflows/` (4 files — `ci.yml`, `_validate.yml`, `release.yml`, `release-tag.yml`) for consolidation. Minimum wins likely 4 → 3 (fold `release-tag.yml` into `release.yml` as `workflow_dispatch`); full 4 → 2 (validate + release) probably not cleanly achievable without losing the per-push-vs-per-tag split. Spike first, commit only if the merged file is not worse than the pair. | S–M |
 | MAINT-115 | MAINT | Unified `reportIpcError(module, message, err, t)` utility — replace the `catch { toast.error(...) }` pattern (no `logger.error`) that shows up in ~14 components (`HistoryView`, `BlockPropertyEditor` ×4, `DateChipEditor`, `QueryResult`, `RescheduleDropZone`, `SearchPanel`, `ConflictList`, `DeviceManagement`, `TagList`, `TemplatesView`, `PropertyRowEditor`, `DependencyIndicator`) plus 40 silent `} catch {}` in 14 hook files plus 10 silent catches in `src/lib/` plus 3 silent `.catch(() => {})` in `App.tsx:935-939`. One-pass migration onto one helper. | M |
@@ -754,79 +753,6 @@ If the adapter is clean, estimate a ~300–500 LOC reduction in `server.rs` with
 **Cost:** M (2–8h for the spike; full migration would be L if pursued).
 **Risk:** M — external binary surface, coexistence with existing actor + activity-feed patterns.
 **Impact:** M (conditional on spike outcome) — reduces framing boilerplate and tracks the MCP spec upstream rather than reimplementing it.
-
-### MAINT-112 — `CommandTx` newtype to DRY up the `BEGIN IMMEDIATE` + `_in_tx` + dispatch dance
-
-**What:** The command layer repeats the same 3-step transaction dance in ~115 places:
-
-1. `let mut tx = pool.begin().await?;` (or `sqlx::query!("BEGIN IMMEDIATE").execute(&*pool).await?` — inconsistent across call sites).
-2. Call one or more `*_in_tx` helpers (`append_local_op_in_tx` in `op_log.rs:81`, `flush_draft_in_tx` / `delete_draft_in_tx` in `draft.rs:82,132`, `apply_reverse_in_tx` in `commands/history.rs:32`, `migration_marker_set_in_tx` in `spaces/bootstrap.rs:486`) — 5 helpers total, 140 `_in_tx` occurrences across 32 files.
-3. `tx.commit().await?;` followed by an ad-hoc `Materializer::dispatch_background(...)` / `dispatch_foreground(...)` call — the enqueue point drifts (sometimes before commit, sometimes inside a spawned task, sometimes inside the caller). This is a structural footgun: forgetting the dispatch leaves caches stale until a subsequent write, and dispatching before commit can leak an op to the materializer before it is durably in the log.
-
-**Evidence (non-test callsite density):**
-
-```text
-17  src-tauri/src/recurrence/compute.rs
-11  src-tauri/src/commands/blocks/crud.rs
-10  src-tauri/src/spaces/bootstrap.rs
- 9  src-tauri/src/op_log.rs
- 9  src-tauri/src/commands/spaces.rs
- 8  src-tauri/src/draft.rs
- 8  src-tauri/src/commands/history.rs
- 6  src-tauri/src/commands/compaction.rs
-...
-115  BEGIN IMMEDIATE literal occurrences total
-```
-
-**Fix sketch:**
-
-```rust
-pub struct CommandTx<'a> {
-    inner: sqlx::Transaction<'a, Sqlite>,
-    pending_dispatch: Vec<BackgroundTask>,
-}
-
-impl<'a> CommandTx<'a> {
-    pub async fn begin_immediate(pool: &'a WritePool) -> Result<Self> {
-        let mut inner = pool.begin().await?;
-        sqlx::query!("BEGIN IMMEDIATE").execute(&mut *inner).await?;  // TODO: verify sqlx doesn't nest
-        Ok(Self { inner, pending_dispatch: Vec::new() })
-    }
-
-    pub fn enqueue(&mut self, task: BackgroundTask) { self.pending_dispatch.push(task) }
-
-    pub async fn commit_and_dispatch(self, materializer: &Materializer) -> Result<()> {
-        self.inner.commit().await?;
-        for task in self.pending_dispatch { materializer.dispatch_background(task); }
-        Ok(())
-    }
-}
-
-impl<'a> std::ops::Deref for CommandTx<'a> {
-    type Target = sqlx::Transaction<'a, Sqlite>;
-    fn deref(&self) -> &Self::Target { &self.inner }
-}
-impl<'a> std::ops::DerefMut for CommandTx<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.inner }
-}
-```
-
-Then the 5 `*_in_tx` helpers change their parameter from `&mut sqlx::Transaction<'_, Sqlite>` to `&mut CommandTx<'_>` (the `DerefMut` impl keeps existing `sqlx::query!(...).execute(&mut *tx)` call sites working unchanged). Keep the `_in_tx` suffix — it is load-bearing for grep + code review; only the parameter type changes.
-
-**Why it matters:** Centralising (a) the `BEGIN IMMEDIATE` pragma so every write-path transaction is guaranteed to hold the write lock from the first statement, and (b) the post-commit dispatch so a missing enqueue fails closed rather than silently leaving the materializer stale. Also removes the chance of the "did the caller remember to `dispatch_background` after commit?" review burden that recurs in session logs.
-
-**Why it is not urgent:** The current code works. The invariant is held by review, same as invariant #9 (`is_conflict = 0`). No HIGH-severity finding to date root-causes to "we literally forgot to start a tx" — the concern is "we forgot to enqueue a materializer task after a specific commit", which the `commit_and_dispatch` sketch above addresses specifically.
-
-**Scope (honest):**
-
-- 1 new module (`src-tauri/src/db/tx.rs` or similar), ~100 LOC + tests.
-- 5 helper signature changes (`op_log.rs:81`, `draft.rs:82,132`, `commands/history.rs:32`, `spaces/bootstrap.rs:486`).
-- ~115 callsites to migrate (most of which become shorter — net LOC reduction expected).
-- `#[cfg(test)]` fixtures that begin transactions manually (~10 files under `tests/`).
-
-**Cost:** M (2–8h) for the newtype + migrating the top-5 callsite files. Remainder can land incrementally under the same ID (split into MAINT-112a / MAINT-112b / ... if the first PR is bigger than one focused session).
-**Risk:** Low — pure refactor, no behaviour change if `commit_and_dispatch` preserves current enqueue ordering. Compile-time coverage is the safety net (every `_in_tx` caller breaks on signature change and must be updated before it compiles).
-**Impact:** S — reduces boilerplate, makes the "tx + commit + dispatch" triple an atomic API rather than a 3-step ritual, enables adding tracing / retry / deadlock observability in one place.
 
 ### MAINT-113 — `ConflictFreeBlockId` newtype to lift invariant #9 into the type system
 
