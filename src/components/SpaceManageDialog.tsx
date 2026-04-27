@@ -57,11 +57,20 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import type { SpaceRow } from '@/lib/tauri'
-import { createSpace, deleteBlock, editBlock, listBlocks, setProperty } from '@/lib/tauri'
+import {
+  createSpace,
+  deleteBlock,
+  deleteProperty,
+  editBlock,
+  getProperties,
+  listBlocks,
+  setProperty,
+} from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 
@@ -136,7 +145,22 @@ function SpaceRowEditor({ space, isLastSpace, onRefresh }: SpaceRowEditorProps) 
   const [isEmpty, setIsEmpty] = useState<boolean | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [savingAccent, setSavingAccent] = useState(false)
+  // FEAT-3p5b — per-space `journal_template` (markdown string committed
+  // on blur to mirror the accent debounce model). `committedJournalTemplate`
+  // is the last successfully-persisted value so a setProperty failure can
+  // revert without re-fetching from the backend.
+  const [journalTemplate, setJournalTemplate] = useState<string>('')
+  const [committedJournalTemplate, setCommittedJournalTemplate] = useState<string>('')
+  const [savingJournalTemplate, setSavingJournalTemplate] = useState(false)
   const renameInputId = useId()
+  const journalTemplateInputId = useId()
+  // FEAT-3p5b — id on the hint paragraph so the textarea can announce
+  // it via `aria-describedby`. The hint paragraph is short ("Tip:
+  // per-space template overrides the global journal-template page.")
+  // and useful context for a screen-reader user encountering the field
+  // for the first time, so promoting it from purely-visual to
+  // accessibility-tree-reachable is worth the one extra `useId`.
+  const journalTemplateHintId = useId()
 
   // Re-sync local state when the upstream `space.name` changes — for
   // instance after the user renames it elsewhere or refreshAvailableSpaces
@@ -171,6 +195,36 @@ function SpaceRowEditor({ space, isLastSpace, onRefresh }: SpaceRowEditorProps) 
         // The user sees the disabled button + tooltip; refreshing the
         // dialog re-runs the probe.
         logger.warn(LOG_MODULE, 'failed to probe space emptiness', { spaceId: space.id }, err)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [space.id])
+
+  // FEAT-3p5b — fetch the current `journal_template` text property
+  // once per `space.id`. Cancel-flag pattern matches the emptiness
+  // probe above. On error we leave the textarea empty and let the user
+  // re-enter; the next blur commits the entered value as the new
+  // source of truth.
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const props = await getProperties(space.id)
+        if (cancelled) return
+        const row = props.find((p) => p.key === 'journal_template')
+        const value = row?.value_text ?? ''
+        setJournalTemplate(value)
+        setCommittedJournalTemplate(value)
+      } catch (err) {
+        if (cancelled) return
+        logger.warn(
+          LOG_MODULE,
+          'failed to load journal template property',
+          { spaceId: space.id },
+          err,
+        )
       }
     })()
     return () => {
@@ -229,6 +283,38 @@ function SpaceRowEditor({ space, isLastSpace, onRefresh }: SpaceRowEditorProps) 
     },
     [accent, space.id, t],
   )
+
+  const handleJournalTemplateCommit = useCallback(async () => {
+    const trimmed = journalTemplate.trim()
+    if (trimmed === committedJournalTemplate.trim()) {
+      // No-op — value unchanged since last commit. Avoid a redundant
+      // IPC round-trip and the toast/revert dance.
+      return
+    }
+    setSavingJournalTemplate(true)
+    const previous = committedJournalTemplate
+    try {
+      if (trimmed === '') {
+        await deleteProperty(space.id, 'journal_template')
+      } else {
+        await setProperty({
+          blockId: space.id,
+          key: 'journal_template',
+          valueText: trimmed,
+        })
+      }
+      setCommittedJournalTemplate(trimmed)
+      setJournalTemplate(trimmed)
+    } catch (err) {
+      logger.error(LOG_MODULE, 'journal template update failed', { spaceId: space.id }, err)
+      toast.error(t('space.journalTemplateFailed'))
+      // Revert to the last successfully-persisted value so the textarea
+      // reflects backend truth instead of the unsaved edit.
+      setJournalTemplate(previous)
+    } finally {
+      setSavingJournalTemplate(false)
+    }
+  }, [journalTemplate, committedJournalTemplate, space.id, t])
 
   const handleDeleteConfirm = useCallback(async () => {
     try {
@@ -321,6 +407,26 @@ function SpaceRowEditor({ space, isLastSpace, onRefresh }: SpaceRowEditorProps) 
             />
           ))}
         </div>
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label htmlFor={journalTemplateInputId} className="text-xs text-muted-foreground">
+          {t('space.journalTemplateLabel')}
+        </Label>
+        <Textarea
+          id={journalTemplateInputId}
+          rows={4}
+          value={journalTemplate}
+          onChange={(e) => setJournalTemplate(e.target.value)}
+          onBlur={() => void handleJournalTemplateCommit()}
+          placeholder={t('space.journalTemplatePlaceholder')}
+          aria-label={t('space.journalTemplateLabel')}
+          aria-describedby={journalTemplateHintId}
+          disabled={savingJournalTemplate}
+          className="min-h-[6rem]"
+        />
+        <p id={journalTemplateHintId} className="text-xs text-muted-foreground">
+          {t('space.journalTemplateHint')}
+        </p>
       </div>
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>

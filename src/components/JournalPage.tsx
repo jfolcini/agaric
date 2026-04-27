@@ -45,7 +45,12 @@ import {
   MIN_JOURNAL_DATE,
 } from '../lib/date-utils'
 import { createBlock, createPageInSpace, listBlocks } from '../lib/tauri'
-import { insertTemplateBlocks, loadJournalTemplate } from '../lib/template-utils'
+import {
+  insertTemplateBlocks,
+  insertTemplateBlocksFromString,
+  loadJournalTemplate,
+  loadJournalTemplateForSpace,
+} from '../lib/template-utils'
 import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
 import { useNavigationStore } from '../stores/navigation'
@@ -196,12 +201,28 @@ export function JournalPage({
         }
 
         if (isNewPage) {
-          const { template: journalTemplate, duplicateWarning } = await loadJournalTemplate()
-          if (duplicateWarning) {
-            toast.warning(duplicateWarning)
+          // FEAT-3p5b — per-space `journal_template` text property on the
+          // space block takes precedence over the legacy global
+          // `journal-template` page. Falls through to the legacy path on
+          // any failure (defensive: a broken per-space property must not
+          // strand the user with no journal blocks at all).
+          let perSpaceTemplate: string | null = null
+          const currentSpaceId = useSpaceStore.getState().currentSpaceId
+          if (currentSpaceId != null) {
+            try {
+              perSpaceTemplate = await loadJournalTemplateForSpace(currentSpaceId)
+            } catch (err) {
+              logger.warn(
+                'JournalPage',
+                'per-space journal template load failed; falling back to legacy',
+                { spaceId: currentSpaceId },
+                err,
+              )
+            }
           }
-          if (journalTemplate) {
-            const ids = await insertTemplateBlocks(journalTemplate.id, pageId, {
+
+          if (perSpaceTemplate != null && perSpaceTemplate.trim() !== '') {
+            const ids = await insertTemplateBlocksFromString(perSpaceTemplate, pageId, {
               pageTitle: dateStr,
             })
             await pageBlockRegistry.get(pageId)?.getState().load()
@@ -209,13 +230,27 @@ export function JournalPage({
               useBlockStore.setState({ focusedBlockId: ids[0] ?? null })
             }
           } else {
-            const block = await createBlock({
-              blockType: 'content',
-              content: '',
-              parentId: pageId,
-            })
-            await pageBlockRegistry.get(pageId)?.getState().load()
-            useBlockStore.setState({ focusedBlockId: block.id })
+            const { template: journalTemplate, duplicateWarning } = await loadJournalTemplate()
+            if (duplicateWarning) {
+              toast.warning(duplicateWarning)
+            }
+            if (journalTemplate) {
+              const ids = await insertTemplateBlocks(journalTemplate.id, pageId, {
+                pageTitle: dateStr,
+              })
+              await pageBlockRegistry.get(pageId)?.getState().load()
+              if (ids.length > 0) {
+                useBlockStore.setState({ focusedBlockId: ids[0] ?? null })
+              }
+            } else {
+              const block = await createBlock({
+                blockType: 'content',
+                content: '',
+                parentId: pageId,
+              })
+              await pageBlockRegistry.get(pageId)?.getState().load()
+              useBlockStore.setState({ focusedBlockId: block.id })
+            }
           }
         } else {
           const block = await createBlock({

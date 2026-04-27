@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   expandTemplateVariables,
   insertTemplateBlocks,
+  insertTemplateBlocksFromString,
   loadJournalTemplate,
+  loadJournalTemplateForSpace,
   loadTemplatePages,
   loadTemplatePagesWithPreview,
 } from '../template-utils'
@@ -440,5 +442,186 @@ describe('expandTemplateVariables', () => {
 
   it('returns content unchanged when no variables present', () => {
     expect(expandTemplateVariables('Hello world', {})).toBe('Hello world')
+  })
+})
+
+describe('loadJournalTemplateForSpace', () => {
+  it('returns null when the journal_template property is absent', async () => {
+    mockedInvoke.mockResolvedValueOnce([
+      // unrelated rows only
+      {
+        key: 'accent_color',
+        value_text: 'accent-blue',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+      },
+      { key: 'is_space', value_text: 'true', value_num: null, value_date: null, value_ref: null },
+    ])
+
+    const result = await loadJournalTemplateForSpace('SPACE_1')
+
+    expect(result).toBeNull()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_properties', { blockId: 'SPACE_1' })
+  })
+
+  it('returns value_text when journal_template is set', async () => {
+    mockedInvoke.mockResolvedValueOnce([
+      {
+        key: 'journal_template',
+        value_text: '## Standup\n- TODOs',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+      },
+    ])
+
+    const result = await loadJournalTemplateForSpace('SPACE_1')
+
+    expect(result).toBe('## Standup\n- TODOs')
+  })
+
+  it('ignores rows for other keys when finding journal_template', async () => {
+    mockedInvoke.mockResolvedValueOnce([
+      {
+        key: 'accent_color',
+        value_text: 'accent-rose',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+      },
+      {
+        key: 'journal_template',
+        value_text: 'Daily focus',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+      },
+      { key: 'is_space', value_text: 'true', value_num: null, value_date: null, value_ref: null },
+    ])
+
+    const result = await loadJournalTemplateForSpace('SPACE_1')
+
+    expect(result).toBe('Daily focus')
+  })
+
+  it('returns null when value_text is null', async () => {
+    mockedInvoke.mockResolvedValueOnce([
+      {
+        key: 'journal_template',
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+      },
+    ])
+
+    const result = await loadJournalTemplateForSpace('SPACE_1')
+
+    expect(result).toBeNull()
+  })
+})
+
+describe('insertTemplateBlocksFromString', () => {
+  it('creates one block per non-empty line', async () => {
+    // createBlock for line 1
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'NEW1',
+      block_type: 'content',
+      content: 'Morning standup',
+    })
+    // createBlock for line 2
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'NEW2',
+      block_type: 'content',
+      content: 'TODOs',
+    })
+
+    const ids = await insertTemplateBlocksFromString('Morning standup\nTODOs', 'PARENT')
+
+    expect(ids).toEqual(['NEW1', 'NEW2'])
+    const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+    expect(createCalls).toHaveLength(2)
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'create_block',
+      expect.objectContaining({
+        blockType: 'content',
+        content: 'Morning standup',
+        parentId: 'PARENT',
+      }),
+    )
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'create_block',
+      expect.objectContaining({
+        blockType: 'content',
+        content: 'TODOs',
+        parentId: 'PARENT',
+      }),
+    )
+  })
+
+  it('expands template variables on each line', async () => {
+    mockedInvoke.mockResolvedValueOnce({ id: 'NEW1', block_type: 'content', content: '' })
+    mockedInvoke.mockResolvedValueOnce({ id: 'NEW2', block_type: 'content', content: '' })
+
+    const now = new Date()
+    const yyyy = now.getFullYear()
+    const mm = String(now.getMonth() + 1).padStart(2, '0')
+    const dd = String(now.getDate()).padStart(2, '0')
+    const today = `${yyyy}-${mm}-${dd}`
+
+    await insertTemplateBlocksFromString('Date: <% today %>\nPage: <% page title %>', 'PARENT', {
+      pageTitle: 'My Daily',
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'create_block',
+      expect.objectContaining({ content: `Date: ${today}` }),
+    )
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'create_block',
+      expect.objectContaining({ content: 'Page: My Daily' }),
+    )
+  })
+
+  it('skips blank lines and surrounding whitespace', async () => {
+    mockedInvoke.mockResolvedValueOnce({ id: 'NEW1', block_type: 'content', content: 'A' })
+    mockedInvoke.mockResolvedValueOnce({ id: 'NEW2', block_type: 'content', content: 'B' })
+
+    // Leading blank, trailing blank, internal blank line, whitespace-only line.
+    const ids = await insertTemplateBlocksFromString('\n\n  \nA\n\n   \nB\n\n', 'PARENT')
+
+    expect(ids).toEqual(['NEW1', 'NEW2'])
+    const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+    expect(createCalls).toHaveLength(2)
+  })
+
+  it('continues on per-line errors and logs a warning', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    // First line fails, second succeeds, third succeeds.
+    mockedInvoke.mockRejectedValueOnce(new Error('create_block failed'))
+    mockedInvoke.mockResolvedValueOnce({ id: 'NEW2', block_type: 'content', content: 'B' })
+    mockedInvoke.mockResolvedValueOnce({ id: 'NEW3', block_type: 'content', content: 'C' })
+
+    const ids = await insertTemplateBlocksFromString('A\nB\nC', 'PARENT')
+
+    expect(ids).toEqual(['NEW2', 'NEW3'])
+    // Three create_block calls (one failed, two succeeded).
+    const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+    expect(createCalls).toHaveLength(3)
+    // The structured logger emits a single warn for the failed line.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('journal template line insert failed; skipping'),
+    )
+
+    warnSpy.mockRestore()
+  })
+
+  it('returns an empty array for an empty template string', async () => {
+    const ids = await insertTemplateBlocksFromString('   \n\n  ', 'PARENT')
+    expect(ids).toEqual([])
+    const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+    expect(createCalls).toHaveLength(0)
   })
 })

@@ -1,6 +1,6 @@
 import { logger } from './logger'
 import type { BlockRow } from './tauri'
-import { createBlock, listBlocks, queryByProperty } from './tauri'
+import { createBlock, getProperties, listBlocks, queryByProperty } from './tauri'
 
 /**
  * Load all pages marked as templates (property `template` = 'true').
@@ -121,5 +121,68 @@ export async function insertTemplateBlocks(
   }
 
   await copyChildren(templatePageId, parentId)
+  return ids
+}
+
+/**
+ * Load the per-space journal template (text property `journal_template`
+ * on the space block itself). Returns the markdown string or null if
+ * the property is not set.
+ *
+ * Distinct from the legacy `journal-template` page property — this one
+ * lives directly on the space block as its `value_text`. FEAT-3p5b
+ * makes this take precedence over the legacy global template page when
+ * a daily journal page is created inside the space.
+ */
+export async function loadJournalTemplateForSpace(spaceId: string): Promise<string | null> {
+  const props = await getProperties(spaceId)
+  const row = props.find((p) => p.key === 'journal_template')
+  return row?.value_text ?? null
+}
+
+/**
+ * Parse a markdown template string and create one content block per
+ * non-empty line under `parentId`. Variables (`<% today %>`,
+ * `<% time %>`, `<% datetime %>`, `<% page title %>`) are expanded on
+ * each line. Returns the IDs of all created blocks.
+ *
+ * Per-line `try/catch` mirrors {@link insertTemplateBlocks}: a single
+ * line failure is logged and skipped so the rest of the template still
+ * lands.
+ */
+export async function insertTemplateBlocksFromString(
+  template: string,
+  parentId: string,
+  context?: { pageTitle?: string },
+): Promise<string[]> {
+  const ids: string[] = []
+  // Split, then drop leading/trailing whitespace-only lines but keep
+  // interior blank lines absent (we filter those per-line below).
+  const lines = template.split('\n')
+  let start = 0
+  let end = lines.length
+  while (start < end && (lines[start] ?? '').trim() === '') start += 1
+  while (end > start && (lines[end - 1] ?? '').trim() === '') end -= 1
+  for (let i = start; i < end; i += 1) {
+    const line = lines[i] ?? ''
+    if (line.trim() === '') continue
+    try {
+      const expanded = expandTemplateVariables(line, context ?? {})
+      const newBlock = await createBlock({
+        blockType: 'content',
+        content: expanded,
+        parentId,
+      })
+      ids.push(newBlock.id)
+    } catch (err) {
+      // Best-effort: log and continue with the remaining lines.
+      logger.warn(
+        'template-utils',
+        'journal template line insert failed; skipping',
+        { line: i, content: line },
+        err,
+      )
+    }
+  }
   return ids
 }
