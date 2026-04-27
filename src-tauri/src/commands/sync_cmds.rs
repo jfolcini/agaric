@@ -248,8 +248,33 @@ pub fn start_sync_inner(
         ));
     }
 
-    // Try to acquire peer lock
-    let _guard = scheduler.try_lock_peer(&peer_id).ok_or_else(|| {
+    // M-33: HEALTH CHECK ONLY — this is *not* a real exclusion lock.
+    //
+    // The `Some` vs `None` result of `try_lock_peer` is used as a probe
+    // for "is the daemon currently syncing this peer?" and the early
+    // return surfaces a user-visible error when the daemon already
+    // holds the per-peer lock. That probe is the only purpose of this
+    // call at the wrapper layer.
+    //
+    // The returned guard (`_health_check_only_guard`) falls out of scope
+    // when `start_sync_inner` returns microseconds later — it does NOT
+    // serialise concurrent wrapper calls. Two back-to-back `start_sync`
+    // invocations can both observe `Some(...)` here, both drop their
+    // guards immediately, and both call `notify_change()` below.
+    //
+    // Real per-peer exclusion lives in the daemon, where
+    // `try_sync_with_peer` re-acquires the same lock for the duration
+    // of the actual network sync — see
+    // `src-tauri/src/sync_daemon/orchestrator.rs::try_sync_with_peer`
+    // (the `try_lock_peer` call there is what serialises real syncs).
+    // If a wrapper call interleaves with a daemon sync exactly on the
+    // lock acquisition the wrapper wins this probe and the daemon's
+    // own guard returns `None`, so the daemon skips that tick — but
+    // the wrapper's `notify_change()` will wake it on the next pass.
+    //
+    // Do not lean on this guard for correctness; it is named
+    // `_health_check_only_guard` to make that misreading harder.
+    let _health_check_only_guard = scheduler.try_lock_peer(&peer_id).ok_or_else(|| {
         AppError::InvalidOperation("Sync already in progress for this peer".into())
     })?;
 

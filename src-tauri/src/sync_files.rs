@@ -18,6 +18,7 @@
 //! into 5 MB frames.  Integrity is verified via blake3 hash.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use sqlx::SqlitePool;
 
@@ -138,25 +139,60 @@ pub fn check_attachment_fs_path_shape(fs_path: &str) -> Result<(), AppError> {
 }
 
 /// Query the `attachments` table and return entries whose `fs_path` file
-/// does not exist on disk under `app_data_dir`.
+/// is missing — or corrupted — on disk under `app_data_dir`.
+///
+/// M-48: a file is also classified as missing when it exists on disk
+/// but its length disagrees with the authoritative `attachments.size_bytes`
+/// in the DB row. This catches truncated copies left behind by interrupted
+/// downloads, partial writes, or antivirus quarantines that leave a 0-byte
+/// stub — without that check, the existence test alone would treat the
+/// stub as present forever and the next sync cycle would never re-request
+/// the file. The size comparison is the cheap path; a stronger content-hash
+/// verification is the deferred "better path" tracked in `REVIEW-LATER.md`.
+///
+/// If `metadata()` errors at all (file missing, permission denied,
+/// quarantined path), the entry is classified as missing — the most
+/// defensive choice per AGENTS.md's "preventing accidental corruption"
+/// framing, and ensures a re-request rather than a silent skip.
 pub async fn find_missing_attachments(
     pool: &SqlitePool,
     app_data_dir: &Path,
 ) -> Result<Vec<MissingAttachment>, AppError> {
-    let rows = sqlx::query_as::<_, (String, String)>(
-        "SELECT id, fs_path FROM attachments WHERE deleted_at IS NULL",
+    let rows = sqlx::query_as::<_, (String, String, i64)>(
+        "SELECT id, fs_path, size_bytes FROM attachments WHERE deleted_at IS NULL",
     )
     .fetch_all(pool)
     .await?;
 
     let mut missing = Vec::new();
-    for (id, fs_path) in rows {
+    for (id, fs_path, size_bytes) in rows {
         let full_path = app_data_dir.join(&fs_path);
         // M-49: prefer the async syscall over std's blocking `Path::exists`
         // so the daemon's runtime is not stalled on cold-cache filesystems
         // (notably Android with thousands of attachments).
-        if tokio::fs::metadata(&full_path).await.is_err() {
-            missing.push(MissingAttachment { id, fs_path });
+        //
+        // M-48: cross-check the on-disk length against the DB's
+        // `size_bytes`. A truncated stub (interrupted download, partial
+        // write, antivirus 0-byte quarantine) would otherwise pass the
+        // existence check forever. Any metadata error (incl. permission
+        // denied) is treated as missing so the file is re-requested.
+        match tokio::fs::metadata(&full_path).await {
+            Ok(meta) => {
+                let expected = u64::try_from(size_bytes).unwrap_or(0);
+                if meta.len() != expected {
+                    tracing::warn!(
+                        attachment_id = %id,
+                        path = %full_path.display(),
+                        expected_size = expected,
+                        actual_size = meta.len(),
+                        "M-48: attachment file size disagrees with DB row; classifying as missing for re-request"
+                    );
+                    missing.push(MissingAttachment { id, fs_path });
+                }
+            }
+            Err(_) => {
+                missing.push(MissingAttachment { id, fs_path });
+            }
         }
     }
     Ok(missing)
@@ -262,10 +298,22 @@ pub fn write_attachment_file(
 /// 1. Receive `FileRequest` from the remote peer.
 /// 2. For each requested attachment: send `FileOffer` + binary data.
 /// 3. Send `FileTransferComplete`.
+///
+/// M-47: at the start of every per-file iteration, the cancel flag is
+/// checked. If the user invoked `cancel_active_sync()` during the
+/// transfer, we break out of the per-file loop and fall through to the
+/// existing `FileTransferComplete` send — the receiver sees a clean
+/// "no more files" signal and exits its own loop without protocol error
+/// (the wire format is unchanged: `FileTransferComplete` already means
+/// "I'm done sending"). Cancel is checked between files, not per chunk,
+/// because the per-chunk inner loop is in a private helper and the
+/// granularity at the file boundary already lets a multi-gigabyte
+/// transfer be aborted before the *next* file starts.
 pub async fn receive_request_and_send_files(
     conn: &mut SyncConnection,
     pool: &SqlitePool,
     app_data_dir: &Path,
+    cancel: &AtomicBool,
 ) -> Result<FileTransferStats, AppError> {
     let mut stats = FileTransferStats::default();
 
@@ -291,6 +339,17 @@ pub async fn receive_request_and_send_files(
 
     // 2. For each requested attachment: send FileOffer + binary data
     for attachment_id in &attachment_ids {
+        // M-47: stop sending more files when the user cancels mid-round.
+        // Falls through to the FileTransferComplete send below so the
+        // receiver exits cleanly via the normal "no more files" sentinel.
+        if cancel.load(Ordering::Acquire) {
+            tracing::info!(
+                "M-47: cancel observed during send loop; stopping after {} of {} files",
+                stats.files_sent,
+                attachment_ids.len()
+            );
+            break;
+        }
         let Some(fs_path) = get_attachment_fs_path(pool, attachment_id).await? else {
             tracing::warn!(
                 attachment_id,
@@ -367,10 +426,20 @@ pub async fn receive_request_and_send_files(
 /// 2. Send `FileRequest` with the missing attachment IDs.
 /// 3. Receive `FileOffer` + binary data for each, verify, and write to disk.
 /// 4. Until `FileTransferComplete` is received.
+///
+/// M-47: at the start of every iteration of the receive loop (before
+/// `recv_json()` for the next `FileOffer`/`FileTransferComplete`), the
+/// cancel flag is checked. If set, we break and return the partial
+/// stats. The remote sender will hit a broken-pipe / connection-close
+/// when its next `send_json` or `send_binary` attempt fails — that
+/// surfaces as a non-fatal warning on the sender side; the next sync
+/// cycle re-attempts the missing files. The wire format is unchanged
+/// (no new message variants).
 pub async fn request_and_receive_files(
     conn: &mut SyncConnection,
     pool: &SqlitePool,
     app_data_dir: &Path,
+    cancel: &AtomicBool,
 ) -> Result<FileTransferStats, AppError> {
     let mut stats = FileTransferStats::default();
 
@@ -397,6 +466,18 @@ pub async fn request_and_receive_files(
     // on the next sync cycle. Stats counters reflect actual receiver
     // outcomes, never optimistic ACKs.
     loop {
+        // M-47: check cancel before reading the next FileOffer. Granularity
+        // is per-file (not per-chunk) because the per-chunk inner read
+        // lives in `receive_binary_data`; aborting between files lets
+        // multi-gigabyte transfers be interrupted before the *next* file
+        // starts streaming.
+        if cancel.load(Ordering::Acquire) {
+            tracing::info!(
+                files_received = stats.files_received,
+                "M-47: cancel observed during receive loop; aborting before next FileOffer"
+            );
+            break;
+        }
         let msg: SyncMessage = conn.recv_json().await?;
         match msg {
             SyncMessage::FileOffer {
@@ -529,22 +610,29 @@ async fn consume_binary_data(conn: &mut SyncConnection, size_bytes: u64) -> Resu
 /// Called by the **initiator** after `SyncComplete` exchange:
 /// 1. Initiator requests files it's missing.
 /// 2. Initiator responds to responder's file request.
+///
+/// M-47: `cancel` is checked at every per-file boundary inside both
+/// helper functions. When set mid-transfer the receiver loop exits early
+/// (partial stats returned) and the sender loop falls through to the
+/// existing `FileTransferComplete` sentinel — both without changing the
+/// wire format.
 pub async fn run_file_transfer_initiator(
     conn: &mut SyncConnection,
     pool: &SqlitePool,
     app_data_dir: &Path,
+    cancel: &AtomicBool,
 ) -> Result<FileTransferStats, AppError> {
     let mut stats = FileTransferStats::default();
 
     // Phase 1: Request our missing files from responder
-    let recv_stats = request_and_receive_files(conn, pool, app_data_dir).await?;
+    let recv_stats = request_and_receive_files(conn, pool, app_data_dir, cancel).await?;
     stats.files_received += recv_stats.files_received;
     stats.bytes_received += recv_stats.bytes_received;
     stats.skipped_hash_mismatch += recv_stats.skipped_hash_mismatch;
     stats.skipped_not_found += recv_stats.skipped_not_found;
 
     // Phase 2: Respond to responder's file request
-    let send_stats = receive_request_and_send_files(conn, pool, app_data_dir).await?;
+    let send_stats = receive_request_and_send_files(conn, pool, app_data_dir, cancel).await?;
     stats.files_sent += send_stats.files_sent;
     stats.bytes_sent += send_stats.bytes_sent;
     stats.skipped_not_found += send_stats.skipped_not_found;
@@ -568,22 +656,27 @@ pub async fn run_file_transfer_initiator(
 /// Called by the **responder** after `SyncComplete` exchange:
 /// 1. Responder sends files the initiator requested.
 /// 2. Responder requests files it's missing.
+///
+/// M-47: `cancel` is threaded through to the inner per-file loops. See
+/// the matching docs on [`run_file_transfer_initiator`] for the rationale
+/// and protocol-compatibility notes.
 pub async fn run_file_transfer_responder(
     conn: &mut SyncConnection,
     pool: &SqlitePool,
     app_data_dir: &Path,
+    cancel: &AtomicBool,
 ) -> Result<FileTransferStats, AppError> {
     let mut stats = FileTransferStats::default();
 
     // Phase 1: Respond to initiator's file request
-    let send_stats = receive_request_and_send_files(conn, pool, app_data_dir).await?;
+    let send_stats = receive_request_and_send_files(conn, pool, app_data_dir, cancel).await?;
     stats.files_sent += send_stats.files_sent;
     stats.bytes_sent += send_stats.bytes_sent;
     stats.skipped_not_found += send_stats.skipped_not_found;
     stats.skipped_hash_mismatch += send_stats.skipped_hash_mismatch;
 
     // Phase 2: Request our missing files from initiator
-    let recv_stats = request_and_receive_files(conn, pool, app_data_dir).await?;
+    let recv_stats = request_and_receive_files(conn, pool, app_data_dir, cancel).await?;
     stats.files_received += recv_stats.files_received;
     stats.bytes_received += recv_stats.bytes_received;
     stats.skipped_hash_mismatch += recv_stats.skipped_hash_mismatch;
@@ -657,14 +750,16 @@ mod tests {
         .await
         .unwrap();
 
-        // Insert another attachment whose file DOES exist
+        // Insert another attachment whose file DOES exist; `size_bytes`
+        // must match the on-disk length so M-48's size check accepts it.
         let existing_path = dir.path().join("attachments");
         std::fs::create_dir_all(&existing_path).unwrap();
-        std::fs::write(existing_path.join("att2.png"), b"fake image data").unwrap();
+        let existing_bytes: &[u8] = b"fake image data"; // 15 bytes
+        std::fs::write(existing_path.join("att2.png"), existing_bytes).unwrap();
 
         sqlx::query(
             "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-             VALUES ('ATT2', 'BLK1', 'image/png', 'photo2.png', 512, 'attachments/att2.png', '2025-01-15T12:00:00Z')",
+             VALUES ('ATT2', 'BLK1', 'image/png', 'photo2.png', 15, 'attachments/att2.png', '2025-01-15T12:00:00Z')",
         )
         .execute(&pool)
         .await
@@ -919,6 +1014,50 @@ mod tests {
         assert_eq!(missing.len(), 3, "all 3 attachments should be missing");
     }
 
+    // ── M-48: truncated / partial file detection ─────────────────────────
+
+    /// M-48: a file that exists on disk but is shorter than the DB's
+    /// `size_bytes` (e.g. interrupted download, antivirus 0-byte stub,
+    /// partial write) MUST be re-classified as missing so the next sync
+    /// cycle re-requests it. Before the fix, `Path::exists()` alone
+    /// short-circuited the check and the truncated stub was treated as
+    /// present forever.
+    #[tokio::test]
+    async fn find_missing_attachments_treats_truncated_file_as_missing_m48() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content) VALUES ('BLK1', 'content', 'test')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // DB row claims size 1024 bytes...
+        sqlx::query(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES ('ATT_TRUNC', 'BLK1', 'image/png', 'photo.png', 1024, 'attachments/trunc.png', '2025-01-15T12:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // ...but the on-disk stub is 0 bytes (interrupted download /
+        // antivirus quarantine / partial write).
+        let att_dir = dir.path().join("attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        std::fs::write(att_dir.join("trunc.png"), b"").unwrap();
+
+        let missing = find_missing_attachments(&pool, dir.path()).await.unwrap();
+
+        assert!(
+            missing.iter().any(|m| m.id == "ATT_TRUNC"),
+            "M-48: truncated file (0 bytes vs DB's 1024) must be re-requested; got {missing:?}",
+        );
+    }
+
     // ── SyncMessage serde roundtrip for file transfer variants ───────────
 
     #[test]
@@ -1119,9 +1258,21 @@ mod tests {
 
         let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
 
+        let cancel_resp = AtomicBool::new(false);
+        let cancel_init = AtomicBool::new(false);
         let (responder_result, initiator_result) = tokio::join!(
-            receive_request_and_send_files(&mut server_conn, &responder_pool, responder_dir.path(),),
-            request_and_receive_files(&mut client_conn, &initiator_pool, initiator_dir.path(),),
+            receive_request_and_send_files(
+                &mut server_conn,
+                &responder_pool,
+                responder_dir.path(),
+                &cancel_resp
+            ),
+            request_and_receive_files(
+                &mut client_conn,
+                &initiator_pool,
+                initiator_dir.path(),
+                &cancel_init
+            ),
         );
 
         let sender_stats = responder_result.unwrap();
@@ -1177,9 +1328,21 @@ mod tests {
 
         let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
 
+        let cancel_resp = AtomicBool::new(false);
+        let cancel_init = AtomicBool::new(false);
         let (responder_result, initiator_result) = tokio::join!(
-            receive_request_and_send_files(&mut server_conn, &responder_pool, responder_dir.path(),),
-            request_and_receive_files(&mut client_conn, &initiator_pool, initiator_dir.path(),),
+            receive_request_and_send_files(
+                &mut server_conn,
+                &responder_pool,
+                responder_dir.path(),
+                &cancel_resp
+            ),
+            request_and_receive_files(
+                &mut client_conn,
+                &initiator_pool,
+                initiator_dir.path(),
+                &cancel_init
+            ),
         );
 
         let sender_stats = responder_result.unwrap();
@@ -1258,9 +1421,15 @@ mod tests {
             );
         };
 
+        let cancel_init = AtomicBool::new(false);
         let (_, initiator_result) = tokio::join!(
             server_side,
-            request_and_receive_files(&mut client_conn, &initiator_pool, initiator_dir.path(),),
+            request_and_receive_files(
+                &mut client_conn,
+                &initiator_pool,
+                initiator_dir.path(),
+                &cancel_init
+            ),
         );
 
         // M-50: receiver returns Err so the daemon's `try_sync_with_peer`
@@ -1339,9 +1508,15 @@ mod tests {
             );
         };
 
+        let cancel_init = AtomicBool::new(false);
         let (_, initiator_result) = tokio::join!(
             server_side,
-            request_and_receive_files(&mut client_conn, &initiator_pool, initiator_dir.path(),),
+            request_and_receive_files(
+                &mut client_conn,
+                &initiator_pool,
+                initiator_dir.path(),
+                &cancel_init
+            ),
         );
 
         let err = initiator_result.expect_err("M-52 must return Err on size mismatch");
@@ -1400,9 +1575,21 @@ mod tests {
 
         let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
 
+        let cancel_resp = AtomicBool::new(false);
+        let cancel_init = AtomicBool::new(false);
         let (responder_result, initiator_result) = tokio::join!(
-            receive_request_and_send_files(&mut server_conn, &responder_pool, responder_dir.path(),),
-            request_and_receive_files(&mut client_conn, &initiator_pool, initiator_dir.path(),),
+            receive_request_and_send_files(
+                &mut server_conn,
+                &responder_pool,
+                responder_dir.path(),
+                &cancel_resp
+            ),
+            request_and_receive_files(
+                &mut client_conn,
+                &initiator_pool,
+                initiator_dir.path(),
+                &cancel_init
+            ),
         );
 
         let sender_stats = responder_result.unwrap();
@@ -1439,15 +1626,17 @@ mod tests {
         .await
         .unwrap();
 
-        // Create both attachment files on disk
+        // Create both attachment files on disk; `size_bytes` in the DB
+        // rows below must match each file's on-disk length so M-48's
+        // size check accepts them as present.
         let att_dir = dir.path().join("attachments");
         std::fs::create_dir_all(&att_dir).unwrap();
-        std::fs::write(att_dir.join("att1.png"), b"image data 1").unwrap();
-        std::fs::write(att_dir.join("att2.png"), b"image data 2").unwrap();
+        std::fs::write(att_dir.join("att1.png"), b"image data 1").unwrap(); // 12 bytes
+        std::fs::write(att_dir.join("att2.png"), b"image data 2").unwrap(); // 12 bytes
 
         sqlx::query(
             "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-             VALUES ('ATT1', 'BLK1', 'image/png', 'photo1.png', 512, 'attachments/att1.png', '2025-01-15T12:00:00Z')",
+             VALUES ('ATT1', 'BLK1', 'image/png', 'photo1.png', 12, 'attachments/att1.png', '2025-01-15T12:00:00Z')",
         )
         .execute(&pool)
         .await
@@ -1455,7 +1644,7 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-             VALUES ('ATT2', 'BLK1', 'image/png', 'photo2.png', 512, 'attachments/att2.png', '2025-01-15T12:00:00Z')",
+             VALUES ('ATT2', 'BLK1', 'image/png', 'photo2.png', 12, 'attachments/att2.png', '2025-01-15T12:00:00Z')",
         )
         .execute(&pool)
         .await
@@ -1525,7 +1714,8 @@ mod tests {
             assert!(matches!(msg, SyncMessage::FileTransferComplete));
         });
 
-        let stats = receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir)
+        let cancel = AtomicBool::new(false);
+        let stats = receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel)
             .await
             .unwrap();
         client_task.await.unwrap();
@@ -1552,7 +1742,8 @@ mod tests {
             assert!(matches!(msg, SyncMessage::FileTransferComplete));
         });
 
-        let stats = receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir)
+        let cancel = AtomicBool::new(false);
+        let stats = receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel)
             .await
             .unwrap();
         client_task.await.unwrap();
@@ -1624,7 +1815,8 @@ mod tests {
             assert!(matches!(msg, SyncMessage::FileTransferComplete));
         });
 
-        let stats = receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir)
+        let cancel = AtomicBool::new(false);
+        let stats = receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel)
             .await
             .unwrap();
         client_task.await.unwrap();
@@ -1668,7 +1860,8 @@ mod tests {
                 .unwrap();
         });
 
-        let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir)
+        let cancel = AtomicBool::new(false);
+        let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel)
             .await
             .unwrap();
         server_task.await.unwrap();
@@ -1737,7 +1930,8 @@ mod tests {
                 .unwrap();
         });
 
-        let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir)
+        let cancel = AtomicBool::new(false);
+        let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel)
             .await
             .unwrap();
         server_task.await.unwrap();
@@ -1789,7 +1983,8 @@ mod tests {
                 .unwrap();
         });
 
-        let stats = run_file_transfer_responder(&mut server_conn, &pool, &app_data_dir)
+        let cancel = AtomicBool::new(false);
+        let stats = run_file_transfer_responder(&mut server_conn, &pool, &app_data_dir, &cancel)
             .await
             .unwrap();
         initiator_task.await.unwrap();
@@ -1798,6 +1993,150 @@ mod tests {
         assert_eq!(stats.files_received, 0);
         assert_eq!(stats.bytes_sent, 0);
         assert_eq!(stats.bytes_received, 0);
+    }
+
+    // ── M-47: cancel signal breaks file transfer between files ────────────
+
+    /// M-47: when `cancel` is set during file 1's transfer, the receiver
+    /// must complete file 1 (already in flight) but break out before
+    /// reading file 2's `FileOffer`. We rely on the receiver's cancel
+    /// check at the **top** of every loop iteration: cancel is set by
+    /// the mock responder *during* iteration 1 (between send_json
+    /// `FileOffer1` and send_binary), which means iteration 2 starts
+    /// AFTER `cancel.store(true)` has happened (because the receiver's
+    /// recv_binary blocks for the binary that comes after the store).
+    /// The implementation aborts cleanly without writing file 2.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
+        use std::sync::Arc;
+
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        let app_data_dir = dir.path().to_path_buf();
+
+        let file1: &[u8] = b"first file body content for M-47 test";
+        let file2: &[u8] = b"second file body - should NOT be received after cancel";
+        let hash1 = blake3::hash(file1).to_hex().to_string();
+        let hash2 = blake3::hash(file2).to_hex().to_string();
+
+        // Two attachment rows: both missing on disk so the receiver
+        // requests both. Names chosen to be obviously distinguishable.
+        insert_test_attachment(
+            &pool,
+            "ATT_M47_1",
+            "attachments/m47_1.bin",
+            file1.len() as i64,
+        )
+        .await;
+        insert_test_attachment(
+            &pool,
+            "ATT_M47_2",
+            "attachments/m47_2.bin",
+            file2.len() as i64,
+        )
+        .await;
+
+        let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_responder = cancel.clone();
+
+        // Mock responder: drives the protocol manually, sets `cancel`
+        // synchronously between `FileOffer1` and `send_binary(file1)`.
+        // This guarantees the receiver's iteration 2 (after ACK1) reads
+        // a `cancel == true` flag — there is no race because the
+        // store-release happens before the binary is even on the wire,
+        // and the receiver cannot reach iteration 2's load-acquire
+        // without first finishing iteration 1's body (recv_binary,
+        // write, send ACK).
+        let responder_task = tokio::spawn(async move {
+            // 1. Receive FileRequest for both files.
+            let req: SyncMessage = server_conn.recv_json().await.unwrap();
+            match req {
+                SyncMessage::FileRequest { attachment_ids } => {
+                    assert_eq!(
+                        attachment_ids,
+                        vec!["ATT_M47_1".to_string(), "ATT_M47_2".to_string()],
+                        "M-47 setup: both attachments must be requested"
+                    );
+                }
+                other => panic!("M-47 setup: expected FileRequest, got {other:?}"),
+            }
+
+            // 2. Send FileOffer for file 1.
+            server_conn
+                .send_json(&SyncMessage::FileOffer {
+                    attachment_id: "ATT_M47_1".into(),
+                    size_bytes: file1.len() as u64,
+                    blake3_hash: hash1.clone(),
+                })
+                .await
+                .unwrap();
+
+            // 3. M-47: store cancel BEFORE sending binary. The receiver
+            //    is now blocked in recv_binary; once the binary arrives
+            //    and iteration 1's body finishes, iteration 2's
+            //    cancel.load() sees the store-released `true`.
+            cancel_responder.store(true, Ordering::Release);
+
+            // 4. Send file 1 binary — receiver completes iteration 1.
+            server_conn.send_binary(file1).await.unwrap();
+
+            // 5. Receive ACK for file 1.
+            let ack: SyncMessage = server_conn.recv_json().await.unwrap();
+            assert!(
+                matches!(
+                    ack,
+                    SyncMessage::FileReceived { ref attachment_id } if attachment_id == "ATT_M47_1"
+                ),
+                "M-47: receiver must ACK file 1 before observing cancel; got {ack:?}"
+            );
+
+            // 6. Try to send file 2 — the receiver SHOULD have broken
+            //    out at iteration 2's cancel check, so these sends
+            //    will hit a closed connection. We swallow errors
+            //    (broken pipe is the success case).
+            let _ = server_conn
+                .send_json(&SyncMessage::FileOffer {
+                    attachment_id: "ATT_M47_2".into(),
+                    size_bytes: file2.len() as u64,
+                    blake3_hash: hash2.clone(),
+                })
+                .await;
+            let _ = server_conn.send_binary(file2).await;
+            let _ = server_conn
+                .send_json(&SyncMessage::FileTransferComplete)
+                .await;
+        });
+
+        // Initiator (receiver) side: run the production code path.
+        let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel)
+            .await
+            .expect("M-47: receive must return Ok with partial stats on cancel");
+
+        let _ = responder_task.await;
+
+        // M-47 contract:
+        // (a) file 1 was successfully received,
+        // (b) file 2 was NOT received,
+        // (c) cancel flag is still set (cleared only by the daemon's
+        //     CancelGuard, not by the file-transfer helper).
+        assert_eq!(
+            stats.files_received, 1,
+            "M-47: exactly one file should be received before cancel takes effect"
+        );
+        assert!(
+            dir.path().join("attachments/m47_1.bin").exists(),
+            "M-47: file 1 must be on disk (it completed before cancel was observed)"
+        );
+        assert!(
+            !dir.path().join("attachments/m47_2.bin").exists(),
+            "M-47: file 2 must NOT be on disk — receiver must break before processing it"
+        );
+        assert!(
+            cancel.load(Ordering::Acquire),
+            "M-47: file-transfer helper does not clear cancel; that is the daemon's job"
+        );
     }
 
     // ── TEST-38 / BUG-35: attachment path traversal validation ────────────

@@ -295,12 +295,26 @@ pub(crate) async fn handle_incoming_sync(
     // ── File transfer phase (F-14) ────────────────────────────────────────
     // After the op-sync completes, transfer missing attachment files.
     // The responder responds first, then requests its own files.
+    //
+    // M-47: the responder side of the connection has no plumbed-in
+    // cancel signal today (only the initiator surfaces the user-visible
+    // "cancel sync" button on its end). We pass a fresh, never-set
+    // `AtomicBool` so the file-transfer helpers compile and behave
+    // exactly as before on the responder. Responder-side cancellation
+    // is a follow-up — once the daemon's per-incoming-session
+    // cancel context is wired through `handle_incoming_sync` we can
+    // replace this placeholder with the real flag. The user-visible
+    // case (initiator cancels its own outbound sync) is fully handled
+    // via the orchestrator's `run_sync_session` cancel parameter, which
+    // *is* threaded through to `run_file_transfer_initiator`.
+    let responder_cancel = std::sync::atomic::AtomicBool::new(false);
     if orch.is_complete() {
         if let Ok(app_data_dir) = crate::sync_files::app_data_dir_from_pool(&pool_ref).await {
             match crate::sync_files::run_file_transfer_responder(
                 &mut conn,
                 &pool_ref,
                 &app_data_dir,
+                &responder_cancel,
             )
             .await
             {
