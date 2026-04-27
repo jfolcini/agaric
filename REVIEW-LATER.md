@@ -17,15 +17,14 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-5 open items.
+4 open items.
 
-Previously resolved: 541+ items across 158 sessions.
+Previously resolved: 542+ items across 159 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
 | FEAT-3 | FEAT | Spaces — parent / umbrella (Phases 1 + 2 + 3 shipped; Phases 4–11 split into FEAT-3p4..FEAT-3p11) | S |
 | FEAT-3p4 | FEAT | Spaces Phase 4: agenda / graph / backlinks / tags / properties scoping (+ promote `space_id` to required on `list_blocks` / `search_blocks`, page-membership check in `get_page_inner`, per-space `currentView`) | L |
-| FEAT-3p5b | FEAT | Spaces Phase 5b: per-space journal templates — `journal_template` text property on space blocks, render via existing `insertTemplateBlocks`, SpaceManageDialog affordance to set it | S |
 | FEAT-3p9 | FEAT | Spaces Phase 9: per-space external integrations — per-space GCal calendar IDs / OAuth / push pipeline + space-name prefix on OS notifications (FEAT-11 coupling) | L |
 | FEAT-4 | FEAT | Agent access: expose notes to external agents via an MCP server — parent / umbrella | L |
 | FEAT-4i | FEAT | MCP v3 — Mobile (HTTPS/LAN via mTLS reuse from `sync_cert.rs`, agent-pairing flow) — DEFERRED pending v2 | L |
@@ -188,20 +187,6 @@ Fresh installs and upgrades both run a boot-time Rust bootstrap (`src-tauri/src/
 
 **Cost:** L — biggest remaining FEAT-3 slice (10+ commands × backend + 7+ frontend areas + property tests + the three additional items above). Realistic estimate: 2 focused sessions.
 **Status:** Open. Depends on FEAT-3 Phases 1 + 2 + 3 (shipped). Independent of FEAT-3p5, FEAT-3p6, FEAT-3p7, FEAT-3p8, FEAT-3p9, FEAT-3p10, FEAT-3p11.
-
-### FEAT-3p5b — Spaces Phase 5b: per-space journal templates
-
-**Problem:** FEAT-3p5 shipped per-space daily journal pages but deliberately deferred per-space journal templates so the lookup work could land cleanly in one session. Today the journal-template lookup still uses the global `journal-template = 'true'` page-property indirection (`src/lib/template-utils.ts::loadJournalTemplate`), so every space shares the same template — the user cannot have a "Work standup" template distinct from a "Personal" template.
-
-**Scope:**
-
-- Each space block can carry a `journal_template` text property whose `value_text` is the template content (a markdown string). When `resolve_or_create_journal_page` creates a new daily page, after the atomic `CreateBlock` + `SetProperty(space)` pair, look up `block_properties WHERE block_id=<space_id> AND key='journal_template'` and, if found, populate the new page's body with the rendered template content.
-- Reuse `insertTemplateBlocks` / `expandTemplateVariables` from `src/lib/template-utils.ts` if the template content is a markdown string; otherwise plumb a `populate_journal_template_in_tx` helper that accepts the raw template text and emits the same `CreateBlock` op pair the existing `insertTemplateBlocks` does.
-- Backend test: `today_journal_template_applied_per_space` — space_a has `journal_template="* Morning standup\n* TODOs"`; new daily page in space_a gets those blocks; space_b without a template gets an empty body.
-- Frontend: a "Set journal template" affordance on the SpaceManageDialog (write `journal_template` via `setProperty`).
-
-**Cost:** S — single focused session, additive on top of FEAT-3p5.
-**Status:** Open. Depends on FEAT-3p5 (shipped). Independent of FEAT-3p4 / FEAT-3p7.
 
 ### FEAT-3p9 — Spaces Phase 9: per-space external integrations (GCal, OS notifications)
 
