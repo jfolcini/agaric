@@ -198,6 +198,21 @@ async fn purge_all_deleted_cleans_dependent_tables() {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+        .bind("PA_REL")
+        .bind("old-name")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO projected_agenda_cache (block_id, projected_date, source) VALUES (?, ?, ?)",
+    )
+    .bind("PA_REL")
+    .bind("2024-12-26")
+    .bind("due_date")
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // Soft-delete both the block with relations and the tag
     soft_delete::cascade_soft_delete(&pool, "PA_REL")
@@ -236,6 +251,23 @@ async fn purge_all_deleted_cleans_dependent_tables() {
     .await
     .unwrap();
     assert_eq!(links, 0, "block_links must be purged");
+
+    // Use the non-macro `query_scalar` form for these two so we don't have
+    // to add new variations to the sqlx offline cache.
+    let aliases: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM page_aliases WHERE page_id = ?")
+        .bind("PA_REL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(aliases, 0, "page_aliases must be purged");
+
+    let projected: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = ?")
+            .bind("PA_REL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(projected, 0, "projected_agenda_cache must be purged");
 
     // PA_TGT (link target, not deleted) should still exist
     let tgt = get_block_inner(&pool, "PA_TGT".into()).await.unwrap();

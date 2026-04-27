@@ -3084,9 +3084,10 @@ async fn list_page_history_includes_ops_after_block_moved_to_different_page() {
         .collect();
 
     // The child is now under B, so all ops for child should appear in B's history.
-    assert!(
-        !child_ops_in_b.is_empty(),
-        "page B history should include ops for the moved child"
+    assert_eq!(
+        child_ops_in_b.len(),
+        3,
+        "page B history should include all 3 ops for the moved child (create, edit, move)"
     );
 
     // Page A should NOT include the child's ops anymore (child is no longer a descendant)

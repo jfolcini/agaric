@@ -273,6 +273,42 @@ mod tests {
         assert_eq!(get_deleted_at(&pool, "TREE_B_C").await, None);
     }
 
+    #[tokio::test]
+    async fn cascade_soft_delete_skips_conflict_copies() {
+        // Invariant #9: the recursive CTE filters `is_conflict = 0` so a
+        // conflict copy sharing parent_id with its original is NOT swept
+        // into the cascade. Without that filter the conflict copy would be
+        // soft-deleted alongside its ancestors and surface in trash UIs.
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
+        insert_block(
+            &pool,
+            CHILD,
+            "content",
+            "normal child",
+            Some(PARENT),
+            Some(1),
+        )
+        .await;
+        // Conflict copy: shares parent_id with the original but is_conflict = 1.
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict, conflict_source) \
+             VALUES (?, 'content', 'conflict copy', ?, 2, 1, ?)",
+            CHILD2,
+            PARENT,
+            CHILD,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (ts, count) = cascade_soft_delete(&pool, PARENT).await.unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(get_deleted_at(&pool, PARENT).await, Some(ts.clone()));
+        assert_eq!(get_deleted_at(&pool, CHILD).await, Some(ts));
+        assert_eq!(get_deleted_at(&pool, CHILD2).await, None);
+    }
+
     // ======================================================================
     // restore_block
     // ======================================================================

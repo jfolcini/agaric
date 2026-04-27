@@ -1096,7 +1096,10 @@ mod tests {
             value_date: None,
             value_ref: None,
         };
-        assert!(validate_set_property(&p).is_ok());
+        assert!(
+            validate_set_property(&p).is_ok(),
+            "validate_set_property should accept a payload with exactly one value (value_text set)"
+        );
     }
 
     #[test]

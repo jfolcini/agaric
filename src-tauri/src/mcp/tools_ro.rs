@@ -1314,9 +1314,15 @@ mod tests {
         // list_property_defs (no DB side effects needed for the check,
         // but ACTOR.scope runs in the same task).
         let result = tools.call_tool("list_property_defs", json!({}), &ctx).await;
+        let Ok(resp) = result else {
+            panic!("list_property_defs must succeed inside scoped call, got {result:?}");
+        };
+        // Sanity-check the response shape: list_property_defs returns a JSON
+        // array of definitions. Confirms the scoped call actually ran the
+        // handler (not just returned a default value).
         assert!(
-            result.is_ok(),
-            "list_property_defs must succeed inside scoped call",
+            resp.is_array(),
+            "list_property_defs response should be a JSON array, got {resp:?}",
         );
     }
 
@@ -1482,6 +1488,10 @@ mod tests {
             let tools = tools.clone();
             handles.push(tokio::spawn(async move {
                 let mut ok = 0usize;
+                // Hold onto one sample list_pages response per task so the
+                // outer scope can shape-check at least one of the N calls
+                // beyond just `is_ok()`.
+                let mut last_list_pages: Value = Value::Null;
                 for _ in 0..ITERS {
                     let ctx = ActorContext {
                         actor: Actor::Agent {
@@ -1500,18 +1510,24 @@ mod tests {
                             &ctx,
                         )
                         .await;
+                    if let Ok(ref v) = b {
+                        last_list_pages = v.clone();
+                    }
                     for r in [a, b, d] {
                         assert!(r.is_ok(), "stress call failed: {r:?}");
                         ok += 1;
                     }
                 }
-                ok
+                (ok, last_list_pages)
             }));
         }
 
         let mut total = 0usize;
+        let mut samples: Vec<Value> = Vec::new();
         for h in handles {
-            total += h.await.expect("task joined");
+            let (ok, sample) = h.await.expect("task joined");
+            total += ok;
+            samples.push(sample);
         }
         assert_eq!(
             total,
@@ -1520,6 +1536,19 @@ mod tests {
             CLIENTS,
             ITERS,
             TOOLS_PER_ITER,
+        );
+
+        // Shape check: at least one of the sampled list_pages responses
+        // must be a JSON object exposing the paginated `items` field.
+        // Catches handlers that succeed but return wrong-typed JSON under
+        // contention (e.g., Null, raw array).
+        let sample = samples
+            .iter()
+            .find(|v| !v.is_null())
+            .expect("at least one stress task should have captured a list_pages response");
+        assert!(
+            sample.get("items").is_some(),
+            "list_pages stress response should expose `items` field, got {sample:?}",
         );
     }
 
