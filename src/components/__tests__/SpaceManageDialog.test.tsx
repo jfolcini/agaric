@@ -71,6 +71,10 @@ function setupDefaultIpcMocks() {
     if (cmd === 'list_spaces') return [PERSONAL, WORK]
     if (cmd === 'edit_block') return null
     if (cmd === 'set_property') return null
+    if (cmd === 'delete_property') return null
+    // FEAT-3p5b — per-space `journal_template` lookup. Default to no
+    // properties so the textarea starts empty.
+    if (cmd === 'get_properties') return []
     if (cmd === 'delete_block') return { affected_count: 1 }
     if (cmd === 'create_space') return 'SPACE_NEW_ID'
     return null
@@ -137,6 +141,7 @@ describe('SpaceManageDialog', () => {
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
       if (cmd === 'edit_block') throw new Error('IPC offline')
       if (cmd === 'set_property') return null
+      if (cmd === 'get_properties') return []
       return null
     })
 
@@ -190,6 +195,7 @@ describe('SpaceManageDialog', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return nonEmptyPage
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
+      if (cmd === 'get_properties') return []
       return null
     })
 
@@ -357,6 +363,162 @@ describe('SpaceManageDialog', () => {
 
     await screen.findByText(t('space.manageDialogTitle'))
     expect(screen.queryByText(t('space.onboardingTitle'))).not.toBeInTheDocument()
+  })
+
+  // ── Per-space journal template (FEAT-3p5b) ──────────────────────────
+
+  it('journal template textarea pre-populates from existing property', async () => {
+    // Seed `get_properties(PERSONAL.id)` with a `journal_template` row;
+    // every other space returns no properties (default-empty).
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_spaces') return [PERSONAL, WORK]
+      if (cmd === 'get_properties') {
+        const a = args as { blockId: string }
+        if (a.blockId === PERSONAL.id) {
+          return [
+            {
+              key: 'journal_template',
+              value_text: '## Standup\n- TODOs',
+              value_num: null,
+              value_date: null,
+              value_ref: null,
+            },
+          ]
+        }
+        return []
+      }
+      return null
+    })
+
+    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+
+    // The Personal row's textarea must mount with the seeded value.
+    // Use findAllByLabelText because both rows render the same label;
+    // the personal row is the first one.
+    const textareas = await screen.findAllByLabelText(t('space.journalTemplateLabel'))
+    const personalTextarea = textareas[0] as HTMLTextAreaElement
+    expect(personalTextarea.tagName.toLowerCase()).toBe('textarea')
+    await waitFor(() => {
+      expect(personalTextarea.value).toBe('## Standup\n- TODOs')
+    })
+  })
+
+  it('saving journal template calls setProperty with the entered value on blur', async () => {
+    const user = userEvent.setup()
+    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+
+    // The Personal row textarea (first one, since both rows render the
+    // same label). Find by aria-label, scoped to the row that matches
+    // the personal input.
+    const textareas = await screen.findAllByLabelText(t('space.journalTemplateLabel'))
+    const personalTextarea = textareas[0] as HTMLTextAreaElement
+    await user.click(personalTextarea)
+    await user.type(personalTextarea, 'Daily focus')
+    // Blur via tabbing out — onBlur fires the commit.
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'set_property',
+        expect.objectContaining({
+          blockId: PERSONAL.id,
+          key: 'journal_template',
+          valueText: 'Daily focus',
+        }),
+      )
+    })
+  })
+
+  it('clearing journal template calls deleteProperty on blur', async () => {
+    // Seed with an existing template so clearing is meaningful.
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_spaces') return [PERSONAL, WORK]
+      if (cmd === 'get_properties') {
+        const a = args as { blockId: string }
+        if (a.blockId === PERSONAL.id) {
+          return [
+            {
+              key: 'journal_template',
+              value_text: 'Existing template',
+              value_num: null,
+              value_date: null,
+              value_ref: null,
+            },
+          ]
+        }
+        return []
+      }
+      if (cmd === 'delete_property') return null
+      if (cmd === 'set_property') return null
+      return null
+    })
+
+    const user = userEvent.setup()
+    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+
+    const textareas = await screen.findAllByLabelText(t('space.journalTemplateLabel'))
+    const textarea = textareas[0] as HTMLTextAreaElement
+    await waitFor(() => {
+      expect(textarea.value).toBe('Existing template')
+    })
+    await user.clear(textarea)
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'delete_property',
+        expect.objectContaining({ blockId: PERSONAL.id, key: 'journal_template' }),
+      )
+    })
+  })
+
+  it('setProperty failure shows toast and reverts to previous value', async () => {
+    // Seed with an existing committed value so we can verify the revert.
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_spaces') return [PERSONAL, WORK]
+      if (cmd === 'get_properties') {
+        const a = args as { blockId: string }
+        if (a.blockId === PERSONAL.id) {
+          return [
+            {
+              key: 'journal_template',
+              value_text: 'Original',
+              value_num: null,
+              value_date: null,
+              value_ref: null,
+            },
+          ]
+        }
+        return []
+      }
+      if (cmd === 'set_property') throw new Error('IPC offline')
+      return null
+    })
+
+    const user = userEvent.setup()
+    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+
+    const textareas = await screen.findAllByLabelText(t('space.journalTemplateLabel'))
+    const textarea = textareas[0] as HTMLTextAreaElement
+    await waitFor(() => {
+      expect(textarea.value).toBe('Original')
+    })
+    await user.click(textarea)
+    await user.clear(textarea)
+    await user.type(textarea, 'Edited but failing')
+    await user.tab()
+
+    // Sonner is globally mocked — toast.error is a vi.fn().
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('space.journalTemplateFailed'))
+    })
+    // Revert: textarea reflects the previously-committed value.
+    await waitFor(() => {
+      expect(textarea.value).toBe('Original')
+    })
   })
 
   // Accessibility audits — four states matter visually:

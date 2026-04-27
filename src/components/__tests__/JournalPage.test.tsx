@@ -2426,6 +2426,174 @@ describe('JournalPage', () => {
     })
   })
 
+  // ── Per-space journal template (FEAT-3p5b) ──────────────────────────
+
+  describe('per-space journal template (FEAT-3p5b)', () => {
+    /**
+     * Build an IPC dispatcher modelling: per-space `journal_template`
+     * property + optional legacy `journal-template` page. Both
+     * surfaces hit the same `create_page_in_space` and `create_block`
+     * mocks so the assertion can pin down which template ran by
+     * inspecting the resulting `create_block` call sequence.
+     */
+    function makePerSpaceMock(opts: {
+      perSpaceTemplate: string | null
+      legacyTemplatePage: boolean
+    }) {
+      return async (cmd: string, args?: unknown): Promise<unknown> => {
+        if (cmd === 'list_blocks') return templateListBlocksResponse(args)
+        if (cmd === 'get_properties') {
+          if (opts.perSpaceTemplate == null) return []
+          return [
+            {
+              key: 'journal_template',
+              value_text: opts.perSpaceTemplate,
+              value_num: null,
+              value_date: null,
+              value_ref: null,
+            },
+          ]
+        }
+        if (cmd === 'query_by_property') {
+          if (opts.legacyTemplatePage) return templateQueryByPropertyResponse(args)
+          return emptyPage
+        }
+        if (cmd === 'create_page_in_space') return 'DP-PS'
+        if (cmd === 'create_block') {
+          const params = args as { blockType: string; content?: string; parentId?: string }
+          return {
+            id: `NEW-${params.content?.replace(/\s+/g, '-') ?? 'block'}`,
+            block_type: params.blockType,
+            content: params.content ?? '',
+            parent_id: params.parentId,
+            position: 0,
+          }
+        }
+        return emptyPage
+      }
+    }
+
+    it('per-space journal template applies on new daily page creation', async () => {
+      mockedInvoke.mockImplementation(
+        makePerSpaceMock({
+          perSpaceTemplate: 'Morning standup\nTODOs',
+          legacyTemplatePage: false,
+        }),
+      )
+
+      renderJournal()
+
+      // Page is created via `create_page_in_space` for today.
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'create_page_in_space',
+          expect.objectContaining({ spaceId: 'SPACE_TEST' }),
+        )
+      })
+
+      // Per-space property lookup hits get_properties with the space id.
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('get_properties', { blockId: 'SPACE_TEST' })
+      })
+
+      // Two blocks created from the markdown lines.
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'create_block',
+          expect.objectContaining({
+            blockType: 'content',
+            content: 'Morning standup',
+            parentId: 'DP-PS',
+          }),
+        )
+      })
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'create_block',
+          expect.objectContaining({
+            blockType: 'content',
+            content: 'TODOs',
+            parentId: 'DP-PS',
+          }),
+        )
+      })
+    })
+
+    it('per-space journal template takes precedence over legacy global journal-template', async () => {
+      mockedInvoke.mockImplementation(
+        makePerSpaceMock({
+          perSpaceTemplate: 'Morning standup\nTODOs',
+          legacyTemplatePage: true,
+        }),
+      )
+
+      renderJournal()
+
+      // The per-space content blocks must land...
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'create_block',
+          expect.objectContaining({ content: 'Morning standup' }),
+        )
+      })
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'create_block',
+          expect.objectContaining({ content: 'TODOs' }),
+        )
+      })
+
+      // ...and the legacy template's children (`## Morning Review`,
+      // `## Tasks`) must NOT have been copied. Ensures the
+      // pre-existing legacy `insertTemplateBlocks` path was skipped.
+      const legacyContentCalls = mockedInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === 'create_block' &&
+          ((args as { content?: string }).content === '## Morning Review' ||
+            (args as { content?: string }).content === '## Tasks'),
+      )
+      expect(legacyContentCalls).toHaveLength(0)
+    })
+
+    it('falls back to legacy journal-template when per-space property absent', async () => {
+      mockedInvoke.mockImplementation(
+        makePerSpaceMock({ perSpaceTemplate: null, legacyTemplatePage: true }),
+      )
+
+      renderJournal()
+
+      // Legacy path: query_by_property('journal-template') is hit AND
+      // its child blocks (`## Morning Review`, `## Tasks`) are copied.
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'query_by_property',
+          expect.objectContaining({
+            key: 'journal-template',
+            valueText: 'true',
+          }),
+        )
+      })
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'create_block',
+          expect.objectContaining({
+            blockType: 'content',
+            content: '## Morning Review',
+          }),
+        )
+      })
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'create_block',
+          expect.objectContaining({
+            blockType: 'content',
+            content: '## Tasks',
+          }),
+        )
+      })
+    })
+  })
+
   // ── Keyboard shortcut for new block (#633) ──────────────────────────
 
   describe('keyboard shortcut for new block (#633)', () => {
