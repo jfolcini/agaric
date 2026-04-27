@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-9 open items.
+5 open items.
 
-Previously resolved: 537+ items across 157 sessions.
+Previously resolved: 541+ items across 158 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -32,10 +32,6 @@ Previously resolved: 537+ items across 157 sessions.
 | FEAT-5 | FEAT | Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar) — parent / umbrella | L |
 | FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L |
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L |
-| FEAT-14 | FEAT | PageBrowser — combine starred grouping with unified namespace tree (parent / umbrella) | S |
-| FEAT-14a | FEAT | PageBrowser grouping: refactor memo + virtualizer estimateSize + keyboard-nav row mapping for unified model | M |
-| FEAT-14b | FEAT | PageBrowser grouping: i18n keys + section icons + per-section empty-state visibility flags | S |
-| FEAT-14c | FEAT | PageBrowser grouping: test coverage update (replace FEAT-12 tree-bypasses assertions, add duplication / filter / a11y / keyboard tests) | S–M |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
@@ -630,84 +626,6 @@ Part of the FEAT-5 family. **Not scheduled.** Blocked on explicit design-review 
 **Cost:** L — design (which events fire? how to dedupe? snooze semantics?), backend scheduler (~6 files), one Settings sub-tab, mobile permission flow, ~25 tests.
 **Risk:** M — wrong-time notifications and notification spam are both real failure modes; needs careful dedupe and "do not re-fire on materialize replay" guard.
 **Impact:** L — closes a recognised feature gap with Org-mode / Logseq parity; especially valuable on mobile where the user is unlikely to have the app foregrounded when a task is due.
-
-### FEAT-14 — PageBrowser: combine starred grouping with unified namespace tree (parent / umbrella)
-
-**Problem:** `PageBrowser` has a sharp cliff today. As soon as **any** filtered page title contains `/`, the entire view flips to tree mode and the FEAT-12 Starred / Other grouping disappears entirely. A user with 200 flat pages and one namespaced page like `archive/2024-q1` loses starred pinning across the whole vault. The two organising axes (favourites vs hierarchy) are treated as mutually exclusive when they should be orthogonal.
-
-**Locked-in policy (unified-Pages model — do not re-litigate during implementation):**
-
-- Two sections only: `Starred` and `Pages`. No three-way `Starred / By namespace / Top-level pages` split — the unified model kills the awkward "Other / Tree" header naming and reduces section chrome by one row.
-- `Starred` (flat, conditional) renders at the top when at least one filtered page is starred. Sort applies independently within the section. Same behaviour as FEAT-12 today.
-- `Pages` is a single section that interleaves top-level flat pages (no `/` in the title) and namespace roots (expandable `PageTreeItem`s) sorted together at each level by the active comparator. Mirrors how a file manager interleaves files and folders.
-- Sort policy unchanged: the active sort (`alphabetical` / `recent` / `created`) controls sibling order at each level inside `Pages` and the order inside `Starred` independently. Top-level mixing of flat pages and namespace roots is by the same comparator.
-- A starred page that also has `/` in its title appears **twice**: once flat in `Starred` (with its full `work/foo` title), once nested in its tree position inside `Pages` (under the `work` root). Star toggle from either copy bumps `starredRevision` and updates both rows immediately. Same precedent as Notion / Logseq / Finder Favourites + Locations.
-- Sections are conditionally hidden when empty. Empty vault → existing `EmptyState`. Single-page vault → `Pages` only, no `Starred` chrome (matches the current FEAT-12 single-page-vault branch).
-- Search / filter narrows both sections simultaneously; an emptied section hides its header without flipping the layout. The "any `/` flips the whole view" cliff is gone.
-
-**Sub-items:**
-
-- FEAT-14a — refactor grouping memo + virtualizer `estimateSize` + keyboard-nav `pageIndexToRowIndex` for the unified model
-- FEAT-14b — i18n keys + section icons + per-section empty-state visibility flags
-- FEAT-14c — test coverage update
-
-**Status:** Open. FEAT-14a–FEAT-14c form a strict serial chain (memo refactor → labels → tests); not parallelisable.
-
-**Cost:** S (umbrella — sub-items carry the implementation cost).
-**Risk:** L — pure frontend, contained to `PageBrowser.tsx` + tests + i18n. No backend, no schema, no architectural change.
-**Impact:** M — removes the surprising "one `/` flips the whole view" cliff and gives users who rely on starring a stable anchor regardless of how they organise namespaces.
-
-### FEAT-14a — PageBrowser grouping: refactor memo, virtualizer, keyboard nav for unified model
-
-**Scope (frontend-only, contained to `src/components/PageBrowser.tsx` + a few imports):**
-
-- Rewrite the `useMemo` at `src/components/PageBrowser.tsx:308-380` to produce two row buckets (`Starred`, `Pages`) instead of the current `isTreeMode ? flat : grouped` ternary. Each bucket is empty-pruneable. The `Pages` bucket holds a heterogeneous list of "top-level units" — each unit is either a single flat page (no `/`) or a namespace root tree node — sorted together by the active comparator.
-- Extend the `PageBrowserRow` discriminated union (currently `'header' | 'page'` at `src/components/PageBrowser.tsx:56-58`) so the `Pages` bucket can emit either flat page rows or tree-page rows. Two viable shapes: add `kind: 'tree-page'` with a `depth` field, or merge tree rendering into the existing `'page'` kind with an optional `treeNode` payload. Header rows stay at `HEADER_ROW_HEIGHT` (36px); page and tree-page rows at `PAGE_ROW_HEIGHT` (44px).
-- `buildPageTree` (or a thin variant) must produce a list of "top-level units" where each unit is either a single flat page or a namespace root tree node. Top-level units are sorted by the active comparator and interleaved. Subtree rendering (existing `PageTreeItem`) is unchanged below the root level.
-- `estimateSize` callback at `src/components/PageBrowser.tsx:408-418` updated to handle the new row kinds (header → 36px, page or tree-page → 44px). Drop the global `isTreeMode` branch.
-- `pageIndexToRowIndex` rebuilt to walk every visible page row in render order — **including duplicates** from starred-and-namespaced pages — so `useListKeyboardNavigation` arrow-down/up steps through each visible row exactly once. `filteredPages.length` reflects total visible page rows (including duplicates), not unique page count. Each row is independently focusable; arrow-down through a starred-and-namespaced duplicate naturally walks past the same page twice (acceptable; matches Finder semantics).
-- Remove the global `isTreeMode` boolean — its job collapses into "does this top-level unit happen to be a tree node?". The single-page-vault and empty-vault branches at `src/components/PageBrowser.tsx:324-339` are preserved as-is.
-- Star toggle still uses `starredRevision` (line 240-243) to bump the memo; verify both row copies refresh on toggle.
-- Per-section divider chrome: `Pages` header gets `border-t border-border mt-1` only when `Starred` is also rendered. Replace the current `hasGrouping` flag at `src/components/PageBrowser.tsx:375-379` with two booleans (`hasStarred`, `hasPages`) computed in the same memo.
-
-**Out of scope:** any backend / schema change. No new Tauri commands. No new Zustand store.
-
-**Cost:** M — one focused session, ~150 LOC delta in `PageBrowser.tsx`.
-**Risk:** M — virtualizer + keyboard nav + row-duplication interact non-trivially; covered by FEAT-14c.
-
-### FEAT-14b — PageBrowser grouping: i18n + icons + per-section visibility flags
-
-**Scope:**
-
-- New i18n keys in `src/lib/i18n.ts`:
-  - `pageBrowser.pagesSection` — visible label, proposed: `"Pages"`
-  - `pageBrowser.pagesSectionLabel` — count-aware sr-only label, matching the existing FEAT-12 pattern
-- Keep `pageBrowser.starredSection` / `pageBrowser.starredSectionLabel` unchanged.
-- Drop the existing `pageBrowser.otherPagesSection` / `pageBrowser.otherPagesSectionLabel` keys — they're replaced by `pagesSection` under the unified model.
-- Section icon for `Pages`: reuse `FileText` (already imported at `src/components/PageBrowser.tsx:10`, currently used for the `Other pages` header).
-- Verify the empty-vault path still renders the existing `EmptyState` component (no sections at all → fall through to empty state).
-
-**Cost:** S — string edits + small render branch tweaks. No logic changes beyond what FEAT-14a already lands.
-
-### FEAT-14c — PageBrowser grouping: test coverage update
-
-**Scope:**
-
-- Replace the FEAT-12 assertion at `src/components/__tests__/PageBrowser.test.tsx:1638-1657` (`tree mode renders without grouping headers`) — under the unified model the `Starred` header must render even when tree-eligible pages exist; `Pages` replaces `Other pages`.
-- Replace the FEAT-12 assertion at `src/components/__tests__/PageBrowser.test.tsx:1908-1936` (`a11y audit passes on tree mode (grouping bypassed)`) with an `axe` audit on the unified two-section layout.
-- Audit and update other FEAT-12 tests that reference the literal text `'Other pages'` — those become `'Pages'` under the new model.
-- New tests:
-  - **Tree + Starred coexist.** Starred non-namespaced page (`Apple`, starred) + namespaced non-starred page (`work/foo`) → `Starred` shows `Apple`, `Pages` shows `work` (expandable) at the top level.
-  - **Mixed top level.** Top-level flat page (`Inbox`) + namespace root (`work/foo`) sorted alphabetically together → both render under `Pages` interleaved by the comparator (`Inbox` before `work` for alphabetical).
-  - **Duplication.** A page that is starred **and** has `/` in its title (`work/foo`, starred) renders in both `Starred` (as `work/foo`) and `Pages` (nested under `work`); `getAllByText('foo')` returns 2 nodes.
-  - **Star toggle propagation.** Clicking the star button in either copy of a duplicated row updates both immediately (`starredRevision` bump fires for both renders).
-  - **Filter narrows `Pages` to empty** → `Pages` header hidden, `Starred` still renders.
-  - **Filter narrows `Starred` to empty** → `Starred` header hidden, `Pages` still renders.
-  - **Keyboard navigation.** Arrow-down walks every visible row in render order, including duplicate rows for starred-namespaced pages.
-  - **Empty vault** still renders the existing empty-state component (no section chrome).
-- Full `axe` audit on the new layout (with `nested-interactive` and `aria-required-children` exemptions matching the existing FEAT-12 audit at lines 1922-1934).
-
-**Cost:** S–M — ~10 new tests + 3 existing rewrites.
 
 ## PERF — Performance items
 
