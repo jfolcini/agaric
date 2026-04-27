@@ -30,6 +30,49 @@ use serde_json::Value;
 use super::actor::ActorContext;
 use crate::error::AppError;
 
+// ---------------------------------------------------------------------------
+// MCP tool-name constants (MAINT-136)
+//
+// One `pub(crate) const TOOL_<NAME>: &str = "<name>";` per advertised MCP
+// tool. These are the single source of truth for the wire-format tool name
+// used at four otherwise-duplicated sites:
+//
+//   1. `ToolDescription` schema construction (`tool_desc_*` in
+//      `tools_ro.rs` / `tools_rw.rs`) — the `name:` field.
+//   2. `call_tool` match arms (in `tools_ro.rs` / `tools_rw.rs`).
+//   3. `parse_args` error-prefix string ("<tool>: invalid arguments — …").
+//   4. `summarise.rs` privacy-summary match.
+//
+// Tests that intentionally pin the wire-format string (snapshot ordering
+// asserts, JSON-RPC envelope assertions, `activity.rs` debug serialisations)
+// still use the bare literal — they are part of the wire contract being
+// asserted, not internal call sites.
+//
+// Constants chosen over a `ToolName` enum because every internal call site
+// matches against `&str` (JSON-RPC `params.name`, `serde_json` arg
+// envelopes); converting through an enum + `From<&str>` would add a parsing
+// step at each dispatch with no offsetting type-system benefit.
+// ---------------------------------------------------------------------------
+
+// Read-only tool names (`tools_ro.rs`).
+pub(crate) const TOOL_LIST_PAGES: &str = "list_pages";
+pub(crate) const TOOL_GET_PAGE: &str = "get_page";
+pub(crate) const TOOL_SEARCH: &str = "search";
+pub(crate) const TOOL_GET_BLOCK: &str = "get_block";
+pub(crate) const TOOL_LIST_BACKLINKS: &str = "list_backlinks";
+pub(crate) const TOOL_LIST_TAGS: &str = "list_tags";
+pub(crate) const TOOL_LIST_PROPERTY_DEFS: &str = "list_property_defs";
+pub(crate) const TOOL_GET_AGENDA: &str = "get_agenda";
+pub(crate) const TOOL_JOURNAL_FOR_DATE: &str = "journal_for_date";
+
+// Read-write tool names (`tools_rw.rs`).
+pub(crate) const TOOL_APPEND_BLOCK: &str = "append_block";
+pub(crate) const TOOL_UPDATE_BLOCK_CONTENT: &str = "update_block_content";
+pub(crate) const TOOL_SET_PROPERTY: &str = "set_property";
+pub(crate) const TOOL_ADD_TAG: &str = "add_tag";
+pub(crate) const TOOL_CREATE_PAGE: &str = "create_page";
+pub(crate) const TOOL_DELETE_BLOCK: &str = "delete_block";
+
 /// Metadata returned by [`ToolRegistry::list_tools`] — one entry per
 /// advertised tool. The JSON shape matches MCP's `tools/list` response:
 /// `{"name": "...", "description": "...", "inputSchema": {...}}`.

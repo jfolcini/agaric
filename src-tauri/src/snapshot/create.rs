@@ -18,7 +18,7 @@ pub(crate) async fn collect_tables(
 ) -> Result<SnapshotTables, AppError> {
     let blocks: Vec<BlockSnapshot> = sqlx::query_as!(
         BlockSnapshot,
-        "SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict, conflict_source, todo_state, priority, due_date, scheduled_date FROM blocks"
+        "SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict, conflict_source, conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks"
     )
     .fetch_all(&mut *conn)
     .await?;

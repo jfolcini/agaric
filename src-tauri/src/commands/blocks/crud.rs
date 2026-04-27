@@ -9,6 +9,70 @@ use tracing::instrument;
 
 use super::super::*;
 
+/// MAINT-147 (a): collapse the ~10 near-identical
+/// `DELETE FROM <table> WHERE <col> IN (SELECT id FROM descendants)`
+/// blocks in [`purge_block_inner`] into a single helper macro.
+///
+/// Each invocation expands to a fully-prepared `sqlx::query(...)` whose
+/// SQL is the textual concatenation of [`crate::descendants_cte_purge!()`]
+/// (a string-literal-emitting macro) and the per-table `DELETE` clause.
+/// The expanded SQL is byte-for-byte identical to the original inline
+/// strings — verified by spot-checking with `cargo expand` — so no
+/// `.sqlx/` cache regeneration is needed (these queries use the
+/// dynamic-string `sqlx::query` API rather than `query!`/`query_as!`).
+///
+/// The macro defaults the predicate column to `block_id`; tables that
+/// key on a different column (e.g. `tags_cache.tag_id`,
+/// `pages_cache.page_id`, `blocks.id`) pass the column literal
+/// explicitly. Variant cases — multi-column `OR` filters and `UPDATE`s
+/// that nullify a column — stay inline; trying to capture their shapes
+/// in this macro would obscure intent without saving lines.
+macro_rules! purge_descendants_table {
+    ($tx:expr, $block_id:expr, $table:literal $(,)?) => {
+        purge_descendants_table!($tx, $block_id, $table, "block_id")
+    };
+    ($tx:expr, $block_id:expr, $table:literal, $col:literal $(,)?) => {
+        sqlx::query(concat!(
+            $crate::descendants_cte_purge!(),
+            "DELETE FROM ",
+            $table,
+            " WHERE ",
+            $col,
+            " IN (SELECT id FROM descendants)",
+        ))
+        .bind($block_id)
+        .execute(&mut **$tx)
+        .await?
+    };
+}
+
+/// Look up the most-recent `edit_block`/`create_block` op for the given
+/// `block_id`, scoped to the supplied connection (typically a live
+/// transaction). Returns the originating `(device_id, seq)` pair if any,
+/// shaped to drop straight into [`EditBlockPayload::prev_edit`].
+///
+/// MAINT-147 (b): extracted to deduplicate the identical query that used
+/// to live inline in [`edit_block_inner`] and `commands::drafts::flush_draft_inner`.
+/// Keeping it on a `&mut SqliteConnection` lets both callers pass either
+/// `&mut **CommandTx` (this file) or `&mut *Transaction` (drafts.rs)
+/// without extra deref gymnastics.
+pub(crate) async fn find_prev_edit_in_tx(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<Option<(String, i64)>, AppError> {
+    let row = sqlx::query!(
+        "SELECT device_id, seq FROM op_log \
+         WHERE json_extract(payload, '$.block_id') = ? \
+         AND op_type IN ('edit_block', 'create_block') \
+         ORDER BY created_at DESC \
+         LIMIT 1",
+        block_id
+    )
+    .fetch_optional(conn)
+    .await?;
+    Ok(row.map(|r| (r.device_id, r.seq)))
+}
+
 /// Create a new block.
 ///
 /// Validates block type and optional parent, generates a ULID, appends a
@@ -379,18 +443,10 @@ pub async fn edit_block_inner(
         None
     };
 
-    // 2. Find prev_edit inside transaction (inlined from recovery::find_prev_edit)
-    let prev_edit_row = sqlx::query!(
-        "SELECT device_id, seq FROM op_log \
-         WHERE json_extract(payload, '$.block_id') = ? \
-         AND op_type IN ('edit_block', 'create_block') \
-         ORDER BY created_at DESC \
-         LIMIT 1",
-        block_id
-    )
-    .fetch_optional(&mut **tx)
-    .await?;
-    let prev_edit = prev_edit_row.map(|r| (r.device_id, r.seq));
+    // 2. Find prev_edit inside transaction (delegates to the shared
+    //    helper — same query also used by `flush_draft_inner`; see
+    //    MAINT-147 (b)).
+    let prev_edit = find_prev_edit_in_tx(&mut tx, &block_id).await?;
 
     // 3. Build OpPayload
     let block_id_ulid = BlockId::from_trusted(&block_id);
@@ -782,17 +838,10 @@ pub async fn purge_block_inner(
     .execute(&mut **tx)
     .await?;
 
-    // block_properties: owned by descendants
-    sqlx::query(concat!(
-        crate::descendants_cte_purge!(),
-        "DELETE FROM block_properties \
-         WHERE block_id IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .execute(&mut **tx)
-    .await?;
+    // block_properties: owned by descendants (MAINT-147 (a): uniform site)
+    purge_descendants_table!(tx, &block_id, "block_properties");
 
-    // block_properties: value_ref pointing into the subtree (NULLify)
+    // block_properties: value_ref pointing into the subtree (NULLify) — variant
     sqlx::query(concat!(
         crate::descendants_cte_purge!(),
         "UPDATE block_properties SET value_ref = NULL \
@@ -802,7 +851,7 @@ pub async fn purge_block_inner(
     .execute(&mut **tx)
     .await?;
 
-    // block_links: either end may be in the subtree
+    // block_links: either end may be in the subtree (variant — multi-column OR)
     sqlx::query(concat!(
         crate::descendants_cte_purge!(),
         "DELETE FROM block_links \
@@ -813,57 +862,22 @@ pub async fn purge_block_inner(
     .execute(&mut **tx)
     .await?;
 
-    // agenda_cache
-    sqlx::query(concat!(
-        crate::descendants_cte_purge!(),
-        "DELETE FROM agenda_cache \
-         WHERE block_id IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .execute(&mut **tx)
-    .await?;
+    // agenda_cache (MAINT-147 (a): uniform site)
+    purge_descendants_table!(tx, &block_id, "agenda_cache");
 
-    // tags_cache
-    sqlx::query(concat!(
-        crate::descendants_cte_purge!(),
-        "DELETE FROM tags_cache \
-         WHERE tag_id IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .execute(&mut **tx)
-    .await?;
+    // tags_cache (MAINT-147 (a): uniform site, keyed on tag_id)
+    purge_descendants_table!(tx, &block_id, "tags_cache", "tag_id");
 
-    // pages_cache
-    sqlx::query(concat!(
-        crate::descendants_cte_purge!(),
-        "DELETE FROM pages_cache \
-         WHERE page_id IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .execute(&mut **tx)
-    .await?;
+    // pages_cache (MAINT-147 (a): uniform site, keyed on page_id)
+    purge_descendants_table!(tx, &block_id, "pages_cache", "page_id");
 
-    // attachments
-    sqlx::query(concat!(
-        crate::descendants_cte_purge!(),
-        "DELETE FROM attachments \
-         WHERE block_id IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .execute(&mut **tx)
-    .await?;
+    // attachments (MAINT-147 (a): uniform site)
+    purge_descendants_table!(tx, &block_id, "attachments");
 
-    // block_drafts
-    sqlx::query(concat!(
-        crate::descendants_cte_purge!(),
-        "DELETE FROM block_drafts \
-         WHERE block_id IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .execute(&mut **tx)
-    .await?;
+    // block_drafts (MAINT-147 (a): uniform site)
+    purge_descendants_table!(tx, &block_id, "block_drafts");
 
-    // Nullify conflict_source refs from blocks outside the subtree
+    // Nullify conflict_source refs from blocks outside the subtree — variant
     sqlx::query(concat!(
         crate::descendants_cte_purge!(),
         "UPDATE blocks SET conflict_source = NULL \
@@ -873,45 +887,20 @@ pub async fn purge_block_inner(
     .execute(&mut **tx)
     .await?;
 
-    // fts_blocks (FTS5 virtual table — no FK, must be cleaned explicitly)
-    sqlx::query(concat!(
-        crate::descendants_cte_purge!(),
-        "DELETE FROM fts_blocks \
-         WHERE block_id IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .execute(&mut **tx)
-    .await?;
+    // fts_blocks — FTS5 virtual table, no FK, must be cleaned explicitly
+    // (MAINT-147 (a): uniform site)
+    purge_descendants_table!(tx, &block_id, "fts_blocks");
 
-    // page_aliases
-    sqlx::query(concat!(
-        crate::descendants_cte_purge!(),
-        "DELETE FROM page_aliases \
-         WHERE page_id IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .execute(&mut **tx)
-    .await?;
+    // page_aliases (MAINT-147 (a): uniform site, keyed on page_id)
+    purge_descendants_table!(tx, &block_id, "page_aliases", "page_id");
 
-    // projected_agenda_cache
-    sqlx::query(concat!(
-        crate::descendants_cte_purge!(),
-        "DELETE FROM projected_agenda_cache \
-         WHERE block_id IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .execute(&mut **tx)
-    .await?;
+    // projected_agenda_cache (MAINT-147 (a): uniform site)
+    purge_descendants_table!(tx, &block_id, "projected_agenda_cache");
 
-    // Delete blocks (deferred FK allows single-statement batch)
-    let result = sqlx::query(concat!(
-        crate::descendants_cte_purge!(),
-        "DELETE FROM blocks \
-         WHERE id IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .execute(&mut **tx)
-    .await?;
+    // Delete blocks (deferred FK allows single-statement batch).
+    // MAINT-147 (a): uniform site, keyed on `id` rather than `block_id`.
+    // Capture the result so we can report `rows_affected` to the caller.
+    let result = purge_descendants_table!(tx, &block_id, "blocks", "id");
 
     let count = result.rows_affected();
 

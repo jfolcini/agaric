@@ -288,6 +288,25 @@ language = "system"
 pass_filenames = true
 files = "^src-tauri/migrations/.*\\.sql$"
 
+# Tauri command IPC error-sanitization check (MAINT-147 (c)). Every
+# `#[tauri::command]` wrapper that returns `Result<_, AppError>` and
+# propagates errors via `?` should funnel them through
+# `.map_err(sanitize_internal_error)` so the IPC boundary never leaks
+# bare `AppError::Sqlx` / `AppError::Internal` payloads to the
+# frontend. A code-level wrapper macro would obstruct specta's type
+# extraction, so the convention is enforced as a regex check instead.
+# Pre-existing violations are grandfathered via an explicit allowlist
+# inside the script — adjust there, not here.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "tauri-command-sanitize"
+name = "tauri command sanitize"
+entry = "node scripts/check-tauri-command-sanitize.mjs"
+language = "system"
+pass_filenames = false
+files = "^src-tauri/src/commands/.*\\.rs$"
+
 # Rust: cargo fmt
 [[repos]]
 repo = "local"
