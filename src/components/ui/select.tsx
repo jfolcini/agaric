@@ -129,8 +129,32 @@ const SelectItem = ({
   ref,
   className,
   children,
+  endContent,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Item>) => {
+}: React.ComponentProps<typeof SelectPrimitive.Item> & {
+  /**
+   * Optional content rendered AFTER `<SelectPrimitive.ItemText>`, OUTSIDE
+   * the auto-mirror surface. Use this for trailing affordances (digit
+   * hints, badges, …) that should appear in the dropdown row but must
+   * NOT bleed into the selected-value label inside the trigger.
+   *
+   * Background: when `<SelectValue>` is rendered without children, Radix
+   * Select portals the matched item's `ItemText` content into the
+   * trigger's value span. Anything rendered alongside `ItemText` (i.e.
+   * here, after the closing `</SelectPrimitive.ItemText>`) is excluded
+   * from that mirror by design — it's the supported way to keep
+   * row-level chrome out of the trigger label.
+   *
+   * Avoid the alternative pattern `<SelectValue>{currentItem?.name}</SelectValue>`:
+   * passing children to `SelectValue` while items render inside
+   * `ItemText` triggers React 19's "Cannot use a ref on a React element
+   * as a container to `createRoot` or `createPortal`…" warning during
+   * the brief window where `valueNodeHasChildren` flips from `false` to
+   * `true` and Radix's per-item portal mirror fires into a span that
+   * also has React-managed text children.
+   */
+  endContent?: React.ReactNode
+}) => {
   return (
     <SelectPrimitive.Item
       ref={ref}
@@ -147,6 +171,7 @@ const SelectItem = ({
         </SelectPrimitive.ItemIndicator>
       </span>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      {endContent}
     </SelectPrimitive.Item>
   )
 }

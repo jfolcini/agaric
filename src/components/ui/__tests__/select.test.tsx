@@ -173,6 +173,47 @@ describe('Select', () => {
     expect(trigger.className).toContain('focus-visible:ring-ring/50')
   })
 
+  // -- endContent slot --------------------------------------------------------
+
+  it('renders SelectItem `endContent` after ItemText so it is excluded from the auto-mirror', async () => {
+    const user = userEvent.setup()
+    render(
+      <Select value="a">
+        <SelectTrigger aria-label="Test select">
+          <SelectValue placeholder="Pick one" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem
+            value="a"
+            endContent={
+              <span data-testid="end-chip" aria-hidden="true">
+                CHIP
+              </span>
+            }
+          >
+            Alpha
+          </SelectItem>
+        </SelectContent>
+      </Select>,
+    )
+
+    // Trigger label mirrors the matched ItemText (Radix auto-mirror) — the
+    // `endContent` chip MUST stay out of the trigger so the docstring
+    // contract holds.
+    const trigger = screen.getByRole('combobox')
+    expect(trigger).toHaveTextContent('Alpha')
+    expect(trigger).not.toHaveTextContent('CHIP')
+
+    // Open the dropdown — the chip is rendered alongside the row.
+    await user.click(trigger)
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: 'Alpha' })).toBeInTheDocument()
+    })
+    const chip = screen.getByTestId('end-chip')
+    expect(chip).toBeInTheDocument()
+    expect(chip.textContent).toBe('CHIP')
+  })
+
   // -- a11y -------------------------------------------------------------------
 
   it('has no a11y violations', async () => {

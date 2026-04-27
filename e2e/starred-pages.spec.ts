@@ -164,7 +164,15 @@ test.describe('FEAT-12 + FEAT-14 — PageBrowser unified Starred + Pages model',
     // `Pages`, and any starred page keeps its `Starred` row.
     const newPageInput = page.getByPlaceholder('New page name...')
     await newPageInput.fill('work/project-a')
-    await page.getByRole('button', { name: /New Page/i }).click()
+    // The bare `getByRole('button', { name: /New Page/i })` resolves to
+    // both the sidebar's "New Page" entry (`sidebar.newPage`) and the
+    // PageBrowser form's submit button (`pageBrowser.newPage`). Scope to
+    // the view header outlet so the click targets the form's submit
+    // button regardless of locale or sidebar state.
+    await page
+      .getByTestId('view-header-outlet')
+      .getByRole('button', { name: /New Page/i })
+      .click()
 
     // Navigate back to Pages (creating a page typically navigates to
     // its editor view).

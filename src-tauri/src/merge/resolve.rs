@@ -373,10 +373,23 @@ mod tests_m74_m76 {
     /// `create_conflict_copy_with_reindex` must enqueue exactly one
     /// `ReindexBlockLinks` task on the materializer's background queue
     /// after committing the inner `create_conflict_copy` transaction.
-    /// Verified via `bg_high_water` (incremented on
-    /// `enqueue_background`) and via `bg_processed` after an explicit
-    /// flush (covering both the enqueue and the consumer-side
-    /// processing path).
+    /// Verified via `bg_processed` after an explicit `flush_background`
+    /// — the deduped batch processed by the consumer is exactly
+    /// [ReindexBlockLinks, Barrier], and `bg_processed` is incremented
+    /// for both, so we assert it advanced by ≥ 2 from baseline. A
+    /// `flush_background`-only call (with no real task enqueued) would
+    /// only increment by 1 (the barrier), so this distinguishes the
+    /// "task was actually enqueued" case from the "only a flush ran"
+    /// case.
+    ///
+    /// We deliberately do **not** read `bg_high_water` here. That
+    /// metric is `fetch_max(BACKGROUND_CAPACITY - tx.capacity())`
+    /// *after* `tx.send().await` returns, so a fast consumer that
+    /// drains the task before we reach the capacity read leaves
+    /// `depth = 0` and the `fetch_max` is a no-op. Under nextest
+    /// parallelism (or any CPU-contended run) this race surfaces as a
+    /// flake; the `bg_processed`-after-flush check is consumer-speed
+    /// invariant.
     ///
     /// The conflict_content is `[[<TARGET>]]` so the token is real —
     /// even though the materializer's `reindex_block_links` filters
@@ -402,8 +415,8 @@ mod tests_m74_m76 {
 
         let conflict_content = format!("see [[{target}]]");
 
-        let baseline_bg_high = mat.metrics().bg_high_water.load(Ordering::Relaxed);
         let baseline_bg_processed = mat.metrics().bg_processed.load(Ordering::Relaxed);
+        let baseline_bg_dropped = mat.metrics().bg_dropped.load(Ordering::Relaxed);
 
         let record = create_conflict_copy_with_reindex(
             &pool,
@@ -424,26 +437,29 @@ mod tests_m74_m76 {
         let new_block_id = payload.block_id.into_string();
         assert_ne!(new_block_id, "ORIGINAL");
 
-        // bg_high_water is updated via fetch_max immediately on
-        // enqueue_background (see coordinator.rs ~L506-509), so it
-        // captures the peak depth even if the consumer drains the
-        // task before this assertion runs.
-        let bg_high = mat.metrics().bg_high_water.load(Ordering::Relaxed);
-        assert!(
-            bg_high > baseline_bg_high,
-            "bg_high_water must advance by at least 1 after \
-             create_conflict_copy_with_reindex (was {baseline_bg_high}, now {bg_high})"
-        );
-
         // Drain the background queue so the spawned consumer has
         // demonstrably consumed our enqueued task (and the trailing
-        // barrier that flush_background appends).
+        // barrier that flush_background appends). `flush_background`
+        // returns only after the consumer has processed every task in
+        // the batch up to and including the barrier, so the
+        // post-return `bg_processed` reads are a synchronisation
+        // barrier — not a polling race.
         mat.flush_background().await.unwrap();
         let bg_processed = mat.metrics().bg_processed.load(Ordering::Relaxed);
         assert!(
-            bg_processed > baseline_bg_processed,
-            "background consumer must have processed at least one task \
-             (was {baseline_bg_processed}, now {bg_processed})"
+            bg_processed >= baseline_bg_processed + 2,
+            "background consumer must have processed both the enqueued \
+             ReindexBlockLinks task and the flush barrier (baseline \
+             {baseline_bg_processed}, now {bg_processed})"
+        );
+
+        // No task should have been shed for backpressure — the
+        // background queue cap is 1024 and we enqueued exactly one
+        // user-task plus the barrier from `flush_background`.
+        let bg_dropped = mat.metrics().bg_dropped.load(Ordering::Relaxed);
+        assert_eq!(
+            bg_dropped, baseline_bg_dropped,
+            "no background task should have been dropped"
         );
     }
 
