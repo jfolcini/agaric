@@ -850,7 +850,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Net findings in this report | 333 |
 | **Critical** | **1** |
 | **High** | **6** |
-| **Medium** | **32** |
+| **Medium** | **28** |
 | **Low** | **124** |
 | **Info / nits** | **125** |
 
@@ -865,11 +865,11 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 | Domain | Crit | High | Med | Low | Info |
 |---|---|---|---|---|---|
-| Core data layer | 0 | 1 | 6 | 9 | 11 |
-| Materializer | 1 | 2 | 6 | 8 | 4 |
+| Core data layer | 0 | 1 | 4 | 9 | 11 |
+| Materializer | 1 | 2 | 5 | 8 | 4 |
 | Cache + Pagination | 0 | 0 | 6 | 12 | 6 |
 | Commands (CRUD) | 0 | 1 | 6 | 9 | 13 |
-| Commands (System) | 0 | 2 | 11 | 13 | 6 |
+| Commands (System) | 0 | 2 | 10 | 13 | 6 |
 | Sync stack | 0 | 3 | 10 | 25 | 5 |
 | Search & Links | 0 | 2 | 4 | 16 | 19 |
 | Lifecycle / Snapshots | 0 | 0 | 17 | 16 | 8 |
@@ -1012,29 +1012,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Core data layer
 
-### M-1 — `attachment_id` typed as `String` bypasses ULID uppercase normalization
-- **Domain:** Core
-- **Location:** `src-tauri/src/op.rs:189-203`
-- **What:** `AddAttachmentPayload.attachment_id` and `DeleteAttachmentPayload.attachment_id` are declared as `String` rather than the existing `AttachmentId` alias for `BlockId` (defined at `ulid.rs:32`). Because `OpPayload::normalize_block_ids` is now a documented no-op that relies on `BlockId`'s auto-uppercase contract on construction/deserialization, raw `String` fields skip that contract and feed un-normalized bytes into `serialize_inner_payload` → `compute_op_hash`.
-- **Why it matters:** AGENTS.md invariant #8 makes ULID uppercase normalization a blake3 hash-determinism prerequisite for cross-device sync. If a frontend bug ever stamps a lowercase `attachment_id` on one device, the same logical op produces two different hashes across devices and the chain silently fails to converge — a single-user multi-device sync correctness bug, not adversarial.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Replace the two `attachment_id: String` fields with `attachment_id: AttachmentId` (the existing alias of `BlockId`). The serde wire shape stays a transparent string. Add a regression test mirroring `normalized_and_unnormalized_ulid_produce_same_hash` in `op_log.rs`.
-- **Pass-1 source:** 01/F1
-- **Status:** Open
 
-### M-2 — `AppError::{Database, Io, Json, Migration}` Serialize forwards raw inner messages to the frontend
-- **Domain:** Core
-- **Location:** `src-tauri/src/error.rs:91-162` (the `#[error("…: {0}")]` strings + `serialize_field("message", &self.to_string())` at line 159); contradicted by `ARCHITECTURE.md:1259-1263`
-- **What:** The four `#[from]` variants format with the inner error's `Display`, and the manual `Serialize` impl writes that full string into the `message` IPC field. ARCHITECTURE.md §15 documents the opposite contract: *"Database, IO, and JSON errors are replaced with generic 'internal error' messages before reaching the frontend. Original errors are logged server-side for debugging."*
-- **Why it matters:** Doc/code drift on a contract the documentation describes as security-relevant. Even within the single-user threat model, sqlx error formats include SQL fragments, constraint names, and absolute on-disk paths (homedir / app data dir) that surface in dialogs, error toasts, and bug-report attachments — operationally noisy and confusing for users.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Pick one and align: (a) implement the documented sanitization in the `Serialize` impl by emitting `"internal error: <kind>"` for `Database`/`Io`/`Json`/`Migration` while the original keeps going to `tracing::error!`; or (b) update `ARCHITECTURE.md:1259-1263` to match what the code actually does. Either path is fine — pick one.
-- **Pass-1 source:** 01/F3
-- **Status:** Open
 
 ### M-3 — AGENTS.md says `AppError` has 11 variants; code has 12 (`Gcal`)
 - **Domain:** Core
@@ -1062,17 +1040,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Materializer
 
-### M-10 — `BatchApplyOps` retry clones the entire `Vec<OpRecord>` even on first-attempt success
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/consumer.rs:154`, `src-tauri/src/materializer/consumer.rs:232`, `src-tauri/src/materializer/consumer.rs:250`
-- **What:** `process_single_foreground_task` does `let retry_task = task.clone();` *before* the first attempt, and `run_background` does `let task_clone = task.clone();` at line 232 plus another `task.clone()` per retry at line 250. `MaterializeTask::BatchApplyOps(Vec<OpRecord>)` can carry a multi-thousand-op chunk during sync catch-up, so the clone is paid even when the first attempt succeeds (the common case).
-- **Why it matters:** Mobile (Android) RAM is constrained; on the bg path the task can be cloned up to 3× the batch size resident concurrently. The duplicate buffer is dead weight when the first attempt succeeds.
-- **Cost:** S (<2h)
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Defer the clone to the retry arm only — pass the task by value into the first spawned attempt and only `clone()` when transitioning to retry. Alternatively switch the variant to `Arc<Vec<OpRecord>>` (or wrap the whole `MaterializeTask` in `Arc`) so all clones are cheap refcount bumps.
-- **Pass-1 source:** 02/F7
-- **Status:** Open
 
 ### M-12 — In-flight tokio tasks not cancelled at shutdown
 - **Domain:** Materializer
@@ -1225,17 +1192,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 05/F13
 - **Status:** Open
 
-### L-42 — `compact_op_log_cmd_inner` reports a stale `ops_deleted` count
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/compaction.rs:95-153`, `src-tauri/src/commands/compaction.rs:151` (`ops_deleted: eligible_in_tx`)
-- **What:** The wrapper acquires `BEGIN IMMEDIATE`, counts eligible ops as `eligible_in_tx`, **commits the tx**, then calls `snapshot::compact_op_log` which does the actual deletion. The reported `CompactionResult.ops_deleted` is `eligible_in_tx` — *not* the count actually deleted by `compact_op_log`. Between releasing the tx and the inner write phase, more ops can be appended (their `created_at` may still be `< cutoff` if the wall clock advanced), and the snapshot-frontier guard inside `compact_op_log` may also skip some.
-- **Why it matters:** Display inaccuracy — the UI shows a wrong count. For an observability surface that is the user's only feedback that compaction did anything, accuracy still matters.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Surface the real `deleted_count` from `snapshot::compact_op_log` (it already accumulates the value internally at `snapshot/create.rs:270-281` and discards it in a log line). Change its return to `Result<Option<(String, u64)>, AppError>` and propagate.
-- **Pass-1 source:** 05/F9 (downgraded High→Medium)
-- **Status:** Open
 
 ### Sync stack
 
