@@ -50,6 +50,32 @@ fn unexpected_create_error(e: std::io::Error) -> AppError {
     e.into()
 }
 
+/// M-54: minimum age of an orphaned `.pem` (no matching `.hash`) before it
+/// is treated as a real torn write rather than a concurrent-startup race.
+///
+/// The genuine torn-write case follows a process crash and a subsequent
+/// app restart — at minimum on the order of seconds and typically much
+/// longer. The benign concurrent-startup case (#460) sees the orphan only
+/// during the sub-millisecond gap between the winner thread's two
+/// `sync_all` calls. 500 ms is comfortably between the two regimes.
+const M54_TORN_WRITE_STALENESS: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Returns `true` when `pem_path` was last modified at least
+/// [`M54_TORN_WRITE_STALENESS`] ago — i.e. the orphan is old enough to be
+/// a real torn-write artefact and not a concurrent writer mid-creation.
+///
+/// On any error (missing metadata, missing modified time, mtime in the
+/// future due to clock skew) returns `false` — i.e. errs on the side of
+/// *not* recovering, since deleting a fresh `.pem` mid-write would
+/// corrupt a sibling thread's state.
+fn pem_orphan_is_stale(pem_path: &Path) -> bool {
+    fs::metadata(pem_path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
+        .is_some_and(|age| age >= M54_TORN_WRITE_STALENESS)
+}
+
 /// Read or generate a persistent self-signed TLS certificate.
 ///
 /// `config_path` is the base path — the function appends `.pem` and `.hash`
@@ -66,6 +92,36 @@ pub fn get_or_create_sync_cert(config_path: &Path, device_id: &str) -> Result<Sy
 
     let pem_path = config_path.with_extension("pem");
     let hash_path = config_path.with_extension("hash");
+
+    // M-54: torn-write recovery.
+    //
+    // The create path below writes `.pem` and `.hash` in two separate
+    // `sync_all` phases. If the process crashes / power-fails between
+    // them, `.pem` survives but `.hash` does not. Without recovery,
+    // [`read_existing_cert`] returns "hash file missing or unreadable"
+    // forever — sync would never start until the user manually deleted
+    // the orphaned `.pem`.
+    //
+    // Detect the orphan by `.pem` existing without `.hash` AND being at
+    // least [`M54_TORN_WRITE_STALENESS`] old. The age check
+    // disambiguates the genuine torn-write case (post-crash, the `.pem`
+    // is at minimum seconds old) from the concurrent-startup race
+    // covered by #460, where a sibling thread is mid-write between the
+    // two `sync_all` calls and the gap is sub-millisecond.
+    //
+    // The orphaned `.pem` MUST be removed before falling through to the
+    // create path below — otherwise `create_new(true)` returns
+    // `AlreadyExists` and we would loop straight back into
+    // [`read_existing_cert`].
+    if pem_path.exists() && !hash_path.exists() && pem_orphan_is_stale(&pem_path) {
+        tracing::warn!(
+            "sync_cert: M-54 torn write detected — '{}' exists without '{}'; \
+             deleting orphaned PEM so a fresh cert can be regenerated",
+            pem_path.display(),
+            hash_path.display()
+        );
+        fs::remove_file(&pem_path)?;
+    }
 
     // Attempt atomic creation — succeeds only if the .pem file does not exist.
     match OpenOptions::new()
@@ -382,6 +438,125 @@ mod tests {
         assert!(
             matches!(err, AppError::InvalidOperation(_)),
             "non-hex hash should return InvalidOperation, got: {err:?}"
+        );
+    }
+
+    // ── M-54: torn-write recovery ───────────────────────────────────────
+
+    /// Regression for M-54: a previous launch crashed between the two
+    /// `sync_all` calls in the create path, leaving `.pem` on disk
+    /// without a matching `.hash`. The next call to
+    /// [`get_or_create_sync_cert`] must NOT error with "hash file
+    /// missing or unreadable" — it must detect the orphan, delete the
+    /// stale `.pem`, regenerate a fresh cert, and write a new
+    /// matching `.hash`.
+    #[test]
+    fn get_or_create_sync_cert_recovers_from_torn_write_m54() {
+        let dir = TempDir::new().unwrap();
+        let base = dir.path().join("sync-cert");
+
+        // Step 1: normal create — both files exist with valid content.
+        let initial = get_or_create_sync_cert(&base, "m54-torn-write").unwrap();
+
+        let pem_path = base.with_extension("pem");
+        let hash_path = base.with_extension("hash");
+        assert!(pem_path.exists());
+        assert!(hash_path.exists());
+
+        // Step 2: simulate the crash between the two `sync_all`s by
+        // deleting `.hash` while keeping `.pem`.
+        fs::remove_file(&hash_path).unwrap();
+        assert!(pem_path.exists(), "PEM must remain after simulated crash");
+        assert!(
+            !hash_path.exists(),
+            "hash must be missing after simulated crash"
+        );
+
+        // Step 3: wait long enough for the `.pem` mtime to age past the
+        // M-54 staleness threshold so the recovery path treats the
+        // orphan as a real torn write rather than a concurrent-startup
+        // race (#460). The threshold is 500 ms; sleep a bit longer.
+        std::thread::sleep(std::time::Duration::from_millis(600));
+
+        // Step 4: the next call must succeed without manual cleanup and
+        // produce a fresh `.pem` + `.hash` pair.
+        let recovered = get_or_create_sync_cert(&base, "m54-torn-write").unwrap();
+
+        assert!(
+            pem_path.exists(),
+            "PEM must be re-created after M-54 recovery"
+        );
+        assert!(
+            hash_path.exists(),
+            "hash must be re-created after M-54 recovery"
+        );
+
+        // Step 5: the new hash file content must match the new returned
+        // cert hash (i.e. the regen wrote a consistent pair, not just
+        // re-read the orphan).
+        let on_disk_hash = fs::read_to_string(&hash_path).unwrap();
+        assert_eq!(
+            on_disk_hash.trim(),
+            recovered.cert_hash,
+            "hash file content must match returned cert_hash after M-54 recovery"
+        );
+        assert_eq!(
+            recovered.cert_hash.len(),
+            64,
+            "recovered hash must be 64 hex chars"
+        );
+        assert!(
+            recovered.cert_hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "recovered hash must be valid hex"
+        );
+
+        // The recovered cert is freshly generated — different from the
+        // original orphaned one (since the create path generates a new
+        // ECDSA key per call).
+        assert_ne!(
+            initial.cert_hash, recovered.cert_hash,
+            "M-54 recovery must regenerate a fresh cert, not resurrect the orphan"
+        );
+
+        // Step 6: a subsequent call must now hit the read-existing path
+        // and return the SAME hash as the recovered cert — i.e. the
+        // recovered state is stable.
+        let again = get_or_create_sync_cert(&base, "m54-torn-write").unwrap();
+        assert_eq!(
+            again.cert_hash, recovered.cert_hash,
+            "post-recovery state must be stable across subsequent calls"
+        );
+    }
+
+    /// A fresh orphaned `.pem` (created moments ago) must NOT be
+    /// recovered — it is most likely a concurrent writer mid-creation
+    /// (#460), and deleting it would corrupt the sibling thread's
+    /// state. The function must instead return the original
+    /// "hash file missing" error so the caller's retry loop can wait
+    /// for the sibling to finish.
+    #[test]
+    fn get_or_create_sync_cert_does_not_recover_fresh_orphan_m54() {
+        let dir = TempDir::new().unwrap();
+        let base = dir.path().join("sync-cert");
+
+        // Synthesize a fresh `.pem` without a `.hash`. Because the file
+        // is just-written, its mtime is well within the 500 ms
+        // staleness window — the M-54 detector must NOT fire.
+        fs::write(
+            base.with_extension("pem"),
+            "-----BEGIN CERTIFICATE-----\ndata\n-----END CERTIFICATE-----\n\
+             -----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----",
+        )
+        .unwrap();
+
+        let err = get_or_create_sync_cert(&base, "m54-fresh-orphan").unwrap_err();
+        assert!(
+            matches!(err, AppError::InvalidOperation(_)),
+            "fresh orphan must NOT be auto-recovered, got: {err:?}"
+        );
+        assert!(
+            base.with_extension("pem").exists(),
+            "fresh `.pem` must NOT be deleted by M-54 recovery"
         );
     }
 

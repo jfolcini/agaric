@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -23,17 +23,34 @@ use crate::error::AppError;
 ///   match (reconnection / pinning mode).  If `None`, any certificate is
 ///   accepted (initial pairing) and the hash is available via
 ///   [`SyncConnection::peer_cert_hash`].
+/// * `expected_remote_id` (M-56) – if `Some(eid)`, the server's TLS
+///   certificate CN must equal `agaric-{eid}`. Pass the known peer device
+///   id whenever the caller has one (orchestrator path), and `None` for
+///   first-pair flows where the peer id is not yet known (the existing
+///   `agaric-*` prefix check still applies). Binding the handshake to
+///   the device id closes the gap where, on first connect without a
+///   stored hash, any `agaric-*` cert would have been accepted.
 /// * `local_cert` – the local device's TLS certificate, sent to the server
 ///   during the handshake so the responder can verify our identity (mTLS).
+///
+/// **Implementation note (M-57):** the verifier writes the observed cert
+/// hash into a shared `Arc<OnceLock<String>>` from inside the rustls
+/// handshake task, and this function reads it after the handshake
+/// completes. `OnceLock` is used (rather than `Mutex<Option<String>>`)
+/// so that a panic inside the verifier cannot poison the cell — there
+/// is exactly one writer (the verifier on the leaf cert) and one reader
+/// (this function), and no mutual exclusion is required.
 pub async fn connect_to_peer(
     addr: &str,
     expected_cert_hash: Option<&str>,
+    expected_remote_id: Option<&str>,
     local_cert: &SyncCert,
 ) -> Result<SyncConnection, AppError> {
-    let observed_hash = Arc::new(std::sync::Mutex::new(None::<String>));
+    let observed_hash: Arc<OnceLock<String>> = Arc::new(OnceLock::new());
 
     let verifier = PinningCertVerifier {
         expected_hash: expected_cert_hash.map(String::from),
+        expected_remote_id: expected_remote_id.map(String::from),
         observed_hash: observed_hash.clone(),
     };
 
@@ -59,10 +76,8 @@ pub async fn connect_to_peer(
             .await
             .map_err(|e| sync_err(format!("connect: {e}")))?;
 
-    let peer_hash = observed_hash
-        .lock()
-        .map_err(|e| sync_err(format!("lock: {e}")))?
-        .clone();
+    // M-57: read via `OnceLock::get` — no locking, no poisoning.
+    let peer_hash = observed_hash.get().cloned();
 
     Ok(SyncConnection {
         inner: InnerStream::Client(ws_stream),

@@ -59,6 +59,7 @@
 //! matches the way normal delta catch-up works when a peer reappears
 //! after a long offline period.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
@@ -66,10 +67,10 @@ use sqlx::SqlitePool;
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::peer_refs;
-use crate::snapshot::{apply_snapshot, get_latest_snapshot};
+use crate::snapshot::{apply_snapshot, decode_snapshot, get_latest_snapshot};
 use crate::sync_events::{SyncEvent, SyncEventSink};
 use crate::sync_net::SyncConnection;
-use crate::sync_protocol::SyncMessage;
+use crate::sync_protocol::{DeviceHead, SyncMessage};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -106,6 +107,48 @@ pub(crate) enum OfferOutcome {
     Rejected,
     /// The snapshot was offered, accepted, and streamed in full.
     Sent { bytes_sent: u64 },
+    /// M-58: the latest local snapshot is BEHIND the remote's
+    /// advertised frontier for at least one device. Sending it would
+    /// silently re-apply older state on the initiator. The responder
+    /// instead sent [`SyncMessage::Error`] so the initiator fails
+    /// loudly and the operator/log can diagnose the retention drift.
+    SnapshotStale { reason: String },
+}
+
+/// M-58: covering check for the responder's snapshot vs. the remote's
+/// advertised heads.
+///
+/// For every `(device_id, remote_seq)` the remote advertised in its
+/// `HeadExchange`, the snapshot's `up_to_seqs[device_id]` must be
+/// **at least** `remote_seq`. If any device's snapshot seq is below
+/// the remote's seq, the snapshot does not cover that device's
+/// frontier and offering it would silently roll the initiator back.
+///
+/// Returns `Ok(())` when the snapshot covers every advertised device
+/// (the empty-heads case is trivially covered). On mismatch returns
+/// `Err(reason)` naming the first device whose seq is below the
+/// remote's claim — used verbatim in the wire-level
+/// [`SyncMessage::Error`] payload so the diagnosis appears in the
+/// initiator's log.
+///
+/// Devices in `snapshot_seqs` that the remote does not mention are
+/// fine: that just means the snapshot saw ops the remote has not yet
+/// observed, which is expected (the post-snapshot delta path will
+/// stream those to the remote on the next session).
+fn snapshot_covers_remote_heads(
+    snapshot_seqs: &BTreeMap<String, i64>,
+    remote_heads: &[DeviceHead],
+) -> Result<(), String> {
+    for head in remote_heads {
+        let snap_seq = snapshot_seqs.get(&head.device_id).copied().unwrap_or(0);
+        if snap_seq < head.seq {
+            return Err(format!(
+                "snapshot covers device {} only up to seq {} but remote claims seq {}",
+                head.device_id, snap_seq, head.seq
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Attempt to offer and send a snapshot to the initiator after the
@@ -121,6 +164,7 @@ pub(crate) async fn try_offer_snapshot_catchup(
     pool: &SqlitePool,
     event_sink: &Arc<dyn SyncEventSink>,
     remote_device_id: &str,
+    remote_heads: &[DeviceHead],
 ) -> Result<OfferOutcome, AppError> {
     let Some((snapshot_id, compressed)) = get_latest_snapshot(pool).await? else {
         tracing::info!(
@@ -134,6 +178,53 @@ pub(crate) async fn try_offer_snapshot_catchup(
     // and the on-wire size cap; usize→u64 is infallible on every tier-1
     // target.
     let size_bytes: u64 = compressed.len() as u64;
+
+    // M-58: defensive covering check.
+    //
+    // `ResetRequired` means our op_log was compacted past the remote's
+    // advertised frontier — so the snapshot we are about to offer
+    // SHOULD have an `up_to_seqs` >= every remote head, by construction
+    // (compaction is bounded by the snapshot's frontier). If retention
+    // policy ever drifts (e.g. compaction window vs. snapshot window),
+    // this invariant could quietly break and we would re-apply an
+    // older snapshot on the initiator — silent data regression.
+    //
+    // Decode the snapshot's frontier and compare against the remote
+    // heads we received in `HeadExchange`. Mismatch → `Error` instead
+    // of `SnapshotOffer` so the initiator fails loudly and the
+    // operator can spot the regression in logs.
+    let snapshot_frontier = decode_snapshot(&compressed)?;
+    if let Err(reason) = snapshot_covers_remote_heads(&snapshot_frontier.up_to_seqs, remote_heads) {
+        tracing::warn!(
+            peer_id = %remote_device_id,
+            snapshot_id = %snapshot_id,
+            reason = %reason,
+            "responder snapshot does not cover remote frontier; sending Error instead of SnapshotOffer (M-58)"
+        );
+        let wire_msg = format!("snapshot does not cover remote frontier: {reason}");
+        // Send the wire-level `Error` so the initiator surfaces a
+        // hard failure rather than silently rewinding to an older
+        // snapshot. Best-effort: a send failure here is logged but
+        // does not change the outcome — we still report `SnapshotStale`
+        // so the caller treats this session as a non-progress event.
+        if let Err(e) = conn
+            .send_json(&SyncMessage::Error {
+                message: wire_msg.clone(),
+            })
+            .await
+        {
+            tracing::warn!(
+                peer_id = %remote_device_id,
+                error = %e,
+                "failed to send M-58 stale-snapshot Error to initiator"
+            );
+        }
+        event_sink.on_sync_event(SyncEvent::Error {
+            message: wire_msg,
+            remote_device_id: remote_device_id.to_string(),
+        });
+        return Ok(OfferOutcome::SnapshotStale { reason });
+    }
 
     tracing::info!(
         peer_id = %remote_device_id,
@@ -476,9 +567,10 @@ mod tests {
         let (mut server_conn, _client_conn) = test_connection_pair().await;
         let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-        let outcome = try_offer_snapshot_catchup(&mut server_conn, &pool, &event_sink, REMOTE_DEV)
-            .await
-            .expect("try_offer_snapshot_catchup must succeed on empty snapshots table");
+        let outcome =
+            try_offer_snapshot_catchup(&mut server_conn, &pool, &event_sink, REMOTE_DEV, &[])
+                .await
+                .expect("try_offer_snapshot_catchup must succeed on empty snapshots table");
         assert_eq!(
             outcome,
             OfferOutcome::NoSnapshot,
@@ -511,7 +603,8 @@ mod tests {
         let pool_clone = pool.clone();
         let sink_clone = event_sink.clone();
         let responder = tokio::spawn(async move {
-            try_offer_snapshot_catchup(&mut server_conn, &pool_clone, &sink_clone, REMOTE_DEV).await
+            try_offer_snapshot_catchup(&mut server_conn, &pool_clone, &sink_clone, REMOTE_DEV, &[])
+                .await
         });
 
         // Client side: expect SnapshotOffer, reply Accept, drain bytes.
@@ -573,7 +666,8 @@ mod tests {
         let pool_clone = pool.clone();
         let sink_clone = event_sink.clone();
         let responder = tokio::spawn(async move {
-            try_offer_snapshot_catchup(&mut server_conn, &pool_clone, &sink_clone, REMOTE_DEV).await
+            try_offer_snapshot_catchup(&mut server_conn, &pool_clone, &sink_clone, REMOTE_DEV, &[])
+                .await
         });
 
         // Read the offer, reply with Reject.
@@ -589,6 +683,150 @@ mod tests {
             OfferOutcome::Rejected,
             "responder must report Rejected when initiator declines the offer"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // M-58: snapshot covering check
+    // -----------------------------------------------------------------
+
+    /// Truth-table for the private covering helper.
+    ///
+    /// - empty heads → trivially Ok.
+    /// - head present, snapshot covers → Ok.
+    /// - head present, snapshot equal → Ok (covering is `>=`, not `>`).
+    /// - head present, snapshot behind → Err naming the device.
+    /// - head present, device absent from snapshot (treated as 0) and
+    ///   remote claims seq > 0 → Err.
+    #[test]
+    fn snapshot_covers_remote_heads_truth_table() {
+        let mut snap_seqs = BTreeMap::new();
+        snap_seqs.insert("dev-A".to_string(), 10);
+        snap_seqs.insert("dev-B".to_string(), 5);
+
+        // Empty heads — trivially covered.
+        assert!(snapshot_covers_remote_heads(&snap_seqs, &[]).is_ok());
+
+        // Snapshot strictly ahead.
+        let heads_ahead = vec![DeviceHead {
+            device_id: "dev-A".into(),
+            seq: 7,
+            hash: "x".into(),
+        }];
+        assert!(snapshot_covers_remote_heads(&snap_seqs, &heads_ahead).is_ok());
+
+        // Snapshot exactly at remote frontier.
+        let heads_eq = vec![DeviceHead {
+            device_id: "dev-A".into(),
+            seq: 10,
+            hash: "x".into(),
+        }];
+        assert!(snapshot_covers_remote_heads(&snap_seqs, &heads_eq).is_ok());
+
+        // Snapshot behind for one device — fail.
+        let heads_behind = vec![DeviceHead {
+            device_id: "dev-B".into(),
+            seq: 99,
+            hash: "x".into(),
+        }];
+        let err = snapshot_covers_remote_heads(&snap_seqs, &heads_behind)
+            .expect_err("seq=99 must not be covered by snapshot at seq=5");
+        assert!(
+            err.contains("dev-B") && err.contains("99") && err.contains("5"),
+            "error message must name the offending device and seqs, got {err:?}"
+        );
+
+        // Device entirely absent from snapshot — fail (snap_seq treated as 0).
+        let heads_unknown = vec![DeviceHead {
+            device_id: "dev-NEW".into(),
+            seq: 1,
+            hash: "x".into(),
+        }];
+        let err = snapshot_covers_remote_heads(&snap_seqs, &heads_unknown)
+            .expect_err("missing device entry must not silently cover seq>0");
+        assert!(
+            err.contains("dev-NEW"),
+            "error must name the absent device, got {err:?}"
+        );
+    }
+
+    /// Wire-level regression: when the latest local snapshot's
+    /// `up_to_seqs` is BEHIND the remote's advertised frontier,
+    /// `try_offer_snapshot_catchup` must send `SyncMessage::Error`
+    /// (NOT `SnapshotOffer`) so the initiator fails loudly instead of
+    /// silently re-applying an older snapshot. Reported in M-58.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn try_offer_snapshot_catchup_sends_error_when_snapshot_behind_remote() {
+        let (pool, _dir) = test_pool().await;
+        // Seed + snapshot a local op; snapshot's frontier will be
+        // {LOCAL_DEV: 1}.
+        seed_one_op(&pool, LOCAL_DEV).await;
+        create_snapshot(&pool, LOCAL_DEV)
+            .await
+            .expect("create_snapshot must succeed with one local op");
+
+        // Synthesize a remote-heads claim that is FAR ahead of the
+        // snapshot for LOCAL_DEV. The covering check must reject.
+        let remote_heads = vec![DeviceHead {
+            device_id: LOCAL_DEV.to_string(),
+            seq: 999,
+            hash: "stale-frontier".into(),
+        }];
+
+        let (mut server_conn, mut client_conn) = test_connection_pair().await;
+        let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+        let pool_clone = pool.clone();
+        let sink_clone = event_sink.clone();
+        let responder = tokio::spawn(async move {
+            try_offer_snapshot_catchup(
+                &mut server_conn,
+                &pool_clone,
+                &sink_clone,
+                REMOTE_DEV,
+                &remote_heads,
+            )
+            .await
+        });
+
+        // The responder must NOT send a SnapshotOffer; it must send an
+        // Error explaining the covering failure.
+        let wire: SyncMessage = client_conn
+            .recv_json()
+            .await
+            .expect("responder must send a wire message even when snapshot is stale");
+        match wire {
+            SyncMessage::Error { message } => {
+                assert!(
+                    message.contains(LOCAL_DEV),
+                    "M-58 Error message must name the offending device, got {message:?}"
+                );
+                assert!(
+                    message.contains("999"),
+                    "M-58 Error message must include the remote's claimed seq, got {message:?}"
+                );
+            }
+            other => panic!(
+                "expected SyncMessage::Error for stale snapshot, got {:?}",
+                other
+            ),
+        }
+
+        let outcome = responder
+            .await
+            .expect("responder task must not panic")
+            .expect("try_offer_snapshot_catchup must return Ok even when sending Error");
+        match outcome {
+            OfferOutcome::SnapshotStale { reason } => {
+                assert!(
+                    reason.contains(LOCAL_DEV) && reason.contains("999"),
+                    "SnapshotStale reason must name the offending device and seq, got {reason:?}"
+                );
+            }
+            other => panic!(
+                "expected OfferOutcome::SnapshotStale when snapshot is behind remote, got {:?}",
+                other
+            ),
+        }
     }
 
     // -----------------------------------------------------------------

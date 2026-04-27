@@ -931,7 +931,7 @@ async fn handle_incoming_sync_rejects_sync_with_self() {
 
     // Connect from client side
     let mut client_conn =
-        sync_net::connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
+        sync_net::connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
             .await
             .unwrap();
 
@@ -1018,7 +1018,7 @@ async fn run_sync_session_respects_cancel_flag() {
     .unwrap();
 
     let mut client_conn =
-        sync_net::connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
+        sync_net::connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
             .await
             .unwrap();
 
@@ -1185,7 +1185,7 @@ async fn handle_incoming_sync_rejects_unpaired_device() {
     .unwrap();
 
     let mut client_conn =
-        sync_net::connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
+        sync_net::connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
             .await
             .unwrap();
 
@@ -3402,8 +3402,34 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     resp_mat.dispatch_op(&record).await.unwrap();
     resp_mat.flush_foreground().await.unwrap();
 
+    // M-58: also seed an op attributed to the initiator on the
+    // responder side. In the real flow this would have been delivered
+    // via a prior sync session; here we synthesize it directly so the
+    // snapshot's `up_to_seqs` covers FEAT6_INIT as well as FEAT6_RESP.
+    // Without this, M-58's covering check correctly rejects the offer
+    // (snapshot would NOT cover the initiator's advertised FEAT6_INIT
+    // head and applying it would silently wipe the initiator's own
+    // op_log entry — see `apply_snapshot` which `DELETE FROM op_log`s).
+    let init_record = append_local_op_at(
+        &resp_pool,
+        "FEAT6_INIT",
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("FEAT6BLK002"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(2),
+            content: "initiator-origin op already mirrored on responder".into(),
+        }),
+        "2025-01-15T12:00:01+00:00".into(),
+    )
+    .await
+    .unwrap();
+    resp_mat.dispatch_op(&init_record).await.unwrap();
+    resp_mat.flush_foreground().await.unwrap();
+
     // Create a snapshot BEFORE simulating compaction. The snapshot
-    // captures the current state of `blocks`, etc.
+    // captures the current state of `blocks`, etc., and an
+    // `up_to_seqs` of `{FEAT6_RESP: 1, FEAT6_INIT: 1}`.
     create_snapshot(&resp_pool, "FEAT6_RESP").await.unwrap();
 
     // Simulate compaction: wipe the responder's op_log so it cannot
@@ -3448,11 +3474,13 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     // Initiator side: we drive a minimal client manually through the
     // wire protocol to exercise the same code path as
     // `run_sync_session` without the full daemon scaffolding. The
-    // initiator claims heads for BOTH devices — its own identity
-    // (required so the responder can attribute the session to a non-
-    // self peer) and a stale head for the responder that the
-    // responder's empty op_log cannot satisfy, forcing
-    // ResetRequired.
+    // initiator claims heads for BOTH devices at the seqs the
+    // responder's snapshot recorded (1 each). The responder's op_log
+    // is empty after the simulated compaction, so any head lookup
+    // fails — `check_reset_required` returns true and the orchestrator
+    // transitions to `ResetRequired`. M-58's covering check then
+    // confirms the snapshot at `{FEAT6_RESP: 1, FEAT6_INIT: 1}` covers
+    // the initiator's frontier and lets the offer proceed.
     let init_self_head = DeviceHead {
         device_id: "FEAT6_INIT".into(),
         seq: 1,
@@ -3460,8 +3488,8 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     };
     let stale_resp_head = DeviceHead {
         device_id: "FEAT6_RESP".into(),
-        seq: 999, // nonexistent in responder's empty op_log
-        hash: "deadbeef".into(),
+        seq: 1, // present in snapshot's frontier; absent from compacted op_log
+        hash: "fake_resp_hash".into(),
     };
     client_conn
         .send_json(&SyncMessage::HeadExchange {
@@ -3508,14 +3536,17 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
 
     init_mat.flush_background().await.unwrap();
 
-    // ── Verify: initiator now has the snapshot's block ───────────────
+    // ── Verify: initiator now has the snapshot's blocks ───────────────
+    // The snapshot covers both seeded ops (FEAT6_RESP's and the
+    // mirrored FEAT6_INIT op added in the M-58 setup), so the
+    // initiator's `blocks` table should hold both rows post-apply.
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
         .fetch_one(&init_pool)
         .await
         .unwrap();
     assert_eq!(
-        count, 1,
-        "initiator must have exactly the one block from the responder's snapshot"
+        count, 2,
+        "initiator must have both blocks from the responder's snapshot"
     );
 
     let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = 'FEAT6BLK001'")
@@ -3524,7 +3555,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
         .unwrap();
     assert_eq!(
         content, "compacted-state content",
-        "block content must match the responder's pre-compaction state"
+        "FEAT6BLK001 content must match the responder's pre-compaction state"
     );
 
     // peer_refs bookkeeping was updated on the initiator side.

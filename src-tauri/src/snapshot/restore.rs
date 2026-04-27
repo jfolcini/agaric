@@ -84,6 +84,35 @@ pub async fn apply_snapshot(
         .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM op_log").execute(&mut *tx).await?;
+
+    // M-66 — surface dropped drafts via a warn line.
+    //
+    // RESET is invoked by FEAT-6 snapshot-driven catch-up. Any draft a
+    // peer saved AFTER the snapshot was taken (because it was mid-edit
+    // when the snapshot fired or when the catch-up arrived) is silently
+    // discarded by the wipe-and-restore. Pre-fix this happened with no
+    // log line, no count returned, and no test asserting the drop —
+    // making "where did my typing go?" a true mystery to debug.
+    //
+    // We sample up to 8 block_ids alongside the count so a support
+    // session has at least an entry point to look at. The cap bounds
+    // log size on a pathological peer with hundreds of unflushed
+    // drafts; the count itself is unbounded.
+    let dropped_count: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM block_drafts")
+        .fetch_one(&mut *tx)
+        .await?;
+    if dropped_count > 0 {
+        let sample_ids: Vec<String> =
+            sqlx::query_scalar::<_, String>("SELECT block_id FROM block_drafts LIMIT 8")
+                .fetch_all(&mut *tx)
+                .await?;
+        tracing::warn!(
+            dropped_count,
+            ?sample_ids,
+            "apply_snapshot: dropping unflushed drafts (M-66) — RESET wipes block_drafts; \
+             any draft saved after the snapshot was taken is silently lost without this warning"
+        );
+    }
     sqlx::query("DELETE FROM block_drafts")
         .execute(&mut *tx)
         .await?;

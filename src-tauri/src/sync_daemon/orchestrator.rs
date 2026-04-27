@@ -364,7 +364,7 @@ async fn try_connect_each_address(
 ) -> Result<(SyncConnection, String), AppError> {
     let mut errors: Vec<String> = Vec::with_capacity(addresses.len());
     for addr in addresses {
-        match sync_net::connect_to_peer(addr, cert_hash, cert).await {
+        match sync_net::connect_to_peer(addr, cert_hash, Some(peer_id), cert).await {
             Ok(conn) => return Ok((conn, addr.clone())),
             Err(e) => {
                 tracing::debug!(
