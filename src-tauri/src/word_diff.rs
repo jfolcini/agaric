@@ -127,6 +127,42 @@ mod tests {
     }
 
     #[test]
+    fn decomposed_combining_marks_pinned_behaviour() {
+        // TEST-50: decomposed (NFD) input — `e\u{0301}` is the base
+        // letter `e` followed by U+0301 COMBINING ACUTE ACCENT, which
+        // renders as `é` but is *not* the same scalar sequence as the
+        // precomposed `é` (U+00E9). The `similar` crate does not
+        // normalize — it diffs raw unicode scalars — so this test
+        // pins the current behaviour: identical decomposed input
+        // round-trips as all-Equal, and the reconstruction (Equal +
+        // Insert spans) recovers the `new` side exactly.
+        let decomposed = "cafe\u{0301} latte";
+        let precomposed = "café latte";
+
+        // Identity: identical decomposed input → all Equal spans, and
+        // the concatenation reproduces the original byte sequence.
+        let identity = compute_word_diff(decomposed, decomposed);
+        assert!(
+            identity.iter().all(|s| s.tag == DiffTag::Equal),
+            "identical decomposed input should produce only Equal spans, got {identity:?}",
+        );
+        let joined: String = identity.iter().map(|s| s.value.as_str()).collect();
+        assert_eq!(joined, decomposed);
+
+        // Cross-form: decomposed vs precomposed — the diff treats them
+        // as distinct words (Delete + Insert for the accented word),
+        // and reconstructing from non-Delete spans yields the `new`
+        // side exactly.  Mirrors `unicode_characters_handled_correctly`.
+        let cross = compute_word_diff(decomposed, precomposed);
+        let reconstructed: String = cross
+            .iter()
+            .filter(|s| s.tag != DiffTag::Delete)
+            .map(|s| s.value.as_str())
+            .collect();
+        assert_eq!(reconstructed, precomposed);
+    }
+
+    #[test]
     fn markdown_content_with_tags() {
         let old = "Buy milk #[01HQRS] and eggs";
         let new = "Buy butter #[01HQRS] and cheese";

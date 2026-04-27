@@ -910,4 +910,98 @@ mod tests {
         // don't interact with agenda dates.
         assert_eq!(block_id_of(&rec).unwrap(), None);
     }
+
+    // ── TEST-51: concurrent producer race ─────────────────────────────
+    //
+    // The other tests in this module are sync calls into the pure
+    // `compute_dirty_event` transformation.  This one exercises the
+    // DB-touching producer entry point — `snapshot_for_op`, which the
+    // materializer's `apply_op` boundary calls just before applying a
+    // remote op — under two concurrent invocations.  The assertion is
+    // that the resulting `(snapshot, DirtyEvent)` pair is *consistent*
+    // across both producers: SQLite serialises the reads and both
+    // tasks must see the same pre-image of the block, so both must
+    // emit the same DirtyEvent.  A regression that, e.g., mutated the
+    // block via an interleaved write would surface as divergent
+    // events.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_producers_emit_consistent_dirty_events() {
+        use crate::db::init_pool;
+        use sqlx::SqlitePool;
+        use std::path::PathBuf;
+        use tempfile::TempDir;
+
+        async fn test_pool() -> (SqlitePool, TempDir) {
+            let dir = TempDir::new().unwrap();
+            let db_path: PathBuf = dir.path().join("test.db");
+            let pool = init_pool(&db_path).await.unwrap();
+            (pool, dir)
+        }
+
+        let (pool, _dir) = test_pool().await;
+
+        // Seed a block with both date keys populated so the pre-image
+        // is non-trivial.
+        let block_id = "BLK-TEST-01";
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, due_date, scheduled_date) \
+             VALUES (?, 'content', 'race-target', '2026-04-25', '2026-04-26')",
+        )
+        .bind(block_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Build the op record once — both tasks deserialise the same
+        // EditBlock payload.  EditBlock's compute path emits old =
+        // new = {prior dates} so the expected DirtyEvent is fully
+        // determined by the pre-image we just wrote.
+        let record = edit_block();
+        let today = today();
+
+        let pool_a = pool.clone();
+        let pool_b = pool.clone();
+        let record_a = record.clone();
+        let record_b = record.clone();
+
+        let handle_a = tokio::spawn(async move {
+            let mut conn = pool_a.acquire().await.unwrap();
+            let snap = snapshot_for_op(&mut conn, &record_a).await.unwrap();
+            let ev = compute_dirty_event(&record_a, &snap, today);
+            (snap, ev)
+        });
+        let handle_b = tokio::spawn(async move {
+            let mut conn = pool_b.acquire().await.unwrap();
+            let snap = snapshot_for_op(&mut conn, &record_b).await.unwrap();
+            let ev = compute_dirty_event(&record_b, &snap, today);
+            (snap, ev)
+        });
+
+        let (out_a, out_b) = tokio::join!(handle_a, handle_b);
+        let (snap_a, ev_a) = out_a.expect("task A joined");
+        let (snap_b, ev_b) = out_b.expect("task B joined");
+
+        // Both producers must have observed the same pre-image — no
+        // torn read, no missing row.
+        assert_eq!(
+            snap_a, snap_b,
+            "concurrent producers must observe the same block snapshot"
+        );
+        assert!(!snap_a.missing, "snapshot must find the seeded block");
+
+        // Both producers must emit identical DirtyEvents.
+        assert_eq!(
+            ev_a, ev_b,
+            "concurrent producers must emit identical DirtyEvents"
+        );
+        let ev = ev_a.expect("EditBlock on a block with dates must produce a DirtyEvent");
+        assert_eq!(
+            ev.old_affected_dates,
+            vec![date("2026-04-25"), date("2026-04-26")]
+        );
+        assert_eq!(
+            ev.new_affected_dates,
+            vec![date("2026-04-25"), date("2026-04-26")]
+        );
+    }
 }

@@ -14,6 +14,33 @@ use crate::materializer::Materializer;
 
 use super::*;
 
+/// MAINT-134: Emit `EVENT_PROPERTY_CHANGED` with a log-on-error
+/// fallback so a transient emit failure does not propagate as a
+/// command error.  Centralises the previously-duplicated emit block
+/// shared by `set_property`, `set_todo_state`, `set_priority`,
+/// `set_due_date`, `set_scheduled_date`, and `delete_property`.
+fn emit_property_changed_event(
+    app: &tauri::AppHandle,
+    block_id: String,
+    changed_keys: Vec<String>,
+) {
+    use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
+    use tauri::Emitter;
+    if let Err(e) = app.emit(
+        EVENT_PROPERTY_CHANGED,
+        PropertyChangedEvent {
+            block_id,
+            changed_keys,
+        },
+    ) {
+        tracing::warn!(
+            error = %e,
+            event = EVENT_PROPERTY_CHANGED,
+            "failed to emit property-changed event",
+        );
+    }
+}
+
 /// List all distinct property keys currently in use across all blocks.
 #[instrument(skip(pool), err)]
 pub async fn list_property_keys_inner(pool: &SqlitePool) -> Result<Vec<String>, AppError> {
@@ -654,21 +681,7 @@ pub async fn set_property(
     )
     .await
     .map_err(sanitize_internal_error)?;
-    use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
-    use tauri::Emitter;
-    if let Err(e) = app.emit(
-        EVENT_PROPERTY_CHANGED,
-        PropertyChangedEvent {
-            block_id: block_id_clone,
-            changed_keys: vec![key_clone],
-        },
-    ) {
-        tracing::warn!(
-            error = %e,
-            event = EVENT_PROPERTY_CHANGED,
-            "failed to emit property-changed event",
-        );
-    }
+    emit_property_changed_event(&app, block_id_clone, vec![key_clone]);
     Ok(result)
 }
 
@@ -688,21 +701,7 @@ pub async fn set_todo_state(
     let result = set_todo_state_inner(&pool.0, device_id.as_str(), &materializer, block_id, state)
         .await
         .map_err(sanitize_internal_error)?;
-    use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
-    use tauri::Emitter;
-    if let Err(e) = app.emit(
-        EVENT_PROPERTY_CHANGED,
-        PropertyChangedEvent {
-            block_id: block_id_clone,
-            changed_keys: vec!["todo_state".to_string()],
-        },
-    ) {
-        tracing::warn!(
-            error = %e,
-            event = EVENT_PROPERTY_CHANGED,
-            "failed to emit property-changed event",
-        );
-    }
+    emit_property_changed_event(&app, block_id_clone, vec!["todo_state".to_string()]);
     Ok(result)
 }
 
@@ -729,21 +728,7 @@ pub async fn set_priority(
     let result = set_priority_inner(&pool.0, device_id.as_str(), &materializer, block_id, level)
         .await
         .map_err(sanitize_internal_error)?;
-    use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
-    use tauri::Emitter;
-    if let Err(e) = app.emit(
-        EVENT_PROPERTY_CHANGED,
-        PropertyChangedEvent {
-            block_id: block_id_clone,
-            changed_keys: vec!["priority".to_string()],
-        },
-    ) {
-        tracing::warn!(
-            error = %e,
-            event = EVENT_PROPERTY_CHANGED,
-            "failed to emit property-changed event",
-        );
-    }
+    emit_property_changed_event(&app, block_id_clone, vec!["priority".to_string()]);
     Ok(result)
 }
 
@@ -763,21 +748,7 @@ pub async fn set_due_date(
     let result = set_due_date_inner(&pool.0, device_id.as_str(), &materializer, block_id, date)
         .await
         .map_err(sanitize_internal_error)?;
-    use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
-    use tauri::Emitter;
-    if let Err(e) = app.emit(
-        EVENT_PROPERTY_CHANGED,
-        PropertyChangedEvent {
-            block_id: block_id_clone,
-            changed_keys: vec!["due_date".to_string()],
-        },
-    ) {
-        tracing::warn!(
-            error = %e,
-            event = EVENT_PROPERTY_CHANGED,
-            "failed to emit property-changed event",
-        );
-    }
+    emit_property_changed_event(&app, block_id_clone, vec!["due_date".to_string()]);
     Ok(result)
 }
 
@@ -798,21 +769,7 @@ pub async fn set_scheduled_date(
         set_scheduled_date_inner(&pool.0, device_id.as_str(), &materializer, block_id, date)
             .await
             .map_err(sanitize_internal_error)?;
-    use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
-    use tauri::Emitter;
-    if let Err(e) = app.emit(
-        EVENT_PROPERTY_CHANGED,
-        PropertyChangedEvent {
-            block_id: block_id_clone,
-            changed_keys: vec!["scheduled_date".to_string()],
-        },
-    ) {
-        tracing::warn!(
-            error = %e,
-            event = EVENT_PROPERTY_CHANGED,
-            "failed to emit property-changed event",
-        );
-    }
+    emit_property_changed_event(&app, block_id_clone, vec!["scheduled_date".to_string()]);
     Ok(result)
 }
 
@@ -833,21 +790,7 @@ pub async fn delete_property(
     delete_property_inner(&pool.0, device_id.as_str(), &materializer, block_id, key)
         .await
         .map_err(sanitize_internal_error)?;
-    use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
-    use tauri::Emitter;
-    if let Err(e) = app.emit(
-        EVENT_PROPERTY_CHANGED,
-        PropertyChangedEvent {
-            block_id: block_id_clone,
-            changed_keys: vec![key_clone],
-        },
-    ) {
-        tracing::warn!(
-            error = %e,
-            event = EVENT_PROPERTY_CHANGED,
-            "failed to emit property-changed event",
-        );
-    }
+    emit_property_changed_event(&app, block_id_clone, vec![key_clone]);
     Ok(())
 }
 

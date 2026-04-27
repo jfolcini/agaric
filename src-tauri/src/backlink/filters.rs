@@ -8,7 +8,7 @@ use sqlx::SqlitePool;
 use super::types::{BacklinkFilter, CompareOp};
 use crate::error::AppError;
 use crate::fts::sanitize_fts_query;
-use crate::sql_utils::escape_like;
+use crate::tag_query::{resolve_tag_leaves, resolve_tag_prefix_leaves};
 
 // ---------------------------------------------------------------------------
 // Crockford Base32 ULID timestamp extraction
@@ -309,31 +309,18 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
             }
 
             BacklinkFilter::HasTag { tag_id } => {
-                // Duplicate leaf SQL from tag_query (avoids making resolve_expr pub)
-                let rows = sqlx::query_scalar::<_, String>(
-                    "SELECT bt.block_id FROM block_tags bt \
-                     JOIN blocks b ON b.id = bt.block_id \
-                     WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
-                )
-                .bind(tag_id)
-                .fetch_all(pool)
-                .await?;
+                // MAINT-143: shares leaf SQL with `tag_query::resolve_expr`
+                // (UX-250 inline-ref union semantics). The single source of
+                // truth is `tag_query::resolve_tag_leaves`.
+                let rows = resolve_tag_leaves(pool, tag_id, false).await?;
                 Ok(rows.into_iter().collect())
             }
 
             BacklinkFilter::HasTagPrefix { prefix } => {
-                let escaped = format!("{}%", escape_like(prefix));
-                let rows = sqlx::query_scalar::<_, String>(
-                    "SELECT DISTINCT bt.block_id \
-                     FROM tags_cache tc \
-                     JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-                     JOIN blocks b ON b.id = bt.block_id \
-                     WHERE tc.name LIKE ?1 ESCAPE '\\' \
-                       AND b.deleted_at IS NULL AND b.is_conflict = 0",
-                )
-                .bind(&escaped)
-                .fetch_all(pool)
-                .await?;
+                // MAINT-143: shares leaf SQL with `tag_query::resolve_expr`
+                // (UX-250 inline-ref union semantics). The single source of
+                // truth is `tag_query::resolve_tag_prefix_leaves`.
+                let rows = resolve_tag_prefix_leaves(pool, prefix, false).await?;
                 Ok(rows.into_iter().collect())
             }
 

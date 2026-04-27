@@ -448,4 +448,59 @@ mod tests {
         let valid = parse_rfc3339("2026-04-22T10:00:00Z");
         assert!(valid.is_some());
     }
+
+    // ── TEST-51: concurrent claim race ─────────────────────────────
+    //
+    // Two devices race for the lease at the *same* logical clock.  The
+    // existing tests above all serialise their `t0() + Ns` clocks; this
+    // one demonstrates that even when two `claim_lease` calls overlap
+    // on the wall clock, SQLite's `BEGIN IMMEDIATE` serialises the
+    // writers and exactly one device wins the lease — the other
+    // observes the live holder and returns `Ok(false)`.
+    //
+    // We assert the *exclusive-or* shape (one `Ok(true)`, one
+    // `Ok(false)`) rather than which device wins — the scheduler is
+    // free to interleave either way.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_claim_two_devices_serialise_to_exactly_one_winner() {
+        let (pool, _dir) = test_pool().await;
+        let now = t0();
+
+        // Spawn both claims at the same `now` so neither has a
+        // freshness advantage.  Cloning the pool is cheap (Arc) and
+        // matches the production wiring where each connector handler
+        // task holds its own clone.
+        let pool_a = pool.clone();
+        let pool_b = pool.clone();
+
+        let handle_a = tokio::spawn(async move { claim_lease(&pool_a, DEV_A, now).await });
+        let handle_b = tokio::spawn(async move { claim_lease(&pool_b, DEV_B, now).await });
+
+        let (res_a, res_b) = tokio::join!(handle_a, handle_b);
+        let res_a = res_a
+            .expect("task A joined")
+            .expect("claim_lease A returned Ok");
+        let res_b = res_b
+            .expect("task B joined")
+            .expect("claim_lease B returned Ok");
+
+        // Exactly one winner.  XOR over the two booleans.
+        assert!(
+            res_a ^ res_b,
+            "exactly one device must win the lease under concurrent claim, got A={res_a} B={res_b}"
+        );
+
+        // Whichever device returned `true` must now hold the lease in
+        // the DB, and the other must NOT be the holder.
+        let state = read_current_lease(&pool).await.unwrap();
+        let expected_holder = if res_a { DEV_A } else { DEV_B };
+        assert_eq!(
+            state.device_id, expected_holder,
+            "DB must reflect the winning claim"
+        );
+        assert!(
+            state.expires_at.is_some(),
+            "winning claim must populate expires_at"
+        );
+    }
 }

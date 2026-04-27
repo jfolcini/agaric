@@ -4,6 +4,10 @@ mod query;
 mod resolve;
 
 pub use query::{eval_tag_query, list_tags_by_prefix, list_tags_for_block};
+// MAINT-143: Shared leaf-resolution helpers — `backlink::filters` calls
+// these to stay in lockstep with `resolve_expr`'s UX-250 inline-ref
+// union semantics. See `resolve.rs` for the canonical SQL.
+pub(crate) use resolve::{resolve_tag_leaves, resolve_tag_prefix_leaves};
 
 use serde::Serialize;
 

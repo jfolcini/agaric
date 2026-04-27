@@ -391,6 +391,19 @@ mod tests {
     }
 
     #[test]
+    fn rejects_malformed_url_with_unclosed_bracket() {
+        // TEST-50: edge case — input has the `agaric://` shape but trips
+        // `url::Url::parse` itself (unclosed `[` is parsed as a malformed
+        // IPv6 host).  Must surface as `Malformed`, never panic.
+        let err =
+            parse_deep_link("agaric://[invalid").expect_err("unclosed bracket should be malformed");
+        assert!(
+            matches!(err, DeepLinkError::Malformed(_)),
+            "expected Malformed, got {err:?}",
+        );
+    }
+
+    #[test]
     fn rejects_url_without_authority() {
         // `agaric:settings/keyboard` (no `//`) parses as a URL but has no
         // authority component, so `host_str()` returns None.

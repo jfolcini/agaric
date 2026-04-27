@@ -1,5 +1,6 @@
 pub mod backlink;
 pub mod block_descendants;
+pub mod block_positions;
 pub mod cache;
 pub mod commands;
 pub mod dag;

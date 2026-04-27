@@ -1,6 +1,7 @@
 use chrono::DateTime;
 use sqlx::SqlitePool;
 
+use crate::block_positions::next_sibling_position_excluding_sentinel;
 use crate::error::AppError;
 use crate::materializer::{MaterializeTask, Materializer};
 use crate::op::*;
@@ -77,22 +78,14 @@ pub async fn create_conflict_copy(
     // Previous approach used position + 1 which could collide with existing siblings.
     // P-18: When original position is the sentinel (or NULL before migration),
     // keep the sentinel instead of incrementing (which would overflow i64::MAX).
-    // BUG-24: Exclude sibling rows that already carry the sentinel from the
-    // MAX() scan. Otherwise `max_pos + 1` would overflow i64::MAX when any
-    // sibling (e.g. a NULL-position tag stored under the same parent) holds
-    // the sentinel value.
+    // BUG-24: Sentinel-bearing siblings are excluded from the MAX() scan inside
+    // `next_sibling_position_excluding_sentinel`; otherwise `max_pos + 1` would
+    // overflow i64::MAX when any sibling (e.g. a NULL-position tag stored under
+    // the same parent) holds the sentinel value.
     let new_position = match position {
         Some(p) if p == NULL_POSITION_SENTINEL => Some(NULL_POSITION_SENTINEL),
         Some(_p) => {
-            let max_pos: Option<i64> = sqlx::query_scalar(
-                "SELECT MAX(position) FROM blocks \
-                 WHERE parent_id IS ? AND deleted_at IS NULL AND position != ?",
-            )
-            .bind(parent_id.as_deref())
-            .bind(NULL_POSITION_SENTINEL)
-            .fetch_one(pool)
-            .await?;
-            Some(max_pos.unwrap_or(0) + 1)
+            Some(next_sibling_position_excluding_sentinel(pool, parent_id.as_deref()).await?)
         }
         None => Some(NULL_POSITION_SENTINEL),
     };

@@ -4,6 +4,7 @@
 use sqlx::SqlitePool;
 
 use super::parser::shift_date;
+use crate::block_positions::next_sibling_position_excluding_sentinel;
 use crate::commands::{create_block_in_tx, is_valid_iso_date, set_property_in_tx};
 use crate::materializer::Materializer;
 use crate::op_log;
@@ -165,7 +166,8 @@ pub(crate) async fn handle_recurrence(
     // Naive `original.position + 1` collides with whatever sibling already
     // occupies that slot, leaving two siblings sharing one position and the
     // agenda's order non-deterministic. Mirrors the BUG-24 fix in
-    // `merge/resolve.rs::create_conflict_copy`.
+    // `merge/resolve.rs::create_conflict_copy` — both call sites now share
+    // `next_sibling_position_excluding_sentinel`.
     //
     // - If the original carries the NULL_POSITION_SENTINEL, the sibling
     //   keeps the sentinel (incrementing would overflow i64::MAX).
@@ -173,17 +175,10 @@ pub(crate) async fn handle_recurrence(
     //   the same overflow.
     let new_position = match original.position {
         Some(p) if p == NULL_POSITION_SENTINEL => Some(NULL_POSITION_SENTINEL),
-        Some(_) => {
-            let max_pos: Option<i64> = sqlx::query_scalar(
-                "SELECT MAX(position) FROM blocks \
-                 WHERE parent_id IS ? AND deleted_at IS NULL AND position != ?",
-            )
-            .bind(original.parent_id.as_deref())
-            .bind(NULL_POSITION_SENTINEL)
-            .fetch_one(&mut **tx)
-            .await?;
-            Some(max_pos.unwrap_or(0) + 1)
-        }
+        Some(_) => Some(
+            next_sibling_position_excluding_sentinel(&mut **tx, original.parent_id.as_deref())
+                .await?,
+        ),
         None => Some(NULL_POSITION_SENTINEL),
     };
 

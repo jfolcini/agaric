@@ -777,6 +777,54 @@ async fn search_whitespace_query_returns_empty() {
 }
 
 #[tokio::test]
+async fn search_sub_trigram_query_returns_empty() {
+    // TEST-50: pin behaviour for queries shorter than the trigram
+    // tokenizer's 3-char minimum.  `sanitize_fts_query` drops 1- and
+    // 2-char non-operator tokens (I-Search-2), so the sanitised query is
+    // empty and `search_fts` short-circuits to an empty page — no panic,
+    // no FTS5 syntax error, no results.
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, BLOCK_A, "content", "hello world", None, Some(0)).await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+
+    let one_char = search_fts(&pool, "a", &page, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        one_char.items.len(),
+        0,
+        "1-char query should return no results (sub-trigram filter)",
+    );
+    assert!(
+        !one_char.has_more,
+        "1-char query should not indicate more pages",
+    );
+    assert!(
+        one_char.next_cursor.is_none(),
+        "1-char query should have no cursor",
+    );
+
+    let two_char = search_fts(&pool, "he", &page, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        two_char.items.len(),
+        0,
+        "2-char query should return no results (sub-trigram filter)",
+    );
+    assert!(
+        !two_char.has_more,
+        "2-char query should not indicate more pages",
+    );
+    assert!(
+        two_char.next_cursor.is_none(),
+        "2-char query should have no cursor",
+    );
+}
+
+#[tokio::test]
 async fn search_deleted_blocks_excluded() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, BLOCK_A, "content", "visible content", None, Some(0)).await;

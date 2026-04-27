@@ -510,6 +510,50 @@ async fn reverse_delete_block_missing_block_returns_not_found() {
         Err(AppError::NotFound(_))
     ));
 }
+/// TEST-50: with a populated `op_log`, calling `compute_reverse` on a
+/// `seq` that does not exist must return `AppError::NotFound` whose
+/// message names the `(device_id, seq)` pair — not panic, not return
+/// an empty payload, not silently succeed. The sibling test above
+/// covers the empty-log case; this one differentiates a real gap from
+/// "no ops at all" and pins the diagnostic shape we rely on in
+/// support.
+#[tokio::test]
+async fn compute_reverse_with_nonexistent_seq_returns_not_found_with_populated_log() {
+    let (pool, _dir) = test_pool().await;
+
+    // Populate op_log with a real entry first so we can distinguish
+    // "seq missing" from "no ops at all".
+    let real = append_op(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("BLK_GAP"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "real".into(),
+        }),
+        FIXED_TS,
+    )
+    .await;
+
+    // Sanity: the real seq round-trips.
+    let _ = compute_reverse(&pool, TEST_DEVICE, real.seq).await.unwrap();
+
+    // A seq strictly greater than any real entry must be NotFound.
+    let bogus_seq = real.seq + 1_000_000;
+    let result = compute_reverse(&pool, TEST_DEVICE, bogus_seq).await;
+    match result {
+        Err(AppError::NotFound(msg)) => {
+            // The message must reference the (device, seq) pair so a
+            // support session has something to grep for.
+            assert!(
+                msg.contains(TEST_DEVICE) && msg.contains(&bogus_seq.to_string()),
+                "NotFound message must include device + seq; got: {msg:?}"
+            );
+        }
+        other => panic!("expected NotFound for missing seq, got: {other:?}"),
+    }
+}
 #[tokio::test]
 async fn undo_chain_edit_round_trip() {
     let (pool, _dir) = test_pool().await;

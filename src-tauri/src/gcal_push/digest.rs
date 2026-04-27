@@ -881,6 +881,75 @@ mod tests {
         );
     }
 
+    /// TEST-51: build a fixture whose joined description lands at
+    /// EXACTLY [`DESCRIPTION_CAP`] characters.
+    ///
+    /// Per-line shape: `"[ ] Projects \u{203A} <content>"` — that's a
+    /// fixed 15-char prefix plus the content prefix.  With
+    /// `content_max_chars = 80`, the longest non-truncated line is
+    /// `15 + 80 = 95` chars.  Stuffing 42 such lines plus one
+    /// shorter (49-char content, 64-char line) entry plus 42
+    /// inter-line newlines lands on:
+    ///
+    /// ```text
+    ///   42 × 95 + 64 + 42 (newlines) = 3990 + 64 + 42 = 4096
+    /// ```
+    ///
+    /// — exactly the cap.  Used by
+    /// [`description_at_exact_cap_keeps_joined_lines_unmodified`].
+    fn entries_at_exact_cap_boundary() -> Vec<ProjectedAgendaEntry> {
+        let mut entries = Vec::with_capacity(43);
+        let big_content = "x".repeat(80); // exactly content_max_chars → no ellipsis
+        let small_content = "y".repeat(49); // pads the joined string to 4096
+        for i in 0..42 {
+            let id = format!("BLK{i:023}");
+            entries.push(entry(&id, &big_content, Some("TODO"), "due_date"));
+        }
+        // Block ID is irrelevant to the boundary assertion (we only
+        // care about total chars), but lex-greater than the loop ids
+        // keeps the canonicalised order obvious in case the test
+        // ever needs to debug.
+        entries.push(entry(
+            "BLKZZZZZZZZZZZZZZZZZZZZZZZZ",
+            &small_content,
+            Some("TODO"),
+            "due_date",
+        ));
+        entries
+    }
+
+    #[test]
+    fn description_at_exact_cap_keeps_joined_lines_unmodified() {
+        // TEST-51 boundary: the production check is
+        // `joined.chars().count() <= DESCRIPTION_CAP` — strict-less-or-
+        // equal — so a description sized *exactly* to the cap must
+        // round-trip verbatim.  No overflow suffix, length unchanged.
+        let entries = entries_at_exact_cap_boundary();
+        let got = digest_for_date(fixed_date(), &entries, &page_titles(), PrivacyMode::Full);
+        let DigestResult::Create(ev) = got else {
+            unreachable!()
+        };
+        assert_eq!(
+            ev.description.chars().count(),
+            DESCRIPTION_CAP,
+            "boundary fixture must hit DESCRIPTION_CAP exactly; \
+             adjust the fixture if the per-line shape changes",
+        );
+        assert!(
+            !ev.description.contains("more in Agaric"),
+            "cap-inclusive convention: at exactly DESCRIPTION_CAP chars, \
+             the truncation suffix must NOT be appended (production \
+             condition is `<= cap`)",
+        );
+        // Belt-and-suspenders: every entry's marker is present, none
+        // were dropped.
+        assert_eq!(
+            ev.description.matches("[ ]").count(),
+            entries.len(),
+            "every entry's marker must survive when the digest fits the cap",
+        );
+    }
+
     #[test]
     fn no_overflow_suffix_when_content_fits() {
         let entries = vec![entry(
