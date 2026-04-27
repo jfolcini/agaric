@@ -189,14 +189,21 @@ export function DaySection({
       {/* Empty state: compact for multi-day views, full for daily */}
       {!entry.pageId &&
         (compact ? (
-          <button
-            type="button"
-            className="w-full rounded-md border border-dashed px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent/50 active:bg-accent/70 transition-colors"
-            onClick={() => onAddBlock(entry.dateStr)}
-          >
-            <Plus className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
-            {t('action.addBlock')}
-          </button>
+          <EmptyState
+            compact
+            message={t('agenda.day.empty', { date: entry.displayDate })}
+            action={
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2 mx-auto flex items-center gap-1"
+                onClick={() => onAddBlock(entry.dateStr)}
+              >
+                <Plus className="h-4 w-4" />
+                {t('agenda.day.addBlock')}
+              </Button>
+            }
+          />
         ) : (
           <EmptyState
             icon={CalendarIcon}

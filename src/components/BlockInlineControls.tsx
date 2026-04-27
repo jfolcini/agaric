@@ -288,7 +288,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
           })}
         >
           <Repeat className="h-3 w-3 flex-shrink-0" />
-          {formatRepeatLabel(properties.find((p) => p.key === 'repeat')?.value ?? '')}
+          {formatRepeatLabel(properties.find((p) => p.key === 'repeat')?.value ?? '', t)}
         </button>
       )}
 

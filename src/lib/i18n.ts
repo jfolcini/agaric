@@ -371,6 +371,20 @@ const resources = {
       'error.sectionCrashed': '{{section}} encountered an error',
       'error.unexpected': 'An unexpected error occurred',
 
+      // Repeat-rule labels (used by formatRepeatLabel in src/lib/repeat-utils.ts)
+      'repeat.daily': 'daily',
+      'repeat.weekly': 'weekly',
+      'repeat.monthly': 'monthly',
+      'repeat.yearly': 'yearly',
+      'repeat.fromCompletionSuffix': ' (from completion)',
+      'repeat.catchUpSuffix': ' (catch-up)',
+      'repeat.everyDays_one': 'every {{count}} day',
+      'repeat.everyDays_other': 'every {{count}} days',
+      'repeat.everyWeeks_one': 'every {{count}} week',
+      'repeat.everyWeeks_other': 'every {{count}} weeks',
+      'repeat.everyMonths_one': 'every {{count}} month',
+      'repeat.everyMonths_other': 'every {{count}} months',
+
       // Slash commands
       'slash.repeatSet': 'Set repeat to {{value}}',
       'slash.repeatFailed': 'Failed to set repeat',
@@ -1242,6 +1256,11 @@ const resources = {
       'pairing.wordPlaceholder': '{{ordinal}} word',
       'pairing.wordLabel': 'Passphrase word {{num}}',
       'pairing.entryFormWord': '{{ordinal}} word',
+      // Ordinal labels for the four passphrase word slots in PairingEntryForm.
+      'pairing.ordinal.first': '1st',
+      'pairing.ordinal.second': '2nd',
+      'pairing.ordinal.third': '3rd',
+      'pairing.ordinal.fourth': '4th',
       'pairing.loadingScannerMessage': 'Loading scanner...',
       'pairing.cancelButton': 'Cancel',
       'pairing.pairButton': 'Pair',
@@ -2332,6 +2351,14 @@ const resources = {
       'gcal.disconnect.successKeep': 'Disconnected. Calendar kept in your Google account.',
       'gcal.disconnect.successWithDelete': 'Disconnected. Calendar deleted from Google.',
       'gcal.disconnect.failed': 'Failed to disconnect Google Calendar',
+
+      // UX-3: Empty state primitive consolidation
+      'pages.tags.empty': 'No more tags',
+      'pages.outline.empty': 'No headings found',
+      'history.diff.empty': 'No changes',
+      'agenda.day.empty': 'No blocks for {{date}}.',
+      'agenda.day.addBlock': 'Add block',
+      'unfinished.loading': 'Loading unfinished tasks',
     },
   },
 }

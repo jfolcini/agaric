@@ -69,6 +69,9 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
               // (e.g. onExit not invoked before a re-entry) to avoid firing a
               // command against a stale context.
               if (autoExecTimer) {
+                logger.debug('slash-command', 'auto-execute timer cleared on onStart', {
+                  reason: 'lingering-timer-from-previous-session',
+                })
                 clearTimeout(autoExecTimer)
                 autoExecTimer = null
               }
@@ -77,20 +80,39 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
             onUpdate(props: SuggestionProps<PickerItem>) {
               base.onUpdate(props)
               if (autoExecTimer) {
+                logger.debug('slash-command', 'auto-execute timer cleared on onUpdate', {
+                  reason: 'rescheduling',
+                  query: props.query,
+                })
                 clearTimeout(autoExecTimer)
                 autoExecTimer = null
               }
               const { items, query, command } = props
               // Auto-execute when exactly 1 match and query is long enough
               if (items.length === 1 && query.length >= 3) {
+                logger.debug('slash-command', 'auto-execute timer scheduled', {
+                  delayMs: AUTO_EXEC_DELAY_MS,
+                  query,
+                  itemId: items[0]?.id,
+                })
                 autoExecTimer = setTimeout(() => {
-                  command(items[0] as PickerItem)
+                  autoExecTimer = null
+                  const item = items[0] as PickerItem
+                  logger.debug('slash-command', 'auto-execute timer fired', {
+                    query,
+                    itemId: item.id,
+                  })
+                  command(item)
                 }, AUTO_EXEC_DELAY_MS)
               }
             },
             onKeyDown(props: SuggestionKeyDownProps) {
               // Cancel auto-execute on any keypress (user is still interacting)
               if (autoExecTimer) {
+                logger.debug('slash-command', 'auto-execute timer cleared on onKeyDown', {
+                  reason: 'user-keypress',
+                  key: props.event.key,
+                })
                 clearTimeout(autoExecTimer)
                 autoExecTimer = null
               }
@@ -98,6 +120,9 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
             },
             onExit() {
               if (autoExecTimer) {
+                logger.debug('slash-command', 'auto-execute timer cleared on onExit', {
+                  reason: 'session-exit',
+                })
                 clearTimeout(autoExecTimer)
                 autoExecTimer = null
               }

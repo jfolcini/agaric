@@ -389,8 +389,18 @@ impl SyncOrchestrator {
                         mismatches = apply_result.hash_mismatches,
                         inserted = apply_result.inserted,
                         duplicates = apply_result.duplicates,
+                        forks = apply_result.forks,
                         peer = ?self.remote_device_id,
                         "hash chain verification failures detected during sync"
+                    );
+                }
+                if apply_result.forks > 0 {
+                    tracing::warn!(
+                        forks = apply_result.forks,
+                        inserted = apply_result.inserted,
+                        duplicates = apply_result.duplicates,
+                        peer = ?self.remote_device_id,
+                        "fork ops detected during sync: peer sent ops with same (device_id, seq) but different hash; local copies kept"
                     );
                 }
                 self.session.ops_received = count;

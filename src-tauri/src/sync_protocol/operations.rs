@@ -94,6 +94,7 @@ pub async fn apply_remote_ops(
         inserted: 0,
         duplicates: 0,
         hash_mismatches: 0,
+        forks: 0,
     };
     let mut to_materialize = Vec::new();
 
@@ -131,10 +132,72 @@ pub async fn apply_remote_ops(
         }
     }
 
+    // Fork detection (H-14): bulk-fetch existing hashes for every
+    // `(device_id, seq)` pair in this batch in a SINGLE query, BEFORE
+    // opening the write transaction. Per-op SELECTs inside the txn would
+    // extend the BEGIN IMMEDIATE write-lock window proportional to batch
+    // size and starve other writers (materializer etc.), causing
+    // intermittent SQLITE_BUSY under load.
+    //
+    // Concurrency: `apply_remote_ops` is the only writer for *remote*
+    // `(device_id, seq)` slots — `append_local_op_at` only writes for the
+    // local device_id, which by construction never collides with the
+    // remote ops we're applying here. So there's no TOCTOU window we
+    // need to defend against; if a future code path introduces concurrent
+    // writers for the same device_id, the existing INSERT OR IGNORE
+    // remains the authoritative safety net.
+    let existing_map: std::collections::HashMap<(String, i64), String> = if records.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        // Build a JSON array of [device_id, seq] pairs and join via
+        // `json_each` — works in a single roundtrip regardless of batch
+        // size, sidestepping bind-parameter limits and per-op latency.
+        let pairs: Vec<(String, i64)> = records
+            .iter()
+            .map(|r| (r.device_id.clone(), r.seq))
+            .collect();
+        let pairs_json = serde_json::to_string(&pairs).map_err(|e| {
+            AppError::InvalidOperation(format!("failed to serialize fork-check pairs: {e}"))
+        })?;
+
+        let rows: Vec<(String, i64, String)> = sqlx::query_as(
+            "SELECT o.device_id, o.seq, o.hash \
+             FROM op_log o \
+             INNER JOIN json_each(?) j \
+               ON o.device_id = json_extract(j.value, '$[0]') \
+              AND o.seq = json_extract(j.value, '$[1]')",
+        )
+        .bind(&pairs_json)
+        .fetch_all(pool)
+        .await?;
+
+        rows.into_iter().map(|(d, s, h)| ((d, s), h)).collect()
+    };
+
     // Wrap all inserts in a single transaction to reduce per-op overhead.
     let mut tx = pool.begin().await?;
 
     for record in records {
+        // Look up the pre-fetched existing hash (no DB roundtrip).
+        let existing_hash = existing_map.get(&(record.device_id.clone(), record.seq));
+        let is_fork = matches!(existing_hash, Some(h) if h != &record.hash);
+
+        if is_fork {
+            tracing::warn!(
+                device_id = %record.device_id,
+                seq = record.seq,
+                existing_hash = %existing_hash.map(String::as_str).unwrap_or(""),
+                incoming_hash = %record.hash,
+                "fork detected: peer sent op with same (device_id, seq) but different hash; keeping local copy"
+            );
+            result.forks += 1;
+            // Fall through to the INSERT OR IGNORE below: it is a no-op for
+            // a row that already exists, but we keep the call for parity
+            // with the duplicate path and as a safety net. Do NOT add to
+            // `to_materialize` — the local op is unchanged, so nothing new
+            // to materialize.
+        }
+
         // INSERT OR IGNORE — duplicate delivery is a no-op
         let r = sqlx::query(
             "INSERT OR IGNORE INTO op_log \
@@ -154,7 +217,8 @@ pub async fn apply_remote_ops(
         if r.rows_affected() > 0 {
             to_materialize.push(record);
             result.inserted += 1;
-        } else {
+        } else if !is_fork {
+            // Forks are NOT duplicates — only count true same-hash collisions.
             result.duplicates += 1;
         }
     }

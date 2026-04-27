@@ -22,6 +22,7 @@ import {
 import { cn } from '@/lib/utils'
 import type { FlatBlock } from '../stores/page-blocks'
 import { usePageBlockStore } from '../stores/page-blocks'
+import { EmptyState } from './EmptyState'
 
 // ── Heading extraction ───────────────────────────────────────────────────
 
@@ -80,7 +81,7 @@ export function PageOutline() {
         </SheetHeader>
         <ScrollArea className="flex-1 px-4 pb-4">
           {headings.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4">{t('outline.empty')}</p>
+            <EmptyState compact message={t('pages.outline.empty')} />
           ) : (
             <nav aria-label={t('outline.navLabel')}>
               <ul className="space-y-1">

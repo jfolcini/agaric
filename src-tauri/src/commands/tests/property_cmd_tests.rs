@@ -69,6 +69,21 @@ async fn set_property_creates_property() {
         props[0].value_ref.is_none(),
         "value_ref should be None for text property"
     );
+
+    // TEST-42: verify op_log row was written with op_type='set_property'
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property' \
+         AND json_extract(payload, '$.block_id') = ? \
+         AND json_extract(payload, '$.key') = 'importance'",
+    )
+    .bind(&block.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 1,
+        "set_property should have written exactly one op_log row"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -202,6 +217,21 @@ async fn delete_property_removes_property() {
     assert!(
         props.is_empty(),
         "properties should be empty after delete, got: {props:?}"
+    );
+
+    // TEST-42: verify op_log row was written with op_type='delete_property'
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM op_log WHERE op_type = 'delete_property' \
+         AND json_extract(payload, '$.block_id') = ? \
+         AND json_extract(payload, '$.key') = 'status'",
+    )
+    .bind(&block.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 1,
+        "delete_property should have written exactly one op_log row"
     );
 }
 
@@ -873,6 +903,21 @@ async fn set_todo_state_sets_value() {
         "DB column should persist TODO state"
     );
 
+    // TEST-42: verify op_log row was written with op_type='set_property' for the todo_state key
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property' \
+         AND json_extract(payload, '$.block_id') = ? \
+         AND json_extract(payload, '$.key') = 'todo_state'",
+    )
+    .bind(&block.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 1,
+        "set_todo_state should have written exactly one set_property op_log row for the todo_state key"
+    );
+
     mat.shutdown();
 }
 
@@ -1083,6 +1128,22 @@ async fn set_priority_sets_and_clears() {
         .unwrap();
     assert_eq!(result.priority, None, "priority should be cleared to None");
 
+    // TEST-42: verify op_log rows were written with op_type='set_property' for the priority key
+    // (one for the set, one for the clear)
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property' \
+         AND json_extract(payload, '$.block_id') = ? \
+         AND json_extract(payload, '$.key') = 'priority'",
+    )
+    .bind(&block.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 2,
+        "set_priority should have written one set_property op_log row per call (set + clear)"
+    );
+
     mat.shutdown();
 }
 
@@ -1157,6 +1218,22 @@ async fn set_due_date_sets_and_clears() {
         .await
         .unwrap();
     assert_eq!(result.due_date, None, "due_date should be cleared to None");
+
+    // TEST-42: verify op_log rows were written with op_type='set_property' for the due_date key
+    // (one for the set, one for the clear)
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property' \
+         AND json_extract(payload, '$.block_id') = ? \
+         AND json_extract(payload, '$.key') = 'due_date'",
+    )
+    .bind(&block.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 2,
+        "set_due_date should have written one set_property op_log row per call (set + clear)"
+    );
 
     mat.shutdown();
 }
@@ -1930,6 +2007,22 @@ async fn set_scheduled_date_sets_and_clears() {
     assert_eq!(
         result.scheduled_date, None,
         "scheduled_date should be cleared to None"
+    );
+
+    // TEST-42: verify op_log rows were written with op_type='set_property' for the scheduled_date key
+    // (one for the set, one for the clear)
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property' \
+         AND json_extract(payload, '$.block_id') = ? \
+         AND json_extract(payload, '$.key') = 'scheduled_date'",
+    )
+    .bind(&block.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 2,
+        "set_scheduled_date should have written one set_property op_log row per call (set + clear)"
     );
 
     mat.shutdown();
