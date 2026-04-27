@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-28 open items (16 previously + 12 new UX-* from 2026-04-26 frontend UX review).
+57 open items — 20 planned work (FEAT/MAINT/PERF/PUB) + 12 UX-1..UX-12 + 25 test-quality (12 backend TEST-40..TEST-51 + 13 frontend TEST-52..TEST-64).
 
 Previously resolved: 542+ items across 159 sessions.
 
@@ -57,6 +57,19 @@ Previously resolved: 542+ items across 159 sessions.
 | TEST-49 | TEST | Assertion hygiene cluster — `dag/tests.rs:318` + `op.rs:1099` missing messages; `undo_redo_tests.rs:3087` weak `!is_empty()` where exact count is known; `mcp/tools_ro.rs:1317` + `:1503` check `is_ok()` without shape; `sync_daemon/tests.rs:239` missing message; stale `assertion_line: 792` in `snapshot_op_record_after_create_block.snap` (actual test at `op_log.rs:1125`) | S |
 | TEST-50 | TEST | Edge-case gaps cluster — deeplink malformed URL, FTS short query (<3 chars), import mixed line endings (CRLF+LF+CR), `word_diff` combining marks, `apply_snapshot` invalid-data variants (NULL, invalid block_type, malformed ULID), `compute_reverse` on nonexistent seq, `shift_date` malformed RRULE intervals (`"5x"`, `"w"`, `"3.5d"`, `"invalid"`), backlink recursive-CTE deep conflict tree | S |
 | TEST-51 | TEST | GCal concurrency + boundary gaps — lease tests sequential only, dirty-producer sequential only, digest truncation not tested exactly at the 4096-char boundary, `emit_activity_survives_poisoned_lock` single-threaded only | S |
+| TEST-52 | TEST | `useBlockKeyboard` popup-yield for Enter / Escape / Backspace is not unit-tested (pitfall #14 gap; only arrows covered at `use-block-keyboard.test.ts:626-681`) | S |
+| TEST-53 | TEST | `useJournalAutoCreate.test.ts:177-192` "cleans up keyboard listener on unmount" tautological on two axes (pageMap guard + post-mount `opts.handleAddBlock` reassignment that the closure never observes) | S |
+| TEST-54 | TEST | `useSyncTrigger.test.ts:116-128` asserts `expect(toast).not.toHaveBeenCalled()` on a bare `toast(...)` that production code never invokes; sub-mocks (`.success/.error/.info`) are untested | S |
+| TEST-55 | TEST | `useBatchCounts.test.ts:108-133` cancellation test cannot distinguish working vs broken — `result.current` is frozen post-`unmount()`, so the `{}`-equals assertion passes regardless of the `cancelled` guard | S |
+| TEST-56 | TEST | `useUndoStore.onNewAction` replaced with spies at ~14 sites across 6 hook test files without any `afterEach` restore; `pages: new Map()` also never reset between tests | S |
+| TEST-57 | TEST | `useSyncTrigger.test.ts:478-522` mutates `navigator.onLine` inline; `vi.restoreAllMocks()` does NOT reverse `Object.defineProperty`; two-test cascade risk across 20+ later tests in the same file | S |
+| TEST-58 | TEST | `keyboard-config.test.ts:264-305` — three `Storage.prototype.setItem/removeItem` spies restored inside test body; a thrown assertion would leave `setItem` stubbed to throw for the remaining ~1080 lines of tests (including the top-level `beforeEach`'s `localStorage.clear()`) | S |
+| TEST-59 | TEST | `use-roving-editor.test.ts:538-546` `setup()` uses `await new Promise(r => setTimeout(r, 50))` for TipTap editor init instead of `waitFor(() => editor !== null)` — violates AGENTS.md §"No timing hacks" | S |
+| TEST-60 | TEST | `export-graph.test.ts:40-60` "handles duplicate page names with ULID suffix" only asserts `blob instanceof Blob` — never opens the Blob, never inspects filenames; a regression that collapsed duplicates into a single entry would pass | S |
+| TEST-61 | TEST | Shared `makeBlock` fixture duplicated in 18 sites across 14 hook + lib test files; `useBlockTags.makeTagBlock` also has a `page_id: null` omission that the shared factory covers | M |
+| TEST-62 | TEST | Hand-rolled `renderHook` in `useBlockSwipeActions.test.ts` + `useBlockTouchLongPress.test.ts` + `useDeepLinkRouter.test.ts` instead of the `@testing-library/react` import the other 47 hook/component test files use; misleading "matches existing project pattern" comment in the `useDeepLinkRouter` helper | S |
+| TEST-63 | TEST | Global-state resource restore inline in test body cluster — `bug-report-events.test.ts:56-65` (SSR `window`), `useBlockCollapse.test.ts:39-61` (localStorage mock), `relaunch-app.test.ts:27-51` (window.location), `date-utils.test.ts:130-137` (fake timers inline), `useBlockDatePicker.test.ts:58-71` (useSpaceStore seed with no `afterEach`) | S |
+| TEST-64 | TEST | Weak-assertion / vacuous-test / brittle-style cluster — `property-picker.test.ts:288-299` vacuous cancellation test; `useUndoShortcuts.test.ts:442,470,601,725` `setTimeout(10)×4`; `agenda-sort.test.ts:154-164` midnight race; `ImageResizeToolbar.test.tsx:41,48` `fireEvent.click`; `PairingDialog.test.tsx:644-646` focus count; `sonner.test.tsx:20-24` `container.toBeTruthy()`; `attachment-utils.test.ts:20-25` URL format; `tauri-mock.test.ts:51-63` daily-page symmetry; axe `{timeout:5000}` for `BlockInlineControls.test.tsx:519-525` + `BlockPropertyDrawer.test.tsx:219-232` + `Calendar.test.tsx:125-139` | S |
 | UX-1 | UX | Focus-visible ring missing on hand-rolled `<button>` elements that bypass the `Button` primitive (PageTreeItem leaf + namespace + hybrid toggles, PageTagSection list + create buttons, SearchPanel Clear-all, PropertyChip key + value, AddPropertyPopover list items) | S |
 | UX-2 | UX | Touch targets below 44 px on coarse pointers (PageAliasSection X, PageTagSection X, MonthlyDayCell date circle, QueryResultTable content cell) + visual icon-in-big-box mismatch on `ui/close-button.tsx` and `ui/filter-pill.tsx` | S |
 | UX-3 | UX | Empty states rendered as plain `<p>` instead of the `EmptyState` primitive (PageTagSection, PageOutline, DiffDisplay, DaySection compact mode); UnfinishedTasks loading state is `sr-only` so sighted users see a blank section during load | S |
@@ -1144,6 +1157,208 @@ Affected tests (all in `materializer/tests.rs`):
 **Cost:** S (~1-2h).
 **Risk:** Low-to-medium for the concurrency tests (they rely on scheduler ordering); use the same patterns as existing `tokio::spawn`-based tests elsewhere in the repo.
 **Impact:** S.
+
+---
+
+## TEST — Frontend test-suite quality — Appended 2026-04-26
+
+> Output of a two-pass review of all 317 frontend Vitest files across `src/` (136 component tests, 28 UI-primitive tests, 9 journal subtree tests, 1 block-tree test, 20 editor tests, 53 hook tests, 46 lib/util tests, 11 store tests, 5 root / smoke tests, plus shared fixtures and test-setup).
+>
+> Pass 1: 10 parallel domain reviewers (split by test directory) produced 52 candidate findings. Pass 2: 4 parallel verification subagents re-opened every cited file and re-read ± 30 lines of surrounding context under an adversarial rubric (bias toward skepticism, reject if evidence snippet cannot be reproduced). 29 confirmed (9 Medium, 20 Low), 10 partially-confirmed and downgraded, 8 outright FALSE — most notably `BlockListItem.test.tsx` (defensive `.toBeDefined()` check already present), `BlockPropertyEditor.test.tsx` (`toHaveBeenCalledWith` on the warn spy already present), `useRichContentCallbacks.test.ts` (inner `beforeEach` already resets `currentView` and `selectedBlockId`), `useBlockTreeEventListeners.test.ts` (handler's no-focus guard is SYNCHRONOUS pre-`await`, so the flagged `setTimeout` is harmless padding), `useEditorBlur.test.ts` (companion test at lines 78-83 asserts specific selectors via `toContain`), and the axe `{ timeout: 5000 }` pattern on test files that are not cold-load sites (`BlockListRenderer.test.tsx`, `BuiltinDateFields.test.tsx`). The 13 items below bundle the 29 confirmed findings; grouped where the fix is one batch of mechanically similar edits, kept separate where the risk profile differs.
+>
+> Scope note: frontend test quality (what would tests fail to catch if code regresses), not production code. Methodology parallels the backend TEST-40..TEST-51 block above.
+
+### TEST-52 — `useBlockKeyboard` popup-yield for Enter / Escape / Backspace is not unit-tested
+
+**What:** `src/editor/use-block-keyboard.ts:272-284` contains a capture-phase guard that yields to a visible `.suggestion-popup` for Enter, Escape, and Backspace (AGENTS.md pitfall #14 — "Keyboard handlers must yield to popups"). `src/editor/__tests__/use-block-keyboard.test.ts:626-681` ("arrow keys suppressed when suggestion popup is visible (B-22)") only exercises the sibling ArrowUp / ArrowDown yield on `handleBlockKeyDown`. `src/hooks/__tests__/useBlockKeyboardHandlers.test.ts` has zero references to popup visibility (verified via repo-wide grep for `isSuggestionPopupVisible` — 4 matches, all in production code). `EditableBlock` tests exercise a different popup-yield path (blur handler, not keydown). A regression that drops the Enter yield would leave Enter confirming the popup AND splitting the block — exactly the bug pitfall #14 documents. Tab is intentionally pass-through, so Tab coverage is not required.
+
+**Fix:** Add three cases to the B-22 describe (or a new describe that renders `useBlockKeyboard` rather than just `handleBlockKeyDown`) — mount a `.suggestion-popup` in the DOM (or stub `checkVisibility` to return true), fire Enter / Escape / Backspace, assert the wrapper's callback set (`onEnterSave` / `onEscapeCancel` / `onMergeWithPrev` / `onDeleteBlock`) is NOT invoked and `preventDefault` is NOT called.
+
+**Cost:** S (<1h).
+**Risk:** Low.
+**Impact:** M — pitfall #14 documents a real bug class with user-visible symptoms; arrows are guarded, the other three keys are not.
+
+### TEST-53 — `useJournalAutoCreate` cleanup test is tautological on two independent axes
+
+**What:** `src/hooks/__tests__/useJournalAutoCreate.test.ts:177-192`, the "cleans up keyboard listener on unmount" test passes whether or not `removeEventListener` runs. Two defects stack: (1) the fixture sets `pageMap: new Map([['2025-06-15', 'p1']])` where `'2025-06-15'` matches the default `currentDate`; production `useJournalAutoCreate.ts:40` early-returns on the `pageMap.has(dateStr)` guard BEFORE reaching `handleAddBlock`. (2) The test reassigns `opts.handleAddBlock = spy` AFTER mount; the hook destructures `handleAddBlock` at line 20 and the effect closure at line 49 captures the mount-time reference, so `spy` is never invoked even if the listener survives unmount.
+
+**Fix:** Render with `pageMap: new Map()` (so the early return doesn't fire), pass `handleAddBlock: spy` at mount, unmount, dispatch the keydown, assert `expect(spy).not.toHaveBeenCalled()`. Alternatively spy on `document.removeEventListener` and assert it was called with the registered handler.
+
+**Cost:** S (<30 min).
+**Risk:** Low.
+**Impact:** S — one test restored to actually proving what its name promises.
+
+### TEST-54 — `useSyncTrigger` empty-peer-list toast assertion is vacuous
+
+**What:** `src/hooks/__tests__/useSyncTrigger.test.ts:116-128` asserts `expect(toast).not.toHaveBeenCalled()`. The local `vi.mock('sonner', ...)` factory (lines 5-15) makes `toast` a bare `vi.fn()` with `.success` / `.error` / `.info` attached as separate `vi.fn()` children. Production `src/hooks/useSyncTrigger.ts` never invokes bare `toast(...)` in any branch — only `toast.success` (line 124), `toast.error` (lines 53, 131), and `toast.info` (line 177). The assertion is therefore guaranteed to pass, and a regression that added a spurious `toast.success('Sync complete')` to the empty-peer branch would slip through.
+
+**Fix:** Replace the single assertion with three:
+```ts
+expect(toast.error).not.toHaveBeenCalled()
+expect(toast.success).not.toHaveBeenCalled()
+expect(toast.info).not.toHaveBeenCalled()
+```
+Keep the other two assertions in the same test (`mockStartSync` and `useSyncStore.getState().state`) — they are non-tautological.
+
+**Cost:** S (<15 min).
+**Risk:** Low.
+**Impact:** S.
+
+### TEST-55 — `useBatchCounts` cancellation test cannot distinguish working from broken
+
+**What:** `src/hooks/__tests__/useBatchCounts.test.ts:108-133`, "cancels fetch on unmount" unmounts the hook, resolves the pending promise, then asserts `result.current.agendaCounts === {}`. After `unmount()`, React does not re-render; `result.current` is frozen at its last pre-unmount value (the initial empty state). The assertion passes regardless of whether the hook's `cancelled` guard works — if the guard were removed, the three state setters at `useBatchCounts.ts:28-37` would fire on an unmounted component (React warning, no test failure). The test's explanatory comment "state should NOT update because cancelled = true" describes behaviour the assertion cannot observe.
+
+**Fix:** Three options: (a) `vi.spyOn(console, 'error')` before unmount + resolve + assert no "state update on unmounted component" warning fired; (b) refactor the hook to use `AbortController` and assert `abort()` was invoked on unmount (requires production change); (c) mount two sibling hooks, unmount one, resolve the shared promise, assert the still-mounted hook got the update while the unmounted one's setters never fired. Option (b) is the cleanest but largest change.
+
+**Cost:** S for (a), S–M for (b).
+**Risk:** Low for (a), low-moderate for (b).
+**Impact:** S — closes a silent cancellation regression vector.
+
+### TEST-56 — `useUndoStore` singleton leak across 6 hook test files
+
+**What:** Six hook test files mutate the module-level `useUndoStore` singleton via `setState({ ...getState(), onNewAction: vi.fn() })` with no `afterEach` to restore. Sites:
+
+- `src/hooks/__tests__/useBlockTags.test.ts` — lines 252, 276, 378, 402, 636 (five sites)
+- `src/hooks/__tests__/useBlockDatePicker.test.ts:361` (inside a nested `beforeEach`)
+- `src/hooks/__tests__/useBlockProperties.test.ts:499`
+- `src/hooks/__tests__/useBlockSlashCommands.test.ts:465, 543`
+- `src/hooks/__tests__/useBlockMultiSelect.test.ts:242`
+- `src/hooks/__tests__/useBlockAttachments.test.ts:174, 214, 273, 308`
+
+Production `useUndoStore.onNewAction` (`src/stores/undo.ts:356-362`) clears per-page redo stacks; tests replace it with `vi.fn()` and never restore the original. The store's `pages: new Map()` is also never reset between tests in any of these files. Currently latent (each test re-installs its own spy so the last-installed wins); per-file Vitest isolation blocks cross-file leak; within-file leak becomes observable the moment a new test is added between existing sites and depends on the real `onNewAction` behaviour.
+
+**Fix:** Add once per file:
+```ts
+const originalOnNewAction = useUndoStore.getState().onNewAction
+afterEach(() => {
+  useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: originalOnNewAction, pages: new Map() })
+})
+```
+
+**Cost:** S (~30 min total — 6 mechanical edits).
+**Risk:** Low.
+**Impact:** M — singleton leak that is one new test away from becoming an observable bug.
+
+### TEST-57 — `useSyncTrigger` `navigator.onLine` not restored in `afterEach`
+
+**What:** `src/hooks/__tests__/useSyncTrigger.test.ts:478-522` contains two tests that do `Object.defineProperty(navigator, 'onLine', { value: false, configurable: true })` inline and restore to `true` at the end of the test body. If any assertion between the setup and the inline restore throws, every subsequent test in the same file (20+ tests that call `syncAll()`) sees `navigator.onLine === false` and short-circuits on the hook's offline guard. The file's `afterEach(() => vi.restoreAllMocks())` (line 52) does NOT reverse `Object.defineProperty` (documented Vitest behaviour — `restoreAllMocks` only reverses `vi.spyOn` / `vi.fn`). `src/hooks/__tests__/useOnlineStatus.test.ts:1-10` already demonstrates the correct pattern.
+
+**Fix:**
+```ts
+const originalOnLine = navigator.onLine
+afterEach(() => {
+  Object.defineProperty(navigator, 'onLine', { value: originalOnLine, configurable: true })
+})
+```
+Remove the two inline `// Restore` blocks at lines 505 and 521.
+
+**Cost:** S (<15 min).
+**Risk:** Low.
+**Impact:** M — eliminates a latent cascade-failure vector.
+
+### TEST-58 — `keyboard-config.test.ts` — three `Storage.prototype` spies restored inside test body
+
+**What:** `src/lib/__tests__/keyboard-config.test.ts:264-305` has three tests (`'handles localStorage.setItem throwing (setCustomShortcut)'`, `'… (resetShortcut)'`, `'… (resetAllShortcuts)'`) that each call `vi.spyOn(Storage.prototype, 'setItem'|'removeItem').mockImplementation(() => { throw ... })` with `vi.restoreAllMocks()` as the LAST line of the test body. If any prior `expect()` in those tests throws, `Storage.prototype.setItem` / `removeItem` stays stubbed-to-throw for the remaining ~1080 lines of tests. The file's top-level `beforeEach(localStorage.clear())` also goes through `Storage.prototype`, so the cascade can masquerade as pre-test setup failure. Full-file grep confirms zero `afterEach` hooks.
+
+**Fix:** Add one `afterEach(() => vi.restoreAllMocks())` at file top (or merge into the existing `beforeEach`) and delete the three inline `vi.restoreAllMocks()` calls.
+
+**Cost:** S (<15 min).
+**Risk:** Low.
+**Impact:** M — meaningful cascade-failure risk in a large file; the spies throw from a mocked prototype method that almost every other test implicitly exercises.
+
+### TEST-59 — `use-roving-editor.test.ts` uses `setTimeout(50)` for editor init instead of `waitFor`
+
+**What:** `src/editor/__tests__/use-roving-editor.test.ts:538-546`, the `setup()` helper uses `await new Promise((r) => setTimeout(r, 50))` to wait for TipTap Editor initialization. Every caller downstream asserts `result.current.editor !== null` — that IS the observable signal the test cares about. AGENTS.md §React-19 test timing explicitly forbids this pattern ("No timing hacks — Use `waitFor` / `findBy*` instead of `sleep`"). Under CI worker contention, 50 ms is not guaranteed to cover editor construction.
+
+**Fix:**
+```ts
+async function setup() {
+  const hook = renderHook(() => useRovingEditor())
+  await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
+  return hook
+}
+```
+
+**Cost:** S (<15 min).
+**Risk:** Low.
+**Impact:** M — latent CI-flake vector across every test that calls `setup()`.
+
+### TEST-60 — `export-graph.test.ts` duplicate-page-name test never inspects the ZIP
+
+**What:** `src/lib/__tests__/export-graph.test.ts:40-60`, "handles duplicate page names with ULID suffix". The fixture sets up two pages both titled `'Same Name'` and calls `exportGraphAsZip()`. The only assertion is `expect(blob).toBeInstanceOf(Blob)`. Neither filename, ZIP entry count, nor any ULID suffix is verified. A regression that collapsed the two pages into a single overwritten entry would still pass. Sibling file `src/lib/__tests__/bug-report-zip.test.ts:15-43` demonstrates the correct pattern: `JSZip.loadAsync(await blob.arrayBuffer())` + `Object.keys(unzipped.files)` + `toEqual([...])`. `jszip` is already a direct dep.
+
+**Fix:** Unzip the Blob, assert exactly two `.md` entries, and regex-match a ULID suffix on at least one filename (e.g. `expect(files.filter(f => f.startsWith('Same Name')).length).toBe(2)` plus `expect(files.some(f => /[0-9A-Z]{26}/.test(f))).toBe(true)`).
+
+**Cost:** S (<30 min).
+**Risk:** Low.
+**Impact:** M — test name promises coverage it doesn't deliver; a silent export collision would ship unnoticed.
+
+### TEST-61 — Shared `makeBlock` fixture duplicated across 14 test files (+ one shape defect)
+
+**What:** The shared `makeBlock` in `src/__tests__/fixtures/index.ts` returns `FlatBlock` (structurally compatible with `BlockRow` consumers — `FlatBlock extends BlockRow { depth: number }`). 14 test files re-implement their own local factory with identical or near-identical shapes:
+
+- **Hook tests:** `useBlockCollapse.test.ts:19`, `useBlockDatePicker.test.ts:25`, `useBlockDnD.test.ts:72` (`makeFlatBlock`), `useBlockKeyboardHandlers.test.ts:30` (`makeFlatBlock`), `useBlockMultiSelect.test.ts:21`, `useBlockNavigation.test.ts:21`, `useBlockProperties.test.ts:38`, `useBlockSlashCommands.test.ts:41`, `useBlockTags.test.ts:36` (`makeTagBlock`), `useBlockZoom.test.ts:28`, `useDuePanelData.test.ts:50`, `useDuePanelData.helpers.test.ts:18`, `useQueryExecution.test.ts:19`, `useQuerySorting.test.ts:6`.
+- **Lib tests:** `agenda-filters.test.ts:17`, `agenda-sort.test.ts:24`, `query-result-utils.test.ts:10`, `tree-utils.test.ts:20` (`mkBlock` / `mkFlat` positional-arg helpers).
+
+**Real defect found during verification:** `useBlockTags.test.ts:36` `makeTagBlock` **omits `page_id: null`** (the shared factory sets it). Every other local factory matches the shared shape.
+
+**Fix:** Replace all 18 sites with `import { makeBlock } from '../../__tests__/fixtures'` + spread overrides. For positional-arg helpers (`tree-utils.test.ts`) a thin wrapper is acceptable: `(id, parentId, position, content) => makeBlock({ id, parent_id: parentId, position, content })`. Fix `useBlockTags.makeTagBlock` to either use the shared factory or add `page_id: null` so its shape matches the rest of the codebase.
+
+**Cost:** M (~2h — mechanical, but 18 sites).
+**Risk:** Low.
+**Impact:** S per file, S–M cumulative — reduces drift and closes one minor shape defect.
+
+### TEST-62 — Hand-rolled `renderHook` helper duplicated in 3 hook tests
+
+**What:** Three hook test files define a local `function renderHook<T>(...)` via `createRoot` / `createElement` / `act` instead of importing `renderHook` from `@testing-library/react` (which 47 other hook/component test files in the repo already use):
+
+- `src/hooks/__tests__/useBlockSwipeActions.test.ts:13-42`
+- `src/hooks/__tests__/useBlockTouchLongPress.test.ts:12-41`
+- `src/hooks/__tests__/useDeepLinkRouter.test.ts:54-77`
+
+The comment in `useDeepLinkRouter.test.ts` ("Minimal renderHook helper (matches existing project pattern)") is misleading — the project pattern IS the library import. None of the three files use `rerender` with new props, so there is no peculiar-re-render requirement justifying the hand-roll. Each also redundantly sets `IS_REACT_ACT_ENVIRONMENT = true` in `beforeEach` (testing-library configures this internally).
+
+**Fix:** Replace each local helper with `import { renderHook } from '@testing-library/react'`. Delete the unused `createRoot` / `Root` / `createElement` imports and the `IS_REACT_ACT_ENVIRONMENT` sets. Test bodies already use the `{ result, unmount }` shape the library returns, so no caller changes are needed.
+
+**Cost:** S (~30 min total).
+**Risk:** Low.
+**Impact:** S — convention drift removal.
+
+### TEST-63 — Global-state resource restore inline in test body cluster (5 files)
+
+**What:** Five test files mutate global state (jsdom `window`, `localStorage`, `window.location`, fake timers) with the restore line at the bottom of the test body rather than in an `afterEach`. If any earlier `expect()` in the test throws, restoration is skipped, and the mutated global leaks to subsequent tests in the same file. Per-file Vitest isolation blocks cross-file leak; within-file cascades are real.
+
+- `src/lib/__tests__/bug-report-events.test.ts:56-65` — SSR test deletes `globalThis.window` and restores inline. Last test in file, so practical risk near zero — cosmetic cleanup.
+- `src/hooks/__tests__/useBlockCollapse.test.ts:39-61` — replaces `globalThis.localStorage` with a custom mock every `beforeEach` with no matching `afterEach`. The same mock is re-installed each test, so within-file is deterministic; the mock itself is overkill. Prefer jsdom's real `localStorage` + `vi.spyOn(Storage.prototype, 'setItem')` (the pattern `useAgendaPreferences.test.ts:10-13` uses).
+- `src/lib/__tests__/relaunch-app.test.ts:27-51` — two tests do `Object.defineProperty(window, 'location', { ... })` with the file's `afterEach(vi.restoreAllMocks)` handling only `vi.spyOn` mocks. `Object.defineProperty` replacements are not reversed. Capture `const originalLocation = window.location` once and restore in `afterEach`, or switch to `vi.stubGlobal('location', ...)`.
+- `src/lib/__tests__/date-utils.test.ts:130-137` — `getTodayString` describe calls `vi.useFakeTimers()` / `vi.useRealTimers()` inline in the one `it()` body with no `afterEach`. Sibling describes in the same file use the correct `beforeEach` / `afterEach` pattern (lines 12-18, 56-65).
+- `src/hooks/__tests__/useBlockDatePicker.test.ts:58-71` — top-level `beforeEach` seeds `useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST', availableSpaces: [...], isReady: true })` with no matching `afterEach`. Currently benign (same seed re-applied each test + per-file isolation) but diverges from the global-store convention in `src/__tests__/AGENTS.md`.
+
+**Fix:** One batch pass across all five sites (TEST-58 is listed separately because its cascade-failure risk is categorically worse and the fix is cleaner there). Each fix is: capture the original in a module constant, add an `afterEach` that restores it; delete the inline restore.
+
+**Cost:** S (~45 min total for the five sites).
+**Risk:** Low.
+**Impact:** S each, S–M cumulative — consistent hygiene across the codebase.
+
+### TEST-64 — Weak-assertion / vacuous-test / brittle-style cluster
+
+**What:** Nine low-severity hygiene fixes that collectively tighten many tests' signal without touching production code. Grouped because the diffs are small and mechanically similar.
+
+- `src/editor/__tests__/property-picker.test.ts:288-299` — "cancellation path: when command is never invoked, no chain side effects fire" asserts `expect(onSelect).not.toHaveBeenCalled()` after calling a helper (`captureCommand`) that, by construction, never invokes `command`. Pure tautology — `onSelect` cannot fire because no code path in the test body invokes it. **Delete the test** or replace with an actually-observed cancellation path.
+- `src/hooks/__tests__/useUndoShortcuts.test.ts:442, 470, 601, 725` — four `await new Promise((r) => setTimeout(r, 10))` waits before negative toast/announce assertions. No real race (V8 drains microtasks before `setTimeout` macrotasks) but brittle style that diverges from the positive-path sibling tests. Replace each with `await Promise.resolve(); await Promise.resolve()` (drains the `.then(async fn)` + async-fn wrap microtasks) or anchor on a positive observable via `vi.waitFor`.
+- `src/lib/__tests__/agenda-sort.test.ts:154-164` — "Overdue group is always first" constructs `todayStr` from `new Date()` and then calls `groupByDate()` which internally does `new Date()` again (`src/lib/agenda-sort.ts:59-65`). Midnight crossing between the two reads flips classification. Flake window is microseconds, but the rest of the file already uses `vi.useFakeTimers()` + `vi.setSystemTime()`; mirror that pattern for consistency.
+- `src/components/__tests__/ImageResizeToolbar.test.tsx:41, 48` — uses `fireEvent.click` where `src/__tests__/AGENTS.md` requires `userEvent`. Two sites. Replace with `const user = userEvent.setup()` + `await user.click(...)`.
+- `src/components/__tests__/PairingDialog.test.tsx:644-646` — `expect(focusSpy).toHaveBeenCalled()` with no count. Tighten to `expect(focusSpy).toHaveBeenCalledTimes(1)` to catch accidental double-focus regressions.
+- `src/components/ui/__tests__/sonner.test.tsx:20-24` — "renders without errors" asserts `expect(container).toBeTruthy()`. `container` is always a truthy HTMLElement returned by RTL `render()`, so the assertion cannot fail — the test's own comment ("Sonner renders a section or list element as the toaster root") describes what the assertion SHOULD check but doesn't. Replace with `expect(container.querySelector('section, ol, ul')).not.toBeNull()` or delete (the axe test at lines 32-36 already covers render regressions).
+- `src/lib/__tests__/attachment-utils.test.ts:20-25` — `getAssetUrl` "returns asset URL when in Tauri" asserts `result !== null` + `convertFileSrc` was called, never checks the returned URL format. Add `expect(result).toBe('asset://localhost/%2Fpath%2Fto%2Ffile.png')` (or `toMatch(/^asset:\/\//)`).
+- `src/lib/__tests__/tauri-mock.test.ts:51-63` — asserts 6 seed pages then spot-checks 5 titles; 6th is the dynamic daily page (asserted separately at lines 76-82). Optional: add one regex assertion `expect(titles.some(t => /^\d{4}-\d{2}-\d{2}$/.test(t as string))).toBe(true)` to close the symmetry.
+- `src/components/__tests__/BlockInlineControls.test.tsx:519-525`, `src/components/__tests__/BlockPropertyDrawer.test.tsx:219-232`, `src/components/__tests__/Calendar.test.tsx:125-139` — axe audit either not wrapped in `waitFor` at all, or wrapped with default 1 s timeout. AGENTS.md §"Raising waitFor" mandates `waitFor(async () => { expect(await axe(container)).toHaveNoViolations() }, { timeout: 5000 })` for cold-load. Apply only here, **not** to every axe site — the verifier explicitly rejected the same pattern claim for `BlockListRenderer.test.tsx` and `BuiltinDateFields.test.tsx` on the grounds they are not plausibly cold-load sites.
+
+**Fix:** One commit, mechanical. Each site is an isolated change; no production code is touched.
+
+**Cost:** S (~1–1.5h for all nine).
+**Risk:** Low.
+**Impact:** S each; S–M cumulative.
 
 ---
 
