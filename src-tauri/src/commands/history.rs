@@ -5,7 +5,7 @@ use tracing::instrument;
 
 use tauri::State;
 
-use crate::db::{ReadPool, WritePool};
+use crate::db::{CommandTx, ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -277,9 +277,14 @@ pub async fn revert_ops_inner(
     });
 
     // Phase 2: Apply all reverses in a single IMMEDIATE transaction.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    //
+    // MAINT-112: `CommandTx` couples the BEGIN IMMEDIATE + commit +
+    // post-commit `dispatch_background_or_warn` steps so a failed commit
+    // cannot leak queued records to the materializer, and a missing
+    // dispatch is structurally impossible (commit_and_dispatch drains
+    // the pending queue in order).
+    let mut tx = CommandTx::begin_immediate(pool, "revert_ops").await?;
     let mut results = Vec::with_capacity(reverses.len());
-    let mut op_records = Vec::with_capacity(reverses.len());
 
     for (op_ref, reverse_payload, _created_at, reversed_op_type) in reverses {
         let new_op_type = reverse_payload.op_type_str().to_owned();
@@ -308,15 +313,12 @@ pub async fn revert_ops_inner(
             is_redo: false,
         });
 
-        op_records.push(op_record);
+        tx.enqueue_background(op_record);
     }
 
-    tx.commit().await?;
-
-    // Dispatch background cache tasks (fire-and-forget)
-    for record in &op_records {
-        materializer.dispatch_background_or_warn(record);
-    }
+    // Commits, then fires queued dispatches in enqueue order. If commit
+    // fails, no dispatches fire.
+    tx.commit_and_dispatch(materializer).await?;
 
     Ok(results)
 }
@@ -487,8 +489,12 @@ pub async fn undo_page_op_inner(
     let reverse_payload = reverse::compute_reverse(pool, &target.device_id, target.seq).await?;
     let new_op_type = reverse_payload.op_type_str().to_owned();
 
-    // Apply in single IMMEDIATE transaction
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // Apply in single IMMEDIATE transaction.
+    //
+    // MAINT-112: see `revert_ops_inner` for the rationale — CommandTx
+    // makes the commit + dispatch pair atomic and impossible to
+    // desequence.
+    let mut tx = CommandTx::begin_immediate(pool, "undo_page_op").await?;
 
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, reverse_payload.clone(), now_rfc3339())
@@ -496,10 +502,12 @@ pub async fn undo_page_op_inner(
 
     apply_reverse_in_tx(&mut tx, &reverse_payload).await?;
 
-    tx.commit().await?;
-
-    // Dispatch background cache tasks
-    materializer.dispatch_background_or_warn(&op_record);
+    // Retain the identity fields the UndoResult needs after the tx
+    // consumes its owned clone.
+    let new_op_device_id = op_record.device_id.clone();
+    let new_op_seq = op_record.seq;
+    tx.enqueue_background(op_record);
+    tx.commit_and_dispatch(materializer).await?;
 
     Ok(UndoResult {
         reversed_op: OpRef {
@@ -508,8 +516,8 @@ pub async fn undo_page_op_inner(
         },
         reversed_op_type: target.op_type,
         new_op_ref: OpRef {
-            device_id: op_record.device_id,
-            seq: op_record.seq,
+            device_id: new_op_device_id,
+            seq: new_op_seq,
         },
         new_op_type,
         is_redo: false,
@@ -538,8 +546,12 @@ pub async fn redo_page_op_inner(
     let reverse_payload = reverse::compute_reverse(pool, &undo_device_id, undo_seq).await?;
     let new_op_type = reverse_payload.op_type_str().to_owned();
 
-    // Apply in single IMMEDIATE transaction
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // Apply in single IMMEDIATE transaction.
+    //
+    // MAINT-112: see `revert_ops_inner` for the rationale — CommandTx
+    // makes the commit + dispatch pair atomic and impossible to
+    // desequence.
+    let mut tx = CommandTx::begin_immediate(pool, "redo_page_op").await?;
 
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, reverse_payload.clone(), now_rfc3339())
@@ -547,10 +559,12 @@ pub async fn redo_page_op_inner(
 
     apply_reverse_in_tx(&mut tx, &reverse_payload).await?;
 
-    tx.commit().await?;
-
-    // Dispatch background cache tasks
-    materializer.dispatch_background_or_warn(&op_record);
+    // Retain the identity fields the UndoResult needs after the tx
+    // consumes its owned clone.
+    let new_op_device_id = op_record.device_id.clone();
+    let new_op_seq = op_record.seq;
+    tx.enqueue_background(op_record);
+    tx.commit_and_dispatch(materializer).await?;
 
     Ok(UndoResult {
         reversed_op: OpRef {
@@ -559,8 +573,8 @@ pub async fn redo_page_op_inner(
         },
         reversed_op_type: undo_record.op_type,
         new_op_ref: OpRef {
-            device_id: op_record.device_id,
-            seq: op_record.seq,
+            device_id: new_op_device_id,
+            seq: new_op_seq,
         },
         new_op_type,
         is_redo: true,
