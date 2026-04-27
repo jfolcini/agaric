@@ -658,6 +658,79 @@ async fn filter_has_tag_prefix_no_match() {
 }
 
 // ======================================================================
+// MAINT-143 / UX-250 — `BacklinkFilter::HasTag` & `HasTagPrefix` share
+// the leaf-resolution SQL with `tag_query::resolve_expr` via the
+// `resolve_tag_leaves` / `resolve_tag_prefix_leaves` helpers. Inline
+// `#[ULID]` references stored in `block_tag_refs` must union into the
+// result set alongside explicit `block_tags` associations. This single
+// test pins the shared semantic at the backlink site so a future
+// divergence between the two sites cannot regress silently. Mirrors
+// the resolver-side coverage in
+// `tag_query/resolve/tests.rs::resolve_tag_unions_inline_refs_into_results`.
+// ======================================================================
+
+#[tokio::test]
+async fn maint143_inline_ref_union_shared_leaf_sql() {
+    let (pool, _dir) = test_pool().await;
+    setup_backlinks(&pool).await;
+    insert_block(&pool, "TAG_UX_EX", "tag", "ux-explicit").await;
+    insert_block(&pool, "TAG_UX_IN", "tag", "ux-inline").await;
+    insert_tag_cache(&pool, "TAG_UX_EX", "proj/explicit", 1).await;
+    insert_tag_cache(&pool, "TAG_UX_IN", "proj/inline", 1).await;
+
+    // SRC_A: explicit block_tags row.
+    // SRC_B: only an inline #[ULID] ref recorded in block_tag_refs (the
+    //        materializer-observed case before any explicit tagging).
+    // SRC_C: untagged.
+    insert_tag_assoc(&pool, "SRC_A", "TAG_UX_EX").await;
+    sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)")
+        .bind("SRC_B")
+        .bind("TAG_UX_IN")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // HasTag: inline-ref source must surface alongside explicit ones.
+    let set_inline = resolve_filter(
+        &pool,
+        &BacklinkFilter::HasTag {
+            tag_id: "TAG_UX_IN".into(),
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    assert!(
+        set_inline.contains("SRC_B"),
+        "UX-250: HasTag must union block_tag_refs (inline #[ULID]) — \
+         this pins parity with tag_query::resolve_tag_leaves"
+    );
+    assert!(!set_inline.contains("SRC_A"));
+    assert!(!set_inline.contains("SRC_C"));
+
+    // HasTagPrefix: same semantics through the prefix helper.
+    let set_prefix = resolve_filter(
+        &pool,
+        &BacklinkFilter::HasTagPrefix {
+            prefix: "proj/".into(),
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    assert!(
+        set_prefix.contains("SRC_A"),
+        "explicit block_tags row under prefix must match"
+    );
+    assert!(
+        set_prefix.contains("SRC_B"),
+        "UX-250: HasTagPrefix must union block_tag_refs (inline #[ULID]) — \
+         this pins parity with tag_query::resolve_tag_prefix_leaves"
+    );
+    assert!(!set_prefix.contains("SRC_C"));
+}
+
+// ======================================================================
 // Contains (FTS)
 // ======================================================================
 
@@ -2956,6 +3029,89 @@ async fn resolve_root_pages_cte_bounds_depth_and_filters_conflicts() {
     assert!(
         !cf_result.contains_key("CFLEAF"),
         "leaf with a conflict-copy ancestor must not be rooted on the real page"
+    );
+}
+
+/// TEST-50: AGENTS.md invariant #9 — recursive CTEs over `blocks` must
+/// filter `is_conflict = 0` so a conflict-rooted subtree never leaks into
+/// results. The companion test above pins the **mid-chain** ancestor
+/// case; this one pins the **root-as-conflict** case across a deep
+/// (≥ 5-level) descendant chain. Every descendant is a normal block,
+/// every parent pointer is intact, and the only defect is that the
+/// page at the top is `is_conflict = 1`. The leaf must not be rooted
+/// on it.
+///
+/// The chain depth (6 descendants) stays well under the
+/// `depth < 100` invariant so depth-bounding is not what makes the
+/// leaf disappear — only the `is_conflict = 0` filter on the final
+/// projection is.
+#[tokio::test]
+async fn resolve_root_pages_cte_filters_conflict_root_with_deep_descendants() {
+    let (pool, _dir) = test_pool().await;
+
+    // Conflict-copy root page. block_type = 'page', parent_id = NULL,
+    // is_conflict = 1. `insert_block_with_parent` does not let us flip
+    // the conflict flag, so we insert by hand.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+         VALUES ('CFROOT_DEEP', 'page', 'conflict root', NULL, 1, 'CFROOT_DEEP', 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // 6-level normal descendant chain rooted at the conflict page.
+    // Use `insert_block_with_parent` for the descendants — it is_conflict
+    // defaults to 0 (the schema default), which is exactly what we want.
+    let descendants = ["CFD_L1", "CFD_L2", "CFD_L3", "CFD_L4", "CFD_L5", "CFD_LEAF"];
+    let mut prev = "CFROOT_DEEP";
+    for id in descendants {
+        insert_block_with_parent(
+            &pool,
+            id,
+            "content",
+            &format!("descendant under conflict root: {id}"),
+            Some(prev),
+            Some(1),
+        )
+        .await;
+        prev = id;
+    }
+
+    // Sanity: the leaf has a parent chain of length 6 up to the root,
+    // well within the `depth < 100` invariant.
+    let chain_len: i64 = sqlx::query_scalar(
+        "WITH RECURSIVE walk(id, depth) AS ( \
+            SELECT id, 0 FROM blocks WHERE id = 'CFD_LEAF' \
+            UNION ALL \
+            SELECT b.parent_id, w.depth + 1 \
+            FROM walk w JOIN blocks b ON b.id = w.id \
+            WHERE b.parent_id IS NOT NULL AND w.depth < 100 \
+         ) \
+         SELECT MAX(depth) FROM walk",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        chain_len, 6,
+        "sanity: leaf should be exactly 6 hops from conflict root"
+    );
+
+    // Run the CTE on the leaf. The `is_conflict = 0` filter on the
+    // final projection must drop the conflict-rooted entry — the leaf
+    // simply does not appear in the result map.
+    let mut ids = FxHashSet::default();
+    ids.insert("CFD_LEAF".to_string());
+    let result = resolve_root_pages_cte(&pool, &ids).await.unwrap();
+    assert_eq!(
+        result.len(),
+        0,
+        "conflict-rooted subtree must not leak into results; got: {result:?}"
+    );
+    assert!(
+        !result.contains_key("CFD_LEAF"),
+        "leaf rooted under a conflict-copy page must not be reported"
     );
 }
 

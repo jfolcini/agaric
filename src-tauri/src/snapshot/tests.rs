@@ -1063,6 +1063,203 @@ async fn apply_snapshot_rejects_fk_violation() {
 }
 
 // =======================================================================
+// 17b. TEST-50: apply_snapshot_rejects_null_in_not_null_column
+// =======================================================================
+
+/// TEST-50: a snapshot blob whose CBOR payload encodes `null` for a
+/// NOT NULL column (here `block_type`) must not be silently accepted.
+/// The canonical `BlockSnapshot.block_type` is `String`, so the rejection
+/// surfaces during CBOR deserialization in `decode_snapshot` rather than
+/// at SQL insert time — but either layer is a legitimate "no" and this
+/// test pins down the contract that **some** layer says no.
+#[tokio::test]
+async fn apply_snapshot_rejects_null_in_not_null_column() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // A parallel struct that mirrors `BlockSnapshot` byte-for-byte but
+    // exposes `block_type` as `Option<String>` so we can serialize a
+    // `null` where the canonical type expects a `String`.
+    #[derive(Serialize)]
+    struct NullableBlockSnap<'a> {
+        id: &'a str,
+        block_type: Option<&'a str>,
+        content: Option<&'a str>,
+        parent_id: Option<&'a str>,
+        position: Option<i64>,
+        deleted_at: Option<&'a str>,
+        is_conflict: i64,
+        conflict_source: Option<&'a str>,
+        todo_state: Option<&'a str>,
+        priority: Option<&'a str>,
+        due_date: Option<&'a str>,
+        scheduled_date: Option<&'a str>,
+    }
+    #[derive(Serialize)]
+    struct NullableTables<'a> {
+        blocks: Vec<NullableBlockSnap<'a>>,
+        block_tags: Vec<BlockTagSnapshot>,
+        block_properties: Vec<BlockPropertySnapshot>,
+        block_links: Vec<BlockLinkSnapshot>,
+        attachments: Vec<AttachmentSnapshot>,
+        property_definitions: Vec<crate::snapshot::types::PropertyDefinitionSnapshot>,
+        page_aliases: Vec<crate::snapshot::types::PageAliasSnapshot>,
+    }
+    #[derive(Serialize)]
+    struct NullableData<'a> {
+        schema_version: u32,
+        snapshot_device_id: &'a str,
+        up_to_seqs: BTreeMap<String, i64>,
+        up_to_hash: &'a str,
+        tables: NullableTables<'a>,
+    }
+
+    let bad = NullableData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-1",
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "h",
+        tables: NullableTables {
+            blocks: vec![NullableBlockSnap {
+                id: "blk-A",
+                block_type: None, // <-- defect: NULL in NOT NULL column
+                content: Some("x"),
+                parent_id: None,
+                position: Some(1),
+                deleted_at: None,
+                is_conflict: 0,
+                conflict_source: None,
+                todo_state: None,
+                priority: None,
+                due_date: None,
+                scheduled_date: None,
+            }],
+            block_tags: vec![],
+            block_properties: vec![],
+            block_links: vec![],
+            attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    };
+
+    let mut cbor_buf = Vec::new();
+    ciborium::into_writer(&bad, &mut cbor_buf).unwrap();
+    let encoded = zstd::encode_all(cbor_buf.as_slice(), 3).unwrap();
+
+    let result = apply_snapshot(&pool, &mat, &encoded).await;
+    assert!(
+        result.is_err(),
+        "NULL value in NOT NULL column block_type must be rejected"
+    );
+}
+
+// =======================================================================
+// 17c. TEST-50: apply_snapshot_rejects_invalid_block_type
+// =======================================================================
+
+/// TEST-50: `block_type` is constrained by the
+/// `check_block_type_insert` BEFORE INSERT trigger
+/// (migration 0005) to one of `content` / `tag` / `page`. A value
+/// outside that enum (here `"banana"`) must abort the apply.
+#[tokio::test]
+async fn apply_snapshot_rejects_invalid_block_type() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let bad_data = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-1".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "h".to_string(),
+        tables: SnapshotTables {
+            blocks: vec![BlockSnapshot {
+                id: "blk-A".to_string(),
+                block_type: "banana".to_string(), // <-- defect
+                content: Some("x".to_string()),
+                parent_id: None,
+                position: Some(1),
+                deleted_at: None,
+                is_conflict: 0,
+                conflict_source: None,
+                todo_state: None,
+                priority: None,
+                due_date: None,
+                scheduled_date: None,
+            }],
+            block_tags: vec![],
+            block_properties: vec![],
+            block_links: vec![],
+            attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    };
+
+    let encoded = encode_snapshot(&bad_data).unwrap();
+    let result = apply_snapshot(&pool, &mat, &encoded).await;
+    assert!(
+        result.is_err(),
+        "block_type 'banana' is not in (content|tag|page) — \
+         check_block_type_insert trigger must abort"
+    );
+}
+
+// =======================================================================
+// 17d. TEST-50: apply_snapshot_rejects_malformed_ulid_block_id
+// =======================================================================
+
+/// TEST-50: a malformed ULID (non-Crockford text, wrong length) used
+/// as a block-id reference must not silently leak in. The blocks
+/// schema has no CHECK on ULID format, so the rejection surfaces as a
+/// deferred FK violation when the malformed string is referenced as a
+/// `parent_id` but no matching row exists in `blocks`. This pins the
+/// invariant that a malformed ULID cannot pose as a valid FK target.
+#[tokio::test]
+async fn apply_snapshot_rejects_malformed_ulid_block_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let bad_data = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-1".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "h".to_string(),
+        tables: SnapshotTables {
+            blocks: vec![BlockSnapshot {
+                id: "blk-A".to_string(),
+                block_type: "content".to_string(),
+                content: Some("x".to_string()),
+                // <-- defect: a malformed (non-ULID) string referenced
+                // as parent_id, with no matching row in `blocks`.
+                parent_id: Some("not-a-valid-ulid!@#".to_string()),
+                position: Some(1),
+                deleted_at: None,
+                is_conflict: 0,
+                conflict_source: None,
+                todo_state: None,
+                priority: None,
+                due_date: None,
+                scheduled_date: None,
+            }],
+            block_tags: vec![],
+            block_properties: vec![],
+            block_links: vec![],
+            attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    };
+
+    let encoded = encode_snapshot(&bad_data).unwrap();
+    let result = apply_snapshot(&pool, &mat, &encoded).await;
+    assert!(
+        result.is_err(),
+        "malformed ULID as parent_id with no matching block must be rejected (deferred FK)"
+    );
+}
+
+// =======================================================================
 // 18. apply_snapshot_full_all_5_tables (F13)
 // =======================================================================
 

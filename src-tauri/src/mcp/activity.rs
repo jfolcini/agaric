@@ -667,6 +667,80 @@ mod tests {
         assert_eq!(emitter.len(), 1);
     }
 
+    // TEST-51: multi-threaded sibling of `emit_activity_survives_poisoned_lock`.
+    //
+    // The single-threaded version above poisons via `std::thread::spawn`
+    // and then synchronously calls `emit_activity` on the same thread.
+    // This sibling exercises the same recovery contract across two
+    // independently scheduled `tokio::spawn` tasks on a multi-thread
+    // runtime — the realistic shape inside the MCP server, where
+    // connection-handler tasks share the activity ring.
+    //
+    // Task 1 acquires the lock and panics, poisoning the mutex; the
+    // panic is contained within the spawned task and surfaces as a
+    // `JoinError` on `await`.  Task 2 (spawned AFTER Task 1's
+    // `JoinHandle` resolves) then calls `emit_activity` and must
+    // succeed — production code recovers via
+    // `PoisonError::into_inner`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn emit_activity_recovers_from_poisoned_lock_across_tasks() {
+        let ring = Arc::new(Mutex::new(ActivityRing::new()));
+        let emitter = Arc::new(RecordingEmitter::new());
+
+        // ── Task 1: poison the lock.  A panic inside `tokio::spawn`
+        //    unwinds the task; the held `MutexGuard` drops during
+        //    unwinding and marks the mutex poisoned.
+        let ring_for_poison = ring.clone();
+        let poison_handle = tokio::spawn(async move {
+            let _guard = ring_for_poison
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            panic!("TEST-51: poison the mutex from a spawned task");
+        });
+        let join_err = poison_handle
+            .await
+            .expect_err("panic inside tokio::spawn must surface as JoinError");
+        assert!(
+            join_err.is_panic(),
+            "JoinError must be a panic flavour, got {join_err:?}",
+        );
+        assert!(
+            ring.is_poisoned(),
+            "mutex must be poisoned before Task 2 runs",
+        );
+
+        // ── Task 2: AFTER the poisoner has joined, call
+        //    `emit_activity` from a fresh task.  Must succeed.
+        let ring_for_emit = ring.clone();
+        let emitter_for_emit = emitter.clone();
+        let emit_handle = tokio::spawn(async move {
+            emit_activity(
+                &ring_for_emit,
+                emitter_for_emit.as_ref(),
+                make_entry("post-poison-mt"),
+            );
+        });
+        emit_handle.await.expect("emitter task must not panic");
+
+        // Both the ring push and the bus emit must have landed exactly
+        // once even though the lock was still flagged poisoned.
+        let guard = ring
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            guard.len(),
+            1,
+            "emit_activity must push despite the poisoned lock",
+        );
+        assert_eq!(
+            emitter.len(),
+            1,
+            "emitter must receive exactly one event after poison-recovery",
+        );
+        let recorded = emitter.entries();
+        assert_eq!(recorded[0].tool_name, "post-poison-mt");
+    }
+
     // ---- Privacy: Debug redaction ----
 
     #[test]

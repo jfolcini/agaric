@@ -7,6 +7,135 @@ use super::TagExpr;
 use crate::error::AppError;
 use crate::sql_utils::escape_like;
 
+/// Resolve a single tag id to the set of `block_id`s that match it,
+/// honouring the UX-250 inline-ref union semantics.
+///
+/// **UX-250 semantics (shared with `backlink::filters`):** the result
+/// always unions inline `#[ULID]` references from `block_tag_refs` into
+/// the explicit `block_tags` set. Inline references are treated
+/// identically to explicit associations for tag-view counts and tag
+/// filtering. `block_tag_inherited` (materialised inheritance cache) is
+/// only included when `include_inherited` is true — by design,
+/// inheritance applies only to explicit tags; an inline ref on a page
+/// does not propagate to child blocks.
+///
+/// Deleted (`deleted_at IS NOT NULL`) and conflict (`is_conflict = 1`)
+/// blocks are excluded at every UNION arm.
+///
+/// This is the single source of truth for the leaf SQL — both
+/// `resolve_expr` (here) and `BacklinkFilter::HasTag`
+/// (`backlink/filters.rs`) call it. Any future change to the UX-250
+/// union must happen here so both sites stay in lockstep (MAINT-143).
+pub(crate) async fn resolve_tag_leaves(
+    pool: &SqlitePool,
+    tag_id: &str,
+    include_inherited: bool,
+) -> Result<Vec<String>, AppError> {
+    if include_inherited {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT bt.block_id \
+             FROM block_tags bt \
+             JOIN blocks b ON b.id = bt.block_id \
+             WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+             UNION \
+             SELECT bti.block_id \
+             FROM block_tag_inherited bti \
+             JOIN blocks b ON b.id = bti.block_id \
+             WHERE bti.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+             UNION \
+             SELECT btr.source_id AS block_id \
+             FROM block_tag_refs btr \
+             JOIN blocks b ON b.id = btr.source_id \
+             WHERE btr.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
+        )
+        .bind(tag_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    } else {
+        let rows = sqlx::query_scalar!(
+            "SELECT bt.block_id FROM block_tags bt \
+             JOIN blocks b ON b.id = bt.block_id \
+             WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+             UNION \
+             SELECT btr.source_id AS block_id \
+             FROM block_tag_refs btr \
+             JOIN blocks b ON b.id = btr.source_id \
+             WHERE btr.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
+            tag_id
+        )
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+}
+
+/// Resolve a tag-name prefix to the set of `block_id`s whose tags match
+/// the prefix, honouring the UX-250 inline-ref union semantics.
+///
+/// `prefix` is the raw user-supplied prefix; LIKE wildcards (`%`, `_`,
+/// `\`) inside it are escaped via [`escape_like`] before binding.
+///
+/// See [`resolve_tag_leaves`] for the shared UX-250 semantics. This is
+/// the single source of truth for the prefix leaf SQL — both
+/// `resolve_expr` (here) and `BacklinkFilter::HasTagPrefix`
+/// (`backlink/filters.rs`) call it (MAINT-143).
+pub(crate) async fn resolve_tag_prefix_leaves(
+    pool: &SqlitePool,
+    prefix: &str,
+    include_inherited: bool,
+) -> Result<Vec<String>, AppError> {
+    let escaped = format!("{}%", escape_like(prefix));
+    if include_inherited {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT bt.block_id \
+             FROM tags_cache tc \
+             JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+             JOIN blocks b ON b.id = bt.block_id \
+             WHERE tc.name LIKE ?1 ESCAPE '\\' \
+               AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+             UNION \
+             SELECT DISTINCT bti.block_id \
+             FROM tags_cache tc \
+             JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
+             JOIN blocks b ON b.id = bti.block_id \
+             WHERE tc.name LIKE ?1 ESCAPE '\\' \
+               AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+             UNION \
+             SELECT DISTINCT btr.source_id AS block_id \
+             FROM tags_cache tc \
+             JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+             JOIN blocks b ON b.id = btr.source_id \
+             WHERE tc.name LIKE ?1 ESCAPE '\\' \
+               AND b.deleted_at IS NULL AND b.is_conflict = 0",
+        )
+        .bind(&escaped)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    } else {
+        let rows = sqlx::query_scalar!(
+            "SELECT DISTINCT bt.block_id \
+             FROM tags_cache tc \
+             JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+             JOIN blocks b ON b.id = bt.block_id \
+             WHERE tc.name LIKE ?1 ESCAPE '\\' \
+               AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+             UNION \
+             SELECT DISTINCT btr.source_id AS block_id \
+             FROM tags_cache tc \
+             JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+             JOIN blocks b ON b.id = btr.source_id \
+             WHERE tc.name LIKE ?1 ESCAPE '\\' \
+               AND b.deleted_at IS NULL AND b.is_conflict = 0",
+            escaped
+        )
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+}
+
 /// Resolve a `TagExpr` into the set of matching `block_id`s.
 pub fn resolve_expr<'a>(
     pool: &'a SqlitePool,
@@ -17,103 +146,16 @@ pub fn resolve_expr<'a>(
 > {
     Box::pin(async move {
         match expr {
-            // UX-250: every TagExpr::Tag / Prefix branch unions inline
-            // `#[ULID]` references from `block_tag_refs` into the result
-            // set. Inline references are treated identically to explicit
-            // `block_tags` associations for tag-view counts and tag
-            // filtering. `block_tag_inherited` (materialised inheritance
-            // cache) is NOT touched — per design, inheritance applies
-            // only to explicit tags; an inline ref on a page does not
-            // propagate to child blocks.
+            // UX-250: leaf SQL lives in `resolve_tag_leaves` /
+            // `resolve_tag_prefix_leaves` so backlink filters share
+            // the same union semantics. See those helpers for details.
             TagExpr::Tag(tag_id) => {
-                if include_inherited {
-                    let rows = sqlx::query_scalar::<_, String>(
-                        "SELECT bt.block_id \
-                         FROM block_tags bt \
-                         JOIN blocks b ON b.id = bt.block_id \
-                         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
-                         UNION \
-                         SELECT bti.block_id \
-                         FROM block_tag_inherited bti \
-                         JOIN blocks b ON b.id = bti.block_id \
-                         WHERE bti.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
-                         UNION \
-                         SELECT btr.source_id AS block_id \
-                         FROM block_tag_refs btr \
-                         JOIN blocks b ON b.id = btr.source_id \
-                         WHERE btr.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
-                    )
-                    .bind(tag_id)
-                    .fetch_all(pool)
-                    .await?;
-                    Ok(rows.into_iter().collect())
-                } else {
-                    let rows = sqlx::query_scalar!(
-                        "SELECT bt.block_id FROM block_tags bt \
-                         JOIN blocks b ON b.id = bt.block_id \
-                         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
-                         UNION \
-                         SELECT btr.source_id AS block_id \
-                         FROM block_tag_refs btr \
-                         JOIN blocks b ON b.id = btr.source_id \
-                         WHERE btr.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
-                        tag_id
-                    )
-                    .fetch_all(pool)
-                    .await?;
-                    Ok(rows.into_iter().collect())
-                }
+                let rows = resolve_tag_leaves(pool, tag_id, include_inherited).await?;
+                Ok(rows.into_iter().collect())
             }
             TagExpr::Prefix(prefix) => {
-                let escaped = format!("{}%", escape_like(prefix));
-                if include_inherited {
-                    let rows = sqlx::query_scalar::<_, String>(
-                        "SELECT DISTINCT bt.block_id \
-                         FROM tags_cache tc \
-                         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-                         JOIN blocks b ON b.id = bt.block_id \
-                         WHERE tc.name LIKE ?1 ESCAPE '\\' \
-                           AND b.deleted_at IS NULL AND b.is_conflict = 0 \
-                         UNION \
-                         SELECT DISTINCT bti.block_id \
-                         FROM tags_cache tc \
-                         JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
-                         JOIN blocks b ON b.id = bti.block_id \
-                         WHERE tc.name LIKE ?1 ESCAPE '\\' \
-                           AND b.deleted_at IS NULL AND b.is_conflict = 0 \
-                         UNION \
-                         SELECT DISTINCT btr.source_id AS block_id \
-                         FROM tags_cache tc \
-                         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-                         JOIN blocks b ON b.id = btr.source_id \
-                         WHERE tc.name LIKE ?1 ESCAPE '\\' \
-                           AND b.deleted_at IS NULL AND b.is_conflict = 0",
-                    )
-                    .bind(&escaped)
-                    .fetch_all(pool)
-                    .await?;
-                    Ok(rows.into_iter().collect())
-                } else {
-                    let rows = sqlx::query_scalar!(
-                        "SELECT DISTINCT bt.block_id \
-                         FROM tags_cache tc \
-                         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-                         JOIN blocks b ON b.id = bt.block_id \
-                         WHERE tc.name LIKE ?1 ESCAPE '\\' \
-                           AND b.deleted_at IS NULL AND b.is_conflict = 0 \
-                         UNION \
-                         SELECT DISTINCT btr.source_id AS block_id \
-                         FROM tags_cache tc \
-                         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-                         JOIN blocks b ON b.id = btr.source_id \
-                         WHERE tc.name LIKE ?1 ESCAPE '\\' \
-                           AND b.deleted_at IS NULL AND b.is_conflict = 0",
-                        escaped
-                    )
-                    .fetch_all(pool)
-                    .await?;
-                    Ok(rows.into_iter().collect())
-                }
+                let rows = resolve_tag_prefix_leaves(pool, prefix, include_inherited).await?;
+                Ok(rows.into_iter().collect())
             }
             TagExpr::And(exprs) => {
                 if exprs.is_empty() {

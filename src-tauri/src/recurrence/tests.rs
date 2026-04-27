@@ -262,6 +262,26 @@ fn shift_date_rejects_zero_intervals() {
     }
 }
 
+#[test]
+fn shift_date_rejects_malformed_intervals() {
+    // TEST-50: malformed RRULE intervals must be rejected at parse time
+    // (return None) rather than silently coerced to 0 / 1 / something
+    // arbitrary. Covers four shapes that have all surfaced from real
+    // user typos:
+    //   - "5x"     bogus unit suffix (not d/w/m/y)
+    //   - "w"      missing numeric prefix
+    //   - "3.5d"   float (i64 parser must fail)
+    //   - "invalid" free-text junk
+    // Style mirrors `shift_date_rejects_zero_intervals` above.
+    for rule in ["5x", "w", "3.5d", "invalid"] {
+        assert_eq!(
+            shift_date("2025-06-15", rule),
+            None,
+            "malformed interval {rule} must be rejected"
+        );
+    }
+}
+
 // ==================================================================
 // T-36: handle_recurrence() dedicated integration tests
 // ==================================================================

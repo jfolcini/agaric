@@ -354,4 +354,38 @@ mod tests_l9 {
         assert_eq!(output.blocks[0].content, "Block 1");
         assert_eq!(output.blocks[1].content, "Block 2");
     }
+
+    #[test]
+    fn mixed_line_endings_frontmatter_is_stripped() {
+        // TEST-50: single fixture mixing all three styles (CRLF, LF, lone
+        // CR) within the same file — including across the frontmatter
+        // boundary.  Exercises the same normalization the CRLF-only and
+        // CR-only frontmatter tests above check, but with the styles
+        // interleaved (the worst case in the wild: a hand-edited file
+        // saved by multiple tools across platforms).
+        let output = parse_logseq_markdown(
+            "---\r\ntitle: hello\ntags: [a, b]\r---\r\n- Block 1\n- Block 2\r- Block 3",
+        );
+        assert_eq!(
+            output.blocks.len(),
+            3,
+            "frontmatter should be stripped and three list blocks should remain, got: {:?}",
+            output.blocks,
+        );
+        assert_eq!(output.blocks[0].content, "Block 1");
+        assert_eq!(output.blocks[1].content, "Block 2");
+        assert_eq!(output.blocks[2].content, "Block 3");
+        for block in &output.blocks {
+            assert!(
+                !block.content.contains("title:"),
+                "frontmatter key leaked into block content: {:?}",
+                block.content,
+            );
+            assert!(
+                !block.content.contains('\r'),
+                "raw CR should not survive normalization in block content: {:?}",
+                block.content,
+            );
+        }
+    }
 }
