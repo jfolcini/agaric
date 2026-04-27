@@ -1178,7 +1178,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
         &pool,
         DEV,
         OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
-            attachment_id: att_id.into(),
+            attachment_id: BlockId::from_trusted(att_id),
             block_id: BlockId::from_trusted(&child.id),
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
@@ -1201,7 +1201,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
         &pool,
         DEV,
         OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
-            attachment_id: att_id.into(),
+            attachment_id: BlockId::from_trusted(att_id),
             fs_path: "/tmp/photo.png".into(),
         }),
         del_ts.clone(),
@@ -1300,7 +1300,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
         &pool,
         DEV,
         OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
-            attachment_id: att_id.into(),
+            attachment_id: BlockId::from_trusted(att_id),
             block_id: BlockId::from_trusted(&child.id),
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
@@ -1324,7 +1324,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
         &pool,
         DEV,
         OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
-            attachment_id: att_id.into(),
+            attachment_id: BlockId::from_trusted(att_id),
             fs_path: "/tmp/photo.png".into(),
         }),
         del_ts.clone(),
@@ -1512,7 +1512,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
         &pool,
         DEV,
         OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
-            attachment_id: att_id.into(),
+            attachment_id: BlockId::from_trusted(att_id),
             block_id: BlockId::from_trusted(&child.id),
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
@@ -1530,7 +1530,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
         &pool,
         DEV,
         OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
-            attachment_id: att_id.into(),
+            attachment_id: BlockId::from_trusted(att_id),
             fs_path: "/tmp/photo.png".into(),
         }),
         del_ts.clone(),
@@ -2387,7 +2387,7 @@ async fn revert_add_attachment_soft_deletes() {
         &pool,
         DEV,
         OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
-            attachment_id: att_id.into(),
+            attachment_id: BlockId::from_trusted(att_id),
             block_id: BlockId::from_trusted(&block.id),
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
@@ -3631,7 +3631,7 @@ async fn apply_reverse_delete_attachment_on_nonexistent_returns_not_found() {
     let mut tx = pool.begin().await.unwrap();
 
     let payload = OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
-        attachment_id: "ATT_GHOST".into(),
+        attachment_id: BlockId::test_id("ATT_GHOST"),
         fs_path: "/tmp/ghost.bin".into(),
     });
     let result = apply_reverse_in_tx(&mut tx, &payload).await;

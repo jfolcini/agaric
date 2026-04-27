@@ -2367,7 +2367,8 @@ async fn compact_op_log_transaction_happy_path() {
         result.is_some(),
         "compaction should return Some(snapshot_id) when old ops exist"
     );
-    let snapshot_id = result.unwrap();
+    // L-42: `compact_op_log` now returns `(snapshot_id, deleted_count)`.
+    let (snapshot_id, _deleted_count) = result.unwrap();
     assert!(!snapshot_id.is_empty(), "snapshot id should not be empty");
 
     // Old ops should be purged, recent op preserved

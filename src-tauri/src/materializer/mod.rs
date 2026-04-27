@@ -22,7 +22,14 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub enum MaterializeTask {
     ApplyOp(OpRecord),
-    BatchApplyOps(Vec<OpRecord>),
+    /// M-10: the inner `Vec<OpRecord>` is wrapped in an `Arc` so that
+    /// cloning the task (e.g. for the foreground/background retry arms in
+    /// `consumer.rs`) is a refcount bump rather than a deep clone of a
+    /// potentially multi-thousand-op chunk during sync catch-up. Mobile
+    /// (Android) RAM is constrained — the previous shape made every
+    /// retry-prep clone proportional to batch size, even on the common
+    /// no-retry path.
+    BatchApplyOps(Arc<Vec<OpRecord>>),
     RebuildTagsCache,
     RebuildPagesCache,
     RebuildAgendaCache,

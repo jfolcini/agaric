@@ -107,7 +107,13 @@ pub async fn get_compaction_status(
 /// already atomic. The wrapper tx exists so we can serve the
 /// fast-path early-return when no ops match the cutoff and emit a
 /// `warn` log via `begin_immediate_logged` if writers are contending.
-/// See L-42 for the related "stale `ops_deleted`" follow-up.
+///
+/// L-42: the returned `CompactionResult.ops_deleted` is the real number
+/// of rows the inner DELETE removed (sourced from
+/// `snapshot::compact_op_log`'s `(snapshot_id, deleted_count)` return
+/// value), **not** the recounted "eligible at start" figure. The
+/// pre-flight `eligible_in_tx` count is logged at `debug` level for
+/// drift observability and otherwise unused on the return path.
 pub async fn compact_op_log_cmd_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -145,15 +151,14 @@ pub async fn compact_op_log_cmd_inner(
     //
     // What this wrapper tx is actually doing is a TOCTOU recount: it
     // takes the writer lock, re-counts eligible ops under that lock,
-    // commits, and uses the recounted figure (`eligible_in_tx`) to drive
-    // the early-return path and — currently — the reported
-    // `ops_deleted` value. That second use is stale by the time
-    // `compact_op_log` runs (more ops can be appended between commit
-    // and the inner write phase, and the snapshot-frontier guard inside
-    // `compact_op_log` may also skip some); see L-42 for the proper fix
-    // (propagate the real `deleted_count` from `compact_op_log`). Do
-    // not assume this wrapper tx adds atomicity over the actual
-    // delete — it does not.
+    // commits, and drives the early-return path when the recount is
+    // zero. The recounted figure is **not** suitable for reporting
+    // `ops_deleted` — it's stale by the time `compact_op_log` runs
+    // (more ops can be appended between commit and the inner write
+    // phase, and the snapshot-frontier guard inside `compact_op_log`
+    // may also skip some). See the L-42 block below for how the real
+    // delete count is now sourced. Do not assume this wrapper tx adds
+    // atomicity over the actual delete — it does not.
     //
     // MAINT-30: slow-acquire timed via `begin_immediate_logged` so a
     // recount that blocks on the write lock surfaces as a `warn` log
@@ -183,14 +188,41 @@ pub async fn compact_op_log_cmd_inner(
     // gain. `compact_op_log` re-verifies eligibility under its own tx.
     tx.commit().await?;
 
-    let snapshot_id = crate::snapshot::compact_op_log(pool, device_id, retention_days).await?;
+    // L-42: previously this wrapper returned `ops_deleted: eligible_in_tx`,
+    // i.e. the count of ops eligible at the start of the wrapper tx — a
+    // figure that goes stale the moment we commit and call into
+    // `compact_op_log`. Between the commit above and the inner write
+    // phase, more ops can be appended (their `created_at` may still be
+    // `< cutoff` if the wall clock advanced), and the snapshot-frontier
+    // guard inside `compact_op_log` (`seq <= up_to_seqs[device]`) can
+    // also drop ops the pre-flight count assumed would be deleted.
+    //
+    // `snapshot::compact_op_log` now returns
+    // `Some((snapshot_id, deleted_count))` where `deleted_count` is the
+    // sum of `rows_affected()` across the per-device DELETEs (see
+    // `snapshot/create.rs` phase 3). Surface that figure verbatim. The
+    // `eligible_in_tx` value is logged as a pre-flight metric only —
+    // never returned over the wire.
+    let (snapshot_id, real_deleted_count) =
+        match crate::snapshot::compact_op_log(pool, device_id, retention_days).await? {
+            Some((id, n)) => (Some(id), n),
+            None => (None, 0),
+        };
+
+    tracing::debug!(
+        eligible_in_tx,
+        real_deleted_count,
+        "compact_op_log_cmd: pre-flight vs actual delete count (L-42)"
+    );
 
     Ok(CompactionResult {
         snapshot_id,
-        // L-42: stale figure — `eligible_in_tx` is the recount taken
-        // before `compact_op_log` ran, not the actual delete count.
-        // Tracked separately; do not "fix" this here.
-        ops_deleted: eligible_in_tx,
+        // `CompactionResult.ops_deleted` is `i64`; the real count is at
+        // most the number of rows in `op_log` and cannot exceed `i64::MAX`
+        // in any realistic deployment. Cast is safe and matches the wire
+        // shape (no Tauri/specta binding change needed).
+        #[allow(clippy::cast_possible_wrap)]
+        ops_deleted: real_deleted_count as i64,
     })
 }
 

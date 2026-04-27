@@ -177,7 +177,8 @@ pub async fn create_snapshot(pool: &SqlitePool, device_id: &str) -> Result<Strin
 pub const DEFAULT_RETENTION_DAYS: u64 = 90;
 
 /// Compact the op log: create a snapshot and purge ops older than `retention_days`.
-/// Returns `Some(snapshot_id)` if compaction occurred, `None` if no old ops exist.
+/// Returns `Some((snapshot_id, deleted_count))` if compaction occurred,
+/// `None` if no old ops exist.
 ///
 /// The work is split into three phases to minimise the time the exclusive
 /// write-lock is held (PERF-10a):
@@ -198,12 +199,19 @@ pub const DEFAULT_RETENTION_DAYS: u64 = 90;
 /// `#[instrument]` wrapper on the Tauri command in `commands/compaction.rs`,
 /// so the `retention_days`, `eligible_ops`, `ops_deleted`, and timing log
 /// lines emitted from this function all share a common span prefix.
+///
+/// L-42: the second tuple element is the **actual** number of rows the
+/// per-device DELETE in phase 3 affected. The wrapper in
+/// `commands/compaction.rs` previously reported a stale "eligible at start"
+/// figure; surfacing the real `deleted_count` here lets the wrapper return
+/// it verbatim. The phase-3 frontier guard (`seq <= up_to_seqs[device]`)
+/// can legitimately make this number smaller than the pre-flight count.
 #[tracing::instrument(skip(pool), err)]
 pub async fn compact_op_log(
     pool: &SqlitePool,
     device_id: &str,
     retention_days: u64,
-) -> Result<Option<String>, AppError> {
+) -> Result<Option<(String, u64)>, AppError> {
     tracing::info!(retention_days, "compaction starting");
     let start = std::time::Instant::now();
 
@@ -314,7 +322,9 @@ pub async fn compact_op_log(
         "compaction completed"
     );
 
-    Ok(Some(snapshot_id))
+    // L-42: return the real deleted_count alongside the snapshot id so
+    // callers (the Tauri wrapper) can report a non-stale figure.
+    Ok(Some((snapshot_id, deleted_count)))
 }
 
 /// Fetch the most recent complete snapshot's compressed data.

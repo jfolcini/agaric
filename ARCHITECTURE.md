@@ -1274,6 +1274,16 @@ Database, IO, and JSON errors are replaced with generic "internal error" message
 the frontend. Original errors are logged server-side for debugging. The frontend receives
 `{ kind: string, message: string }` and can match on `kind`.
 
+The mechanism is the per-Tauri-command `sanitize_internal_error` helper at
+`src-tauri/src/commands/mod.rs::sanitize_internal_error`, applied as `.map_err(sanitize_internal_error)`
+on the inner function's result. It collapses `AppError::Database` / `Migration` / `Io` / `Json` /
+`Channel` / `Snapshot` to `AppError::InvalidOperation("an internal error occurred")` and emits a
+`tracing::warn!` with the original error so backend logs keep the diagnostic detail. User-facing
+variants (`NotFound`, `Validation`, `InvalidOperation`, `NonReversible`, `Ulid`, `Gcal`) pass through
+unchanged — they already carry messages suitable for rendering. Sanitization happens at the command
+wrapper, not in `AppError`'s `Serialize` impl, so adding the wrapper is the contract for any new
+Tauri command that can surface an internal error.
+
 ### Secrets
 
 No secrets or API keys in the codebase. No cloud services. Device UUID is the only persistent

@@ -399,3 +399,96 @@ pub(super) async fn run_background(
     }
     tracing::info!("background queue closed");
 }
+
+#[cfg(test)]
+mod m10_tests {
+    use super::*;
+    use crate::op_log::OpRecord;
+
+    fn make_op_record(seq: i64) -> OpRecord {
+        OpRecord {
+            device_id: "dev-A".into(),
+            seq,
+            parent_seqs: None,
+            hash: "deadbeef".into(),
+            op_type: "create_block".into(),
+            payload: "{}".into(),
+            created_at: "2025-01-15T12:00:00Z".into(),
+        }
+    }
+
+    /// M-10: the `BatchApplyOps` variant wraps its `Vec<OpRecord>` in an
+    /// `Arc` so that the `task.clone()` calls on the foreground /
+    /// background consumer retry paths are cheap refcount bumps instead
+    /// of full deep clones of what can, during sync catch-up, be a
+    /// multi-thousand-op chunk. Mobile (Android) RAM is constrained.
+    ///
+    /// This regression test pins the clone semantics directly via
+    /// `Arc::strong_count` / `Arc::ptr_eq`:
+    ///
+    ///   1. Construction of a `BatchApplyOps(Arc::new(vec![...]))` leaves
+    ///      the allocation at `strong_count == 1` (plus any strong refs
+    ///      the test itself holds).
+    ///   2. `task.clone()` — the operation every retry-prep site invokes
+    ///      on the no-retry happy path — does NOT deep-clone the inner
+    ///      Vec: the Arc refcount is bumped by one, and the cloned task
+    ///      shares pointer identity with the original via `Arc::ptr_eq`.
+    ///   3. Dropping either clone decrements the refcount; nothing leaks.
+    #[test]
+    fn batch_apply_ops_no_retry_does_not_deep_clone_m10() {
+        let records = Arc::new(vec![
+            make_op_record(1),
+            make_op_record(2),
+            make_op_record(3),
+        ]);
+        assert_eq!(
+            Arc::strong_count(&records),
+            1,
+            "freshly-constructed Arc<Vec<OpRecord>> should have strong_count == 1",
+        );
+
+        let task = MaterializeTask::BatchApplyOps(Arc::clone(&records));
+        assert_eq!(
+            Arc::strong_count(&records),
+            2,
+            "holding the Arc inside MaterializeTask plus the test binding \
+             should leave strong_count == 2",
+        );
+
+        // The critical property: cloning the task (as
+        // `consumer.rs::process_single_foreground_task` L~154 and
+        // `consumer.rs::run_background` L~232/L~250 do on every retry
+        // prep — including the no-retry happy path, pre-M-10) must NOT
+        // deep-clone the inner Vec. It is a refcount bump.
+        let task_clone = task.clone();
+        match &task_clone {
+            MaterializeTask::BatchApplyOps(inner) => {
+                assert_eq!(
+                    Arc::strong_count(inner),
+                    3,
+                    "task.clone() must be a refcount bump (strong_count == 3), \
+                     not a deep clone",
+                );
+                assert!(
+                    Arc::ptr_eq(inner, &records),
+                    "Arc::clone through task.clone() must preserve pointer identity \
+                     — a deep clone would create a fresh allocation",
+                );
+            }
+            other => panic!("expected BatchApplyOps variant, got {other:?}"),
+        }
+
+        drop(task_clone);
+        assert_eq!(
+            Arc::strong_count(&records),
+            2,
+            "dropping the cloned task should release exactly one strong ref",
+        );
+        drop(task);
+        assert_eq!(
+            Arc::strong_count(&records),
+            1,
+            "dropping the original task should return strong_count to 1",
+        );
+    }
+}

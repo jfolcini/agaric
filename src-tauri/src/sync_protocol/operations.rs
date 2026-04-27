@@ -165,7 +165,9 @@ pub async fn apply_remote_ops(
     // before any are processed.
     if !to_materialize.is_empty() {
         materializer
-            .enqueue_foreground(MaterializeTask::BatchApplyOps(to_materialize))
+            .enqueue_foreground(MaterializeTask::BatchApplyOps(std::sync::Arc::new(
+                to_materialize,
+            )))
             .await?;
     }
 

@@ -447,7 +447,7 @@ mod tests {
             (
                 "add_attachment",
                 OpPayload::AddAttachment(AddAttachmentPayload {
-                    attachment_id: "ATT01".into(),
+                    attachment_id: BlockId::test_id("ATT01"),
                     block_id: BlockId::test_id("BLK001"),
                     mime_type: "text/plain".into(),
                     filename: "readme.txt".into(),
@@ -458,7 +458,7 @@ mod tests {
             (
                 "delete_attachment",
                 OpPayload::DeleteAttachment(DeleteAttachmentPayload {
-                    attachment_id: "ATT01".into(),
+                    attachment_id: BlockId::test_id("ATT01"),
                     fs_path: "/tmp/readme.txt".into(),
                 }),
             ),
@@ -978,6 +978,62 @@ mod tests {
         assert_eq!(
             hash_lower, hash_upper,
             "same payload JSON should produce the same hash"
+        );
+    }
+
+    /// M-1 regression: `AddAttachmentPayload.attachment_id` is now an
+    /// `AttachmentId` (alias of `BlockId`), so a payload deserialized from
+    /// JSON with a lowercase ULID must produce byte-identical canonical
+    /// payload bytes (and thus an identical `compute_op_hash` digest) to
+    /// the same payload constructed with the uppercase form. Before M-1
+    /// the field was a raw `String`, which bypassed the
+    /// `BlockId`-deserialize uppercase contract and broke blake3
+    /// hash determinism across devices when one device emitted a
+    /// lowercased `attachment_id` (AGENTS.md invariant #8).
+    ///
+    /// Uses the JSON deserialization path because `BlockId::from_trusted`
+    /// only accepts already-uppercased input by contract.
+    #[tokio::test]
+    async fn attachment_id_normalization_lowercase_and_uppercase_produce_same_hash_m1() {
+        let lower_id = "01arz3ndektsv4rrffq69g5fav";
+        let upper_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let block_upper = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
+
+        // Same logical payload, only `attachment_id` casing differs.
+        let lower_json = format!(
+            r#"{{"op_type":"add_attachment","attachment_id":"{lower_id}","block_id":"{block_upper}","mime_type":"image/png","filename":"photo.png","size_bytes":1024,"fs_path":"/tmp/photo.png"}}"#
+        );
+        let upper_json = format!(
+            r#"{{"op_type":"add_attachment","attachment_id":"{upper_id}","block_id":"{block_upper}","mime_type":"image/png","filename":"photo.png","size_bytes":1024,"fs_path":"/tmp/photo.png"}}"#
+        );
+
+        let payload_lower: OpPayload = serde_json::from_str(&lower_json).unwrap();
+        let payload_upper: OpPayload = serde_json::from_str(&upper_json).unwrap();
+
+        // After deserialization through `BlockId`, the two payloads must be
+        // byte-identical at the struct level — this is the invariant the
+        // raw-`String` field violated before M-1.
+        assert_eq!(
+            payload_lower, payload_upper,
+            "lowercase and uppercase attachment_id must deserialize equal"
+        );
+
+        // Round-trip through canonical JSON serialization (the same path
+        // used by `serialize_inner_payload` on the write side) and confirm
+        // the bytes match — this is what feeds `compute_op_hash`.
+        let canonical_lower = serialize_inner_payload(&payload_lower).unwrap();
+        let canonical_upper = serialize_inner_payload(&payload_upper).unwrap();
+        assert_eq!(
+            canonical_lower, canonical_upper,
+            "canonical payload JSON must be identical regardless of input case"
+        );
+
+        // Final invariant: the cross-device hash is identical for both.
+        let hash_lower = compute_op_hash("dev-a", 1, None, "add_attachment", &canonical_lower);
+        let hash_upper = compute_op_hash("dev-a", 1, None, "add_attachment", &canonical_upper);
+        assert_eq!(
+            hash_lower, hash_upper,
+            "AGENTS.md invariant #8: lowercase and uppercase attachment_id must hash identically"
         );
     }
 

@@ -898,7 +898,7 @@ mod tests {
     #[test]
     fn block_id_of_none_for_attachment_ops() {
         let rec = make_record(&OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
-            attachment_id: "att-1".into(),
+            attachment_id: BlockId::test_id("att-1"),
             block_id: bid(),
             filename: "f.png".into(),
             fs_path: "/tmp/f.png".into(),

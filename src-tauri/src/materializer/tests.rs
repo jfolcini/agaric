@@ -780,7 +780,7 @@ async fn dispatch_op_add_attachment() {
     let r = make_op_record(
         &pool,
         OpPayload::AddAttachment(AddAttachmentPayload {
-            attachment_id: "att-1".into(),
+            attachment_id: BlockId::test_id("ATT-1"),
             block_id: BlockId::test_id("blk-a"),
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
@@ -791,8 +791,10 @@ async fn dispatch_op_add_attachment() {
     .await;
     mat.dispatch_op(&r).await.unwrap();
     mat.flush_foreground().await.unwrap();
+    // M-1: AttachmentId (BlockId alias) auto-uppercases on construction, so
+    // the materializer writes 'ATT-1' regardless of input casing.
     let row = sqlx::query_as::<_, (String, String)>(
-        "SELECT filename, mime_type FROM attachments WHERE id = 'att-1'",
+        "SELECT filename, mime_type FROM attachments WHERE id = 'ATT-1'",
     )
     .fetch_one(&pool)
     .await
@@ -808,19 +810,22 @@ async fn dispatch_op_delete_attachment() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     insert_block_direct(&pool, "BLK-ATT-DEL", "content", "att block").await;
-    sqlx::query("INSERT INTO attachments (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) VALUES ('att-2', 'BLK-ATT-DEL', 'f.txt', '/tmp/f.txt', 'text/plain', 10, '2025-01-01T00:00:00Z')")
+    // M-1: store the row with the canonical-uppercase id so it matches the
+    // bind value the materializer derives from the auto-normalized
+    // AttachmentId in the payload.
+    sqlx::query("INSERT INTO attachments (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) VALUES ('ATT-2', 'BLK-ATT-DEL', 'f.txt', '/tmp/f.txt', 'text/plain', 10, '2025-01-01T00:00:00Z')")
         .execute(&pool).await.unwrap();
     let r = make_op_record(
         &pool,
         OpPayload::DeleteAttachment(DeleteAttachmentPayload {
-            attachment_id: "att-2".into(),
+            attachment_id: BlockId::test_id("ATT-2"),
             fs_path: "/tmp/f.txt".into(),
         }),
     )
     .await;
     mat.dispatch_op(&r).await.unwrap();
     mat.flush_foreground().await.unwrap();
-    let row = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM attachments WHERE id = 'att-2'")
+    let row = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM attachments WHERE id = 'ATT-2'")
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -2378,7 +2383,7 @@ async fn batch_partial_failure() {
     )
     .await;
     let bad = fake_op_record("create_block", "{}");
-    mat.enqueue_foreground(MaterializeTask::BatchApplyOps(vec![good, bad]))
+    mat.enqueue_foreground(MaterializeTask::BatchApplyOps(StdArc::new(vec![good, bad])))
         .await
         .unwrap();
     mat.flush().await.unwrap();
@@ -2469,9 +2474,11 @@ async fn fg_apply_dropped_bumps_once_per_failed_batch() {
     // remaining ops are implicitly dropped.
     let bad1 = fake_op_record("create_block", "{}");
     let bad2 = fake_op_record("create_block", "{}");
-    mat.enqueue_foreground(MaterializeTask::BatchApplyOps(vec![bad1, bad2]))
-        .await
-        .unwrap();
+    mat.enqueue_foreground(MaterializeTask::BatchApplyOps(StdArc::new(vec![
+        bad1, bad2,
+    ])))
+    .await
+    .unwrap();
     mat.flush_foreground().await.unwrap();
     let m = mat.metrics();
     assert!(
@@ -2759,7 +2766,7 @@ async fn batch_apply_ops_atomic_rollback_on_failure() {
     // Second op: bad payload that will fail deserialization
     let bad = fake_op_record("create_block", "{}");
 
-    let task = MaterializeTask::BatchApplyOps(vec![good, bad]);
+    let task = MaterializeTask::BatchApplyOps(StdArc::new(vec![good, bad]));
     let result = handle_foreground_task(&pool, &task, &metrics, &empty_gcal_handle()).await;
     assert!(
         result.is_err(),
@@ -2806,7 +2813,7 @@ async fn batch_apply_ops_all_succeed_commits() {
     )
     .await;
 
-    let task = MaterializeTask::BatchApplyOps(vec![op1, op2]);
+    let task = MaterializeTask::BatchApplyOps(StdArc::new(vec![op1, op2]));
     let result = handle_foreground_task(&pool, &task, &metrics, &empty_gcal_handle()).await;
     result.unwrap();
 
@@ -3887,7 +3894,7 @@ mod gcal_hook {
 
         // Dispatch as a single BatchApplyOps task so the
         // transaction-wrapped path is exercised.
-        mat.enqueue_foreground(MaterializeTask::BatchApplyOps(records))
+        mat.enqueue_foreground(MaterializeTask::BatchApplyOps(StdArc::new(records)))
             .await
             .unwrap();
         mat.flush_foreground().await.unwrap();

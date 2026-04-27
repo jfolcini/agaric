@@ -81,9 +81,12 @@ pub async fn add_attachment_inner(
     let attachment_id = ulid::Ulid::new().to_string().to_uppercase();
     let now = now_rfc3339();
 
-    // Build OpPayload
+    // Build OpPayload. `attachment_id` is freshly generated via
+    // `Ulid::new().to_string().to_uppercase()` above, so `from_trusted`
+    // is the correct entry point — it normalizes (no-op here, already
+    // uppercase) without re-validating the ULID format.
     let payload = OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
-        attachment_id: attachment_id.clone(),
+        attachment_id: BlockId::from_trusted(&attachment_id),
         block_id: BlockId::from_trusted(&block_id),
         mime_type: mime_type.clone(),
         filename: filename.clone(),
@@ -204,7 +207,7 @@ pub async fn delete_attachment_inner(
     let fs_path = row.fs_path;
 
     let payload = OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
-        attachment_id: attachment_id.clone(),
+        attachment_id: BlockId::from_trusted(&attachment_id),
         fs_path: fs_path.clone(),
     });
 

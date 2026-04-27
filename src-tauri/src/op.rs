@@ -15,7 +15,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ulid::BlockId;
+use crate::ulid::{AttachmentId, BlockId};
 
 // ---------------------------------------------------------------------------
 // OpType — the string tag stored in op_log.op_type
@@ -186,9 +186,17 @@ pub struct DeletePropertyPayload {
 }
 
 /// Payload for the `add_attachment` op — records a new file attachment linked to a block.
+///
+/// `attachment_id` is an [`AttachmentId`] (alias of [`BlockId`]) so that it
+/// auto-uppercases on construction / deserialization. Storing it as a raw
+/// `String` would bypass the uppercase contract and feed un-normalized bytes
+/// into [`compute_op_hash`](crate::hash::compute_op_hash), breaking the
+/// blake3 hash determinism that AGENTS.md invariant #8 relies on for
+/// cross-device sync. The serde wire format is unchanged (`BlockId` is
+/// `#[serde(transparent)]`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddAttachmentPayload {
-    pub attachment_id: String,
+    pub attachment_id: AttachmentId,
     pub block_id: BlockId,
     pub mime_type: String,
     pub filename: String,
@@ -203,9 +211,12 @@ pub struct AddAttachmentPayload {
 /// unlink it. Marked `#[serde(default)]` so op-log entries written before
 /// C-3 (which had no `fs_path`) still deserialize — they yield `fs_path
 /// = ""` and will be reconciled by the C-3c GC pass.
+///
+/// `attachment_id` is an [`AttachmentId`] (alias of [`BlockId`]) for the
+/// same uppercase-normalization contract as [`AddAttachmentPayload`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteAttachmentPayload {
-    pub attachment_id: String,
+    pub attachment_id: AttachmentId,
     #[serde(default)]
     pub fs_path: String,
 }
@@ -535,7 +546,7 @@ mod tests {
                 key: "priority".into(),
             }),
             OpPayload::AddAttachment(AddAttachmentPayload {
-                attachment_id: "A1".into(),
+                attachment_id: BlockId::test_id("A1"),
                 block_id: BlockId::from_string(TEST_BID).unwrap(),
                 mime_type: "image/png".into(),
                 filename: "photo.png".into(),
@@ -543,7 +554,7 @@ mod tests {
                 fs_path: "/tmp/photo.png".into(),
             }),
             OpPayload::DeleteAttachment(DeleteAttachmentPayload {
-                attachment_id: "A1".into(),
+                attachment_id: BlockId::test_id("A1"),
                 fs_path: "/tmp/photo.png".into(),
             }),
         ]

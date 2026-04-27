@@ -219,6 +219,127 @@ async fn compact_op_log_cmd_noop_when_no_old_ops() {
     mat.shutdown();
 }
 
+/// L-42 regression: `compact_op_log_cmd_inner` previously returned
+/// `ops_deleted = eligible_in_tx`, the count of ops eligible at the
+/// start of the wrapper transaction. That figure is stale by the time
+/// the inner `snapshot::compact_op_log` runs (more ops can be appended
+/// between commit and the inner write phase, and the snapshot-frontier
+/// guard inside `compact_op_log` may also skip some). The fix routes
+/// the real `deleted_count` from `snapshot::compact_op_log` (now
+/// returning `(snapshot_id, deleted_count)`) up to the wrapper.
+///
+/// This test pre-seeds the op_log with N eligible ops, runs
+/// `compact_op_log_cmd_inner`, and asserts that the reported
+/// `ops_deleted` matches the **actual** row delta in `op_log`. It
+/// guards against doc-code drift if a future refactor reintroduces
+/// `eligible_in_tx` as the source of `ops_deleted`.
+#[tokio::test]
+async fn compact_op_log_returns_real_deleted_count_l42() {
+    let (pool, _dir) = test_pool().await;
+
+    // Pre-seed N=4 eligible (old) ops + 1 recent op so the recount,
+    // the inner DELETE, and the actual table delta are all observable.
+    let old_ts = "2024-01-01T00:00:00.000Z";
+    let n_old: i64 = 4;
+    for i in 1..=n_old {
+        let block_id = format!("01HZ00000000000000000BLK{i:03}");
+        insert_block(
+            &pool,
+            &block_id,
+            "content",
+            &format!("old block {i}"),
+            None,
+            Some(i),
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, op_type, payload, hash, created_at) \
+             VALUES (?, ?, 'create_block', ?, 'fakehash_old' || ?, ?)",
+        )
+        .bind(DEV)
+        .bind(i)
+        .bind(format!(
+            r#"{{"block_id":"{}","block_type":"content","content":"old block {}","parent_id":null,"position":{}}}"#,
+            block_id, i, i
+        ))
+        .bind(i)
+        .bind(old_ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // One recent op so the frontier is well-defined and the cutoff
+    // comparison has a "kept" row to leave behind.
+    let recent_block_id = "01HZ00000000000000000BLKREC";
+    insert_block(
+        &pool,
+        recent_block_id,
+        "content",
+        "recent block",
+        None,
+        Some(n_old + 1),
+    )
+    .await;
+    let recent_ts = crate::now_rfc3339();
+    sqlx::query(
+        "INSERT INTO op_log (device_id, seq, op_type, payload, hash, created_at) \
+         VALUES (?, ?, 'create_block', ?, 'fakehash_recent', ?)",
+    )
+    .bind(DEV)
+    .bind(n_old + 1)
+    .bind(format!(
+        r#"{{"block_id":"{}","block_type":"content","content":"recent block","parent_id":null,"position":{}}}"#,
+        recent_block_id, n_old + 1
+    ))
+    .bind(&recent_ts)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let count_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count_before,
+        n_old + 1,
+        "fixture should seed {} ops before compaction",
+        n_old + 1
+    );
+
+    let result = compact_op_log_cmd_inner(&pool, DEV, 90).await.unwrap();
+
+    let count_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let actual_deleted = count_before - count_after;
+
+    // Core L-42 invariant: the reported `ops_deleted` is the **real**
+    // number of rows the inner DELETE removed, not the pre-flight
+    // recount. Any regression that wires the wrapper back to
+    // `eligible_in_tx` would break this invariant the moment the two
+    // figures drift.
+    assert_eq!(
+        result.ops_deleted, actual_deleted,
+        "ops_deleted ({}) must equal the actual op_log row delta ({}); \
+         L-42 regression — wrapper is reporting a stale count",
+        result.ops_deleted, actual_deleted
+    );
+
+    // Sanity: with the seeded fixture, exactly the old ops should go.
+    assert_eq!(
+        result.ops_deleted, n_old,
+        "with {n_old} eligible ops and 1 recent op, ops_deleted must equal {n_old}"
+    );
+    assert!(
+        result.snapshot_id.is_some(),
+        "compaction must produce a snapshot id when old ops were deleted"
+    );
+}
+
 #[tokio::test]
 async fn compact_op_log_cmd_rejects_retention_days_zero() {
     // M-38 regression: retention_days = 0 must be rejected up-front with

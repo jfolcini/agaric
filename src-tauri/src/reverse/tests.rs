@@ -388,7 +388,7 @@ async fn reverse_add_attachment_produces_delete_attachment() {
     let rec = append_op(
         &pool,
         OpPayload::AddAttachment(AddAttachmentPayload {
-            attachment_id: "ATT1".into(),
+            attachment_id: BlockId::test_id("ATT1"),
             block_id: BlockId::test_id("BLK11"),
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
@@ -423,7 +423,7 @@ async fn reverse_delete_attachment_returns_non_reversible_error() {
     let rec = append_op(
         &pool,
         OpPayload::DeleteAttachment(DeleteAttachmentPayload {
-            attachment_id: "ATT2".into(),
+            attachment_id: BlockId::test_id("ATT2"),
             fs_path: "/tmp/att2.bin".into(),
         }),
         FIXED_TS,
@@ -791,7 +791,7 @@ async fn reverse_delete_attachment_returns_add_attachment_with_metadata() {
     append_op(
         &pool,
         OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
-            attachment_id: "ATT_001".into(),
+            attachment_id: BlockId::test_id("ATT_001"),
             block_id: BlockId::test_id("BLK_ATT"),
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
@@ -804,7 +804,7 @@ async fn reverse_delete_attachment_returns_add_attachment_with_metadata() {
     let del = append_op(
         &pool,
         OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
-            attachment_id: "ATT_001".into(),
+            attachment_id: BlockId::test_id("ATT_001"),
             fs_path: "attachments/att_001.bin".into(),
         }),
         "2025-01-15T12:01:00+00:00",
@@ -824,7 +824,7 @@ async fn reverse_delete_attachment_no_add_op_returns_non_reversible() {
     let del = append_op(
         &pool,
         OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
-            attachment_id: "ATT_ORPHAN".into(),
+            attachment_id: BlockId::test_id("ATT_ORPHAN"),
             fs_path: "attachments/orphan.bin".into(),
         }),
         FIXED_TS,
@@ -841,7 +841,7 @@ async fn reverse_delete_attachment_roundtrip() {
     let add_rec = append_op(
         &pool,
         OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
-            attachment_id: "ATT_RT".into(),
+            attachment_id: BlockId::test_id("ATT_RT"),
             block_id: BlockId::test_id("BLK_RT"),
             mime_type: "application/pdf".into(),
             filename: "doc.pdf".into(),
