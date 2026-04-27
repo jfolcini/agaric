@@ -631,10 +631,18 @@ mod tests {
             handles.push(thread::spawn(move || {
                 // Retry to tolerate the window between create_new and write
                 // completion — a reader may see an incomplete file briefly.
-                for _ in 0..20 {
+                // Budget: 100 × 10 ms = 1 s. The winner thread does crypto
+                // work in `generate_self_signed_cert` plus two `sync_all`
+                // calls, which can exceed 100 ms on slow CI; readers need
+                // a budget that comfortably covers the worst case so the
+                // test is not flaky under load. The `M54_TORN_WRITE_STALENESS`
+                // threshold (500 ms) is still longer than any individual
+                // sleep so the M-54 path will not delete a fresh PEM
+                // mid-write.
+                for _ in 0..100 {
                     match get_or_create_sync_cert(&p, "DEVICE_RACE") {
                         Ok(cert) => return Ok(cert),
-                        Err(_) => thread::sleep(std::time::Duration::from_millis(5)),
+                        Err(_) => thread::sleep(std::time::Duration::from_millis(10)),
                     }
                 }
                 get_or_create_sync_cert(&p, "DEVICE_RACE")

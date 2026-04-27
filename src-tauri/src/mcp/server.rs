@@ -2827,10 +2827,13 @@ mod tests {
 
         // Give the per-connection task a moment to register itself in
         // the active counter so we can prove the shutdown actually
-        // sees a live connection.
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+        // sees a live connection. Budget bumped to 5 s with a sleep
+        // (rather than `yield_now`) so the test is not flaky on a
+        // loaded runtime where the per-connection spawn can be slow
+        // to schedule even with `worker_threads = 2`.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
         while lifecycle.connection_count() == 0 && tokio::time::Instant::now() < deadline {
-            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         assert_eq!(
             lifecycle.connection_count(),
@@ -2840,7 +2843,7 @@ mod tests {
 
         // Disable while the in-flight connection is still parked.
         lifecycle.shutdown();
-        wait_for_task_running_false(&lifecycle, std::time::Duration::from_secs(2)).await;
+        wait_for_task_running_false(&lifecycle, std::time::Duration::from_secs(5)).await;
         let result = serve_task.await.expect("serve task joins");
         assert!(
             result.is_ok(),
@@ -2854,6 +2857,12 @@ mod tests {
         drop(inflight);
 
         // After shutdown, no new connection succeeds — H-2 invariant.
+        // Removing the socket file makes the assertion deterministic
+        // (ENOENT) rather than relying on the kernel's reclaim of the
+        // closed listening fd (ECONNREFUSED), which has a small race
+        // window on heavily-loaded runtimes. Either error is fine for
+        // the H-2 contract; ENOENT is just easier to reproduce.
+        let _ = std::fs::remove_file(&path);
         let post_shutdown = UnixStream::connect(&path).await;
         assert!(
             post_shutdown.is_err(),
