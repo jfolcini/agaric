@@ -787,7 +787,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Net findings in this report | 333 |
 | **Critical** | **1** |
 | **High** | **6** |
-| **Medium** | **36** |
+| **Medium** | **32** |
 | **Low** | **124** |
 | **Info / nits** | **125** |
 
@@ -806,8 +806,8 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Materializer | 1 | 2 | 6 | 8 | 4 |
 | Cache + Pagination | 0 | 0 | 6 | 12 | 6 |
 | Commands (CRUD) | 0 | 1 | 6 | 9 | 13 |
-| Commands (System) | 0 | 2 | 12 | 13 | 6 |
-| Sync stack | 0 | 3 | 13 | 25 | 5 |
+| Commands (System) | 0 | 2 | 11 | 13 | 6 |
+| Sync stack | 0 | 3 | 10 | 25 | 5 |
 | Search & Links | 0 | 2 | 4 | 16 | 19 |
 | Lifecycle / Snapshots | 0 | 0 | 17 | 16 | 8 |
 | MCP | 0 | 0 | 6 | 12 | 8 |
@@ -1137,17 +1137,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 05/F4
 - **Status:** Open
 
-### M-33 — `start_sync_inner`'s peer lock guard is dropped before the daemon syncs
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/sync_cmds.rs:179-186`
-- **What:** `_guard = scheduler.try_lock_peer(&peer_id)` falls out of scope when `start_sync_inner` returns (microseconds later). The daemon's own `try_sync_with_peer` flow re-acquires the same lock, so the wrapper's exclusion is purely cosmetic — two back-to-back `start_sync` calls both succeed past `try_lock_peer` and both call `notify_change`. The "Sync already in progress for this peer" error path is therefore unreachable in practice.
-- **Why it matters:** The error message implies an exclusion that isn't there. If a wrapper call interleaves with a daemon sync exactly on the lock acquisition, the wrapper wins the guard and the daemon's guard fails — the sync silently doesn't run, and tests asserting backoff/lock semantics may pass for the wrong reason.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either (a) remove the `try_lock_peer` call from this wrapper entirely and let the daemon own the lock, or (b) keep it but rename `_guard` and add a comment that the wrapper is a health-check only, not real exclusion.
-- **Pass-1 source:** 05/F18 (cross-ref 06/F42)
-- **Status:** Open
 
 ### M-34 — `start_pairing_inner` builds a QR with `host=0.0.0.0, port=0`
 - **Domain:** Commands (System)
@@ -1187,41 +1176,8 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Sync stack
 
-### M-46 — `try_sync_with_peer` drops the cancel flag after each peer; cancellation only stops the current peer
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_daemon/orchestrator.rs:196-218 (Branch B), 244-260 (Branch C), 383-389 (CancelGuard)`
-- **What:** `CancelGuard::drop` unconditionally `self.0.store(false, Ordering::Release)` after each `try_sync_with_peer` call. In Branch B/C, peers are processed sequentially in a `for peer_ref in &refs` loop with no inter-iteration cancel check. If the user calls `cancel_active_sync` mid-session, peer 1 aborts, the guard clears the flag, and peer 2 starts a fresh session as if no cancellation happened.
-- **Why it matters:** "Cancel sync" intuitively means "stop this round", not "stop the current peer and continue". The user reading the toast will be confused when subsequent peers' Progress events appear after they pressed Cancel — UX correctness, not security.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium (UX)
-- **Recommendation:** Have the daemon loop also check the cancel flag *between* peer iterations (or have `try_sync_with_peer` return a `Cancelled` variant that short-circuits the outer loop). Alternatively, scope the `CancelGuard` to a sync *round* rather than a single session.
-- **Pass-1 source:** 06/F9
-- **Status:** Open
 
-### M-47 — File transfer phase ignores cancel flag entirely
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_daemon/orchestrator.rs:601-624`; `src-tauri/src/sync_files.rs:233-547` (`run_file_transfer_initiator`/`_responder`); cancel check in `run_sync_session:523-527`
-- **What:** Once `orch.is_complete()`, control falls into `run_file_transfer_initiator(conn, pool, &app_data_dir)` which takes no `cancel` parameter. The internal `request_and_receive_files` / `receive_request_and_send_files` loops likewise do not consult any cancel signal. Only the orchestrator's message-exchange `while !orch.is_terminal()` loop checks `cancel.load(Acquire)`.
-- **Why it matters:** A multi-gigabyte attachment transfer cannot be interrupted by `cancel_active_sync` — the UI says "cancelling" while the file phase continues for minutes. Same UX-correctness family as M-46, with bigger time scales.
-- **Cost:** M
-- **Risk:** Medium (touches the protocol's "files keep flowing until TransferComplete" assumption)
-- **Impact:** Medium
-- **Recommendation:** Thread the cancel `&AtomicBool` through `run_file_transfer_initiator` / `_responder` and check it between each `recv_binary` / `send_binary`. On cancellation, send a clean `FileTransferComplete` to flush the protocol cleanly; do not introduce a new wire message.
-- **Pass-1 source:** 06/F10
-- **Status:** Open
 
-### M-48 — `find_missing_attachments` only checks file presence, not size or hash
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_files.rs:142-160`
-- **What:** Liveness is decided by `full_path.exists()` alone. A truncated copy (interrupted last download, partial filesystem write, antivirus quarantine that left a 0-byte stub, etc.) is treated as present and never re-requested. The DB row already carries `attachments.size_bytes` and the wire `FileOffer` carries `blake3_hash`, but neither is consulted.
-- **Why it matters:** Squarely "preventing accidental corruption" per AGENTS.md — a truncated file from a prior interrupted sync is treated as present forever. Cheapest cure costs no protocol changes.
-- **Cost:** S (size-only) | M (add `attachments.blake3_hash` column for content verification)
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Cheap path: also reject as "missing" when `tokio::fs::metadata(&full_path).await?.len() != attachments.size_bytes`. Better path: add `attachments.blake3_hash` (already inline on the wire `FileOffer`) and verify on read; surface a user-visible repair on mismatch.
-- **Pass-1 source:** 06/F13
-- **Status:** Open
 
 ### M-51 — Both file send and receive buffer the entire file in memory
 - **Domain:** Sync
