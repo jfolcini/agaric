@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 use super::super::*;
 use super::common::*;
+use crate::soft_delete;
 
 // ======================================================================
 // add_tag
@@ -31,6 +32,21 @@ async fn add_tag_success() {
     .await
     .unwrap();
     assert!(row.is_some(), "block_tags row should exist after add_tag");
+
+    // Verify op_log row was written with op_type='add_tag' (TEST-41)
+    let block_id = "AT_BLK";
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM op_log WHERE op_type = 'add_tag' \
+         AND json_extract(payload, '$.block_id') = ?",
+    )
+    .bind(block_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 1,
+        "add_tag should have written exactly one op_log row"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -131,6 +147,29 @@ async fn add_tag_self_returns_invalid_operation() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tag_deleted_block_returns_not_found() {
+    // TEST-40: soft-deleted block must reject add_tag with NotFound. The
+    // block-existence check in `add_tag_inner` filters `deleted_at IS NULL`,
+    // so a cascaded soft-delete must surface as NotFound (not a stale row).
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "ATDEL_BLK", "content", "my block", None, Some(1)).await;
+    insert_block(&pool, "ATDEL_TAG", "tag", "urgent", None, None).await;
+
+    soft_delete::cascade_soft_delete(&pool, "ATDEL_BLK")
+        .await
+        .unwrap();
+
+    let result = add_tag_inner(&pool, DEV, &mat, "ATDEL_BLK".into(), "ATDEL_TAG".into()).await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "add_tag on soft-deleted block should return NotFound, got: {result:?}"
+    );
+}
+
 // ======================================================================
 // remove_tag
 // ======================================================================
@@ -167,6 +206,21 @@ async fn remove_tag_success() {
         row.is_none(),
         "block_tags row should be gone after remove_tag"
     );
+
+    // Verify op_log row was written with op_type='remove_tag' (TEST-41)
+    let block_id = "RT_BLK";
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM op_log WHERE op_type = 'remove_tag' \
+         AND json_extract(payload, '$.block_id') = ?",
+    )
+    .bind(block_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 1,
+        "remove_tag should have written exactly one op_log row"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -187,6 +241,34 @@ async fn remove_tag_not_applied_returns_error() {
     assert!(
         err.to_string().contains("tag association"),
         "error message should mention tag association"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remove_tag_deleted_block_returns_not_found() {
+    // TEST-40: soft-deleted block must reject remove_tag with NotFound. The
+    // block-existence check in `remove_tag_inner` filters `deleted_at IS NULL`
+    // before the association lookup, so the cascade-deleted block surfaces
+    // as NotFound even though the `block_tags` row physically still exists.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "RTDEL_BLK", "content", "my block", None, Some(1)).await;
+    insert_block(&pool, "RTDEL_TAG", "tag", "urgent", None, None).await;
+
+    add_tag_inner(&pool, DEV, &mat, "RTDEL_BLK".into(), "RTDEL_TAG".into())
+        .await
+        .unwrap();
+
+    soft_delete::cascade_soft_delete(&pool, "RTDEL_BLK")
+        .await
+        .unwrap();
+
+    let result = remove_tag_inner(&pool, DEV, &mat, "RTDEL_BLK".into(), "RTDEL_TAG".into()).await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "remove_tag on soft-deleted block should return NotFound, got: {result:?}"
     );
 }
 

@@ -315,7 +315,10 @@ async fn append_merge_op_rejects_empty_parents() {
     let payload = make_edit("B1", "text", None);
     let err = append_merge_op(&pool, DEV_A, payload, vec![]).await;
 
-    assert!(err.is_err());
+    assert!(
+        matches!(err, Err(AppError::InvalidOperation(_))),
+        "append_merge_op with empty parents should return AppError::InvalidOperation, got {err:?}"
+    );
 }
 
 #[tokio::test]

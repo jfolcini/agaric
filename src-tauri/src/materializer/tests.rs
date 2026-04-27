@@ -1066,9 +1066,10 @@ async fn metrics_bg() {
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
-    assert!(
-        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 1,
-        "should have processed at least one background task"
+    assert_eq!(
+        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed),
+        3,
+        "should have processed exactly 2 background tasks plus the flush barrier"
     );
 }
 #[tokio::test]
@@ -1090,9 +1091,10 @@ async fn metrics_fg() {
         .await
         .unwrap();
     mat.flush_foreground().await.unwrap();
-    assert!(
-        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 1,
-        "should have processed at least one foreground task"
+    assert_eq!(
+        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed),
+        2,
+        "should have processed exactly 1 foreground task plus the flush barrier"
     );
 }
 #[tokio::test]
@@ -1137,9 +1139,10 @@ async fn flush_fg() {
         .await
         .unwrap();
     mat.flush_foreground().await.unwrap();
-    assert!(
-        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 1,
-        "flush_foreground should process at least one task"
+    assert_eq!(
+        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed),
+        2,
+        "flush_foreground should process exactly 1 task plus the flush barrier"
     );
 }
 #[tokio::test]
@@ -1150,9 +1153,10 @@ async fn flush_bg() {
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
-    assert!(
-        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 1,
-        "flush_background should process at least one task"
+    assert_eq!(
+        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed),
+        2,
+        "flush_background should process exactly 1 task plus the flush barrier"
     );
 }
 #[tokio::test]
@@ -1177,13 +1181,15 @@ async fn flush_both() {
         .await
         .unwrap();
     mat.flush().await.unwrap();
-    assert!(
-        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 1,
-        "flush should process foreground tasks"
+    assert_eq!(
+        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed),
+        2,
+        "flush should process exactly 1 foreground task plus the flush barrier"
     );
-    assert!(
-        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 1,
-        "flush should process background tasks"
+    assert_eq!(
+        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed),
+        2,
+        "flush should process exactly 1 background task plus the flush barrier"
     );
 }
 
@@ -1487,9 +1493,10 @@ async fn foreground_distinct_block_edits_land_in_fifo_order() {
         Some("updated-B"),
         "block PAR_B content should be updated"
     );
-    assert!(
-        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 2,
-        "should process at least 2 foreground tasks for the two distinct-block edits"
+    assert_eq!(
+        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed),
+        3,
+        "should process exactly 2 distinct-block edits plus the flush barrier"
     );
 }
 
@@ -2171,6 +2178,11 @@ async fn apply_op_invalid_payload() {
     .await
     .unwrap();
     mat.flush_foreground().await.unwrap();
+    assert_eq!(
+        mat.metrics().fg_errors.load(AtomicOrdering::Relaxed),
+        1,
+        "malformed create_block payload should increment fg_errors exactly once after retry exhaustion"
+    );
 }
 #[tokio::test]
 async fn apply_op_unknown_op() {
@@ -2183,6 +2195,11 @@ async fn apply_op_unknown_op() {
     .await
     .unwrap();
     mat.flush_foreground().await.unwrap();
+    assert_eq!(
+        mat.metrics().fg_errors.load(AtomicOrdering::Relaxed),
+        1,
+        "unknown op_type should increment fg_errors exactly once after retry exhaustion"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2686,9 +2703,10 @@ async fn concurrent_dispatch() {
         h.await.unwrap();
     }
     mat.flush().await.unwrap();
-    assert!(
-        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 10,
-        "should process at least 10 concurrent dispatch ops"
+    assert_eq!(
+        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed),
+        11,
+        "should process exactly 10 concurrent dispatch ops plus the flush barrier"
     );
 }
 

@@ -1,6 +1,5 @@
 ---
 source: src/op_log.rs
-assertion_line: 792
 expression: record
 ---
 device_id: test-device

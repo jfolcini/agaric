@@ -859,17 +859,22 @@ mod tests {
     async fn keyring_store_never_falls_back_to_plaintext_on_unavailable() {
         // Explicit regression guard for the FEAT-5 parent § "Open questions"
         // policy: on keyring unavailable we error out, we do NOT persist
-        // the token anywhere else.
-        let backend = Arc::new(MemBackend::new());
-        let wrapped: Arc<dyn KeyringBackend> = Arc::new(UnavailableBackend);
-        let (store, _emitter) = store_with(wrapped);
+        // the token anywhere else. The store has exactly one write path
+        // (its wrapped `KeyringBackend`) — there is no plaintext fallback
+        // file or sibling backend the store can reach. So the meaningful
+        // assertion is on the store's own return value: it must surface
+        // a `Validation(keyring.unavailable)` error rather than silently
+        // succeed. A regression that returned `Ok(())` here (e.g., a
+        // future patch adding a "fallback to disk" branch) would be
+        // caught by the matches! below.
+        let backend: Arc<dyn KeyringBackend> = Arc::new(UnavailableBackend);
+        let (store, _emitter) = store_with(backend);
 
-        let _ = store.store(&fixed_token()).await;
+        let result = store.store(&fixed_token()).await;
 
-        // The sibling memory backend must still be empty.
         assert!(
-            backend.get().unwrap().is_none(),
-            "unavailable-path must NOT write plaintext anywhere"
+            matches!(result, Err(AppError::Validation(ref m)) if m.contains("keyring.unavailable")),
+            "store() on unavailable keyring must return Validation(keyring.unavailable), got {result:?}"
         );
     }
 
