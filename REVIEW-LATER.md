@@ -17,9 +17,11 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-4 open items.
+16 open items (4 existing + 12 new TEST-* from 2026-04-26 backend test review).
 
 Previously resolved: 542+ items across 159 sessions.
+
+> **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. The `TEST-*` items below it (`TEST-40`..`TEST-51`) are a separate, targeted review of **backend test quality** — see the block header for scope and methodology.**
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -43,6 +45,18 @@ Previously resolved: 542+ items across 159 sessions.
 | PUB-3 | PUB | Employer IP clearance before public release | S |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S |
+| TEST-40 | TEST | `tag_cmd_tests.rs` — no error-path tests for `add_tag_inner` / `remove_tag_inner` on a soft-deleted block; every other command file in `commands/tests/` tests the "deleted block → NotFound" path | S |
+| TEST-41 | TEST | `tag_cmd_tests.rs` — no op-log verification for `add_tag_inner` / `remove_tag_inner`; tests only assert on the `block_tags` materialised table | S |
+| TEST-42 | TEST | `property_cmd_tests.rs` — happy-path tests for `set_property_inner` + sibling property commands skip op-log verification; only a handful of tests (e.g. `set_todo_state_writes_op_log_entry`) check op_log | M |
+| TEST-43 | TEST | `trash_integration.rs::purge_all_deleted_cleans_dependent_tables` verifies `block_tags` + `block_properties` + `block_links` are cleaned but NOT `page_aliases` + `projected_agenda_cache`, which the production purge DOES delete (pitfall #23) | S |
+| TEST-44 | TEST | `soft_delete::cascade_soft_delete` has seven subtree-shape tests but none with an `is_conflict = 1` copy in the tree — the recursive CTE's `is_conflict = 0` guard would be removable without any test catching it | S |
+| TEST-45 | TEST | GCal OAuth — no test for the stored-token-has-empty-refresh path; `RefreshToken::new` is called unconditionally on the stored secret | S |
+| TEST-46 | TEST | `keyring_store_never_falls_back_to_plaintext_on_unavailable` asserts on an unused `MemBackend` instead of the store's own Err result; the test would pass even if the store silently succeeded on a side channel | S |
+| TEST-47 | TEST | `materializer/tests.rs` — eight queue-metric tests use `>= N` where an exact post-barrier count is deterministic; subtle because `flush_*` itself enqueues a `Barrier` that counts, so the correct tightening is `== N + 1` (not `== N`) | S |
+| TEST-48 | TEST | `materializer/tests.rs::apply_op_invalid_payload` + `::apply_op_unknown_op` enqueue a malformed op and flush but assert nothing (only prove "didn't panic") | S |
+| TEST-49 | TEST | Assertion hygiene cluster — `dag/tests.rs:318` + `op.rs:1099` missing messages; `undo_redo_tests.rs:3087` weak `!is_empty()` where exact count is known; `mcp/tools_ro.rs:1317` + `:1503` check `is_ok()` without shape; `sync_daemon/tests.rs:239` missing message; stale `assertion_line: 792` in `snapshot_op_record_after_create_block.snap` (actual test at `op_log.rs:1125`) | S |
+| TEST-50 | TEST | Edge-case gaps cluster — deeplink malformed URL, FTS short query (<3 chars), import mixed line endings (CRLF+LF+CR), `word_diff` combining marks, `apply_snapshot` invalid-data variants (NULL, invalid block_type, malformed ULID), `compute_reverse` on nonexistent seq, `shift_date` malformed RRULE intervals (`"5x"`, `"w"`, `"3.5d"`, `"invalid"`), backlink recursive-CTE deep conflict tree | S |
+| TEST-51 | TEST | GCal concurrency + boundary gaps — lease tests sequential only, dirty-producer sequential only, digest truncation not tested exactly at the 4096-char boundary, `emit_activity_survives_poisoned_lock` single-threaded only | S |
 
 > **`PUB-*` statuses are heterogeneous now that the publish target is concrete (`github.com/jfolcini/agaric`).**
 > PUB-5 / PUB-8 are ACTIONABLE; PUB-2 / PUB-3 remain DEFERRED on the identity / employer-IP decisions. macOS + Windows code signing are explicitly out of scope: the maintainer opted out of paid Apple Developer Program enrollment ($99/year) and Windows OV/EV certs ($200–400/year) for this OSS project. Bundles ship unsigned with Gatekeeper / SmartScreen first-launch warnings; see `BUILD.md` → "Desktop code signing in CI" for the user-facing install instructions.
@@ -950,6 +964,174 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 **Cost:** S (~15 min once you've decided what to use as DN).
 **Status:** ACTIONABLE — pure operations, no design decision pending.
+
+---
+
+## TEST — Backend test-suite gaps — Appended 2026-04-26
+
+> Output of a two-pass review of all ~2100 Rust backend tests (58 test files: 19 dedicated `*/tests.rs`, 15 under `src/commands/tests/`, 11 under `src/command_integration_tests/`, `integration_tests.rs`, `sync_integration_tests.rs`, and ~87 inline `#[cfg(test)] mod tests` blocks across production modules including MCP and GCal).
+>
+> Pass 1: 7 parallel domain reviewers produced 78 candidate findings. Pass 2: one verification subagent + manual verification (three verifier subagents died on connection errors) re-checked every candidate against the actual source. 40 confirmed, 23 exaggerated / downgraded, 9 outright FALSE (tests already exist elsewhere, code behaves differently than claimed, etc.). The 12 items below bundle the 40 confirmed findings; grouped where the fix is one batch of mechanically similar edits, kept separate where the risk profile differs.
+>
+> Scope note: this is about **test quality** (what would the tests fail to catch if production code regressed), not production code. Production-code findings from the 2026-04-25 review are in the separate block below.
+
+### TEST-40 — `tag_cmd_tests.rs` has no soft-deleted-block error paths
+
+**What:** `src-tauri/src/commands/tests/tag_cmd_tests.rs` covers `add_tag_inner` / `remove_tag_inner` happy paths, nonexistent-block NotFound, nonexistent-tag NotFound, non-tag-block-type Validation, and self-tag Validation, but **never** tests calling either function on a soft-deleted block. Every other `*_cmd_tests.rs` file in the same directory tests the "deleted block → NotFound" path for its commands, per AGENTS.md.
+
+**Fix:** Add `add_tag_deleted_block_returns_not_found` and `remove_tag_deleted_block_returns_not_found`. Pattern: create block, `cascade_soft_delete(&pool, id)`, then call `add_tag_inner` / `remove_tag_inner` and `assert!(matches!(result, Err(AppError::NotFound(_))))`.
+
+**Cost:** S (<15 min — two symmetric tests).
+**Risk:** Low.
+**Impact:** S — closes the one asymmetry between this file and the other `*_cmd_tests.rs` files.
+
+### TEST-41 — `tag_cmd_tests.rs` skips op-log verification for `add_tag` / `remove_tag`
+
+**What:** Both `add_tag_inner` (`src-tauri/src/commands/tags.rs:111-112`) and `remove_tag_inner` (`:188-189`) append to `op_log`, but `tag_cmd_tests.rs` asserts only on the materialised `block_tags` table — no test checks op count, `op_type`, or payload. If the op-log append regressed (wrong `op_type`, wrong payload shape, or was silently dropped entirely) the materialised table would still look correct and every current test would pass.
+
+**Fix:** Add an op-log check after at least one happy-path call: `SELECT COUNT(*) FROM op_log WHERE op_type = 'add_tag' AND json_extract(payload, '$.block_id') = ?`, assert the count matches the number of `add_tag_inner` calls made in the test.
+
+**Cost:** S (<30 min — add 1-2 assertions to the existing happy-path tests).
+**Risk:** Low.
+**Impact:** M — op log is the source of truth for CQRS; silent op-log divergence is the same class of bug as C-2 in the 2026-04-25 production review. Tests should catch it.
+
+### TEST-42 — `property_cmd_tests.rs` op-log verification is inconsistent
+
+**What:** `src-tauri/src/commands/tests/property_cmd_tests.rs` (4 033 lines) has a few explicit op-log checks (e.g. `set_todo_state_writes_op_log_entry` at line 1761) but the canonical happy-path tests — `set_property_creates_property` (line 11), `delete_property_*`, `set_priority_*`, `set_scheduled_date_*`, `set_completed_at_*` — check only the materialised `block_properties` / blocks columns. Same failure mode as TEST-41 but wider: a drop-the-op-log-append regression in property commands would pass almost every test in this file.
+
+**Fix:** Systematic pass: for each property-mutating `*_inner` function, add one op-log-count assertion to its canonical happy-path test. Not every test needs it — one per mutator is enough to catch the regression.
+
+**Cost:** M (2–4h — roughly 25–30 assertions across the file, plus re-running `cargo nextest run` to confirm).
+**Risk:** Low.
+**Impact:** M — same reasoning as TEST-41, but this file covers the larger surface (TODO state, priority, due date, scheduled date, custom properties, repeat rules, etc.).
+
+### TEST-43 — `trash_integration.rs` purge-cascade test misses two FK tables
+
+**What:** `src-tauri/src/command_integration_tests/trash_integration.rs::purge_all_deleted_cleans_dependent_tables` (lines 173-243) verifies that `block_tags`, `block_properties`, and `block_links` rows are deleted when a soft-deleted block is purged. But `src-tauri/src/commands/blocks/crud.rs:1204-1216` ALSO deletes `page_aliases` (by `page_id`) and `projected_agenda_cache` (by `block_id`), and neither is asserted on. AGENTS.md pitfall #23 explicitly flags this as a regression-prone spot ("when adding a new table referencing `blocks`, add a cleanup step … AND a test case verifying rows are deleted"). `integration_tests.rs::purge_block_removes_*` has the symmetric gap.
+
+**Fix:** Extend the test to seed rows in `page_aliases` (against the doomed block) and `projected_agenda_cache` (same), then `assert_eq!(COUNT(*), 0)` for each after `purge_all_deleted_inner`.
+
+**Cost:** S (<1h — two INSERTs + two asserts in an existing test).
+**Risk:** Low.
+**Impact:** M — a regression that drops the `page_aliases` cleanup would leave orphan alias rows pointing to purged blocks; a regression that drops `projected_agenda_cache` cleanup would leave stale agenda entries pointing at purged blocks. Both are user-visible but silent.
+
+### TEST-44 — `soft_delete::cascade_soft_delete` never tested with a conflict copy in the subtree
+
+**What:** `src-tauri/src/soft_delete/mod.rs` production code (lines 22-38) explicitly filters `b.is_conflict = 0` in the recursive CTE ("conflict copies share their original's parent_id but are logically separate — invariant #9"). The seven inline `cascade_soft_delete_*` tests (lines 138-450) build linear chains, wide trees, deep trees, sibling trees, re-deletes, concurrent deletes — but **none** insert a `is_conflict = 1` row into the subtree. A regression that dropped the `is_conflict = 0` filter would soft-delete conflict copies along with their ancestors, making them appear in trash UIs they should not appear in, and every current test would pass.
+
+**Fix:** Add one test. Build a parent-child tree; insert a conflict-copy child (`is_conflict = 1`) alongside a normal child; call `cascade_soft_delete` on the parent; assert the normal child has `deleted_at IS NOT NULL` AND the conflict copy has `deleted_at IS NULL`.
+
+**Cost:** S (~45 min).
+**Risk:** Low.
+**Impact:** M — invariant #9 is called out as one of the top architectural invariants in the root `AGENTS.md`; the general convention is "recursive CTEs over `blocks` must filter `is_conflict = 0`". Having a test that actually exercises the filter is better insurance than relying on review to catch its removal.
+
+### TEST-45 — GCal OAuth: no test for stored empty / missing refresh token
+
+**What:** `src-tauri/src/gcal_push/oauth.rs:488-495` passes the stored refresh token straight into `RefreshToken::new()` without validating non-emptiness. Tests cover `invalid_grant` (revoked), transient network failures, and success, but never the path where the token store returns `SecretString::from("")`. Realistic failure modes: the initial OAuth flow didn't capture a refresh token (Google only returns one on first consent when `access_type=offline` + `prompt=consent`); token store corruption; test-fixture regression.
+
+**Fix:** Either (a) add validation at the read site (`oauth.rs`) that returns a clean `AppError::Auth` when refresh is empty, plus a test; or (b) accept the current behaviour and add a test that documents the panic / error path that occurs today.
+
+**Cost:** S (<1h).
+**Risk:** Low.
+**Impact:** M — silent failure mode in production; a user who somehow loses their refresh token gets an opaque error chain instead of a clear "sign in again" message.
+
+### TEST-46 — `keyring_store_never_falls_back_to_plaintext_on_unavailable` asserts on the wrong object
+
+**What:** `src-tauri/src/gcal_push/keyring_store.rs:859-874` constructs a `MemBackend` that the store under test never touches, then asserts the unused `MemBackend` is empty at the end. This tells us nothing about what the store did in response to the "real" backend being unavailable — the store could have silently succeeded on some unlogged side channel and the test would still pass.
+
+**Fix:** Restructure so the assertion is on the store's own return value: `assert!(result.is_err())` AND a filesystem check that no plaintext file was written at the expected fallback path. Drop the unused `MemBackend`.
+
+**Cost:** S (<1h).
+**Risk:** Low (test-only change).
+**Impact:** M — this is the one test that defends against OAuth tokens being written to plaintext. Its current structure defeats the defence.
+
+### TEST-47 — Materializer queue-metric tests use `>= N` where `== N + 1` is deterministic
+
+**What:** `src-tauri/src/materializer/tests.rs` has eight small tests that enqueue N user tasks, call `flush_foreground` / `flush_background` / `flush`, and then assert `metrics().fg_processed.load(..) >= N` (or equivalent). The assertions are loose in a subtle way: `flush_*` itself enqueues a `Barrier` task (`coordinator.rs:589-593`), and the `Barrier` dequeue increments the same counter (`consumer.rs:150-153` for fg, `:280-283` for bg). So the exact deterministic count is `N + 1`, not `N`.
+
+This matters: a naive tightening to `== N` (which a reviewer might try) would fail every one of these tests. The correct tightening is `== N + 1`, or — preferably — replace the metric-count assertion with a direct observation of side effects (cache row counts, `blocks` table state) that doesn't couple the test to the barrier accounting.
+
+Affected tests (all in `materializer/tests.rs`):
+
+| Lines | Test | Current | Correct |
+|---|---|---|---|
+| 1062-1073 | `metrics_bg` | `>= 1` | `== 3` (2 user bg + 1 barrier) |
+| 1074-1097 | `metrics_fg` | `>= 1` | `== 2` |
+| 1121-1144 | `flush_fg` | `>= 1` | `== 2` |
+| 1145-1157 | `flush_bg` | `>= 1` | `== 2` |
+| 1158-1188 | `flush_both` | fg `>= 1`, bg `>= 1` | fg `== 2`, bg `== 2` |
+| 1539-1542 | (parallel groups) | `>= 2` | `== 3` |
+| 2710-2742 | (concurrent dispatch stress) | `>= 10` | `== 11` |
+
+`high_water_fg` / `high_water_bg` (lines 1560-1591) are separate: high-water is recorded at enqueue, so `== 1` is correct (no barrier accounting needed there).
+
+**Fix:** Pass over the table above; swap `>=` for `==` at each cited line, using the "N + 1" count. Run the suite to confirm. Prefer side-effect assertions where natural, but the exact-count tightening is mechanical.
+
+**Cost:** S (<1h).
+**Risk:** Low (test-only).
+**Impact:** S–M — not a behavioural bug in production, but the `>=` pattern is exactly what AGENTS.md § Quality Standards tells reviewers to challenge, and a looming source of inflation every time someone copies one of these tests as a template.
+
+### TEST-48 — Two materializer "invalid op" tests assert literally nothing
+
+**What:** `src-tauri/src/materializer/tests.rs::apply_op_invalid_payload` (lines 2213-2223) and `::apply_op_unknown_op` (lines 2224-2235) enqueue a malformed op, call `flush_foreground`, and end. No assertion. They prove only "the materializer didn't panic on bad input". If the dispatch path stopped tracking errors at `fg_errors` (or stopped the retry exhaustion counter at `fg_apply_dropped`), both tests would still pass.
+
+**Fix:** Add `assert!(mat.metrics().fg_errors.load(..) >= 1)` (or `== 2` accounting for the one retry) so a regression that silently swallows the failure gets caught. Bonus: also assert that nothing was materialised into `blocks` (the op is malformed, no row should exist).
+
+**Cost:** S (<15 min — 4-6 lines of assertion added to each test).
+**Risk:** Low.
+**Impact:** S — small, but these tests currently give a false sense of coverage.
+
+### TEST-49 — Assertion hygiene cluster (messages, exact counts, stale snapshot metadata)
+
+**What:** A handful of low-severity hygiene nits that are worth fixing as one batch because they are mechanically identical and the file diffs stay small:
+
+- `src-tauri/src/dag/tests.rs:318` — `assert!(err.is_err());` with no message or variant check. Should include a message and prefer `matches!(err, Err(AppError::…))`.
+- `src-tauri/src/op.rs:1099` — `assert!(validate_set_property(&p).is_ok());` missing message.
+- `src-tauri/src/commands/tests/undo_redo_tests.rs:3087-3090` — `assert!(!child_ops_in_b.is_empty(), …)`; the comment at line 3076 states 3 expected ops (create, edit, move). Should be `assert_eq!(child_ops_in_b.len(), 3, …)`.
+- `src-tauri/src/mcp/tools_ro.rs:1317` — `assert!(result.is_ok(), …)` without inspecting the response shape.
+- `src-tauri/src/mcp/tools_ro.rs:1503` — same pattern inside a concurrent stress loop; add a field-existence check on at least one of the N concurrent responses.
+- `src-tauri/src/sync_daemon/tests.rs:239` — `assert!(orch.next_message().is_none())` missing the descriptive-message string that the rest of the test uses.
+- `src-tauri/src/snapshots/agaric_lib__op_log__tests__snapshot_op_record_after_create_block.snap` — metadata header says `assertion_line: 792` but the test is now at `src-tauri/src/op_log.rs:1125` (drifted after a refactor). Snapshot content is correct; only the metadata needs regenerating. Fix with `cargo insta test --accept`.
+
+**Fix:** One commit per category if you want tidy history, or one rollup commit labelled "test hygiene". All changes are mechanical.
+
+**Cost:** S (<1h total for all six sites).
+**Risk:** Low.
+**Impact:** S — style consistency; would also catch a future reviewer's "why is this file different" question.
+
+### TEST-50 — Edge-case coverage gaps cluster
+
+**What:** Eight individually small but collectively real edge-case gaps where production code handles the case but no test would catch its regression:
+
+- `src-tauri/src/deeplink/mod.rs` — no test for an invalid URL that fails `url::Url::parse` (e.g. `"agaric://[invalid"`).
+- `src-tauri/src/fts/tests.rs` — no test for 1- or 2-character queries; FTS5 trigram tokenizer has implementation-defined behaviour for sub-trigram input.
+- `src-tauri/src/import.rs` — CRLF-only and lone-CR are each covered (per L-9), but no single-file fixture with `\r\n` + `\n` + `\r` mixed together.
+- `src-tauri/src/word_diff.rs:119-127` — unicode test uses precomposed characters only (`café`, `naïve`); no combining-mark input (`e\u{0301}`) where the `similar` crate may behave differently.
+- `src-tauri/src/snapshot/tests.rs::apply_snapshot_rejects_fk_violation` (lines 1032-1063) — only covers FK violation; NULL-in-NOT-NULL, invalid `block_type`, and malformed ULID should also reject.
+- `src-tauri/src/reverse/tests.rs` — no `compute_reverse` test against a nonexistent `seq`; behaviour is defined but untested.
+- `src-tauri/src/recurrence/tests.rs:236-263` — `shift_date_rejects_zero_intervals` / `shift_date_rejects_negative_intervals` exist, but `"5x"`, `"w"` (no number), `"3.5d"` (float), `"invalid"` are not covered.
+- `src-tauri/src/backlink/tests.rs` — flat conflict cases are tested, but no deep (5+-level) descendant tree under a conflict copy that would stress the recursive CTE's `is_conflict = 0` + `depth < 100` bound under a pathological shape.
+
+**Fix:** Add one minimal test per bullet. Each is ~10-20 lines.
+
+**Cost:** S (~2-3h for all eight).
+**Risk:** Low.
+**Impact:** S per item, M cumulative — same "close the obvious gaps while someone is already touching the file" thinking as TEST-49.
+
+### TEST-51 — GCal concurrency + boundary gaps
+
+**What:** Four small gaps in the GCal push subsystem:
+
+- `src-tauri/src/gcal_push/lease.rs` — lease tests use strictly sequential timestamps (`t0()`, `t0() + 1s`, …); no test with two concurrent `claim_lease` calls. SQLite's write lock makes this less urgent than it sounds, but a single `tokio::spawn` pair + `join!` would demonstrate the serialisation behaviour explicitly.
+- `src-tauri/src/gcal_push/dirty_producer.rs` — same: all sequential, no two-producer race test.
+- `src-tauri/src/gcal_push/digest.rs` — `truncation_triggers_on_many_entries_and_fits_within_cap` tests with 200 entries (well over the 4096-char cap) but nothing at the boundary; an off-by-one in the truncation cut would go undetected.
+- `src-tauri/src/mcp/activity.rs::emit_activity_survives_poisoned_lock` — single-threaded only; the test poisons the lock from inside the same task it asserts from, which doesn't exercise the concurrent-recovery path the code is written for.
+
+**Fix:** One test per bullet. Concurrency tests use `tokio::spawn` + `join!`; the boundary test is one more `assert` on a 4 096-byte fixture.
+
+**Cost:** S (~1-2h).
+**Risk:** Low-to-medium for the concurrency tests (they rely on scheduler ordering); use the same patterns as existing `tokio::spawn`-based tests elsewhere in the repo.
+**Impact:** S.
 
 ---
 
