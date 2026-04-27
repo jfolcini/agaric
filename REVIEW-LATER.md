@@ -17,11 +17,11 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-86 open items — 57 planned work (FEAT/MAINT/PERF/PUB) + 12 UX-1..UX-12 + 17 test-quality (4 backend TEST-42, TEST-45, TEST-50, TEST-51 + 13 frontend TEST-52..TEST-64).
+81 open items — 54 planned work (FEAT/MAINT/PERF/PUB) + 12 UX-1..UX-12 + 15 test-quality (2 backend TEST-42, TEST-45 + 13 frontend TEST-52..TEST-64).
 
-Previously resolved: 550+ items across 160 sessions.
+Previously resolved: 555+ items across 161 sessions.
 
-> **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. The `TEST-*` items below it (TEST-42, TEST-45, TEST-50, TEST-51) are a separate, targeted review of **backend test quality** — see the block header for scope and methodology.**
+> **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. The `TEST-*` items below it (TEST-42, TEST-45) are a separate, targeted review of **backend test quality** — see the block header for scope and methodology.**
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -56,7 +56,6 @@ Previously resolved: 550+ items across 160 sessions.
 | MAINT-131 | MAINT | Block-surface Tauri coupling — 8 presentational components in `src/components/` import functions from `src/lib/tauri` directly (`StaticBlock`, `EditableBlock`, `SortableBlock`, `BlockListItem`, `BlockPropertyEditor`, `BlockPropertyDrawer`, `ImageResizeToolbar`, `LinkEditPopover`). Notable double-IPC: `SortableBlock.tsx:155` calls `listAttachments(blockId)` AND `StaticBlock` via `useBlockAttachments` also calls `listAttachments` for every visible block (1 IPC → 2 IPCs per block row on the page). Add backend `get_batch_attachment_counts(block_ids)` (mirrors the existing `json_each`-backed batch patterns in `fts.rs` / `backlink/query.rs`), wrap per-IPC calls in hooks (`usePropertySave` already exists; add `useBlockReschedule`, `useLinkMetadata`). Prevents isolated rendering (Storybook, unit tests w/o full mocks) too. | L |
 | MAINT-132 | MAINT | Consolidate hand-written recursive CTEs. Ancestor walks at `commands/blocks/move_ops.rs:93-109` (cycle detection) + `commands/blocks/crud.rs:99-110` (depth check) and descendant walks at `commands/history.rs:51-64` / `:72-81` (DeleteBlock/RestoreBlock cascades) are still inline. `block_descendants.rs` macros cover descendant walks but not ancestors, and history.rs is not on the documented exception list at `block_descendants.rs:36-38`. Every hand-written CTE risks forgetting invariant #9 (`is_conflict = 0` + `depth < 100`). Extend the macro family to cover ancestor walks + `find_lca` chain-walking; migrate history.rs to the existing `descendants_cte_*!()` macros. | M |
 | MAINT-133 | MAINT | **Possible data-loss bug surfaced by review.** `BlockSnapshot` (`snapshot/types.rs:15-33`), the snapshot SELECT (`snapshot/create.rs:21`), and the restore INSERT (`snapshot/restore.rs:135-154`) all omit the `conflict_type` column that migration `0007_add_conflict_type.sql:3` adds to `blocks` and that `merge/resolve.rs:117-127` populates on every conflict copy (values `Text`/`Property`/`Move`/`DeleteEdit`). On any snapshot round-trip (restore, peer snapshot catch-up) every conflict block's `conflict_type` becomes NULL. **Write a round-trip test first to confirm the regression is reachable**, then add the column to the struct + SELECT + INSERT and bump `snapshot::SCHEMA_VERSION`. | S–M |
-| MAINT-134 | MAINT | Extract `emit_property_changed_event(app, block_id, changed_keys)` helper in `commands/properties.rs`. Six Tauri command wrappers (`set_property`, `set_todo_state`, `set_priority`, `set_due_date`, `set_scheduled_date`, `delete_property` at `properties.rs:654-848`) repeat the same ~12-line "call inner → emit `EVENT_PROPERTY_CHANGED` → log-on-error" block verbatim. Any change to the event payload or emission strategy touches 6 sites today. | S |
 | MAINT-135 | MAINT | Move MCP `parse_args<T>` (duplicated at `mcp/tools_ro.rs:176` and `mcp/tools_rw.rs:111`) plus a new `to_tool_result<T: Serialize>(resp) -> Result<Value, AppError>` into `mcp/mod.rs`. Every RO/RW handler today repeats both bits of ceremony; collapsing them makes each handler ~2 lines. | S |
 | MAINT-136 | MAINT | MCP tool-name centralization + registry-driven privacy guard. Each of ~15 MCP tool names is duplicated across 4 sites (ToolDescription, `call_tool` match, `parse_args` error prefix, `summarise.rs` dispatch) with no compile-time link — drift hazard. The privacy-guard test (`mcp/summarise.rs::privacy_guard_no_summariser_leaks_content_or_value_text`) maintains a separate hand-typed list of 15 names; adding a tool without a summariser silently falls through to bare tool name. Introduce `&'static str` constants (or a `ToolName` enum) and drive the privacy guard by iterating the registry rather than a frozen list. | S–M |
 | MAINT-137 | MAINT | Extract `#[cfg(test)]` mega-blocks to sibling `tests.rs` files. Production / test line counts: `mcp/server.rs` 3053 total / ~915 prod, `mcp/tools_ro.rs` 2138 / ~645, `mcp/tools_rw.rs` 1189 / ~449, `sync_files.rs` 2393 / ~720. Mechanical move; no production refactor required. Matches the already-established pattern in `sync_daemon/`, `sync_protocol/`, `sync_net/`. Immediately reduces scan time on the largest backend files. Do in one commit per file so CI cache invalidation stays bounded. | S–M |
@@ -65,8 +64,6 @@ Previously resolved: 550+ items across 160 sessions.
 | MAINT-140 | MAINT | Type `CycleOutcome::HardFailure`. Currently `HardFailure(String)` at `gcal_push/connector.rs:442-454, 524-597` discards structured `GcalErrorKind` variants into formatted strings at every call site (`"unauthorized (reauth required)"`, `"rate_limited: retry after {…}ms"`, `"server_error: HTTP {status}"`, `"invalid_request: {msg}"`). Task loop only uses it for logging. Replace with `HardFailure(GcalErrorKind)` (or a narrower `HardFailureReason` enum); keep a `Display` impl for log lines. Also unifies `classify_date_err` + `classify_cycle_failure` which duplicate per-variant arms. | S |
 | MAINT-141 | MAINT | `tag_inheritance.rs` (1324L) embeds **11** `WITH RECURSIVE` blocks and **14** literal `depth < 100` bounds, bypassing the `block_descendants.rs` macro infrastructure. Add `subtree_cte_*!()` macros covering the tag-inheritance walks; replace literal `100` with a named `MAX_TAG_INHERITANCE_DEPTH` constant (or reuse a crate-wide one). Precondition for MAINT-132's broader consolidation. | M |
 | MAINT-142 | MAINT | Split `tag_inheritance.rs` (1324L) into `tag_inheritance/mod.rs` (dispatcher) + `incremental.rs` + `rebuild.rs` + `tests.rs` — matches the pattern used by sibling modules. The file documents `apply_op_tag_inheritance` as "the" single entry point but 7 other `pub async fn` are also callable; demote helpers to `pub(crate)` as part of the split. Deliver after MAINT-141 so the macros move first. | M |
-| MAINT-143 | MAINT | Dedup leaf-resolution SQL shared between `tag_query/resolve.rs` and `backlink/filters.rs`. The query is literally copy-pasted with a comment in one file acknowledging it. UX-250 inline-ref union behaviour risks diverging silently between the two copies. Move to one location and call from both sites. | S |
-| MAINT-144 | MAINT | Dedup `MAX(position) + 1` sibling-placement SQL. Identical query (with the same BUG-24 `NULL_POSITION_SENTINEL` exclusion hack) lives in `merge/resolve.rs:84-98` and `recurrence/compute.rs:166-180`. Extract `async fn next_sibling_position_excluding_sentinel(tx, parent_id) -> i64` and call from both. | S |
 | MAINT-145 | MAINT | Clarify sync orchestrator boundaries + delete dead protocol-layer arms. `sync_daemon/orchestrator.rs` owns peer discovery, scheduling, per-peer locking, snapshot+file transfer orchestration; `sync_protocol/orchestrator.rs` owns the HeadExchange→OpBatch→Merge→Complete state machine. Add module-level doc comments stating each layer's responsibility explicitly, and delete the file-transfer message arms at `sync_protocol/orchestrator.rs:460-467` that are never reached (file transfer is handled entirely by `sync_files.rs` after `SyncComplete`). Also a good place to document `SyncOrchestrator` invariants (when `remote_device_id` is populated, how `received_ops` accumulates, meaning of `is_terminal`). | S |
 | MAINT-146 | MAINT | LOW cleanup batch — core / op log. (a) `OpPayload::normalize_block_ids()` at `op.rs:329-333` is an empty method whose name misleads — rename `_assert_normalized()` or remove. (b) `serialize_variant!` macro wraps a single 12-arm match at `op_log.rs:46-59` — inline. (c) `dag::find_lca` at `dag.rs:220-346` duplicates two chain-walk loops with the same error message in 4 places — extract `walk_edit_chain(pool, start, max_steps, has_snapshots)`. (d) `insert_remote_op` doesn't verify canonical `parent_seqs` ordering (documentation-only; hash re-verify is self-consistent under current design). (e) Hardcoded `20` import-depth limit at `import.rs:119-126, 198-202` — introduce `const MAX_IMPORT_DEPTH: usize = 20;`. (f) `op_log.rs:128` builds JSON with `format!(r#"[["{}",{}]]"#, …)` — use `serde_json::to_string(&vec![(device_id, prev_seq)])?`. (g) `db.rs` `init_pool` / `init_pools` split would benefit from a short "when to use which" doc comment. | S |
 | MAINT-147 | MAINT | LOW cleanup batch — commands. (a) `purge_block_inner` at `commands/blocks/crud.rs:716-937` is ~221L with ~15 near-identical `DELETE`/`UPDATE` blocks; introduce a `purge_descendants_table!()` macro for the uniform DELETE-by-IN case (~10 of 15 blocks). (b) `prev_edit` lookup duplicated between `crud.rs:398-409` and `drafts.rs:84-95` — extract `find_prev_edit_in_tx`. (c) ~99 `#[tauri::command]` wrappers repeat `State` + `.map_err(sanitize_internal_error)`; add a pre-commit check (not a macro — macros obstruct specta). (d) Two `dispatch_background_for_*` helpers in `commands/spaces.rs` differ only by an error-message string — unify. (e) `set_todo_state_inner` / `set_priority_inner` (`commands/properties.rs:92-104, 253-265`) duplicate the "fetch def → fallback to defaults" validation with different default arrays — extract helper. (f) Unused `_space_id: &str` parameter in `spaces::dispatch_background_for_page_create:246`. (g) Mixed `sanitize_internal_error` vs `super::sanitize_internal_error` import paths in `properties.rs` — normalize. (h) `bug_report.rs` comments reference hardcoded "2 MB" / "7 days" / "8 KB" alongside the named constants — reference the constants by name. (i) `redact_line` growing param list at `bug_report.rs:255-306` — bundle into `RedactionContext` struct. (j) `DEFAULT_RETENTION_DAYS.cast_signed()` in `commands/compaction.rs:70, 129` with no safety comment — add a one-liner or wrap in a helper. (k) Missing doc comments on command wrappers at `link_metadata.rs:60/71`, `gcal.rs:309/320/330/350/360`, `bug_report.rs:178/479`, `sync_cmds.rs:345`. | S–M |
@@ -84,8 +81,6 @@ Previously resolved: 550+ items across 160 sessions.
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S |
 | TEST-42 | TEST | `property_cmd_tests.rs` — happy-path tests for `set_property_inner` + sibling property commands skip op-log verification; only a handful of tests (e.g. `set_todo_state_writes_op_log_entry`) check op_log | M |
 | TEST-45 | TEST | GCal OAuth — no test for the stored-token-has-empty-refresh path; `RefreshToken::new` is called unconditionally on the stored secret | S |
-| TEST-50 | TEST | Edge-case gaps cluster — deeplink malformed URL, FTS short query (<3 chars), import mixed line endings (CRLF+LF+CR), `word_diff` combining marks, `apply_snapshot` invalid-data variants (NULL, invalid block_type, malformed ULID), `compute_reverse` on nonexistent seq, `shift_date` malformed RRULE intervals (`"5x"`, `"w"`, `"3.5d"`, `"invalid"`), backlink recursive-CTE deep conflict tree | S |
-| TEST-51 | TEST | GCal concurrency + boundary gaps — lease tests sequential only, dirty-producer sequential only, digest truncation not tested exactly at the 4096-char boundary, `emit_activity_survives_poisoned_lock` single-threaded only | S |
 | TEST-52 | TEST | `useBlockKeyboard` popup-yield for Enter / Escape / Backspace is not unit-tested (pitfall #14 gap; only arrows covered at `use-block-keyboard.test.ts:626-681`) | S |
 | TEST-53 | TEST | `useJournalAutoCreate.test.ts:177-192` "cleans up keyboard listener on unmount" tautological on two axes (pageMap guard + post-mount `opts.handleAddBlock` reassignment that the closure never observes) | S |
 | TEST-54 | TEST | `useSyncTrigger.test.ts:116-128` asserts `expect(toast).not.toHaveBeenCalled()` on a bare `toast(...)` that production code never invokes; sub-mocks (`.success/.error/.info`) are untested | S |
@@ -1273,39 +1268,6 @@ On any snapshot round-trip (user-triggered restore, peer snapshot catch-up durin
 **Risk:** Low–Medium — additive struct field; `SCHEMA_VERSION` bump rejects older-format snapshots unless the decoder tolerates missing fields (verify).
 **Impact:** H — restores conflict metadata fidelity across snapshot boundaries; prevents a silent integrity regression on every sync-reset / peer bootstrap.
 
-### MAINT-134 — Extract `emit_property_changed_event` helper in `commands/properties.rs`
-
-**What:** Six Tauri command wrappers in `commands/properties.rs` repeat the same ~12-line block verbatim:
-
-- `set_property` at L654-668
-- `set_todo_state` at L676-703
-- `set_priority` at L717-744
-- `set_due_date` at L751-778
-- `set_scheduled_date` at L785-813
-- `delete_property` at L820-848
-
-Each: `let resp = set_*_inner(...).await.map_err(sanitize_internal_error)?; if let Err(e) = app.emit(EVENT_PROPERTY_CHANGED, PropertyChangedEvent { block_id: ..., changed_keys: ... }) { logger::warn(...) } Ok(resp)`.
-
-**Fix:**
-
-```rust
-fn emit_property_changed_event(
-    app: &tauri::AppHandle,
-    block_id: String,
-    changed_keys: Vec<String>,
-) {
-    if let Err(e) = app.emit(EVENT_PROPERTY_CHANGED, PropertyChangedEvent { block_id, changed_keys }) {
-        tracing::warn!(?e, "failed to emit EVENT_PROPERTY_CHANGED");
-    }
-}
-```
-
-Call from all 6 wrappers. If other commands start emitting the same event, move the helper to `commands/mod.rs` or a new `commands/event_helpers.rs`.
-
-**Cost:** S.
-**Risk:** Low — mechanical extraction; the per-site behaviour is identical.
-**Impact:** M — one place to change the event payload, the log level, or add a future retry.
-
 ### MAINT-135 — Move MCP `parse_args<T>` + `to_tool_result<T>` into a shared module
 
 **What:** `parse_args<T: DeserializeOwned>(args: Value) -> Result<T, AppError>` is defined verbatim at both `mcp/tools_ro.rs:176` and `mcp/tools_rw.rs:111`. Every RO/RW handler also repeats `serde_json::to_value(resp).map_err(|e| ...)?`.
@@ -1460,40 +1422,6 @@ Precondition for MAINT-132's broader consolidation story.
 **Cost:** M — straight-up file-level refactor; test module moves verbatim.
 **Risk:** Low — no logic change; the call graph (only `materializer/handlers.rs` imports this module) is small.
 **Impact:** M — readable seams for a critical subsystem; discourages new cross-helper coupling.
-
-### MAINT-143 — Deduplicate `tag_query/resolve.rs` leaf SQL shared with `backlink/filters.rs`
-
-**What:** `tag_query/resolve.rs` contains a leaf-resolution query that is also copy-pasted into `backlink/filters.rs` (with a four-word comment in `backlink/filters.rs` admitting this: roughly "duplicated from tag_query"). UX-250 ships "inline-ref union" behaviour — any future change to that union semantic risks silently diverging between the two copies.
-
-**Fix:** Move the leaf SQL (the query itself — not the calling-code structure, which differs legitimately) to one location (`tag_query/resolve.rs` is the natural home) and have `backlink/filters.rs` call through. Add a single shared integration test that pins the UX-250 inline-ref union behaviour so any future drift triggers a CI failure.
-
-**Cost:** S.
-**Risk:** Low.
-**Impact:** M — removes a real silent-drift hazard in an already-subtle reference-resolution path.
-
-### MAINT-144 — Deduplicate `MAX(position) + 1` sibling-placement SQL
-
-**What:** Identical "find the next sibling position, excluding the `NULL_POSITION_SENTINEL`" query lives in two places:
-
-- `merge/resolve.rs:84-98`
-- `recurrence/compute.rs:166-180`
-
-Both carry the same BUG-24 sentinel-exclusion hack. Each call issues the same `MAX(position) + 1` SQL with the same `WHERE position != ?sentinel` filter.
-
-**Fix:** Extract
-
-```rust
-pub(crate) async fn next_sibling_position_excluding_sentinel(
-    tx: &mut Transaction<'_, Sqlite>,
-    parent_id: &str,
-) -> Result<i64, AppError> { ... }
-```
-
-into a shared module (e.g., `sql_utils.rs` or a new `block_positions.rs`). Call from both sites.
-
-**Cost:** S.
-**Risk:** Low — two call sites, both covered by tests.
-**Impact:** S — one place for BUG-24 follow-ups; no more silent drift between merge-conflict sibling placement and recurrence sibling placement.
 
 ### MAINT-145 — Clarify sync orchestrator boundaries + delete dead protocol-layer arms
 
@@ -1800,40 +1728,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 **Risk:** Low.
 **Impact:** M — silent failure mode in production; a user who somehow loses their refresh token gets an opaque error chain instead of a clear "sign in again" message.
 
-### TEST-50 — Edge-case coverage gaps cluster
-
-**What:** Eight individually small but collectively real edge-case gaps where production code handles the case but no test would catch its regression:
-
-- `src-tauri/src/deeplink/mod.rs` — no test for an invalid URL that fails `url::Url::parse` (e.g. `"agaric://[invalid"`).
-- `src-tauri/src/fts/tests.rs` — no test for 1- or 2-character queries; FTS5 trigram tokenizer has implementation-defined behaviour for sub-trigram input.
-- `src-tauri/src/import.rs` — CRLF-only and lone-CR are each covered (per L-9), but no single-file fixture with `\r\n` + `\n` + `\r` mixed together.
-- `src-tauri/src/word_diff.rs:119-127` — unicode test uses precomposed characters only (`café`, `naïve`); no combining-mark input (`e\u{0301}`) where the `similar` crate may behave differently.
-- `src-tauri/src/snapshot/tests.rs::apply_snapshot_rejects_fk_violation` (lines 1032-1063) — only covers FK violation; NULL-in-NOT-NULL, invalid `block_type`, and malformed ULID should also reject.
-- `src-tauri/src/reverse/tests.rs` — no `compute_reverse` test against a nonexistent `seq`; behaviour is defined but untested.
-- `src-tauri/src/recurrence/tests.rs:236-263` — `shift_date_rejects_zero_intervals` / `shift_date_rejects_negative_intervals` exist, but `"5x"`, `"w"` (no number), `"3.5d"` (float), `"invalid"` are not covered.
-- `src-tauri/src/backlink/tests.rs` — flat conflict cases are tested, but no deep (5+-level) descendant tree under a conflict copy that would stress the recursive CTE's `is_conflict = 0` + `depth < 100` bound under a pathological shape.
-
-**Fix:** Add one minimal test per bullet. Each is ~10-20 lines.
-
-**Cost:** S (~2-3h for all eight).
-**Risk:** Low.
-**Impact:** S per item, M cumulative — same "close the obvious gaps while someone is already touching the file" thinking as TEST-49.
-
-### TEST-51 — GCal concurrency + boundary gaps
-
-**What:** Four small gaps in the GCal push subsystem:
-
-- `src-tauri/src/gcal_push/lease.rs` — lease tests use strictly sequential timestamps (`t0()`, `t0() + 1s`, …); no test with two concurrent `claim_lease` calls. SQLite's write lock makes this less urgent than it sounds, but a single `tokio::spawn` pair + `join!` would demonstrate the serialisation behaviour explicitly.
-- `src-tauri/src/gcal_push/dirty_producer.rs` — same: all sequential, no two-producer race test.
-- `src-tauri/src/gcal_push/digest.rs` — `truncation_triggers_on_many_entries_and_fits_within_cap` tests with 200 entries (well over the 4096-char cap) but nothing at the boundary; an off-by-one in the truncation cut would go undetected.
-- `src-tauri/src/mcp/activity.rs::emit_activity_survives_poisoned_lock` — single-threaded only; the test poisons the lock from inside the same task it asserts from, which doesn't exercise the concurrent-recovery path the code is written for.
-
-**Fix:** One test per bullet. Concurrency tests use `tokio::spawn` + `join!`; the boundary test is one more `assert` on a 4 096-byte fixture.
-
-**Cost:** S (~1-2h).
-**Risk:** Low-to-medium for the concurrency tests (they rely on scheduler ordering); use the same patterns as existing `tokio::spawn`-based tests elsewhere in the repo.
-**Impact:** S.
-
 ---
 
 ## TEST — Frontend test-suite quality — Appended 2026-04-26
@@ -1842,7 +1736,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 >
 > Pass 1: 10 parallel domain reviewers (split by test directory) produced 52 candidate findings. Pass 2: 4 parallel verification subagents re-opened every cited file and re-read ± 30 lines of surrounding context under an adversarial rubric (bias toward skepticism, reject if evidence snippet cannot be reproduced). 29 confirmed (9 Medium, 20 Low), 10 partially-confirmed and downgraded, 8 outright FALSE — most notably `BlockListItem.test.tsx` (defensive `.toBeDefined()` check already present), `BlockPropertyEditor.test.tsx` (`toHaveBeenCalledWith` on the warn spy already present), `useRichContentCallbacks.test.ts` (inner `beforeEach` already resets `currentView` and `selectedBlockId`), `useBlockTreeEventListeners.test.ts` (handler's no-focus guard is SYNCHRONOUS pre-`await`, so the flagged `setTimeout` is harmless padding), `useEditorBlur.test.ts` (companion test at lines 78-83 asserts specific selectors via `toContain`), and the axe `{ timeout: 5000 }` pattern on test files that are not cold-load sites (`BlockListRenderer.test.tsx`, `BuiltinDateFields.test.tsx`). The 13 items below bundle the 29 confirmed findings; grouped where the fix is one batch of mechanically similar edits, kept separate where the risk profile differs.
 >
-> Scope note: frontend test quality (what would tests fail to catch if code regresses), not production code. Methodology parallels the backend TEST-40..TEST-51 block above.
+> Scope note: frontend test quality (what would tests fail to catch if code regresses), not production code. Methodology parallels the backend test-quality block above.
 
 ### TEST-52 — `useBlockKeyboard` popup-yield for Enter / Escape / Backspace is not unit-tested
 

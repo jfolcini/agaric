@@ -1,5 +1,51 @@
 # Session Log
 
+## Session 509 — Backend test + maint batch: close 5 items (TEST-50, TEST-51, MAINT-134, MAINT-143, MAINT-144) (2026-04-27)
+
+**5 items closed (10 sub-items + 1 incidental UX-250 bug fix).** Six parallel build subagents on non-overlapping files, paired with six review subagents — all SHIP'd on first pass. No subagent stalls this time. The MAINT-143 dedup surfaced and incidentally fixed a UX-250 bug where `BacklinkFilter::HasTag` / `HasTagPrefix` were not unioning `block_tag_refs` (inline tag refs); the dedup now routes both backlink filters through the canonical `resolve_tag_leaves` / `resolve_tag_prefix_leaves` helpers, matching the documented UX-250 contract (FEATURE-MAP.md line 193).
+
+**REVIEW-LATER impact:**
+
+- **Top-level:** 86 open items → 81. Summary text: `57 planned work + … 17 test-quality (4 backend TEST-42, TEST-45, TEST-50, TEST-51 + 13 frontend …)` → `54 planned work + … 15 test-quality (2 backend TEST-42, TEST-45 + 13 frontend …)`. Previously-resolved bumped 550+ → 555+ across 161 sessions.
+- Stale prose reference `Methodology parallels the backend TEST-40..TEST-51 block above` → `…the backend test-quality block above` (since most of TEST-40..TEST-51 is now closed).
+
+**Items closed (5) and where they landed:**
+
+| Item | File(s) | Change |
+|---|---|---|
+| TEST-50 | `deeplink/mod.rs`, `fts/tests.rs`, `import.rs`, `word_diff.rs`, `snapshot/tests.rs`, `reverse/tests.rs`, `recurrence/tests.rs`, `backlink/tests.rs` (8 files, 10 new tests) | One regression test per edge case — invalid URL parse, sub-trigram FTS query, mixed-line-ending frontmatter, NFD combining-mark word diff, NULL-in-NOT-NULL snapshot reject, invalid `block_type` snapshot reject, malformed-ULID snapshot reject, `compute_reverse` NotFound on missing seq, malformed RRULE intervals (`5x`/`w`/`3.5d`/`invalid`), conflict-rooted 6-level descendant tree filtered by `is_conflict = 0` CTE projection. |
+| TEST-51 | `gcal_push/lease.rs`, `gcal_push/dirty_producer.rs`, `gcal_push/digest.rs`, `mcp/activity.rs` (4 new tests) | One concurrency / boundary regression test per gap — two-device `claim_lease` SQLite-serialised XOR winner, two-producer concurrent `snapshot_for_op` consistency, exactly-4096-char digest cap-inclusive boundary, multi-task poisoned-mutex recovery (sibling of the existing single-threaded test, which is left intact). |
+| MAINT-134 | `commands/properties.rs` | New private `emit_property_changed_event(app, block_id, changed_keys)` helper at L17-42; replaced 6 inlined `if let Err(e) = app.emit(EVENT_PROPERTY_CHANGED, …) { … }` blocks (`set_property`, `set_todo_state`, `set_priority`, `set_due_date`, `set_scheduled_date`, `delete_property`) with single-line calls. 6 redundant local `use crate::sync_events::{…}` / `use tauri::Emitter;` imports removed. Net diff: ~92 lines removed, 26 added. |
+| MAINT-143 | `tag_query/resolve.rs`, `tag_query/mod.rs`, `backlink/filters.rs`, `backlink/tests.rs` | Two new `pub(crate) async fn` helpers (`resolve_tag_leaves`, `resolve_tag_prefix_leaves`) in `tag_query/resolve.rs`. Both `resolve_expr` `Tag`/`Prefix` arms and both `BacklinkFilter::HasTag`/`HasTagPrefix` arms now delegate. Old "Duplicate leaf SQL" comment + unused `escape_like` import removed from `backlink/filters.rs`. New integration test `maint143_inline_ref_union_shared_leaf_sql` pins the UX-250 inline-ref union behaviour through both backlink filter variants. **Incidental UX-250 bug fix**: backlink filters now correctly union `block_tag_refs`, matching the documented contract. |
+| MAINT-144 | new `block_positions.rs`, `lib.rs`, `merge/resolve.rs`, `recurrence/compute.rs` | New top-level module `block_positions` with `pub(crate) async fn next_sibling_position_excluding_sentinel<'e, E: sqlx::Executor<'e, Database = Sqlite>>(executor: E, parent_id: Option<&str>) -> Result<i64, AppError>`. Both call sites (merge passes `&SqlitePool`; recurrence passes `&mut **tx`) collapse from 11–13 lines of inline SQL to a single helper call. Helper signature deviated from REVIEW-LATER spec (generic `Executor` instead of `Transaction`; `Option<&str>` for top-level NULL-parent case) — both deviations forced by the actual call-site needs. |
+
+**Files touched (21 unique code + 2 docs + 6 sqlx cache deltas):**
+
+- `REVIEW-LATER.md` (5 detail sections + 5 summary rows removed; counts bumped 86 → 81)
+- `SESSION-LOG.md` (this entry)
+- `src-tauri/src/commands/properties.rs` (MAINT-134)
+- `src-tauri/src/tag_query/resolve.rs` + `tag_query/mod.rs` + `backlink/filters.rs` + `backlink/tests.rs` (MAINT-143)
+- `src-tauri/src/block_positions.rs` (NEW) + `src-tauri/src/lib.rs` + `merge/resolve.rs` + `recurrence/compute.rs` (MAINT-144)
+- `src-tauri/src/deeplink/mod.rs` + `fts/tests.rs` + `import.rs` + `word_diff.rs` (TEST-50A)
+- `src-tauri/src/snapshot/tests.rs` + `reverse/tests.rs` + `recurrence/tests.rs` + `backlink/tests.rs` (TEST-50B)
+- `src-tauri/src/gcal_push/lease.rs` + `gcal_push/dirty_producer.rs` + `gcal_push/digest.rs` + `mcp/activity.rs` (TEST-51)
+- `src-tauri/.sqlx/` (2 stale entries deleted, 5 new entries added by the MAINT-143 SQL move; regenerated via `cargo sqlx prepare -- --tests`)
+
+**Verification:** `cd src-tauri && cargo nextest run` → **3006 tests run, 3006 passed (2 flaky retried green: `mcp::server::tests::shutdown_during_active_connection_blocks_new_connects` + `sync_cert::tests::concurrent_get_or_create_returns_same_cert` — both pre-existing and unrelated), 2 skipped**. No regressions across the full suite.
+
+**Reviewers:** Six review subagents, one per build cluster — all SHIP'd. Highlights:
+- The MAINT-143 reviewer identified the UX-250 bug fix as desirable (matched FEATURE-MAP.md line 193) rather than a regression; pre-existing `block_tags`-only backlink behaviour was the bug.
+- The MAINT-144 reviewer cross-checked the helper SQL against a sibling query in `commands/blocks/crud.rs:125-126` (which uses hardcoded `i64::MAX` instead of the named `NULL_POSITION_SENTINEL`); the helper's parameterised binding is more maintainable.
+- The TEST-51 reviewer mathematically verified the 4096-char digest fixture (42 × 95 + 64 + 42 = 4096) and confirmed the `<=` cap-inclusive convention in `format_description_full`.
+
+**Process notes:**
+
+- **Six parallel subagents on non-overlapping files, no worktrees.** Same shape as Session 508; this batch had no stalls. End-to-end wall clock dominated by the longest build (TEST-50B with 6 tests across 4 files).
+- **Subagents observed each other's working-tree state but did NOT step on each other.** TEST-51 noted snapshot/tests.rs was being concurrently edited by TEST-50B and a transient compile-error window; TEST-51 used a saved backup workaround for its test run, then reverted. MAINT-143 noted `.sqlx/` deltas from the TEST-50B snapshot work and reverted them too. Final orchestrator-level `cargo sqlx prepare` regenerated the cache cleanly. No conflicts.
+- **The orchestrator regenerates the sqlx cache once after all subagents settle.** Subagents that touch SQL should NOT run `cargo sqlx prepare` themselves (it would conflict with siblings); the orchestrator does it after the final `cargo nextest run` clean. This pattern worked well this session.
+- **One commit, one prek run.** All 21 file changes ship in a single commit so the `prek run --all-files` hook covers the whole batch.
+- **Incidental bug fix bonus.** MAINT-143's dedup wasn't expected to change behaviour — it just looked like a refactor. The reviewer flagged that the old `backlink/filters.rs` query was missing the inline-ref UNION (a pre-existing UX-250 contract violation) and the new helper-routed path correctly unions both. Net: REVIEW-LATER says "MAINT-143 done", and the BUG side ledger gets one more silent regression closed. This is a strong argument for dedup-style refactors when one side already has a documented invariant the other side is missing.
+
 ## Session 508 — Backend test-quality batch: close 8 TEST items (TEST-40, 41, 43, 44, 46, 47, 48, 49) (2026-04-27)
 
 **8 TEST items closed in one batched session.** Six parallel build subagents on non-overlapping backend test files, paired with four review subagents (one per work-cluster). Pure test-only changes — no production code touched anywhere. The keyring-store subagent stalled mid-task and was replaced by direct orchestrator edits; everything else completed cleanly on the first pass.
