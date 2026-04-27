@@ -3223,8 +3223,13 @@ async fn compact_stale_read_seq_guard() {
 
     let cutoff_str = "2025-01-01T00:00:00.000Z"; // all ops are before this
 
-    // Execute the same per-device DELETE that compact_op_log Phase 3 uses
+    // Execute the same per-device DELETE that compact_op_log Phase 3 uses.
+    // H-13: enable the op_log mutation bypass for the duration of this tx,
+    // mirroring the production compaction path.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    crate::op_log::enable_op_log_mutation_bypass(&mut tx)
+        .await
+        .unwrap();
     for (dev_id, max_seq) in &stale_frontier {
         sqlx::query("DELETE FROM op_log WHERE created_at < ?1 AND device_id = ?2 AND seq <= ?3")
             .bind(cutoff_str)
@@ -3234,6 +3239,9 @@ async fn compact_stale_read_seq_guard() {
             .await
             .unwrap();
     }
+    crate::op_log::disable_op_log_mutation_bypass(&mut tx)
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
 
     // seq 1 and 2 should be deleted; seq 3 survives because seq > stale max_seq

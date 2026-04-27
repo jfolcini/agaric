@@ -1,5 +1,53 @@
 # Session Log
 
+## Session 514 — Pick up + finish another agent's H-4 + H-13 leftover Rust WIP (2026-04-27)
+
+**Two HIGH backend code-review findings closed by salvaging another agent's abandoned in-progress work.** The previous agent had landed substantial scaffolding for H-4 (`set_todo_state` atomicity), H-13 (op-log immutability triggers), and H-9b (deny-list bug-report redaction) in the working tree, but never completed it — the code didn't compile and had been sitting unchanged across at least 3 of my prior sessions. This session investigated the WIP, finished the missing pieces for H-4, accepted H-13 as already complete, dropped H-9b (incomplete + scope too large for this session — left open in REVIEW-LATER), and added a dedicated H-4 atomicity regression test.
+
+**REVIEW-LATER impact:**
+
+- **HIGH findings:** 6 → 4 (H-4 + H-13 removed; severity table at the top of the BCR appendix bumped). Top-priority list pruned from 4 entries to 2.
+- **Previously-resolved counter:** 583+ → 585+ across 482 sessions (latest session 514).
+- **Top-level open count:** 54 unchanged (H-4 / H-13 were BCR-appendix entries, not main-summary items).
+- **H-9b stays open** — left in the BCR appendix at H-9 (parent) / H-9b / H-9c entries; H-9b is still M-cost and needs careful safe-token-set tuning.
+
+**Items closed (2):**
+
+| Item | Files | Change |
+|---|---|---|
+| H-4 | `src-tauri/src/commands/blocks/crud.rs` (+85L: new `delete_property_in_tx`), `src-tauri/src/commands/blocks/mod.rs` + `commands/mod.rs` (re-exports), `src-tauri/src/commands/properties.rs` (the previous agent's WIP — `set_todo_state_inner` now opens one `CommandTx::begin_immediate` covering state change + timestamp writes + recurrence sibling creation, snapshots GCal pre-state inside that tx, and routes through `set_property_in_tx` / `delete_property_in_tx` / `handle_recurrence_in_tx`), `src-tauri/src/recurrence/compute.rs` (split `handle_recurrence` into a thin pool-based wrapper + new `handle_recurrence_in_tx(tx, device_id, block_id)` that takes a caller-managed `CommandTx`; bumped `&mut **tx` → `&mut ***tx` and `&mut tx,` → `&mut *tx,` since `tx` is now a `&mut CommandTx` parameter rather than an owned value), `src-tauri/src/recurrence/mod.rs` (re-export `handle_recurrence_in_tx`, drop crate-wide re-export of `handle_recurrence` since no production caller remains), `src-tauri/src/commands/tests/property_cmd_tests.rs` (new test `set_todo_state_atomic_when_recurrence_fails` plants a corrupt `repeat-until` value, asserts the rolled-back tx leaves todo_state unchanged + no completed_at + no recurrence sibling + op_log size unchanged). The `delete_property_in_tx` helper mirrors `delete_property_core` (validate block exists → append DeleteProperty op → clear column for reserved keys / DELETE FROM block_properties for non-reserved) but runs entirely inside the caller's tx and returns the OpRecord for the caller to enqueue. | One commit |
+| H-13 | `src-tauri/migrations/0036_op_log_immutability_triggers.sql` (NEW — adds `_op_log_mutation_allowed` sentinel table + BEFORE UPDATE / BEFORE DELETE triggers on `op_log` that ABORT unless the sentinel is present), `src-tauri/src/op_log.rs` (NEW `enable_op_log_mutation_bypass` / `disable_op_log_mutation_bypass` helper pair; existing test `op_log_update_not_blocked_by_schema` rewritten to assert the trigger now fires; 2 new tests `compaction_path_with_bypass_succeeds` + `compaction_bypass_does_not_leak_to_sibling_connection` covering the documented enable → mutate → disable → commit dance and WAL connection-isolation guarantee), `src-tauri/src/snapshot/create.rs` (production compaction path wraps its per-device DELETEs with the bypass helper pair), `src-tauri/src/snapshot/restore.rs` (snapshot RESET path wraps the `DELETE FROM op_log` with the bypass helper pair), `src-tauri/src/dag/tests.rs` + `src-tauri/src/snapshot/tests.rs` + `src-tauri/src/sync_daemon/tests.rs` (existing tests that DELETE from op_log directly migrated to use the bypass dance). The previous agent's `temp.` per-connection-scoped sentinel had been rejected by SQLite (triggers cannot reference temp-schema tables); the doc comment in the migration now documents that we achieve equivalent isolation via WAL semantics + transactional discipline (sibling connections never observe the sentinel as present because BEGIN IMMEDIATE serialises writers and the helper requires the sentinel be DELETEd before commit). | Same commit |
+
+**H-9b dropped (left open):** the previous agent had added ~233L of deny-list redaction scaffolding to `src-tauri/src/commands/bug_report.rs` — a `SafeTokenClass` enum with 11 variants, ten compile-time regex matchers, an `allowed_classes_for_field` helper, a `RedactionContext` struct (separate MAINT-147(i) refactor) — but had NOT wired any of it into the existing `redact_line` function. Without the wiring, every component was dead code (15 unused-warning lines on `cargo build --lib`). Wiring it correctly requires careful tuning of the safe-token set + extensive property tests + a decision on `RedactionContext`'s adoption (which is a refactor separable from H-9b). All of that is M+-cost work and properly belongs in a dedicated session, not appended to a salvage commit. The bug_report.rs file was reverted to HEAD; H-9b stays open in the BCR appendix.
+
+**Files touched (12 modified + 1 new migration + 1 new test + 2 .sqlx cache files + 1 doc):**
+
+- `REVIEW-LATER.md` (HIGH count 6→4; H-4 + H-13 detail blocks removed; top-priority list pruned; previously-resolved 583+→585+; sessions 513→514)
+- `SESSION-LOG.md` (this entry)
+- NEW `src-tauri/migrations/0036_op_log_immutability_triggers.sql` (H-13 — triggers + bypass table)
+- NEW `src-tauri/.sqlx/query-233e1ab5...json` + `src-tauri/.sqlx/query-fcd0271b...json` (sqlx cache for the new `delete_property_in_tx` query and a related test query)
+- `src-tauri/src/commands/blocks/crud.rs` (NEW `delete_property_in_tx` ~85L)
+- `src-tauri/src/commands/blocks/mod.rs` + `src-tauri/src/commands/mod.rs` (re-exports)
+- `src-tauri/src/commands/properties.rs` (H-4 single-tx `set_todo_state_inner`)
+- `src-tauri/src/commands/tests/property_cmd_tests.rs` (H-4 atomicity regression test)
+- `src-tauri/src/op_log.rs` (H-13 helper pair + 3 reworked / new tests)
+- `src-tauri/src/recurrence/compute.rs` (split into wrapper + `_in_tx`)
+- `src-tauri/src/recurrence/mod.rs` (re-export update)
+- `src-tauri/src/snapshot/create.rs` + `src-tauri/src/snapshot/restore.rs` (compaction + RESET use bypass)
+- `src-tauri/src/dag/tests.rs` + `src-tauri/src/snapshot/tests.rs` + `src-tauri/src/sync_daemon/tests.rs` (test sites that DELETE op_log migrated to the bypass dance)
+
+**Verification:** `cargo nextest run` → **2996 tests passed across 3 binaries (+1 new H-4 atomicity test vs session 513's 2995)**. `cargo sqlx prepare -- --tests` succeeded; `.sqlx/` cache regenerated (no stale entries). All 33 prek hooks pass (cargo fmt fixed two pre-existing minor format issues during the run; re-staged and reran clean).
+
+**Process notes:**
+
+- **The user spotted that the leftover Rust WIP was being skirted around session after session.** Sessions 511, 512, 513 had each stashed it to run prek and restored it after committing — never actually engaging with the work. Investigation revealed three substantial pieces (H-4, H-13, H-9b) at very different completeness levels: H-13 was production-ready, H-4 was 90% there but missing one helper function (`delete_property_in_tx`) and the recurrence-handler-as-`_in_tx`-variant split, H-9b was framework-only (declarations without wiring). Salvaging H-4 + H-13 in one session was tractable; salvaging H-9b was not.
+- **Borrow checker subtlety on the recurrence split.** With `tx: &mut CommandTx` (parameter) vs the original `let mut tx = CommandTx::...` (owned value), every `&mut **tx` had to become `&mut ***tx` (one extra deref) and every `&mut tx,` argument had to become `&mut *tx,` (reborrow). The doc comment in `db.rs:166` mentioning that `&mut CommandTx` coerces to `&mut Transaction<'_>` "automatically" is true at the *function-call site* via deref-coercion-on-reborrow, but raw `**tx` / `***tx` for `Executor` access still needs the right deref count.
+- **The session-count fix** ("165 sessions" → "482 sessions") landed in its own small commit before the H-4/H-13 work to keep the diff focused. The number had been getting +1 per session for 22+ sessions without ever matching the actual SESSION-LOG.md count — a documentation-drift cluster the user flagged at the same time.
+- **`cargo sqlx prepare -- --tests` is the canonical command for this repo** (per AGENTS.md). The earlier attempt with bare `cargo sqlx prepare` (no `--tests`) deleted ~10 test-only `.sqlx/` cache entries; restored via `git checkout HEAD -- src-tauri/.sqlx/` and re-prepared with `--tests`.
+- **Tests in `compute.rs:tests_h17_m77` still call the pool-based `handle_recurrence` directly.** The wrapper was preserved (with `#[allow(dead_code)]`) rather than rewriting the test bodies to construct a `CommandTx` themselves — keeps the existing M-77 / H-17 atomicity tests passing without any change. If a future cleanup wants to drop `handle_recurrence` entirely, those two tests need to be refactored to call `handle_recurrence_in_tx` inside a fresh `CommandTx` they manage.
+
+---
+
 ## Session 513 — Frontend test-quality batch: close 8 items (TEST-52, TEST-53, TEST-54, TEST-55, TEST-57, TEST-58, TEST-59, TEST-60) (2026-04-27)
 
 **8 frontend test-quality items closed in one batch — the bulk of the TEST-52..TEST-64 cluster.** Five parallel build subagents on disjoint test files, paired with five review subagents — all SHIP. Zero production code touched; only test files modified. Net `+3` new tests (TEST-52's three new popup-yield cases for Enter/Escape/Backspace).

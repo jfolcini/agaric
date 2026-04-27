@@ -966,11 +966,20 @@ async fn find_lca_after_compaction_returns_clear_error() {
     .await
     .unwrap();
 
-    sqlx::query("DELETE FROM op_log WHERE device_id = ? AND seq = 1")
-        .bind(DEV_A)
-        .execute(&pool)
+    // H-13: op_log mutations now require the compaction bypass.
+    let mut tx = pool.begin().await.unwrap();
+    crate::op_log::enable_op_log_mutation_bypass(&mut tx)
         .await
         .unwrap();
+    sqlx::query("DELETE FROM op_log WHERE device_id = ? AND seq = 1")
+        .bind(DEV_A)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    crate::op_log::disable_op_log_mutation_bypass(&mut tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
 
     // find_lca walks from (A,2), follows prev_edit to (A,1) which is
     // missing → should return InvalidOperation mentioning compaction

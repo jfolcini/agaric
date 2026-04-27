@@ -39,6 +39,7 @@ use crate::pagination::{BlockRow, NULL_POSITION_SENTINEL};
 /// dispatched materializer tasks. Validation failures (e.g. a corrupt
 /// `repeat-until` value that can't round-trip through
 /// `set_property_in_tx`) surface to the caller instead of being hidden.
+#[allow(dead_code)] // H-4: production path now uses handle_recurrence_in_tx.
 pub(crate) async fn handle_recurrence(
     pool: &SqlitePool,
     device_id: &str,
@@ -59,17 +60,35 @@ pub(crate) async fn handle_recurrence(
     // uniquely identifies the op so the source block can still be
     // recovered via the op log.
     let mut tx = crate::db::CommandTx::begin_immediate(pool, "recurrence_handle").await?;
+    let created = handle_recurrence_in_tx(&mut tx, device_id, block_id).await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(created)
+}
 
+/// Inner-tx variant of [`handle_recurrence`] for callers that already hold
+/// a `CommandTx` and need the recurrence-sibling creation to run inside the
+/// same write transaction (H-4: `set_todo_state_inner` wraps the state
+/// change + timestamp writes + recurrence sibling creation in one tx so a
+/// crash mid-sequence cannot leave a recurring task stuck).
+///
+/// Returns `Ok(true)` if a sibling was created. The caller is responsible
+/// for committing the transaction and dispatching background work — this
+/// function only enqueues op records via `tx.enqueue_background(...)`.
+pub(crate) async fn handle_recurrence_in_tx(
+    tx: &mut crate::db::CommandTx,
+    device_id: &str,
+    block_id: &str,
+) -> Result<bool, crate::error::AppError> {
     // Check for repeat property (inside tx)
     let repeat_rule: Option<String> = sqlx::query_scalar(
         "SELECT value_text FROM block_properties WHERE block_id = ?1 AND key = 'repeat'",
     )
     .bind(block_id)
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
 
     let Some(rule) = repeat_rule else {
-        // No repeat rule — drop the (read-only) tx without committing.
+        // No repeat rule — caller drops/commits the (read-only) tx.
         return Ok(false);
     };
 
@@ -84,7 +103,7 @@ pub(crate) async fn handle_recurrence(
            FROM blocks WHERE id = ?"#,
         block_id
     )
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
     let original =
         original.ok_or_else(|| crate::error::AppError::NotFound(format!("block '{block_id}'")))?;
@@ -108,7 +127,7 @@ pub(crate) async fn handle_recurrence(
         "SELECT value_date FROM block_properties WHERE block_id = ?1 AND key = 'repeat-until'",
     )
     .bind(block_id)
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
 
     if let Some(ref until_str) = repeat_until {
@@ -126,14 +145,14 @@ pub(crate) async fn handle_recurrence(
         "SELECT value_num FROM block_properties WHERE block_id = ?1 AND key = 'repeat-count'",
     )
     .bind(block_id)
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
 
     let repeat_seq: Option<f64> = sqlx::query_scalar(
         "SELECT value_num FROM block_properties WHERE block_id = ?1 AND key = 'repeat-seq'",
     )
     .bind(block_id)
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
 
     if let Some(count) = repeat_count {
@@ -153,7 +172,7 @@ pub(crate) async fn handle_recurrence(
         "SELECT value_ref FROM block_properties WHERE block_id = ?1 AND key = 'repeat-origin'",
     )
     .bind(block_id)
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
     // Use existing origin, or this block is the first in the chain
     let origin_id = repeat_origin.unwrap_or_else(|| block_id.to_string());
@@ -176,7 +195,7 @@ pub(crate) async fn handle_recurrence(
     let new_position = match original.position {
         Some(p) if p == NULL_POSITION_SENTINEL => Some(NULL_POSITION_SENTINEL),
         Some(_) => Some(
-            next_sibling_position_excluding_sentinel(&mut **tx, original.parent_id.as_deref())
+            next_sibling_position_excluding_sentinel(&mut ***tx, original.parent_id.as_deref())
                 .await?,
         ),
         None => Some(NULL_POSITION_SENTINEL),
@@ -184,7 +203,7 @@ pub(crate) async fn handle_recurrence(
 
     // Create next occurrence as a sibling
     let (new_block, op) = create_block_in_tx(
-        &mut tx,
+        &mut *tx,
         device_id,
         original.block_type.clone(),
         original.content.unwrap_or_default(),
@@ -196,7 +215,7 @@ pub(crate) async fn handle_recurrence(
 
     // Set TODO state on new block
     let (_, op) = set_property_in_tx(
-        &mut tx,
+        &mut *tx,
         device_id,
         new_block.id.clone(),
         "todo_state",
@@ -210,7 +229,7 @@ pub(crate) async fn handle_recurrence(
 
     // Copy repeat property to new block
     let (_, op) = set_property_in_tx(
-        &mut tx,
+        &mut *tx,
         device_id,
         new_block.id.clone(),
         "repeat",
@@ -239,7 +258,7 @@ pub(crate) async fn handle_recurrence(
             );
         } else {
             let (_, op) = set_property_in_tx(
-                &mut tx,
+                &mut *tx,
                 device_id,
                 new_block.id.clone(),
                 "due_date",
@@ -264,7 +283,7 @@ pub(crate) async fn handle_recurrence(
             );
         } else {
             let (_, op) = set_property_in_tx(
-                &mut tx,
+                &mut *tx,
                 device_id,
                 new_block.id.clone(),
                 "scheduled_date",
@@ -281,7 +300,7 @@ pub(crate) async fn handle_recurrence(
     // Copy repeat-until to new block if present (M-77: propagate via `?`).
     if let Some(ref until_str) = repeat_until {
         let (_, op) = set_property_in_tx(
-            &mut tx,
+            &mut *tx,
             device_id,
             new_block.id.clone(),
             "repeat-until",
@@ -303,7 +322,7 @@ pub(crate) async fn handle_recurrence(
 
         // Copy repeat-count (M-77: propagate via `?`).
         let (_, op) = set_property_in_tx(
-            &mut tx,
+            &mut *tx,
             device_id,
             new_block.id.clone(),
             "repeat-count",
@@ -317,7 +336,7 @@ pub(crate) async fn handle_recurrence(
 
         // Set incremented repeat-seq (M-77: propagate via `?`).
         let (_, op) = set_property_in_tx(
-            &mut tx,
+            &mut *tx,
             device_id,
             new_block.id.clone(),
             "repeat-seq",
@@ -333,7 +352,7 @@ pub(crate) async fn handle_recurrence(
     // Set repeat-origin on new block (points to original block in chain)
     // (M-77: propagate via `?`).
     let (_, op) = set_property_in_tx(
-        &mut tx,
+        &mut *tx,
         device_id,
         new_block.id.clone(),
         "repeat-origin",
@@ -345,11 +364,10 @@ pub(crate) async fn handle_recurrence(
     .await?;
     op_records.push(op);
 
-    // Commit + dispatch all ops (fire-and-forget, warn on failure).
+    // Enqueue all ops on the tx; the caller drives commit + dispatch.
     for op in op_records {
         tx.enqueue_background(op);
     }
-    tx.commit_and_dispatch(materializer).await?;
 
     Ok(true)
 }

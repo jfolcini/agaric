@@ -3435,10 +3435,22 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     // Simulate compaction: wipe the responder's op_log so it cannot
     // satisfy any HeadExchange claim. In production this is what
     // `compact_op_log` would do after a 90-day cutoff.
-    sqlx::query("DELETE FROM op_log")
-        .execute(&resp_pool)
+    //
+    // H-13: op_log mutations now require the compaction bypass. Wrap the
+    // DELETE in the same enable/disable dance the real compaction path
+    // uses so the BEFORE DELETE trigger (migration 0036) permits it.
+    let mut tx = resp_pool.begin().await.unwrap();
+    crate::op_log::enable_op_log_mutation_bypass(&mut tx)
         .await
         .unwrap();
+    sqlx::query("DELETE FROM op_log")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    crate::op_log::disable_op_log_mutation_bypass(&mut tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
 
     // ── Initiator side: empty DB ─────────────────────────────────────
     let (init_pool, _init_dir) = test_pool().await;

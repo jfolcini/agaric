@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 54 open items — 46 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12) + 5 frontend test-quality (TEST-56, TEST-61, TEST-62, TEST-63, TEST-64).
 
-Previously resolved: 583+ items across 482 sessions (per SESSION-LOG.md unique session count; latest is session 513).
+Previously resolved: 585+ items across 482 sessions (per SESSION-LOG.md unique session count; latest is session 514).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; only frontend test-quality items remain.**
 
@@ -1678,7 +1678,7 @@ The comment in `useDeepLinkRouter.test.ts` ("Minimal renderHook helper (matches 
 | Already-tracked in REVIEW-LATER (PERF-19, PERF-20, PERF-23) | 3 |
 | Net findings in this report | 333 |
 | **Critical** | **1** |
-| **High** | **6** |
+| **High** | **4** |
 | **Medium** | **28** |
 | **Low** | **124** |
 | **Info / nits** | **125** |
@@ -1686,9 +1686,7 @@ The comment in `useDeepLinkRouter.test.ts` ("Minimal renderHook helper (matches 
 ### Top-priority items (Impact ÷ Cost)
 
 1. **C-2b** — Boot-time op-log replay path for unmaterialized ops; op_log diverges from materialized state with no automatic remediation (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/materializer/consumer.rs" />). C-2a (divergence detection) shipped — divergence is now visible via `fg_apply_dropped` in `StatusInfo`; C-2b remains as the actual replay path. **Schema migration approval required**.
-2. **H-4** — `set_todo_state_inner` runs state change + timestamp writes + recurrence sibling creation across separate transactions; crash mid-sequence leaves recurring task stuck (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/properties.rs" />).
-3. **H-13** — Op-log immutability has zero database-level enforcement; only application-level invariant (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/op_log.rs" />).
-4. **H-17** — `recurrence::handle_recurrence` reads counters BEFORE `BEGIN IMMEDIATE` (TOCTOU); two clicks on a recurring task can duplicate or skip the next-occurrence sibling (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/recurrence/handle.rs" />).
+2. **H-17** — `recurrence::handle_recurrence` reads counters BEFORE `BEGIN IMMEDIATE` (TOCTOU); two clicks on a recurring task can duplicate or skip the next-occurrence sibling (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/recurrence/handle.rs" />).
 
 ### Findings by Domain × Severity
 
@@ -1748,18 +1746,7 @@ The comment in `useDeepLinkRouter.test.ts` ("Minimal renderHook helper (matches 
 
 ---
 
-## HIGH findings (4)
-
-### H-4 — `set_todo_state_inner` runs the state change, timestamp writes, and recurrence sibling creation across separate transactions
-- **Domain:** Commands / Recurrence
-- **Location:** `src-tauri/src/commands/properties.rs::set_todo_state_inner`; cross-ref `recurrence::handle_recurrence`
-- **What:** State change → property writes (`created_at` / `completed_at`) → recurrence-sibling creation are all separate ops with no enclosing `BEGIN IMMEDIATE`.
-- **Why it matters:** A crash mid-sequence on a recurring task can leave a `done` state with no completed-at timestamp and no next-occurrence sibling. The user is silently "stuck" on a task whose recurrence never advances.
-- **Cost:** M
-- **Risk:** Medium (recurrence handler signature change)
-- **Impact:** High
-- **Recommendation:** Wrap the entire state transition + property writes + recurrence sibling creation in a single `BEGIN IMMEDIATE` via a new `set_todo_state_in_tx`. The recurrence handler already uses `_in_tx` variants — exposes them.
-- **Pass-1 source:** 04-commands-crud / F2
+## HIGH findings (3)
 
 ### H-9 — Bug-report redaction allow-list misses GCal email, peer device IDs, and any other PII (parent — split into H-9b, H-9c after H-9a shipped)
 - **Domain:** Commands / System
@@ -1790,17 +1777,6 @@ The comment in `useDeepLinkRouter.test.ts` ("Minimal renderHook helper (matches 
 - **Impact:** High (user trust in the bug-report feature)
 - **Recommendation:** Tauri command `bug_report_preview()` returns the same redacted bundle as the existing submit, but does not upload. The dialog renders it via the existing `ScrollArea` + diff viewer primitives. Cross-references UX-277 (`BugReportDialog` polish — adding "no log-content preview before submit" was already filed there at S cost; this finding promotes it to H-9c with a richer scope).
 - **Status:** Open. Independent of H-9a / H-9b. May supersede the "no log-content preview" item in UX-277 — when H-9c lands, drop the preview bullet from UX-277.
-
-### H-13 — `Op-log immutability has zero database-level enforcement
-- **Domain:** Core
-- **Location:** `src-tauri/src/op_log.rs:1199-1247` (test that documents the lack of enforcement)
-- **What:** Bare UPDATE/DELETE against `op_log` succeed; only the materializer convention prevents mutation. The existing test `op_log_update_not_blocked_by_schema` documents this explicitly.
-- **Why it matters:** AGENTS.md invariant #1 ("Op log is strictly append-only — never mutate, never delete (except compaction)") is enforced by convention only. A future bug or third-party tool can violate it without the DB protesting.
-- **Cost:** M
-- **Risk:** Medium (compaction needs a way through)
-- **Impact:** High (this is invariant #1)
-- **Recommendation:** Add `BEFORE UPDATE`/`BEFORE DELETE` triggers on `op_log` that allow only the compaction path (e.g., gated by a session-scoped `PRAGMA application_id` or a transaction-attached audit row). Document the bypass.
-- **Pass-1 source:** 01-core-data / F2
 
 ## MEDIUM findings (44 — expanded)
 

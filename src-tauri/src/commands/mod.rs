@@ -307,7 +307,7 @@ pub use tags::{
 };
 
 // pub(crate) helpers used by other crate modules (e.g. recurrence.rs)
-pub(crate) use blocks::{create_block_in_tx, set_property_in_tx};
+pub(crate) use blocks::{create_block_in_tx, delete_property_in_tx, set_property_in_tx};
 pub(crate) use properties::is_valid_iso_date;
 
 const MAX_CONTENT_LENGTH: usize = 256 * 1024;
