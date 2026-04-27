@@ -786,18 +786,17 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Already-tracked in REVIEW-LATER (PERF-19, PERF-20, PERF-23) | 3 |
 | Net findings in this report | 333 |
 | **Critical** | **1** |
-| **High** | **8** |
+| **High** | **6** |
 | **Medium** | **41** |
 | **Low** | **124** |
 | **Info / nits** | **125** |
 
-### Top-5 highest-priority items (Impact ÷ Cost)
+### Top-priority items (Impact ÷ Cost)
 
 1. **C-2b** — Boot-time op-log replay path for unmaterialized ops; op_log diverges from materialized state with no automatic remediation (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/materializer/consumer.rs" />). C-2a (divergence detection) shipped — divergence is now visible via `fg_apply_dropped` in `StatusInfo`; C-2b remains as the actual replay path. **Schema migration approval required**.
-2. **H-3** — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated daily. Split into H-3a (backend IPC enforcement), H-3b (frontend callsites), H-3c (property test) (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/blocks/crud.rs" />).
-3. **H-4** — `set_todo_state_inner` runs state change + timestamp writes + recurrence sibling creation across separate transactions; crash mid-sequence leaves recurring task stuck (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/properties.rs" />).
-4. **H-13** — Op-log immutability has zero database-level enforcement; only application-level invariant (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/op_log.rs" />).
-5. **H-17** — `recurrence::handle_recurrence` reads counters BEFORE `BEGIN IMMEDIATE` (TOCTOU); two clicks on a recurring task can duplicate or skip the next-occurrence sibling (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/recurrence/handle.rs" />).
+2. **H-4** — `set_todo_state_inner` runs state change + timestamp writes + recurrence sibling creation across separate transactions; crash mid-sequence leaves recurring task stuck (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/commands/properties.rs" />).
+3. **H-13** — Op-log immutability has zero database-level enforcement; only application-level invariant (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/op_log.rs" />).
+4. **H-17** — `recurrence::handle_recurrence` reads counters BEFORE `BEGIN IMMEDIATE` (TOCTOU); two clicks on a recurring task can duplicate or skip the next-occurrence sibling (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/recurrence/handle.rs" />).
 
 ### Findings by Domain × Severity
 
@@ -837,8 +836,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 | ID | Title | Why |
 |---|---|---|
-| **H-3** | Fix `create_page_in_space` bypass in journal/templates/`create_block` | "Nothing outside of spaces" invariant |
-| **H-8** | `list_agenda_range` cursor encodes `b.due_date`/`b.scheduled_date`, not `ac.date` | Pagination drift on agenda |
 | **H-17** | `recurrence::handle_recurrence` reads counters before BEGIN IMMEDIATE (TOCTOU) | Two clicks duplicate next-occurrence sibling |
 | **M-23** | `flush_draft_inner` reads `prev_edit` outside the flush transaction | Conflict-detection asymmetry vs `edit_block_inner` |
 
@@ -859,48 +856,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ---
 
-## HIGH findings (8)
-
-### H-3 — `create_page_in_space` bypassed by 3+ callsites; "nothing outside of spaces" invariant violated daily (parent — split into H-3a, H-3b, H-3c)
-- **Domain:** Spaces / Commands
-- **Location:** `src/components/JournalPage.tsx:170` (frontend); `src/components/TemplatesView.tsx:77` (frontend); `src-tauri/src/commands/journal.rs::resolve_or_create_journal_page`; `src-tauri/src/commands/blocks/crud.rs::create_block` (accepts `block_type='page'` with no space enforcement)
-- **What:** Bootstrap migrates only existing-at-first-boot pages. New daily journal pages, template pages, and direct `create_block` IPC calls produce pages with no `space` property. FEAT-3 Phase 1 documentation claims atomicity via `create_page_in_space` but the IPC backend doesn't enforce it.
-- **Why it matters:** Cross-space leak. Every new journal page after install is invisible to space-scoped queries. The "Personal/Work" partition silently degrades over time.
-- **Cost:** M (combined) — split into H-3a (S–M, backend enforcement), H-3b (S, frontend callsites), H-3c (S, property test). Recommend H-3a → H-3b → H-3c in one session.
-- **Pass-1 source:** 10-gcal-spaces-misc / F4, F5, F26; cross-references 04-commands-crud / F5
-
-### H-3a — Backend `create_block` IPC: enforce space property atomicity for `block_type='page'`
-- **Domain:** Spaces / Commands
-- **Location:** `src-tauri/src/commands/blocks/crud.rs::create_block_in_tx`
-- **What:** Choose ONE of two enforcement options and implement it: (a) reject `block_type='page'` from `create_block_in_tx` and return an error pointing the caller at `create_page_in_space`; (b) accept `block_type='page'` with a required `space_id` parameter and set the `space` property atomically inside the existing tx when the type is `page`. Option (b) is more defensive (callers can't forget to migrate) but changes the IPC contract for callers that don't yet pass `space_id`. Recommend option (b) with `space_id: Option<String>` defaulting to current-space if None — which keeps the IPC contract additive.
-- **Why it matters:** This is the structural fix. Without backend enforcement, every new feature added by future sessions that calls `create_block({blockType: 'page'})` re-introduces the bug.
-- **Cost:** S–M
-- **Risk:** Medium — IPC contract change for `create_block`. Existing frontend callsites must continue to work; H-3b migrates them. Coordinate frontend-backend in a single session if option (b) is chosen with a new required arg.
-- **Impact:** High
-- **Recommendation:** Implement option (b) with `space_id: Option<String>`. Inside the tx: when `block_type == "page"` and `space_id` is None, fall back to the current default space (the resolver already exists in `commands/spaces.rs`). When non-None, set the `space` property in the same tx. Add tests: page creation with explicit space, page creation with None (defaults), non-page creation ignores `space_id`.
-- **Status:** Open. Should land before H-3b. Couples loosely with FEAT-3p5 (per-space journal) — ideally land H-3a first, then FEAT-3p5 builds on it.
-
-### H-3b — Frontend journal/templates/`createBlock` callsites switch to `create_page_in_space` / `createPageInSpace`
-- **Domain:** Frontend / Spaces
-- **Location:** `src/components/JournalPage.tsx:170`; `src/components/TemplatesView.tsx:77`; any other callsites flagged by grep `createBlock\(\{[^)]*blockType:\s*['"]page`
-- **What:** Replace direct `createBlock({blockType: 'page'})` calls with `createPageInSpace(currentSpaceId, …)`. Update JournalPage's 4 internal page-creation callsites (also referenced in FEAT-3p5). Add a Biome lint or test guard preventing future regressions if feasible (e.g., a vitest unit test that greps the source for the forbidden pattern).
-- **Why it matters:** Closes the frontend half of H-3. With H-3a's backend enforcement, this is belt-and-suspenders, but the explicit calls also clarify intent for readers.
-- **Cost:** S
-- **Risk:** Low — purely additive on the frontend (uses an already-existing wrapper).
-- **Impact:** High (combined with H-3a) — together they close the bypass.
-- **Recommendation:** Land in the same session as H-3a. Update component tests where they assert on `createBlock` mock calls.
-- **Status:** Open. Depends on H-3a (backend must accept the new shape first).
-
-### H-3c — Property test: every page block has a non-null `space` property
-- **Domain:** Tests / Spaces
-- **Location:** `src-tauri/src/commands/spaces.rs` tests; `src-tauri/src/integration_tests.rs` (or a new spaces-invariant test file)
-- **What:** Add a property test (`fast-check` / `proptest`) that, after any sequence of valid command operations, asserts: for every block where `block_type = 'page' AND id NOT IN (seeded_space_ulids)`, the `space` property is non-null. Run on a few thousand random op sequences.
-- **Why it matters:** Catches future regressions from any new op-handler or command path that creates page blocks. Makes "nothing outside of spaces" a machine-checkable invariant.
-- **Cost:** S
-- **Risk:** Low (test-only).
-- **Impact:** Medium — guards the structural invariant going forward.
-- **Recommendation:** Use the existing fast-check / proptest harness. Generator: random sequences of CreateBlock + SetProperty + DeleteBlock for varying block types and content. Assert the invariant after each materialization step.
-- **Status:** Open. Depends on H-3a + H-3b (the invariant must already hold before the property test will pass).
+## HIGH findings (6)
 
 ### H-4 — `set_todo_state_inner` runs the state change, timestamp writes, and recurrence sibling creation across separate transactions
 - **Domain:** Commands / Recurrence
@@ -934,17 +890,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** High
 - **Recommendation:** Either split BatchApplyOps into per-block-id sub-batches at dispatch time, or compute a multi-key grouping (HashSet of all block_ids; serialize batches whose key sets overlap). Pass 2 confirmed the pass-1 "return None" remediation does NOT serialize because the None bucket still races with other groups via JoinSet.
 - **Pass-1 source:** 02-materializer / F3
-
-### H-8 — `list_agenda_range` cursor encodes `b.due_date`/`b.scheduled_date`, not `ac.date`
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/pagination/agenda.rs::list_agenda_range`
-- **What:** The cursor encodes block-column dates instead of the `agenda_cache.date` actually used for sort. When an agenda entry's date comes from a property or tag source, the cursor doesn't match what the next page filters on.
-- **Why it matters:** Duplicates and skips in agenda pagination — user sees double-counted or missing items at page boundaries. Hard-to-reproduce because it depends on which date source was authoritative for that row.
-- **Cost:** S
-- **Risk:** Low (cursor change is backward-incompatible; add a version byte)
-- **Impact:** High
-- **Recommendation:** Encode `ac.date` in the cursor; bump cursor version field.
-- **Pass-1 source:** 03-cache-pagination / F1
 
 ### H-9 — Bug-report redaction allow-list misses GCal email, peer device IDs, and any other PII (parent — split into H-9b, H-9c after H-9a shipped)
 - **Domain:** Commands / System
