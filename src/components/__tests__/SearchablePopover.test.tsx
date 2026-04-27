@@ -173,4 +173,84 @@ describe('SearchablePopover', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  // ── UX-9: keyboard navigation via useListKeyboardNavigation ─────────
+  describe('keyboard navigation (UX-9)', () => {
+    it('roving tabindex starts on the first item', () => {
+      renderPopover()
+
+      const first = screen.getByText('Alpha').closest('button') as HTMLButtonElement
+      const second = screen.getByText('Beta').closest('button') as HTMLButtonElement
+      const third = screen.getByText('Gamma').closest('button') as HTMLButtonElement
+      expect(first).toHaveAttribute('tabindex', '0')
+      expect(second).toHaveAttribute('tabindex', '-1')
+      expect(third).toHaveAttribute('tabindex', '-1')
+    })
+
+    it('ArrowDown moves the focused index to the next item', async () => {
+      const user = userEvent.setup()
+      renderPopover()
+
+      // Start with focus on the first item so the hook's effect moves
+      // DOM focus (otherwise the focus-management effect bails because
+      // no list button is the active element).
+      const first = screen.getByText('Alpha').closest('button') as HTMLButtonElement
+      first.focus()
+
+      await user.keyboard('{ArrowDown}')
+
+      await waitFor(() => {
+        const second = screen.getByText('Beta').closest('button') as HTMLButtonElement
+        expect(second).toHaveAttribute('tabindex', '0')
+        expect(second).toHaveFocus()
+      })
+    })
+
+    it('ArrowUp wraps to the last item from the first', async () => {
+      const user = userEvent.setup()
+      renderPopover()
+
+      const first = screen.getByText('Alpha').closest('button') as HTMLButtonElement
+      first.focus()
+
+      await user.keyboard('{ArrowUp}')
+
+      await waitFor(() => {
+        const last = screen.getByText('Gamma').closest('button') as HTMLButtonElement
+        expect(last).toHaveAttribute('tabindex', '0')
+        expect(last).toHaveFocus()
+      })
+    })
+
+    it('Enter triggers onSelect for the focused item', async () => {
+      const user = userEvent.setup()
+      const onSelect = vi.fn()
+      renderPopover({ onSelect })
+
+      const first = screen.getByText('Alpha').closest('button') as HTMLButtonElement
+      first.focus()
+
+      // Move down once to focus Beta, then press Enter.
+      await user.keyboard('{ArrowDown}')
+      await waitFor(() => {
+        const second = screen.getByText('Beta').closest('button') as HTMLButtonElement
+        expect(second).toHaveFocus()
+      })
+      await user.keyboard('{Enter}')
+
+      expect(onSelect).toHaveBeenCalledWith(items[1])
+    })
+
+    it('has no a11y violations after arrow-key navigation', async () => {
+      const user = userEvent.setup()
+      const { container } = renderPopover()
+
+      const first = screen.getByText('Alpha').closest('button') as HTMLButtonElement
+      first.focus()
+      await user.keyboard('{ArrowDown}')
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
 })

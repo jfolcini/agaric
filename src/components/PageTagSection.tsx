@@ -42,7 +42,7 @@ export function PageTagSection({
           {tag.name}
           <button
             type="button"
-            className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+            className="ml-0.5 inline-flex items-center justify-center rounded-full p-0.5 hover:bg-muted-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 [@media(pointer:coarse)]:p-2"
             onClick={() => onRemoveTag(tag.id)}
             aria-label={t('pageHeader.removeTag', { name: tag.name })}
           >
@@ -80,23 +80,25 @@ export function PageTagSection({
           />
           <ScrollArea className="max-h-40">
             {availableTags.map((tag) => (
-              <button
+              <Button
                 key={tag.id}
-                type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                variant="ghost"
+                size="sm"
+                className="w-full justify-start"
                 onClick={() => onAddTag(tag.id)}
               >
                 {tag.name}
-              </button>
+              </Button>
             ))}
             {tagQuery.trim() && !allTags.some((t_) => t_.name === tagQuery.trim()) && (
-              <button
-                type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent"
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full justify-start text-muted-foreground"
                 onClick={onCreateTag}
               >
                 {t('pageHeader.createTag', { name: tagQuery.trim() })}
-              </button>
+              </Button>
             )}
             {availableTags.length === 0 && !tagQuery.trim() && (
               <EmptyState compact message={t('pages.tags.empty')} />

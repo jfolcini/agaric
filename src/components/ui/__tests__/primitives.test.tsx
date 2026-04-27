@@ -140,6 +140,21 @@ describe('CloseButtonIcon', () => {
     expect(svg).toBeInTheDocument()
   })
 
+  // UX-2: the visible icon must scale up on coarse pointers so it fills
+  // more of the 44 px button (visual–affordance mismatch fix).
+  it('UX-2: inner icon scales to size-5 on coarse pointers', () => {
+    const { container } = render(
+      <button type="button">
+        <CloseButtonIcon />
+      </button>,
+    )
+    const svg = container.querySelector('svg')
+    expect(svg).toBeInTheDocument()
+    const cls = svg?.getAttribute('class') ?? ''
+    expect(cls).toContain('size-4')
+    expect(cls).toContain('[@media(pointer:coarse)]:size-5')
+  })
+
   it('has no a11y violations when wrapped in a button', async () => {
     const { container } = render(
       <button type="button">

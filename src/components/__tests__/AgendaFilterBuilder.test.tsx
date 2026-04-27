@@ -142,6 +142,36 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
+  // UX-9: dimension picker carries a Tooltip describing each dimension
+  // -----------------------------------------------------------------------
+  it('renders a tooltip describing each dimension when hovered (UX-9)', async () => {
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+
+    // Hover the dueDate row — its tooltip explains the contrast with
+    // scheduledDate, which is the whole point of the discoverability fix.
+    const dueDateBtn = screen
+      .getByText(t('agendaFilter.dueDate'))
+      .closest('button') as HTMLButtonElement | null
+    expect(dueDateBtn).not.toBeNull()
+    // The Tooltip wraps the menu item in a `<span>`. Hover the span so
+    // disabled-button pointer handling does not swallow the event.
+    const triggerSpan = (dueDateBtn as HTMLButtonElement).parentElement as HTMLElement
+    expect(triggerSpan).not.toBeNull()
+    await user.hover(triggerSpan)
+
+    await waitFor(
+      async () => {
+        const matches = await screen.findAllByText(t('filter.dimension.dueDate.description'))
+        expect(matches.length).toBeGreaterThanOrEqual(1)
+      },
+      { timeout: 3000 },
+    )
+  })
+
+  // -----------------------------------------------------------------------
   // 7. Selecting Status dimension shows TODO/DOING/DONE checkboxes
   // -----------------------------------------------------------------------
   it('selecting Status dimension shows TODO/DOING/DONE checkboxes', async () => {

@@ -280,8 +280,8 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
       )}
 
       {properties?.some((p) => p.key === 'repeat') && (
-        <button
-          type="button"
+        <span
+          role="status"
           className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground max-sm:px-2.5 max-sm:py-1"
           aria-label={t('block.repeats', {
             value: properties.find((p) => p.key === 'repeat')?.value ?? '',
@@ -289,7 +289,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
         >
           <Repeat className="h-3 w-3 flex-shrink-0" />
           {formatRepeatLabel(properties.find((p) => p.key === 'repeat')?.value ?? '', t)}
-        </button>
+        </span>
       )}
 
       {filteredProperties.length > 0 && (

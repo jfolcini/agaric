@@ -307,6 +307,9 @@ describe('QueryBuilderModal', () => {
       // Input is wired to the datalist
       const keyInput = screen.getByLabelText(/property key/i) as HTMLInputElement
       expect(keyInput.getAttribute('list')).toBe('qb-prop-key-list')
+      // UX-8: input also exposes ARIA autocomplete semantics for the datalist
+      expect(keyInput.getAttribute('aria-autocomplete')).toBe('list')
+      expect(keyInput.getAttribute('aria-controls')).toBe('qb-prop-key-list')
     })
 
     it('shows inline warning when entered key is not a known definition', async () => {
@@ -331,8 +334,11 @@ describe('QueryBuilderModal', () => {
       const keyInput = screen.getByLabelText(/property key/i) as HTMLInputElement
       await user.type(keyInput, 'unknown_key')
 
-      // Warning is announced (role=status) and input is marked invalid
-      expect(screen.getByText(/not yet defined/i)).toBeInTheDocument()
+      // Warning is announced (aria-live=polite) and input is marked invalid (UX-8)
+      const warning = screen.getByText(/not yet defined/i)
+      expect(warning).toBeInTheDocument()
+      expect(warning.getAttribute('aria-live')).toBe('polite')
+      expect(warning.getAttribute('role')).not.toBe('status')
       expect(keyInput).toHaveAttribute('aria-invalid', 'true')
       expect(keyInput.className).toContain('border-destructive')
     })

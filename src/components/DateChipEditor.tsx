@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { announce } from '@/lib/announcer'
 import { formatDate } from '@/lib/date-utils'
+import { reportIpcError } from '@/lib/report-ipc-error'
 import { setDueDate, setScheduledDate } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useDateInput } from '../hooks/useDateInput'
@@ -62,8 +63,12 @@ export function DateChipEditor({
         toast.success(newDate ? t('dateChip.dateUpdated') : t('dateChip.dateCleared'))
         announce(newDate ? t('announce.dateUpdated', { date: newDate }) : t('announce.dateCleared'))
         onSuccess?.()
-      } catch {
-        toast.error(t('dateChip.updateFailed'))
+      } catch (err) {
+        reportIpcError('DateChipEditor', 'dateChip.updateFailed', err, t, {
+          blockId,
+          dateType,
+          newDate,
+        })
         announce(t('announce.rescheduleFailed'))
       }
     },

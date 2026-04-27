@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { useEditorBlur } from '@/hooks/useEditorBlur'
 import { logger } from '@/lib/logger'
+import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { shouldSplitOnBlur } from '../editor/use-roving-editor'
@@ -69,8 +70,11 @@ async function processFileAttachments(files: File[], blockId: string, t: TFuncti
         fsPath: info.fsPath,
       })
       toast.success(t('blockTree.attachedFileMessage', { filename: info.filename }))
-    } catch {
-      toast.error(t('blockTree.attachFileFailed'))
+    } catch (err) {
+      reportIpcError('EditableBlock', 'blockTree.attachFileFailed', err, t, {
+        blockId,
+        filename: info.filename,
+      })
     }
   }
 }

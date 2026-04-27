@@ -1105,6 +1105,62 @@
     --accent-slate: oklch(0.4 0.06 257);
     --accent-orange: oklch(0.6 0.22 50);
   }
+
+  /* UX-6 — token-coverage gap. Until this block landed, the
+   * `prefers-contrast: more` query only re-keyed the per-space accent
+   * palette; the StatusBadge / PriorityBadge / scheduled+repeat
+   * indicator chips kept their normal-contrast values. The result was
+   * that users in high-contrast mode saw boosted accents but the same
+   * washed-out status / priority / indicator surfaces as everyone
+   * else. Boost chroma and push lightness toward the extremes (darker
+   * fg / lighter bg in light mode, lighter fg / brighter bg in dark
+   * mode) — same `oklch()` recipe as the accent block above, hue
+   * preserved so the semantic mapping (green = done, blue = active,
+   * etc.) is unchanged. */
+
+  /* Light theme — push backgrounds slightly darker (away from the
+   * page bg) and foregrounds toward black for higher legibility. */
+  :root {
+    --status-done: oklch(0.88 0.12 155);
+    --status-done-foreground: oklch(0.22 0.16 155);
+    --status-active: oklch(0.86 0.12 250);
+    --status-active-foreground: oklch(0.22 0.16 250);
+    --status-pending: oklch(0.9 0.12 90);
+    --status-pending-foreground: oklch(0.35 0.18 88);
+
+    --indicator-scheduled: oklch(0.88 0.08 307);
+    --indicator-scheduled-foreground: oklch(0.36 0.24 303);
+    --indicator-repeat: oklch(0.88 0.08 272);
+    --indicator-repeat-foreground: oklch(0.34 0.3 277);
+  }
+
+  /* Dark theme — push backgrounds slightly brighter (away from the
+   * page bg) and foregrounds toward white for higher legibility. */
+  .dark {
+    --status-done: oklch(0.32 0.12 155);
+    --status-done-foreground: oklch(0.9 0.16 160);
+    --status-active: oklch(0.32 0.1 250);
+    --status-active-foreground: oklch(0.9 0.14 250);
+    --status-pending: oklch(0.34 0.1 90);
+    --status-pending-foreground: oklch(0.94 0.16 95);
+
+    --indicator-scheduled: oklch(0.3 0.1 305);
+    --indicator-scheduled-foreground: oklch(0.85 0.24 302);
+    --indicator-repeat: oklch(0.3 0.08 279);
+    --indicator-repeat-foreground: oklch(0.82 0.26 274);
+  }
+
+  /* Priority palette — the base values are intentionally identical
+   * across light and dark (they're foreground-on-foreground chips with
+   * a shared white `--priority-foreground`), so a single rule covers
+   * both modes, matching the accent block's convention above. */
+  :root,
+  .dark {
+    --priority-urgent: oklch(0.55 0.28 25);
+    --priority-high: oklch(0.7 0.22 90);
+    --priority-normal: oklch(0.5 0.28 265);
+    --priority-foreground: oklch(1 0 0);
+  }
 }
 
 /* ── Fallback: browsers without container query support ────────────── */

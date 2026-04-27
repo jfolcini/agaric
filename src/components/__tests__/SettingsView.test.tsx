@@ -417,6 +417,75 @@ describe('SettingsView', () => {
     })
   })
 
+  // ── UX-9: week-start preference Select ─────────────────────────────
+  describe('week-start preference (UX-9)', () => {
+    beforeEach(() => {
+      localStorage.removeItem('week-start-preference')
+    })
+
+    async function openAppearance() {
+      const user = userEvent.setup()
+      render(<SettingsView />)
+      const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })
+      await user.click(appearanceTab)
+      return user
+    }
+
+    it('renders a week-start Select labelled and defaulting to Monday', async () => {
+      await openAppearance()
+
+      const select = screen.getByLabelText(t('settings.weekStartLabel'))
+      expect(select).toBeInTheDocument()
+      // Hook default is 1 (Monday). Coerced to '1' for the Select.
+      expect(select).toHaveValue('1')
+    })
+
+    it('renders both Monday and Sunday options', async () => {
+      await openAppearance()
+      expect(
+        screen.getByRole('option', { name: t('settings.weekStartMonday') }),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('option', { name: t('settings.weekStartSunday') }),
+      ).toBeInTheDocument()
+    })
+
+    it('changing the value writes "0" to localStorage when Sunday is picked', async () => {
+      const user = await openAppearance()
+      const select = screen.getByLabelText(t('settings.weekStartLabel'))
+
+      await user.selectOptions(select, '0')
+
+      await waitFor(() => {
+        expect(localStorage.getItem('week-start-preference')).toBe('0')
+      })
+      // Hook re-reads via the synthetic storage event — the select
+      // reflects the new value.
+      expect(select).toHaveValue('0')
+    })
+
+    it('changing the value writes "1" to localStorage when Monday is picked', async () => {
+      // Pre-seed Sunday so we can assert the round-trip back to Monday.
+      localStorage.setItem('week-start-preference', '0')
+      const user = await openAppearance()
+      const select = screen.getByLabelText(t('settings.weekStartLabel'))
+      expect(select).toHaveValue('0')
+
+      await user.selectOptions(select, '1')
+
+      await waitFor(() => {
+        expect(localStorage.getItem('week-start-preference')).toBe('1')
+      })
+      expect(select).toHaveValue('1')
+    })
+
+    it('initialises the select value from a persisted Sunday preference', async () => {
+      localStorage.setItem('week-start-preference', '0')
+      await openAppearance()
+      expect(screen.getByLabelText(t('settings.weekStartLabel'))).toHaveValue('0')
+    })
+  })
+
   it('font size selector updates localStorage and CSS variable', async () => {
     const user = userEvent.setup()
     render(<SettingsView />)

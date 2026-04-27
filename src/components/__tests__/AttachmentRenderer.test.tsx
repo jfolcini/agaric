@@ -270,4 +270,51 @@ describe('AttachmentRenderer', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  // -- UX-5: image-resize wrapper has aria-label + tabindex (no role="button" — would
+  // create a nested-interactive a11y violation with the inner ImageResizeToolbar buttons).
+  it('image-resize wrapper exposes aria-label and tabindex (UX-5)', () => {
+    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
+    const { container } = render(
+      <AttachmentRenderer
+        blockId="B1"
+        attachments={[makeAttachment()]}
+        imageWidth="100"
+        imageHovered={false}
+        onImageHoveredChange={vi.fn()}
+        onImageWidthChange={vi.fn()}
+        onLightboxOpen={vi.fn()}
+        onPdfOpen={vi.fn()}
+      />,
+    )
+    const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]') as HTMLElement
+    expect(wrapper).toBeInTheDocument()
+    // Uses role="group" (non-interactive) instead of role="button" to avoid a
+    // nested-interactive a11y violation with the inner ImageResizeToolbar buttons.
+    expect(wrapper.getAttribute('role')).toBe('group')
+    expect(wrapper.getAttribute('aria-label')).toBe('Toggle resize toolbar')
+    expect(wrapper.getAttribute('tabindex')).toBe('0')
+  })
+
+  it('image-resize wrapper toggles imageHovered on Enter/Space (UX-5)', () => {
+    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
+    const onHoveredChange = vi.fn()
+    const { container } = render(
+      <AttachmentRenderer
+        blockId="B1"
+        attachments={[makeAttachment()]}
+        imageWidth="100"
+        imageHovered={false}
+        onImageHoveredChange={onHoveredChange}
+        onImageWidthChange={vi.fn()}
+        onLightboxOpen={vi.fn()}
+        onPdfOpen={vi.fn()}
+      />,
+    )
+    const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]') as HTMLElement
+    fireEvent.keyDown(wrapper, { key: 'Enter' })
+    expect(onHoveredChange).toHaveBeenCalledWith(true)
+    fireEvent.keyDown(wrapper, { key: ' ' })
+    expect(onHoveredChange).toHaveBeenCalledTimes(2)
+  })
 })

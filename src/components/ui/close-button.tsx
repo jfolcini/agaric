@@ -17,7 +17,7 @@ const CloseButtonIcon = ({ ref, ...props }: React.ComponentProps<'span'>) => {
   const { t } = useTranslation()
   return (
     <span ref={ref} {...props}>
-      <XIcon className="size-4" />
+      <XIcon className="size-4 [@media(pointer:coarse)]:size-5" />
       <span className="sr-only">{t('ui.close')}</span>
     </span>
   )

@@ -250,6 +250,21 @@ describe('MonthlyDayCell', () => {
     expect(cell).toHaveAttribute('tabindex', '-1')
   })
 
+  // UX-2: scale the inner clickable date circle on coarse pointers so the
+  // visible tap target meets the 44 px minimum (the cell already does, but
+  // the circle is the visual affordance — see REVIEW-LATER.md UX-2).
+  it('UX-2: inner date circle scales to 40 px on coarse pointers', () => {
+    const { container } = render(<MonthlyDayCell {...defaultProps} />)
+
+    // The date number span is the first <span> with the rounded-full class
+    const dateSpan = container.querySelector('span.rounded-full') as HTMLElement
+    expect(dateSpan).toBeInTheDocument()
+    expect(dateSpan.className).toContain('w-7')
+    expect(dateSpan.className).toContain('h-7')
+    expect(dateSpan.className).toContain('[@media(pointer:coarse)]:w-10')
+    expect(dateSpan.className).toContain('[@media(pointer:coarse)]:h-10')
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(
       // biome-ignore lint/a11y/useSemanticElements: test wrapper for ARIA grid context

@@ -29,6 +29,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { type ThemePreference, useTheme } from '@/hooks/useTheme'
+import { useWeekStart } from '@/hooks/useWeekStart'
 import { logger } from '@/lib/logger'
 import {
   defaultQuickCaptureShortcut,
@@ -447,6 +448,10 @@ export function SettingsView(): React.ReactElement {
   const { theme, setTheme } = useTheme()
   const [fontSize, setFontSize] = useState<FontSize>(readFontSize)
   const [bugReportOpen, setBugReportOpen] = useState<boolean>(false)
+  // UX-9 — surface the previously hidden week-start preference. The hook
+  // returns `0 | 1` (Sunday | Monday); the Select primitive only deals
+  // in strings so we coerce on read/write.
+  const { weekStartsOn, setWeekStart } = useWeekStart()
 
   // Apply font size on mount and changes
   useEffect(() => {
@@ -496,6 +501,18 @@ export function SettingsView(): React.ReactElement {
       // localStorage unavailable
     }
   }, [])
+
+  // UX-9 — week-start coercion. Select values are strings; the hook
+  // and underlying localStorage key are typed `0 | 1`. We accept only
+  // `'0'` and `'1'` and ignore anything else (defensive — the Select
+  // can only emit values from the items we render).
+  const handleWeekStartChange = useCallback(
+    (value: string) => {
+      if (value === '0') setWeekStart(0)
+      else if (value === '1') setWeekStart(1)
+    },
+    [setWeekStart],
+  )
 
   return (
     <div className="settings-view space-y-6">
@@ -577,6 +594,25 @@ export function SettingsView(): React.ReactElement {
                   <SelectItem value="small">{t('settings.fontSizeSmall')}</SelectItem>
                   <SelectItem value="medium">{t('settings.fontSizeMedium')}</SelectItem>
                   <SelectItem value="large">{t('settings.fontSizeLarge')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Week-start preference (UX-9). Previously a half-shipped feature
+                exposed only via the `week-start-preference` localStorage key.
+                Surfacing it in Appearance lets users pick Monday / Sunday-
+                first weeks without devtools. */}
+            <div className="space-y-2">
+              <label htmlFor="week-start-select" className="text-sm font-medium">
+                {t('settings.weekStartLabel')}
+              </label>
+              <Select value={String(weekStartsOn)} onValueChange={handleWeekStartChange}>
+                <SelectTrigger id="week-start-select" aria-label={t('settings.weekStartLabel')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">{t('settings.weekStartMonday')}</SelectItem>
+                  <SelectItem value="0">{t('settings.weekStartSunday')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>

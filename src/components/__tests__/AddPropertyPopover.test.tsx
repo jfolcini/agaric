@@ -305,4 +305,40 @@ describe('AddPropertyPopover', () => {
       expect(await axe(container)).toHaveNoViolations()
     })
   })
+
+  // UX-1 — definition rows render via the Button primitive so they inherit
+  // the focus-visible ring tokens from buttonVariants.
+  it('UX-1: definition rows render as Button primitives with focus-visible ring tokens', async () => {
+    const defs = [makeDef('status', 'text')]
+    render(<AddPropertyPopover definitions={defs} onAdd={vi.fn()} open onOpenChange={vi.fn()} />)
+
+    const row = await screen.findByRole('button', { name: /Status/ })
+    expect(row.className).toContain('focus-visible:ring-[3px]')
+    expect(row.className).toContain('focus-visible:ring-ring/50')
+  })
+
+  // UX-6 — the type-hint contrast fix. The hint must not use the old
+  // text-[10px] opacity-70 combo (both font-size and contrast were below
+  // WCAG AA); it should now use text-xs + text-muted-foreground.
+  it('UX-6: create-new-type-hint uses text-xs + text-muted-foreground (no opacity-70)', async () => {
+    const user = userEvent.setup()
+    render(
+      <AddPropertyPopover
+        definitions={[]}
+        onAdd={vi.fn()}
+        supportCreateDef
+        onCreateDef={vi.fn()}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    )
+
+    await user.type(screen.getByLabelText('Search definitions'), 'myfield')
+    const hint = await screen.findByTestId('create-new-type-hint')
+
+    expect(hint.className).toContain('text-xs')
+    expect(hint.className).toContain('text-muted-foreground')
+    expect(hint.className).not.toContain('text-[10px]')
+    expect(hint.className).not.toContain('opacity-70')
+  })
 })

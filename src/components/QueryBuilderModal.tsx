@@ -213,6 +213,8 @@ export function QueryBuilderModal({
               onChange={(e) => setPropertyKey(e.target.value)}
               placeholder={t('queryBuilder.propertyKeyPlaceholder')}
               list="qb-prop-key-list"
+              aria-autocomplete="list"
+              aria-controls="qb-prop-key-list"
               aria-invalid={propertyKeyUnknown}
               aria-describedby={propertyKeyUnknown ? 'qb-prop-key-warning' : undefined}
               className={cn(propertyKeyUnknown && 'border-destructive')}
@@ -223,7 +225,7 @@ export function QueryBuilderModal({
               ))}
             </datalist>
             {propertyKeyUnknown && (
-              <p id="qb-prop-key-warning" className="text-xs text-destructive" role="status">
+              <p id="qb-prop-key-warning" className="text-xs text-destructive" aria-live="polite">
                 {t('queryBuilder.propertyKeyUnknown', { key: propertyKeyTrimmed })}
               </p>
             )}

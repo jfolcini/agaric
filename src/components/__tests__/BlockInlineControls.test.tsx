@@ -401,6 +401,22 @@ describe('BlockInlineControls', () => {
     expect(screen.getByTestId('repeat-icon')).toBeInTheDocument()
   })
 
+  it('renders the repeat indicator as a non-interactive status span (UX-5)', () => {
+    const { container } = renderControls(
+      makeProps({
+        properties: [{ key: 'repeat', value: 'weekly' }],
+      }),
+    )
+
+    // It must NOT be a <button> (no click target, screen readers should not
+    // announce "button"). It is rendered as a <span role="status">.
+    const indicator = container.querySelector('.repeat-indicator') as HTMLElement
+    expect(indicator).toBeInTheDocument()
+    expect(indicator.tagName).toBe('SPAN')
+    expect(indicator.getAttribute('role')).toBe('status')
+    expect(indicator.getAttribute('aria-label')).toContain('weekly')
+  })
+
   it('renders property chips up to 3', () => {
     const filtered = [
       { key: 'a', value: 'v1' },

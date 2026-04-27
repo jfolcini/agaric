@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { TooltipProvider } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { isMac } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
@@ -98,18 +98,34 @@ export function SpaceSwitcher(): React.JSX.Element {
   return (
     <TooltipProvider>
       <Select value={currentSpaceId ?? ''} onValueChange={handleValueChange}>
-        <SelectTrigger
-          aria-label={t('space.switch')}
-          className={cn(
-            'w-full justify-between',
-            // Inherit the sidebar's tight typography while preserving
-            // the 44px touch target via the Select's built-in
-            // `[@media(pointer:coarse)]:h-11` rule.
-            'text-sm font-medium',
-          )}
-        >
-          <SelectValue placeholder={t('space.switch')}>{currentSpace?.name}</SelectValue>
-        </SelectTrigger>
+        {/*
+         * UX-9 — surface the `Ctrl+1..9` / `⌘1..9` space-switching
+         * shortcuts via a tooltip on the trigger so users discover
+         * them without opening the `?` keyboard help dialog. The
+         * tooltip wraps a `<span>` rather than the SelectTrigger
+         * directly so the Tooltip's pointer events do not interfere
+         * with Radix Select's own trigger handling, and the tooltip
+         * still surfaces over disabled / non-button anchors.
+         */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="block w-full">
+              <SelectTrigger
+                aria-label={t('space.switch')}
+                className={cn(
+                  'w-full justify-between',
+                  // Inherit the sidebar's tight typography while preserving
+                  // the 44px touch target via the Select's built-in
+                  // `[@media(pointer:coarse)]:h-11` rule.
+                  'text-sm font-medium',
+                )}
+              >
+                <SelectValue placeholder={t('space.switch')}>{currentSpace?.name}</SelectValue>
+              </SelectTrigger>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{t('spaceSwitcher.shortcutHint')}</TooltipContent>
+        </Tooltip>
         <SelectContent>
           {availableSpaces.map((space, idx) => (
             <SelectItem key={space.id} value={space.id}>

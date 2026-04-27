@@ -60,7 +60,13 @@ function parseSelectOptions(def: PropertyDefinition | undefined): string[] {
   try {
     const parsed = JSON.parse(def.options)
     return Array.isArray(parsed) ? parsed : []
-  } catch {
+  } catch (err) {
+    logger.warn(
+      'PropertyRowEditor',
+      'failed to parse select options JSON',
+      { key: def.key, options: def.options },
+      err,
+    )
     return []
   }
 }

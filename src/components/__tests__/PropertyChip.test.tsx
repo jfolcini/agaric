@@ -254,14 +254,24 @@ describe('PropertyChip', () => {
     expect(chip?.className).toContain('focus-within:ring-ring/50')
   })
 
-  it('inner buttons do not paint their own focus-visible ring (avoids double ring)', () => {
+  // UX-1: each inner button now also paints the standard focus-visible ring
+  // alongside `focus-visible:outline-hidden`, so keyboard users see a clear
+  // indicator on whichever zone is focused. The wrapper still carries a
+  // focus-within ring; the per-button ring sits inside it (not a true
+  // double ring because the wrapper one is `focus-within`, the inner one
+  // is `focus-visible` — they target different states).
+  it('inner buttons paint the standard focus-visible ring (UX-1)', () => {
     render(<PropertyChip propKey="effort" value="2h" onClick={() => {}} onKeyClick={() => {}} />)
 
     const keyButton = screen.getByRole('button', { name: /Edit property/ })
     const valueButton = screen.getByRole('button', { name: 'Effort: 2h' })
-    expect(keyButton.className).not.toContain('focus-visible:ring-[3px]')
-    expect(keyButton.className).toContain('focus-visible:outline-hidden')
-    expect(valueButton.className).not.toContain('focus-visible:ring-[3px]')
-    expect(valueButton.className).toContain('focus-visible:outline-hidden')
+    for (const cls of [
+      'focus-visible:ring-[3px]',
+      'focus-visible:ring-ring/50',
+      'focus-visible:outline-hidden',
+    ]) {
+      expect(keyButton.className).toContain(cls)
+      expect(valueButton.className).toContain(cls)
+    }
   })
 })

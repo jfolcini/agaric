@@ -60,7 +60,7 @@ export function MonthlyDayCell({
       {/* Date number */}
       <span
         className={cn(
-          'inline-flex items-center justify-center text-sm font-medium w-7 h-7 rounded-full',
+          'inline-flex items-center justify-center text-sm font-medium w-7 h-7 rounded-full [@media(pointer:coarse)]:w-10 [@media(pointer:coarse)]:h-10',
           isToday && 'bg-primary text-primary-foreground font-bold',
         )}
       >

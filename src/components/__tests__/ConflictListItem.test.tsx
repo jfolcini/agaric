@@ -564,6 +564,79 @@ describe('ConflictListItem', () => {
     })
   })
 
+  // -- UX-5: Ambiguous/hidden state on Keep button + missing-original banner --
+  describe('UX-5 — Keep button visible label & collapsed-row banner', () => {
+    it('renders "Keep incoming" as the visible Keep button label', () => {
+      const block = makeConflict({ id: 'C1', content: 'incoming text' })
+
+      render(
+        <ul>
+          <ConflictListItem
+            {...defaultProps}
+            block={block}
+            original={originalBlock}
+            isExpanded={false}
+          />
+        </ul>,
+      )
+
+      const keepBtn = screen.getByTestId('conflict-keep-btn')
+      expect(keepBtn.textContent).toContain(t('conflict.keepIncoming'))
+      expect(keepBtn.textContent).toContain('Keep incoming')
+    })
+
+    it('shows the originalMissing banner on the collapsed row (not gated by isExpanded)', () => {
+      const block = makeConflict({ id: 'C1', content: 'text', parent_id: 'GONE' })
+
+      render(
+        <ul>
+          <ConflictListItem
+            {...defaultProps}
+            block={block}
+            original={undefined}
+            isExpanded={false}
+          />
+        </ul>,
+      )
+
+      // Banner is present even though the item is collapsed.
+      const banner = screen.getByTestId('conflict-original-missing')
+      expect(banner).toBeInTheDocument()
+      expect(banner.getAttribute('role')).toBe('alert')
+    })
+
+    it('exposes the disabled-reason via aria-description when Keep is disabled', () => {
+      const block = makeConflict({ id: 'C1', content: 'text', parent_id: 'GONE' })
+
+      render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={undefined} />
+        </ul>,
+      )
+
+      const keepBtn = screen.getByTestId('conflict-keep-btn') as HTMLButtonElement
+      expect(keepBtn.disabled).toBe(true)
+      expect(keepBtn.getAttribute('aria-description')).toBe(t('conflict.keepDisabledNoOriginal'))
+    })
+
+    it('has no a11y violations when the originalMissing banner is shown', async () => {
+      const block = makeConflict({ id: 'C1', content: 'text', parent_id: 'GONE' })
+
+      const { container } = render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={undefined} />
+        </ul>,
+      )
+
+      await waitFor(async () => {
+        const results = await axe(container, {
+          rules: { 'color-contrast': { enabled: false } },
+        })
+        expect(results).toHaveNoViolations()
+      })
+    })
+  })
+
   describe('a11y', () => {
     it('has no a11y violations', async () => {
       const block = makeConflict({ id: 'C1', content: 'accessible conflict' })

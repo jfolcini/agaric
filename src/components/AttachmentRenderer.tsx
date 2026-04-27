@@ -53,12 +53,17 @@ export function AttachmentRenderer({
           const url = getAssetUrl(att.fs_path)
           if (!url) return null
           return (
-            // biome-ignore lint/a11y/noStaticElementInteractions: hover/focus interaction for image resize toolbar
+            // biome-ignore lint/a11y/noStaticElementInteractions: focusable image container reveals an inner toolbar with its own buttons; using role="button" here would create a nested-interactive a11y violation
+            // biome-ignore lint/a11y/useSemanticElements: <fieldset>/<legend> are form-control semantics, not appropriate for an image wrapper; role="group" is the correct ARIA primitive here
             <div
               key={att.id}
               className="relative inline-block"
               style={{ maxWidth: `${imageWidth}%` }}
               data-testid="image-resize-wrapper"
+              role="group"
+              aria-label={t('attachment.toggleResizeToolbar')}
+              // biome-ignore lint/a11y/noNoninteractiveTabindex: image container needs keyboard focus to expose the inner resize toolbar
+              tabIndex={0}
               onPointerEnter={() => onImageHoveredChange(true)}
               onPointerLeave={() => onImageHoveredChange(false)}
               onClick={(e) => e.stopPropagation()}
@@ -68,8 +73,6 @@ export function AttachmentRenderer({
                   onImageHoveredChange(!imageHovered)
                 }
               }}
-              // biome-ignore lint/a11y/noNoninteractiveTabindex: image container needs focus for keyboard resize access
-              tabIndex={0}
               onFocus={() => onImageHoveredChange(true)}
               onBlur={(e) => {
                 if (!e.currentTarget.contains(e.relatedTarget)) {

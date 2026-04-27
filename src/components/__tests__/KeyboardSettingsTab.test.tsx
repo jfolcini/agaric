@@ -242,6 +242,31 @@ describe('KeyboardSettingsTab', () => {
     expect(screen.getByText('Key binding cannot be empty')).toBeInTheDocument()
   })
 
+  it('UX-8: empty-binding error is wired to the input via aria-describedby + aria-invalid', async () => {
+    const user = userEvent.setup()
+    render(<KeyboardSettingsTab />)
+
+    const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
+    await user.click(editButtons[0] as HTMLElement)
+
+    const input = screen.getByPlaceholderText('Type new key binding...')
+    await user.clear(input)
+
+    // While the binding is empty, the input must point at the error <p>
+    expect(input.getAttribute('aria-describedby')).toBe('kbd-empty-binding-error')
+    expect(input.getAttribute('aria-invalid')).toBe('true')
+
+    // The error <p> must own that id.
+    const errorP = screen.getByText('Key binding cannot be empty')
+    expect(errorP.getAttribute('id')).toBe('kbd-empty-binding-error')
+
+    // Once the user types something, the error and the wiring must clear.
+    await user.type(input, 'Ctrl + P')
+    expect(input.getAttribute('aria-describedby')).toBeNull()
+    expect(input.getAttribute('aria-invalid')).toBeNull()
+    expect(screen.queryByText('Key binding cannot be empty')).not.toBeInTheDocument()
+  })
+
   it('shows "Customized" badge for custom shortcuts', () => {
     render(<KeyboardSettingsTab />)
 

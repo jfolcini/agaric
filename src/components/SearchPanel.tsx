@@ -31,6 +31,7 @@ import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { logger } from '../lib/logger'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
+import { reportIpcError } from '../lib/report-ipc-error'
 import type { BlockRow, TagCacheRow } from '../lib/tauri'
 import {
   batchResolve,
@@ -253,10 +254,14 @@ export function SearchPanel(): React.ReactElement {
             addRecentPage(block.parent_id, parent.content ?? 'Untitled')
             setRecentPages(getRecentPages())
             navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
-          } catch {
-            toast.error(t('search.loadResultsFailed'))
+          } catch (err) {
+            reportIpcError('SearchPanel', 'search.loadResultsFailed', err, t, {
+              blockId: block.id,
+              parentId: block.parent_id,
+            })
           }
         } else {
+          logger.warn('SearchPanel', 'block has no parent page', { blockId: block.id })
           toast.error(t('search.noParentPage'))
         }
       } finally {
@@ -487,7 +492,7 @@ export function SearchPanel(): React.ReactElement {
           <button
             type="button"
             onClick={handleClearAllFilters}
-            className="text-xs text-muted-foreground hover:text-foreground underline ml-1"
+            className="text-xs text-muted-foreground hover:text-foreground underline ml-1 rounded-sm focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
           >
             {t('search.clearAll')}
           </button>

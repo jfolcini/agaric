@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   type AgendaFilterDimension,
   ALL_DIMENSIONS,
@@ -160,24 +161,42 @@ function AddFilterPopover({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-56 p-3 max-w-[calc(100vw-2rem)]">
         {step === 'pick-dimension' && (
-          <ul
-            className="flex flex-col gap-1 list-none m-0 p-0"
-            aria-label={t('agendaFilter.filterDimensions')}
-          >
-            {ALL_DIMENSIONS.map((dim) => {
-              const alreadyUsed = dim !== 'property' && existingDimensions.has(dim)
-              return (
-                <li key={dim}>
-                  <PopoverMenuItem
-                    disabled={alreadyUsed}
-                    onClick={() => handleSelectDimension(dim)}
-                  >
-                    {dimensionLabel(dim)}
-                  </PopoverMenuItem>
-                </li>
-              )
-            })}
-          </ul>
+          // UX-9 — wrap each dimension item in a Tooltip so the
+          // distinction between visually-similar dimensions (dueDate vs
+          // scheduledDate, completedDate vs createdDate) is discoverable
+          // without opening the dimension and trying its values.
+          <TooltipProvider>
+            <ul
+              className="flex flex-col gap-1 list-none m-0 p-0"
+              aria-label={t('agendaFilter.filterDimensions')}
+            >
+              {ALL_DIMENSIONS.map((dim) => {
+                const alreadyUsed = dim !== 'property' && existingDimensions.has(dim)
+                return (
+                  <li key={dim}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        {/* Span wrapper so the tooltip surfaces over disabled
+                            menu items too — disabled buttons swallow pointer
+                            events otherwise. */}
+                        <span className="block">
+                          <PopoverMenuItem
+                            disabled={alreadyUsed}
+                            onClick={() => handleSelectDimension(dim)}
+                          >
+                            {dimensionLabel(dim)}
+                          </PopoverMenuItem>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="max-w-xs">
+                        {t(`filter.dimension.${dim}.description`)}
+                      </TooltipContent>
+                    </Tooltip>
+                  </li>
+                )
+              })}
+            </ul>
+          </TooltipProvider>
         )}
 
         {step === 'pick-values' && dimension && (
