@@ -190,6 +190,45 @@ describe('SpaceManageDialog', () => {
     })
   })
 
+  // UX-6 — colour-blind users cannot reliably tell which swatch is
+  // selected by ring colour alone, so the selected swatch overlays a
+  // <Check> icon as a non-colour signal. This test asserts the icon
+  // is present on exactly the selected swatch and absent on the rest.
+  it('overlays a Check icon on the currently-selected accent swatch only (UX-6)', async () => {
+    const user = userEvent.setup()
+    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+
+    const groups = await screen.findAllByRole('group', {
+      name: t('space.accentColorLabel'),
+    })
+    const personalGroup = groups[0] as HTMLElement
+    const violetBtn = within(personalGroup).getByRole('button', {
+      name: t('space.accentSwatchLabel', { color: 'violet' }),
+    })
+    const blueBtn = within(personalGroup).getByRole('button', {
+      name: t('space.accentSwatchLabel', { color: 'blue' }),
+    })
+
+    // Pre-click: nothing is selected on the Personal row (mock seeds
+    // `accent_color: null`), so no swatch carries the Check overlay.
+    expect(violetBtn.querySelector('svg')).toBeNull()
+    expect(blueBtn.querySelector('svg')).toBeNull()
+
+    await user.click(violetBtn)
+
+    // Post-click: only the violet swatch shows the Check icon. Other
+    // swatches in the same group stay icon-free.
+    await waitFor(() => {
+      expect(violetBtn.querySelector('svg')).not.toBeNull()
+    })
+    expect(blueBtn.querySelector('svg')).toBeNull()
+
+    // The icon is hidden from assistive tech (decorative — selection
+    // is already announced via `aria-pressed`).
+    const icon = violetBtn.querySelector('svg') as SVGElement
+    expect(icon.getAttribute('aria-hidden')).toBe('true')
+  })
+
   it('disables the delete button when the space has at least one page', async () => {
     // Probe returns a non-empty page → Delete must be disabled.
     mockedInvoke.mockImplementation(async (cmd: string) => {

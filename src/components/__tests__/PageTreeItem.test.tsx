@@ -262,4 +262,60 @@ describe('PageTreeItem', () => {
       }
     })
   })
+
+  describe('UX-1 — focus-visible ring + aria-labels on hand-rolled buttons', () => {
+    const ringClasses = [
+      'focus-visible:ring-[3px]',
+      'focus-visible:ring-ring/50',
+      'focus-visible:outline-hidden',
+    ]
+
+    it('leaf page button has focus-visible ring tokens', () => {
+      const node = makeLeaf('Leaf Page', 'Leaf Page', 'P1')
+      const { container } = render(<PageTreeItem node={node} {...defaultProps} />)
+
+      // The leaf navigation button is the first <button> child
+      // biome-ignore lint/style/noNonNullAssertion: button known to exist after render
+      const leafBtn = container.querySelector('button')!
+      for (const cls of ringClasses) {
+        expect(leafBtn.className).toContain(cls)
+      }
+    })
+
+    it('namespace toggle has aria-label and focus-visible ring tokens', () => {
+      const child = makeLeaf('child', 'ns/child', 'P1')
+      const node = makeNamespace('ns', 'ns', [child])
+      render(<PageTreeItem node={node} {...defaultProps} />)
+
+      const toggle = screen.getByLabelText('Toggle ns namespace')
+      expect(toggle).toBeInTheDocument()
+      for (const cls of ringClasses) {
+        expect(toggle.className).toContain(cls)
+      }
+    })
+
+    it('hybrid toggle has aria-label and focus-visible ring tokens', () => {
+      const child = makeLeaf('sub', 'work/sub', 'P2')
+      const node = makeHybrid('work', 'work', 'P1', [child])
+      render(<PageTreeItem node={node} {...defaultProps} />)
+
+      const toggle = screen.getByLabelText('Toggle work (hybrid namespace)')
+      expect(toggle).toBeInTheDocument()
+      for (const cls of ringClasses) {
+        expect(toggle.className).toContain(cls)
+      }
+    })
+
+    it('hybrid name button has focus-visible ring tokens', () => {
+      const child = makeLeaf('sub', 'work/sub', 'P2')
+      const node = makeHybrid('work', 'work', 'P1', [child])
+      render(<PageTreeItem node={node} {...defaultProps} />)
+
+      // The hybrid name button has the page name as text
+      const nameBtn = screen.getByText('work').closest('button') as HTMLElement
+      for (const cls of ringClasses) {
+        expect(nameBtn.className).toContain(cls)
+      }
+    })
+  })
 })

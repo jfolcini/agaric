@@ -2,7 +2,6 @@ import { Pencil, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
@@ -10,6 +9,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useQueryExecution } from '../hooks/useQueryExecution'
 import { useQuerySorting } from '../hooks/useQuerySorting'
 import { OPERATOR_SYMBOLS, parseQueryExpression } from '../lib/query-utils'
+import { reportIpcError } from '../lib/report-ipc-error'
 import type { BlockRow } from '../lib/tauri'
 import { editBlock } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
@@ -145,8 +145,8 @@ export function QueryResult({
         await editBlock(blockId, `{{query ${newExpression}}}`)
         setBuilderOpen(false)
         fetchResults()
-      } catch {
-        toast.error(t('queryBuilder.saveFailed'))
+      } catch (err) {
+        reportIpcError('QueryResult', 'queryBuilder.saveFailed', err, t, { blockId })
       }
     },
     [blockId, fetchResults, t],

@@ -14,10 +14,10 @@ import type React from 'react'
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '../lib/logger'
+import { reportIpcError } from '../lib/report-ipc-error'
 import type { BlockRow } from '../lib/tauri'
 import { setProperty } from '../lib/tauri'
 import { cn } from '../lib/utils'
@@ -232,8 +232,11 @@ export function BlockPropertyEditor({
               onClick={async () => {
                 try {
                   await setProperty({ blockId, key: editingProp.key, valueText: opt })
-                } catch {
-                  toast.error(t('property.saveFailed'))
+                } catch (err) {
+                  reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
+                    blockId,
+                    key: editingProp.key,
+                  })
                 }
                 setEditingProp(null)
               }}
@@ -296,8 +299,12 @@ export function BlockPropertyEditor({
                         key: editingProp.key,
                         valueRef: page.id,
                       })
-                    } catch {
-                      toast.error(t('property.saveFailed'))
+                    } catch (err) {
+                      reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
+                        blockId,
+                        key: editingProp.key,
+                        refPageId: page.id,
+                      })
                     }
                     setEditingProp(null)
                   }}
@@ -326,8 +333,11 @@ export function BlockPropertyEditor({
                   key: editingProp.key,
                   valueText: newValue || null,
                 })
-              } catch {
-                toast.error(t('property.saveFailed'))
+              } catch (err) {
+                reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
+                  blockId,
+                  key: editingProp.key,
+                })
               }
             }
             setEditingProp(null)
@@ -370,8 +380,11 @@ export function BlockPropertyEditor({
                 key: editingKey.oldKey,
                 valueText: null,
               })
-            } catch {
-              toast.error(t('property.renameFailed'))
+            } catch (err) {
+              reportIpcError('BlockPropertyEditor', 'property.renameFailed', err, t, {
+                blockId,
+                oldKey: editingKey.oldKey,
+              })
             }
           }
           setEditingKey(null)

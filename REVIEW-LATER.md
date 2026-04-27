@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-70 open items — 47 planned work (FEAT/MAINT/PERF/PUB) + 10 UX (UX-1, UX-2, UX-4, UX-5, UX-6, UX-8, UX-9, UX-10, UX-11, UX-12) + 13 frontend test-quality (TEST-52..TEST-64). One HIGH backend finding (H-14) closed this session.
+62 open items — 46 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12) + 13 frontend test-quality (TEST-52..TEST-64).
 
-Previously resolved: 567+ items across 163 sessions.
+Previously resolved: 575+ items across 164 sessions.
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; only frontend test-quality items remain.**
 
@@ -36,7 +36,6 @@ Previously resolved: 567+ items across 163 sessions.
 | MAINT-111 | MAINT | Spike `rmcp` (official Rust MCP SDK) vs the hand-rolled JSON-RPC 2.0 dispatch in `mcp/server.rs` (~492 LOC of framing + `make_success` / `make_error` / `parse_request` / method-dispatch boilerplate); keep existing `ToolRegistry` + activity-feed if the adapter stays thin | M |
 | MAINT-113 | MAINT | `ConflictFreeBlockId` newtype to lift invariant #9 (`is_conflict = 0` + `depth < 100` in every recursive CTE over `blocks`) into the type system — 220 `is_conflict = 0` SQL occurrences across 70 files. LOW-priority refactor for elegance, not correctness; the convention + review + documented invariant are already working. Do NOT do on a deadline. | L |
 | MAINT-114 | MAINT | Audit `.github/workflows/` (4 files — `ci.yml`, `_validate.yml`, `release.yml`, `release-tag.yml`) for consolidation. Minimum wins likely 4 → 3 (fold `release-tag.yml` into `release.yml` as `workflow_dispatch`); full 4 → 2 (validate + release) probably not cleanly achievable without losing the per-push-vs-per-tag split. Spike first, commit only if the merged file is not worse than the pair. | S–M |
-| MAINT-115 | MAINT | Unified `reportIpcError(module, message, err, t)` utility — replace the `catch { toast.error(...) }` pattern (no `logger.error`) that shows up in ~14 components (`HistoryView`, `BlockPropertyEditor` ×4, `DateChipEditor`, `QueryResult`, `RescheduleDropZone`, `SearchPanel`, `ConflictList`, `DeviceManagement`, `TagList`, `TemplatesView`, `PropertyRowEditor`, `DependencyIndicator`) plus 40 silent `} catch {}` in 14 hook files plus 10 silent catches in `src/lib/` plus 3 silent `.catch(() => {})` in `App.tsx:935-939`. One-pass migration onto one helper. | M |
 | MAINT-116 | MAINT | `useBlockSlashCommands.applyContentEdit` at `src/hooks/useBlockSlashCommands.ts:131-145` bypasses `pageStore.edit()` and omits `notifyUndoNewAction`, so heading / callout / numbered-list / divider slash commands silently leave the redo stack uncleared. Fix as part of adding a `setBlockProperty` action to `src/stores/page-blocks.ts` — also collapses 8 per-hook `pageStore.setState(...)` + rollback + `useUndoStore.getState().onNewAction(rootParentId)` copies across `useBlockProperties`, `useBlockSlashCommands`, `useBlockDatePicker`, `useCheckboxSyntax`. | S+M |
 | MAINT-118 | MAINT | Block-surface prop drilling — `BlockListRenderer` / `SortableBlockWrapper` / `SortableBlock` carry 33 / 32 / 32 props each with **14 verbatim-shared callbacks** (`onNavigate` … `onSelect`) + **4 verbatim-shared resolvers**. Deliver via `PageBlockContext`-style provider + 3 hooks (`useBlockActions`, `useBlockResolvers`, `useBlockState`). Kills the memoisation lost to callback identity churn and unblocks every "add a new block action" ticket. | M |
 | MAINT-119 | MAINT | Decompose `src/components/JournalPage.tsx` (728L) — extract `GlobalDateControls` / `JournalControls` to sibling files (currently inlined), extract `useCalendarPageDates()` hook that eliminates a **byte-identical** `listBlocks({blockType:'page',limit:500})` fetch at L356-369 ≡ L490-503 (runs twice on mount today), and extract `useJournalBlockCreation()` for the page-create + template-load + block-insert flow. Target ≤300 lines. | M |
@@ -85,13 +84,6 @@ Previously resolved: 567+ items across 163 sessions.
 | TEST-62 | TEST | Hand-rolled `renderHook` in `useBlockSwipeActions.test.ts` + `useBlockTouchLongPress.test.ts` + `useDeepLinkRouter.test.ts` instead of the `@testing-library/react` import the other 47 hook/component test files use; misleading "matches existing project pattern" comment in the `useDeepLinkRouter` helper | S |
 | TEST-63 | TEST | Global-state resource restore inline in test body cluster — `bug-report-events.test.ts:56-65` (SSR `window`), `useBlockCollapse.test.ts:39-61` (localStorage mock), `relaunch-app.test.ts:27-51` (window.location), `date-utils.test.ts:130-137` (fake timers inline), `useBlockDatePicker.test.ts:58-71` (useSpaceStore seed with no `afterEach`) | S |
 | TEST-64 | TEST | Weak-assertion / vacuous-test / brittle-style cluster — `property-picker.test.ts:288-299` vacuous cancellation test; `useUndoShortcuts.test.ts:442,470,601,725` `setTimeout(10)×4`; `agenda-sort.test.ts:154-164` midnight race; `ImageResizeToolbar.test.tsx:41,48` `fireEvent.click`; `PairingDialog.test.tsx:644-646` focus count; `sonner.test.tsx:20-24` `container.toBeTruthy()`; `attachment-utils.test.ts:20-25` URL format; `tauri-mock.test.ts:51-63` daily-page symmetry; axe `{timeout:5000}` for `BlockInlineControls.test.tsx:519-525` + `BlockPropertyDrawer.test.tsx:219-232` + `Calendar.test.tsx:125-139` | S |
-| UX-1 | UX | Focus-visible ring missing on hand-rolled `<button>` elements that bypass the `Button` primitive (PageTreeItem leaf + namespace + hybrid toggles, PageTagSection list + create buttons, SearchPanel Clear-all, PropertyChip key + value, AddPropertyPopover list items) | S |
-| UX-2 | UX | Touch targets below 44 px on coarse pointers (PageAliasSection X, PageTagSection X, MonthlyDayCell date circle, QueryResultTable content cell) + visual icon-in-big-box mismatch on `ui/close-button.tsx` and `ui/filter-pill.tsx` | S |
-| UX-4 | UX | Silent error swallowing / missing user feedback — DependencyIndicator two bare `catch {}`, ImageResizeToolbar width revert without toast, AgendaResults inline due-date save with no confirmation, DeadlineWarningSection silent clamping, GoogleCalendarSettingsTab silent clamping | S |
-| UX-5 | UX | Ambiguous or hidden state on important controls — ConflictListItem `originalMissing` banner + disabled-reason hidden inside collapsed panel, ambiguous "Keep" button copy, BlockInlineControls repeat `<button>` with no onClick, AttachmentRenderer interactive `<div>` with no role/aria-label, QueryResultTable `<th>` column-sort is keyboard-inaccessible | S–M |
-| UX-6 | UX | Colour-only signals + high-contrast gaps — AgendaResults overdue chip relies on colour alone, SpaceManageDialog accent swatches have no checkmark indicator, `index.css prefers-contrast: more` block boosts only `--accent-*` (not `--status-*` / `--priority-*` / `--indicator-*`), AddPropertyPopover type hint at `text-[10px] opacity-70` | S |
-| UX-8 | UX | ARIA semantics mismatches — QueryResultTable has `role="grid"` without row/cell roles, KeyboardSettingsTab "Empty binding" error not wired via aria-describedby/aria-invalid, QueryBuilderModal warning uses `role="status"` not `aria-live="polite"` and datalist input missing `aria-autocomplete="list"`, BatchActionToolbar hint span not wired via `aria-describedby` | S |
-| UX-9 | UX | Keyboard / discoverability — SearchablePopover list has no roving tabindex or Up/Down navigation (repo already has `useListKeyboardNavigation`), `Ctrl+1..9` space-switch shortcuts invisible outside `?` dialog, `useWeekStart` preference has no Settings UI exposing it (feature is half-shipped), AgendaFilterBuilder dimension picker shows raw names without descriptions | S–M |
 | UX-10 | UX | DuePanel projected (future-recurrence) entries indistinguishable from real tasks — only a dashed border and muted colour; no "Projected" pill per entry; long content is `truncate`d without a `title=` tooltip | S |
 | UX-11 | UX | Focus management edge cases — BlockContextMenu `handleCloseWithFocus` has no fallback when the trigger element was removed (focus lands on `<body>`); context menu animates in from off-screen before `computePosition` resolves; `use-block-keyboard` suppresses arrow keys when a `.suggestion-popup` is found even if the node is `!isConnected`; PageBrowser double focus ring (outer div + inner button) | S |
 | UX-12 | UX | Low-severity polish batch — PropertyRowEditor save disables whole ref-picker list instead of the saving row; PropertyRowEditor pencil button missing aria-label; LinkEditPopover error state omits `border-destructive` on the Input; BlockInlineControls due-date chip uses dynamic colour but scheduled-date chip is static; BlockContextMenu "No actions available" should close instead of render a dead menu; FeatureErrorBoundary shows raw `error.message` with no data-safety copy; BugReportDialog required checkbox has no required marker; PairingQrDisplay passphrase has no copy button + pause indicator is visually subtle; PeerListItem address-edit popover has no close/Cancel button + address error has no format hint + help text is `text-[10px]`; DataSettingsTab import progress is text-only; JournalCalendarDropdown legend dots are 8 px; AgendaResults group headers use `text-xs text-muted-foreground`; AgendaFilterBuilder pills lack `title=` on truncated values; `useDateInput` 300 ms NL-parse debounce has no visible "parsing…" hint; TemplatesView no-search-results message doesn't show total count; BugReportDialog log preview truncated at 500 chars with no "view full" option; ConflictListItem conflict-type badge has no `cursor-help` / visual tooltip affordance | M |
@@ -759,38 +751,6 @@ The initial one-line recommendation was "4 → 2 (validate + release)". On inspe
 **Cost:** S–M (spike ~2h; full migration including docs-drift checks ~4h).
 **Risk:** Low-to-medium — release pipeline is load-bearing. Test the merged workflow by dispatching against a throwaway tag (`0.0.0-test-consolidation`) on a fork or a draft release.
 **Impact:** S — one fewer file to navigate, slight simplification of the "how do I cut a release?" mental model. Not pressure relief.
-
-### MAINT-115 — Unified `reportIpcError(module, message, err, t)` utility
-
-**What:** The whole-frontend maintainability review (Apr 2026) identified three concurrent variants of silent error handling that each violate a different part of AGENTS.md §Anti-patterns:
-
-1. **`catch { toast.error(...) }` with no `logger.error`** in ~14 components. User sees a toast, devs can't correlate to a peer/sync/write error. (See the UX-4 broader inventory for the site list.)
-2. **40 silent `} catch {}` in 14 hook files** (`useBlockSlashCommands` 14, `useAgendaPreferences` 4, `useBlockDatePicker` 3, `useDuePanelData` 3, plus 10 others). Pure `} catch {}` with no toast, no log.
-3. **10 silent catches in `src/lib/`** (`history-utils.ts`, `format.ts`, `slash-commands.ts:494`, `tag-colors.ts`, `recent-pages.ts`, `starred-pages.ts`, `attachment-utils.ts`, `quick-capture-shortcut.ts`, `keyboard-config.ts:698/708/716`, `logger.ts:33`, `open-url.ts:11`). Mostly localStorage / feature-detection fallbacks that should log at debug level.
-
-The only documented carve-out is `src/lib/logger.ts:157` (dual-write logger self-catch to avoid IPC recursion). Every other catch is a violation.
-
-**Fix:**
-
-```ts
-// src/lib/report-ipc-error.ts
-export function reportIpcError(
-  module: string,
-  messageKey: string,            // i18n key for the toast (resolved via t())
-  err: unknown,
-  t: TFunction,
-  context?: Record<string, unknown>,
-): void {
-  logger.error(module, `${messageKey} (IPC error)`, context, err)
-  toast.error(t(messageKey))
-}
-```
-
-Migrate call sites in waves: (a) UX-facing `catch { toast.error(...) }` sites first (MAINT-115 itself is enough context; UX-4 is the UX-visible slice), (b) hook-layer silent catches (adds only `logger.warn` with module+context, no toast where the error isn't user-visible), (c) lib-layer fallbacks (move to `logger.debug` for feature-detection cases; keep behaviour). Pair with MAINT-124 for the App.tsx silent `.catch(() => {})` triplet at L935-939.
-
-**Cost:** M (utility is ~30 LOC; the migration is mechanical but spans ~60+ sites).
-**Risk:** Low — no behaviour change other than a stream of new log lines.
-**Impact:** M — the one change that most reduces future regression-hunt time; AGENTS.md calls the pattern out explicitly as a blocker for user-reported-bug triage.
 
 ### MAINT-116 — `applyContentEdit` drops `notifyUndoNewAction` + missing `setBlockProperty` store action
 
@@ -1734,135 +1694,9 @@ The comment in `useDeepLinkRouter.test.ts` ("Minimal renderHook helper (matches 
 >
 > Pass 1: 6 parallel domain reviewers produced ~135 candidate findings. Pass 2: 6 parallel verification subagents re-read the source and refuted / downgraded / merged candidates. ~50 were false positives and dropped — most notably the entire `prefers-reduced-motion` cluster against `ui/dialog.tsx` / `ui/sheet.tsx` / `ui/popover.tsx` / `ui/select.tsx` / `ui/alert-dialog.tsx` / `ui/tooltip.tsx` (the global rule at `src/index.css:1209-1226` already zeroes animation and transition durations for every element — the six "high severity" findings were redundant). Sonner's internal `aria-live="polite"`, `ConfirmDialog`'s intentional dual-`autoFocus` per UX-259, `GutterButton`'s tooltip + aria-label, `ui/close-button.tsx`'s 44 px coarse-pointer sizing, every "missing focus-visible" claim on components that use the `Button` primitive, `ConflictList`'s already-rendered `batchProgress`, and `SettingsView`'s live font-size preview were all refuted on source.
 >
-> The 12 UX-* items below bundle the confirmed findings; grouped where the fix is one batch of mechanically similar edits, kept separate where the risk profile or user-visible behaviour differs. Each item lists every concrete site so the batch can be fixed in one pass without re-discovery.
+> The remaining UX-* items below bundle the confirmed findings; grouped where the fix is one batch of mechanically similar edits, kept separate where the risk profile or user-visible behaviour differs. Each item lists every concrete site so the batch can be fixed in one pass without re-discovery.
 >
 > Scope note: UX perception (discoverability, affordance, feedback, a11y, touch, keyboard, consistency with the design system). Architectural / behavioural defects in the frontend are filed as FEAT-* / MAINT-* elsewhere. Aspirational rewrites, speculative claims without code evidence, and findings forbidden by AGENTS.md "Architectural Stability" were dropped in pass 2.
-
-### UX-1 — Focus-visible ring missing on hand-rolled buttons that bypass the `Button` primitive
-
-**What:** Several interactive `<button>` elements set `className` directly instead of using the shared `Button` primitive from `src/components/ui/button.tsx`, so they do not inherit `focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden` from `buttonVariants`. Keyboard users lose the focus indicator entirely at these sites:
-
-- `src/components/PageTreeItem.tsx:48-57` — leaf page button.
-- `src/components/PageTreeItem.tsx:83-90` — namespace folder toggle (also missing `aria-label`).
-- `src/components/PageTreeItem.tsx:125-131` — hybrid node toggle (also missing `aria-label`).
-- `src/components/PageTagSection.tsx:82-89` — tag button in popover list.
-- `src/components/PageTagSection.tsx:92-98` — "Create tag" button.
-- `src/components/SearchPanel.tsx:487-493` — "Clear all filters" underline link-button.
-- `src/components/PropertyChip.tsx:48,71` — key + value buttons use `focus-visible:outline-hidden` without a replacement ring.
-- `src/components/AddPropertyPopover.tsx:154-169` — property list items.
-
-**Fix:** One sweep — add `focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden` (inset variant where the button fills a parent with its own focus treatment) to each className. Where the element is a real list row (PageTagSection popover rows, AddPropertyPopover rows), prefer converting to `<Button variant="ghost" size="sm" className="w-full justify-start">` so the tokens travel automatically to future changes. For PageTreeItem toggles add `aria-label={t('pageTree.toggleNamespace', { path: node.fullPath })}` / `pageTree.toggleHybrid` alongside the ring.
-
-**Cost:** S (<1h — mostly className edits + 2 new i18n keys for the toggle labels).
-**Risk:** Low.
-**Impact:** M — mandatory per AGENTS.md ("use `focus-visible:ring-[3px] focus-visible:ring-ring/50` consistently"). Keyboard-only users currently have no focus indicator on these rows.
-
-### UX-2 — Touch targets below 44 px on coarse pointers
-
-**What:** Four interactive elements do not meet the AGENTS.md-mandated 44 px minimum on `@media(pointer:coarse)`:
-
-- `src/components/PageAliasSection.tsx:39-46` — remove-alias X button (12 px icon, `p-0.5`, no coarse media override).
-- `src/components/PageTagSection.tsx:42-49` — remove-tag X button, same pattern.
-- `src/components/journal/MonthlyDayCell.tsx:53-68` — the cell reaches 44 px but the inner clickable date circle is `w-7 h-7` (28 px) and is the actual tap target in monthly calendar view.
-- `src/components/QueryResultTable.tsx:82-91` — content-cell button has no coarse-pointer class (contrast with the adjacent page cell at `:97` which carries `[@media(pointer:coarse)]:py-3`).
-
-Separately, two primitives already hit 44 px but the *visible* icon is a tiny `size-4` in the middle of a large empty square, which mis-cues users about the actual tap target (visual–affordance mismatch, not a strict a11y violation):
-
-- `src/components/ui/close-button.tsx:13-20`.
-- `src/components/ui/filter-pill.tsx:44-60`.
-
-**Fix:** Add `[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 [@media(pointer:coarse)]:p-2` (or `min-h-[44px] min-w-[44px]` where padding would break layout) to each coarse-pointer miss. For `MonthlyDayCell`, scale the inner circle: `[@media(pointer:coarse)]:w-10 [@media(pointer:coarse)]:h-10`. For the visual-mismatch pair, add `[@media(pointer:coarse)]:size-5` (or `size-6`) to the icon so it fills more of the 44 px button.
-
-**Cost:** S (<1h).
-**Risk:** Low.
-**Impact:** M — AGENTS.md "Mandatory patterns" requires 44 px on touch; these sites currently fail it on mobile.
-
-### UX-4 — Silent error swallowing / missing user feedback
-
-**What:** AGENTS.md forbids "Silent `.catch(() => {})` blocks — always use `logger.warn` or `logger.error`. Silent error swallowing masks real bugs." Five sites swallow or under-communicate errors / value changes:
-
-- `src/components/DependencyIndicator.tsx:69-74` — two bare `catch { /* Silently ignore */ }` blocks. Direct anti-pattern violation.
-- `src/components/ImageResizeToolbar.tsx:35-39` — width save `.catch` reverts silently with only `logger.warn`; the image "snaps back" with no explanation to the user.
-- `src/components/AgendaResults.tsx:116-120` — inline due-date save closes the popover with no toast / `announce()`, so the user cannot tell if the save succeeded.
-- `src/components/DeadlineWarningSection.tsx:30-58` — entering `100` silently clamps to `90`; no warning, no inline hint about the valid range.
-- `src/components/GoogleCalendarSettingsTab.tsx:241-254` — same clamping-on-blur pattern for the window-days input.
-
-**Fix:** DependencyIndicator: replace bare catches with `logger.warn('DependencyIndicator', 'Failed to resolve blocking task', { blockId }, err)`. ImageResizeToolbar: add `toast.error(t('imageResize.saveFailed'))` alongside the revert. AgendaResults: `toast.success(t('agenda.dateSaved'))` + `announce(t('announce.dateSaved'))` in the `onSuccess` callback. Deadline / GCal inputs: show a transient `toast.info(t('settings.valueClamped', { min, max }))` or an inline destructive helper below the Input when the typed value was out of range.
-
-**Cost:** S (<1h total).
-**Risk:** Low.
-**Impact:** M — silent failure is explicitly listed as a repo anti-pattern; users currently have no way to notice the revert or clamp.
-
-**Broader silent-catch inventory (from frontend maintainability review — see MAINT-115 for the unified fix):**
-
-UX-4 was filed against 5 specific UX-visible sites. A later whole-frontend sweep found the same anti-pattern is widespread across the hook and lib layers too, and there is a second variant (`catch { toast.error(...) }` with no `logger.error`) that is UX-visible but invisible to diagnostics. The migration should be driven from MAINT-115 (introduce `reportIpcError`); UX-4 above remains the user-visible slice. Evidence:
-
-- **`catch { toast.error(...) }` with no logging (user sees a toast, devs have no log):** `HistoryView.tsx:255-258` (`handleConfirmRevert`) + `~:284` (`handleConfirmRestore`); same pattern in `BlockPropertyEditor.tsx:235 / 299 / 329 / 373` (all `setProperty` IPCs), `BlockListItem.tsx:129` (`setDueDate` / `setScheduledDate`), `EditableBlock.tsx:72` (`addAttachment`), `SortableBlock.tsx:236` (`JSON.parse` of property options), `DateChipEditor.tsx:65`, `TemplatesView.tsx:63 / 97 / 109`, `TagList.tsx:158 / 173`, `QueryResult.tsx`, `RescheduleDropZone.tsx`, `SearchPanel.tsx`, `ConflictList.tsx:225 / 254 / 442`, `DeviceManagement.tsx`, `PropertyRowEditor.tsx:63`.
-- **40 silent `} catch {}` in 14 hook files (validator-counted):** `useBlockSlashCommands` 14, `useAgendaPreferences` 4, `useBlockDatePicker` 3, `useDuePanelData` 3, `useTemplateSelection` 2, `useBlockProperties` 2, `useBlockMultiSelect` 2, `useBlockCollapse` 2, `useTheme` 2, `useSyncTrigger` 2, plus 5 files with 1 each. Plus 2 `.catch(() => ...)` in `useUndoShortcuts.ts:77 / 103`.
-- **10 silent catches in `src/lib/`:** `history-utils.ts:18/34/56`, `format.ts:75`, `slash-commands.ts:494`, `tag-colors.ts:47`, `recent-pages.ts:35`, `starred-pages.ts:18`, `attachment-utils.ts:15`, `quick-capture-shortcut.ts:47/62`, `keyboard-config.ts:698/708/716`, `logger.ts:33`, `open-url.ts:11`.
-- **3 silent `.catch(() => {})` in `App.tsx:935-939`** (`w.unminimize`, `w.show`, `w.setFocus`). Outer `try/catch` cannot trap — each `.catch` resolves the rejected promise to `undefined`. Covered by MAINT-124.
-- **1 documented exception that must stay:** `src/lib/logger.ts:157` dual-write logger catch (avoids IPC recursion). Per AGENTS.md.
-
-### UX-5 — Ambiguous or hidden state on important controls
-
-**What:** Five distinct controls that fail "name/role/value matches actual behaviour":
-
-- `src/components/ConflictListItem.tsx:157-199` — the `originalMissing` alert banner *and* the reason the "Keep" button is disabled are both inside the expanded panel. A user triaging a long conflict list never sees them unless they expand each item individually.
-- `src/components/ConflictListItem.tsx:191-207` — the "Keep" button label is the single word **Keep**, which is ambiguous (does it keep mine, or keep incoming?). The `aria-label` says "Keep incoming version" and the tooltip clarifies, but the visible copy does not. Sighted keyboard users without hover see only "Keep".
-- `src/components/BlockInlineControls.tsx:282-293` — repeat indicator is a `<button type="button">` with `aria-label` but **no onClick**. Screen readers announce "button"; Enter does nothing. Should be `<span role="status" aria-label={...}>`.
-- `src/components/AttachmentRenderer.tsx:56-79` — interactive `<div tabIndex={0} onKeyDown>` with no `role` and no `aria-label` (the `biome-ignore` at `:56` acknowledges the concern but does not fix it).
-- `src/components/QueryResultTable.tsx:51-70` — `<th>` with `onClick={() => onColumnSort(col.key)}` + `cursor-pointer` but no `role="button"`, no `tabIndex`, no `onKeyDown`. **Keyboard users cannot sort the query result table.** The `aria-sort` is correct, but the trigger is mouse-only.
-
-**Fix:** ConflictListItem: surface `originalMissing` on the collapsed row (icon + a short banner above the actions), and add a small inline warning text next to the disabled Keep button — or put the tooltip content in an always-visible `aria-description` span so the reason is readable on focus. Rename the visible label from "Keep" to "Keep incoming" (new i18n key) or render a `text-xs text-muted-foreground block` subtitle under "Keep". BlockInlineControls: swap the `<button>` for `<span role="status" aria-label={...}>`. AttachmentRenderer: add `role="button"` and `aria-label={t('attachment.toggleResizeToolbar')}` to the wrapper. QueryResultTable: either promote the `<th>` to a real `<button>` inside the cell, or add `role="button"` + `tabIndex={0}` + an `onKeyDown` that triggers sort on Enter / Space.
-
-**Cost:** S–M (2–4h across the five sites; ConflictListItem is the heaviest because the banner relocation touches layout).
-**Risk:** Low–medium — the ConflictListItem copy change has a test surface (conflict resolution specs) and needs the i18n key added.
-**Impact:** M — QueryResultTable keyboard sort is a real a11y breach; the others fix long-standing "that button doesn't do anything" / "what does Keep mean?" confusions.
-
-### UX-6 — Colour-only signals + high-contrast token coverage gaps
-
-**What:** Four findings around colour-only state and the `prefers-contrast: more` block:
-
-- `src/components/AgendaResults.tsx:67-73` — overdue date chip uses `bg-destructive/10 text-destructive` (10 % opacity). Signal is colour-only; add an icon or prefix text so colour-blind users perceive overdue status.
-- `src/components/SpaceManageDialog.tsx:390-408` — accent swatch selection is *only* a `ring-2 ring-ring ring-offset-2`; no `<Check>` icon, so colour-blind users cannot reliably see which swatch is selected.
-- `src/index.css:1080-1108` — the `@media (prefers-contrast: more)` block only overrides `--accent-*` tokens. `--status-done` / `--status-active` / `--status-pending` / `--priority-urgent` / `--priority-high` / `--priority-normal` / `--indicator-*` keep the normal-contrast values. Users in high-contrast mode see boosted accents but the exact same status / priority / indicator colours as normal mode.
-- `src/components/AddPropertyPopover.tsx:180-184` — "new property" type hint at `text-[10px] opacity-70`: font size and contrast are both below WCAG AA for the help-text role.
-
-**Fix:** AgendaResults: `<Badge variant="destructive"><AlertCircle className="h-3 w-3 mr-1" /> {dateStr}</Badge>` or add a text prefix. SpaceManageDialog: overlay a `<Check className="h-3 w-3 text-ring-foreground" />` when `accent === swatch.token`. `index.css`: extend the `prefers-contrast: more` block with boosted `--status-*` / `--priority-*` / `--indicator-*` overrides (follow the same `oklch()` pattern already used for accents). AddPropertyPopover: change `text-[10px] opacity-70` → `text-xs text-muted-foreground`.
-
-**Cost:** S (<1h).
-**Risk:** Low.
-**Impact:** M for the colour-only overdue chip (a real WCAG 1.4.1 concern); L for the others.
-
-### UX-8 — ARIA semantics mismatches
-
-**What:** Four small ARIA wiring gaps:
-
-- `src/components/QueryResultTable.tsx:48` — `<table role="grid">` but the `<tr>` / `<th>` / `<td>` children carry no corresponding `role="row"` / `role="columnheader"` / `role="gridcell"`. Native table semantics already include `aria-sort` on the header, so the cleanest fix is to **remove `role="grid"`** and let the native semantics stand.
-- `src/components/KeyboardSettingsTab.tsx:248-250` — "Empty binding" error is a stand-alone `<p>` with no `id`, and the Input being edited has no `aria-describedby` / `aria-invalid`. Screen readers cannot tell that the error belongs to the field being edited.
-- `src/components/QueryBuilderModal.tsx:210-229` — unknown-property-key warning uses `role="status"` (less reliable than `aria-live` for dynamic content); and the property-key Input uses `list="qb-prop-key-list"` for `<datalist>` autocomplete without `aria-autocomplete="list"`.
-- `src/components/BatchActionToolbar.tsx:51-66` — hint span has no `id` and the toolbar has no `aria-describedby` pointing at it, so screen-reader users don't hear the "Shift+Click to select range" hint as part of the toolbar description.
-
-**Fix:** Drop `role="grid"` from QueryResultTable. KeyboardSettingsTab: add `aria-invalid="true"` + `aria-describedby="kbd-empty-binding-error"` to the Input and matching `id` to the `<p>`. QueryBuilderModal: change `role="status"` → `aria-live="polite"` on the warning, and add `aria-autocomplete="list"` + `aria-controls="qb-prop-key-list"` on the Input. BatchActionToolbar: give the hint span `id="batch-range-select-hint"` and add `aria-describedby="batch-range-select-hint"` on the toolbar div.
-
-**Cost:** S (<1h).
-**Risk:** Low.
-**Impact:** L–M — each is a small a11y correctness fix, no user-visible behaviour change for sighted users.
-
-### UX-9 — Keyboard navigation + feature discoverability
-
-**What:** Four items around keyboard paths and half-shipped affordances:
-
-- `src/components/SearchablePopover.tsx:67-103` — list items have focus-visible styling but no roving tabindex and no Up / Down arrow-key navigation. Users Tab item-by-item through every row. The repo already has `src/hooks/useListKeyboardNavigation.ts` — wire it in.
-- `src/lib/keyboard-config.ts:462-525` — `Ctrl+1..9` space-switching shortcuts exist and work, but are invisible outside the `?` help dialog. The `SpaceSwitcher` UI has no tooltip or hint.
-- `src/hooks/useWeekStart.ts:1-50` — the week-start preference (`week-start-preference` localStorage key) is read and written but there is **no Settings UI anywhere that exposes it**. `SettingsView.tsx` (Appearance tab) does not mount it. Users who want Monday-first weeks must open devtools and set localStorage by hand. The feature is half-shipped.
-- `src/components/AgendaFilterBuilder.tsx:162-180` — dimension picker shows raw names (Status, Priority, Tag, Page, Property, …) with no descriptions. New users cannot tell "dueDate" from "scheduledDate" without trying each.
-
-**Fix:** SearchablePopover: call `useListKeyboardNavigation(items, { onSelect })` and wire the returned `{ focusedIndex, listProps, itemProps }` into the existing list rendering. SpaceSwitcher: add a `<Tooltip>` on the trigger with `t('spaceSwitcher.shortcutHint')` ("Tip: Ctrl+1–9 to switch spaces"). Settings: add a `<Select value={weekStartsOn} onValueChange={...}>` row in the Appearance tab with `t('settings.weekStart')` + `weekStartSunday` / `weekStartMonday` labels. AgendaFilterBuilder: wrap each dimension item in a `<Tooltip>` with a short description (add i18n keys `filter.dimension.<name>.description`).
-
-**Cost:** S–M (2–4h — the SearchablePopover change may ripple into the components that consume it).
-**Risk:** Low–medium (SearchablePopover has test coverage; re-run its specs after wiring the hook).
-**Impact:** M — `useWeekStart` in particular is a user-visible feature that today is effectively hidden.
 
 ### UX-10 — Projected entries in DuePanel are visually indistinguishable from real tasks
 

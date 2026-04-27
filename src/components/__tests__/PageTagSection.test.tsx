@@ -222,6 +222,59 @@ describe('PageTagSection interaction', () => {
   })
 })
 
+describe('PageTagSection UX-1 / UX-2', () => {
+  it('remove-tag button has 44 px coarse-pointer touch target', () => {
+    render(<PageTagSection {...defaultProps} appliedTags={[TAG_1]} allTags={[TAG_1]} />)
+
+    const removeBtn = screen.getByRole('button', { name: /remove tag urgent/i })
+    expect(removeBtn.className).toContain('[@media(pointer:coarse)]:h-11')
+    expect(removeBtn.className).toContain('[@media(pointer:coarse)]:w-11')
+    expect(removeBtn.className).toContain('[@media(pointer:coarse)]:p-2')
+  })
+
+  it('remove-tag button keeps focus-visible ring tokens', () => {
+    render(<PageTagSection {...defaultProps} appliedTags={[TAG_1]} allTags={[TAG_1]} />)
+
+    const removeBtn = screen.getByRole('button', { name: /remove tag urgent/i })
+    expect(removeBtn.className).toContain('focus-visible:ring-[3px]')
+    expect(removeBtn.className).toContain('focus-visible:ring-ring/50')
+    expect(removeBtn.className).toContain('focus-visible:outline-hidden')
+  })
+
+  it('available-tag picker rows render via the Button primitive (focus ring inherited)', () => {
+    render(
+      <PageTagSection
+        {...defaultProps}
+        showTagPicker={true}
+        availableTags={[TAG_2]}
+        allTags={[TAG_1, TAG_2]}
+      />,
+    )
+
+    // The Button primitive applies its own focus-visible ring; assert the row
+    // is a real <button> with the variant ring tokens applied.
+    const tagBtn = screen.getByRole('button', { name: /^review$/ })
+    expect(tagBtn.className).toContain('focus-visible:ring-[3px]')
+    expect(tagBtn.className).toContain('focus-visible:ring-ring/50')
+  })
+
+  it('"Create tag" row renders via the Button primitive (focus ring inherited)', () => {
+    render(
+      <PageTagSection
+        {...defaultProps}
+        showTagPicker={true}
+        tagQuery="newtag"
+        availableTags={[]}
+        allTags={[TAG_1]}
+      />,
+    )
+
+    const createBtn = screen.getByRole('button', { name: /Create "newtag"/i })
+    expect(createBtn.className).toContain('focus-visible:ring-[3px]')
+    expect(createBtn.className).toContain('focus-visible:ring-ring/50')
+  })
+})
+
 describe('PageTagSection accessibility', () => {
   it('has no a11y violations with tags', async () => {
     const { container } = render(

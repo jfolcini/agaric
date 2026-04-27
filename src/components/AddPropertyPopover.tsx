@@ -153,18 +153,18 @@ export function AddPropertyPopover({
         />
         <ScrollArea className="max-h-[min(240px,40vh)]">
           {filteredDefs.map((def) => (
-            <button
+            <Button
               key={def.key}
-              type="button"
-              className="flex w-full items-center gap-2 rounded px-2 py-1
-                text-left text-sm hover:bg-accent"
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start gap-2"
               onClick={() => handleAddFromDef(def)}
             >
-              <span className="flex-1">{formatPropertyName(def.key)}</span>
+              <span className="flex-1 text-left">{formatPropertyName(def.key)}</span>
               <Badge variant="outline" className="font-mono text-xs">
                 {def.value_type}
               </Badge>
-            </button>
+            </Button>
           ))}
         </ScrollArea>
 
@@ -178,7 +178,7 @@ export function AddPropertyPopover({
             onClick={() => setCreatingDef(true)}
           >
             {t('pageProperty.createButton', { name: defSearch.trim() })}
-            <span className="ml-1 text-[10px] opacity-70" data-testid="create-new-type-hint">
+            <span className="ml-1 text-xs text-muted-foreground" data-testid="create-new-type-hint">
               {t('properties.createNewTypeHint')}
             </span>
           </Button>

@@ -33,7 +33,7 @@
  * after every mutation so the SpaceSwitcher re-renders within a tick.
  */
 
-import { Plus, Trash2 } from 'lucide-react'
+import { Check, Plus, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -396,7 +396,7 @@ function SpaceRowEditor({ space, isLastSpace, onRefresh }: SpaceRowEditorProps) 
               disabled={savingAccent}
               onClick={() => void handleAccentClick(swatch.token)}
               className={cn(
-                'inline-block rounded-full ring-offset-background transition-all',
+                'inline-flex items-center justify-center rounded-full ring-offset-background transition-all',
                 'h-5 w-5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
                 'focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
                 'disabled:opacity-50 disabled:cursor-not-allowed',
@@ -404,7 +404,20 @@ function SpaceRowEditor({ space, isLastSpace, onRefresh }: SpaceRowEditorProps) 
                 swatch.className,
               )}
               data-accent-token={swatch.token}
-            />
+            >
+              {/* UX-6 — surface selection with an icon, not just a ring,
+               * so colour-blind users can identify the active swatch.
+               * White text + bold stroke + dark drop-shadow guarantees
+               * WCAG AA contrast on every palette fill (incl. amber-500
+               * and violet-500 where plain `text-white` falls below 4.5:1). */}
+              {accent === swatch.token ? (
+                <Check
+                  className="h-3 w-3 text-white drop-shadow-[0_0_1.5px_rgb(0_0_0/0.9)]"
+                  strokeWidth={3}
+                  aria-hidden="true"
+                />
+              ) : null}
+            </button>
           ))}
         </div>
       </div>
@@ -543,14 +556,25 @@ function CreateSpaceForm({ onCreated }: CreateSpaceFormProps) {
               aria-pressed={accent === swatch.token}
               onClick={() => setAccent(swatch.token)}
               className={cn(
-                'inline-block rounded-full ring-offset-background transition-all',
+                'inline-flex items-center justify-center rounded-full ring-offset-background transition-all',
                 'h-5 w-5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
                 'focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
                 accent === swatch.token && 'ring-2 ring-ring ring-offset-2',
                 swatch.className,
               )}
               data-accent-token={swatch.token}
-            />
+            >
+              {/* UX-6 — same icon-overlay rationale as the per-row
+               * picker above; keeps the two swatch grids visually
+               * consistent for colour-blind users. */}
+              {accent === swatch.token ? (
+                <Check
+                  className="h-3 w-3 text-white drop-shadow-[0_0_1.5px_rgb(0_0_0/0.9)]"
+                  strokeWidth={3}
+                  aria-hidden="true"
+                />
+              ) : null}
+            </button>
           ))}
         </div>
       </div>

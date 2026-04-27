@@ -222,8 +222,14 @@ export function ConflictList(): React.ReactElement {
               if (hist.items.length > 0) {
                 deviceIdsByBlock.set(block.id, hist.items[0]?.device_id as string)
               }
-            } catch {
+            } catch (err) {
               // Silently skip blocks where history is unavailable
+              logger.warn(
+                'ConflictList',
+                'failed to load block history for device-name resolution',
+                { blockId: block.id },
+                err,
+              )
             }
           }),
         )
@@ -251,8 +257,9 @@ export function ConflictList(): React.ReactElement {
           }
           setDeviceNames(result)
         }
-      } catch {
+      } catch (err) {
         // Silently handle — device info is non-critical
+        logger.warn('ConflictList', 'failed to fetch device info for conflicts', undefined, err)
       }
     }
 
@@ -439,8 +446,14 @@ export function ConflictList(): React.ReactElement {
           await deleteBlock(block.id)
           setBlocks((prev) => prev.filter((b) => b.id !== block.id))
         }
-      } catch {
+      } catch (err) {
         failCount++
+        logger.warn(
+          'ConflictList',
+          'failed to apply batch action to a conflict',
+          { blockId: block.id, action: savedBatchAction },
+          err,
+        )
       }
     }
     setBatchProgress(null)

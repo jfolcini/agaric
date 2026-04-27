@@ -155,8 +155,9 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
     setColorPickerOpen(null)
     try {
       await setProperty({ blockId: tagId, key: 'color', valueText: color })
-    } catch {
+    } catch (err) {
       // localStorage already persisted — property sync is best-effort
+      logger.warn('TagList', 'failed to persist tag color via setProperty', { tagId, color }, err)
     }
   }, [])
 
@@ -170,8 +171,9 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
     setColorPickerOpen(null)
     try {
       await deleteProperty(tagId, 'color')
-    } catch {
+    } catch (err) {
       // localStorage already updated — property sync is best-effort
+      logger.warn('TagList', 'failed to clear tag color via deleteProperty', { tagId }, err)
     }
   }, [])
 

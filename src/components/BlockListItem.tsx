@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { announce } from '../lib/announcer'
 import { logger } from '../lib/logger'
+import { reportIpcError } from '../lib/report-ipc-error'
 import { getBlock, setDueDate, setScheduledDate } from '../lib/tauri'
 import { PageLink } from './PageLink'
 import { renderRichContent } from './StaticBlock'
@@ -109,8 +110,8 @@ function BlockListItemInner({
         onReschedule(blockId, dateStr)
         return
       }
+      let useScheduledDate = false
       try {
-        let useScheduledDate = false
         try {
           const block = await getBlock(blockId)
           if (block.scheduled_date && !block.due_date) {
@@ -126,8 +127,12 @@ function BlockListItemInner({
         }
         toast.success(t('journal.rescheduled', { date: dateStr }))
         announce(t('announce.taskRescheduled', { date: dateStr }))
-      } catch {
-        toast.error(t('journal.rescheduleFailed'))
+      } catch (err) {
+        reportIpcError('BlockListItem', 'journal.rescheduleFailed', err, t, {
+          blockId,
+          dateStr,
+          useScheduledDate,
+        })
         announce(t('announce.rescheduleFailed'))
       }
     },

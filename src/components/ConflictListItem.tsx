@@ -199,7 +199,7 @@ export function ConflictListItem({
                   aria-description={keepAriaDescription}
                 >
                   <Check className="h-3.5 w-3.5" />
-                  {t('conflict.keepLabel')}
+                  {t('conflict.keepIncoming')}
                 </Button>
               </span>
             </TooltipTrigger>

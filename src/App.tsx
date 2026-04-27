@@ -933,10 +933,18 @@ function App() {
           const w = getCurrentWindow()
           // Order matters: unminimize before show before setFocus.
           if (await w.isMinimized().catch(() => false)) {
-            await w.unminimize().catch(() => {})
+            await w
+              .unminimize()
+              .catch((err) =>
+                logger.warn('App', 'window operation failed', { op: 'unminimize' }, err),
+              )
           }
-          await w.show().catch(() => {})
-          await w.setFocus().catch(() => {})
+          await w
+            .show()
+            .catch((err) => logger.warn('App', 'window operation failed', { op: 'show' }, err))
+          await w
+            .setFocus()
+            .catch((err) => logger.warn('App', 'window operation failed', { op: 'setFocus' }, err))
         } catch (err) {
           logger.warn('App', 'quick-capture window focus failed', undefined, err)
         }

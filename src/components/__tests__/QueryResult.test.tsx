@@ -628,7 +628,7 @@ describe('QueryResult – table mode', () => {
     render(<QueryResult expression={TABLE_EXPRESSION} />)
 
     await waitFor(() => {
-      expect(screen.getByRole('grid')).toBeInTheDocument()
+      expect(screen.getByRole('table')).toBeInTheDocument()
     })
     // Should NOT have a list
     expect(screen.queryByRole('list')).not.toBeInTheDocument()
@@ -659,11 +659,11 @@ describe('QueryResult – table mode', () => {
     render(<QueryResult expression={TABLE_EXPRESSION} />)
 
     await waitFor(() => {
-      expect(screen.getByRole('grid')).toBeInTheDocument()
+      expect(screen.getByRole('table')).toBeInTheDocument()
     })
 
     // Check column headers
-    const table = screen.getByRole('grid')
+    const table = screen.getByRole('table')
     expect(within(table).getByText('Content')).toBeInTheDocument()
     expect(within(table).getByText('Status')).toBeInTheDocument()
     expect(within(table).getByText('Priority')).toBeInTheDocument()
@@ -699,7 +699,7 @@ describe('QueryResult – table mode', () => {
     render(<QueryResult expression={TABLE_EXPRESSION} />)
 
     await waitFor(() => {
-      expect(screen.getByRole('grid')).toBeInTheDocument()
+      expect(screen.getByRole('table')).toBeInTheDocument()
     })
 
     const contentHeader = screen.getByText('Content')
@@ -707,7 +707,7 @@ describe('QueryResult – table mode', () => {
     // Click to sort ascending by Content
     await user.click(contentHeader)
 
-    const table = screen.getByRole('grid')
+    const table = screen.getByRole('table')
     const rows = within(table).getAllByRole('row')
     // rows[0] is header, rows[1..] are data
     const firstDataRow = rows[1]
@@ -745,7 +745,7 @@ describe('QueryResult – table mode', () => {
     render(<QueryResult expression={TABLE_EXPRESSION} onNavigate={onNavigate} />)
 
     await waitFor(() => {
-      expect(screen.getByRole('grid')).toBeInTheDocument()
+      expect(screen.getByRole('table')).toBeInTheDocument()
     })
 
     const link = screen.getByText(/Navigate me/)
@@ -1013,10 +1013,10 @@ describe('QueryResult – multi-filter (filtered)', () => {
     render(<QueryResult expression="property:todo_state=TODO table:true" />)
 
     await waitFor(() => {
-      expect(screen.getByRole('grid')).toBeInTheDocument()
+      expect(screen.getByRole('table')).toBeInTheDocument()
     })
 
-    const table = screen.getByRole('grid')
+    const table = screen.getByRole('table')
     expect(within(table).getByText(/Filtered task/)).toBeInTheDocument()
     expect(within(table).getByText('TODO')).toBeInTheDocument()
   })

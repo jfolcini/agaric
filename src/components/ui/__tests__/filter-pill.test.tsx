@@ -117,6 +117,17 @@ describe('FilterPill', () => {
     expect(removeBtn.className).toContain('focus-visible:outline-hidden')
   })
 
+  // UX-2: the visible X icon scales up on coarse pointers so the tap area
+  // matches the 44 px button (visual–affordance mismatch fix).
+  it('UX-2: inner X icon scales to size-5 on coarse pointers', () => {
+    const { container } = render(<FilterPill {...defaultProps} />)
+
+    const svg = container.querySelector('button svg')
+    expect(svg).toBeInTheDocument()
+    const cls = svg?.getAttribute('class') ?? ''
+    expect(cls).toContain('[@media(pointer:coarse)]:size-5')
+  })
+
   // -- a11y -------------------------------------------------------------------
 
   it('has no a11y violations', async () => {

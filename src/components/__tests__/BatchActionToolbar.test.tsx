@@ -79,6 +79,32 @@ describe('BatchActionToolbar', () => {
     expect(toolbar).toHaveAccessibleName('4 selected')
   })
 
+  it('UX-8: wires the range-select hint to the toolbar via aria-describedby', () => {
+    render(
+      <BatchActionToolbar selectedCount={2}>
+        <button type="button">Action</button>
+      </BatchActionToolbar>,
+    )
+
+    const toolbar = screen.getByRole('toolbar')
+    expect(toolbar.getAttribute('aria-describedby')).toBe('batch-range-select-hint')
+
+    const hint = screen.getByTestId('batch-range-select-hint')
+    expect(hint.getAttribute('id')).toBe('batch-range-select-hint')
+  })
+
+  it('UX-8: omits aria-describedby when the range-select hint is suppressed', () => {
+    render(
+      <BatchActionToolbar selectedCount={2} suppressRangeSelectHint>
+        <button type="button">Action</button>
+      </BatchActionToolbar>,
+    )
+
+    const toolbar = screen.getByRole('toolbar')
+    expect(toolbar.getAttribute('aria-describedby')).toBeNull()
+    expect(screen.queryByTestId('batch-range-select-hint')).not.toBeInTheDocument()
+  })
+
   it('forwards click events on child buttons', async () => {
     const user = userEvent.setup()
     const onClick = vi.fn()

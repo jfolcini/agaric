@@ -196,6 +196,38 @@ describe('SpaceSwitcher', () => {
     )
   })
 
+  // ── UX-9: shortcut hint tooltip on the trigger ──
+  it('renders a shortcut-hint tooltip on the trigger (UX-9)', async () => {
+    const user = userEvent.setup()
+    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+
+    render(<SpaceSwitcher />)
+    await waitFor(() => {
+      expect(useSpaceStore.getState().isReady).toBe(true)
+    })
+
+    // The Tooltip wraps the SelectTrigger via a `<span>` so the hint
+    // surfaces even though Radix Select owns the underlying combobox
+    // events. The Radix TooltipTrigger writes `data-slot="tooltip-trigger"`
+    // onto the cloned span; hovering that span opens the tooltip.
+    // Note: the ui-select mock renders SelectTrigger as `null`, so the
+    // span is empty in tests — hover events still fire on the span
+    // itself, which is all Radix Tooltip needs.
+    const tooltipTrigger = document.querySelector(
+      '[data-slot="tooltip-trigger"]',
+    ) as HTMLElement | null
+    expect(tooltipTrigger).not.toBeNull()
+    await user.hover(tooltipTrigger as HTMLElement)
+
+    await waitFor(
+      async () => {
+        const matches = await screen.findAllByText(/Tip: Ctrl\+1.+9/)
+        expect(matches.length).toBeGreaterThanOrEqual(1)
+      },
+      { timeout: 3000 },
+    )
+  })
+
   // FEAT-3p11 — each non-disabled SelectItem must carry a digit-hotkey
   // hint chip (`Ctrl+1`, `Ctrl+2`, … on Linux/Windows; `⌘1`, `⌘2`, … on
   // macOS) so the shortcut is discoverable without consulting the

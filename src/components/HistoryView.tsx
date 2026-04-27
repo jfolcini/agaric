@@ -23,6 +23,7 @@ import { announce } from '../lib/announcer'
 import { formatTimestamp } from '../lib/format'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { logger } from '../lib/logger'
+import { reportIpcError } from '../lib/report-ipc-error'
 import type { HistoryEntry } from '../lib/tauri'
 import { listPageHistory, restorePageToOp, revertOps } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
@@ -252,8 +253,10 @@ export function HistoryView(): React.ReactElement {
       // Reload after revert
       setEntries([])
       await reload()
-    } catch {
-      toast.error(t('history.revertFailed'))
+    } catch (err) {
+      reportIpcError('HistoryView', 'history.revertFailed', err, t, {
+        selectedCount: selected.size,
+      })
       announce(t('announce.revertFailed'))
     }
     setReverting(false)
@@ -281,8 +284,11 @@ export function HistoryView(): React.ReactElement {
       }
       setEntries([])
       await reload()
-    } catch {
-      toast.error(t('history.restoreFailed'))
+    } catch (err) {
+      reportIpcError('HistoryView', 'history.restoreFailed', err, t, {
+        deviceId: restoreTarget.device_id,
+        seq: restoreTarget.seq,
+      })
       announce(t('announce.restoreToHereFailed'))
     }
     setRestoring(false)

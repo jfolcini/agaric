@@ -176,6 +176,26 @@ describe('PageAliasSection interaction', () => {
   })
 })
 
+describe('PageAliasSection UX-2 — touch target on remove button', () => {
+  it('remove-alias button has 44 px coarse-pointer touch target', () => {
+    render(<PageAliasSection {...defaultProps} aliases={['alias-a']} editingAliases={true} />)
+
+    const btn = screen.getByRole('button', { name: /remove alias alias-a/i })
+    expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
+    expect(btn.className).toContain('[@media(pointer:coarse)]:w-11')
+    expect(btn.className).toContain('[@media(pointer:coarse)]:p-2')
+  })
+
+  it('remove-alias button keeps focus-visible ring tokens', () => {
+    render(<PageAliasSection {...defaultProps} aliases={['alias-a']} editingAliases={true} />)
+
+    const btn = screen.getByRole('button', { name: /remove alias alias-a/i })
+    expect(btn.className).toContain('focus-visible:ring-[3px]')
+    expect(btn.className).toContain('focus-visible:ring-ring/50')
+    expect(btn.className).toContain('focus-visible:outline-hidden')
+  })
+})
+
 describe('PageAliasSection accessibility', () => {
   it('has no a11y violations with aliases', async () => {
     const { container } = render(

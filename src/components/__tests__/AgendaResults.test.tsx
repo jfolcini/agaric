@@ -24,6 +24,9 @@ vi.mock('lucide-react', () => ({
   Loader2: (props: Record<string, unknown>) => <svg data-testid="loader-spinner" {...props} />,
   Link2: (props: Record<string, unknown>) => <svg data-testid="icon-link2" {...props} />,
   CalendarDays: (props: Record<string, unknown>) => <svg data-testid="calendar-days" {...props} />,
+  AlertCircle: (props: Record<string, unknown>) => (
+    <svg data-testid="icon-alert-circle" {...props} />
+  ),
 }))
 
 vi.mock('../StaticBlock', () => ({

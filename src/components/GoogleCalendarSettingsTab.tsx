@@ -247,13 +247,19 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     }
     const parsed = Number.parseInt(windowInput, 10)
     const clamped = clampWindow(Number.isFinite(parsed) ? parsed : (status?.window_days ?? 30))
+    // UX-4: notify the user when their typed value was clamped to the valid
+    // range. Silent clamping (e.g. typing 100 and getting 90 with no
+    // feedback) is a documented anti-pattern.
+    if (Number.isFinite(parsed) && (parsed < WINDOW_MIN || parsed > WINDOW_MAX)) {
+      toast.info(t('settings.valueClamped', { min: WINDOW_MIN, max: WINDOW_MAX }))
+    }
     if (status && clamped === status.window_days) {
       // No-op: just sync the input in case the user typed out-of-range.
       setWindowInput(String(clamped))
       return
     }
     void persistWindowDays(clamped)
-  }, [persistWindowDays, status, windowInput])
+  }, [persistWindowDays, status, windowInput, t])
 
   const handlePrivacyToggle = useCallback(
     async (nextMinimal: boolean) => {

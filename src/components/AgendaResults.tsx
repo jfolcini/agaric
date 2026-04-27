@@ -9,6 +9,7 @@
  * fetching, filtering, and passing down blocks.
  */
 
+import { AlertCircle } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -72,6 +73,11 @@ function dueDateColor(dateStr: string): string {
   return 'bg-muted text-muted-foreground'
 }
 
+/** Whether a YYYY-MM-DD date string represents an overdue date (UX-6). */
+function isOverdue(dateStr: string): boolean {
+  return dateStr < getTodayString()
+}
+
 // ── Due date chip with popover ─────────────────────────────────────────
 
 /** Inline editable due date chip — wraps the date in a Popover + DateChipEditor. */
@@ -87,6 +93,8 @@ function DueDateChip({
 
   if (!block.due_date) return null
 
+  const overdue = isOverdue(block.due_date)
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -100,6 +108,8 @@ function DueDateChip({
           onKeyDown={(e) => e.stopPropagation()}
           aria-label={t('dateChip.editDate')}
         >
+          {/* UX-6: surface overdue with an icon as well as a colour so colour-blind users perceive the state. */}
+          {overdue && <AlertCircle className="h-3 w-3 mr-1" aria-hidden="true" />}
           {formatCompactDate(block.due_date)}
         </button>
       </PopoverTrigger>
@@ -114,6 +124,9 @@ function DueDateChip({
           dateType="due"
           currentDate={block.due_date}
           onSuccess={() => {
+            // DateChipEditor already fires its own `toast.success` + `announce`
+            // on save, so UX-4's explicit-feedback requirement is satisfied
+            // without a second redundant toast here. Just close + refresh.
             setOpen(false)
             onDateChanged?.()
           }}

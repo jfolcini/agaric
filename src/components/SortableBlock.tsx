@@ -233,7 +233,16 @@ function SortableBlockInner({
         if (def?.value_type === 'select' && def.options) {
           try {
             setSelectOptions(JSON.parse(def.options) as string[])
-          } catch {
+          } catch (err) {
+            logger.warn(
+              'SortableBlock',
+              'failed to parse select options',
+              {
+                key: def.key,
+                options: def.options,
+              },
+              err,
+            )
             setSelectOptions(null)
           }
           setIsRefProp(false)

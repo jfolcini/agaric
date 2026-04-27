@@ -150,6 +150,10 @@ export function KeyboardSettingsTab(): React.ReactElement {
                             placeholder={t('keyboard.settings.typeNewBinding')}
                             className="text-xs"
                             autoFocus
+                            aria-invalid={!editValue.trim() ? true : undefined}
+                            aria-describedby={
+                              !editValue.trim() ? 'kbd-empty-binding-error' : undefined
+                            }
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
                                 e.preventDefault()
@@ -246,7 +250,9 @@ export function KeyboardSettingsTab(): React.ReactElement {
 
       {/* Empty binding validation message */}
       {editingId && !editValue.trim() && (
-        <p className="text-xs text-destructive">{t('keyboard.settings.emptyBinding')}</p>
+        <p id="kbd-empty-binding-error" className="text-xs text-destructive">
+          {t('keyboard.settings.emptyBinding')}
+        </p>
       )}
 
       <div className="pt-2">

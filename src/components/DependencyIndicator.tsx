@@ -15,6 +15,7 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import type { PropertyRow } from '../lib/tauri'
 import { batchResolve, getProperties } from '../lib/tauri'
@@ -66,11 +67,23 @@ export function DependencyIndicator({
           if (!cancelled && resolved.length > 0 && resolved[0]?.title) {
             setBlockedByTitle(resolved[0].title)
           }
-        } catch {
-          // Silently ignore — we'll show the fallback tooltip text
+        } catch (err) {
+          // Best-effort title resolution — fall back to the generic tooltip text.
+          logger.warn(
+            'DependencyIndicator',
+            'Failed to resolve blocking task',
+            { blockId, blockedByRef: blockedByProp.value_ref },
+            err,
+          )
         }
-      } catch {
-        // Silently ignore — property fetch failed, just don't show indicator
+      } catch (err) {
+        // Best-effort property fetch — if it fails we just don't show the indicator.
+        logger.warn(
+          'DependencyIndicator',
+          'Failed to fetch properties for dependency indicator',
+          { blockId },
+          err,
+        )
       }
     }
 

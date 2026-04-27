@@ -2359,6 +2359,34 @@ const resources = {
       'agenda.day.empty': 'No blocks for {{date}}.',
       'agenda.day.addBlock': 'Add block',
       'unfinished.loading': 'Loading unfinished tasks',
+
+      // ── A11y / clarity (UX-5/UX-8) ──
+      'conflict.keepIncoming': 'Keep incoming',
+      'attachment.toggleResizeToolbar': 'Toggle resize toolbar',
+      'queryResult.sortBy': 'Sort by {{column}}',
+      'block.repeatStatus': 'Repeats {{value}}',
+
+      // ── A11y labels (UX-1) ──
+      'pageTree.toggleNamespace': 'Toggle {{path}} namespace',
+      'pageTree.toggleHybrid': 'Toggle {{path}} (hybrid namespace)',
+
+      // ── Discoverability (UX-9) ──
+      'spaceSwitcher.shortcutHint': 'Tip: Ctrl+1–9 to switch spaces',
+      'settings.weekStartLabel': 'Week starts on',
+      'settings.weekStartMonday': 'Monday',
+      'settings.weekStartSunday': 'Sunday',
+      'filter.dimension.status.description': 'Task workflow state — TODO, DOING, DONE, CANCELLED',
+      'filter.dimension.priority.description': 'Priority level — A (highest) through C',
+      'filter.dimension.dueDate.description': 'Hard due date — overdue if past',
+      'filter.dimension.scheduledDate.description': 'Soft scheduled start — not overdue if past',
+      'filter.dimension.completedDate.description': 'When the task was marked DONE or CANCELLED',
+      'filter.dimension.createdDate.description': 'When the block was first created',
+      'filter.dimension.tag.description': 'Match blocks carrying a specific #tag',
+      'filter.dimension.property.description': 'Match a custom property key/value pair',
+
+      // ── Error feedback (MAINT-115 / UX-4) ──
+      'imageResize.saveFailed': 'Could not save image size',
+      'settings.valueClamped': 'Value clamped to {{min}}–{{max}}',
     },
   },
 }

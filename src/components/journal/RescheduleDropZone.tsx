@@ -35,6 +35,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
+import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import { getBlock, setDueDate, setScheduledDate } from '../../lib/tauri'
 
@@ -99,8 +100,11 @@ export function RescheduleDropZone({
         }
         toast.success(t('journal.rescheduled', { date: dateStr }))
         announce(t('announce.taskRescheduled', { date: dateStr }))
-      } catch {
-        toast.error(t('journal.rescheduleFailed'))
+      } catch (err) {
+        reportIpcError('RescheduleDropZone', 'journal.rescheduleFailed', err, t, {
+          blockId,
+          dateStr,
+        })
         announce(t('announce.rescheduleFailed'))
       }
     },

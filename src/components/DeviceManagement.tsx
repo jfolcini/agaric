@@ -22,6 +22,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { writeText } from '@/lib/clipboard'
 import { truncateId } from '@/lib/format'
 import { logger } from '@/lib/logger'
+import { reportIpcError } from '@/lib/report-ipc-error'
 import { useSyncWithTimeout } from '../hooks/useSyncWithTimeout'
 import type { PeerRefRow } from '../lib/tauri'
 import { deletePeerRef, getDeviceId, listPeerRefs, startSync, updatePeerName } from '../lib/tauri'
@@ -221,8 +222,8 @@ export function DeviceManagement(): React.ReactElement {
                       try {
                         await writeText(deviceId)
                         toast.success(t('device.deviceIdCopied'))
-                      } catch {
-                        toast.error(t('device.copyFailed'))
+                      } catch (err) {
+                        reportIpcError('DeviceManagement', 'device.copyFailed', err, t)
                       }
                     }}
                     aria-label={t('device.copyDeviceIdLabel')}

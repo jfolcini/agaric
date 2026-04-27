@@ -19,6 +19,7 @@ import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
+import { reportIpcError } from '@/lib/report-ipc-error'
 import { createPageInSpace, deleteProperty, queryByProperty, setProperty } from '../lib/tauri'
 import { loadTemplatePagesWithPreview } from '../lib/template-utils'
 import { useNavigationStore } from '../stores/navigation'
@@ -60,8 +61,8 @@ export function TemplatesView(): React.ReactElement {
           isJournalTemplate: journalIds.has(p.id),
         })),
       )
-    } catch {
-      toast.error(t('slash.templateLoadFailed'))
+    } catch (err) {
+      reportIpcError('TemplatesView', 'slash.templateLoadFailed', err, t)
     }
     setLoading(false)
   }, [t])
@@ -94,8 +95,8 @@ export function TemplatesView(): React.ReactElement {
         ...prev,
       ])
       setNewTemplateName('')
-    } catch {
-      toast.error(t('templates.createFailed'))
+    } catch (err) {
+      reportIpcError('TemplatesView', 'templates.createFailed', err, t, { name })
     }
     setIsCreating(false)
   }, [newTemplateName, t])
@@ -106,8 +107,8 @@ export function TemplatesView(): React.ReactElement {
         await deleteProperty(id, 'template')
         setTemplates((prev) => prev.filter((tpl) => tpl.id !== id))
         toast.success(t('templates.templateRemoved', { name }))
-      } catch {
-        toast.error(t('templates.removeTemplateFailed'))
+      } catch (err) {
+        reportIpcError('TemplatesView', 'templates.removeTemplateFailed', err, t, { id, name })
       }
     },
     [t],

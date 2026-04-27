@@ -47,7 +47,7 @@ export function PageTreeItem({
       >
         <button
           type="button"
-          className="flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer"
+          className="flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer rounded focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
           onClick={() => onNavigate(leafId, node.fullPath)}
         >
           <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -83,7 +83,8 @@ export function PageTreeItem({
           <button
             type="button"
             onClick={() => !forceExpand && setExpanded(!expanded)}
-            className="flex-1 text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 active:bg-accent/70 rounded flex items-center gap-1"
+            aria-label={t('pageTree.toggleNamespace', { path: node.fullPath })}
+            className="flex-1 text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 active:bg-accent/70 rounded flex items-center gap-1 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
           >
             <ChevronToggle isExpanded={isExpanded} />
             <HighlightMatch text={node.name} filterText={filterText} />
@@ -125,13 +126,14 @@ export function PageTreeItem({
         <button
           type="button"
           onClick={() => !forceExpand && setExpanded(!expanded)}
-          className="px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 active:bg-accent/70 rounded flex items-center"
+          aria-label={t('pageTree.toggleHybrid', { path: node.fullPath })}
+          className="px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 active:bg-accent/70 rounded flex items-center focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
         >
           <ChevronToggle isExpanded={isExpanded} />
         </button>
         <button
           type="button"
-          className="flex-1 text-left px-1 py-1 text-sm hover:bg-accent/50 active:bg-accent/70 rounded truncate"
+          className="flex-1 text-left px-1 py-1 text-sm hover:bg-accent/50 active:bg-accent/70 rounded truncate focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
           onClick={() => onNavigate(hybridId, node.fullPath)}
           title={node.fullPath}
         >
@@ -140,7 +142,7 @@ export function PageTreeItem({
         <button
           type="button"
           className="opacity-0 group-hover:opacity-100 h-5 w-5 flex items-center justify-center rounded hover:bg-accent transition-opacity focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:h-[44px] [@media(pointer:coarse)]:w-[44px] active:bg-accent active:scale-95"
-          aria-label={`Create page under ${node.fullPath}`}
+          aria-label={t('pageTree.createUnder', { path: node.fullPath })}
           onClick={(e) => {
             e.stopPropagation()
             onCreateUnder(node.fullPath)

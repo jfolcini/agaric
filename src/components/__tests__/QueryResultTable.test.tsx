@@ -43,7 +43,7 @@ describe('QueryResultTable', () => {
       />,
     )
 
-    const table = screen.getByRole('grid')
+    const table = screen.getByRole('table')
     expect(within(table).getByText('Content')).toBeInTheDocument()
     expect(within(table).getByText('Status')).toBeInTheDocument()
     expect(within(table).getByText('Priority')).toBeInTheDocument()
@@ -67,7 +67,7 @@ describe('QueryResultTable', () => {
       />,
     )
 
-    const table = screen.getByRole('grid')
+    const table = screen.getByRole('table')
     expect(within(table).getByText('Task Alpha')).toBeInTheDocument()
     expect(within(table).getByText('Task Beta')).toBeInTheDocument()
     expect(within(table).getByText('TODO')).toBeInTheDocument()
@@ -86,7 +86,7 @@ describe('QueryResultTable', () => {
       />,
     )
 
-    const table = screen.getByRole('grid')
+    const table = screen.getByRole('table')
     // Header row exists, but no data rows
     const rows = within(table).getAllByRole('row')
     expect(rows).toHaveLength(1) // only header row
@@ -107,11 +107,56 @@ describe('QueryResultTable', () => {
       />,
     )
 
-    await user.click(screen.getByText('Content'))
+    await user.click(screen.getByRole('button', { name: 'Sort by Content' }))
     expect(onColumnSort).toHaveBeenCalledWith('content')
 
-    await user.click(screen.getByText('Status'))
+    await user.click(screen.getByRole('button', { name: 'Sort by Status' }))
     expect(onColumnSort).toHaveBeenCalledWith('todo_state')
+  })
+
+  it('triggers sort on Enter / Space when column header has keyboard focus', async () => {
+    const onColumnSort = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <QueryResultTable
+        results={[makeBlock({ todo_state: 'TODO' })]}
+        columns={defaultColumns}
+        pageTitles={new Map()}
+        sortKey={null}
+        sortDir="asc"
+        onColumnSort={onColumnSort}
+      />,
+    )
+
+    const contentSortBtn = screen.getByRole('button', { name: 'Sort by Content' })
+    contentSortBtn.focus()
+    expect(contentSortBtn).toHaveFocus()
+
+    await user.keyboard('{Enter}')
+    expect(onColumnSort).toHaveBeenCalledWith('content')
+
+    onColumnSort.mockClear()
+    const statusSortBtn = screen.getByRole('button', { name: 'Sort by Status' })
+    statusSortBtn.focus()
+    await user.keyboard(' ')
+    expect(onColumnSort).toHaveBeenCalledWith('todo_state')
+  })
+
+  it('does not have role="grid" on the table (UX-8)', () => {
+    render(
+      <QueryResultTable
+        results={[makeBlock({ todo_state: 'TODO' })]}
+        columns={defaultColumns}
+        pageTitles={new Map()}
+        sortKey={null}
+        sortDir="asc"
+        onColumnSort={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByRole('grid')).not.toBeInTheDocument()
+    expect(screen.getByRole('table')).toBeInTheDocument()
   })
 
   it('shows ascending aria-sort on active sort column', () => {
@@ -263,6 +308,38 @@ describe('QueryResultTable', () => {
     )
 
     expect(screen.getByText('2025-06-01')).toBeInTheDocument()
+  })
+
+  // UX-2: the content cell must carry the same coarse-pointer padding as
+  // the adjacent page cell so the row is consistently 44 px tall on touch.
+  it('UX-2: content cell has [@media(pointer:coarse)]:py-3 to match the page cell', () => {
+    const columns: TableColumn[] = [{ key: 'content', label: 'Content' }]
+    const { container } = render(
+      <QueryResultTable
+        results={[
+          makeBlock({
+            id: 'B1',
+            content: 'Task',
+            todo_state: 'TODO',
+            parent_id: 'P1',
+            page_id: 'P1',
+          }),
+        ]}
+        columns={columns}
+        pageTitles={new Map([['P1', 'Page']])}
+        sortKey={null}
+        sortDir="asc"
+        onColumnSort={vi.fn()}
+      />,
+    )
+
+    const cells = container.querySelectorAll('tbody td')
+    expect(cells.length).toBeGreaterThanOrEqual(2)
+    // Every <td> in the body should have the coarse-pointer padding so the
+    // row sizing is consistent (UX-2 visual mismatch fix).
+    for (const cell of cells) {
+      expect((cell as HTMLElement).className).toContain('[@media(pointer:coarse)]:py-3')
+    }
   })
 
   it('has no a11y violations', async () => {
