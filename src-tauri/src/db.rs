@@ -940,8 +940,9 @@ mod tests {
         let holder_pool = pool.clone();
         let holder = tokio::spawn(async move {
             let _conn = holder_pool.acquire().await.unwrap();
-            #[allow(clippy::cast_possible_truncation)]
-            let sleep_ms = (SLOW_ACQUIRE_WARN_MS as u64) + 150;
+            let sleep_ms = u64::try_from(SLOW_ACQUIRE_WARN_MS)
+                .expect("invariant: SLOW_ACQUIRE_WARN_MS = 100 fits in u64")
+                + 150;
             tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
             // Drop releases the slot.
         });

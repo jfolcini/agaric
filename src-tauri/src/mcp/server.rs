@@ -294,7 +294,8 @@ fn handle_tools_list<R: ToolRegistry>(registry: &R) -> Result<Value, (i64, Strin
 ///   that clients already rely on.
 /// - The v1 read-only tools never produce a "tool ran and reported a
 ///   domain-level failure" (they're all reads). FEAT-4h RW tools will
-///   use [`wrap_tool_result_error`] directly for that case — this
+///   need to wrap their domain-level failures in a `CallToolResult`
+///   envelope with `isError: true` directly at the call site — this
 ///   function keeps the JSON-RPC-error path for the "tool never ran"
 ///   cases.
 fn app_error_to_jsonrpc(err: &AppError) -> (i64, String) {
@@ -352,40 +353,6 @@ fn wrap_tool_result_success(value: Value) -> Value {
     envelope.insert("isError".to_string(), Value::Bool(false));
     envelope.insert("structuredContent".to_string(), value);
     Value::Object(envelope)
-}
-
-/// Wrap a tool-execution failure in the MCP `CallToolResult` envelope
-/// with `isError: true`. See FEAT-4j.
-///
-/// Shape:
-/// ```json
-/// { "content": [ { "type": "text", "text": "<message>" } ], "isError": true }
-/// ```
-///
-/// Note: this helper is **not** wired into the v1 dispatch path — all
-/// current `AppError` variants map onto JSON-RPC error codes via
-/// [`app_error_to_jsonrpc`], matching FEAT-4c's wire contract. The
-/// MCP spec distinguishes "tool never ran" (JSON-RPC error, including
-/// `-32001` resource-not-found and `-32602` invalid params) from
-/// "tool ran and reported a domain-level failure" (`isError: true`
-/// inside a 200-style response). The v1 read-only tools only hit the
-/// former; FEAT-4h RW tools will use this helper for the latter.
-///
-/// Kept as a module-private, unit-tested helper so the envelope shape
-/// is locked in before FEAT-4h needs it.
-//
-// `#[allow(dead_code)]` is justified: the helper's only callers today
-// live in `#[cfg(test)]` code, but it is part of the FEAT-4j wire
-// contract and must keep compiling into the release binary so FEAT-4h
-// can wire it in without reintroducing the helper there.
-#[allow(dead_code)]
-fn wrap_tool_result_error(message: &str) -> Value {
-    json!({
-        "content": [
-            { "type": "text", "text": message }
-        ],
-        "isError": true,
-    })
 }
 
 /// Dispatch a `tools/call` request through the registry. Constructs a
@@ -1821,24 +1788,6 @@ mod tests {
         assert_eq!(
             wrapped["structuredContent"], raw,
             "structuredContent carries the raw value verbatim",
-        );
-    }
-
-    #[test]
-    fn wrap_tool_result_error_shape_has_is_error_true() {
-        // Unit-test the FEAT-4h seam: tool-execution-failure envelope.
-        // Not currently reachable via the v1 dispatch path (all errors
-        // surface as JSON-RPC errors), but the shape must be locked in.
-        let wrapped = wrap_tool_result_error("disk full while writing block XYZ");
-
-        let content = wrapped["content"].as_array().expect("content array");
-        assert_eq!(content.len(), 1);
-        assert_eq!(content[0]["type"], "text");
-        assert_eq!(content[0]["text"], "disk full while writing block XYZ");
-        assert_eq!(wrapped["isError"], true, "error envelope sets isError=true");
-        assert!(
-            wrapped.get("structuredContent").is_none(),
-            "error envelope omits structuredContent (no typed payload to surface)",
         );
     }
 

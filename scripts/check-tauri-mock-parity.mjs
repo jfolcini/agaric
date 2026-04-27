@@ -44,31 +44,11 @@ const HANDLERS = path.join(ROOT, 'src/lib/tauri-mock/handlers.ts')
 // only ever shrink, never grow — adding a new IPC command without a
 // handler means that command will silently return `null` to the UI.
 const KNOWN_UNMOCKED = new Set([
-  // Google Calendar integration (FEAT-5) — OAuth + remote API; covered
-  // by GoogleCalendarSettingsTab.test.tsx with explicit per-call mocks.
-  'disconnect_gcal',
-  'force_gcal_resync',
-  'get_gcal_status',
-  'set_gcal_privacy_mode',
-  'set_gcal_window_days',
-  // MCP server (FEAT-4) — Unix-domain-socket lifecycle; covered by
-  // AgentAccessSettingsTab.test.tsx with explicit per-call mocks.
-  'get_mcp_rw_socket_path',
-  'get_mcp_rw_status',
-  'get_mcp_socket_path',
-  'get_mcp_status',
-  'mcp_disconnect_all',
-  'mcp_rw_disconnect_all',
-  'mcp_rw_set_enabled',
-  'mcp_set_enabled',
-  // Trash detail-count aggregator — used by the Trash header badge
-  // only; per-page tests pass through a manual count fixture.
-  'trash_descendant_counts',
-  // FEAT-12: quick-capture is wired through the global-shortcut
-  // plugin (OS-level keybinding) and the QuickCaptureDialog, both
-  // mocked at the per-component level (QuickCaptureDialog.test.tsx,
-  // SettingsView.test.tsx). No Playwright surface yet.
-  'quick_capture_block',
+  // (Empty — MAINT-160 added mock handlers for the previous 15 entries
+  // (5 GCal + 4 MCP RO + 4 MCP RW + trash_descendant_counts + quick_capture_block)
+  // covering Google Calendar, MCP RO/RW, trash descendant counts, and
+  // quick-capture. Re-introduce entries here only with a comment that
+  // explains why an in-browser mock is impossible.)
 ])
 
 const bindingsSrc = fs.readFileSync(BINDINGS, 'utf8')

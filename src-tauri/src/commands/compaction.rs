@@ -215,14 +215,15 @@ pub async fn compact_op_log_cmd_inner(
         "compact_op_log_cmd: pre-flight vs actual delete count (L-42)"
     );
 
+    // `CompactionResult.ops_deleted` is `i64`; the real count is at
+    // most the number of rows in `op_log` and cannot exceed `i64::MAX`
+    // in any realistic deployment. The cast matches the wire shape (no
+    // Tauri/specta binding change needed).
+    let ops_deleted: i64 = i64::try_from(real_deleted_count)
+        .expect("invariant: op_log row count fits in i64 in any realistic deployment");
     Ok(CompactionResult {
         snapshot_id,
-        // `CompactionResult.ops_deleted` is `i64`; the real count is at
-        // most the number of rows in `op_log` and cannot exceed `i64::MAX`
-        // in any realistic deployment. Cast is safe and matches the wire
-        // shape (no Tauri/specta binding change needed).
-        #[allow(clippy::cast_possible_wrap)]
-        ops_deleted: real_deleted_count as i64,
+        ops_deleted,
     })
 }
 

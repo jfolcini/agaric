@@ -1387,6 +1387,203 @@ export const HANDLERS: Record<string, Handler> = {
       auth_required: false,
     }
   },
+
+  // ---------------------------------------------------------------------------
+  // Google Calendar integration (FEAT-5) — MAINT-160
+  //
+  // The real backend talks to Google over OAuth and exposes a `GcalStatus`
+  // snapshot to the Settings tab. The mock returns a stable "disconnected"
+  // status so the GoogleCalendarSettingsTab renders its sign-in CTA without
+  // any per-call invoke stubbing in Playwright. Mutating commands return
+  // `null` (or the new value where the binding declares one) and do not
+  // persist state — this is enough to exercise the rendering paths.
+  // ---------------------------------------------------------------------------
+
+  get_gcal_status: () => ({
+    connected: false,
+    account_email: null,
+    calendar_id: null,
+    window_days: 30,
+    privacy_mode: 'full',
+    last_push_at: null,
+    last_error: null,
+    push_lease: {
+      held_by_this_device: false,
+      device_id: null,
+      expires_at: null,
+    },
+  }),
+
+  force_gcal_resync: returnNull,
+
+  disconnect_gcal: (args) => {
+    // Acknowledge the binding's `deleteCalendar: boolean` arg even though
+    // the mock has no calendar to delete — the destructured (and discarded)
+    // binding documents the contract for parity with the Rust command at
+    // `src-tauri/src/commands/gcal.rs:332`. The mock has no observable
+    // state to mutate either way, so this is a no-op.
+    const a = args as { deleteCalendar?: boolean }
+    void a.deleteCalendar
+    return null
+  },
+
+  set_gcal_window_days: (args) => {
+    const a = args as Record<string, unknown>
+    return (a['n'] as number) ?? 30
+  },
+
+  set_gcal_privacy_mode: returnNull,
+
+  // ---------------------------------------------------------------------------
+  // MCP read-only / read-write servers (FEAT-4) — MAINT-160
+  //
+  // The real backend manages a Unix-domain-socket lifecycle that can't run
+  // inside Playwright. The mock returns disabled status snapshots so
+  // AgentAccessSettingsTab renders its toggles + socket-path readouts
+  // without per-call stubbing. Toggle commands echo the requested value;
+  // disconnect commands return `null` since they have no observable
+  // effect on the mock state.
+  // ---------------------------------------------------------------------------
+
+  get_mcp_status: () => ({
+    enabled: false,
+    socket_path: '/mock/agaric-mcp-ro.sock',
+    active_connections: 0,
+  }),
+
+  get_mcp_socket_path: () => '/mock/agaric-mcp-ro.sock',
+
+  mcp_set_enabled: (args) => {
+    const a = args as Record<string, unknown>
+    return (a['enabled'] as boolean) ?? false
+  },
+
+  mcp_disconnect_all: returnNull,
+
+  get_mcp_rw_status: () => ({
+    enabled: false,
+    socket_path: '/mock/agaric-mcp-rw.sock',
+    active_connections: 0,
+  }),
+
+  get_mcp_rw_socket_path: () => '/mock/agaric-mcp-rw.sock',
+
+  mcp_rw_set_enabled: (args) => {
+    const a = args as Record<string, unknown>
+    return (a['enabled'] as boolean) ?? false
+  },
+
+  mcp_rw_disconnect_all: returnNull,
+
+  // ---------------------------------------------------------------------------
+  // Trash descendant counts (MAINT-160)
+  //
+  // Returns a map of root_id → number of cascade-deleted descendants.
+  //
+  // ── Semantic divergence from the Rust backend ─────────────────────────
+  // The Rust impl in `src-tauri/src/commands/blocks/queries.rs`
+  // (`trash_descendant_counts_inner` → `pagination::trash_descendant_counts`)
+  // uses a SQL JOIN on the root's `deleted_at` timestamp, so it counts
+  // only blocks deleted in the *same cascade-batch* as the root, AND it
+  // filters `is_conflict = 0` per AGENTS.md invariant #9 (recursive
+  // CTEs over `blocks` must exclude conflict copies).
+  //
+  // The mock here counts ALL soft-deleted descendants of the root via a
+  // BFS over `parent_id`, regardless of *when* they were deleted.
+  // Conflict copies are excluded via `!b['is_conflict']` to align with
+  // invariant #9 — that part matches Rust.
+  //
+  // For the current Playwright e2e seed-data flows the two converge,
+  // because the seed deletes whole subtrees in a single batch and never
+  // produces conflict copies under a trash root. Revisit this if a
+  // Playwright spec ever creates mixed-batch trash state (e.g. partial
+  // restore-then-redelete) — at that point the mock will need to track
+  // and join on `deleted_at` like the Rust impl.
+  // ---------------------------------------------------------------------------
+
+  trash_descendant_counts: (args) => {
+    const a = args as Record<string, unknown>
+    const rootIds = (a['rootIds'] as string[]) ?? []
+    const result: Record<string, number> = {}
+    for (const rootId of rootIds) {
+      let count = 0
+      const queue: string[] = [rootId]
+      const seen = new Set<string>([rootId])
+      while (queue.length > 0) {
+        const parent = queue.shift() as string
+        for (const b of blocks.values()) {
+          const id = b['id'] as string
+          if (seen.has(id)) continue
+          if (b['parent_id'] !== parent) continue
+          // Exclude conflict copies per AGENTS.md invariant #9 — the
+          // in-memory `is_conflict` is a boolean (see seed.ts makeBlock).
+          if (b['is_conflict']) continue
+          seen.add(id)
+          if (b['deleted_at']) count++
+          queue.push(id)
+        }
+      }
+      result[rootId] = count
+    }
+    return result
+  },
+
+  // ---------------------------------------------------------------------------
+  // Quick capture (FEAT-12) — MAINT-160
+  //
+  // Creates a content block under today's daily page in the requested
+  // space and returns the new BlockRow. The mock uses the seeded
+  // `PAGE_DAILY` as the parent when available so the new block shows up
+  // in the daily-page list_blocks query like the real backend would.
+  // ---------------------------------------------------------------------------
+
+  quick_capture_block: (args) => {
+    const a = args as Record<string, unknown>
+    const content = (a['content'] as string) ?? ''
+    // Prefer today's daily page as the parent so the captured block
+    // shows up where the UI expects it.  Fall back to the supplied
+    // spaceId if the daily page is missing for any reason.
+    const todayIso = new Date().toISOString().slice(0, 10)
+    let parentId: string | null = null
+    for (const b of blocks.values()) {
+      if (b['block_type'] === 'page' && b['content'] === todayIso) {
+        parentId = b['id'] as string
+        break
+      }
+    }
+    if (parentId == null) {
+      parentId = (a['spaceId'] as string | null) ?? null
+    }
+    const id = fakeId()
+    const siblings = [...blocks.values()].filter(
+      (b) => b['parent_id'] === parentId && !b['deleted_at'],
+    )
+    const position = siblings.length
+    const row = {
+      id,
+      block_type: 'content',
+      content,
+      parent_id: parentId,
+      page_id: parentId,
+      position,
+      deleted_at: null,
+      is_conflict: false,
+      conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+    }
+    blocks.set(id, row)
+    pushOp('create_block', {
+      block_id: id,
+      content,
+      parent_id: parentId,
+      block_type: 'content',
+      position,
+    })
+    return row
+  },
 }
 
 /**

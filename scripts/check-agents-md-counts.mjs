@@ -9,20 +9,20 @@
 //
 //   1. Root AGENTS.md mentions of "<N>+ tests" — the marketing-style
 //      counts in the Build Commands block ("Vitest (7300+ tests)",
-//      "Rust tests (2100+ tests)"). These are approximate by design
-//      (the trailing `+`); the hook tolerates ±50% drift before
+//      "Rust tests (3000+ tests)"). These are approximate by design
+//      (the trailing `+`); the hook tolerates ±25% drift before
 //      failing. Counts come from grep'ing `it(` / `test(` in
 //      .test.ts(x) and `#[test]` / `#[tokio::test]` in src-tauri/src.
 //
 //   2. src/__tests__/AGENTS.md "<N> files" entries in the directory
 //      tree — concrete counts like `components/__tests__/ — 136 files`
-//      and `e2e/ — 26 spec files`. Each must be within ±50% of the
+//      and `e2e/ — 26 spec files`. Each must be within ±25% of the
 //      actual file count for that directory.
 //
-// Why ±50% and not ±20% or exact?
+// Why ±25% and not ±20% or exact?
 //   - The doc counts are intentionally round numbers ("7300+", not
 //     "7917"). Hard equality forces a doc churn on every test add.
-//   - 50% is loose enough to never false-fire on normal growth, tight
+//   - 25% is loose enough to never false-fire on normal growth, tight
 //     enough to catch the "doc says 100, actual is 1" class of drift
 //     that MAINT-99 / MAINT-97 are aimed at.
 //   - When the doc *should* be updated to reflect a new round number,
@@ -37,7 +37,7 @@
 //     approximate measurement against an approximate claim is fine.
 //
 // Usage: node scripts/check-agents-md-counts.mjs
-// Exit:  0 = within tolerance, 1 = at least one count drifted >50%.
+// Exit:  0 = within tolerance, 1 = at least one count drifted >25%.
 // ─────────────────────────────────────────────────────────────────────
 
 import fs from 'node:fs'
@@ -45,7 +45,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const TOLERANCE = 0.5 // ±50%
+const TOLERANCE = 0.25 // ±25%
 
 const failures = []
 const notes = []
@@ -151,11 +151,11 @@ for (const m of rootSrc.matchAll(TEST_COUNT_RE)) {
     continue
   }
   if (withinTolerance(documented, actual)) {
-    notes.push(`OK: AGENTS.md "${m[0]}" (${label}) within ±50% of actual ${actual}`)
+    notes.push(`OK: AGENTS.md "${m[0]}" (${label}) within ±25% of actual ${actual}`)
   } else {
     failures.push(
       `AGENTS.md ${label} count drifted: doc says ~${documented}, actual is ${actual} ` +
-        `(${(((actual - documented) / documented) * 100).toFixed(0)}% off, threshold ±50%)`,
+        `(${(((actual - documented) / documented) * 100).toFixed(0)}% off, threshold ±25%)`,
     )
   }
 }
@@ -220,11 +220,11 @@ for (const entry of DIR_COUNT_ENTRIES) {
   const documented = parseInt(m[1], 10)
   const actual = entry.count()
   if (withinTolerance(documented, actual)) {
-    notes.push(`OK: ${entry.label} doc=${documented}, actual=${actual} (within ±50%)`)
+    notes.push(`OK: ${entry.label} doc=${documented}, actual=${actual} (within ±25%)`)
   } else {
     failures.push(
       `${entry.label} file-count drifted: doc says ${documented}, actual is ${actual} ` +
-        `(${(((actual - documented) / documented) * 100).toFixed(0)}% off, threshold ±50%)`,
+        `(${(((actual - documented) / documented) * 100).toFixed(0)}% off, threshold ±25%)`,
     )
   }
 }
@@ -239,7 +239,7 @@ if (failures.length > 0) {
     'Update the affected number(s) in AGENTS.md / src/__tests__/AGENTS.md to match reality.',
   )
   console.error(
-    'Tolerance is ±50% — only large drifts fail. Pick a round number that brackets the current count.',
+    'Tolerance is ±25% — only large drifts fail. Pick a round number that brackets the current count.',
   )
   if (process.env.CHECK_AGENTS_MD_VERBOSE === '1') {
     console.error('')
@@ -252,5 +252,5 @@ if (process.env.CHECK_AGENTS_MD_VERBOSE === '1') {
   for (const n of notes) console.log(n)
 }
 console.log(
-  `OK: ${notes.filter((n) => n.startsWith('OK:')).length} AGENTS.md count(s) within ±50% of reality.`,
+  `OK: ${notes.filter((n) => n.startsWith('OK:')).length} AGENTS.md count(s) within ±25% of reality.`,
 )

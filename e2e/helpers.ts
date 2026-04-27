@@ -51,12 +51,12 @@ export const test = baseTest
  * exception; fixing the source is the rule.
  */
 const IGNORED_CONSOLE_ERROR_PATTERNS: RegExp[] = [
-  // Vite dev server does not serve `/favicon.ico`; chromium logs a 404 on
-  // every page load. Same filter as the original `smoke.spec.ts` listener.
-  /favicon/,
-  // Generic "Failed to load resource: the server responded with a status of
-  // 404 (Not Found)" wrapper that accompanies the favicon 404 above.
-  /Failed to load resource/,
+  // Vite dev server doesn't serve `/favicon.ico`; chromium logs the exact
+  // 404 on every page load. We match the literal chromium message so any
+  // OTHER 4xx/5xx (broken `<img src>`, missing fonts, dropped attachment
+  // URLs, mock 404s, backend 4xx in production) surfaces through the
+  // afterEach `expectNoConsoleErrors` gate as a real test failure.
+  /Failed to load resource:.*\/favicon\.ico/,
 ]
 
 const consoleErrorsByPage = new WeakMap<Page, string[]>()

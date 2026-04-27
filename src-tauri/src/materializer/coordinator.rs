@@ -193,8 +193,9 @@ impl Materializer {
                 .fetch_one(&p)
                 .await
                 {
-                    #[allow(clippy::cast_sign_loss)]
-                    m.cached_block_count.store(count as u64, Ordering::Relaxed);
+                    let count_u64: u64 =
+                        u64::try_from(count).expect("invariant: SQL COUNT(*) is non-negative");
+                    m.cached_block_count.store(count_u64, Ordering::Relaxed);
                 }
                 // Signal completion so tests can observe a deterministic
                 // post-init state. Release-ordering pairs with the Acquire
@@ -391,10 +392,11 @@ impl Materializer {
                     .fetch_one(&pool)
                     .await
             {
-                #[allow(clippy::cast_sign_loss)]
+                let count_u64: u64 =
+                    u64::try_from(count).expect("invariant: SQL COUNT(*) is non-negative");
                 metrics
                     .cached_block_count
-                    .store(count as u64, Ordering::Relaxed);
+                    .store(count_u64, Ordering::Relaxed);
             }
         });
     }
@@ -633,17 +635,20 @@ impl Materializer {
         let (last_materialize_at, time_since_last_materialize_secs) = if last_ms == 0 {
             (None, None)
         } else {
-            #[allow(clippy::cast_possible_wrap)]
-            let secs = (last_ms / 1000) as i64;
-            #[allow(clippy::cast_possible_truncation)]
-            let nsecs = ((last_ms % 1000) * 1_000_000) as u32;
+            let secs: i64 = i64::try_from(last_ms / 1000)
+                .expect("invariant: epoch-seconds fits in i64 for millennia");
+            let nsecs: u32 = u32::try_from((last_ms % 1000) * 1_000_000)
+                .expect("invariant: (ms % 1000) * 1_000_000 < 1e9 fits in u32");
             let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(secs, nsecs);
             let rfc = dt.map(|d| d.to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
-            #[allow(clippy::cast_possible_truncation)]
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
+            // Millis since epoch fits in u64 for millions of years; saturate on overflow.
+            let now_ms = u64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis(),
+            )
+            .unwrap_or(u64::MAX);
             let elapsed = now_ms.saturating_sub(last_ms) / 1000;
             (rfc, Some(elapsed))
         };

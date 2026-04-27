@@ -48,7 +48,7 @@ describe('FeatureErrorBoundary', () => {
 
   it('shows fallback UI when child throws', () => {
     // Suppress console.error from React and the boundary itself
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     shouldThrow = true
 
@@ -64,10 +64,16 @@ describe('FeatureErrorBoundary', () => {
     expect(screen.getByText('Boom!')).toBeInTheDocument()
     // Child should NOT be rendered
     expect(screen.queryByTestId('child')).not.toBeInTheDocument()
+
+    // React 19 logs the caught error once; the boundary's logger.error call
+    // adds a second formatted log.
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Boom!'))
+    consoleErrorSpy.mockRestore()
   })
 
   it('shows section name in error message', () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     shouldThrow = true
 
@@ -78,10 +84,14 @@ describe('FeatureErrorBoundary', () => {
     )
 
     expect(screen.getByText('Journal encountered an error')).toBeInTheDocument()
+
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Boom!'))
+    consoleErrorSpy.mockRestore()
   })
 
   it('retry button resets error state and re-renders children', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const user = userEvent.setup()
 
     shouldThrow = true
@@ -107,6 +117,12 @@ describe('FeatureErrorBoundary', () => {
     expect(screen.getByText('OK')).toBeInTheDocument()
     // Error UI should be gone
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    // The single throw triggers two console.error calls (React 19 + logger).
+    // Retry resets state without re-throwing, so the count stays at 2.
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Boom!'))
+    consoleErrorSpy.mockRestore()
   })
 
   describe('Report bug button (UX-279)', () => {
@@ -122,7 +138,7 @@ describe('FeatureErrorBoundary', () => {
     })
 
     it('renders the Report bug button alongside Retry when crashed', () => {
-      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       shouldThrow = true
 
       render(
@@ -133,10 +149,14 @@ describe('FeatureErrorBoundary', () => {
 
       expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Report this crash' })).toBeInTheDocument()
+
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Boom!'))
+      consoleErrorSpy.mockRestore()
     })
 
     it('dispatches BUG_REPORT_EVENT with the error message + stack on click', async () => {
-      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       const user = userEvent.setup()
 
       shouldThrow = true
@@ -157,10 +177,14 @@ describe('FeatureErrorBoundary', () => {
         message: 'section kaboom',
         stack: 'Error: section kaboom\n    at Bomb (file.tsx:1:1)',
       })
+
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('section kaboom'))
+      consoleErrorSpy.mockRestore()
     })
 
     it('omits stack from the dispatch detail when the error has no stack', async () => {
-      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       const user = userEvent.setup()
 
       shouldThrow = true
@@ -182,11 +206,15 @@ describe('FeatureErrorBoundary', () => {
       const event = listener.mock.calls[0]?.[0] as CustomEvent<BugReportEventDetail>
       expect(event.detail).toEqual({ message: 'stackless' })
       expect(event.detail.stack).toBeUndefined()
+
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('stackless'))
+      consoleErrorSpy.mockRestore()
     })
   })
 
   it('has no a11y violations in fallback UI', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     shouldThrow = true
 
@@ -198,5 +226,9 @@ describe('FeatureErrorBoundary', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Boom!'))
+    consoleErrorSpy.mockRestore()
   })
 })

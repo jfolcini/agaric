@@ -156,7 +156,9 @@ pub(crate) async fn handle_recurrence_in_tx(
     .await?;
 
     if let Some(count) = repeat_count {
-        // repeat_seq and repeat_count are non-negative whole numbers stored as f64
+        // f64 → i64 has no `TryFrom` in std; the cast is safe because
+        // repeat_seq and repeat_count are non-negative whole numbers
+        // stored as f64 in SQLite (REAL affinity for `value_num`).
         #[allow(clippy::cast_possible_truncation)]
         let current_seq = repeat_seq.unwrap_or(0.0) as i64;
         #[allow(clippy::cast_possible_truncation)]
@@ -315,7 +317,8 @@ pub(crate) async fn handle_recurrence_in_tx(
 
     // Copy repeat-count and increment repeat-seq on new block
     if let Some(count) = repeat_count {
-        // repeat_seq is a non-negative whole number stored as f64; safe to truncate
+        // f64 → i64 has no `TryFrom` in std; the cast is safe because
+        // repeat_seq is a non-negative whole number stored as f64.
         #[allow(clippy::cast_possible_truncation)]
         let current_seq = repeat_seq.unwrap_or(0.0) as i64;
         let next_seq = current_seq + 1;

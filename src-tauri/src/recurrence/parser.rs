@@ -64,9 +64,8 @@ pub(crate) fn shift_date_once(
                         .checked_add(month as i64 - 1)?
                         .checked_add(n)?;
                     let new_year_i64 = total_months.div_euclid(12);
-                    // rem_euclid(12) + 1 is in [1, 12]; always fits in u32
-                    #[allow(clippy::cast_possible_truncation)]
-                    let new_month = (total_months.rem_euclid(12) + 1) as u32;
+                    let new_month: u32 = u32::try_from(total_months.rem_euclid(12) + 1)
+                        .expect("invariant: rem_euclid(12) + 1 is in [1, 12]");
                     // Clamp to a reasonable calendar range; return None for
                     // extreme values instead of producing garbage dates.
                     if !(1900..=2200).contains(&new_year_i64) {
@@ -86,9 +85,8 @@ pub(crate) fn shift_date_once(
                         .checked_add(month as i64 - 1)?
                         .checked_add(n_months)?;
                     let new_year_i64 = total_months.div_euclid(12);
-                    // rem_euclid(12) + 1 is in [1, 12]; always fits in u32
-                    #[allow(clippy::cast_possible_truncation)]
-                    let new_month = (total_months.rem_euclid(12) + 1) as u32;
+                    let new_month: u32 = u32::try_from(total_months.rem_euclid(12) + 1)
+                        .expect("invariant: rem_euclid(12) + 1 is in [1, 12]");
                     if !(1900..=2200).contains(&new_year_i64) {
                         return None;
                     }

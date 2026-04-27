@@ -2,21 +2,13 @@
   "$schema": "https://unpkg.com/knip@latest/schema.json",
   "entry": ["src/App.tsx"],
   "project": ["src/**/*.{ts,tsx}"],
-  "ignore": ["src/lib/bindings.ts", "src/lib/tauri.ts", "src/vitest-axe.d.ts"],
-  "ignoreDependencies": ["tailwindcss", "markdownlint-cli2"],
-  "ignoreBinaries": [
-    "ISC",
-    "Apache-2.0",
-    "BSD-3-Clause",
-    "BSD-2-Clause",
-    "MPL-2.0",
-    "MIT-0",
-    "CC0-1.0",
-    "Python-2.0",
-    "BlueOak-1.0.0",
-    "CC-BY-3.0",
-    "CC-BY-4.0",
-    "0BSD"
+  "ignore": ["src/lib/bindings.ts", "src/vitest-axe.d.ts"],
+  "ignoreDependencies": [
+    "tailwindcss",
+    "markdownlint-cli2",
+    "better-npm-audit",
+    "depcheck",
+    "license-checker"
   ],
   "ignoreExportsUsedInFile": true
 }

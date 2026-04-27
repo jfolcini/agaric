@@ -15,5 +15,3 @@ export const BUG_TRACKER = {
   owner: 'jfolcini',
   repo: 'agaric',
 } as const
-
-export type BugTrackerConfig = typeof BUG_TRACKER

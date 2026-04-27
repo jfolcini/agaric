@@ -1179,12 +1179,6 @@ pub(crate) mod testing {
             }
         }
 
-        #[allow(dead_code)] // Used by tests in future sub-items
-        pub async fn set_fixed_calendar_id(&self, id: &str) {
-            let mut state = self.state.lock().await;
-            state.calendars.entry(id.to_owned()).or_default();
-        }
-
         pub async fn create_calendar_call_count(&self) -> usize {
             self.state
                 .lock()
@@ -1216,22 +1210,6 @@ pub(crate) mod testing {
                     _ => false,
                 })
                 .count()
-        }
-
-        #[allow(dead_code)] // Reserved for future integration tests
-        pub async fn call_count(&self) -> usize {
-            self.state.lock().await.calls.len()
-        }
-
-        #[allow(dead_code)] // Reserved for future integration tests
-        pub async fn remote_event_count(&self, calendar_id: &str) -> usize {
-            self.state
-                .lock()
-                .await
-                .calendars
-                .get(calendar_id)
-                .map(HashMap::len)
-                .unwrap_or(0)
         }
 
         pub async fn force_next_insert_error(&self, err: GcalErrorKind) {

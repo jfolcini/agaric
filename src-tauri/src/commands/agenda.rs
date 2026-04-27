@@ -131,9 +131,8 @@ pub async fn list_projected_agenda_inner(
     }
 
     // Try cache first — a single query replaces the O(n*m) projection loop.
-    // cap is at most 500; fits in i64
-    #[allow(clippy::cast_possible_wrap)]
-    let cache_limit = cap as i64;
+    let cache_limit: i64 =
+        i64::try_from(cap).expect("invariant: cap is clamped to <= 500 and fits in i64");
     #[allow(clippy::type_complexity)]
     let cached: Vec<(
         String,
@@ -279,7 +278,9 @@ async fn list_projected_agenda_on_the_fly(
             .as_deref()
             .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
 
-        // repeat_count and repeat_seq are non-negative f64 from SQLite; safe to truncate
+        // f64 → usize has no `TryFrom` in std; the cast is safe because
+        // repeat_count and repeat_seq are non-negative f64 (whole numbers)
+        // from SQLite.
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let remaining = match (repeat_count, repeat_seq) {
             (Some(count), Some(seq)) if count > seq => Some((count - seq) as usize),

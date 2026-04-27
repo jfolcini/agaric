@@ -629,9 +629,7 @@ describe('ConflictListItem', () => {
       )
 
       await waitFor(async () => {
-        const results = await axe(container, {
-          rules: { 'color-contrast': { enabled: false } },
-        })
+        const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
     })
@@ -648,9 +646,7 @@ describe('ConflictListItem', () => {
       )
 
       await waitFor(async () => {
-        const results = await axe(container, {
-          rules: { 'color-contrast': { enabled: false } },
-        })
+        const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
     })
@@ -670,9 +666,7 @@ describe('ConflictListItem', () => {
       )
 
       await waitFor(async () => {
-        const results = await axe(container, {
-          rules: { 'color-contrast': { enabled: false } },
-        })
+        const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
     })
@@ -692,9 +686,7 @@ describe('ConflictListItem', () => {
       )
 
       await waitFor(async () => {
-        const results = await axe(container, {
-          rules: { 'color-contrast': { enabled: false } },
-        })
+        const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
     })

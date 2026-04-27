@@ -190,12 +190,14 @@ impl Materializer {
                     .fts_edits_since_optimize
                     .fetch_add(1, Ordering::Relaxed)
                     + 1;
-                // Millis since epoch won't exceed u64 for millions of years
-                #[allow(clippy::cast_possible_truncation)]
-                let now_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
+                // Millis since epoch fits in u64 for millions of years; saturate on overflow.
+                let now_ms = u64::try_from(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis(),
+                )
+                .unwrap_or(u64::MAX);
                 let last_ms = self.metrics.fts_last_optimize_ms.load(Ordering::Relaxed);
                 let elapsed_ms = now_ms.saturating_sub(last_ms);
                 let block_count = self.metrics.cached_block_count.load(Ordering::Relaxed);

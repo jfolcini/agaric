@@ -719,7 +719,6 @@ pub async fn app_data_dir_from_pool(pool: &SqlitePool) -> Result<PathBuf, AppErr
 // ===========================================================================
 
 #[cfg(test)]
-#[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
 mod tests {
     use super::*;
     use crate::db::init_pool;
@@ -1241,14 +1240,14 @@ mod tests {
             &initiator_pool,
             "ATT01",
             "attachments/photo.jpg",
-            file_data.len() as i64,
+            i64::try_from(file_data.len()).expect("invariant: test fixture file size fits in i64"),
         )
         .await;
         insert_test_attachment(
             &responder_pool,
             "ATT01",
             "attachments/photo.jpg",
-            file_data.len() as i64,
+            i64::try_from(file_data.len()).expect("invariant: test fixture file size fits in i64"),
         )
         .await;
 
@@ -1286,9 +1285,15 @@ mod tests {
 
         // Stats
         assert_eq!(receiver_stats.files_received, 1);
-        assert_eq!(receiver_stats.bytes_received, file_data.len() as u64);
+        assert_eq!(
+            receiver_stats.bytes_received,
+            u64::try_from(file_data.len()).expect("invariant: test fixture file size fits in u64")
+        );
         assert_eq!(sender_stats.files_sent, 1);
-        assert_eq!(sender_stats.bytes_sent, file_data.len() as u64);
+        assert_eq!(
+            sender_stats.bytes_sent,
+            u64::try_from(file_data.len()).expect("invariant: test fixture file size fits in u64")
+        );
 
         server.shutdown().await;
     }
@@ -1311,14 +1316,14 @@ mod tests {
             &initiator_pool,
             "ATT01",
             "attachments/photo.jpg",
-            file_data.len() as i64,
+            i64::try_from(file_data.len()).expect("invariant: test fixture file size fits in i64"),
         )
         .await;
         insert_test_attachment(
             &responder_pool,
             "ATT01",
             "attachments/photo.jpg",
-            file_data.len() as i64,
+            i64::try_from(file_data.len()).expect("invariant: test fixture file size fits in i64"),
         )
         .await;
 
@@ -1375,7 +1380,7 @@ mod tests {
             &initiator_pool,
             "ATT01",
             "attachments/photo.jpg",
-            file_data.len() as i64,
+            i64::try_from(file_data.len()).expect("invariant: test fixture file size fits in i64"),
         )
         .await;
 
@@ -1398,7 +1403,8 @@ mod tests {
             server_conn
                 .send_json(&SyncMessage::FileOffer {
                     attachment_id: "ATT01".into(),
-                    size_bytes: file_data.len() as u64,
+                    size_bytes: u64::try_from(file_data.len())
+                        .expect("invariant: test fixture file size fits in u64"),
                     blake3_hash: wrong_hash,
                 })
                 .await
@@ -1559,14 +1565,14 @@ mod tests {
             &initiator_pool,
             "ATT01",
             "attachments/large.bin",
-            file_data.len() as i64,
+            i64::try_from(file_data.len()).expect("invariant: test fixture file size fits in i64"),
         )
         .await;
         insert_test_attachment(
             &responder_pool,
             "ATT01",
             "attachments/large.bin",
-            file_data.len() as i64,
+            i64::try_from(file_data.len()).expect("invariant: test fixture file size fits in i64"),
         )
         .await;
 
@@ -1604,9 +1610,15 @@ mod tests {
 
         // Stats show correct byte counts
         assert_eq!(receiver_stats.files_received, 1);
-        assert_eq!(receiver_stats.bytes_received, file_data.len() as u64);
+        assert_eq!(
+            receiver_stats.bytes_received,
+            u64::try_from(file_data.len()).expect("invariant: test fixture file size fits in u64")
+        );
         assert_eq!(sender_stats.files_sent, 1);
-        assert_eq!(sender_stats.bytes_sent, file_data.len() as u64);
+        assert_eq!(
+            sender_stats.bytes_sent,
+            u64::try_from(file_data.len()).expect("invariant: test fixture file size fits in u64")
+        );
 
         server.shutdown().await;
     }
@@ -1760,14 +1772,15 @@ mod tests {
 
         let file_data = b"attachment content for transfer test";
         let expected_hash = blake3::hash(file_data).to_hex().to_string();
-        let expected_size = file_data.len() as u64;
+        let expected_size =
+            u64::try_from(file_data.len()).expect("invariant: test fixture file size fits in u64");
 
         // Insert block + attachment and create the file on disk
         insert_test_attachment(
             &pool,
             "ATT_S1",
             "attachments/send1.bin",
-            file_data.len() as i64,
+            i64::try_from(file_data.len()).expect("invariant: test fixture file size fits in i64"),
         )
         .await;
         write_attachment_file(dir.path(), "attachments/send1.bin", file_data).unwrap();
@@ -1837,7 +1850,7 @@ mod tests {
             &pool,
             "ATT_P1",
             "attachments/present.bin",
-            file_data.len() as i64,
+            i64::try_from(file_data.len()).expect("invariant: test fixture file size fits in i64"),
         )
         .await;
         write_attachment_file(dir.path(), "attachments/present.bin", file_data).unwrap();
@@ -1878,14 +1891,15 @@ mod tests {
 
         let file_data = b"file content to receive over inmem connection";
         let expected_hash = blake3::hash(file_data).to_hex().to_string();
-        let expected_size = file_data.len() as u64;
+        let expected_size =
+            u64::try_from(file_data.len()).expect("invariant: test fixture file size fits in u64");
 
         // Insert attachment record but do NOT create the file on disk (so it's missing)
         insert_test_attachment(
             &pool,
             "ATT_R1",
             "attachments/recv1.bin",
-            file_data.len() as i64,
+            i64::try_from(file_data.len()).expect("invariant: test fixture file size fits in i64"),
         )
         .await;
         assert!(!dir.path().join("attachments/recv1.bin").exists());
@@ -2025,14 +2039,14 @@ mod tests {
             &pool,
             "ATT_M47_1",
             "attachments/m47_1.bin",
-            file1.len() as i64,
+            i64::try_from(file1.len()).expect("invariant: test fixture file size fits in i64"),
         )
         .await;
         insert_test_attachment(
             &pool,
             "ATT_M47_2",
             "attachments/m47_2.bin",
-            file2.len() as i64,
+            i64::try_from(file2.len()).expect("invariant: test fixture file size fits in i64"),
         )
         .await;
 
@@ -2067,7 +2081,8 @@ mod tests {
             server_conn
                 .send_json(&SyncMessage::FileOffer {
                     attachment_id: "ATT_M47_1".into(),
-                    size_bytes: file1.len() as u64,
+                    size_bytes: u64::try_from(file1.len())
+                        .expect("invariant: test fixture file size fits in u64"),
                     blake3_hash: hash1.clone(),
                 })
                 .await
@@ -2099,7 +2114,8 @@ mod tests {
             let _ = server_conn
                 .send_json(&SyncMessage::FileOffer {
                     attachment_id: "ATT_M47_2".into(),
-                    size_bytes: file2.len() as u64,
+                    size_bytes: u64::try_from(file2.len())
+                        .expect("invariant: test fixture file size fits in u64"),
                     blake3_hash: hash2.clone(),
                 })
                 .await;

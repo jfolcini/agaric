@@ -103,7 +103,9 @@ async fn rebuild_projected_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, A
             .as_deref()
             .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
 
-        // repeat_count and repeat_seq are non-negative f64 from SQLite; safe to truncate
+        // f64 → usize has no `TryFrom` in std; the cast is safe because
+        // repeat_count and repeat_seq are non-negative f64 (whole numbers)
+        // from SQLite.
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let remaining = match (repeat_count, repeat_seq) {
             (Some(count), Some(seq)) if count > seq => Some((count - seq) as usize),
