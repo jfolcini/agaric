@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   configKeyToTipTap,
   DEFAULT_SHORTCUTS,
@@ -29,6 +29,10 @@ const STORAGE_KEY = 'agaric-keyboard-shortcuts'
 
 beforeEach(() => {
   localStorage.clear()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('keyboard-config', () => {
@@ -272,8 +276,6 @@ describe('keyboard-config', () => {
       'KeyboardConfig',
       'failed to save keyboard shortcut override',
     )
-
-    vi.restoreAllMocks()
   })
 
   it('handles localStorage.setItem throwing (resetShortcut)', () => {
@@ -286,8 +288,6 @@ describe('keyboard-config', () => {
       'KeyboardConfig',
       'failed to reset keyboard shortcut',
     )
-
-    vi.restoreAllMocks()
   })
 
   it('handles localStorage.removeItem throwing (resetAllShortcuts)', () => {
@@ -300,8 +300,6 @@ describe('keyboard-config', () => {
       'KeyboardConfig',
       'failed to reset all keyboard shortcuts',
     )
-
-    vi.restoreAllMocks()
   })
 
   describe('Block Tree shortcuts (F-38)', () => {

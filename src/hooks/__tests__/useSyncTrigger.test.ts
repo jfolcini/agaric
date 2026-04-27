@@ -35,6 +35,8 @@ const mockStartSync = vi.mocked(startSync)
 const mockedAnnounce = vi.mocked(announce)
 
 describe('useSyncTrigger', () => {
+  const originalOnLine = navigator.onLine
+
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
@@ -53,6 +55,7 @@ describe('useSyncTrigger', () => {
     vi.clearAllTimers()
     vi.useRealTimers()
     vi.restoreAllMocks()
+    Object.defineProperty(navigator, 'onLine', { value: originalOnLine, configurable: true })
   })
 
   it('starts not syncing', () => {
@@ -123,7 +126,9 @@ describe('useSyncTrigger', () => {
     })
 
     expect(mockStartSync).not.toHaveBeenCalled()
-    expect(toast).not.toHaveBeenCalled()
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.info).not.toHaveBeenCalled()
     expect(useSyncStore.getState().state).toBe('idle')
   })
 
@@ -500,9 +505,6 @@ describe('useSyncTrigger', () => {
 
     expect(mockListPeerRefs).not.toHaveBeenCalled()
     expect(mockStartSync).not.toHaveBeenCalled()
-
-    // Restore
-    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
   })
 
   it('sets offline state when navigator.onLine is false (#667)', async () => {
@@ -516,9 +518,6 @@ describe('useSyncTrigger', () => {
 
     const state = useSyncStore.getState()
     expect(state.state).toBe('offline')
-
-    // Restore
-    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
   })
 
   it('triggers sync when online event fires (#667)', async () => {

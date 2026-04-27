@@ -1,9 +1,15 @@
+import { renderHook } from '@testing-library/react'
+import { Editor } from '@tiptap/core'
+import Document from '@tiptap/extension-document'
+import Paragraph from '@tiptap/extension-paragraph'
+import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   type BlockKeyboardCallbacks,
   type DeleteBlockOpts,
   type EditorLike,
   handleBlockKeyDown,
+  useBlockKeyboard,
 } from '../use-block-keyboard'
 
 // -- Helpers ------------------------------------------------------------------
@@ -677,6 +683,106 @@ describe('handleBlockKeyDown', () => {
       expect(cbs._calls['onFocusPrev']).toBe(1)
       expect(cbs._calls['onFlush']).toBe(1)
       expect(event.preventDefault).toHaveBeenCalled()
+    })
+
+    // -- useBlockKeyboard hook-level popup-yield (Enter / Escape / Backspace) --
+    //
+    // Lines 272-284 of use-block-keyboard.ts implement a capture-phase guard
+    // that yields to a visible .suggestion-popup for Enter, Escape, and
+    // Backspace (AGENTS.md pitfall #14). The arrow-key cases above exercise
+    // the same behaviour through `handleBlockKeyDown`; these three cases drive
+    // the full hook so the early-return at the top of `handleKeyDown` is
+    // covered. Tab is intentionally pass-through (no rule + no early-return),
+    // so no Tab case is needed here.
+    function setupHookWithRealEditor(opts: { content?: string } = {}) {
+      const element = document.createElement('div')
+      document.body.appendChild(element)
+      const editor = new Editor({
+        element,
+        extensions: [Document, Paragraph, Text],
+        content: opts.content
+          ? {
+              type: 'doc',
+              content: [{ type: 'paragraph', content: [{ type: 'text', text: opts.content }] }],
+            }
+          : { type: 'doc', content: [{ type: 'paragraph' }] },
+      })
+      const callbacks = makeCallbacks()
+      const { unmount } = renderHook(() => useBlockKeyboard(editor, callbacks))
+      // The hook attaches its listener on editor.view.dom.parentElement with
+      // capture:true. Dispatch on the parent itself so ProseMirror's own
+      // bubble-phase listener (attached to view.dom, a descendant) never sees
+      // the event — that way only the wrapper hook's preventDefault path is
+      // observable.
+      const target = editor.view.dom.parentElement as HTMLElement
+      const cleanup = () => {
+        unmount()
+        editor.destroy()
+        element.remove()
+      }
+      return { editor, callbacks, target, cleanup }
+    }
+
+    it('Enter does NOT trigger onEnterSave when popup is visible (hook-level yield)', () => {
+      addVisiblePopup()
+      const { callbacks, target, cleanup } = setupHookWithRealEditor()
+
+      const event = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      })
+      const preventDefaultSpy = vi.spyOn(event, 'preventDefault')
+
+      target.dispatchEvent(event)
+
+      expect(callbacks._calls['onEnterSave']).toBeUndefined()
+      expect(preventDefaultSpy).not.toHaveBeenCalled()
+
+      cleanup()
+    })
+
+    it('Escape does NOT trigger onEscapeCancel when popup is visible (hook-level yield)', () => {
+      addVisiblePopup()
+      const { callbacks, target, cleanup } = setupHookWithRealEditor()
+
+      const event = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      })
+      const preventDefaultSpy = vi.spyOn(event, 'preventDefault')
+
+      target.dispatchEvent(event)
+
+      expect(callbacks._calls['onEscapeCancel']).toBeUndefined()
+      expect(preventDefaultSpy).not.toHaveBeenCalled()
+
+      cleanup()
+    })
+
+    it('Backspace does NOT trigger onMergeWithPrev / onDeleteBlock at start of empty block when popup is visible (hook-level yield)', () => {
+      addVisiblePopup()
+      // Empty block — without the popup-yield, the "Backspace on empty"
+      // rule would call onDeleteBlock. With the popup-yield, neither
+      // onDeleteBlock nor onMergeWithPrev should fire.
+      const { editor, callbacks, target, cleanup } = setupHookWithRealEditor()
+      expect(editor.isEmpty).toBe(true)
+
+      const event = new KeyboardEvent('keydown', {
+        key: 'Backspace',
+        bubbles: true,
+        cancelable: true,
+      })
+      const preventDefaultSpy = vi.spyOn(event, 'preventDefault')
+
+      target.dispatchEvent(event)
+
+      expect(callbacks._calls['onMergeWithPrev']).toBeUndefined()
+      expect(callbacks._calls['onDeleteBlock']).toBeUndefined()
+      expect(preventDefaultSpy).not.toHaveBeenCalled()
+
+      cleanup()
     })
   })
 })
