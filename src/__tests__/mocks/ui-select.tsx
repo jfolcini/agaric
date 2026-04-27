@@ -22,9 +22,14 @@
 //    `<select>` with those attributes forwarded. `size="sm"` is surfaced as
 //    `data-size="sm"` so tests can assert on it without conflicting with the
 //    native `<select size>` attribute (which means "visible row count").
-//  - `<SelectItem value="…">` renders a native `<option>`.
+//  - `<SelectItem value="…">` renders a native `<option>` plus, when an
+//    `endContent` prop is present, the slot fragment portaled into
+//    `document.body` so the test DOM has the chip available for
+//    `data-testid` queries without nesting non-text content under
+//    `<option>` (which jsdom warns against).
 import type React from 'react'
-import { createContext, createElement, useContext, useRef } from 'react'
+import { createContext, createElement, Fragment, useContext, useRef } from 'react'
+import { createPortal } from 'react-dom'
 
 type TriggerProps = Record<string, unknown>
 
@@ -104,12 +109,29 @@ type SelectItemProps = {
   value: string
   children?: React.ReactNode
   disabled?: boolean
+  /**
+   * Mirror of the real `SelectItem`'s `endContent` slot — content rendered
+   * AFTER `<SelectPrimitive.ItemText>`, outside the auto-mirror surface.
+   * In jsdom the native `<select>` tree forbids non-text children inside
+   * `<option>`, so we portal the slot into a hidden sibling of the
+   * `<select>` (set up by `SelectContent`) so the chip lives in the
+   * document tree and is queryable via `document.querySelectorAll`
+   * without polluting the option text.
+   */
+  endContent?: React.ReactNode
 }
 
-export function SelectItem({ value, children, disabled }: SelectItemProps) {
+export function SelectItem({ value, children, disabled, endContent }: SelectItemProps) {
   const attrs: Record<string, unknown> = { value }
   if (disabled !== undefined) attrs['disabled'] = disabled
-  return createElement('option', attrs, children)
+  const optionEl = createElement('option', attrs, children)
+  if (endContent === undefined || endContent === null) return optionEl
+  // Fragment + portal-to-`document.body` so the `<option>` stays a
+  // direct child of the host `<select>` (HTML rule) while the chip
+  // mounts elsewhere in the document — queryable from tests via
+  // document-scoped `data-testid` selectors but never nested under
+  // `<option>` (which would trigger a jsdom ancestor warning).
+  return createElement(Fragment, null, optionEl, createPortal(endContent, document.body))
 }
 
 type GroupLikeProps = {

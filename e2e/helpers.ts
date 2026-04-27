@@ -242,6 +242,30 @@ export async function focusBlock(page: Page, index = 0) {
 }
 
 /**
+ * Click the block-static element with the given block id and wait for the
+ * TipTap editor to mount. Use this instead of `focusBlock(page, n)` when:
+ *
+ *   - Another block may already be in editor mode (the bare `block-static`
+ *     locator collapses to N-1 elements while one block is focused, so
+ *     `nth(n)` no longer maps to the n-th sibling in document order).
+ *   - The test needs to focus a specific block by its ULID rather than by
+ *     visual position.
+ *
+ * Callers that need to switch focus from one already-focused block to
+ * another should send a `Escape` keystroke first to drain the previous
+ * editor's blur path before clicking the new target — clicking a
+ * block-static directly while another block holds the roving editor
+ * triggers a blur+focus race that intermittently leaves no editor mounted.
+ */
+export async function focusBlockById(page: Page, blockId: string) {
+  await page.locator(`[data-testid="block-static"][data-block-id="${blockId}"]`).click()
+  const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
+  await expect(editor).toBeVisible()
+  await editor.focus()
+  return editor
+}
+
+/**
  * Escape any `contentEditable` / input focus so the next Ctrl+Z is handled
  * by `useUndoShortcuts` (which skips `contentEditable` targets) instead of
  * ProseMirror's in-editor undo.

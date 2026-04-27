@@ -87,14 +87,6 @@ export function SpaceSwitcher(): React.JSX.Element {
     setCurrentSpace(next)
   }
 
-  // FEAT-3p11 — feed the trigger a name-only render so the digit-hint
-  // chip stays scoped to the dropdown rows and does not bleed into the
-  // selected-value label inside the trigger button. SelectValue auto-
-  // mirrors the *entire* `ItemText` content, so without this override
-  // the trigger would read "Personal Ctrl+1" once a chip is hung off
-  // the matching row.
-  const currentSpace = availableSpaces.find((s) => s.id === currentSpaceId) ?? null
-
   return (
     <TooltipProvider>
       <Select value={currentSpaceId ?? ''} onValueChange={handleValueChange}>
@@ -120,7 +112,17 @@ export function SpaceSwitcher(): React.JSX.Element {
                   'text-sm font-medium',
                 )}
               >
-                <SelectValue placeholder={t('space.switch')}>{currentSpace?.name}</SelectValue>
+                {/*
+                 * FEAT-3p11 — keep the digit-hint chip scoped to the
+                 * dropdown rows so it does not bleed into the trigger
+                 * label. Implemented via the `endContent` slot on
+                 * `SelectItem` (rendered AFTER `<SelectPrimitive.ItemText>`,
+                 * outside the auto-mirror surface) — see the prop's
+                 * docstring in `ui/select.tsx` for why we cannot pass
+                 * children to `SelectValue` here without tripping React
+                 * 19's portal/ref-children-conflict warning.
+                 */}
+                <SelectValue placeholder={t('space.switch')} />
               </SelectTrigger>
             </span>
           </TooltipTrigger>
@@ -128,18 +130,18 @@ export function SpaceSwitcher(): React.JSX.Element {
         </Tooltip>
         <SelectContent>
           {availableSpaces.map((space, idx) => (
-            <SelectItem key={space.id} value={space.id}>
-              {/*
-               * FEAT-3p11 — flex layout gives us a name on the left and a
-               * right-aligned digit-hint chip (`Ctrl+1` / `⌘1`) for the
-               * first nine spaces. The chip is intentionally a plain
-               * `<span>` (not a new primitive) — the spec calls for a
-               * tiny muted hint and there is no shared keyboard-shortcut
-               * chip component to reuse.
-               */}
-              <span className="flex w-full items-center justify-between gap-2">
-                <span>{space.name}</span>
-                {idx < MAX_HOTKEY_SPACES && (
+            <SelectItem
+              key={space.id}
+              value={space.id}
+              endContent={
+                idx < MAX_HOTKEY_SPACES ? (
+                  /*
+                   * FEAT-3p11 — right-aligned digit-hint chip (`Ctrl+1` /
+                   * `⌘1`) for the first nine spaces. Rendered via
+                   * `SelectItem`'s `endContent` slot so it stays out of
+                   * `<SelectPrimitive.ItemText>` and therefore out of
+                   * Radix's auto-mirror into the trigger label.
+                   */
                   <span
                     aria-hidden="true"
                     className="ml-auto text-xs text-muted-foreground"
@@ -147,8 +149,10 @@ export function SpaceSwitcher(): React.JSX.Element {
                   >
                     {spaceHotkeyHint(idx)}
                   </span>
-                )}
-              </span>
+                ) : undefined
+              }
+            >
+              {space.name}
             </SelectItem>
           ))}
           <SelectSeparator />

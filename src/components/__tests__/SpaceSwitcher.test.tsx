@@ -251,20 +251,28 @@ describe('SpaceSwitcher', () => {
     const options = select.querySelectorAll('option')
     // 2 spaces + 1 Manage placeholder.
     expect(options).toHaveLength(3)
-    // Alphabetical order: Personal first, Work second.
+    // Alphabetical order: Personal first, Work second. The native
+    // `<option>` rows that Radix's BubbleSelect emits mirror only the
+    // `<SelectPrimitive.ItemText>` content — the digit-hint chip is
+    // intentionally rendered via `SelectItem`'s `endContent` slot
+    // (outside ItemText) so it stays scoped to the visible dropdown
+    // rows and does not leak into the trigger label or the bubbled
+    // option text. Asserting on the data-testid'd chip elements below
+    // is the right way to verify chip presence.
     expect(options[0]?.textContent).toContain('Personal')
-    expect(options[0]?.textContent).toContain('Ctrl+1')
     expect(options[1]?.textContent).toContain('Work')
-    expect(options[1]?.textContent).toContain('Ctrl+2')
     // The disabled Manage placeholder must stay chip-free — FEAT-3p6
     // owns it and it isn't a hotkey target.
     const manageOption = screen.getByRole('option', { name: /Manage spaces/ })
     expect(manageOption.textContent).not.toMatch(/Ctrl\+\d/)
     // Belt-and-braces: the data-testid'd chip elements are exactly two
-    // (one per space) and not attached to the placeholder.
+    // (one per space) and not attached to the placeholder, and each
+    // carries the spelled-out modifier text (`Ctrl+N`) on non-macOS.
     const chips = document.querySelectorAll('[data-testid^="space-hotkey-hint-"]')
     expect(chips).toHaveLength(2)
     expect(chips[0]?.getAttribute('data-testid')).toBe('space-hotkey-hint-1')
+    expect(chips[0]?.textContent).toBe('Ctrl+1')
     expect(chips[1]?.getAttribute('data-testid')).toBe('space-hotkey-hint-2')
+    expect(chips[1]?.textContent).toBe('Ctrl+2')
   })
 })

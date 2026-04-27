@@ -36,7 +36,7 @@
  * this spec is the first.
  */
 
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import { expect, focusBlockById, openPage, test, waitForBoot } from './helpers'
 
 test.describe('Breadcrumb navigation — BlockZoomBar zoom trail (FEAT-13)', () => {
   test.beforeEach(async ({ page }) => {
@@ -56,8 +56,26 @@ test.describe('Breadcrumb navigation — BlockZoomBar zoom trail (FEAT-13)', () 
 
     const blocks = page.locator('[data-testid="sortable-block"]')
 
-    // Step 1: indent GS_3 (index 2) once → child of GS_2.
-    await focusBlock(page, 2)
+    // Capture every block's id up-front. `[data-testid="sortable-block"]`
+    // wrappers always render regardless of focus state (the inner
+    // EditableBlock toggles between StaticBlock and the roving editor),
+    // so this list is stable through the indent sequence below — unlike
+    // `[data-testid="block-static"]`-by-nth, which shifts when one
+    // block is in editor mode.
+    const blockIds = await blocks.evaluateAll((els) =>
+      els.map((el) => el.getAttribute('data-block-id') ?? ''),
+    )
+    expect(blockIds).toHaveLength(5)
+    const [, , gs3Id, gs4Id] = blockIds
+
+    // Step 1: indent GS_3 once → child of GS_2.
+    //
+    // `focusBlock(page, 2)` would also work for the first focus call
+    // (no other block is focused yet), but we use the explicit
+    // block-id selector throughout the test so the second focus
+    // (`focusBlock(page, …)` after another block is focused) doesn't
+    // hit the static-block index-shift case.
+    await focusBlockById(page, gs3Id ?? '')
     await page.keyboard.press('Control+Shift+ArrowRight')
     // Wait for indentation to apply (paddingLeft increases on the indented
     // block). Use the same polling style as keyboard-shortcuts.spec.ts.
@@ -70,9 +88,17 @@ test.describe('Breadcrumb navigation — BlockZoomBar zoom trail (FEAT-13)', () 
       )
       .toBeGreaterThan(0)
 
-    // Step 2: indent GS_4 (still index 3) twice → first to depth 2 (under
-    // GS_2 alongside GS_3), then to depth 3 (under GS_3, the leaf).
-    await focusBlock(page, 3)
+    // Step 2: indent GS_4 twice → first to depth 2 (under GS_2 alongside
+    // GS_3), then to depth 3 (under GS_3, the leaf). Switching focus
+    // from GS_3 to GS_4 has to go via Escape first: clicking a
+    // block-static while another block holds the roving editor fires
+    // the previous editor's blur AND the new block's focus in the same
+    // pointer-down/click pair, and the order in which `setFocused(null)`
+    // (from blur) vs. `mount(newId)` (from focus) settle is not
+    // race-stable — Escape lets us drain the blur path deterministically
+    // before clicking the new target.
+    await page.keyboard.press('Escape')
+    await focusBlockById(page, gs4Id ?? '')
     await page.keyboard.press('Control+Shift+ArrowRight')
     await page.keyboard.press('Control+Shift+ArrowRight')
 
@@ -92,13 +118,28 @@ test.describe('Breadcrumb navigation — BlockZoomBar zoom trail (FEAT-13)', () 
       })
       .toBeGreaterThan(0)
 
-    // Capture GS_4's block id (the leaf of our hierarchy) so we can verify
-    // it's the active crumb after zooming.
-    const leafBlock = blocks.nth(3)
+    // Capture GS_3's block id — the deepest non-leaf in our hierarchy,
+    // which is what we zoom into. We deliberately zoom into GS_3 rather
+    // than GS_4 (the actual leaf) because `SortableBlockWrapper`
+    // suppresses the "Zoom in" context-menu entry on blocks with no
+    // children (`onZoomIn={hasChildren ? onZoomIn : undefined}`); zoom
+    // is a children-scoping operation, so leaves are not zoomable. The
+    // breadcrumb-trail behaviour the test exercises (Home + every
+    // ancestor + the zoomed block as the active crumb) is identical
+    // whether the leaf or its parent is the zoom target.
+    const leafBlock = blocks.nth(2)
     const leafId = await leafBlock.getAttribute('data-block-id')
-    expect(leafId).toBeTruthy()
+    expect(leafId).toBe(gs3Id)
 
-    // Right-click the leaf and choose "Zoom in" from the context menu.
+    // Blur the editor before right-clicking so the BlockContextMenu's
+    // own contextmenu handler wins over any in-editor context handler
+    // — without this the right-click can land on the still-focused
+    // ProseMirror surface, which suppresses the BlockContextMenu and
+    // leaves our `[role="menu"]` lookup to time out.
+    await page.keyboard.press('Escape')
+
+    // Right-click the zoom target and choose "Zoom in" from the
+    // context menu.
     await leafBlock.click({ button: 'right' })
     const menu = page.locator('[role="menu"]')
     await expect(menu).toBeVisible()
@@ -108,12 +149,12 @@ test.describe('Breadcrumb navigation — BlockZoomBar zoom trail (FEAT-13)', () 
     const breadcrumbNav = page.getByRole('navigation', { name: /zoom breadcrumbs/i })
     await expect(breadcrumbNav).toBeVisible()
 
-    // Trail walks GS_4 → GS_3 → GS_2 (GS_2's parent is the page itself,
-    // which is not in the per-page block list, so the loop stops there).
+    // Trail walks GS_3 → GS_2 (GS_2's parent is the page itself, which
+    // is not in the per-page block list, so the loop stops there).
     // BlockZoomBar prepends the Home icon, so the visible trail has
-    // 4 `[data-zoom-crumb]` elements: Home + 3 ancestor crumbs.
+    // 3 `[data-zoom-crumb]` elements: Home + 2 ancestor crumbs.
     const crumbs = breadcrumbNav.locator('[data-zoom-crumb]')
-    await expect(crumbs).toHaveCount(4)
+    await expect(crumbs).toHaveCount(3)
 
     // The final crumb is the active one — it must be a span with
     // aria-current="page" (FEAT-13 visual smoke check).
@@ -125,9 +166,9 @@ test.describe('Breadcrumb navigation — BlockZoomBar zoom trail (FEAT-13)', () 
     const activeTag = await activeCrumb.evaluate((el) => el.tagName.toLowerCase())
     expect(activeTag).toBe('span')
 
-    // Click an intermediate ancestor (one level up from the leaf — the
-    // crumb at index 2 in the visible trail: Home, GS_2, GS_3, [GS_4 active]).
-    const ancestorCrumb = crumbs.nth(2) // GS_3
+    // Click an intermediate ancestor (one level up from the zoom target —
+    // the crumb at index 1 in the visible trail: Home, [GS_2], [GS_3 active]).
+    const ancestorCrumb = crumbs.nth(1) // GS_2
     const ancestorId = await ancestorCrumb.getAttribute('data-zoom-crumb')
     expect(ancestorId).toBeTruthy()
     await ancestorCrumb.click()
