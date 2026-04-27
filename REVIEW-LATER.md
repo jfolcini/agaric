@@ -31,6 +31,8 @@ Previously resolved: 542+ items across 159 sessions.
 | FEAT-5 | FEAT | Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar) — parent / umbrella | L |
 | FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L |
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L |
+| MAINT-110 | MAINT | `pairing.rs` — remove dead ChaCha20-Poly1305 + HKDF machinery (`session_key`, `encrypt_message` / `decrypt_message`, `derive_session_key`); pairing exchange is plaintext JSON over mTLS and the derived key is never read in production. Drops `chacha20poly1305` + `hkdf` crates. | S |
+| MAINT-111 | MAINT | Spike `rmcp` (official Rust MCP SDK) vs the hand-rolled JSON-RPC 2.0 dispatch in `mcp/server.rs` (~492 LOC of framing + `make_success` / `make_error` / `parse_request` / method-dispatch boilerplate); keep existing `ToolRegistry` + activity-feed if the adapter stays thin | M |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
@@ -611,6 +613,67 @@ Part of the FEAT-5 family. **Not scheduled.** Blocked on explicit design-review 
 **Cost:** L — design (which events fire? how to dedupe? snooze semantics?), backend scheduler (~6 files), one Settings sub-tab, mobile permission flow, ~25 tests.
 **Risk:** M — wrong-time notifications and notification spam are both real failure modes; needs careful dedupe and "do not re-fire on materialize replay" guard.
 **Impact:** L — closes a recognised feature gap with Org-mode / Logseq parity; especially valuable on mobile where the user is unlikely to have the app foregrounded when a task is due.
+
+## MAINT — Maintenance / cleanup
+
+### MAINT-110 — `pairing.rs` carries ~250 LOC of dead ChaCha20-Poly1305 + HKDF machinery
+
+**What:** `src-tauri/src/pairing.rs` exports `derive_session_key` (HKDF-SHA256), `encrypt_message` / `decrypt_message` (ChaCha20-Poly1305), and a `PairingSession { session_key: [u8; 32], ... }` field. `PairingSession::new` and `::from_passphrase` both populate `session_key` via `derive_session_key` (lines 237, 253).
+
+**Evidence that this is dead code in production:**
+
+```text
+$ grep -rn '\.session_key' src-tauri/src/ --include='*.rs' | grep -v tests
+src-tauri/src/pairing.rs:225:    pub session_key: [u8; 32],
+src-tauri/src/pairing.rs:237:        let session_key = derive_session_key(...)
+src-tauri/src/pairing.rs:240:            session_key,
+src-tauri/src/pairing.rs:253:        let session_key = derive_session_key(...)
+src-tauri/src/pairing.rs:256:            session_key,
+$ grep -rn 'hkdf\|chacha20poly1305\|ChaCha20' src-tauri/src/ --include='*.rs' | grep -v tests
+# -> only src-tauri/src/pairing.rs (imports + impls); no other module uses them
+```
+
+All `PairingSession.session_key` reads, all `encrypt_message` / `decrypt_message` invocations outside the `pub fn` definitions themselves live in `pairing.rs`'s own `#[cfg(test)]` module. The actual wire exchange is `PairingMessage::DeviceOffer { device_id, cert_hash, passphrase }` and `::DeviceAccept { ... }` — both plain serde-JSON enums sent over the already-mTLS'd, cert-pinned WebSocket in `sync_net/connection.rs`. Confidentiality + authenticity for the pairing handshake come from rustls (TOFU cert pinning, `PinningCertVerifier`), not from the derived session key.
+
+**Fix:**
+
+1. Remove `PairingSession.session_key` field + its computation in both constructors.
+2. Remove `derive_session_key` / `encrypt_message` / `decrypt_message` + their tests.
+3. Drop `chacha20poly1305` and `hkdf` from `src-tauri/Cargo.toml` (and from the `cargo-machete` `ignored` list). Re-check whether `sha2` / `rand` are still used elsewhere before dropping them.
+4. Update `Cargo.toml` the module-level doc comment at `pairing.rs:4` that still advertises HKDF-SHA256 + ChaCha20-Poly1305 as part of the scheme.
+
+**Cost:** S (<2h) — code removal + Cargo.toml pruning + test module cleanup. No behaviour change, no migration.
+**Risk:** Low — no production code path invokes the removed functions. Must be committed with an explicit "this was dead code since the plaintext-over-mTLS pairing design shipped" note so a future reader does not misread the diff as "ripped out crypto".
+**Impact:** M — ~250 LOC gone, two pure-Rust AEAD/KDF crates off the supply-chain surface, and a misleading doc comment that implied the pairing protocol was crypto-authenticated on the wire goes away (it never was — mTLS + passphrase compare is the actual story).
+
+### MAINT-111 — MCP server hand-rolls JSON-RPC 2.0 framing; evaluate `rmcp` (official Rust MCP SDK)
+
+**What:** `src-tauri/src/mcp/server.rs` (~492 LOC) implements line-delimited JSON-RPC 2.0 over the Unix-domain socket / Windows named pipe by hand:
+
+- `make_success(id, result)` / `make_error(id, code, message)` response builders (lines ~127–145).
+- `parse_request(line)` — manual shape validation (object? `method` field? `id` field?) with its own `ParsedRequest` / `IncomingRequest` / `IncomingNotification` enums (lines ~167–209).
+- Method dispatch — `handle_initialize`, `tools/list`, `tools/call`, `notifications/initialized`, hard-coded JSON-RPC error codes (`JSONRPC_PARSE_ERROR` … `JSONRPC_RESOURCE_NOT_FOUND`).
+- No `jsonrpc-core` / `jsonrpsee` / `rmcp` crate in `Cargo.toml`; everything is `serde_json::Value` + `json!` macros.
+
+**Alternative:** `rmcp` (https://crates.io/crates/rmcp) is the official Rust Model Context Protocol SDK published by the `modelcontextprotocol` organisation. It supports **both** client and server roles over stdio (matching the MCP spec's subprocess framing that `agaric-mcp` forwards verbatim), provides typed tool / prompt / resource registration, automatic JSON-RPC 2.0 framing, and error-code mapping. `jsonrpsee` is an alternative for generic JSON-RPC but is HTTP/WS-oriented — `rmcp` is the more direct fit.
+
+**Why this is only a "spike", not an immediate replace:**
+
+- The `mcp/` module is ~2.4k LOC total and already has its own actor (`actor.rs`, 323 LOC), registry (`registry.rs`, 873 LOC), activity ring (`activity.rs`, 823 LOC), and last-append tracker (`last_append.rs`, 135 LOC). `rmcp`'s macro-driven tool model needs to coexist with the existing `ToolRegistry` trait and the FEAT-4d activity-feed plumbing.
+- `agaric-mcp` ships as a separate binary; the migration affects the external stdio surface.
+- `rmcp` is still pre-1.0 and evolving.
+
+**Suggested spike:** wire one read-only tool (e.g. `search_blocks`) through `rmcp`'s server API while keeping the rest on the hand-rolled path. Measure:
+
+1. How much of `server.rs` collapses (dispatch, framing, error mapping).
+2. Whether `rmcp`'s tool-registration model can be adapted over the existing `ToolRegistry` trait without losing the activity-feed emission point.
+3. Spec-conformance delta — does `rmcp` handle protocol-version negotiation, `tools/listChanged` notifications, or other MCP features that `server.rs` currently stubs?
+
+If the adapter is clean, estimate a ~300–500 LOC reduction in `server.rs` with better forward-compatibility with MCP spec revisions. If `rmcp` wants to own the registry, abandon — the current code is well-tested and not a maintenance burden.
+
+**Cost:** M (2–8h for the spike; full migration would be L if pursued).
+**Risk:** M — external binary surface, coexistence with existing actor + activity-feed patterns.
+**Impact:** M (conditional on spike outcome) — reduces framing boilerplate and tracks the MCP spec upstream rather than reimplementing it.
 
 ## PERF — Performance items
 
