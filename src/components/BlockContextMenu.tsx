@@ -9,7 +9,7 @@
  * Closes on: action selected, click outside, or Escape.
  */
 
-import { computePosition, flip, offset, shift } from '@floating-ui/dom'
+import { autoUpdate, computePosition, flip, offset, shift } from '@floating-ui/dom'
 import {
   ArrowLeftToLine,
   ArrowRightToLine,
@@ -138,15 +138,24 @@ export function BlockContextMenu({
   }, [triggerRef, onClose])
 
   // ── Close on click outside ───────────────────────────────────────
+  // Defer registration by one animation frame so the same pointerdown
+  // event that opened the menu does not immediately close it (BUG-2 /
+  // mirrors `suggestion-renderer.ts` and `BlockPropertyEditor.tsx`).
   useEffect(() => {
     const handlePointerDown = (e: PointerEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         handleCloseWithFocus()
       }
     }
-    // Use pointerdown to catch both mouse and touch
-    document.addEventListener('pointerdown', handlePointerDown, true)
-    return () => document.removeEventListener('pointerdown', handlePointerDown, true)
+    let frameId: number | null = requestAnimationFrame(() => {
+      frameId = null
+      // Use pointerdown to catch both mouse and touch
+      document.addEventListener('pointerdown', handlePointerDown, true)
+    })
+    return () => {
+      if (frameId !== null) cancelAnimationFrame(frameId)
+      document.removeEventListener('pointerdown', handlePointerDown, true)
+    }
   }, [handleCloseWithFocus])
 
   // ── Close on Escape ──────────────────────────────────────────────
@@ -167,32 +176,60 @@ export function BlockContextMenu({
   }, [])
 
   // ── Compute position with floating-ui ─────────────────────────────
+  // Uses `autoUpdate` so the menu reflows on scroll/resize while open,
+  // mirroring `BlockPropertyEditor.tsx` and `suggestion-renderer.ts`
+  // (AGENTS.md §"Floating UI lifecycle logging").
   const [computedPos, setComputedPos] = useState(position)
 
   useEffect(() => {
     const el = menuRef.current
     if (!el) return
 
+    const triggerEl = triggerRef?.current ?? null
+
     const virtualEl = {
       getBoundingClientRect: () => new DOMRect(position.x, position.y, 0, 0),
+      // `contextElement` lets `autoUpdate` discover the right scroll
+      // ancestors when the reference is a virtual element.
+      ...(triggerEl ? { contextElement: triggerEl } : {}),
     }
 
-    computePosition(virtualEl, el, {
-      placement: 'bottom-start',
-      middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 })],
-    })
-      .then(({ x, y }) => {
-        setComputedPos({ x, y })
+    const updatePosition = () => {
+      // Stale-unmount guard: the floating element or its trigger may
+      // have been removed from the DOM between this `autoUpdate` tick
+      // and the previous one. Bail loudly so latent bugs surface.
+      if (!el.isConnected) {
+        logger.warn('BlockContextMenu', 'floating element unmounted, skipping update')
+        return
+      }
+      if (triggerEl && !triggerEl.isConnected) {
+        logger.warn('BlockContextMenu', 'trigger unmounted, skipping update', {
+          blockId,
+        })
+        return
+      }
+
+      computePosition(virtualEl, el, {
+        placement: 'bottom-start',
+        middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 })],
       })
-      .catch((err: unknown) => {
-        logger.warn(
-          'BlockContextMenu',
-          'computePosition failed, using initial position',
-          undefined,
-          err,
-        )
-      })
-  }, [position])
+        .then(({ x, y }) => {
+          if (!el.isConnected) return
+          setComputedPos({ x, y })
+        })
+        .catch((err: unknown) => {
+          logger.warn(
+            'BlockContextMenu',
+            'positioning failed, falling back to anchor coords',
+            { x: position.x, y: position.y },
+            err,
+          )
+          setComputedPos({ x: position.x, y: position.y })
+        })
+    }
+
+    return autoUpdate(virtualEl, el, updatePosition)
+  }, [position, triggerRef, blockId])
 
   const handleAction = useCallback(
     (action: ((blockId: string) => void) | undefined) => {

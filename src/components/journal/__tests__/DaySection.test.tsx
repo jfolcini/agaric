@@ -10,7 +10,7 @@
  *  6. Clicking heading navigates to daily view for that date
  *  7. Renders BlockTree inside PageBlockStoreProvider when pageId exists
  *  8. Shows full EmptyState when no pageId and not compact
- *  9. Shows compact add-block button when no pageId and compact=true
+ *  9. Shows compact EmptyState with add-block CTA when no pageId and compact=true
  * 10. Calls onAddBlock when empty-state CTA clicked
  * 11. Calls onAddBlock when compact add button clicked
  * 12. Shows AddBlockButton when pageId exists
@@ -264,14 +264,16 @@ describe('DaySection', () => {
     expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
   })
 
-  // 9. Shows compact add-block button when no pageId and compact=true
-  it('shows compact add button when no pageId and compact=true', () => {
-    const entry = makeDayEntry({ pageId: null })
+  // 9. Shows compact EmptyState w/ add-block CTA when no pageId and compact=true
+  it('shows compact EmptyState with add-block CTA when no pageId and compact=true', () => {
+    const entry = makeDayEntry({ pageId: null, displayDate: 'Sun, Jun 15, 2025' })
 
     render(<DaySection entry={entry} mode="weekly" compact onAddBlock={noop} />)
 
+    // Compact mode now uses the EmptyState primitive (UX-3) with an "Add block" action
+    expect(screen.getByTestId('empty-state')).toBeInTheDocument()
+    expect(screen.getByText(/No blocks for Sun, Jun 15, 2025/)).toBeInTheDocument()
     expect(screen.getByText('Add block')).toBeInTheDocument()
-    expect(screen.queryByTestId('empty-state')).not.toBeInTheDocument()
   })
 
   // 10. Calls onAddBlock when empty-state CTA clicked

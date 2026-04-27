@@ -21,6 +21,7 @@ import { priorityColor } from '../../lib/priority-color'
 import type { BlockRow } from '../../lib/tauri'
 import { batchResolve, queryByProperty } from '../../lib/tauri'
 import { BlockListItem } from '../BlockListItem'
+import { LoadingSkeleton } from '../LoadingSkeleton'
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -260,8 +261,20 @@ export function UnfinishedTasks({
     })
   }, [])
 
-  // Don't render anything while loading
-  if (loading) return <div aria-busy="true" role="status" className="sr-only" />
+  // Initial load: show a visible skeleton placeholder so sighted users see the
+  // panel reserving space (rather than a blank gap that pops in when ready).
+  if (loading) {
+    return (
+      <section
+        aria-label={t('unfinished.loading')}
+        aria-busy="true"
+        role="status"
+        data-testid="unfinished-tasks-loading"
+      >
+        <LoadingSkeleton count={3} height="h-10" className="unfinished-tasks-loading" />
+      </section>
+    )
+  }
 
   // Don't render section if no unfinished tasks
   if (blocks.length === 0) return null

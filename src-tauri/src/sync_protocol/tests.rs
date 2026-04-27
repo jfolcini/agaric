@@ -3531,3 +3531,142 @@ async fn handle_message_emits_within_sync_msg_span() {
 
     materializer.shutdown();
 }
+
+// ======================================================================
+// H-14 — fork detection: same (device_id, seq) with different hash
+// ======================================================================
+
+/// A peer can produce two different ops for the same `(device_id, seq)`
+/// slot if a misbehaving peer build, a restored backup, or a clock-bug
+/// generates divergent histories.  The legacy `INSERT OR IGNORE` swallowed
+/// the second insert and counted it as a "duplicate" — silent data loss
+/// and no observability.  Verify `apply_remote_ops` now:
+///   1. Detects the collision via SELECT before INSERT OR IGNORE.
+///   2. Increments `result.forks` (NOT `result.duplicates`).
+///   3. Leaves the local op_log row unchanged (keeps the local copy).
+///   4. Does not enqueue the incoming op for materialization.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_remote_ops_detects_fork_with_same_seq_different_hash() {
+    const DEV_A: &str = "fork-dev";
+
+    // Pool 1: the local DB we're applying ops to.  Seed it with a real
+    // op for (DEV_A, seq=1) — this is what the peer's fork will collide
+    // with.  Using `append_local_op_at` ensures the local row carries a
+    // genuine, well-formed hash chain (no need to fake the hash).
+    let (local_pool, _local_dir) = test_pool().await;
+    let materializer = Materializer::new(local_pool.clone());
+
+    let local_record = append_local_op_at(
+        &local_pool,
+        DEV_A,
+        test_create_payload("FORK-LOCAL"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+    let hash_a = local_record.hash.clone();
+
+    // Pool 2: an independent "peer" DB that *also* produces an op for
+    // `(DEV_A, seq=1)` — but with different content, hence a different
+    // hash.  This is a legitimate, integrity-passing op from the peer's
+    // perspective; the fork is detected at apply time on the local side.
+    let (remote_pool, _remote_dir) = test_pool().await;
+    let remote_record = append_local_op_at(
+        &remote_pool,
+        DEV_A,
+        test_create_payload("FORK-REMOTE"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        remote_record.seq, 1,
+        "fresh remote pool should assign seq=1 for DEV_A"
+    );
+    assert_ne!(
+        remote_record.hash, hash_a,
+        "remote op must have a different hash for the test to be meaningful"
+    );
+
+    let fork_transfer: OpTransfer = remote_record.into();
+
+    // Apply the forking transfer to the local pool.
+    let result = apply_remote_ops(&local_pool, &materializer, vec![fork_transfer])
+        .await
+        .unwrap();
+
+    assert_eq!(result.forks, 1, "fork must be counted");
+    assert_eq!(result.inserted, 0, "no rows inserted on a fork");
+    assert_eq!(
+        result.duplicates, 0,
+        "fork must NOT be counted as a duplicate (different hash)"
+    );
+    assert_eq!(result.hash_mismatches, 0, "no integrity failures");
+
+    // The local op_log row must be unchanged — the keep-local policy.
+    let stored_hash: Option<String> =
+        sqlx::query_scalar("SELECT hash FROM op_log WHERE device_id = ? AND seq = ?")
+            .bind(DEV_A)
+            .bind(1_i64)
+            .fetch_optional(&local_pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored_hash.as_deref(),
+        Some(hash_a.as_str()),
+        "local row must still carry hash_a after a fork attempt"
+    );
+
+    materializer.shutdown();
+}
+
+/// Symmetric sanity check: a *true* duplicate (same `(device_id, seq)`
+/// AND same hash — i.e., the peer re-sends the same op) must continue to
+/// be counted as a duplicate, not a fork.  Guards against an over-eager
+/// `is_fork` predicate that fires on every collision.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_remote_ops_does_not_count_real_duplicates_as_forks() {
+    const DEV_A: &str = "dup-dev";
+
+    // Pool that produces the canonical op for (DEV_A, seq=1).
+    let (remote_pool, _remote_dir) = test_pool().await;
+    let record = append_local_op_at(
+        &remote_pool,
+        DEV_A,
+        test_create_payload("DUP-1"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+    let transfer: OpTransfer = record.into();
+
+    // Apply the same op to a fresh local pool twice.  The second apply
+    // should be a true duplicate: same (device_id, seq) AND same hash.
+    let (local_pool, _local_dir) = test_pool().await;
+    let materializer = Materializer::new(local_pool.clone());
+
+    let first = apply_remote_ops(&local_pool, &materializer, vec![transfer.clone()])
+        .await
+        .unwrap();
+    assert_eq!(first.inserted, 1, "first apply inserts the op");
+    assert_eq!(first.forks, 0, "no fork on a fresh insert");
+    assert_eq!(first.duplicates, 0, "no duplicate on a fresh insert");
+
+    let second = apply_remote_ops(&local_pool, &materializer, vec![transfer])
+        .await
+        .unwrap();
+    assert_eq!(
+        second.duplicates, 1,
+        "re-applying an identical op must count as a duplicate"
+    );
+    assert_eq!(
+        second.forks, 0,
+        "identical op (same hash) is NOT a fork — guard against over-firing"
+    );
+    assert_eq!(
+        second.inserted, 0,
+        "INSERT OR IGNORE is a no-op for the duplicate"
+    );
+
+    materializer.shutdown();
+}

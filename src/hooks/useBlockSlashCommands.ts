@@ -343,7 +343,16 @@ async function handleRepeat(ctx: SlashCommandContext, value: string): Promise<vo
   try {
     await setProperty({ blockId: ctx.blockId, key: 'repeat', valueText: value })
     notifyUndo(ctx.rootParentId)
-    toast.success(ctx.t('slash.repeatSet', { value: formatRepeatLabel(value) }))
+    // ctx.t is typed as the file-local loose `TFn` to keep the dispatcher
+    // generic; formatRepeatLabel takes the strict i18next `TFunction`. The
+    // cast is safe because ctx.t IS the i18next translator at runtime —
+    // only the type alias is loose. See the `TFn` declaration at the top
+    // of this file.
+    toast.success(
+      ctx.t('slash.repeatSet', {
+        value: formatRepeatLabel(value, ctx.t as unknown as import('i18next').TFunction),
+      }),
+    )
   } catch {
     toast.error(ctx.t('slash.repeatFailed'))
   }

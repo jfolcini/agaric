@@ -36,6 +36,14 @@ vi.mock('@floating-ui/dom', () => ({
   flip: vi.fn(() => ({})),
   shift: vi.fn(() => ({})),
   offset: vi.fn(() => ({})),
+  // `autoUpdate(reference, floating, update)` invokes `update` once
+  // synchronously and returns a cleanup function. Mirror that behavior
+  // in the test mock so positioning is exercised exactly as in
+  // production but without the resize/scroll listeners.
+  autoUpdate: vi.fn((_ref: unknown, _floating: unknown, update: () => void) => {
+    update()
+    return () => {}
+  }),
 }))
 
 // Mock the clipboard wrapper used by the "Copy URL" menu item so the test
@@ -337,8 +345,13 @@ describe('BlockContextMenu', () => {
 
   // ── Existing tests (updated) ────────────────────────────────────
 
-  it('clicking outside the menu closes it', () => {
+  it('clicking outside the menu closes it', async () => {
     const { props } = renderMenu()
+
+    // The outside-click listener is registered via requestAnimationFrame
+    // so the same pointerdown that opened the menu doesn't immediately
+    // close it. Wait one frame before firing, mirroring real usage.
+    await new Promise((resolve) => requestAnimationFrame(resolve))
 
     // Fire pointerdown on document body (outside menu)
     fireEvent.pointerDown(document.body)
@@ -615,5 +628,145 @@ describe('BlockContextMenu', () => {
 
     const items = screen.getAllByRole('menuitem')
     expect(items[0]).toHaveTextContent(t('contextMenu.copyUrl'))
+  })
+
+  // ── Floating UI safeguards (MAINT-121) ───────────────────────────
+  //
+  // These tests cover the four AGENTS.md §"Floating UI lifecycle
+  // logging" requirements: autoUpdate, isConnected stale-unmount
+  // guard, rAF-deferred outside-click registration, and
+  // computePosition rejection fallback.
+
+  describe('floating-ui lifecycle safeguards (MAINT-121)', () => {
+    it('safeguard #1 — registers an autoUpdate cleanup so the menu reflows on scroll/resize', async () => {
+      const { autoUpdate, computePosition } = await import('@floating-ui/dom')
+      const mockedAutoUpdate = vi.mocked(autoUpdate)
+      const mockedComputePosition = vi.mocked(computePosition)
+      mockedAutoUpdate.mockClear()
+      mockedComputePosition.mockClear()
+
+      const { unmount } = renderMenu({ position: { x: 100, y: 200 } })
+
+      // autoUpdate should be invoked on mount with (virtualReference,
+      // floatingElement, updateCallback).
+      expect(mockedAutoUpdate).toHaveBeenCalledTimes(1)
+      const [, floatingArg, updateCb] = mockedAutoUpdate.mock.calls[0] as [
+        unknown,
+        HTMLElement,
+        () => void,
+      ]
+      expect(floatingArg).toBeInstanceOf(HTMLElement)
+      expect(typeof updateCb).toBe('function')
+
+      // The first synchronous tick from our mock invoked the update,
+      // which calls computePosition once.
+      expect(mockedComputePosition).toHaveBeenCalledTimes(1)
+
+      // Manually re-invoking the update (simulating a scroll/resize
+      // event under real autoUpdate) calls computePosition again —
+      // the menu reflows.
+      updateCb()
+      expect(mockedComputePosition).toHaveBeenCalledTimes(2)
+
+      // The cleanup function returned by autoUpdate is honoured on
+      // unmount. (Our mock returns a no-op so we just assert no throw.)
+      expect(() => unmount()).not.toThrow()
+    })
+
+    it('safeguard #2 — bails with logger.warn when the trigger is unmounted before the update fires', async () => {
+      const { autoUpdate, computePosition } = await import('@floating-ui/dom')
+      const mockedAutoUpdate = vi.mocked(autoUpdate)
+      const mockedComputePosition = vi.mocked(computePosition)
+
+      // Replace the default autoUpdate mock with one that does NOT
+      // synchronously invoke the update — we want to drive it manually
+      // after detaching the trigger from the DOM.
+      let captured: (() => void) | null = null
+      mockedAutoUpdate.mockImplementationOnce(((_ref, _floating, update) => {
+        captured = update as () => void
+        return () => {}
+      }) as typeof autoUpdate)
+
+      const triggerEl = document.createElement('button')
+      document.body.appendChild(triggerEl)
+      const triggerRef = { current: triggerEl }
+
+      const { logger } = await import('../../lib/logger')
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      mockedComputePosition.mockClear()
+
+      renderMenu({ triggerRef })
+
+      // Detach the trigger before the update tick runs.
+      triggerEl.remove()
+      expect(triggerEl.isConnected).toBe(false)
+
+      // Drive the deferred update — should bail loudly.
+      expect(captured).not.toBeNull()
+      ;(captured as unknown as () => void)()
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        'BlockContextMenu',
+        'trigger unmounted, skipping update',
+        expect.objectContaining({ blockId: 'BLOCK_01' }),
+      )
+      // computePosition must NOT run when the guard fires.
+      expect(mockedComputePosition).not.toHaveBeenCalled()
+
+      warnSpy.mockRestore()
+    })
+
+    it('safeguard #3 — outside-click handler does not fire on the SAME click that opened the menu', () => {
+      const { props } = renderMenu()
+
+      // Fire a pointerdown synchronously, BEFORE the next animation
+      // frame: this simulates the same user gesture that triggered
+      // mounting the menu (the regression we are guarding against).
+      fireEvent.pointerDown(document.body)
+
+      expect(props.onClose).not.toHaveBeenCalled()
+    })
+
+    it('safeguard #4 — falls back to anchor coords and warns when computePosition rejects', async () => {
+      const { autoUpdate, computePosition } = await import('@floating-ui/dom')
+      const mockedAutoUpdate = vi.mocked(autoUpdate)
+      const mockedComputePosition = vi.mocked(computePosition)
+
+      // Use a real (rejecting) promise so the .catch fires.
+      const positioningError = new Error('boom')
+      mockedComputePosition.mockRejectedValueOnce(positioningError)
+
+      // Restore eager autoUpdate semantics for this test (mock is
+      // shared across tests — the previous test replaced it).
+      mockedAutoUpdate.mockImplementation(((_ref, _floating, update) => {
+        update()
+        return () => {}
+      }) as typeof autoUpdate)
+
+      const { logger } = await import('../../lib/logger')
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+      renderMenu({ position: { x: 175, y: 325 } })
+
+      // Wait for the rejected promise's catch handler to run.
+      await waitFor(() => {
+        expect(warnSpy).toHaveBeenCalledWith(
+          'BlockContextMenu',
+          'positioning failed, falling back to anchor coords',
+          expect.objectContaining({ x: 175, y: 325 }),
+          positioningError,
+        )
+      })
+
+      // The menu should still be positioned at the original anchor
+      // coordinates passed in via the `position` prop.
+      const menu = screen.getByRole('menu')
+      await waitFor(() => {
+        expect(menu.style.left).toBe('175px')
+        expect(menu.style.top).toBe('325px')
+      })
+
+      warnSpy.mockRestore()
+    })
   })
 })

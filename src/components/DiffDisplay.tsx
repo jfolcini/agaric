@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 import type { DiffSpan } from '../lib/tauri'
+import { EmptyState } from './EmptyState'
 import { renderRichContent } from './StaticBlock'
 
 interface DiffDisplayProps {
@@ -90,7 +91,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
   }, [currentHunk, goToHunk])
 
   if (spans.length === 0) {
-    return <span className="text-xs text-muted-foreground italic">{t('diff.noChanges')}</span>
+    return <EmptyState compact message={t('history.diff.empty')} />
   }
 
   return (

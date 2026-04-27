@@ -129,6 +129,13 @@ pub struct ApplyResult {
     pub inserted: usize,
     pub duplicates: usize,
     pub hash_mismatches: usize,
+    /// Number of ops where `(device_id, seq)` already existed locally with a
+    /// **different** hash — i.e., a fork: a peer produced a divergent op for
+    /// the same `(device_id, seq)` slot. The local copy is kept; the
+    /// incoming op is dropped (the existing `INSERT OR IGNORE` is a no-op
+    /// for these rows). This is distinct from `duplicates` (same hash), and
+    /// is surfaced for observability so callers can log/alert.
+    pub forks: usize,
 }
 
 /// Counts returned by [`merge_diverged_blocks`](super::merge_diverged_blocks).

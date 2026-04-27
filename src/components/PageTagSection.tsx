@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { TagEntry } from '../hooks/useBlockTags'
+import { EmptyState } from './EmptyState'
 
 export interface PageTagSectionProps {
   appliedTags: TagEntry[]
@@ -98,9 +99,7 @@ export function PageTagSection({
               </button>
             )}
             {availableTags.length === 0 && !tagQuery.trim() && (
-              <p className="px-2 py-1 text-sm text-muted-foreground">
-                {t('pageHeader.noMoreTags')}
-              </p>
+              <EmptyState compact message={t('pages.tags.empty')} />
             )}
           </ScrollArea>
         </PopoverContent>

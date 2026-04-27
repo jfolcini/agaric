@@ -169,7 +169,9 @@ export function PairingEntryForm({
       {entryMode === 'manual' ? (
         <div className="pairing-word-inputs grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
           {(['first', 'second', 'third', 'fourth'] as const).map((slot, i) => {
-            const ordinal = ['1st', '2nd', '3rd', '4th'][i] as string
+            // UX-7: ordinal labels come from i18n (`pairing.ordinal.<slot>`)
+            // so they can be localized rather than hardcoded English.
+            const ordinal = t(`pairing.ordinal.${slot}`)
             const inputId = `${inputIdPrefix}-pairing-word-${i}`
             return (
               // UX-263: Each word slot gets a visible ordinal Label so users

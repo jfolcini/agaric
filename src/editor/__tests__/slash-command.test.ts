@@ -156,4 +156,74 @@ describe('slash-command auto-execute', () => {
     vi.advanceTimersByTime(200)
     expect(command).not.toHaveBeenCalled()
   })
+
+  // ── Lifecycle breadcrumbs (MAINT-121) ────────────────────────────
+  //
+  // The auto-execute timer used to be a silent setTimeout — we now
+  // emit logger.debug breadcrumbs for scheduling, cancellation, and
+  // firing so a future session can trace why a slash command did or
+  // did not auto-fire.
+
+  it('emits a debug breadcrumb when scheduling and firing the auto-execute timer', async () => {
+    const { logger } = await import('../../lib/logger')
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+
+    const lifecycle = getLifecycle()
+    const command = vi.fn()
+    const item: PickerItem = { id: 'todo', label: 'TODO' }
+
+    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+    expect(debugSpy).toHaveBeenCalledWith(
+      'slash-command',
+      'auto-execute timer scheduled',
+      expect.objectContaining({ delayMs: 200, query: 'tod', itemId: 'todo' }),
+    )
+
+    vi.advanceTimersByTime(200)
+    expect(debugSpy).toHaveBeenCalledWith(
+      'slash-command',
+      'auto-execute timer fired',
+      expect.objectContaining({ query: 'tod', itemId: 'todo' }),
+    )
+
+    debugSpy.mockRestore()
+  })
+
+  it('emits a debug breadcrumb when the timer is cleared on keyDown / exit / start', async () => {
+    const { logger } = await import('../../lib/logger')
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+
+    const lifecycle = getLifecycle()
+    const command = vi.fn()
+    const item: PickerItem = { id: 'todo', label: 'TODO' }
+
+    // onKeyDown clears
+    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+    lifecycle.onKeyDown({ event: new KeyboardEvent('keydown', { key: 'ArrowDown' }) })
+    expect(debugSpy).toHaveBeenCalledWith(
+      'slash-command',
+      'auto-execute timer cleared on onKeyDown',
+      expect.objectContaining({ reason: 'user-keypress', key: 'ArrowDown' }),
+    )
+
+    // onExit clears
+    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+    lifecycle.onExit()
+    expect(debugSpy).toHaveBeenCalledWith(
+      'slash-command',
+      'auto-execute timer cleared on onExit',
+      expect.objectContaining({ reason: 'session-exit' }),
+    )
+
+    // onStart clears (defensive, on re-entry)
+    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+    lifecycle.onStart({ items: [item], query: '', command })
+    expect(debugSpy).toHaveBeenCalledWith(
+      'slash-command',
+      'auto-execute timer cleared on onStart',
+      expect.objectContaining({ reason: 'lingering-timer-from-previous-session' }),
+    )
+
+    debugSpy.mockRestore()
+  })
 })
