@@ -79,6 +79,187 @@ pub async fn begin_immediate_logged(
     Ok(tx)
 }
 
+/// Command-layer transaction wrapper that couples a `BEGIN IMMEDIATE`
+/// SQLite transaction to the materializer-dispatch calls that must fire
+/// after it commits.
+///
+/// MAINT-112 (phase A): every write-path command previously repeated the
+/// same three-step dance —
+///
+/// ```text
+/// let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+/// // ... work ...
+/// tx.commit().await?;
+/// materializer.dispatch_background_or_warn(&op_record);
+/// ```
+///
+/// This pattern appears in ~54 command-layer sites (35 raw
+/// `begin_with("BEGIN IMMEDIATE")` + 19 already using
+/// [`begin_immediate_logged`]) and pairs with 22 post-commit
+/// `dispatch_background_or_warn` calls. Two failure modes are easy to
+/// introduce and hard to review for:
+///
+/// 1. **Pre-commit dispatch.** Firing the background task before
+///    `tx.commit().await?` can expose the not-yet-committed op-record to
+///    the materializer. A follow-up commit failure then leaves the
+///    materializer chasing an op that never lands.
+/// 2. **Missing dispatch.** Forgetting the `dispatch_background_or_warn`
+///    call leaves caches (`tags_cache`, `pages_cache`, FTS, block_links,
+///    block_tag_inherited) stale until the next touch. Session 495's
+///    H-5 / H-6 fixes were both in this class.
+///
+/// `CommandTx` closes both by construction:
+///
+/// - Opening a transaction is a single call — [`CommandTx::begin_immediate`]
+///   — that also takes the [`SLOW_ACQUIRE_WARN_MS`] timing log for free.
+/// - Callers [`enqueue_background`](CommandTx::enqueue_background) the op
+///   records that need post-commit dispatch *during* the transaction.
+///   The records are held on the `CommandTx` value, not sent to the
+///   materializer yet.
+/// - The only way to commit is via [`commit_and_dispatch`](
+///   CommandTx::commit_and_dispatch) or the explicit
+///   [`commit_without_dispatch`](CommandTx::commit_without_dispatch)
+///   escape hatch. Both commit the inner `sqlx::Transaction` first, and
+///   only then (if the commit succeeded) drain the pending queue into
+///   `Materializer::dispatch_background_or_warn` in enqueue order.
+/// - Dropping the `CommandTx` without calling either commit method
+///   rolls back the transaction (via `sqlx::Transaction`'s own `Drop`)
+///   and discards the pending queue. No dispatches fire on rollback.
+///
+/// Existing `*_in_tx` helpers that take `&mut sqlx::Transaction<'_,
+/// Sqlite>` do **not** need signature changes: `CommandTx` implements
+/// [`Deref`] and [`DerefMut`] to the inner transaction, so Rust's
+/// deref-coercion-on-reborrow rule lets callers keep writing
+/// `append_local_op_in_tx(&mut cmd_tx, ...)` at the function-call site —
+/// the `&mut CommandTx` → `&mut sqlx::Transaction<'_, Sqlite>` coercion
+/// applies automatically. (Explicit `&mut *cmd_tx` also works if
+/// the reader wants the coercion to be visible.) The `_in_tx` suffix is
+/// preserved deliberately — it is load-bearing for grep + code review
+/// and every call site keeps its familiar shape.
+///
+/// This is the phase-A surface. A later phase may add wrapper methods
+/// for `dispatch_edit_background` / `dispatch_op` if usage warrants, but
+/// 22 of the 25 post-commit dispatch sites go through
+/// `dispatch_background_or_warn`, so this one variant covers the
+/// dominant pattern.
+pub struct CommandTx {
+    /// The live `BEGIN IMMEDIATE` transaction. `'static` because
+    /// `pool.begin_with(...)` internally clones the pool handle.
+    inner: sqlx::Transaction<'static, Sqlite>,
+    /// Op records to dispatch to the materializer's background queue
+    /// once the transaction commits successfully. FIFO order —
+    /// `commit_and_dispatch` drains them in enqueue order.
+    pending_background: Vec<crate::op_log::OpRecord>,
+    /// Label used by [`begin_immediate_logged`] for slow-acquire logs.
+    /// Stored here only so diagnostic code (future: a debug-assert on
+    /// Drop with a pending queue) can name the originating command.
+    #[allow(dead_code)]
+    label: &'static str,
+}
+
+impl CommandTx {
+    /// Open a new `BEGIN IMMEDIATE` transaction with slow-acquire logging.
+    ///
+    /// `label` mirrors [`begin_immediate_logged`] — a stable,
+    /// human-readable tag like `"undo_page_op"` so slow writes can be
+    /// filtered per-command in the tracing output.
+    pub async fn begin_immediate(
+        pool: &SqlitePool,
+        label: &'static str,
+    ) -> Result<Self, sqlx::Error> {
+        let inner = begin_immediate_logged(pool, label).await?;
+        Ok(Self {
+            inner,
+            pending_background: Vec::new(),
+            label,
+        })
+    }
+
+    /// Queue an op record for post-commit background dispatch.
+    ///
+    /// The record is held on the `CommandTx` value and forwarded to
+    /// `Materializer::dispatch_background_or_warn` only if
+    /// [`commit_and_dispatch`](Self::commit_and_dispatch) succeeds. If
+    /// the transaction is rolled back or committed via
+    /// [`commit_without_dispatch`](Self::commit_without_dispatch), the
+    /// queued records are discarded.
+    ///
+    /// Multiple records may be enqueued from the same transaction —
+    /// typical for batch operations such as [`crate::commands::history::revert_ops_inner`].
+    pub fn enqueue_background(&mut self, record: crate::op_log::OpRecord) {
+        self.pending_background.push(record);
+    }
+
+    /// Commit the transaction, then drain the pending queue via
+    /// `Materializer::dispatch_background_or_warn` in enqueue order.
+    ///
+    /// If `commit()` fails, no dispatches fire and the error is
+    /// propagated. This is the desired behaviour — a failed commit means
+    /// the op records never landed in `op_log`, so the materializer must
+    /// not be told about them.
+    ///
+    /// Returns the number of dispatches that fired. Dispatch failures
+    /// are handled by `dispatch_background_or_warn`'s internal
+    /// `logger.warn` path; they do not surface here.
+    pub async fn commit_and_dispatch(
+        mut self,
+        materializer: &crate::materializer::Materializer,
+    ) -> Result<usize, sqlx::Error> {
+        self.inner.commit().await?;
+        let drained = std::mem::take(&mut self.pending_background);
+        let count = drained.len();
+        for record in &drained {
+            materializer.dispatch_background_or_warn(record);
+        }
+        Ok(count)
+    }
+
+    /// Commit the transaction without firing any dispatches.
+    ///
+    /// Escape hatch for test fixtures and maintenance commands that
+    /// don't participate in the materializer pipeline (e.g., direct
+    /// SQLite PRAGMA writes, migration markers). Pending records are
+    /// discarded silently.
+    pub async fn commit_without_dispatch(mut self) -> Result<(), sqlx::Error> {
+        self.inner.commit().await?;
+        self.pending_background.clear();
+        Ok(())
+    }
+
+    /// Explicitly roll back the transaction and discard pending
+    /// dispatches.
+    ///
+    /// Identical in effect to dropping the `CommandTx` without
+    /// committing, but surfaces any rollback error to the caller.
+    pub async fn rollback(mut self) -> Result<(), sqlx::Error> {
+        self.pending_background.clear();
+        self.inner.rollback().await
+    }
+
+    /// Number of op records currently queued for post-commit dispatch.
+    ///
+    /// Useful in tests that want to assert exactly how many cache
+    /// rebuilds a command will schedule.
+    #[must_use]
+    pub fn pending_len(&self) -> usize {
+        self.pending_background.len()
+    }
+}
+
+impl std::ops::Deref for CommandTx {
+    type Target = sqlx::Transaction<'static, Sqlite>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for CommandTx {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
 /// Separated read/write connection pools for SQLite.
 ///
 /// WAL mode allows concurrent readers alongside a single writer.
@@ -708,6 +889,294 @@ mod tests {
         assert!(
             contents.contains("test_slow"),
             "slow-acquire warn must include the caller-supplied label, got: {contents:?}"
+        );
+    }
+
+    // ======================================================================
+    // MAINT-112: CommandTx newtype tests
+    // ======================================================================
+
+    use crate::op_log::OpRecord;
+
+    /// Build a non-roundtrippable but structurally-valid `OpRecord` for
+    /// tests that only care about whether dispatch *fires* (the
+    /// materializer's internal payload parse will fail and emit a
+    /// `warn`, which is exactly what `dispatch_background_or_warn`
+    /// promises to do). No real op-log row is written.
+    fn fake_op_record(device_id: &str, seq: i64, op_type: &str) -> OpRecord {
+        OpRecord {
+            device_id: device_id.to_string(),
+            seq,
+            parent_seqs: None,
+            hash: "0".repeat(64),
+            op_type: op_type.to_string(),
+            payload: "{}".to_string(),
+            created_at: "1970-01-01T00:00:00.000Z".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn command_tx_begin_immediate_opens_write_tx() {
+        let (pool, _dir) = test_pool().await;
+        let mut tx = CommandTx::begin_immediate(&pool, "test_cmd_tx_open")
+            .await
+            .expect("begin_immediate should succeed");
+
+        // Writes via Deref should work exactly like a plain Transaction.
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+            "CMDTX_OPEN",
+            "content",
+            "hello"
+        )
+        .execute(&mut **tx)
+        .await
+        .expect("write through CommandTx should succeed");
+
+        tx.commit_without_dispatch()
+            .await
+            .expect("commit without dispatch should succeed");
+
+        let row = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", "CMDTX_OPEN")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row, 1, "commit_without_dispatch should persist the write");
+    }
+
+    #[tokio::test]
+    async fn command_tx_deref_passes_through_to_in_tx_helpers() {
+        // Prove that an existing `&mut sqlx::Transaction<'_, Sqlite>`
+        // helper accepts `&mut *cmd_tx` unchanged. This is the
+        // load-bearing invariant for the MAINT-112 migration strategy.
+        async fn in_tx_style_helper(
+            tx: &mut sqlx::Transaction<'_, Sqlite>,
+            id: &str,
+        ) -> Result<(), sqlx::Error> {
+            sqlx::query!(
+                "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+                id,
+                "content",
+                "from_helper"
+            )
+            .execute(&mut **tx)
+            .await?;
+            Ok(())
+        }
+
+        let (pool, _dir) = test_pool().await;
+        let mut cmd_tx = CommandTx::begin_immediate(&pool, "test_deref_passthrough")
+            .await
+            .unwrap();
+
+        // The helper signature is unchanged from the pre-MAINT-112
+        // codebase — the Deref/DerefMut impls on CommandTx are what
+        // makes `&mut *cmd_tx` match its expected `&mut Transaction`.
+        in_tx_style_helper(&mut cmd_tx, "CMDTX_DEREF")
+            .await
+            .expect("in-tx helper should accept &mut *cmd_tx");
+
+        cmd_tx.commit_without_dispatch().await.unwrap();
+
+        let row = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", "CMDTX_DEREF")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row, 1, "helper-written row should be committed");
+    }
+
+    #[tokio::test]
+    async fn command_tx_drop_rolls_back_writes() {
+        let (pool, _dir) = test_pool().await;
+        {
+            let mut tx = CommandTx::begin_immediate(&pool, "test_drop_rollback")
+                .await
+                .unwrap();
+            sqlx::query!(
+                "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+                "CMDTX_DROP",
+                "content",
+                "x"
+            )
+            .execute(&mut **tx)
+            .await
+            .unwrap();
+            // Drop without commit — sqlx::Transaction's Drop impl rolls
+            // back implicitly. CommandTx adds no new guarantee here; we
+            // assert the behaviour is preserved.
+        }
+        let row = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", "CMDTX_DROP")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row, 0, "drop without commit must roll back the write");
+    }
+
+    #[tokio::test]
+    async fn command_tx_explicit_rollback_discards_pending() {
+        let (pool, _dir) = test_pool().await;
+        let mut tx = CommandTx::begin_immediate(&pool, "test_explicit_rollback")
+            .await
+            .unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+            "CMDTX_RB",
+            "content",
+            "x"
+        )
+        .execute(&mut **tx)
+        .await
+        .unwrap();
+        tx.enqueue_background(fake_op_record("DEV", 1, "create_block"));
+        tx.enqueue_background(fake_op_record("DEV", 2, "edit_block"));
+        assert_eq!(tx.pending_len(), 2, "enqueue should grow pending");
+
+        tx.rollback().await.expect("rollback should succeed");
+
+        let row = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", "CMDTX_RB")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row, 0, "rollback must discard the write");
+    }
+
+    #[tokio::test]
+    async fn command_tx_commit_and_dispatch_returns_pending_count_and_persists_writes() {
+        use crate::materializer::Materializer;
+
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let mut tx = CommandTx::begin_immediate(&pool, "test_commit_dispatch")
+            .await
+            .unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+            "CMDTX_C1",
+            "content",
+            "x"
+        )
+        .execute(&mut **tx)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+            "CMDTX_C2",
+            "content",
+            "y"
+        )
+        .execute(&mut **tx)
+        .await
+        .unwrap();
+        tx.enqueue_background(fake_op_record("DEV", 1, "create_block"));
+        tx.enqueue_background(fake_op_record("DEV", 2, "create_block"));
+        tx.enqueue_background(fake_op_record("DEV", 3, "create_block"));
+
+        let dispatched = tx
+            .commit_and_dispatch(&materializer)
+            .await
+            .expect("commit_and_dispatch should succeed");
+        assert_eq!(
+            dispatched, 3,
+            "commit_and_dispatch must return the pre-commit pending count"
+        );
+
+        let row = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM blocks WHERE id IN (?, ?)",
+            "CMDTX_C1",
+            "CMDTX_C2"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row, 2, "commit must persist both writes");
+    }
+
+    #[tokio::test]
+    async fn command_tx_commit_and_dispatch_with_no_pending_returns_zero() {
+        use crate::materializer::Materializer;
+
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let mut tx = CommandTx::begin_immediate(&pool, "test_zero_pending")
+            .await
+            .unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+            "CMDTX_ZERO",
+            "content",
+            "x"
+        )
+        .execute(&mut **tx)
+        .await
+        .unwrap();
+        assert_eq!(tx.pending_len(), 0, "no enqueue, no pending");
+
+        let dispatched = tx.commit_and_dispatch(&materializer).await.unwrap();
+        assert_eq!(
+            dispatched, 0,
+            "commit_and_dispatch with nothing enqueued must still commit and return 0"
+        );
+
+        let row = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", "CMDTX_ZERO")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row, 1, "commit must have happened even with no dispatch");
+    }
+
+    #[tokio::test]
+    async fn command_tx_pending_len_reflects_enqueues() {
+        let (pool, _dir) = test_pool().await;
+        let mut tx = CommandTx::begin_immediate(&pool, "test_pending_len")
+            .await
+            .unwrap();
+
+        assert_eq!(tx.pending_len(), 0);
+        tx.enqueue_background(fake_op_record("DEV", 1, "create_block"));
+        assert_eq!(tx.pending_len(), 1);
+        tx.enqueue_background(fake_op_record("DEV", 2, "edit_block"));
+        assert_eq!(tx.pending_len(), 2);
+        tx.enqueue_background(fake_op_record("DEV", 3, "delete_block"));
+        assert_eq!(tx.pending_len(), 3);
+
+        // Cleanup (tx.rollback() also clears).
+        tx.rollback().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn command_tx_commit_without_dispatch_clears_pending() {
+        let (pool, _dir) = test_pool().await;
+        let mut tx = CommandTx::begin_immediate(&pool, "test_commit_no_dispatch")
+            .await
+            .unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+            "CMDTX_ND",
+            "content",
+            "x"
+        )
+        .execute(&mut **tx)
+        .await
+        .unwrap();
+        tx.enqueue_background(fake_op_record("DEV", 1, "create_block"));
+        tx.enqueue_background(fake_op_record("DEV", 2, "edit_block"));
+        assert_eq!(tx.pending_len(), 2);
+
+        // Escape hatch — commits the tx but explicitly skips dispatch.
+        // The queued records are discarded.
+        tx.commit_without_dispatch()
+            .await
+            .expect("commit_without_dispatch should succeed");
+
+        let row = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", "CMDTX_ND")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            row, 1,
+            "commit_without_dispatch must still commit the transaction"
         );
     }
 }
