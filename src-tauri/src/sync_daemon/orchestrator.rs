@@ -177,7 +177,10 @@ pub(crate) async fn daemon_loop(
                     event, &device_id, &mut discovered, &refs,
                 ) {
                     tracing::info!(peer_id = %peer.device_id, "discovered new peer via mDNS");
-                    try_sync_with_peer(
+                    // M-46: Branch A is single-shot (one peer per discovery
+                    // event), so the bool return is informational only — no
+                    // for-loop to break out of. Discard explicitly.
+                    let _cancelled = try_sync_with_peer(
                         &pool,
                         &device_id,
                         &materializer,
@@ -201,7 +204,7 @@ pub(crate) async fn daemon_loop(
                         peer_ref.last_address.as_deref(),
                         &discovered,
                     ) {
-                        try_sync_with_peer(
+                        let cancelled = try_sync_with_peer(
                             &pool,
                             &device_id,
                             &materializer,
@@ -213,6 +216,18 @@ pub(crate) async fn daemon_loop(
                             &cert,
                         )
                         .await;
+                        // M-46: cancel observed during this peer's session →
+                        // stop the whole round, not just the current peer.
+                        // Without this break, peer 2 / 3 / … would each spin
+                        // up fresh sessions because `CancelGuard::drop`
+                        // already cleared the flag.
+                        if cancelled {
+                            tracing::info!(
+                                peer_id = %peer_ref.peer_id,
+                                "cancel observed mid-round; aborting remaining debounced-change peers"
+                            );
+                            break;
+                        }
                     }
                 }
             }
@@ -244,7 +259,7 @@ pub(crate) async fn daemon_loop(
                 for pid in due {
                     let last_addr = refs_by_id.get(pid.as_str()).and_then(|r| r.last_address.as_deref());
                     if let Some(peer) = resolve_peer_address(&pid, last_addr, &discovered) {
-                        try_sync_with_peer(
+                        let cancelled = try_sync_with_peer(
                             &pool,
                             &device_id,
                             &materializer,
@@ -256,6 +271,15 @@ pub(crate) async fn daemon_loop(
                             &cert,
                         )
                         .await;
+                        // M-46: see Branch B comment — break the round, not
+                        // just the current peer, when the user cancels.
+                        if cancelled {
+                            tracing::info!(
+                                peer_id = %pid,
+                                "cancel observed mid-round; aborting remaining periodic-resync peers"
+                            );
+                            break;
+                        }
                     }
                 }
             }
@@ -401,6 +425,29 @@ async fn try_connect_each_address(
 /// session (including those from nested `run_sync_session`,
 /// `SyncOrchestrator::handle_message`, and file-transfer helpers) shares a
 /// `sync{peer=ULID}` prefix when the tracing subscriber includes span info.
+///
+/// # Return value (M-46)
+///
+/// Returns `true` iff the cancel flag was observed set when the sync
+/// session ended — i.e., the user invoked `cancel_active_sync()` while
+/// this peer's session was running. The caller (the daemon-loop branches
+/// that iterate over multiple peers) uses this to **break out of the
+/// round** so a "stop this round" cancel is honoured for every peer in
+/// the iteration, not just the one that happened to be syncing when the
+/// user clicked.
+///
+/// Early-exit paths (backoff gate, per-peer lock contention, no resolved
+/// addresses, all-addresses-failed connect) return `false`: those didn't
+/// run a real session, so cancellation is moot and the daemon's next
+/// peer in the round should still be attempted on its own merits. The
+/// only path that returns `true` is the one where `run_sync_session`
+/// actually executed and the cancel flag was observed (typically because
+/// `run_sync_session` returned `Err("sync cancelled by user")`).
+///
+/// The `_cancel_guard` (a Drop scope guard, S-11) clears the flag on
+/// every exit path — but the `was_cancelled` capture happens *before*
+/// the guard's Drop fires, so the returned bool reflects the live state
+/// at session end.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(
     skip_all,
@@ -417,7 +464,7 @@ pub(crate) async fn try_sync_with_peer(
     peer_refs: &[PeerRef],
     cancel: &AtomicBool,
     cert: &SyncCert,
-) {
+) -> bool {
     let peer_id = &peer.device_id;
 
     // Scope guard: always clear the cancel flag when this function returns,
@@ -434,12 +481,14 @@ pub(crate) async fn try_sync_with_peer(
 
     // 1. Backoff gate
     if !scheduler.may_retry(peer_id) {
-        return;
+        // M-46: no real session ran, cancellation is moot for this peer.
+        return false;
     }
 
     // 2. Per-peer mutex (prevents concurrent syncs to the same peer)
     let Some(_guard) = scheduler.try_lock_peer(peer_id) else {
-        return; // already syncing with this peer
+        // M-46: already syncing with this peer; no real session ran here.
+        return false;
     };
 
     // 3. Resolve all addresses from discovered peer info, in connection
@@ -447,7 +496,8 @@ pub(crate) async fn try_sync_with_peer(
     let addrs = format_peer_addresses(peer);
     if addrs.is_empty() {
         tracing::warn!(peer_id, "peer has no addresses, skipping sync");
-        return;
+        // M-46: no real session ran, cancellation is moot for this peer.
+        return false;
     }
 
     // 4. Look up cert hash for TLS certificate pinning
@@ -481,7 +531,8 @@ pub(crate) async fn try_sync_with_peer(
                     message: format!("Connection failed: {combined}"),
                     remote_device_id: peer_id.clone(),
                 });
-                return;
+                // M-46: connection never established, no real session ran.
+                return false;
             }
         };
 
@@ -535,11 +586,22 @@ pub(crate) async fn try_sync_with_peer(
         }
     }
 
+    // M-46: capture the cancel flag's live state BEFORE `_cancel_guard`
+    // clears it on Drop. The guard is the *first* local declared in this
+    // function so it drops *last* (Rust drops locals in reverse declaration
+    // order); both `conn.close()` below and this read therefore observe
+    // the still-set flag. The returned bool tells the daemon-loop caller
+    // whether the user cancelled mid-session so it can break out of the
+    // current peer round (see Branch B / Branch C in `daemon_loop`).
+    let was_cancelled = cancel.load(Ordering::Acquire);
+
     // Cancel flag is cleared by `_cancel_guard` (Drop) on all exit paths.
 
     let _ = conn.close().await.map_err(|e| {
         tracing::debug!(error = %e, "failed to close sync connection");
     });
+
+    was_cancelled
 }
 
 // ---------------------------------------------------------------------------
@@ -657,9 +719,16 @@ pub(crate) async fn run_sync_session(
     // ── File transfer phase (F-14) ────────────────────────────────────────
     // After the op-sync completes, transfer missing attachment files.
     // The initiator requests first, then responds to the responder's request.
+    //
+    // M-47: thread the same `cancel` flag through so a multi-gigabyte
+    // attachment transfer can be aborted between files when the user
+    // hits "cancel sync" (otherwise the run_sync_session loop's cancel
+    // check is dead code once we reach this phase).
     if orch.is_complete() {
         if let Ok(app_data_dir) = crate::sync_files::app_data_dir_from_pool(pool).await {
-            match crate::sync_files::run_file_transfer_initiator(conn, pool, &app_data_dir).await {
+            match crate::sync_files::run_file_transfer_initiator(conn, pool, &app_data_dir, cancel)
+                .await
+            {
                 Ok(stats) => {
                     if stats.files_received > 0 || stats.files_sent > 0 {
                         tracing::info!(
