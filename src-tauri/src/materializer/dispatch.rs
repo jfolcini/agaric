@@ -14,6 +14,33 @@ use tokio::sync::mpsc;
 /// `enqueue_full_cache_rebuild` has a single source of truth to iterate.
 /// Adding a new block-referencing cache should only require appending to
 /// this array — the three dispatch arms pick up the change automatically.
+///
+/// ## Ordering semantics (MAINT-148h)
+///
+/// Each arm is enqueued in this order via `try_enqueue_background`, then
+/// the background queue's [`super::dedup::dedup_tasks`] pass collapses
+/// adjacent duplicates (e.g. two `delete_block` mutations in the same
+/// drain only run each rebuild once). The materializer then processes
+/// the deduped batch FIFO, so the order observed at the handler is the
+/// order shown here.
+///
+/// **The arms are *independent transactions*** — each rebuild owns its
+/// own transaction, so a failure in arm `n` does not roll back arm
+/// `n - 1`. They are not, however, *logically* independent: certain
+/// rebuilds read columns or rows produced by others (e.g.
+/// `RebuildAgendaCache` reads `blocks.page_id` populated by
+/// `RebuildPageIds`; `RebuildTagsCache.usage_count` UNIONs
+/// `block_tag_refs` populated by `RebuildBlockTagRefsCache`). Because
+/// the materializer is intentionally eventually-consistent, running an
+/// older snapshot of those inputs only delays convergence by one drain
+/// — the next `delete_block` / `restore_block` / `purge_block` (or a
+/// snapshot restore) re-enqueues the full set and the dependent reads
+/// see the freshly-populated rows. The strictly dependency-correct
+/// order is in [`crate::cache::rebuild_all_caches`] (test-only); that
+/// function is the canonical reference for which rebuild reads which
+/// upstream column/table. Keeping the array in this loose order keeps
+/// the test assertions stable; the dedup + eventual consistency
+/// combine to make the discrepancy invisible to users in practice.
 pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 7] = [
     MaterializeTask::RebuildTagsCache,
     MaterializeTask::RebuildPagesCache,

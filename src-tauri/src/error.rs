@@ -62,6 +62,16 @@ pub enum GcalErrorKind {
     #[error("server error: HTTP {status}")]
     ServerError { status: u16 },
 
+    /// Network / transport failure — no HTTP response was received
+    /// (connect failure, read timeout, TLS handshake failure).
+    /// Distinct from [`GcalErrorKind::ServerError`] so log lines and
+    /// the [`super::gcal_push::connector::CycleOutcome`] display do
+    /// not print a misleading "HTTP 0" status.  Retry semantics are
+    /// the same as a 5xx — the connector treats both as transient and
+    /// retries with backoff.
+    #[error("transport failure: {0}")]
+    Transport(String),
+
     /// HTTP 404 on a `calendars/{calendar_id}` path.  Distinct from
     /// [`GcalErrorKind::EventGone`] because the recovery is different:
     /// the dedicated "Agaric Agenda" calendar was deleted externally

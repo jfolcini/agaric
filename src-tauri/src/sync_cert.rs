@@ -1,4 +1,4 @@
-//! Persistent TLS certificate for sync transport.
+//! Persistent TLS certificate for sync transport — TOFU pinning anchor.
 //!
 //! Follows the same generate-once-then-load pattern as [`crate::device`]:
 //! on first launch, a self-signed ECDSA P-256 certificate is generated via
@@ -9,8 +9,28 @@
 //! - `{stem}.pem` — concatenated certificate + private key in PEM format
 //! - `{stem}.hash` — SHA-256 hex hash of the DER-encoded certificate
 //!
-//! The cert never expires for our purposes — [`crate::sync_net::PinningCertVerifier`]
+//! The cert never expires for our purposes — [`crate::sync_net::tls::PinningCertVerifier`]
 //! only checks the SHA-256 hash, skipping all X.509 validation.
+//!
+//! # Place in the pairing flow
+//!
+//! - [`crate::pairing`] sends the local cert hash inside `DeviceOffer` /
+//!   `DeviceAccept`; the peer side calls [`verify_device_exchange`]
+//!   ([`crate::pairing::verify_device_exchange`]) and receives the
+//!   remote `(device_id, cert_hash)` pair.
+//! - [`crate::commands::sync_cmds`] then hands that `cert_hash` to
+//!   [`crate::peer_refs::upsert_peer_ref_with_cert`], persisting the
+//!   pin in `peer_refs.cert_hash` for use by the verifier on every
+//!   subsequent reconnection (TOFU model — Trust On First Use).
+//! - On reconnect, [`crate::sync_net::connect_to_peer`] supplies the
+//!   stored hash to `PinningCertVerifier`, which fails the TLS
+//!   handshake unless the remote leaf cert hashes to the pinned value.
+//!
+//! In short: this module owns the *local* identity (cert + hash);
+//! [`crate::peer_refs`] owns the *remote* identity (peer cert hashes
+//! pinned via TOFU); [`crate::pairing`] is the one-shot bridge that
+//! moves the latter from peer-to-peer over an already-mTLS-protected
+//! WebSocket.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;

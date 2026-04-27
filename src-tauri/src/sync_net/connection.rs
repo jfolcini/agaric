@@ -163,6 +163,73 @@ impl SyncConnection {
         }
     }
 
+    /// Send `data` as one or more binary frames, each at most `chunk_size`
+    /// bytes. Empty `data` is delivered as a single empty frame so the
+    /// receiver's per-frame accounting terminates cleanly — this matches
+    /// the sentinel that [`Self::receive_binary_chunked`] expects when
+    /// invoked with `size_bytes == 0`.
+    ///
+    /// Used by both
+    /// [`crate::sync_daemon::snapshot_transfer`] (snapshot blob → wire)
+    /// and [`crate::sync_files`] (attachment file → wire) so the chunking
+    /// invariants are defined in exactly one place.
+    pub async fn send_binary_chunked(
+        &mut self,
+        data: &[u8],
+        chunk_size: usize,
+    ) -> Result<(), AppError> {
+        if data.is_empty() {
+            return self.send_binary(&[]).await;
+        }
+        for chunk in data.chunks(chunk_size) {
+            self.send_binary(chunk).await?;
+        }
+        Ok(())
+    }
+
+    /// Receive exactly `size_bytes` worth of binary data, accumulated
+    /// across one or more frames. Mirrors [`Self::send_binary_chunked`]:
+    /// when `size_bytes == 0` the sender emits a single empty frame, so
+    /// this function consumes one frame and rejects any non-empty
+    /// payload.
+    ///
+    /// Returns an error if the cumulative byte count over-runs
+    /// `size_bytes` (a sender bug), preserving the bound that the
+    /// previous per-call helpers in `snapshot_transfer` and `sync_files`
+    /// enforced separately.
+    pub async fn receive_binary_chunked(&mut self, size_bytes: u64) -> Result<Vec<u8>, AppError> {
+        // On 32-bit targets `usize::try_from` saturates at `usize::MAX`;
+        // `Vec::with_capacity` is a hint so saturation is safe.
+        let capacity = usize::try_from(size_bytes).unwrap_or(usize::MAX);
+        let mut data: Vec<u8> = Vec::with_capacity(capacity);
+
+        // Zero-size payload: expect exactly one empty binary frame
+        // (matches the sender's empty-data path).
+        if size_bytes == 0 {
+            let chunk = self.recv_binary().await?;
+            if !chunk.is_empty() {
+                return Err(sync_err(format!(
+                    "expected empty binary frame, got {} bytes",
+                    chunk.len()
+                )));
+            }
+            return Ok(data);
+        }
+
+        while (data.len() as u64) < size_bytes {
+            let chunk = self.recv_binary().await?;
+            data.extend_from_slice(&chunk);
+            if (data.len() as u64) > size_bytes {
+                return Err(sync_err(format!(
+                    "received {} binary bytes, expected {}",
+                    data.len(),
+                    size_bytes
+                )));
+            }
+        }
+        Ok(data)
+    }
+
     /// Get the remote peer's certificate hash (populated on client-side
     /// connections only).
     pub fn peer_cert_hash(&self) -> Option<String> {

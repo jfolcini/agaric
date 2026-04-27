@@ -30,7 +30,8 @@
 //! 3. Await [`SyncMessage::SnapshotAccept`] or
 //!    [`SyncMessage::SnapshotReject`] from the initiator.
 //! 4. On accept: send the blob in binary frames of
-//!    [`SNAPSHOT_CHUNK_SIZE`] bytes (mirrors `sync_files` chunking).
+//!    [`BINARY_FRAME_CHUNK_SIZE`](crate::sync_constants::BINARY_FRAME_CHUNK_SIZE)
+//!    bytes (mirrors `sync_files` chunking).
 //! 5. On reject or no snapshot available: close the session; the
 //!    initiator falls back to the prior failure mode.
 //!
@@ -68,6 +69,7 @@ use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::peer_refs;
 use crate::snapshot::{apply_snapshot, decode_snapshot, get_latest_snapshot};
+use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 use crate::sync_events::{SyncEvent, SyncEventSink};
 use crate::sync_net::SyncConnection;
 use crate::sync_protocol::{DeviceHead, SyncMessage};
@@ -84,13 +86,6 @@ use crate::sync_protocol::{DeviceHead, SyncMessage};
 /// 100K-block database compresses to well under this cap, so rejecting
 /// anything larger is safe in practice.
 pub(crate) const MAX_SNAPSHOT_SIZE: u64 = 256 * 1024 * 1024;
-
-/// Size of a single binary frame when streaming snapshot bytes.
-///
-/// Stays under [`SyncConnection::MAX_MSG_SIZE`] (10 MB) with margin,
-/// matching the 5 MB `FILE_CHUNK_SIZE` used by the attachment-transfer
-/// path in [`sync_files`](crate::sync_files).
-pub(crate) const SNAPSHOT_CHUNK_SIZE: usize = 5_000_000;
 
 // ---------------------------------------------------------------------------
 // Responder side — offer + send
@@ -286,21 +281,17 @@ pub(crate) async fn try_offer_snapshot_catchup(
 }
 
 /// Send the compressed snapshot bytes over the WebSocket in
-/// [`SNAPSHOT_CHUNK_SIZE`]-sized binary frames.
+/// [`BINARY_FRAME_CHUNK_SIZE`]-sized binary frames.
 ///
-/// Mirrors the chunking strategy in
-/// [`sync_files::receive_request_and_send_files`](crate::sync_files).
-/// A zero-length snapshot is still delivered as a single empty frame
-/// so the receiver's frame accounting terminates cleanly.
+/// Thin wrapper around
+/// [`SyncConnection::send_binary_chunked`](crate::sync_net::SyncConnection::send_binary_chunked),
+/// the single shared implementation used by both this module and
+/// [`sync_files`](crate::sync_files). A zero-length snapshot is
+/// delivered as a single empty frame so the receiver's frame
+/// accounting terminates cleanly.
 async fn send_snapshot_bytes(conn: &mut SyncConnection, compressed: &[u8]) -> Result<(), AppError> {
-    if compressed.is_empty() {
-        conn.send_binary(&[]).await?;
-        return Ok(());
-    }
-    for chunk in compressed.chunks(SNAPSHOT_CHUNK_SIZE) {
-        conn.send_binary(chunk).await?;
-    }
-    Ok(())
+    conn.send_binary_chunked(compressed, BINARY_FRAME_CHUNK_SIZE)
+        .await
 }
 
 // ---------------------------------------------------------------------------
@@ -457,43 +448,16 @@ pub(crate) async fn try_receive_snapshot_catchup(
 /// Receive snapshot bytes in binary frames, accumulating until
 /// exactly `size_bytes` have arrived.
 ///
-/// Rejects any over-run (more bytes than advertised) to avoid runaway
-/// allocation, mirroring the guard in
-/// [`sync_files::receive_binary_data`](crate::sync_files).
+/// Thin wrapper around
+/// [`SyncConnection::receive_binary_chunked`](crate::sync_net::SyncConnection::receive_binary_chunked),
+/// the single shared implementation used by both this module and
+/// [`sync_files`](crate::sync_files). The shared helper rejects any
+/// over-run (more bytes than advertised) to avoid runaway allocation.
 async fn receive_snapshot_bytes(
     conn: &mut SyncConnection,
     size_bytes: u64,
 ) -> Result<Vec<u8>, AppError> {
-    // On 32-bit targets large sizes saturate at usize::MAX rather than
-    // aborting; `Vec::with_capacity` is a hint so this is safe.
-    let capacity = usize::try_from(size_bytes).unwrap_or(usize::MAX);
-    let mut data: Vec<u8> = Vec::with_capacity(capacity);
-
-    // Zero-size snapshot: expect one empty binary frame (matches the
-    // sender's zero-path in `send_snapshot_bytes`).
-    if size_bytes == 0 {
-        let chunk = conn.recv_binary().await?;
-        if !chunk.is_empty() {
-            return Err(AppError::InvalidOperation(format!(
-                "expected empty snapshot frame, got {} bytes",
-                chunk.len()
-            )));
-        }
-        return Ok(data);
-    }
-
-    while (data.len() as u64) < size_bytes {
-        let chunk = conn.recv_binary().await?;
-        data.extend_from_slice(&chunk);
-        if (data.len() as u64) > size_bytes {
-            return Err(AppError::InvalidOperation(format!(
-                "received {} snapshot bytes, expected {}",
-                data.len(),
-                size_bytes
-            )));
-        }
-    }
-    Ok(data)
+    conn.receive_binary_chunked(size_bytes).await
 }
 
 // ===========================================================================
@@ -863,7 +827,7 @@ mod tests {
             let accept: SyncMessage = server_conn.recv_json().await.unwrap();
             assert_eq!(accept, SyncMessage::SnapshotAccept);
             // Stream bytes.
-            for chunk in bytes_clone.chunks(SNAPSHOT_CHUNK_SIZE) {
+            for chunk in bytes_clone.chunks(BINARY_FRAME_CHUNK_SIZE) {
                 server_conn.send_binary(chunk).await.unwrap();
             }
         });
@@ -1156,22 +1120,21 @@ mod tests {
         // is effectively tighter — still valid.
         let cap_as_usize = usize::try_from(MAX_SNAPSHOT_SIZE).unwrap_or(usize::MAX);
         assert!(
-            cap_as_usize >= SNAPSHOT_CHUNK_SIZE,
+            cap_as_usize >= BINARY_FRAME_CHUNK_SIZE,
             "MAX_SNAPSHOT_SIZE must admit at least one full chunk"
         );
     }
 
     #[test]
     fn snapshot_chunk_size_under_max_msg_size() {
-        // Mirror sync_files::FILE_CHUNK_SIZE: stay well under the
-        // transport's 10 MB per-frame cap to leave headroom for
-        // WebSocket framing overhead. `const_assert`-style using a
-        // const block so clippy's `assertions_on_constants` is happy
-        // (the comparison is known at compile time).
+        // Stay well under the transport's 10 MB per-frame cap to leave
+        // headroom for WebSocket framing overhead. `const_assert`-style
+        // using a const block so clippy's `assertions_on_constants` is
+        // happy (the comparison is known at compile time).
         const {
             assert!(
-                SNAPSHOT_CHUNK_SIZE <= 10_000_000,
-                "SNAPSHOT_CHUNK_SIZE must stay under SyncConnection::MAX_MSG_SIZE"
+                BINARY_FRAME_CHUNK_SIZE <= 10_000_000,
+                "BINARY_FRAME_CHUNK_SIZE must stay under SyncConnection::MAX_MSG_SIZE"
             );
         }
     }

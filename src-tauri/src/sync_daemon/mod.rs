@@ -48,8 +48,13 @@ pub use discovery::{
     process_discovery_event, process_service_removed, resolve_peer_address,
     should_attempt_sync_with_discovered_peer, should_store_cert_hash,
 };
+// `pub(crate) use` re-exports consumed only by `#[cfg(test)]` siblings
+// (sync_daemon/tests.rs and the crate-level `sync_integration_tests`).
+// Without this `#[allow]` rustc fires `unused_imports` on non-test
+// builds because no production code path imports through this module.
 #[allow(unused_imports)]
 pub(crate) use orchestrator::{run_sync_session, try_sync_with_peer};
+// Same rationale as above: only the test sibling reaches into these.
 #[allow(unused_imports)]
 pub(crate) use server::{handle_incoming_sync, verify_peer_cert, CertVerifyResult};
 
@@ -85,7 +90,12 @@ pub struct SyncDaemon {
     cancel: Arc<AtomicBool>,
     /// Read only by `#[cfg(test)] mod tests` — assertions that the
     /// daemon holds a handle (e.g. in dormant mode) and to await
-    /// graceful shutdown. The production drop path doesn't need it.
+    /// graceful shutdown after `shutdown()`. The production drop path
+    /// doesn't read it, but the field is *held* (rather than
+    /// `.detach()`-ed or dropped at construction) so the spawned task
+    /// is anchored to the daemon's lifetime — the `#[cfg_attr]`
+    /// silences the resulting `dead_code` warning on non-test builds
+    /// without sacrificing the join-able test handle.
     #[cfg_attr(not(test), allow(dead_code))]
     handle: Option<JoinHandle<()>>,
 }

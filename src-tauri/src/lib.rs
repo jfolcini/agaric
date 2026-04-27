@@ -31,6 +31,7 @@ pub mod soft_delete;
 pub mod spaces;
 pub mod sql_utils;
 pub mod sync_cert;
+pub mod sync_constants;
 pub mod sync_daemon;
 pub mod sync_events;
 pub mod sync_files;
@@ -40,6 +41,7 @@ pub mod sync_scheduler;
 pub mod tag_inheritance;
 pub mod tag_inheritance_macros;
 pub mod tag_query;
+pub mod task_locals;
 pub mod ulid;
 pub mod word_diff;
 

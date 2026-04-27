@@ -8,10 +8,33 @@
 //! an exponential backoff.
 //!
 //! Scope: only **idempotent, per-block** tasks are persisted
-//! (`UpdateFtsBlock`, `ReindexBlockLinks`). Global rebuild tasks are
-//! triggered by other code paths and don't benefit from persisted retry.
+//! (`UpdateFtsBlock`, `ReindexBlockLinks`, `ReindexBlockTagRefs`). Global
+//! rebuild tasks are triggered by other code paths and don't benefit from
+//! persisted retry.
 //!
 //! Backoff schedule: 1 min → 5 min → 30 min → 1 h (cap).
+//!
+//! ## Two-tier retry semantics (MAINT-148h)
+//!
+//! This persistent schedule is the **second tier** of the materializer's
+//! retry pipeline. The first tier — the in-memory
+//! [`super::consumer::retry_with_backoff`] loop — runs on a much shorter
+//! ms-scale budget (foreground: 1 retry × 100 ms; background: 2 retries
+//! × 150/300 ms exponential) and clears transient WAL contention before
+//! the task ever reaches `materializer_retry_queue`. The handoff:
+//!
+//! 1. `run_background` invokes the task via `retry_with_backoff` with
+//!    its in-memory schedule.
+//! 2. On exhaustion (`outcome.succeeded == false`), an idempotent
+//!    per-block task is passed to [`record_failure`], which appends or
+//!    bumps a row in `materializer_retry_queue`.
+//! 3. The boot-time / periodic sweeper reads rows whose
+//!    `next_attempt_at <= now()` and re-enqueues them onto the live
+//!    background queue, where the first tier runs again.
+//!
+//! Both tiers are observability-instrumented but otherwise independent:
+//! tightening one schedule does not change the other. See the module
+//! doc-comment on [`super::consumer`] for the full table.
 
 use crate::error::AppError;
 use crate::materializer::MaterializeTask;

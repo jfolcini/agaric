@@ -28,23 +28,10 @@ struct CacheRepeatingRow {
 /// 3. Respects end conditions (repeat-until, repeat-count).
 /// 4. Writes projected entries via DELETE + INSERT in a single transaction.
 pub async fn rebuild_projected_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    tracing::info!("rebuilding projected_agenda cache");
-    let start = std::time::Instant::now();
-    let result = rebuild_projected_agenda_cache_impl(pool).await;
-    match result {
-        Ok(rows_affected) => {
-            tracing::info!(
-                rows_affected,
-                duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
-                "rebuilt projected_agenda cache"
-            );
-            Ok(())
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "rebuild failed for projected_agenda cache");
-            Err(e)
-        }
-    }
+    super::rebuild_with_timing("projected_agenda", || {
+        rebuild_projected_agenda_cache_impl(pool)
+    })
+    .await
 }
 
 async fn rebuild_projected_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {

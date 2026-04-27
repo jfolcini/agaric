@@ -23,16 +23,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
+use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 use crate::sync_net::SyncConnection;
 use crate::sync_protocol::SyncMessage;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/// Maximum size of a single binary WebSocket frame for file transfer.
-/// Chosen to stay well under the 10 MB `MAX_MSG_SIZE` in `SyncConnection`.
-const FILE_CHUNK_SIZE: usize = 5_000_000; // 5 MB
+// The binary-frame chunk size used by chunked sends/receives lives in
+// `crate::sync_constants::BINARY_FRAME_CHUNK_SIZE` so this module and
+// `sync_daemon::snapshot_transfer` cannot drift apart.
 
 // ---------------------------------------------------------------------------
 // Types
@@ -382,14 +379,12 @@ pub async fn receive_request_and_send_files(
         })
         .await?;
 
-        // Send binary data (chunked if > FILE_CHUNK_SIZE)
-        if data.is_empty() {
-            conn.send_binary(&[]).await?;
-        } else {
-            for chunk in data.chunks(FILE_CHUNK_SIZE) {
-                conn.send_binary(chunk).await?;
-            }
-        }
+        // Send binary data (chunked if > BINARY_FRAME_CHUNK_SIZE).
+        // Empty data is delivered as a single empty frame so the
+        // receiver's per-frame accounting terminates cleanly — see
+        // `SyncConnection::send_binary_chunked` for the shared contract.
+        conn.send_binary_chunked(&data, BINARY_FRAME_CHUNK_SIZE)
+            .await?;
 
         // Wait for FileReceived acknowledgment
         let ack: SyncMessage = conn.recv_json().await?;
@@ -569,30 +564,31 @@ pub async fn request_and_receive_files(
 }
 
 /// Receive binary data for a file, accumulating chunks until the expected
-/// size is reached. Rejects data that exceeds the declared size.
+/// size is reached.
+///
+/// Thin wrapper around
+/// [`SyncConnection::receive_binary_chunked`] so the chunking contract
+/// (zero-byte payload as a single empty frame, over-run rejection) is
+/// shared with [`crate::sync_daemon::snapshot_transfer`] rather than
+/// duplicated here.
 async fn receive_binary_data(
     conn: &mut SyncConnection,
     size_bytes: u64,
 ) -> Result<Vec<u8>, AppError> {
-    // size_bytes is a file size; on 32-bit targets large files would saturate
-    let capacity = usize::try_from(size_bytes).unwrap_or(usize::MAX);
-    let mut data = Vec::with_capacity(capacity);
-    while (data.len() as u64) < size_bytes {
-        let chunk = conn.recv_binary().await?;
-        data.extend_from_slice(&chunk);
-        if data.len() as u64 > size_bytes {
-            return Err(AppError::InvalidOperation(format!(
-                "received {} bytes but expected {}",
-                data.len(),
-                size_bytes
-            )));
-        }
-    }
-    Ok(data)
+    conn.receive_binary_chunked(size_bytes).await
 }
 
 /// Consume and discard binary data for a file we don't need.
+///
+/// Mirrors [`SyncConnection::send_binary_chunked`]: a zero-byte payload
+/// is delivered as a single empty frame, so when `size_bytes == 0` we
+/// still drain exactly one frame off the wire to keep the receiver's
+/// frame pointer aligned with the sender's.
 async fn consume_binary_data(conn: &mut SyncConnection, size_bytes: u64) -> Result<(), AppError> {
+    if size_bytes == 0 {
+        let _ = conn.recv_binary().await?;
+        return Ok(());
+    }
     let mut received = 0u64;
     while received < size_bytes {
         let chunk = conn.recv_binary().await?;
@@ -968,16 +964,20 @@ mod tests {
         assert_eq!(hash, expected_hash);
     }
 
-    // ── FILE_CHUNK_SIZE constant ─────────────────────────────────────────
+    // ── BINARY_FRAME_CHUNK_SIZE constant ────────────────────────────────
 
     #[test]
     fn file_chunk_size_is_under_max_msg_size() {
-        // MAX_MSG_SIZE in SyncConnection is 10_000_000 (10 MB)
+        // MAX_MSG_SIZE in SyncConnection is 10_000_000 (10 MB).
+        // The shared chunk-size constant lives in `crate::sync_constants`.
         const _: () = assert!(
-            FILE_CHUNK_SIZE < 10_000_000,
-            "FILE_CHUNK_SIZE must be under the 10 MB WebSocket frame limit"
+            BINARY_FRAME_CHUNK_SIZE < 10_000_000,
+            "BINARY_FRAME_CHUNK_SIZE must be under the 10 MB WebSocket frame limit"
         );
-        assert_eq!(FILE_CHUNK_SIZE, 5_000_000, "FILE_CHUNK_SIZE should be 5 MB");
+        assert_eq!(
+            BINARY_FRAME_CHUNK_SIZE, 5_000_000,
+            "BINARY_FRAME_CHUNK_SIZE should be 5 MB"
+        );
     }
 
     // ── find_missing_attachments with multiple missing ───────────────────
@@ -1556,8 +1556,8 @@ mod tests {
             .await
             .unwrap();
 
-        // File larger than FILE_CHUNK_SIZE (5 MB) → will be chunked
-        let file_size = FILE_CHUNK_SIZE + 1_000_000; // 6 MB
+        // File larger than BINARY_FRAME_CHUNK_SIZE (5 MB) → will be chunked
+        let file_size = BINARY_FRAME_CHUNK_SIZE + 1_000_000; // 6 MB
         let file_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
         let expected_hash = blake3::hash(&file_data).to_hex().to_string();
 

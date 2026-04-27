@@ -50,12 +50,9 @@ pub async fn list_block_history(
     .fetch_all(pool)
     .await?;
 
-    build_page_response(rows, page.limit, |last| Cursor {
-        id: last.device_id.clone(), // device_id as tie-breaker
-        position: None,
-        deleted_at: None,
-        seq: Some(last.seq),
-        rank: None,
+    build_page_response(rows, page.limit, |last| {
+        // device_id as tie-breaker
+        Cursor::for_history_seq(last.device_id.clone(), last.seq)
     })
 }
 
@@ -130,12 +127,8 @@ pub async fn list_page_history(
         .fetch_all(pool)
         .await?;
 
-        return build_page_response(rows, page.limit, |last| Cursor {
-            id: last.device_id.clone(),
-            position: None,
-            deleted_at: Some(last.created_at.clone()),
-            seq: Some(last.seq),
-            rank: None,
+        return build_page_response(rows, page.limit, |last| {
+            Cursor::for_history_full(last.device_id.clone(), last.created_at.clone(), last.seq)
         });
     }
 
@@ -172,11 +165,8 @@ pub async fn list_page_history(
     .fetch_all(pool)
     .await?;
 
-    build_page_response(rows, page.limit, |last| Cursor {
-        id: last.device_id.clone(),
-        position: None,
-        deleted_at: Some(last.created_at.clone()), // reuse deleted_at for created_at
-        seq: Some(last.seq),
-        rank: None,
+    build_page_response(rows, page.limit, |last| {
+        // reuse deleted_at slot for created_at — see Cursor docs
+        Cursor::for_history_full(last.device_id.clone(), last.created_at.clone(), last.seq)
     })
 }

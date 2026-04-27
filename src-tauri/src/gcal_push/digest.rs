@@ -595,6 +595,64 @@ mod tests {
         );
     }
 
+    // ── state_marker exhaustiveness (MAINT-151(l)) ──────────────────
+
+    /// Canonical list of TODO state literals recognised by
+    /// [`state_marker`].  Any new TODO state added to the system must
+    /// extend both this list and the `state_marker` match arm —
+    /// [`state_marker_recognises_every_canonical_todo_state`] keeps
+    /// them locked together.
+    ///
+    /// The crate does not currently have a typed `TodoState` enum;
+    /// the strings are spelled out at the call sites that emit them
+    /// (see `commands/properties.rs` and the tests in
+    /// `commands/tests/property_cmd_tests.rs` that pin
+    /// `["TODO","DOING","DONE","CANCELLED"]`).  When the typed enum
+    /// lands the constant here can be replaced with that enum's
+    /// `::ALL` accessor.
+    const CANONICAL_TODO_STATES: &[&str] = &["TODO", "DOING", "DONE", "CANCELLED"];
+
+    #[test]
+    fn state_marker_recognises_every_canonical_todo_state() {
+        // Pins the four marker glyphs to the four allowed TODO
+        // states and the untyped/unknown fallback to TODO.  Without
+        // this gate `digest.rs` was the single repository of the
+        // mapping — a typo in the match arm would silently regress
+        // every Settings-rendered digest event for the affected
+        // state to the TODO marker (since that is the fallback).
+        for &state in CANONICAL_TODO_STATES {
+            let marker = state_marker(Some(state));
+            let expected = match state {
+                "TODO" => MARKER_TODO,
+                "DOING" => MARKER_DOING,
+                "DONE" => MARKER_DONE,
+                "CANCELLED" => MARKER_CANCELLED,
+                other => panic!("unexpected canonical state {other:?}"),
+            };
+            assert_eq!(
+                marker, expected,
+                "state_marker({state:?}) drifted from the documented marker for that state",
+            );
+        }
+
+        // Sanity-check the fallback — an unknown / untyped state
+        // collapses to the TODO marker (documented `_ => MARKER_TODO`).
+        assert_eq!(state_marker(None), MARKER_TODO);
+        assert_eq!(state_marker(Some("WAITING")), MARKER_TODO);
+        assert_eq!(state_marker(Some("")), MARKER_TODO);
+    }
+
+    #[test]
+    fn canonical_todo_state_marker_glyphs_are_byte_pinned() {
+        // Catch a renderer-side glyph swap (e.g. a refactor that
+        // replaces middle-dot with bullet) before it reaches the
+        // calendar event body.  These bytes are user-visible.
+        assert_eq!(MARKER_TODO, "[ ]");
+        assert_eq!(MARKER_DOING, "[\u{00B7}]"); // U+00B7 MIDDLE DOT
+        assert_eq!(MARKER_DONE, "[x]");
+        assert_eq!(MARKER_CANCELLED, "[\u{2014}]"); // U+2014 EM DASH
+    }
+
     // ── Minimal mode ────────────────────────────────────────────────
 
     #[test]

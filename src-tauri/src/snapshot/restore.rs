@@ -6,6 +6,41 @@ use crate::db::MAX_SQL_PARAMS;
 use crate::error::AppError;
 use crate::materializer::{MaterializeTask, Materializer};
 
+/// MAINT-152(d): single inventory of cache tables paired with their rebuild
+/// task. The wipe loop iterates over `.0` to issue `DELETE FROM <table>`;
+/// the rebuild loop iterates over `.1` to enqueue the materializer task
+/// that repopulates the same table. Co-locating both sides means a new
+/// cache table cannot be wiped without a matching rebuild (or vice-versa)
+/// — adding it requires a single edit to this list.
+///
+/// Note: `RebuildPageIds` is intentionally NOT in this list — it has no
+/// dedicated cache table (it backfills `blocks.page_id` instead) and must
+/// be enqueued ahead of agenda rebuilds (M-15). It is enqueued separately
+/// at the head of the rebuild fan-out below.
+///
+/// `block_tag_refs` is the UX-250 inline-tag-ref cache and is wiped
+/// alongside the other caches (the wipe used to be inline among the core
+/// tables purely as a sequencing artifact; FK ordering does not matter
+/// because `PRAGMA defer_foreign_keys = ON` is set at the top of the
+/// transaction).
+const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
+    ("agenda_cache", MaterializeTask::RebuildAgendaCache),
+    ("pages_cache", MaterializeTask::RebuildPagesCache),
+    ("tags_cache", MaterializeTask::RebuildTagsCache),
+    (
+        "block_tag_inherited",
+        MaterializeTask::RebuildTagInheritanceCache,
+    ),
+    (
+        "projected_agenda_cache",
+        MaterializeTask::RebuildProjectedAgendaCache,
+    ),
+    ("fts_blocks", MaterializeTask::RebuildFtsIndex),
+    // UX-250: inline `#[ULID]` tag-ref cache. Purely derived — repopulated
+    // by `RebuildBlockTagRefsCache` below.
+    ("block_tag_refs", MaterializeTask::RebuildBlockTagRefsCache),
+];
+
 /// Apply a snapshot (RESET path). Wipes all core + cache tables, inserts
 /// snapshot data, then enqueues the full cache-rebuild set on the
 /// materializer so the UI doesn't see empty agenda / tag list / page
@@ -38,34 +73,17 @@ pub async fn apply_snapshot(
         .execute(&mut *tx)
         .await?;
 
-    // Wipe all tables (order matters for FK constraints — children first)
-    // Cache tables
-    sqlx::query("DELETE FROM agenda_cache")
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM pages_cache")
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM tags_cache")
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM block_tag_inherited")
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM projected_agenda_cache")
-        .execute(&mut *tx)
-        .await?;
-    // FTS5
-    sqlx::query("DELETE FROM fts_blocks")
-        .execute(&mut *tx)
-        .await?;
-    // Core tables (children before parents due to FK)
+    // MAINT-152(d): wipe every cache table from the single inventory.
+    // FK ordering is moot under `defer_foreign_keys = ON`; iteration order
+    // matches `CACHE_TABLES` for reviewability.
+    for (table, _rebuild_task) in CACHE_TABLES {
+        let sql = format!("DELETE FROM {table}");
+        sqlx::query(&sql).execute(&mut *tx).await?;
+    }
+
+    // Wipe core tables (children before parents purely for reviewability —
+    // `defer_foreign_keys = ON` would let any order succeed).
     sqlx::query("DELETE FROM block_links")
-        .execute(&mut *tx)
-        .await?;
-    // UX-250: inline `#[ULID]` tag-ref cache. Purely derived — repopulated
-    // by `RebuildBlockTagRefsCache` in the rebuild task set below.
-    sqlx::query("DELETE FROM block_tag_refs")
         .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM block_properties")
@@ -129,32 +147,69 @@ pub async fn apply_snapshot(
     // blocks last (parent of all FK references)
     sqlx::query("DELETE FROM blocks").execute(&mut *tx).await?;
 
-    // Insert snapshot data using multi-row INSERT batches.
-    // Each table uses a chunk size derived from MAX_SQL_PARAMS / num_columns
-    // to stay within SQLite's bind-parameter limit.
+    // MAINT-152(a): batch-INSERT each table via the `batch_insert_snapshot_rows!`
+    // macro. The macro hides the placeholder string, the chunk-size derivation
+    // (`MAX_SQL_PARAMS / num_columns`), the `format!`-driven INSERT, and the
+    // bind loop — leaving the column list, row source, and per-row binding
+    // closure as the only varying inputs.
+    //
+    // MAINT-133: `conflict_type` joined the `blocks` column list at
+    // SCHEMA_VERSION = 3. Older v1/v2 snapshots decode it as `None` (via
+    // `serde(default)` on the struct field), which is exactly what
+    // `merge/resolve.rs` writes for non-conflict blocks anyway, so the
+    // INSERT below is safe for both cases.
 
-    // -- blocks (13 columns) --
-    // MAINT-133: `conflict_type` joined the column list at SCHEMA_VERSION = 3.
-    // Older v1/v2 snapshots decode it as `None` (via `serde(default)` on the
-    // struct field), which is exactly what `merge/resolve.rs` writes for
-    // non-conflict blocks anyway, so the INSERT below is safe for both cases.
-    const BLOCKS_COLS: usize = 13;
-    const BLOCKS_CHUNK: usize = MAX_SQL_PARAMS / BLOCKS_COLS; // 76
-    for chunk in data.tables.blocks.chunks(BLOCKS_CHUNK) {
-        let placeholders: Vec<&str> = chunk
-            .iter()
-            .map(|_| "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-            .collect();
-        let sql = format!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, \
-             deleted_at, is_conflict, conflict_source, conflict_type, \
-             todo_state, priority, due_date, scheduled_date) VALUES {}",
-            placeholders.join(", ")
-        );
-        let mut query = sqlx::query(&sql);
-        for b in chunk {
-            query = query
-                .bind(&b.id)
+    macro_rules! batch_insert_snapshot_rows {
+        (
+            table: $table:literal,
+            columns: [$($col:literal),+ $(,)?],
+            rows: $rows:expr,
+            bind: |$query:ident, $row:ident| $bind:block $(,)?
+        ) => {{
+            const COLUMNS: &[&str] = &[$($col),+];
+            const COLS: usize = COLUMNS.len();
+            const CHUNK: usize = MAX_SQL_PARAMS / COLS;
+            // One-row placeholder string `(?, ?, ?, ...)` reused per chunk.
+            let row_placeholder: String = {
+                let mut s = String::with_capacity(2 + COLS * 3);
+                s.push('(');
+                for i in 0..COLS {
+                    if i > 0 {
+                        s.push_str(", ");
+                    }
+                    s.push('?');
+                }
+                s.push(')');
+                s
+            };
+            for chunk in $rows.chunks(CHUNK) {
+                let placeholders: Vec<&str> =
+                    chunk.iter().map(|_| row_placeholder.as_str()).collect();
+                let sql = format!(
+                    "INSERT INTO {} ({}) VALUES {}",
+                    $table,
+                    COLUMNS.join(", "),
+                    placeholders.join(", "),
+                );
+                let mut $query = sqlx::query(&sql);
+                for $row in chunk {
+                    $query = $bind;
+                }
+                $query.execute(&mut *tx).await?;
+            }
+        }};
+    }
+
+    batch_insert_snapshot_rows!(
+        table: "blocks",
+        columns: [
+            "id", "block_type", "content", "parent_id", "position",
+            "deleted_at", "is_conflict", "conflict_source", "conflict_type",
+            "todo_state", "priority", "due_date", "scheduled_date",
+        ],
+        rows: data.tables.blocks,
+        bind: |q, b| {
+            q.bind(&b.id)
                 .bind(&b.block_type)
                 .bind(&b.content)
                 .bind(&b.parent_id)
@@ -166,131 +221,83 @@ pub async fn apply_snapshot(
                 .bind(&b.todo_state)
                 .bind(&b.priority)
                 .bind(&b.due_date)
-                .bind(&b.scheduled_date);
-        }
-        query.execute(&mut *tx).await?;
-    }
+                .bind(&b.scheduled_date)
+        },
+    );
 
-    // -- block_tags (2 columns) --
-    const BLOCK_TAGS_COLS: usize = 2;
-    const BLOCK_TAGS_CHUNK: usize = MAX_SQL_PARAMS / BLOCK_TAGS_COLS; // 499
-    for chunk in data.tables.block_tags.chunks(BLOCK_TAGS_CHUNK) {
-        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?)").collect();
-        let sql = format!(
-            "INSERT INTO block_tags (block_id, tag_id) VALUES {}",
-            placeholders.join(", ")
-        );
-        let mut query = sqlx::query(&sql);
-        for bt in chunk {
-            query = query.bind(&bt.block_id).bind(&bt.tag_id);
-        }
-        query.execute(&mut *tx).await?;
-    }
+    batch_insert_snapshot_rows!(
+        table: "block_tags",
+        columns: ["block_id", "tag_id"],
+        rows: data.tables.block_tags,
+        bind: |q, bt| { q.bind(&bt.block_id).bind(&bt.tag_id) },
+    );
 
-    // -- block_properties (6 columns) --
-    const BLOCK_PROPS_COLS: usize = 6;
-    const BLOCK_PROPS_CHUNK: usize = MAX_SQL_PARAMS / BLOCK_PROPS_COLS; // 166
-    for chunk in data.tables.block_properties.chunks(BLOCK_PROPS_CHUNK) {
-        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?, ?, ?)").collect();
-        let sql = format!(
-            "INSERT INTO block_properties (block_id, key, value_text, value_num, \
-             value_date, value_ref) VALUES {}",
-            placeholders.join(", ")
-        );
-        let mut query = sqlx::query(&sql);
-        for bp in chunk {
-            query = query
-                .bind(&bp.block_id)
+    batch_insert_snapshot_rows!(
+        table: "block_properties",
+        columns: [
+            "block_id", "key", "value_text", "value_num", "value_date", "value_ref",
+        ],
+        rows: data.tables.block_properties,
+        bind: |q, bp| {
+            q.bind(&bp.block_id)
                 .bind(&bp.key)
                 .bind(&bp.value_text)
                 .bind(bp.value_num)
                 .bind(&bp.value_date)
-                .bind(&bp.value_ref);
-        }
-        query.execute(&mut *tx).await?;
-    }
+                .bind(&bp.value_ref)
+        },
+    );
 
-    // -- block_links (2 columns) --
-    const BLOCK_LINKS_COLS: usize = 2;
-    const BLOCK_LINKS_CHUNK: usize = MAX_SQL_PARAMS / BLOCK_LINKS_COLS; // 499
-    for chunk in data.tables.block_links.chunks(BLOCK_LINKS_CHUNK) {
-        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?)").collect();
-        let sql = format!(
-            "INSERT INTO block_links (source_id, target_id) VALUES {}",
-            placeholders.join(", ")
-        );
-        let mut query = sqlx::query(&sql);
-        for bl in chunk {
-            query = query.bind(&bl.source_id).bind(&bl.target_id);
-        }
-        query.execute(&mut *tx).await?;
-    }
+    batch_insert_snapshot_rows!(
+        table: "block_links",
+        columns: ["source_id", "target_id"],
+        rows: data.tables.block_links,
+        bind: |q, bl| { q.bind(&bl.source_id).bind(&bl.target_id) },
+    );
 
-    // -- attachments (8 columns) --
-    const ATTACH_COLS: usize = 8;
-    const ATTACH_CHUNK: usize = MAX_SQL_PARAMS / ATTACH_COLS; // 124
-    for chunk in data.tables.attachments.chunks(ATTACH_CHUNK) {
-        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?, ?, ?, ?, ?)").collect();
-        let sql = format!(
-            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, \
-             fs_path, created_at, deleted_at) VALUES {}",
-            placeholders.join(", ")
-        );
-        let mut query = sqlx::query(&sql);
-        for a in chunk {
-            // Gate every attachment row at the trust boundary: a malformed snapshot
-            // must not be able to seed `..`/absolute paths into the attachments
-            // table even though later reads/writes would catch them (defense in
-            // depth — we want the invariant "no bad rows in attachments" to hold).
+    batch_insert_snapshot_rows!(
+        table: "attachments",
+        columns: [
+            "id", "block_id", "mime_type", "filename", "size_bytes",
+            "fs_path", "created_at", "deleted_at",
+        ],
+        rows: data.tables.attachments,
+        bind: |q, a| {
+            // Gate every attachment row at the trust boundary: a malformed
+            // snapshot must not be able to seed `..`/absolute paths into the
+            // attachments table even though later reads/writes would catch
+            // them (defense in depth — we want the invariant "no bad rows
+            // in attachments" to hold).
             crate::sync_files::check_attachment_fs_path_shape(&a.fs_path)?;
-            query = query
-                .bind(&a.id)
+            q.bind(&a.id)
                 .bind(&a.block_id)
                 .bind(&a.mime_type)
                 .bind(&a.filename)
                 .bind(a.size_bytes)
                 .bind(&a.fs_path)
                 .bind(&a.created_at)
-                .bind(&a.deleted_at);
-        }
-        query.execute(&mut *tx).await?;
-    }
+                .bind(&a.deleted_at)
+        },
+    );
 
-    // -- property_definitions (4 columns) --
-    const PROP_DEFS_COLS: usize = 4;
-    const PROP_DEFS_CHUNK: usize = MAX_SQL_PARAMS / PROP_DEFS_COLS; // 249
-    for chunk in data.tables.property_definitions.chunks(PROP_DEFS_CHUNK) {
-        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?)").collect();
-        let sql = format!(
-            "INSERT INTO property_definitions (key, value_type, options, created_at) VALUES {}",
-            placeholders.join(", ")
-        );
-        let mut query = sqlx::query(&sql);
-        for pd in chunk {
-            query = query
-                .bind(&pd.key)
+    batch_insert_snapshot_rows!(
+        table: "property_definitions",
+        columns: ["key", "value_type", "options", "created_at"],
+        rows: data.tables.property_definitions,
+        bind: |q, pd| {
+            q.bind(&pd.key)
                 .bind(&pd.value_type)
                 .bind(&pd.options)
-                .bind(&pd.created_at);
-        }
-        query.execute(&mut *tx).await?;
-    }
+                .bind(&pd.created_at)
+        },
+    );
 
-    // -- page_aliases (2 columns) --
-    const PAGE_ALIASES_COLS: usize = 2;
-    const PAGE_ALIASES_CHUNK: usize = MAX_SQL_PARAMS / PAGE_ALIASES_COLS; // 499
-    for chunk in data.tables.page_aliases.chunks(PAGE_ALIASES_CHUNK) {
-        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?)").collect();
-        let sql = format!(
-            "INSERT INTO page_aliases (page_id, alias) VALUES {}",
-            placeholders.join(", ")
-        );
-        let mut query = sqlx::query(&sql);
-        for pa in chunk {
-            query = query.bind(&pa.page_id).bind(&pa.alias);
-        }
-        query.execute(&mut *tx).await?;
-    }
+    batch_insert_snapshot_rows!(
+        table: "page_aliases",
+        columns: ["page_id", "alias"],
+        rows: data.tables.page_aliases,
+        bind: |q, pa| { q.bind(&pa.page_id).bind(&pa.alias) },
+    );
 
     tx.commit().await?;
 
@@ -300,42 +307,29 @@ pub async fn apply_snapshot(
     // silently drops if the queue is saturated (`warn!` logged), which is
     // acceptable — the worst case is a slightly delayed rebuild on an
     // overloaded system, not data loss.
+    //
     // M-15: `RebuildPageIds` MUST be enqueued first so it is processed
     // before `RebuildAgendaCache` / `RebuildProjectedAgendaCache`. Both
     // agenda rebuilds consult `b.page_id` to apply the FEAT-5a
     // template-page exclusion (`NOT EXISTS (... tp.block_id = b.page_id
     // AND tp.key = 'template')`). The background consumer processes
-    // tasks sequentially in enqueue order, so ordering this array
-    // guarantees the agenda sees populated `page_id`s on first
-    // rebuild — otherwise template-tagged pages' blocks would leak into
-    // the agenda until something else triggered another rebuild.
-    let rebuild_tasks = [
-        ("RebuildPageIds", MaterializeTask::RebuildPageIds),
-        ("RebuildTagsCache", MaterializeTask::RebuildTagsCache),
-        ("RebuildPagesCache", MaterializeTask::RebuildPagesCache),
-        ("RebuildAgendaCache", MaterializeTask::RebuildAgendaCache),
-        (
-            "RebuildProjectedAgendaCache",
-            MaterializeTask::RebuildProjectedAgendaCache,
-        ),
-        (
-            "RebuildTagInheritanceCache",
-            MaterializeTask::RebuildTagInheritanceCache,
-        ),
-        ("RebuildFtsIndex", MaterializeTask::RebuildFtsIndex),
-        // UX-250: repopulate inline tag-ref cache scanning the restored
-        // block content. Ordering within this array does not matter
-        // for agenda correctness — the background consumer processes
-        // each task independently.
-        (
-            "RebuildBlockTagRefsCache",
-            MaterializeTask::RebuildBlockTagRefsCache,
-        ),
-    ];
-    for (label, task) in rebuild_tasks {
-        if let Err(e) = materializer.try_enqueue_background(task) {
+    // tasks sequentially in enqueue order, so enqueuing it ahead of
+    // `CACHE_TABLES` guarantees the agenda sees populated `page_id`s on
+    // first rebuild — otherwise template-tagged pages' blocks would
+    // leak into the agenda until something else triggered another
+    // rebuild. (`RebuildPageIds` has no dedicated cache table, so it
+    // does not appear in `CACHE_TABLES`.)
+    if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildPageIds) {
+        tracing::warn!(
+            task = "RebuildPageIds",
+            error = %e,
+            "failed to enqueue cache rebuild task after apply_snapshot"
+        );
+    }
+    for (table, task) in CACHE_TABLES {
+        if let Err(e) = materializer.try_enqueue_background(task.clone()) {
             tracing::warn!(
-                task = label,
+                cache_table = table,
                 error = %e,
                 "failed to enqueue cache rebuild task after apply_snapshot"
             );

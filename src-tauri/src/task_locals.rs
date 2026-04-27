@@ -1,26 +1,51 @@
-//! Task-local capture of the most recent op appended inside a scoped block.
+//! Crate-wide tokio task-locals.
 //!
-//! Set by `op_log::append_local_op_in_tx` (via `try_with`, silent no-op
-//! outside the scope). Read by the MCP dispatch layer in `server.rs` to
-//! attach an `OpRef` to the emitted `mcp:activity` entry for FEAT-4h
-//! slice 3 (per-entry Undo).
+//! This module is the neutral home for task-locals that are populated
+//! by core modules (e.g. [`crate::op_log`]) and read by integration
+//! modules (e.g. [`crate::mcp`]). Putting them here removes the
+//! dependency-direction inversion that the previous home
+//! (`crate::mcp::last_append`) introduced — `op_log` is a core
+//! abstraction and `mcp` is an integration on top, so the task-local
+//! it populates must not live inside `mcp`.
 //!
-//! Why not thread `OpRecord`/`OpRef` through every `*_inner` signature?
-//! Those functions have 800+ call sites. The task-local is strictly
-//! additive, scoped, and invisible outside the MCP dispatch path.
+//! ## Currently-defined task-locals
+//!
+//! - [`LAST_APPEND`] — populated by
+//!   [`crate::op_log::append_local_op_in_tx`] with the freshly-inserted
+//!   `(device_id, seq)` of the just-appended op, when a scope is
+//!   active. Read by `crate::mcp::server::handle_tools_call` so the
+//!   emitted `mcp:activity` entry can carry an `OpRef` for FEAT-4h
+//!   slice 3 (per-entry Undo).
+//!
+//! ## Why a task-local, not a function parameter?
+//!
+//! `append_local_op_in_tx` has 800+ call sites. Threading an
+//! `Option<&Cell<Option<OpRef>>>` through every `*_inner` signature
+//! would be invasive churn for a feature that only the MCP dispatch
+//! layer cares about. The task-local is strictly additive, scoped, and
+//! invisible outside the MCP dispatch path — every call from outside
+//! `mcp::server` is a silent no-op via `try_with`.
 
 use std::cell::Cell;
 
 use crate::op::OpRef;
 
 tokio::task_local! {
+    /// Task-local capture of the most recent op appended inside a
+    /// scoped block.
+    ///
+    /// Set by [`crate::op_log::append_local_op_in_tx`] (via
+    /// [`record_append`], silent no-op outside the scope). Read by the
+    /// MCP dispatch layer in `mcp::server` to attach an `OpRef` to the
+    /// emitted `mcp:activity` entry for FEAT-4h slice 3 (per-entry
+    /// Undo).
     pub static LAST_APPEND: Cell<Option<OpRef>>;
 }
 
-/// Record the `(device_id, seq)` of a just-appended op if a capture scope
-/// is active. Silent no-op when called outside any scope — this is the
-/// intended behaviour for frontend user writes that have no activity
-/// emission surface.
+/// Record the `(device_id, seq)` of a just-appended op if a capture
+/// scope is active. Silent no-op when called outside any scope — this
+/// is the intended behaviour for frontend user writes that have no
+/// activity emission surface.
 pub fn record_append(op_ref: OpRef) {
     let _ = LAST_APPEND.try_with(|c| c.set(Some(op_ref)));
 }

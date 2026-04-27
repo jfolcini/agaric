@@ -12,23 +12,7 @@ use crate::error::AppError;
 /// left-joined with `block_tags` usage counts. Tags with zero usage are
 /// included.
 pub async fn rebuild_tags_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    tracing::info!("rebuilding tags cache");
-    let start = std::time::Instant::now();
-    let result = rebuild_tags_cache_impl(pool).await;
-    match result {
-        Ok(rows_affected) => {
-            tracing::info!(
-                rows_affected,
-                duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
-                "rebuilt tags cache"
-            );
-            Ok(())
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "rebuild failed for tags cache");
-            Err(e)
-        }
-    }
+    super::rebuild_with_timing("tags", || rebuild_tags_cache_impl(pool)).await
 }
 
 async fn rebuild_tags_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {

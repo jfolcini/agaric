@@ -3,6 +3,8 @@
 
 use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
+use std::cmp::Ordering;
+use std::collections::HashMap;
 
 use super::types::{BacklinkSort, SortDir};
 use crate::error::AppError;
@@ -25,51 +27,86 @@ pub(crate) async fn sort_ids(
             Ok(sorted)
         }
 
-        BacklinkSort::PropertyText { key, dir } => sort_by_property_text(pool, ids, key, dir).await,
+        BacklinkSort::PropertyText { key, dir } => {
+            if ids.is_empty() {
+                return Ok(vec![]);
+            }
+            let id_vec: Vec<&str> = ids.iter().map(String::as_str).collect();
+            let prop_map = fetch_text_props_for_ids(pool, key, &id_vec).await?;
+            Ok(sort_with_property_map(ids, dir, &prop_map))
+        }
 
-        BacklinkSort::PropertyNum { key, dir } => sort_by_property_num(pool, ids, key, dir).await,
+        BacklinkSort::PropertyNum { key, dir } => {
+            if ids.is_empty() {
+                return Ok(vec![]);
+            }
+            let id_vec: Vec<&str> = ids.iter().map(String::as_str).collect();
+            let prop_map = fetch_num_props_for_ids(pool, key, &id_vec).await?;
+            Ok(sort_with_property_map(ids, dir, &prop_map))
+        }
 
-        BacklinkSort::PropertyDate { key, dir } => sort_by_property_date(pool, ids, key, dir).await,
+        BacklinkSort::PropertyDate { key, dir } => {
+            if ids.is_empty() {
+                return Ok(vec![]);
+            }
+            let id_vec: Vec<&str> = ids.iter().map(String::as_str).collect();
+            let prop_map = fetch_date_props_for_ids(pool, key, &id_vec).await?;
+            Ok(sort_with_property_map(ids, dir, &prop_map))
+        }
     }
 }
 
-/// Sort block IDs by a text property value.  Blocks without the property
-/// are placed at the end.
+// ---------------------------------------------------------------------------
+// Generic comparator (MAINT-148d)
+// ---------------------------------------------------------------------------
+
+/// Sort `ids` by the values in `prop_map` (`block_id → Option<V>`),
+/// generic over the value type `V: PartialOrd`.
 ///
-/// Uses a dynamic IN clause (or `json_each` for large sets) to fetch only the
-/// property values for the given `ids`, avoiding a full table scan (#320).
-async fn sort_by_property_text(
-    pool: &SqlitePool,
+/// All three former `sort_by_property_{text,num,date}` helpers shared the
+/// same comparator shape:
+///
+/// 1. Some-before-None ordering (blocks without the property sink to the
+///    end), and
+/// 2. fall back on lexicographic block-id order whenever values tie or
+///    both sides lack the property.
+///
+/// The fetch step (`fetch_*_props_for_ids`) varies by `value_text` /
+/// `value_num` / `value_date` and stays per-column, but the comparator
+/// itself is column-agnostic and lives here under a single roof —
+/// future tweaks (e.g. the H-21 deterministic-tiebreaker fix) edit one
+/// site instead of three.
+fn sort_with_property_map<V>(
     ids: &FxHashSet<String>,
-    key: &str,
     dir: &SortDir,
-) -> Result<Vec<String>, AppError> {
-    if ids.is_empty() {
-        return Ok(vec![]);
-    }
-
-    let id_vec: Vec<&str> = ids.iter().map(String::as_str).collect();
-    let prop_map = fetch_text_props_for_ids(pool, key, &id_vec).await?;
-
+    prop_map: &HashMap<String, Option<V>>,
+) -> Vec<String>
+where
+    V: PartialOrd,
+{
     let mut sorted: Vec<String> = ids.iter().cloned().collect();
     sorted.sort_by(|a, b| {
-        let va = prop_map.get(a.as_str()).and_then(|v| v.as_deref());
-        let vb = prop_map.get(b.as_str()).and_then(|v| v.as_deref());
+        let va = prop_map.get(a.as_str()).and_then(Option::as_ref);
+        let vb = prop_map.get(b.as_str()).and_then(Option::as_ref);
         match (va, vb) {
             (Some(va), Some(vb)) => {
                 let directed = match dir {
-                    SortDir::Asc => va.cmp(vb),
-                    SortDir::Desc => vb.cmp(va),
+                    SortDir::Asc => va.partial_cmp(vb).unwrap_or(Ordering::Equal),
+                    SortDir::Desc => vb.partial_cmp(va).unwrap_or(Ordering::Equal),
                 };
                 directed.then_with(|| a.cmp(b))
             }
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
             (None, None) => a.cmp(b),
         }
     });
-    Ok(sorted)
+    sorted
 }
+
+// ---------------------------------------------------------------------------
+// Per-column fetchers
+// ---------------------------------------------------------------------------
 
 /// Fetch text property values for a set of block IDs.
 /// Uses bind-parameter IN clause for ≤500 IDs, `json_each` for larger sets.
@@ -77,7 +114,7 @@ async fn fetch_text_props_for_ids(
     pool: &SqlitePool,
     key: &str,
     ids: &[&str],
-) -> Result<std::collections::HashMap<String, Option<String>>, AppError> {
+) -> Result<HashMap<String, Option<String>>, AppError> {
     if ids.len() <= 500 {
         let placeholders: String = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()
@@ -107,50 +144,13 @@ async fn fetch_text_props_for_ids(
     }
 }
 
-/// Sort block IDs by a numeric property value.
-///
-/// Uses a dynamic IN clause (or `json_each` for large sets) to fetch only the
-/// property values for the given `ids`, avoiding a full table scan (#320).
-async fn sort_by_property_num(
-    pool: &SqlitePool,
-    ids: &FxHashSet<String>,
-    key: &str,
-    dir: &SortDir,
-) -> Result<Vec<String>, AppError> {
-    if ids.is_empty() {
-        return Ok(vec![]);
-    }
-
-    let id_vec: Vec<&str> = ids.iter().map(String::as_str).collect();
-    let prop_map = fetch_num_props_for_ids(pool, key, &id_vec).await?;
-
-    let mut sorted: Vec<String> = ids.iter().cloned().collect();
-    sorted.sort_by(|a, b| {
-        let va = prop_map.get(a.as_str()).and_then(|v| *v);
-        let vb = prop_map.get(b.as_str()).and_then(|v| *v);
-        match (va, vb) {
-            (Some(va), Some(vb)) => {
-                let directed = match dir {
-                    SortDir::Asc => va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Equal),
-                    SortDir::Desc => vb.partial_cmp(&va).unwrap_or(std::cmp::Ordering::Equal),
-                };
-                directed.then_with(|| a.cmp(b))
-            }
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => a.cmp(b),
-        }
-    });
-    Ok(sorted)
-}
-
 /// Fetch numeric property values for a set of block IDs.
 /// Uses bind-parameter IN clause for ≤500 IDs, `json_each` for larger sets.
 async fn fetch_num_props_for_ids(
     pool: &SqlitePool,
     key: &str,
     ids: &[&str],
-) -> Result<std::collections::HashMap<String, Option<f64>>, AppError> {
+) -> Result<HashMap<String, Option<f64>>, AppError> {
     if ids.len() <= 500 {
         let placeholders: String = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()
@@ -180,50 +180,13 @@ async fn fetch_num_props_for_ids(
     }
 }
 
-/// Sort block IDs by a date property value.
-///
-/// Uses a dynamic IN clause (or `json_each` for large sets) to fetch only the
-/// property values for the given `ids`, avoiding a full table scan (#320).
-async fn sort_by_property_date(
-    pool: &SqlitePool,
-    ids: &FxHashSet<String>,
-    key: &str,
-    dir: &SortDir,
-) -> Result<Vec<String>, AppError> {
-    if ids.is_empty() {
-        return Ok(vec![]);
-    }
-
-    let id_vec: Vec<&str> = ids.iter().map(String::as_str).collect();
-    let prop_map = fetch_date_props_for_ids(pool, key, &id_vec).await?;
-
-    let mut sorted: Vec<String> = ids.iter().cloned().collect();
-    sorted.sort_by(|a, b| {
-        let va = prop_map.get(a.as_str()).and_then(|v| v.as_deref());
-        let vb = prop_map.get(b.as_str()).and_then(|v| v.as_deref());
-        match (va, vb) {
-            (Some(va), Some(vb)) => {
-                let directed = match dir {
-                    SortDir::Asc => va.cmp(vb),
-                    SortDir::Desc => vb.cmp(va),
-                };
-                directed.then_with(|| a.cmp(b))
-            }
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => a.cmp(b),
-        }
-    });
-    Ok(sorted)
-}
-
 /// Fetch date property values for a set of block IDs.
 /// Uses bind-parameter IN clause for ≤500 IDs, `json_each` for larger sets.
 async fn fetch_date_props_for_ids(
     pool: &SqlitePool,
     key: &str,
     ids: &[&str],
-) -> Result<std::collections::HashMap<String, Option<String>>, AppError> {
+) -> Result<HashMap<String, Option<String>>, AppError> {
     if ids.len() <= 500 {
         let placeholders: String = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()

@@ -1,6 +1,5 @@
 //! Extracted handler functions for the materializer queues.
 
-use super::metrics::QueueMetrics;
 use super::MaterializeTask;
 use crate::cache;
 use crate::error::AppError;
@@ -19,10 +18,15 @@ use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+// MAINT-148g — `handle_foreground_task` previously took an unused
+// `_metrics: &QueueMetrics` parameter. Counters live on the consumer
+// loop (see `consumer::process_single_foreground_task`) which inspects
+// the handler's `Result` and bumps the appropriate counter; the handler
+// itself never needed access. Reintroduce the parameter only when a
+// future code path needs metric mutation from inside the handler.
 pub(super) async fn handle_foreground_task(
     pool: &SqlitePool,
     task: &MaterializeTask,
-    _metrics: &QueueMetrics,
     gcal_handle: &OnceLock<GcalConnectorHandle>,
 ) -> Result<(), AppError> {
     match task {
@@ -745,6 +749,30 @@ pub(super) async fn cleanup_orphaned_attachments(
     Ok(())
 }
 
+/// Dispatch a background task to either the read/write split implementation
+/// (when a separate read pool is configured) or the single-pool implementation.
+///
+/// MAINT-148a — collapses ~10 identical `match read_pool { Some(rp) => …_split,
+/// None => … }` arms in [`handle_background_task`] to a single helper. Each
+/// call site becomes one expression that constructs both branches as closures.
+async fn dispatch_split_or_single<'a, FSplit, FSingle, FutSplit, FutSingle, T>(
+    pool: &'a SqlitePool,
+    read_pool: Option<&'a SqlitePool>,
+    split_fn: FSplit,
+    single_fn: FSingle,
+) -> Result<T, AppError>
+where
+    FSplit: FnOnce(&'a SqlitePool, &'a SqlitePool) -> FutSplit,
+    FSingle: FnOnce(&'a SqlitePool) -> FutSingle,
+    FutSplit: std::future::Future<Output = Result<T, AppError>>,
+    FutSingle: std::future::Future<Output = Result<T, AppError>>,
+{
+    match read_pool {
+        Some(rp) => split_fn(pool, rp).await,
+        None => single_fn(pool).await,
+    }
+}
+
 pub(super) async fn handle_background_task(
     pool: &SqlitePool,
     task: &MaterializeTask,
@@ -752,44 +780,84 @@ pub(super) async fn handle_background_task(
     app_data_dir: Option<&Path>,
 ) -> Result<(), AppError> {
     match task {
-        MaterializeTask::RebuildTagsCache => match read_pool {
-            Some(rp) => cache::rebuild_tags_cache_split(pool, rp).await,
-            None => cache::rebuild_tags_cache(pool).await,
-        },
-        MaterializeTask::RebuildBlockTagRefsCache => match read_pool {
-            Some(rp) => cache::rebuild_block_tag_refs_cache_split(pool, rp).await,
-            None => cache::rebuild_block_tag_refs_cache(pool).await,
-        },
-        MaterializeTask::RebuildPagesCache => match read_pool {
-            Some(rp) => cache::rebuild_pages_cache_split(pool, rp).await,
-            None => cache::rebuild_pages_cache(pool).await,
-        },
-        MaterializeTask::RebuildAgendaCache => match read_pool {
-            Some(rp) => cache::rebuild_agenda_cache_split(pool, rp).await,
-            None => cache::rebuild_agenda_cache(pool).await,
-        },
-        MaterializeTask::ReindexBlockLinks { ref block_id } => match read_pool {
-            Some(rp) => cache::reindex_block_links_split(pool, rp, block_id).await,
-            None => cache::reindex_block_links(pool, block_id).await,
-        },
-        MaterializeTask::ReindexBlockTagRefs { ref block_id } => match read_pool {
-            Some(rp) => cache::reindex_block_tag_refs_split(pool, rp, block_id).await,
-            None => cache::reindex_block_tag_refs(pool, block_id).await,
-        },
-        MaterializeTask::UpdateFtsBlock { ref block_id } => match read_pool {
-            Some(rp) => fts::update_fts_for_block_split(pool, rp, block_id).await,
-            None => fts::update_fts_for_block(pool, block_id).await,
-        },
+        MaterializeTask::RebuildTagsCache => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_tags_cache_split,
+                cache::rebuild_tags_cache,
+            )
+            .await
+        }
+        MaterializeTask::RebuildBlockTagRefsCache => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_block_tag_refs_cache_split,
+                cache::rebuild_block_tag_refs_cache,
+            )
+            .await
+        }
+        MaterializeTask::RebuildPagesCache => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_pages_cache_split,
+                cache::rebuild_pages_cache,
+            )
+            .await
+        }
+        MaterializeTask::RebuildAgendaCache => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_agenda_cache_split,
+                cache::rebuild_agenda_cache,
+            )
+            .await
+        }
+        MaterializeTask::ReindexBlockLinks { ref block_id } => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                |w, r| cache::reindex_block_links_split(w, r, block_id),
+                |p| cache::reindex_block_links(p, block_id),
+            )
+            .await
+        }
+        MaterializeTask::ReindexBlockTagRefs { ref block_id } => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                |w, r| cache::reindex_block_tag_refs_split(w, r, block_id),
+                |p| cache::reindex_block_tag_refs(p, block_id),
+            )
+            .await
+        }
+        MaterializeTask::UpdateFtsBlock { ref block_id } => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                |w, r| fts::update_fts_for_block_split(w, r, block_id),
+                |p| fts::update_fts_for_block(p, block_id),
+            )
+            .await
+        }
         MaterializeTask::ReindexFtsReferences { ref block_id } => {
             fts::reindex_fts_references(pool, block_id).await
         }
         MaterializeTask::RemoveFtsBlock { ref block_id } => {
             fts::remove_fts_for_block(pool, block_id).await
         }
-        MaterializeTask::RebuildFtsIndex => match read_pool {
-            Some(rp) => fts::rebuild_fts_index_split(pool, rp).await,
-            None => fts::rebuild_fts_index(pool).await,
-        },
+        MaterializeTask::RebuildFtsIndex => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                fts::rebuild_fts_index_split,
+                fts::rebuild_fts_index,
+            )
+            .await
+        }
         MaterializeTask::FtsOptimize => fts::fts_optimize(pool).await,
         MaterializeTask::CleanupOrphanedAttachments => match app_data_dir {
             Some(dir) => cleanup_orphaned_attachments(pool, dir).await,
@@ -805,18 +873,33 @@ pub(super) async fn handle_background_task(
                 Ok(())
             }
         },
-        MaterializeTask::RebuildTagInheritanceCache => match read_pool {
-            Some(rp) => tag_inheritance::rebuild_all_split(pool, rp).await,
-            None => tag_inheritance::rebuild_all(pool).await,
-        },
-        MaterializeTask::RebuildProjectedAgendaCache => match read_pool {
-            Some(rp) => cache::rebuild_projected_agenda_cache_split(pool, rp).await,
-            None => cache::rebuild_projected_agenda_cache(pool).await,
-        },
-        MaterializeTask::RebuildPageIds => match read_pool {
-            Some(rp) => cache::rebuild_page_ids_split(pool, rp).await,
-            None => cache::rebuild_page_ids(pool).await,
-        },
+        MaterializeTask::RebuildTagInheritanceCache => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                tag_inheritance::rebuild_all_split,
+                tag_inheritance::rebuild_all,
+            )
+            .await
+        }
+        MaterializeTask::RebuildProjectedAgendaCache => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_projected_agenda_cache_split,
+                cache::rebuild_projected_agenda_cache,
+            )
+            .await
+        }
+        MaterializeTask::RebuildPageIds => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_page_ids_split,
+                cache::rebuild_page_ids,
+            )
+            .await
+        }
         MaterializeTask::ApplyOp(ref record) => {
             tracing::warn!(
                 op_type = %record.op_type,

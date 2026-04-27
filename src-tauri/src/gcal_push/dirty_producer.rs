@@ -18,8 +18,8 @@
 //! * `SetProperty` / `DeleteProperty` on the reserved keys
 //!   `due_date`, `scheduled_date`, `todo_state`, `priority`.
 //! * `SetProperty` / `DeleteProperty` on the non-reserved repeat
-//!   keys `repeat`, `repeat-until`, `repeat-count`, `repeat_interval`,
-//!   `repeat_unit`.
+//!   keys `repeat`, `repeat-until`, `repeat-count` — see
+//!   [`AGENDA_RELEVANT_KEYS`] for the canonical list.
 //! * `EditBlock` — block text is part of the digest line.  When the
 //!   block is on the agenda for a given date, re-hash the digest for
 //!   that date.
@@ -51,10 +51,7 @@ use chrono::{Duration, NaiveDate};
 use sqlx::SqliteConnection;
 
 use crate::error::AppError;
-use crate::op::{
-    DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, OpType, RestoreBlockPayload,
-    SetPropertyPayload,
-};
+use crate::op::{DeletePropertyPayload, OpType, SetPropertyPayload};
 use crate::op_log::OpRecord;
 
 use super::connector::{DirtyEvent, MAX_WINDOW_DAYS};
@@ -63,28 +60,41 @@ use super::connector::{DirtyEvent, MAX_WINDOW_DAYS};
 // Keys that affect the agenda projection / digest line
 // ---------------------------------------------------------------------------
 
-/// Reserved + non-reserved property keys that the GCal digest depends
-/// on.  A `SetProperty` / `DeleteProperty` op on any of these keys
-/// *may* change the agenda for the block's dates and we emit a
-/// [`DirtyEvent`].  Any other key is agenda-irrelevant.
+/// Property keys that may shift the GCal digest for a block's dates.
+/// A `SetProperty` / `DeleteProperty` on any of these keys triggers a
+/// [`DirtyEvent`] for the affected dates; any other key is
+/// agenda-irrelevant.
+///
+/// MAINT-151(k): canonicalised here so the list is searchable
+/// (`AGENDA_RELEVANT_KEYS`) and easy to audit.  The previous list
+/// included two typo'd keys (`"repeat_interval"`, `"repeat_unit"`)
+/// that are not actually written anywhere in the codebase — the
+/// recurrence model uses a single combined `"repeat"` rule string
+/// rather than split interval/unit fields.  Those keys have been
+/// removed here; the canonical built-in keys this list draws from
+/// are spelled out in [`crate::op::is_builtin_property_key`].
+///
+/// `"repeat-seq"` and `"repeat-origin"` are intentionally **not**
+/// listed: they are writer-side bookkeeping (set when a sibling is
+/// materialised by `recurrence::compute`), and changing them does
+/// not alter the visible digest line.
 ///
 /// This deliberately undercounts — keys the agenda cache treats as
 /// visible (e.g. custom labels surfaced in the digest) would need
 /// their own entries here — but the 15-minute reconcile sweep always
 /// picks up missed changes so the list is conservative.
+const AGENDA_RELEVANT_KEYS: &[&str] = &[
+    "due_date",
+    "scheduled_date",
+    "todo_state",
+    "priority",
+    "repeat",
+    "repeat-until",
+    "repeat-count",
+];
+
 fn is_agenda_relevant_key(key: &str) -> bool {
-    matches!(
-        key,
-        "due_date"
-            | "scheduled_date"
-            | "todo_state"
-            | "priority"
-            | "repeat"
-            | "repeat-until"
-            | "repeat-count"
-            | "repeat_interval"
-            | "repeat_unit"
-    )
+    AGENDA_RELEVANT_KEYS.contains(&key)
 }
 
 fn is_date_key(key: &str) -> bool {
@@ -329,16 +339,20 @@ fn compute_for_delete_property(
 }
 
 fn compute_for_edit_block(
-    record: &OpRecord,
+    _record: &OpRecord,
     prior: &BlockDateSnapshot,
     today: NaiveDate,
 ) -> Option<DirtyEvent> {
     if prior.missing {
         return None;
     }
-    // Validate payload structure (unused fields — presence is enough).
-    let _payload: EditBlockPayload = serde_json::from_str(&record.payload).ok()?;
-
+    // No payload deserialization needed — `OpType::EditBlock` from
+    // the dispatch in `compute_dirty_event` already gates entry, and
+    // every field of `EditBlockPayload` would be discarded here.
+    // MAINT-151(j) dropped the defensive parse: a malformed payload
+    // would have been rejected upstream by the materializer before
+    // it reaches this producer.
+    //
     // Emit old = new = {prior dates}.  The visible digest line
     // changes with the block content, so the connector re-pushes the
     // existing dates.
@@ -351,15 +365,15 @@ fn compute_for_edit_block(
 }
 
 fn compute_for_delete_block(
-    record: &OpRecord,
+    _record: &OpRecord,
     prior: &BlockDateSnapshot,
     today: NaiveDate,
 ) -> Option<DirtyEvent> {
     if prior.missing {
         return None;
     }
-    let _payload: DeleteBlockPayload = serde_json::from_str(&record.payload).ok()?;
-
+    // MAINT-151(j): no payload deserialization — see
+    // `compute_for_edit_block` for the rationale.
     let mut old = BTreeSet::new();
     extend_all_dates(&mut old, prior);
 
@@ -367,14 +381,15 @@ fn compute_for_delete_block(
 }
 
 fn compute_for_restore_block(
-    record: &OpRecord,
+    _record: &OpRecord,
     prior: &BlockDateSnapshot,
     today: NaiveDate,
 ) -> Option<DirtyEvent> {
     if prior.missing {
         return None;
     }
-    let _payload: RestoreBlockPayload = serde_json::from_str(&record.payload).ok()?;
+    // MAINT-151(j): no payload deserialization — see
+    // `compute_for_edit_block` for the rationale.
 
     // Only emit if the block was actually deleted before the op — an
     // idempotent re-restore adds nothing.
@@ -435,7 +450,7 @@ fn clamp_to_window(dates: BTreeSet<NaiveDate>, today: NaiveDate) -> Vec<NaiveDat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::op::OpPayload;
+    use crate::op::{DeleteBlockPayload, EditBlockPayload, OpPayload, RestoreBlockPayload};
     use crate::ulid::BlockId;
 
     const TODAY_STR: &str = "2026-04-22";
@@ -509,24 +524,32 @@ mod tests {
 
     #[test]
     fn relevant_keys_return_true() {
-        for k in [
-            "due_date",
-            "scheduled_date",
-            "todo_state",
-            "priority",
-            "repeat",
-            "repeat-until",
-            "repeat-count",
-            "repeat_interval",
-            "repeat_unit",
-        ] {
+        // Drives the iteration straight off the canonical constant so
+        // adding a new entry to `AGENDA_RELEVANT_KEYS` cannot drift
+        // out of sync with the predicate (MAINT-151(k)).
+        for k in AGENDA_RELEVANT_KEYS {
             assert!(is_agenda_relevant_key(k), "{k} should be relevant");
         }
     }
 
     #[test]
     fn irrelevant_keys_return_false() {
-        for k in ["assignee", "effort", "completed_at", "created_at", "notes"] {
+        // MAINT-151(k): `repeat_interval` / `repeat_unit` were
+        // typo'd entries removed from `AGENDA_RELEVANT_KEYS`; pin
+        // them here so a future careless re-addition fails the test.
+        // `repeat-seq` / `repeat-origin` are writer-side bookkeeping
+        // keys that don't change the visible digest line.
+        for k in [
+            "assignee",
+            "effort",
+            "completed_at",
+            "created_at",
+            "notes",
+            "repeat_interval",
+            "repeat_unit",
+            "repeat-seq",
+            "repeat-origin",
+        ] {
             assert!(!is_agenda_relevant_key(k), "{k} should not be relevant");
         }
     }
@@ -662,13 +685,11 @@ mod tests {
             due_date: Some(date("2026-04-25")),
             ..BlockDateSnapshot::default()
         };
-        for key in [
-            "repeat",
-            "repeat-until",
-            "repeat-count",
-            "repeat_interval",
-            "repeat_unit",
-        ] {
+        // MAINT-151(k): only the canonical repeat keys are listed
+        // here.  `repeat_interval` / `repeat_unit` were typo'd
+        // entries that are not actually written anywhere in the
+        // codebase.
+        for key in ["repeat", "repeat-until", "repeat-count"] {
             let rec = set_property(key, None, Some("++1w"));
             let ev = compute_dirty_event(&rec, &prior, today()).unwrap_or_else(|| {
                 panic!("{key} should produce a DirtyEvent");

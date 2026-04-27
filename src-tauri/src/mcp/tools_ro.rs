@@ -39,9 +39,11 @@
 //!   through [`PageRequest::new`]'s clamp while list tools pre-clamp the
 //!   caller's `limit`.
 //! - **Snippet length:** `search` truncates each `BlockRow.content` to
-//!   [`SEARCH_SNIPPET_CAP`] bytes (512 UTF-8 chars worst case) before
-//!   returning it — agents that want the full content call `get_block` on
-//!   the returned id.
+//!   [`SEARCH_SNIPPET_CAP`] Unicode scalars (chars) before returning it —
+//!   agents that want the full content call `get_block` on the returned
+//!   id. The implementation truncates at char boundaries so the output
+//!   is always valid UTF-8 even when the content contains multi-byte
+//!   codepoints (CJK, emoji, etc.).
 
 use std::future::Future;
 
@@ -49,7 +51,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
-use super::actor::{ActorContext, ACTOR};
+use super::actor::ActorContext;
+use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{parse_args, to_tool_result};
 use super::registry::{
     ToolDescription, ToolRegistry, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE,
@@ -57,7 +60,7 @@ use super::registry::{
     TOOL_LIST_TAGS, TOOL_SEARCH,
 };
 use crate::commands::{
-    get_block_inner, get_page_inner, journal_for_date_inner, list_backlinks_grouped_inner,
+    get_block_inner, get_page_unscoped_inner, journal_for_date_inner, list_backlinks_grouped_inner,
     list_pages_inner, list_projected_agenda_inner, list_property_defs_inner, list_tags_inner,
     search_blocks_inner,
 };
@@ -74,12 +77,18 @@ use crate::materializer::Materializer;
 pub const SEARCH_RESULT_CAP: i64 = 50;
 
 /// Default for list-style tools (`list_pages`, `list_tags`,
-/// `list_backlinks`). Matches [`crate::commands::MCP_PAGE_LIMIT_CAP`].
-pub const LIST_RESULT_CAP: i64 = 100;
+/// `list_backlinks`). Re-exported from
+/// [`crate::commands::MCP_PAGE_LIMIT_CAP`] so the tool boundary cap and
+/// the [`list_pages_inner`] / [`get_page_inner`] internal clamp share a
+/// single source of truth.
+pub use crate::commands::MCP_PAGE_LIMIT_CAP as LIST_RESULT_CAP;
 
-/// Per-result snippet length cap (in UTF-8 bytes) for the `search` tool.
-/// Prevents oversized content strings when an agent searches for a common
-/// term and hits long blocks.
+/// Per-result snippet length cap (in Unicode scalars / `char`s) for the
+/// `search` tool. Prevents oversized content strings when an agent
+/// searches for a common term and hits long blocks. Truncation is
+/// done via `chars().take(...)`, which always lands on a UTF-8 char
+/// boundary — the worst-case byte length is `4 * SEARCH_SNIPPET_CAP`
+/// (every codepoint a four-byte emoji).
 pub const SEARCH_SNIPPET_CAP: usize = 512;
 
 /// Cap for `get_agenda`'s `limit` — matches the ceiling baked into
@@ -266,48 +275,41 @@ impl ToolRegistry for ReadOnlyTools {
         args: Value,
         ctx: &ActorContext,
     ) -> impl Future<Output = Result<Value, AppError>> + Send {
-        // Clone the context once for the task-local scope; the registry
-        // methods themselves take `&self` so no further clones are needed.
         // The server already wraps the outer call in `ACTOR.scope(...)`,
-        // but scoping again here is idempotent (nested scope shadows with
-        // the same value) AND makes direct `call_tool(...)` invocations
-        // (tests, diagnostics) see the actor without requiring the caller
-        // to know about `ACTOR`. See `mcp::actor` tests.
-        let scoped = ctx.clone();
+        // but `scoped_dispatch` re-scopes here (nested scope shadows
+        // with the same value) so direct `call_tool(...)` invocations
+        // (tests, diagnostics) see the actor without requiring the
+        // caller to know about `ACTOR`. See `mcp::actor` tests.
+        // MAINT-150 (h): the ACTOR scope + name-clone boilerplate is
+        // shared with `tools_rw` via `super::dispatch::scoped_dispatch`.
         let pool = self.pool.clone();
         let writer_pool = self.writer_pool.clone();
         let materializer = self.materializer.clone();
         let device_id = self.device_id.clone();
-        let name = name.to_string();
-        async move {
-            ACTOR
-                .scope(scoped, async move {
-                    match name.as_str() {
-                        TOOL_LIST_PAGES => handle_list_pages(&pool, args).await,
-                        TOOL_GET_PAGE => handle_get_page(&pool, args).await,
-                        TOOL_SEARCH => handle_search(&pool, args).await,
-                        TOOL_GET_BLOCK => handle_get_block(&pool, args).await,
-                        TOOL_LIST_BACKLINKS => handle_list_backlinks(&pool, args).await,
-                        TOOL_LIST_TAGS => handle_list_tags(&pool, args).await,
-                        TOOL_LIST_PROPERTY_DEFS => handle_list_property_defs(&pool, args).await,
-                        TOOL_GET_AGENDA => handle_get_agenda(&pool, args).await,
-                        TOOL_JOURNAL_FOR_DATE => {
-                            // M-82: route `journal_for_date` to the writer
-                            // pool because `journal_for_date_inner` opens
-                            // `BEGIN IMMEDIATE` and inserts into `op_log` +
-                            // `blocks` whenever the requested date has no
-                            // existing page. The reader pool's
-                            // `PRAGMA query_only = ON` rejects that path
-                            // with `SQLITE_READONLY`. The other eight
-                            // tools stay on the reader pool.
-                            handle_journal_for_date(&writer_pool, &materializer, &device_id, args)
-                                .await
-                        }
-                        other => Err(AppError::NotFound(format!("unknown tool `{other}`"))),
-                    }
-                })
-                .await
-        }
+        scoped_dispatch(ctx, name, move |name| async move {
+            match name.as_str() {
+                TOOL_LIST_PAGES => handle_list_pages(&pool, args).await,
+                TOOL_GET_PAGE => handle_get_page(&pool, args).await,
+                TOOL_SEARCH => handle_search(&pool, args).await,
+                TOOL_GET_BLOCK => handle_get_block(&pool, args).await,
+                TOOL_LIST_BACKLINKS => handle_list_backlinks(&pool, args).await,
+                TOOL_LIST_TAGS => handle_list_tags(&pool, args).await,
+                TOOL_LIST_PROPERTY_DEFS => handle_list_property_defs(&pool, args).await,
+                TOOL_GET_AGENDA => handle_get_agenda(&pool, args).await,
+                TOOL_JOURNAL_FOR_DATE => {
+                    // M-82: route `journal_for_date` to the writer
+                    // pool because `journal_for_date_inner` opens
+                    // `BEGIN IMMEDIATE` and inserts into `op_log` +
+                    // `blocks` whenever the requested date has no
+                    // existing page. The reader pool's
+                    // `PRAGMA query_only = ON` rejects that path with
+                    // `SQLITE_READONLY`. The other eight tools stay
+                    // on the reader pool.
+                    handle_journal_for_date(&writer_pool, &materializer, &device_id, args).await
+                }
+                other => Err(unknown_tool_error(other)),
+            }
+        })
     }
 }
 
@@ -524,38 +526,13 @@ async fn handle_list_pages(pool: &SqlitePool, args: Value) -> Result<Value, AppE
 async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetPageArgs = parse_args(TOOL_GET_PAGE, args)?;
     let limit = args.limit.map(|l| l.clamp(1, LIST_RESULT_CAP));
-    // FEAT-3 Phase 7: `get_page_inner` requires a `space_id` and rejects
-    // requests for pages outside that space. MCP agents are intentionally
-    // unscoped (see search/list comments above), so we look up the page's
-    // own `space` property and pass it — making the membership check a
-    // trivial pass for any page the agent can name.
-    //
-    // Order of error checks preserves pre-Phase-7 contract:
-    //   - unknown ids → `NotFound` (via `get_block_inner` inside
-    //     `get_page_inner` once we have a space_id, OR via the explicit
-    //     existence check below when the page lacks a space property).
-    //   - non-page block_type → `Validation` (via `get_block_inner` +
-    //     block_type check inside `get_page_inner`).
-    //   - page exists but has no space property → `Validation`.
-    let space_id: Option<String> = sqlx::query_scalar!(
-        r#"SELECT value_ref FROM block_properties
-           WHERE block_id = ? AND key = 'space'"#,
-        args.page_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .flatten();
-    let Some(space_id) = space_id else {
-        // No space property — distinguish "unknown id" (NotFound) from
-        // "exists but unscoped" (Validation) so the MCP error code
-        // contract matches what the agent would have seen pre-Phase-7.
-        crate::commands::get_block_inner(pool, args.page_id.clone()).await?;
-        return Err(AppError::Validation(format!(
-            "page '{}' has no space property",
-            args.page_id
-        )));
-    };
-    let resp = get_page_inner(pool, &args.page_id, &space_id, args.cursor, limit).await?;
+    // MAINT-150 (g): the FEAT-3 Phase 7 space-membership lookup lives
+    // inside `get_page_unscoped_inner` so this module stays a thin
+    // wrapper around `*_inner`. MCP agents are intentionally unscoped
+    // — every page they can name belongs to its own space by
+    // construction, and the helper preserves the
+    // unknown-id / wrong-type / unscoped error categories.
+    let resp = get_page_unscoped_inner(pool, &args.page_id, args.cursor, limit).await?;
     to_tool_result(&resp)
 }
 
@@ -745,6 +722,131 @@ mod tests {
         // Use `to_value` so camelCase `inputSchema` is visible in the snap.
         let wire: Value = serde_json::to_value(&descs).unwrap();
         insta::assert_yaml_snapshot!("tool_descriptions", wire);
+    }
+
+    // -------------------------------------------------------------------
+    // MAINT-150 (d) PARTIAL — schema/struct equivalence
+    //
+    // The full fix would derive `JsonSchema` via `schemars` on each
+    // `*Args` struct so the tool description's `inputSchema` is
+    // auto-generated, eliminating drift. That is a meaningful design
+    // change requiring user approval (extra dependency + a re-derive on
+    // every `*Args` struct), so it is DEFERRED.
+    //
+    // As a partial / starting point, the following tests pin the link
+    // between the hand-authored `json!` schema and the typed `*Args`
+    // struct for two representative tools (one trivial, one with
+    // multiple optional fields). Drift between schema and struct will
+    // fail one of these asserts:
+    //
+    //   - The struct must successfully `serde_json::from_value` a
+    //     payload built from the schema's `required` list.
+    //   - Every property advertised in the schema's `properties` must
+    //     deserialise into the struct without an `unknown_fields`
+    //     rejection (the structs use `deny_unknown_fields`).
+    //
+    // The asserts below cover `list_pages` (no required fields, two
+    // optional) and `get_block` (one required field, no optional). When
+    // schemars lands these can be removed in favour of the
+    // auto-generated schema.
+    // -------------------------------------------------------------------
+    #[test]
+    fn list_pages_schema_matches_args_struct() {
+        let desc = tool_desc_list_pages();
+        let schema = &desc.input_schema;
+        let props = schema
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .expect("inputSchema has properties object");
+        let prop_names: Vec<&str> = props.keys().map(String::as_str).collect();
+
+        // Every property advertised in the schema must round-trip
+        // through `ListPagesArgs` without `deny_unknown_fields` firing.
+        // The schema has no required fields — an empty object must
+        // deserialize cleanly (no required-field rejection).
+        let empty: ListPagesArgs = serde_json::from_value(json!({}))
+            .expect("ListPagesArgs accepts an empty object (all fields optional)");
+        let _ = empty;
+
+        // Build a concrete payload using every property the schema
+        // advertises. If the struct lacks one of these fields, this
+        // would parse but lose data; if the struct has additional
+        // fields, those would be required (currently they are all
+        // `Option<T>` with `#[serde(default)]`, so this stays valid).
+        let mut payload = serde_json::Map::new();
+        for &name in &prop_names {
+            // Pick a value-shape that matches the schema's declared
+            // type. Both fields here are typed (`string` and
+            // `integer`); extending the test would need a small type
+            // mapper.
+            let ty = props[name]["type"].as_str().expect("each prop has a type");
+            let value = match ty {
+                "string" => json!("placeholder"),
+                "integer" => json!(1),
+                other => panic!("list_pages schema grew an unexpected type: {other}"),
+            };
+            payload.insert(name.to_string(), value);
+        }
+        let parsed: ListPagesArgs = serde_json::from_value(Value::Object(payload))
+            .expect("ListPagesArgs accepts every property the schema advertises");
+        assert_eq!(parsed.cursor.as_deref(), Some("placeholder"));
+        assert_eq!(parsed.limit, Some(1));
+
+        // The schema must not advertise `additionalProperties: true`
+        // (struct uses `deny_unknown_fields`) — pin that here so a
+        // future schema edit cannot silently drift.
+        assert_eq!(
+            schema.get("additionalProperties"),
+            Some(&Value::Bool(false)),
+            "list_pages schema must mirror `deny_unknown_fields` with additionalProperties: false",
+        );
+    }
+
+    #[test]
+    fn get_block_schema_matches_args_struct() {
+        let desc = tool_desc_get_block();
+        let schema = &desc.input_schema;
+        let required: Vec<&str> = schema
+            .get("required")
+            .and_then(|r| r.as_array())
+            .expect("get_block inputSchema declares required[]")
+            .iter()
+            .map(|v| v.as_str().expect("required entries are strings"))
+            .collect();
+        assert_eq!(
+            required,
+            vec!["block_id"],
+            "get_block schema requires exactly the `block_id` field",
+        );
+
+        // A payload that omits `block_id` must fail deserialization
+        // (the struct field is non-optional).
+        let missing: Result<GetBlockArgs, _> = serde_json::from_value(json!({}));
+        assert!(
+            missing.is_err(),
+            "GetBlockArgs must reject an empty object — required field missing",
+        );
+
+        // A payload that includes `block_id` deserializes cleanly.
+        let parsed: GetBlockArgs = serde_json::from_value(json!({"block_id": "abc"}))
+            .expect("GetBlockArgs accepts a payload with block_id");
+        assert_eq!(parsed.block_id, "abc");
+
+        // A payload with an unknown property must be rejected by
+        // `deny_unknown_fields` — pinning the schema/struct contract
+        // even when the schema's `additionalProperties: false` is the
+        // wire contract.
+        let stray: Result<GetBlockArgs, _> =
+            serde_json::from_value(json!({"block_id": "abc", "extra": 1}));
+        assert!(
+            stray.is_err(),
+            "GetBlockArgs must reject unknown fields (deny_unknown_fields)",
+        );
+        assert_eq!(
+            schema.get("additionalProperties"),
+            Some(&Value::Bool(false)),
+            "get_block schema must mirror `deny_unknown_fields` with additionalProperties: false",
+        );
     }
 
     // -------------------------------------------------------------------
@@ -1598,6 +1700,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn inner_get_page_composes_root_and_subtree() {
+        use crate::commands::get_page_inner;
+
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
         let page = create_block_inner(&pool, DEV, &mat, "page".into(), "P".into(), None, Some(1))
@@ -1635,6 +1739,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn inner_get_page_unknown_id_not_found() {
+        use crate::commands::get_page_inner;
+
         let (pool, _dir) = test_pool().await;
         // Even with no bootstrap, `get_page_inner` resolves NotFound first
         // (via `get_block_inner`) before reaching the space-membership
@@ -1957,7 +2063,7 @@ mod tests {
     /// exit.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn list_pages_does_not_populate_last_append() {
-        use crate::mcp::last_append::LAST_APPEND;
+        use crate::task_locals::LAST_APPEND;
         use std::cell::Cell;
 
         let (tools, _mat, _dir) = mk_tools().await;

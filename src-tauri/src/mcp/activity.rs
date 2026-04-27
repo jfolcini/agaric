@@ -356,36 +356,58 @@ pub fn emit_activity(
     emitter.emit(&for_bus);
 }
 
+/// Bundle of every parameter [`emit_tool_completion`] needs beyond the
+/// shared [`ActivityContext`]. MAINT-150 (f): replaces the 8-positional
+/// `#[allow(clippy::too_many_arguments)]` signature so call sites are
+/// self-documenting and adding a new field (e.g. a future
+/// `latency_ms`) does not become a positional argument shuffle.
+///
+/// `tool_name` / `summary` / `session_id` borrow rather than own so
+/// callers can avoid an extra `String` allocation when they already
+/// hold an owned value — the function clones into the
+/// [`ActivityEntry`] internally.
+#[derive(Debug)]
+pub struct ToolCompletionEvent<'a> {
+    /// Wire-format tool name (`"search"`, `"append_block"`, …).
+    pub tool_name: &'a str,
+    /// Privacy-safe one-line summary (counts, ULID prefixes, property
+    /// keys — never block content or text-property values). See
+    /// [`super::summarise`] for the construction rules.
+    pub summary: &'a str,
+    /// Always [`ActorKind::Agent`] today; the `User` arm is reserved
+    /// for future non-MCP usage of the same emission seam.
+    pub actor_kind: ActorKind,
+    /// Handshake `clientInfo.name`. `None` only when the dispatch path
+    /// did not capture an agent identity — currently never produced
+    /// by the production code, but kept optional so test harnesses can
+    /// emit anonymous entries.
+    pub agent_name: Option<String>,
+    /// Success / failure outcome. The error-arm payload is already
+    /// clipped to `ERROR_CLIP_CAP` chars by the dispatch layer.
+    pub result: ActivityResult,
+    /// Opaque per-connection ULID stable across every request on the
+    /// same socket — see [`ActivityEntry::session_id`].
+    pub session_id: &'a str,
+    /// `(device_id, seq)` of the op produced by this call. `None` for
+    /// RO tools and for tools that produced no op. Captured from the
+    /// `LAST_APPEND` task-local inside `handle_tools_call`.
+    pub op_ref: Option<crate::op::OpRef>,
+}
+
 /// Convenience wrapper that builds an [`ActivityEntry`] with `Utc::now()`
 /// and dispatches it through [`emit_activity`]. Exposed as the stable
-/// integration point FEAT-4c will call from the `tools/call` success and
+/// integration point FEAT-4c calls from the `tools/call` success and
 /// failure branches.
-///
-/// `session_id` is the opaque per-connection ULID carried by
-/// `ConnectionState.session_id`; it is stable across every request on
-/// the same socket. `op_ref` is the `(device_id, seq)` pair captured
-/// from the `LAST_APPEND` task-local inside `handle_tools_call` — `None`
-/// for RO tools and for tools that produced no op.
-#[allow(clippy::too_many_arguments)]
-pub fn emit_tool_completion(
-    ctx: &ActivityContext,
-    tool_name: impl Into<String>,
-    summary: impl Into<String>,
-    actor_kind: ActorKind,
-    agent_name: Option<String>,
-    result: ActivityResult,
-    session_id: impl Into<String>,
-    op_ref: Option<crate::op::OpRef>,
-) {
+pub fn emit_tool_completion(ctx: &ActivityContext, event: ToolCompletionEvent<'_>) {
     let entry = ActivityEntry {
-        tool_name: tool_name.into(),
-        summary: summary.into(),
+        tool_name: event.tool_name.to_string(),
+        summary: event.summary.to_string(),
         timestamp: Utc::now(),
-        actor_kind,
-        agent_name,
-        result,
-        session_id: session_id.into(),
-        op_ref,
+        actor_kind: event.actor_kind,
+        agent_name: event.agent_name,
+        result: event.result,
+        session_id: event.session_id.to_string(),
+        op_ref: event.op_ref,
     };
     emit_activity(&ctx.ring, ctx.emitter.as_ref(), entry);
 }
@@ -587,13 +609,15 @@ mod tests {
         let before = Utc::now();
         emit_tool_completion(
             &ctx,
-            "search",
-            "searched for '…' (0 results)",
-            ActorKind::Agent,
-            Some("claude-desktop".to_string()),
-            ActivityResult::Ok,
-            "SESSION-1",
-            None,
+            ToolCompletionEvent {
+                tool_name: "search",
+                summary: "searched for '…' (0 results)",
+                actor_kind: ActorKind::Agent,
+                agent_name: Some("claude-desktop".to_string()),
+                result: ActivityResult::Ok,
+                session_id: "SESSION-1",
+                op_ref: None,
+            },
         );
         let after = Utc::now();
 
@@ -625,13 +649,15 @@ mod tests {
         };
         emit_tool_completion(
             &ctx,
-            "append_block",
-            "appended",
-            ActorKind::Agent,
-            Some("claude-desktop".to_string()),
-            ActivityResult::Ok,
-            "SESSION-2",
-            Some(op_ref.clone()),
+            ToolCompletionEvent {
+                tool_name: "append_block",
+                summary: "appended",
+                actor_kind: ActorKind::Agent,
+                agent_name: Some("claude-desktop".to_string()),
+                result: ActivityResult::Ok,
+                session_id: "SESSION-2",
+                op_ref: Some(op_ref.clone()),
+            },
         );
 
         let guard = ring.lock().unwrap();

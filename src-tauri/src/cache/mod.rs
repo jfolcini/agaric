@@ -23,8 +23,15 @@ mod tags;
 mod tests;
 
 // ---------------------------------------------------------------------------
-// Regex for [[ULID]], ((ULID)), and #[ULID] tokens
+// Regex for [[ULID]], ((ULID)), and #[ULID] tokens (canonical home)
 // ---------------------------------------------------------------------------
+//
+// MAINT-148e — the three ULID-token regexes are defined once here and
+// re-exported by [`crate::fts`] so the materializer pipeline (cache
+// rebuilds + FTS strip) shares a single source of truth. Pre-refactor,
+// `TAG_REF_RE` and `PAGE_LINK_RE` were duplicated in `fts/strip.rs` with
+// slightly different naming. Any future ULID-token change should land
+// here only.
 //
 // ULIDs are encoded in Crockford base-32: exactly 26 uppercase alphanumeric
 // characters (digits 0-9 and letters A-Z).  `ULID_LINK_RE` captures the
@@ -39,6 +46,10 @@ mod tests;
 // this regex (e.g. matching bare `[ULID]`) would conflict with wiki-style
 // `[[ULID]]` handling and start capturing regular markdown link syntax.
 //
+// `PAGE_LINK_RE` is the page-link-only sibling (`[[ULID]]`); `ULID_LINK_RE`
+// also matches block references `((ULID))` and is used by the per-block
+// link reindexer.
+//
 // The ULID-link regex intentionally allows mixed delimiters (e.g.
 // `[[ULID))`) but that is harmless — the ULID validation is what matters,
 // not delimiter matching.  In practice the serializer always produces
@@ -50,12 +61,15 @@ mod tests;
 use regex::Regex;
 use std::sync::LazyLock;
 
-static ULID_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
+pub(crate) static ULID_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:\[\[|\(\()([0-9A-Z]{26})(?:\]\]|\)\))").expect("invalid ULID link regex")
 });
 
-static TAG_REF_RE: LazyLock<Regex> =
+pub(crate) static TAG_REF_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"#\[([0-9A-Z]{26})\]").expect("invalid tag-ref regex"));
+
+pub(crate) static PAGE_LINK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[\[([0-9A-Z]{26})\]\]").expect("invalid page-link regex"));
 
 /// Returns a reference to the lazily-compiled ULID-link regex.
 #[inline]
@@ -68,6 +82,50 @@ fn ulid_link_re() -> &'static Regex {
 #[inline]
 fn tag_ref_re() -> &'static Regex {
     &TAG_REF_RE
+}
+
+// ---------------------------------------------------------------------------
+// Shared cache-rebuild logging helper (MAINT-148b)
+// ---------------------------------------------------------------------------
+
+/// Wrap a cache-rebuild closure with the standard tracing instrumentation.
+///
+/// Emits `"rebuilding"` info at entry, `"rebuilt"` info at success (with
+/// `rows_affected` and `duration_ms`), and `"rebuild failed"` warn on error.
+/// `name` is the cache identifier (e.g. `"tags"`, `"agenda"`,
+/// `"projected_agenda"`) and shows up in every emitted log line so the
+/// pre-refactor message format (`"rebuilding <name> cache"` /
+/// `"rebuilt <name> cache"` / `"rebuild failed for <name> cache"`) is
+/// preserved verbatim.
+///
+/// The closure returns the rows-affected count; this helper translates that
+/// to `Result<(), AppError>` so the public rebuild functions retain their
+/// pre-refactor signature.
+pub(super) async fn rebuild_with_timing<F, Fut>(
+    name: &'static str,
+    f: F,
+) -> Result<(), crate::error::AppError>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<u64, crate::error::AppError>>,
+{
+    tracing::info!(cache = name, "rebuilding {name} cache");
+    let start = std::time::Instant::now();
+    match f().await {
+        Ok(rows_affected) => {
+            tracing::info!(
+                cache = name,
+                rows_affected,
+                duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                "rebuilt {name} cache"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!(cache = name, error = %e, "rebuild failed for {name} cache");
+            Err(e)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

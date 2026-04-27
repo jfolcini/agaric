@@ -488,6 +488,7 @@ fn kind_display(kind: &GcalErrorKind) -> String {
             format!("rate_limited: retry after {retry_after_ms}ms")
         }
         GcalErrorKind::ServerError { status } => format!("server_error: HTTP {status}"),
+        GcalErrorKind::Transport(msg) => format!("transport: {msg}"),
         GcalErrorKind::InvalidRequest(msg) => format!("invalid_request: {msg}"),
         GcalErrorKind::CalendarGone => "calendar_gone".to_owned(),
         GcalErrorKind::EventGone => "event_gone".to_owned(),
@@ -552,7 +553,7 @@ pub async fn run_cycle<C: GcalClient>(
     // a successful push to a sibling date.  Hard failures (401 / 403 /
     // CalendarGone) are returned to the caller for the whole cycle.
     for date in dirty {
-        match push_date(pool, client, emitter, token, &settings, &calendar_id, *date).await {
+        match push_date(pool, client, token, &settings, &calendar_id, *date).await {
             Ok(_) => {}
             Err(DateFailure::CalendarGone) => {
                 // Whole cycle has to abort — the calendar is gone.
@@ -630,11 +631,10 @@ fn classify_cycle_failure(
 
 /// Evaluate a single date: fetch agenda entries, compute digest, hash,
 /// compare, push/patch/delete.
-#[tracing::instrument(skip(pool, client, emitter, token, settings), fields(date = %date))]
+#[tracing::instrument(skip(pool, client, token, settings), fields(date = %date))]
 async fn push_date<C: GcalClient>(
     pool: &SqlitePool,
     client: &C,
-    emitter: &Arc<dyn GcalEventEmitter>,
     token: &Token,
     settings: &GcalSettingsSnapshot,
     calendar_id: &str,
@@ -682,7 +682,7 @@ async fn push_date<C: GcalClient>(
                 Err(AppError::Gcal(GcalErrorKind::EventGone)) => {
                     // Already gone remotely — fine; drop the map row.
                 }
-                Err(e) => return Err(classify_date_err(&e, emitter)),
+                Err(e) => return Err(classify_date_err(&e)),
             }
             delete_event_map_by_date(pool, &date_str)
                 .await
@@ -694,7 +694,7 @@ async fn push_date<C: GcalClient>(
             let event_id = client
                 .insert_event(token, calendar_id, &event)
                 .await
-                .map_err(|e| classify_date_err(&e, emitter))?;
+                .map_err(|e| classify_date_err(&e))?;
             let entry = GcalAgendaEventMap {
                 date: date_str,
                 gcal_event_id: event_id,
@@ -738,7 +738,7 @@ async fn push_date<C: GcalClient>(
                         .map_err(DateFailure::Other)?;
                     Err(DateFailure::Skipped("event_gone".to_owned()))
                 }
-                Err(e) => Err(classify_date_err(&e, emitter)),
+                Err(e) => Err(classify_date_err(&e)),
             }
         }
     }
@@ -753,18 +753,20 @@ async fn push_date<C: GcalClient>(
 /// routing (`Unauthorized` / `Forbidden` / `CalendarGone` end the
 /// cycle; everything else is `Skipped`) stays here — only the
 /// reason-string formatting goes through the helper.
-fn classify_date_err(err: &AppError, _emitter: &Arc<dyn GcalEventEmitter>) -> DateFailure {
+fn classify_date_err(err: &AppError) -> DateFailure {
     if let AppError::Gcal(kind) = err {
         match kind {
             GcalErrorKind::Unauthorized => DateFailure::Unauthorized,
             GcalErrorKind::Forbidden(msg) => DateFailure::Forbidden(msg.clone()),
             GcalErrorKind::CalendarGone => DateFailure::CalendarGone,
-            // EventGone / RateLimited / ServerError / InvalidRequest
-            // are all "skip this date, retry on next sweep" — the
-            // reason string comes from the shared formatter.
+            // EventGone / RateLimited / ServerError / Transport /
+            // InvalidRequest are all "skip this date, retry on next
+            // sweep" — the reason string comes from the shared
+            // formatter.
             GcalErrorKind::EventGone
             | GcalErrorKind::RateLimited { .. }
             | GcalErrorKind::ServerError { .. }
+            | GcalErrorKind::Transport(_)
             | GcalErrorKind::InvalidRequest(_) => DateFailure::Skipped(kind_display(kind)),
         }
     } else {
@@ -781,11 +783,14 @@ fn classify_date_err(err: &AppError, _emitter: &Arc<dyn GcalEventEmitter>) -> Da
 /// **M-89:** the event-map wipe and `calendar_id` reset are wrapped in
 /// a single `BEGIN IMMEDIATE` transaction so a crash between the two
 /// writes cannot leave the post-state inconsistent (empty map but
-/// `calendar_id` still pointing at the gone calendar).  The
-/// `models::set_setting` UPDATE for `CalendarId` is inlined against
-/// the same transaction handle — calling the bare helper would either
-/// deadlock against the held write lock or run on a separate
-/// connection (defeating atomicity).  `oauth_account_email` is
+/// `calendar_id` still pointing at the gone calendar).
+///
+/// **MAINT-151(i):** the inlined `set_setting` UPDATE that used to
+/// live here now goes through [`models::set_setting_in_tx`], which
+/// takes any `sqlx::Executor` (including `&mut Transaction`).  This
+/// keeps both call sites — pool-based [`models::set_setting`] and
+/// transaction-bound recovery — funneled through the same UPDATE
+/// shape and `NotFound` policy.  `oauth_account_email` is
 /// intentionally untouched here (that is finding M-95).
 async fn recover_calendar_gone(
     pool: &SqlitePool,
@@ -801,27 +806,7 @@ async fn recover_calendar_gone(
         .execute(&mut *tx)
         .await?;
 
-    // Inlined equivalent of `models::set_setting(.., CalendarId, "")`:
-    // same UPDATE shape, same `NotFound` semantics on a missing seed
-    // row.  Kept inline (not factored into a `_in_tx` helper) per the
-    // M-89 brief — the helper would only ever be called from this one
-    // path.
-    let calendar_id_key = GcalSettingKey::CalendarId.as_str();
-    let updated_at = crate::now_rfc3339();
-    let empty_value = "";
-    let result = sqlx::query!(
-        "UPDATE gcal_settings SET value = ?, updated_at = ? WHERE key = ?",
-        empty_value,
-        updated_at,
-        calendar_id_key,
-    )
-    .execute(&mut *tx)
-    .await?;
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound(format!(
-            "gcal_settings row missing for key '{calendar_id_key}'"
-        )));
-    }
+    models::set_setting_in_tx(&mut *tx, GcalSettingKey::CalendarId.as_str(), "").await?;
 
     tx.commit().await?;
     emitter.emit(GcalEvent::CalendarRecreated);

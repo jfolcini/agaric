@@ -5,22 +5,7 @@ use sqlx::SqlitePool;
 
 /// Full rebuild of `page_id` for all blocks using a recursive CTE.
 pub async fn rebuild_page_ids(pool: &SqlitePool) -> Result<(), AppError> {
-    tracing::info!("rebuilding page_id cache");
-    let start = std::time::Instant::now();
-    match rebuild_page_ids_impl(pool).await {
-        Ok(rows_affected) => {
-            tracing::info!(
-                rows_affected,
-                duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
-                "rebuilt page_id cache"
-            );
-            Ok(())
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "rebuild failed for page_id cache");
-            Err(e)
-        }
-    }
+    super::rebuild_with_timing("page_id", || rebuild_page_ids_impl(pool)).await
 }
 
 async fn rebuild_page_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {

@@ -38,13 +38,19 @@ static STRIKE_RE: LazyLock<Regex> =
 static HIGHLIGHT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"==(.+?)==").expect("invalid highlight regex"));
 
-/// Matches tag references: `#[ULID]`
-pub(crate) static TAG_REF_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"#\[([0-9A-Z]{26})\]").expect("invalid tag ref regex"));
+// MAINT-148e — `TAG_REF_RE` and `PAGE_LINK_RE` were canonicalised in
+// `cache::mod` so the cache-rebuild and FTS-strip paths share a single
+// regex compilation. The re-exports below preserve this module's public
+// names (`crate::fts::TAG_REF_RE` / `crate::fts::PAGE_LINK_RE`) for
+// downstream consumers (e.g. `commands::pages::resolve_ulids_for_export`).
 
-/// Matches page links: `[[ULID]]`
-pub(crate) static PAGE_LINK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[\[([0-9A-Z]{26})\]\]").expect("invalid page link regex"));
+/// Matches tag references: `#[ULID]`. Re-exports the canonical regex
+/// owned by `crate::cache`.
+pub(crate) use crate::cache::TAG_REF_RE;
+
+/// Matches page links: `[[ULID]]`. Re-exports the canonical regex
+/// owned by `crate::cache`.
+pub(crate) use crate::cache::PAGE_LINK_RE;
 
 // ---------------------------------------------------------------------------
 // Strip functions

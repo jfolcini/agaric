@@ -196,23 +196,7 @@ pub async fn reindex_block_tag_refs_split(
 /// caches" actions. Per-block content edits go through
 /// [`reindex_block_tag_refs`] instead.
 pub async fn rebuild_block_tag_refs_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    tracing::info!("rebuilding block_tag_refs cache");
-    let start = std::time::Instant::now();
-    let result = rebuild_block_tag_refs_cache_impl(pool).await;
-    match result {
-        Ok(rows_affected) => {
-            tracing::info!(
-                rows_affected,
-                duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
-                "rebuilt block_tag_refs cache"
-            );
-            Ok(())
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "rebuild failed for block_tag_refs cache");
-            Err(e)
-        }
-    }
+    super::rebuild_with_timing("block_tag_refs", || rebuild_block_tag_refs_cache_impl(pool)).await
 }
 
 async fn rebuild_block_tag_refs_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
@@ -281,23 +265,10 @@ pub async fn rebuild_block_tag_refs_cache_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<(), AppError> {
-    tracing::info!("rebuilding block_tag_refs cache");
-    let start = std::time::Instant::now();
-    let result = rebuild_block_tag_refs_cache_split_impl(write_pool, read_pool).await;
-    match result {
-        Ok(rows_affected) => {
-            tracing::info!(
-                rows_affected,
-                duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
-                "rebuilt block_tag_refs cache"
-            );
-            Ok(())
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "rebuild failed for block_tag_refs cache");
-            Err(e)
-        }
-    }
+    super::rebuild_with_timing("block_tag_refs", || {
+        rebuild_block_tag_refs_cache_split_impl(write_pool, read_pool)
+    })
+    .await
 }
 
 async fn rebuild_block_tag_refs_cache_split_impl(

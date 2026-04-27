@@ -44,13 +44,7 @@ pub async fn list_agenda(
     .fetch_all(pool)
     .await?;
 
-    build_page_response(rows, page.limit, |last| Cursor {
-        id: last.id.clone(),
-        position: None,
-        deleted_at: None,
-        seq: None,
-        rank: None,
-    })
+    build_page_response(rows, page.limit, |last| Cursor::for_id(last.id.clone()))
 }
 
 /// List blocks for a date *range* from the agenda cache, paginated.
@@ -146,11 +140,7 @@ pub async fn list_agenda_range(
     }
     let last_ac_date = ac_dates.last().cloned();
 
-    build_page_response(rows, page.limit, move |last| Cursor {
-        id: last.id.clone(),
-        position: None,
-        deleted_at: last_ac_date,
-        seq: None,
-        rank: None,
+    build_page_response(rows, page.limit, move |last| {
+        Cursor::for_id_and_deleted_at(last.id.clone(), last_ac_date)
     })
 }

@@ -236,11 +236,22 @@ pub(crate) const PKCE_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 /// `BasicClient`.  Instances are cheap to construct and `Send + Sync`
 /// — the only internal state is the PKCE verifier cache, which lives
 /// behind a `std::sync::Mutex`.
+///
+/// MAINT-151(d): the three endpoint URLs are parsed once at
+/// construction time and cached as their typed `oauth2` wrappers
+/// (`AuthUrl` / `TokenUrl` / `RedirectUrl`).  `build_client` clones
+/// these cheaply (each is a typed `String` newtype) instead of
+/// re-parsing on every `begin_authorize` / `exchange_code` /
+/// `refresh_token` call.  We do not cache the fully typestated
+/// `Client` itself: its 10-parameter typestate makes it awkward to
+/// store as a struct field and cloning it requires moving every
+/// endpoint slot through the typestate transitions, which is more
+/// expensive than the parse it would replace.
 pub struct OAuthClient {
     client_id: String,
-    auth_url: String,
-    token_url: String,
-    redirect_url: String,
+    auth_url: AuthUrl,
+    token_url: TokenUrl,
+    redirect_url: RedirectUrl,
     scopes: Vec<String>,
     /// PKCE verifier cache.
     ///
@@ -311,14 +322,15 @@ impl OAuthClient {
         redirect_url: String,
         scopes: Vec<String>,
     ) -> Result<Self, AppError> {
-        // Validate URLs up front — `AuthUrl::new` / `TokenUrl::new`
-        // would error later otherwise, inside begin_authorize /
-        // exchange_code.
-        AuthUrl::new(auth_url.clone())
+        // MAINT-151(d): parse the URLs once at construction time and
+        // store the typed wrappers.  `build_client` clones these (each
+        // is a typed `String` newtype) instead of re-parsing on every
+        // begin_authorize / exchange_code / refresh_token call.
+        let auth_url = AuthUrl::new(auth_url)
             .map_err(|e| AppError::Validation(format!("oauth.invalid_auth_url: {e}")))?;
-        TokenUrl::new(token_url.clone())
+        let token_url = TokenUrl::new(token_url)
             .map_err(|e| AppError::Validation(format!("oauth.invalid_token_url: {e}")))?;
-        RedirectUrl::new(redirect_url.clone())
+        let redirect_url = RedirectUrl::new(redirect_url)
             .map_err(|e| AppError::Validation(format!("oauth.invalid_redirect_url: {e}")))?;
 
         // Per oauth2 crate security note: disable automatic redirects
@@ -363,24 +375,23 @@ impl OAuthClient {
     /// Cheap — no network I/O.  Uses [`GoogleTokenResponse`] so the
     /// Google-specific `id_token` claim is deserialised alongside the
     /// standard fields.
-    fn build_client(&self) -> Result<ConfiguredClient, AppError> {
-        let auth_url = AuthUrl::new(self.auth_url.clone())
-            .map_err(|e| AppError::Validation(format!("oauth.invalid_auth_url: {e}")))?;
-        let token_url = TokenUrl::new(self.token_url.clone())
-            .map_err(|e| AppError::Validation(format!("oauth.invalid_token_url: {e}")))?;
-        let redirect_url = RedirectUrl::new(self.redirect_url.clone())
-            .map_err(|e| AppError::Validation(format!("oauth.invalid_redirect_url: {e}")))?;
-
-        Ok(Client::<
+    ///
+    /// MAINT-151(d): the three endpoint URLs are pre-parsed and
+    /// cached on `self`, so this just clones them (each is a typed
+    /// `String` newtype) instead of re-parsing on every call.  The
+    /// function is now infallible — every parse error has already
+    /// been raised by [`OAuthClient::new`].
+    fn build_client(&self) -> ConfiguredClient {
+        Client::<
             StandardErrorResponse<BasicErrorResponseType>,
             GoogleTokenResponse,
             BasicTokenIntrospectionResponse,
             StandardRevocableToken,
             StandardErrorResponse<RevocationErrorResponseType>,
         >::new(ClientId::new(self.client_id.clone()))
-        .set_auth_uri(auth_url)
-        .set_token_uri(token_url)
-        .set_redirect_uri(redirect_url))
+        .set_auth_uri(self.auth_url.clone())
+        .set_token_uri(self.token_url.clone())
+        .set_redirect_uri(self.redirect_url.clone())
     }
 
     /// Start a new OAuth authorization.  Generates a fresh PKCE pair +
@@ -391,7 +402,7 @@ impl OAuthClient {
     /// [`AppError::Validation`] if the endpoint URLs are malformed.
     #[tracing::instrument(skip(self), err)]
     pub fn begin_authorize(&self) -> Result<AuthorizeUrl, AppError> {
-        let client = self.build_client()?;
+        let client = self.build_client();
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
 
         let mut builder = client
@@ -460,7 +471,7 @@ impl OAuthClient {
                 .ok_or_else(|| AppError::Validation("oauth.invalid_state".to_owned()))?
         };
 
-        let client = self.build_client()?;
+        let client = self.build_client();
         let response = client
             .exchange_code(AuthorizationCode::new(code))
             .set_pkce_verifier(verifier)
@@ -468,7 +479,17 @@ impl OAuthClient {
             .await
             .map_err(|e| AppError::Validation(format!("oauth.exchange_failed: {e}")))?;
 
-        let token = token_from_response(&response, /* require_refresh = */ true)?;
+        let (access_part, refresh) =
+            token_from_response(&response, /* require_refresh = */ true)?;
+        // `require_refresh = true` guarantees `refresh.is_some()`.
+        let refresh = refresh.ok_or_else(|| {
+            AppError::Validation("oauth.exchange_failed: response missing refresh_token".to_owned())
+        })?;
+        let token = Token {
+            access: access_part.access,
+            refresh,
+            expires_at: access_part.expires_at,
+        };
         let email = extract_email_from_response(&response);
         Ok((token, email))
     }
@@ -488,7 +509,7 @@ impl OAuthClient {
     ///   Validation taxonomy because they are not HTTP 401-class.
     #[tracing::instrument(skip(self, token), err)]
     pub async fn refresh_token(&self, token: &Token) -> Result<Token, AppError> {
-        let client = self.build_client()?;
+        let client = self.build_client();
         let refresh_token = RefreshToken::new(token.refresh.expose_secret().to_owned());
 
         let response = client
@@ -497,15 +518,20 @@ impl OAuthClient {
             .await
             .map_err(|e| classify_refresh_error(&e))?;
 
-        let mut refreshed = token_from_response(&response, /* require_refresh = */ false)?;
+        let (access_part, refresh) =
+            token_from_response(&response, /* require_refresh = */ false)?;
         // Google sometimes omits `refresh_token` from a refresh
         // response (the original stays valid).  Carry the previous
         // refresh token forward so callers always end up with a
-        // complete Token pair.
-        if response.refresh_token().is_none() {
-            refreshed.refresh = token.refresh.clone();
-        }
-        Ok(refreshed)
+        // complete Token pair.  MAINT-151(e): the `Option` here makes
+        // the missing-refresh case type-visible — no empty-string
+        // placeholder convention.
+        let refresh = refresh.unwrap_or_else(|| token.refresh.clone());
+        Ok(Token {
+            access: access_part.access,
+            refresh,
+            expires_at: access_part.expires_at,
+        })
     }
 }
 
@@ -561,8 +587,13 @@ where
     let refreshed = match oauth_client.refresh_token(&initial).await {
         Ok(t) => t,
         Err(e) => {
-            // Revoked / invalid refresh token — give up, prompt for reauth.
-            if is_revocation_error(&e) {
+            // Revoked / invalid refresh token — give up, prompt for
+            // reauth.  `classify_refresh_error` collapses
+            // `invalid_grant` / `unauthorized_client` to
+            // `AppError::Gcal(Unauthorized)`; matching on that here
+            // (rather than calling a one-line helper) keeps the
+            // recovery branch readable in-place.  MAINT-151(f).
+            if matches!(&e, AppError::Gcal(GcalErrorKind::Unauthorized)) {
                 tracing::warn!(
                     target: "gcal",
                     error = %e,
@@ -629,14 +660,28 @@ pub async fn persist_oauth_account_email(pool: &SqlitePool, email: &str) -> Resu
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Convert a [`GoogleTokenResponse`] into our [`Token`].
+/// The non-refresh portion of a [`Token`] — the bits the token
+/// endpoint always provides regardless of whether the response
+/// carries a refresh token.  Returned alongside the optional refresh
+/// token by [`token_from_response`] so the missing-refresh case is
+/// encoded in the type system rather than papered over with an
+/// empty-string placeholder (MAINT-151(e)).
+#[derive(Debug, Clone)]
+struct AccessPart {
+    access: SecretString,
+    expires_at: DateTime<Utc>,
+}
+
+/// Convert a [`GoogleTokenResponse`] into the access half of a
+/// [`Token`] plus the optional refresh token from the response.
 ///
 /// When `require_refresh` is `true` (the initial `exchange_code`
 /// path) the response MUST include a `refresh_token` — Google issues
 /// one on the first exchange when `access_type=offline` is requested
 /// (the default in oauth2 v5's authorize-url builder).  When `false`
-/// (the refresh-grant path) a missing refresh token is tolerated:
-/// callers carry the previously-held one forward.
+/// (the refresh-grant path) a missing refresh token is tolerated;
+/// the caller is expected to merge the previously-held refresh token
+/// in its place.
 ///
 /// # Errors
 /// [`AppError::Validation`] keyed `oauth.exchange_failed` if
@@ -644,7 +689,7 @@ pub async fn persist_oauth_account_email(pool: &SqlitePool, email: &str) -> Resu
 fn token_from_response(
     response: &GoogleTokenResponse,
     require_refresh: bool,
-) -> Result<Token, AppError> {
+) -> Result<(AccessPart, Option<SecretString>), AppError> {
     let access = SecretString::from(response.access_token().secret().to_owned());
     let refresh = response
         .refresh_token()
@@ -655,27 +700,13 @@ fn token_from_response(
     let expires_at = Utc::now()
         + ChronoDuration::from_std(expires_in).unwrap_or_else(|_| ChronoDuration::seconds(3600));
 
-    let refresh = match (refresh, require_refresh) {
-        (Some(r), _) => r,
-        (None, false) => {
-            // Placeholder — the caller will overwrite with the
-            // previously-held refresh token.  Using an empty secret
-            // keeps the type constructor simple while making the bug
-            // obvious in debug output if it ever slips through.
-            SecretString::from(String::new())
-        }
-        (None, true) => {
-            return Err(AppError::Validation(
-                "oauth.exchange_failed: response missing refresh_token".to_owned(),
-            ));
-        }
-    };
+    if require_refresh && refresh.is_none() {
+        return Err(AppError::Validation(
+            "oauth.exchange_failed: response missing refresh_token".to_owned(),
+        ));
+    }
 
-    Ok(Token {
-        access,
-        refresh,
-        expires_at,
-    })
+    Ok((AccessPart { access, expires_at }, refresh))
 }
 
 /// Pull the `email` claim out of an ID token carried in the
@@ -744,17 +775,6 @@ fn classify_refresh_error(
         }
     }
     AppError::Validation(format!("oauth.refresh_failed: {err}"))
-}
-
-/// Does this refresh error indicate that the refresh token is
-/// permanently revoked (as opposed to a transient failure)?
-///
-/// Revocation is now signalled by [`AppError::Gcal(GcalErrorKind::Unauthorized)`]
-/// (see [`classify_refresh_error`]).  We keep the predicate so the
-/// `fetch_with_auto_refresh` wrapper logic reads naturally rather than
-/// pattern-matching inline.
-fn is_revocation_error(err: &AppError) -> bool {
-    matches!(err, AppError::Gcal(GcalErrorKind::Unauthorized))
 }
 
 // ---------------------------------------------------------------------------
@@ -913,9 +933,12 @@ mod tests {
     #[test]
     fn google_constructor_uses_pinned_endpoints() {
         let client = OAuthClient::google(54321).unwrap();
-        assert_eq!(client.auth_url, GOOGLE_AUTH_URL);
-        assert_eq!(client.token_url, GOOGLE_TOKEN_URL);
-        assert_eq!(client.redirect_url, "http://127.0.0.1:54321");
+        // Compare via the typed wrappers' string accessor — MAINT-151(d)
+        // changed `OAuthClient`'s fields from `String` to the typed
+        // `AuthUrl` / `TokenUrl` / `RedirectUrl` newtypes.
+        assert_eq!(client.auth_url.as_str(), GOOGLE_AUTH_URL);
+        assert_eq!(client.token_url.as_str(), GOOGLE_TOKEN_URL);
+        assert_eq!(client.redirect_url.as_str(), "http://127.0.0.1:54321");
         assert_eq!(client.client_id, CLIENT_ID);
         assert!(client.scopes.iter().any(|s| s == GOOGLE_CALENDAR_SCOPE));
         assert!(client.scopes.iter().any(|s| s == OPENID_EMAIL_SCOPE));
@@ -1293,10 +1316,11 @@ mod tests {
         // as `refresh_token=` and Google responds with `invalid_grant`,
         // which `classify_refresh_error` maps to
         // `AppError::Gcal(GcalErrorKind::Unauthorized)`.  The
-        // `fetch_with_auto_refresh` wrapper recognises that variant via
-        // `is_revocation_error` and emits `gcal:reauth_required` —
-        // exactly the right user-facing outcome (the user has to redo
-        // the OAuth flow because there is no usable refresh token).
+        // `fetch_with_auto_refresh` wrapper recognises that variant
+        // inline (MAINT-151(f) inlined the former `is_revocation_error`
+        // predicate) and emits `gcal:reauth_required` — exactly the
+        // right user-facing outcome (the user has to redo the OAuth
+        // flow because there is no usable refresh token).
         //
         // This test pins that error variant so a future change (e.g. a
         // synchronous local validation that returns a different error

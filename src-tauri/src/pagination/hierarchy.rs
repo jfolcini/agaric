@@ -75,12 +75,11 @@ pub async fn list_children(
     .fetch_all(pool)
     .await?;
 
-    build_page_response(rows, page.limit, |last| Cursor {
-        id: last.id.clone(),
-        position: Some(last.position.unwrap_or(NULL_POSITION_SENTINEL)),
-        deleted_at: None,
-        seq: None,
-        rank: None,
+    build_page_response(rows, page.limit, |last| {
+        Cursor::for_id_and_position(
+            last.id.clone(),
+            last.position.unwrap_or(NULL_POSITION_SENTINEL),
+        )
     })
 }
 
@@ -133,13 +132,7 @@ pub async fn list_by_type(
     .fetch_all(pool)
     .await?;
 
-    build_page_response(rows, page.limit, |last| Cursor {
-        id: last.id.clone(),
-        position: None,
-        deleted_at: None,
-        seq: None,
-        rank: None,
-    })
+    build_page_response(rows, page.limit, |last| Cursor::for_id(last.id.clone()))
 }
 
 /// List conflict blocks, paginated.
@@ -175,11 +168,5 @@ pub async fn list_conflicts(
     .fetch_all(pool)
     .await?;
 
-    build_page_response(rows, page.limit, |last| Cursor {
-        id: last.id.clone(),
-        position: None,
-        deleted_at: None,
-        seq: None,
-        rank: None,
-    })
+    build_page_response(rows, page.limit, |last| Cursor::for_id(last.id.clone()))
 }
