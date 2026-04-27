@@ -11,23 +11,7 @@ use crate::error::AppError;
 /// Deletes all existing rows and re-populates from `blocks` where
 /// `block_type = 'page'` and not soft-deleted.
 pub async fn rebuild_pages_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    tracing::info!("rebuilding pages cache");
-    let start = std::time::Instant::now();
-    let result = rebuild_pages_cache_impl(pool).await;
-    match result {
-        Ok(rows_affected) => {
-            tracing::info!(
-                rows_affected,
-                duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
-                "rebuilt pages cache"
-            );
-            Ok(())
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "rebuild failed for pages cache");
-            Err(e)
-        }
-    }
+    super::rebuild_with_timing("pages", || rebuild_pages_cache_impl(pool)).await
 }
 
 async fn rebuild_pages_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {

@@ -6,6 +6,16 @@
 
 use chrono::Datelike;
 
+/// MAINT-152(b) — calendar-range bound for `+Nm` / `+Ny` shifts.
+///
+/// Shifts that resolve to a year outside `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR`
+/// return `None` instead of producing garbage dates. The bound is deliberately
+/// loose; it exists to guard against pathological input (e.g. `+99999999y`
+/// underflowing/overflowing the i64 month arithmetic), not to enforce a
+/// product-level calendar range.
+const MIN_CALENDAR_YEAR: i64 = 1900;
+const MAX_CALENDAR_YEAR: i64 = 2200;
+
 /// Return the number of days in the given month of the given year.
 pub(super) fn days_in_month(year: i32, month: u32) -> u32 {
     chrono::NaiveDate::from_ymd_opt(
@@ -15,6 +25,34 @@ pub(super) fn days_in_month(year: i32, month: u32) -> u32 {
     )
     .map(|d| d.pred_opt().unwrap().day())
     .unwrap_or(28)
+}
+
+/// MAINT-152(b) — shift `base` by `n_months` months, clamping the resulting
+/// day-of-month against the destination month length so e.g. shifting from
+/// `2024-02-29` by 12 months lands on `2025-02-28`.
+///
+/// Shared by the `+Nm` arm (passes `n` directly) and the `+Ny` arm (passes
+/// `n * 12`). Returns `None` if the shifted year falls outside the
+/// `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR` guard rail or the month
+/// arithmetic overflows i64.
+fn shift_by_months(base: chrono::NaiveDate, n_months: i64) -> Option<chrono::NaiveDate> {
+    let year = base.year();
+    let month = base.month();
+    let day = base.day();
+
+    let total_months = (year as i64)
+        .checked_mul(12)?
+        .checked_add(month as i64 - 1)?
+        .checked_add(n_months)?;
+    let new_year_i64 = total_months.div_euclid(12);
+    let new_month: u32 = u32::try_from(total_months.rem_euclid(12) + 1)
+        .expect("invariant: rem_euclid(12) + 1 is in [1, 12]");
+    if !(MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR).contains(&new_year_i64) {
+        return None;
+    }
+    let new_year = i32::try_from(new_year_i64).ok()?;
+    let max_day = days_in_month(new_year, new_month);
+    chrono::NaiveDate::from_ymd_opt(new_year, new_month, day.min(max_day))
 }
 
 /// Shift a `YYYY-MM-DD` date string by a recurrence interval once from
@@ -58,42 +96,13 @@ pub(crate) fn shift_date_once(
             match unit {
                 "d" => base + chrono::Duration::days(n),
                 "w" => base + chrono::Duration::days(n * 7),
-                "m" => {
-                    let total_months = (year as i64)
-                        .checked_mul(12)?
-                        .checked_add(month as i64 - 1)?
-                        .checked_add(n)?;
-                    let new_year_i64 = total_months.div_euclid(12);
-                    let new_month: u32 = u32::try_from(total_months.rem_euclid(12) + 1)
-                        .expect("invariant: rem_euclid(12) + 1 is in [1, 12]");
-                    // Clamp to a reasonable calendar range; return None for
-                    // extreme values instead of producing garbage dates.
-                    if !(1900..=2200).contains(&new_year_i64) {
-                        return None;
-                    }
-                    let new_year = i32::try_from(new_year_i64).ok()?;
-                    let max_day = days_in_month(new_year, new_month);
-                    chrono::NaiveDate::from_ymd_opt(new_year, new_month, day.min(max_day))?
-                }
-                "y" => {
-                    // M-80: `+Ny` is `N*12` months. Reuse the month branch's
-                    // leap-day clamp so e.g. `+1y` from 2024-02-29 lands on
-                    // 2025-02-28 (Feb 29 only exists in leap years).
-                    let n_months = n.checked_mul(12)?;
-                    let total_months = (year as i64)
-                        .checked_mul(12)?
-                        .checked_add(month as i64 - 1)?
-                        .checked_add(n_months)?;
-                    let new_year_i64 = total_months.div_euclid(12);
-                    let new_month: u32 = u32::try_from(total_months.rem_euclid(12) + 1)
-                        .expect("invariant: rem_euclid(12) + 1 is in [1, 12]");
-                    if !(1900..=2200).contains(&new_year_i64) {
-                        return None;
-                    }
-                    let new_year = i32::try_from(new_year_i64).ok()?;
-                    let max_day = days_in_month(new_year, new_month);
-                    chrono::NaiveDate::from_ymd_opt(new_year, new_month, day.min(max_day))?
-                }
+                // MAINT-152(b): `+Nm` and `+Ny` share the leap-day-clamping
+                // month arithmetic via `shift_by_months`; the `y` arm just
+                // multiplies by 12 first. M-80: `+1y` from 2024-02-29 lands
+                // on 2025-02-28 because the helper clamps day against the
+                // destination month length.
+                "m" => shift_by_months(base, n)?,
+                "y" => shift_by_months(base, n.checked_mul(12)?)?,
                 _ => return None,
             }
         }

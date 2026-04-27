@@ -112,6 +112,32 @@ pub async fn upsert_peer_ref_with_cert(
 /// Sets `last_hash`, `last_sent_hash`, and `synced_at` (current UTC time).
 /// Returns [`AppError::NotFound`] if `peer_id` does not exist.
 ///
+/// # Empty-string sentinel for `last_sent_hash`
+///
+/// `last_sent_hash` accepts the empty string (`""`) as a "we sent
+/// nothing this session" sentinel. Two call sites use it:
+///
+/// 1. The per-session [`crate::sync_protocol::orchestrator`] propagates
+///    the empty-string default when its `pending_ops_to_send` was empty
+///    (typical for an initiator that has no new ops since the previous
+///    sync) — see the `pending_ops_to_send.last().…unwrap_or_default()`
+///    expression in `handle_message(SyncComplete)`.
+/// 2. [`crate::sync_daemon::snapshot_transfer::try_receive_snapshot_catchup`]
+///    explicitly passes `""` after applying a snapshot, because the
+///    snapshot apply path does not stream ops in either direction.
+///
+/// The empty value is *stored verbatim* in the `last_sent_hash` column;
+/// downstream readers must treat it as "no last-sent hash recorded" and
+/// not as a real hash.
+///
+/// **Migration follow-up:** the type-visible alternative is
+/// `Option<&str>` (with `None` mapping to NULL or the empty string in
+/// the column). That requires touching every call site
+/// (`complete_sync` in `sync_protocol::operations`, the orchestrator's
+/// `SyncComplete` arm, `snapshot_transfer`, and several test files);
+/// the doc-comment route is preferred for the MAINT-149 batch and the
+/// type migration is left as a separate small refactor.
+///
 /// **Caller responsibility:** this should run inside a `BEGIN IMMEDIATE`
 /// transaction in production to prevent concurrent modifications.
 pub async fn update_on_sync(

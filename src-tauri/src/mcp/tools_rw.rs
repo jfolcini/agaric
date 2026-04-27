@@ -42,7 +42,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
-use super::actor::{ActorContext, ACTOR};
+use super::actor::ActorContext;
+use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{parse_args, to_tool_result};
 use super::registry::{
     ToolDescription, ToolRegistry, TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_CREATE_PAGE,
@@ -166,39 +167,32 @@ impl ToolRegistry for ReadWriteTools {
         args: Value,
         ctx: &ActorContext,
     ) -> impl Future<Output = Result<Value, AppError>> + Send {
-        let scoped = ctx.clone();
+        // MAINT-150 (h): ACTOR scope + name-clone boilerplate is
+        // shared with `tools_ro` via `super::dispatch::scoped_dispatch`.
         let pool = self.pool.clone();
         let materializer = self.materializer.clone();
         let device_id = self.device_id.clone();
-        let name = name.to_string();
-        async move {
-            ACTOR
-                .scope(scoped, async move {
-                    match name.as_str() {
-                        TOOL_APPEND_BLOCK => {
-                            handle_append_block(&pool, &materializer, &device_id, args).await
-                        }
-                        TOOL_UPDATE_BLOCK_CONTENT => {
-                            handle_update_block_content(&pool, &materializer, &device_id, args)
-                                .await
-                        }
-                        TOOL_SET_PROPERTY => {
-                            handle_set_property(&pool, &materializer, &device_id, args).await
-                        }
-                        TOOL_ADD_TAG => {
-                            handle_add_tag(&pool, &materializer, &device_id, args).await
-                        }
-                        TOOL_CREATE_PAGE => {
-                            handle_create_page(&pool, &materializer, &device_id, args).await
-                        }
-                        TOOL_DELETE_BLOCK => {
-                            handle_delete_block(&pool, &materializer, &device_id, args).await
-                        }
-                        other => Err(AppError::NotFound(format!("unknown tool `{other}`"))),
-                    }
-                })
-                .await
-        }
+        scoped_dispatch(ctx, name, move |name| async move {
+            match name.as_str() {
+                TOOL_APPEND_BLOCK => {
+                    handle_append_block(&pool, &materializer, &device_id, args).await
+                }
+                TOOL_UPDATE_BLOCK_CONTENT => {
+                    handle_update_block_content(&pool, &materializer, &device_id, args).await
+                }
+                TOOL_SET_PROPERTY => {
+                    handle_set_property(&pool, &materializer, &device_id, args).await
+                }
+                TOOL_ADD_TAG => handle_add_tag(&pool, &materializer, &device_id, args).await,
+                TOOL_CREATE_PAGE => {
+                    handle_create_page(&pool, &materializer, &device_id, args).await
+                }
+                TOOL_DELETE_BLOCK => {
+                    handle_delete_block(&pool, &materializer, &device_id, args).await
+                }
+                other => Err(unknown_tool_error(other)),
+            }
+        })
     }
 }
 
@@ -1151,7 +1145,7 @@ mod tests {
     /// `LAST_APPEND.scope(...)` and checking the cell after the call.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn append_block_populates_last_append_inside_scope() {
-        use crate::mcp::last_append::LAST_APPEND;
+        use crate::task_locals::LAST_APPEND;
         use std::cell::Cell;
 
         let (tools, mat, pool, _dir) = mk_tools().await;

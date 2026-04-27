@@ -576,6 +576,65 @@ pub async fn get_page_inner(
     })
 }
 
+/// Fetch a page + paginated subtree without a caller-supplied
+/// `space_id`. Looks up the page's own `space` property and feeds it
+/// into [`get_page_inner`], so the FEAT-3 Phase 7 membership check is
+/// trivially satisfied.
+///
+/// Used by the MCP `get_page` tool (`crate::mcp::tools_ro`) where the
+/// agent is intentionally unscoped — every page the agent can name
+/// belongs to its own space by construction. Frontend callers always
+/// know their `space_id` and call [`get_page_inner`] directly; this
+/// helper exists so the tool layer stays a "thin wrapper" instead of
+/// owning a sibling `block_properties` query.
+///
+/// Error contract preserves the pre-Phase-7 MCP behaviour:
+///
+/// - unknown id → [`AppError::NotFound`]
+/// - block_type ≠ `"page"` → [`AppError::Validation`]
+///   (via [`get_page_inner`])
+/// - page exists but has no `space` property → [`AppError::Validation`]
+///   (so agents can distinguish "no such page" from "exists but
+///   unscoped" via the error category).
+///
+/// MAINT-150 (g): pulled out of `mcp::tools_ro::handle_get_page` so
+/// `mcp::tools_ro` no longer carries direct SQL — the module header
+/// invariant is "thin wrapper around `*_inner`".
+#[instrument(skip(pool), err)]
+pub async fn get_page_unscoped_inner(
+    pool: &SqlitePool,
+    page_id: &str,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageSubtreeResponse, AppError> {
+    // Look up the page's own `space` property. The `block_properties`
+    // table is keyed `(block_id, key)` so a single query is enough; we
+    // intentionally do not join `blocks` because the next branch wants
+    // to distinguish "no row" (page may not exist) from "row with
+    // null value_ref" (defensive — should not occur for `space`).
+    let space_id: Option<String> = sqlx::query_scalar!(
+        r#"SELECT value_ref FROM block_properties
+           WHERE block_id = ? AND key = 'space'"#,
+        page_id,
+    )
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+    let Some(space_id) = space_id else {
+        // No space property — distinguish "unknown id" (NotFound) from
+        // "exists but unscoped" (Validation) by hitting `get_block_inner`
+        // first; it returns `NotFound` for unknown ids. If the block
+        // exists but has no space, fall through to `Validation` so the
+        // error category matches what an MCP agent would have seen
+        // pre-Phase-7.
+        get_block_inner(pool, page_id.to_string()).await?;
+        return Err(AppError::Validation(format!(
+            "page '{page_id}' has no space property"
+        )));
+    };
+    get_page_inner(pool, page_id, &space_id, cursor, limit).await
+}
+
 /// Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]

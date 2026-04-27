@@ -208,6 +208,89 @@ impl Cursor {
         serde_json::from_str(&json)
             .map_err(|e| AppError::Validation(format!("invalid cursor JSON: {e}")))
     }
+
+    // -------------------------------------------------------------------
+    // Constructors (MAINT-148c)
+    // -------------------------------------------------------------------
+    //
+    // The optional fields on `Cursor` are populated in a small number of
+    // recurring shapes across `pagination::*` (and `fts::search`). The
+    // constructors below cover the four common shapes; each call site
+    // collapses from a 6-line struct literal to a one-line helper call.
+    // Shapes not enumerated here (currently only the FTS rank cursor in
+    // `fts::search`) keep using the struct literal.
+
+    /// Cursor keyed only on `id` — all other slots `None`.
+    ///
+    /// Used by `list_backlinks`, `list_by_type`, `list_conflicts`,
+    /// `list_undated_tasks`, `list_by_tag`, `query_by_property`, and
+    /// `list_agenda` (single-date variant).
+    #[must_use]
+    pub(super) fn for_id(id: String) -> Self {
+        Self {
+            id,
+            position: None,
+            deleted_at: None,
+            seq: None,
+            rank: None,
+        }
+    }
+
+    /// Cursor keyed on `(position, id)` — used by `list_children` whose
+    /// keyset is `(position ASC, id ASC)`. NULL positions are encoded
+    /// with [`NULL_POSITION_SENTINEL`] so they sort after positioned
+    /// siblings.
+    #[must_use]
+    pub(super) fn for_id_and_position(id: String, position: i64) -> Self {
+        Self {
+            id,
+            position: Some(position),
+            deleted_at: None,
+            seq: None,
+            rank: None,
+        }
+    }
+
+    /// Cursor keyed on `(deleted_at, id)` — used by `list_trash` and
+    /// `list_agenda_range` (which reuses `deleted_at` as the
+    /// agenda-cache `date` carrier per the H-8 fix in `agenda.rs`).
+    #[must_use]
+    pub(super) fn for_id_and_deleted_at(id: String, deleted_at: Option<String>) -> Self {
+        Self {
+            id,
+            position: None,
+            deleted_at,
+            seq: None,
+            rank: None,
+        }
+    }
+
+    /// Cursor keyed on `(seq, device_id)` — used by `list_block_history`
+    /// where `id` stores the op-log `device_id` tiebreaker.
+    #[must_use]
+    pub(super) fn for_history_seq(device_id: String, seq: i64) -> Self {
+        Self {
+            id: device_id,
+            position: None,
+            deleted_at: None,
+            seq: Some(seq),
+            rank: None,
+        }
+    }
+
+    /// Cursor keyed on `(created_at, seq, device_id)` — used by
+    /// `list_page_history`, where `deleted_at` reuses the slot to carry
+    /// the op-log `created_at` and `id` carries `device_id`.
+    #[must_use]
+    pub(super) fn for_history_full(device_id: String, created_at: String, seq: i64) -> Self {
+        Self {
+            id: device_id,
+            position: None,
+            deleted_at: Some(created_at),
+            seq: Some(seq),
+            rank: None,
+        }
+    }
 }
 
 impl PageRequest {

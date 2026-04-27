@@ -365,6 +365,33 @@ async fn pages_without_space(
 /// MAINT-1 — One-shot migration: move every pre-existing Personal page
 /// into the Work space.
 ///
+/// # Kill-date plan (MAINT-152(e))
+///
+/// **REMOVE AFTER `0.3.0`.** This entire function (plus
+/// [`migration_marker_set`] and [`pages_to_migrate`], plus the
+/// [`MIGRATION_THRESHOLD_ULID`] constant)
+/// is one-shot maintainer-only cruft: it exists solely to retro-fit pages
+/// in the maintainer's pre-`MIGRATION_THRESHOLD_ULID` (= 2026-04-26)
+/// vault into the Work space. On any device that has already booted at
+/// least once after this migration shipped, the marker fast-path makes it
+/// a pure no-op. Fresh installs created after the threshold cannot have
+/// candidate pages and the loop body never fires either.
+///
+/// **Removal trigger:** when `0.3.0` is cut, delete the function and its
+/// helpers in the same commit that bumps the version. Old DBs that have
+/// somehow never booted into a `0.2.x` build (unlikely) will need a
+/// manual schema reset (re-import from snapshot or wipe `~/.local/share/
+/// com.agaric.app/notes.db`); document that in the `0.3.0` release notes.
+/// The associated REVIEW-LATER entry (under MAINT-152) and 08-MISC-015
+/// can be closed at the same time.
+///
+/// The version target is intentionally conservative — `0.3.0` gives every
+/// active vault several minor releases to migrate naturally. If the
+/// installed-base inflection point arrives sooner (e.g. by the `0.2.x`
+/// series), the doc comment can be tightened then.
+///
+/// # Behaviour
+///
 /// Runs at boot AFTER `bootstrap_spaces` has finished. The migration is
 /// gated by two independent guards so it is safe to call on every boot
 /// and on every install scenario:
@@ -413,7 +440,7 @@ pub async fn migrate_personal_pages_to_work(
     // can both pass the outer fast-path; BEGIN IMMEDIATE serialises
     // them and the loser sees the marker the winner committed and
     // becomes a no-op.
-    if migration_marker_set_in_tx(&mut tx).await? {
+    if migration_marker_set(&mut *tx).await? {
         tx.rollback().await?;
         tracing::debug!(
             "personal_to_work_migration_v1 marker observed inside tx; concurrent peer won"
@@ -466,7 +493,17 @@ pub async fn migrate_personal_pages_to_work(
 
 /// Marker fast-path query: does the seeded Personal space block already
 /// carry `personal_to_work_migration_v1 = "true"`?
-async fn migration_marker_set(pool: &SqlitePool) -> Result<bool, AppError> {
+///
+/// MAINT-152(f) / 08-MISC-009: parameterised on `sqlx::Executor` so the
+/// same body serves both the outer pool-borrowing fast-path call and the
+/// inner BEGIN IMMEDIATE second-check call (`&mut *tx` reborrows the
+/// transaction's underlying connection). Replaced the
+/// pool-vs-tx-duplicated `migration_marker_set` /
+/// `migration_marker_set_in_tx` pair.
+async fn migration_marker_set<'e, E>(executor: E) -> Result<bool, AppError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let row = sqlx::query_scalar!(
         r#"SELECT 1 as "v: i32" FROM block_properties
            WHERE block_id = ?
@@ -474,26 +511,7 @@ async fn migration_marker_set(pool: &SqlitePool) -> Result<bool, AppError> {
              AND value_text = 'true'"#,
         SPACE_PERSONAL_ULID,
     )
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.is_some())
-}
-
-/// Same query as [`migration_marker_set`] but inside an existing
-/// transaction. Used for the second-check pattern after BEGIN IMMEDIATE
-/// so a concurrent peer that committed first turns this run into a
-/// no-op.
-async fn migration_marker_set_in_tx(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-) -> Result<bool, AppError> {
-    let row = sqlx::query_scalar!(
-        r#"SELECT 1 as "v: i32" FROM block_properties
-           WHERE block_id = ?
-             AND key = 'personal_to_work_migration_v1'
-             AND value_text = 'true'"#,
-        SPACE_PERSONAL_ULID,
-    )
-    .fetch_optional(&mut **tx)
+    .fetch_optional(executor)
     .await?;
     Ok(row.is_some())
 }

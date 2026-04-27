@@ -139,9 +139,53 @@ pub async fn get_setting(
     Ok(row.map(|r| r.value))
 }
 
-/// Write a typed setting by key.  Refuses to create new rows — every
-/// valid key is seeded by the migration, so a zero-row update means
-/// someone deleted the seed and the caller needs to know.
+/// Write a typed setting by key, on an arbitrary `sqlx::Executor`.
+/// Use this overload when the write must run on a `Transaction`
+/// (e.g. wrapped in a `BEGIN IMMEDIATE` along with sibling writes for
+/// atomicity) — passing the `&mut Transaction` avoids both the
+/// deadlock against an outer write lock and the loss of atomicity
+/// that would happen if we routed the same UPDATE through the pool.
+///
+/// `key` is a raw string here (rather than a typed [`GcalSettingKey`])
+/// so the generic `Executor` bound doesn't have to spell out the
+/// extra constraint when callers want to interpolate
+/// `GcalSettingKey::*.as_str()` inline.  Pair with [`set_setting`]
+/// for the typed pool variant — that is just a thin wrapper over
+/// this function.
+///
+/// MAINT-151(i).
+///
+/// # Errors
+/// * [`AppError::NotFound`] — the seeded row for `key` is missing.
+/// * [`AppError::Database`] — SQL error.
+pub async fn set_setting_in_tx<'a, E>(executor: E, key: &str, value: &str) -> Result<(), AppError>
+where
+    E: sqlx::Executor<'a, Database = sqlx::Sqlite>,
+{
+    let updated_at = now_rfc3339();
+    let result = sqlx::query!(
+        "UPDATE gcal_settings SET value = ?, updated_at = ? WHERE key = ?",
+        value,
+        updated_at,
+        key,
+    )
+    .execute(executor)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!(
+            "gcal_settings row missing for key '{key}'"
+        )));
+    }
+    Ok(())
+}
+
+/// Write a typed setting by key on the connection pool.  Refuses to
+/// create new rows — every valid key is seeded by the migration, so
+/// a zero-row update means someone deleted the seed and the caller
+/// needs to know.
+///
+/// Thin wrapper over [`set_setting_in_tx`]; transaction-bound writers
+/// should call that directly with their `&mut Transaction`.
 ///
 /// # Errors
 /// * [`AppError::NotFound`] — the seeded row for `key` is missing.
@@ -151,22 +195,7 @@ pub async fn set_setting(
     key: GcalSettingKey,
     value: &str,
 ) -> Result<(), AppError> {
-    let key_str = key.as_str();
-    let updated_at = now_rfc3339();
-    let result = sqlx::query!(
-        "UPDATE gcal_settings SET value = ?, updated_at = ? WHERE key = ?",
-        value,
-        updated_at,
-        key_str,
-    )
-    .execute(pool)
-    .await?;
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound(format!(
-            "gcal_settings row missing for key '{key_str}'"
-        )));
-    }
-    Ok(())
+    set_setting_in_tx(pool, key.as_str(), value).await
 }
 
 // ---------------------------------------------------------------------------

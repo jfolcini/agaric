@@ -25,14 +25,24 @@ use std::process::ExitCode;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
-const SOCKET_ENV: &str = "AGARIC_MCP_SOCKET";
-const APP_IDENTIFIER: &str = "com.agaric.app";
-
+// MAINT-150 (i): consume the canonical identifiers from
+// `agaric_lib::mcp` instead of redeclaring them locally. Keeping the
+// path constants in one place prevents the stub binary from drifting
+// from the in-process server (e.g. a default socket-filename change
+// that would silently strand any agent already running this stub).
+//
+// `APP_IDENTIFIER` is only needed by the unix branches of
+// [`default_socket_path`] — on Windows the named-pipe path is
+// already a fixed namespace constant ([`MCP_RO_PIPE_PATH`]) and the
+// identifier is not threaded through.
 #[cfg(unix)]
-const MCP_RO_SOCKET_FILENAME: &str = "mcp-ro.sock";
-
+use agaric_lib::mcp::APP_IDENTIFIER;
 #[cfg(windows)]
-const MCP_RO_PIPE_PATH: &str = r"\\.\pipe\agaric-mcp-ro";
+use agaric_lib::mcp::MCP_RO_PIPE_PATH;
+#[cfg(unix)]
+use agaric_lib::mcp::MCP_RO_SOCKET_FILENAME;
+
+const SOCKET_ENV: &str = "AGARIC_MCP_SOCKET";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {

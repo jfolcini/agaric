@@ -1,14 +1,35 @@
-//! Sync pairing module.
+//! Sync pairing module — passphrase exchange leg of the device pairing flow.
 //!
-//! Handles passphrase generation (EFF large wordlist), QR code payload
-//! construction, and pairing session management.
+//! # Place in the pairing flow
+//!
+//! Pairing is split across three modules with distinct responsibilities:
+//!
+//! - [`crate::commands::sync_cmds`] — Tauri-IPC orchestration: generates
+//!   the QR payload via this module, opens the pairing WebSocket via
+//!   [`crate::sync_net`], drives the peer through `DeviceOffer` /
+//!   `DeviceAccept`, and on success calls
+//!   [`crate::peer_refs::upsert_peer_ref_with_cert`] to persist the
+//!   peer's TOFU-pinned cert hash.
+//! - **This module (`pairing`)** — pure helpers + message types: EFF
+//!   wordlist passphrase generation, QR payload encoding/parsing
+//!   ([`pairing_qr_payload`] / [`parse_pairing_qr`]), the
+//!   [`PairingMessage`] wire type, and [`verify_device_exchange`] which
+//!   matches the inbound `DeviceOffer`/`DeviceAccept`'s passphrase and
+//!   `device_id` against the local `PairingSession`'s expectations.
+//! - [`crate::sync_cert`] — owns the persistent self-signed TLS
+//!   certificate and its hash; the hash that `verify_device_exchange`
+//!   returns is the value [`crate::peer_refs`] stores for the peer's
+//!   subsequent TOFU pin.
 //!
 //! Pairing messages travel as plaintext JSON over the WebSocket
 //! established by [`crate::sync_net::connection`], which is already
 //! mTLS-secured and TOFU-cert-pinned. Confidentiality and authenticity
 //! of the pairing exchange come from that rustls + cert-pin layer, not
 //! from a derived session key — there is no application-layer crypto
-//! in this module.
+//! in this module. Once `verify_device_exchange` returns
+//! `(device_id, cert_hash)`, the orchestration layer hands the hash to
+//! [`peer_refs`](crate::peer_refs) so the next reconnection can pin the
+//! peer cert (TOFU model — see `sync_net::tls::PinningCertVerifier`).
 
 use crate::error::AppError;
 

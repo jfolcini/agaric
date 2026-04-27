@@ -76,12 +76,8 @@ pub async fn list_trash(
     .fetch_all(pool)
     .await?;
 
-    build_page_response(rows, page.limit, |last| Cursor {
-        id: last.id.clone(),
-        position: None,
-        deleted_at: last.deleted_at.clone(),
-        seq: None,
-        rank: None,
+    build_page_response(rows, page.limit, |last| {
+        Cursor::for_id_and_deleted_at(last.id.clone(), last.deleted_at.clone())
     })
 }
 

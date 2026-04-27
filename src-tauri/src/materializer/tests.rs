@@ -1640,7 +1640,7 @@ async fn handle_fg_apply_op() {
         r#"{"block_id":"NOOP_BLK","to_text":"modified","prev_edit":null}"#,
     ));
     assert!(
-        handle_foreground_task(&pool, &task, &QueueMetrics::default(), &empty_gcal_handle())
+        handle_foreground_task(&pool, &task, &empty_gcal_handle())
             .await
             .is_ok(),
         "handle_foreground_task should succeed for valid ApplyOp"
@@ -1663,7 +1663,6 @@ async fn handle_fg_barrier() {
         handle_foreground_task(
             &pool,
             &MaterializeTask::Barrier(Arc::clone(&n)),
-            &QueueMetrics::default(),
             &empty_gcal_handle()
         )
         .await
@@ -1684,7 +1683,6 @@ async fn handle_fg_unexpected() {
         handle_foreground_task(
             &pool,
             &MaterializeTask::RebuildTagsCache,
-            &QueueMetrics::default(),
             &empty_gcal_handle()
         )
         .await
@@ -1701,7 +1699,6 @@ async fn handle_fg_unexpected_reindex() {
             &MaterializeTask::ReindexBlockLinks {
                 block_id: "01FAKE00000000000000000000".into()
             },
-            &QueueMetrics::default(),
             &empty_gcal_handle()
         )
         .await
@@ -2717,7 +2714,6 @@ async fn concurrent_dispatch() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_apply_ops_atomic_rollback_on_failure() {
     let (pool, _dir) = test_pool().await;
-    let metrics = std::sync::Arc::new(QueueMetrics::default());
 
     // First op: a valid create_block
     let good = make_op_record(
@@ -2736,7 +2732,7 @@ async fn batch_apply_ops_atomic_rollback_on_failure() {
     let bad = fake_op_record("create_block", "{}");
 
     let task = MaterializeTask::BatchApplyOps(StdArc::new(vec![good, bad]));
-    let result = handle_foreground_task(&pool, &task, &metrics, &empty_gcal_handle()).await;
+    let result = handle_foreground_task(&pool, &task, &empty_gcal_handle()).await;
     assert!(
         result.is_err(),
         "batch should fail because the last op has bad payload"
@@ -2756,7 +2752,6 @@ async fn batch_apply_ops_atomic_rollback_on_failure() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_apply_ops_all_succeed_commits() {
     let (pool, _dir) = test_pool().await;
-    let metrics = std::sync::Arc::new(QueueMetrics::default());
 
     let op1 = make_op_record(
         &pool,
@@ -2783,7 +2778,7 @@ async fn batch_apply_ops_all_succeed_commits() {
     .await;
 
     let task = MaterializeTask::BatchApplyOps(StdArc::new(vec![op1, op2]));
-    let result = handle_foreground_task(&pool, &task, &metrics, &empty_gcal_handle()).await;
+    let result = handle_foreground_task(&pool, &task, &empty_gcal_handle()).await;
     result.unwrap();
 
     // Both blocks should be visible
@@ -2807,7 +2802,6 @@ async fn batch_apply_ops_all_succeed_commits() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn purge_handler_cleans_page_aliases() {
     let (pool, _dir) = test_pool().await;
-    let metrics = std::sync::Arc::new(QueueMetrics::default());
 
     // Create a page block, soft-delete it, add a page alias
     insert_block_direct(&pool, "PURGE_PA_1", "page", "my page").await;
@@ -2837,7 +2831,7 @@ async fn purge_handler_cleans_page_aliases() {
     )
     .await;
     let task = MaterializeTask::ApplyOp(r);
-    handle_foreground_task(&pool, &task, &metrics, &empty_gcal_handle())
+    handle_foreground_task(&pool, &task, &empty_gcal_handle())
         .await
         .unwrap();
 
@@ -2859,7 +2853,6 @@ async fn purge_handler_cleans_page_aliases() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn purge_handler_cleans_projected_agenda_cache() {
     let (pool, _dir) = test_pool().await;
-    let metrics = std::sync::Arc::new(QueueMetrics::default());
 
     // Create a block, soft-delete it, add a projected_agenda_cache row
     insert_block_direct(&pool, "PURGE_PAC_1", "content", "task").await;
@@ -2896,7 +2889,7 @@ async fn purge_handler_cleans_projected_agenda_cache() {
     )
     .await;
     let task = MaterializeTask::ApplyOp(r);
-    handle_foreground_task(&pool, &task, &metrics, &empty_gcal_handle())
+    handle_foreground_task(&pool, &task, &empty_gcal_handle())
         .await
         .unwrap();
 
@@ -2926,7 +2919,6 @@ async fn purge_handler_cleans_projected_agenda_cache() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remove_tag_handler_cleans_inherited() {
     let (pool, _dir) = test_pool().await;
-    let metrics = std::sync::Arc::new(QueueMetrics::default());
 
     // Setup: block with a tag and child inheriting
     insert_block_direct(&pool, "RT_PARENT", "page", "parent page").await;
@@ -2978,7 +2970,7 @@ async fn remove_tag_handler_cleans_inherited() {
     )
     .await;
     let task = MaterializeTask::ApplyOp(r);
-    handle_foreground_task(&pool, &task, &metrics, &empty_gcal_handle())
+    handle_foreground_task(&pool, &task, &empty_gcal_handle())
         .await
         .unwrap();
 

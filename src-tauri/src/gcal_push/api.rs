@@ -188,6 +188,15 @@ const RATE_LIMIT_BURST: usize = 25;
 /// header — matches Google's typical client-library behaviour.
 const DEFAULT_RETRY_AFTER_MS: u64 = 1000;
 
+/// Per-request timeout for the shared `reqwest::Client`.  Covers the
+/// total request lifetime — connect + TLS handshake + read.  Keep in
+/// the same neighbourhood as Google's own client-library default; a
+/// timeout that is too short turns a slow-but-healthy upstream into a
+/// transient transport error and triggers retry storms, while one
+/// that is too long lets a hung connection block the connector's
+/// per-cycle deadline.
+const HTTP_CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
+
 impl GcalApi {
     /// Construct a production `GcalApi` pointing at the real Google
     /// Calendar endpoint.
@@ -250,7 +259,7 @@ impl GcalApi {
                 &url,
                 token,
                 Some(&CreateCalendarReq { summary: name }),
-                /*on_event*/ false,
+                NotFoundMeans::CalendarGone,
             )
             .await?;
         Ok(body.id)
@@ -273,7 +282,7 @@ impl GcalApi {
             reqwest::Method::DELETE,
             &url,
             token,
-            /*on_event*/ false,
+            NotFoundMeans::CalendarGone,
         )
         .await
     }
@@ -302,7 +311,7 @@ impl GcalApi {
                 &url,
                 token,
                 Some(&wire_event),
-                /*on_event*/ false,
+                NotFoundMeans::CalendarGone,
             )
             .await?;
         body.into_event_response()
@@ -335,7 +344,7 @@ impl GcalApi {
                 &url,
                 token,
                 Some(&wire_patch),
-                /*on_event*/ true,
+                NotFoundMeans::EventGone,
             )
             .await?;
         body.into_event_response()
@@ -358,8 +367,13 @@ impl GcalApi {
             "{}/calendars/{}/events/{}",
             self.base_url, calendar_id, event_id
         );
-        self.send_empty(reqwest::Method::DELETE, &url, token, /*on_event*/ true)
-            .await
+        self.send_empty(
+            reqwest::Method::DELETE,
+            &url,
+            token,
+            NotFoundMeans::EventGone,
+        )
+        .await
     }
 
     /// GET a single event.  Used by FEAT-5e's reconcile sweep to
@@ -402,7 +416,7 @@ impl GcalApi {
                 &url,
                 token,
                 None,
-                /*on_event*/ true,
+                NotFoundMeans::EventGone,
             )
             .await
         {
@@ -416,9 +430,9 @@ impl GcalApi {
     // ---------------------------------------------------------------
     // Private HTTP helpers — shared skeleton for every public method:
     // bucket-take → bearer auth → optional JSON body → send → translate
-    // via `reqwest_to_gcal_err` / `classify_error`.  `on_event` is the
-    // same bool passed to `classify_error` (event vs calendar path);
-    // MAINT-151(a) will replace it with a `PathKind` enum.
+    // via `reqwest_to_gcal_err` / `classify_error`.  `not_found_means`
+    // is the same enum passed to `classify_error` (event vs calendar
+    // path) so a 404 maps to the correct [`GcalErrorKind`] variant.
     // ---------------------------------------------------------------
 
     /// Issue a request that expects a JSON body in the response and
@@ -429,7 +443,7 @@ impl GcalApi {
         url: &str,
         token: &Token,
         body: Option<&B>,
-        on_event: bool,
+        not_found_means: NotFoundMeans,
     ) -> Result<T, AppError>
     where
         B: Serialize + ?Sized,
@@ -450,7 +464,7 @@ impl GcalApi {
         if status.is_success() {
             return resp.json::<T>().await.map_err(|e| reqwest_to_gcal_err(&e));
         }
-        Err(classify_error(status, &resp_headers(&resp), on_event).into())
+        Err(classify_error(status, &resp_headers(&resp), not_found_means).into())
     }
 
     /// Issue a request that does not send or expect a JSON body — the
@@ -461,7 +475,7 @@ impl GcalApi {
         method: reqwest::Method,
         url: &str,
         token: &Token,
-        on_event: bool,
+        not_found_means: NotFoundMeans,
     ) -> Result<(), AppError> {
         self.bucket.lock().await.take().await;
 
@@ -477,7 +491,7 @@ impl GcalApi {
         if status.is_success() {
             return Ok(());
         }
-        Err(classify_error(status, &resp_headers(&resp), on_event).into())
+        Err(classify_error(status, &resp_headers(&resp), not_found_means).into())
     }
 }
 
@@ -612,6 +626,23 @@ fn shift_date_forward(date_str: &str, delta_days: i64) -> Result<String, AppErro
 // HTTP-status → GcalErrorKind classifier
 // ---------------------------------------------------------------------------
 
+/// What an HTTP 404 means at the call site that issued the request.
+/// Replaces the previous `on_event: bool` flag — a typed enum makes
+/// the call sites self-documenting (no need for the
+/// `/*on_event*/ true` comment-as-name workaround) and removes the
+/// "which way is true?" reading-time penalty.  MAINT-151(a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NotFoundMeans {
+    /// Path is `/calendars/{id}` or `/calendars/{id}/events` — a 404
+    /// here means the dedicated calendar was deleted externally.
+    /// Maps to [`GcalErrorKind::CalendarGone`].
+    CalendarGone,
+    /// Path is `/calendars/{id}/events/{event_id}` — a 404 here means
+    /// the event row was deleted in the GCal UI.  Maps to
+    /// [`GcalErrorKind::EventGone`].
+    EventGone,
+}
+
 /// Copy response headers into a plain `Vec<(name, value)>` so we can
 /// continue consuming the body without racing the borrow checker.
 fn resp_headers(resp: &reqwest::Response) -> Vec<(String, String)> {
@@ -629,27 +660,22 @@ fn resp_headers(resp: &reqwest::Response) -> Vec<(String, String)> {
 /// Map a non-2xx HTTP status + header slice to the matching
 /// [`GcalErrorKind`] variant.
 ///
-/// `on_event`: `true` if the request targeted an event path
-/// (`/calendars/{id}/events/{event_id}`), `false` for a calendar-level
-/// path (`/calendars/{id}` or `/calendars/{id}/events`).  Distinguishes
-/// 404-on-event from 404-on-calendar, which require different recovery.
+/// `not_found_means`: how a 404 response should be classified for the
+/// call site that issued the request — see [`NotFoundMeans`].
 fn classify_error(
     status: reqwest::StatusCode,
     headers: &[(String, String)],
-    on_event: bool,
+    not_found_means: NotFoundMeans,
 ) -> GcalErrorKind {
     let code = status.as_u16();
     match code {
         400 => GcalErrorKind::InvalidRequest(format!("HTTP {code}")),
         401 => GcalErrorKind::Unauthorized,
         403 => GcalErrorKind::Forbidden(format!("HTTP {code}")),
-        404 => {
-            if on_event {
-                GcalErrorKind::EventGone
-            } else {
-                GcalErrorKind::CalendarGone
-            }
-        }
+        404 => match not_found_means {
+            NotFoundMeans::EventGone => GcalErrorKind::EventGone,
+            NotFoundMeans::CalendarGone => GcalErrorKind::CalendarGone,
+        },
         409 => GcalErrorKind::InvalidRequest(format!("HTTP {code}: conflict")),
         429 => GcalErrorKind::RateLimited {
             retry_after_ms: retry_after_from_headers(headers),
@@ -680,8 +706,8 @@ fn retry_after_from_headers(headers: &[(String, String)]) -> u64 {
 
 /// Map a bare [`reqwest::Error`] (network failure, JSON parse failure)
 /// into [`AppError`].  Network errors surface as
-/// [`GcalErrorKind::ServerError`] with status 0 — callers treat that
-/// as a transient failure and retry with back-off.
+/// [`GcalErrorKind::Transport`] — callers treat that as a transient
+/// failure and retry with back-off (MAINT-151(b)).
 ///
 /// JSON-parse failures in the response body are distinctive enough to
 /// return [`AppError::Json`] via the existing `#[from]` impl, so
@@ -690,10 +716,10 @@ fn reqwest_to_gcal_err(err: &reqwest::Error) -> AppError {
     if err.is_decode() {
         AppError::Validation(format!("gcal.api.decode_failed: {err}"))
     } else {
-        // Connect / timeout / protocol error — transient, same class
-        // as a 5xx.  We use status=0 as the sentinel for "no status
-        // because no response".
-        AppError::Gcal(GcalErrorKind::ServerError { status: 0 })
+        // Connect / timeout / protocol error — transient, same retry
+        // class as a 5xx but distinct in the taxonomy so logs and the
+        // CycleOutcome display do not print a misleading "HTTP 0".
+        AppError::Gcal(GcalErrorKind::Transport(err.to_string()))
     }
 }
 
@@ -712,7 +738,7 @@ fn shared_client() -> Result<reqwest::Client, AppError> {
     }
     let built = reqwest::Client::builder()
         .user_agent("Agaric/1.0 (gcal_push)")
-        .timeout(Duration::from_secs(30))
+        .timeout(HTTP_CLIENT_TIMEOUT)
         .build()
         .map_err(|e| AppError::Validation(format!("gcal.api.http_client_build_failed: {e}")))?;
     // Benign race: two threads may both get into `build()` on first

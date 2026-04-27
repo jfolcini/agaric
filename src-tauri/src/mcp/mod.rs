@@ -17,8 +17,8 @@
 
 pub mod activity;
 pub mod actor;
+pub mod dispatch;
 pub mod handler_utils;
-pub mod last_append;
 pub mod registry;
 pub mod server;
 pub mod summarise;
@@ -185,6 +185,15 @@ impl Drop for ConnectionCounterGuard {
         self.0.fetch_sub(1, Ordering::AcqRel);
     }
 }
+
+/// Tauri application identifier — must mirror the `identifier` field in
+/// `tauri.conf.json`. Surfaced here (rather than as a hidden literal in
+/// `bin/agaric-mcp.rs`) so the stub binary and any future MCP-adjacent
+/// path-resolver share a single source of truth for the per-platform
+/// data-dir layout.
+///
+/// MAINT-150 (i).
+pub const APP_IDENTIFIER: &str = "com.agaric.app";
 
 /// Marker-file name inside the application data directory. When this file
 /// exists, the MCP read-only socket is bound at startup; otherwise the task

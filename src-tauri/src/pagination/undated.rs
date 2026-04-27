@@ -37,11 +37,5 @@ pub async fn list_undated_tasks(
     .fetch_all(pool)
     .await?;
 
-    build_page_response(rows, page.limit, |last| Cursor {
-        id: last.id.clone(),
-        position: None,
-        deleted_at: None,
-        seq: None,
-        rank: None,
-    })
+    build_page_response(rows, page.limit, |last| Cursor::for_id(last.id.clone()))
 }

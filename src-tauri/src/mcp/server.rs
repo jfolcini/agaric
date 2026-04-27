@@ -66,6 +66,16 @@ pub const JSONRPC_INTERNAL_ERROR: i64 = -32603;
 /// undefined method" rely on this split.
 pub const JSONRPC_RESOURCE_NOT_FOUND: i64 = -32001;
 
+/// Maximum length (in Unicode scalars / `char`s) of the clipped error
+/// message stored in [`super::activity::ActivityResult::Err`] when a
+/// `tools/call` dispatch fails. Keeps the activity feed entries short
+/// while preserving enough context for "block not found" / "validation
+/// failed: …" style diagnostics. Char-based clipping (via
+/// `chars().take(ERROR_CLIP_CAP)`) always lands on a UTF-8 char
+/// boundary so the output is safe to serialise as JSON even when the
+/// underlying error message contains multi-byte codepoints.
+pub(crate) const ERROR_CLIP_CAP: usize = 200;
+
 // ---------------------------------------------------------------------------
 // Handshake payload types
 // ---------------------------------------------------------------------------
@@ -427,12 +437,16 @@ async fn handle_tools_call<R: ToolRegistry>(
     // so the emitted activity entry can carry it for per-entry Undo.
     // Capturing happens INSIDE the scope so the task-local is still
     // alive when we read it.
+    //
+    // MAINT-150 (j): `LAST_APPEND` lives in `crate::task_locals` so
+    // `op_log` (core) does not depend on `mcp` (integration) just to
+    // populate the cell.
     let (result, op_ref) = ACTOR
         .scope(scoped_ctx, async {
-            super::last_append::LAST_APPEND
+            crate::task_locals::LAST_APPEND
                 .scope(std::cell::Cell::new(None), async {
                     let r = registry.call_tool(&name, args, &call_ctx).await;
-                    let captured = super::last_append::LAST_APPEND.with(std::cell::Cell::take);
+                    let captured = crate::task_locals::LAST_APPEND.with(std::cell::Cell::take);
                     (r, captured)
                 })
                 .await
@@ -444,7 +458,9 @@ async fn handle_tools_call<R: ToolRegistry>(
     // failure). The frontend activity feed renders errors too, so the
     // emission branches cover both the Ok and Err arms.
     if let Some(ref ctx) = state.activity_ctx {
-        use super::activity::{emit_tool_completion, ActivityResult as ActRes, ActorKind};
+        use super::activity::{
+            emit_tool_completion, ActivityResult as ActRes, ActorKind, ToolCompletionEvent,
+        };
         // FEAT-4k: per-tool privacy-safe summaries. On success, dispatch
         // through `super::summarise::summarise` so each tool produces a
         // structural one-line summary (counts, ULID prefixes, property
@@ -468,10 +484,10 @@ async fn handle_tools_call<R: ToolRegistry>(
             ),
             Err(err) => {
                 // Clip the message to avoid leaking long error chains
-                // into the activity feed. 200 Unicode scalars is
-                // plenty for "block not found" / "validation failed:
-                // ..." style messages.
-                let short: String = err.to_string().chars().take(200).collect();
+                // into the activity feed. See [`ERROR_CLIP_CAP`] for
+                // the rationale on the cap and the Unicode-scalar
+                // (rather than byte) basis.
+                let short: String = err.to_string().chars().take(ERROR_CLIP_CAP).collect();
                 (name.clone(), ActRes::Err(short))
             }
         };
@@ -481,13 +497,15 @@ async fn handle_tools_call<R: ToolRegistry>(
         // `clientInfo.name` (see the `unwrap_or_else` fallback above).
         emit_tool_completion(
             ctx,
-            name.clone(),
-            summary,
-            ActorKind::Agent,
-            Some(agent_name.clone()),
-            result_variant,
-            state.session_id.clone(),
-            op_ref,
+            ToolCompletionEvent {
+                tool_name: &name,
+                summary: &summary,
+                actor_kind: ActorKind::Agent,
+                agent_name: Some(agent_name.clone()),
+                result: result_variant,
+                session_id: &state.session_id,
+                op_ref,
+            },
         );
     }
 
@@ -2123,7 +2141,7 @@ mod tests {
         // directly so the wiring is verified before FEAT-4c lands.
         use super::super::activity::{
             emit_tool_completion, ActivityContext, ActivityEmitter, ActivityResult, ActivityRing,
-            ActorKind, RecordingEmitter,
+            ActorKind, RecordingEmitter, ToolCompletionEvent,
         };
         use std::sync::Mutex;
 
@@ -2146,13 +2164,15 @@ mod tests {
 
         emit_tool_completion(
             ctx_ref,
-            "search",
-            "searched for '…' (0 results)",
-            ActorKind::Agent,
-            Some("claude-desktop".to_string()),
-            ActivityResult::Ok,
-            state.session_id.clone(),
-            None,
+            ToolCompletionEvent {
+                tool_name: "search",
+                summary: "searched for '…' (0 results)",
+                actor_kind: ActorKind::Agent,
+                agent_name: Some("claude-desktop".to_string()),
+                result: ActivityResult::Ok,
+                session_id: &state.session_id,
+                op_ref: None,
+            },
         );
 
         assert_eq!(
@@ -2218,7 +2238,7 @@ mod tests {
             _args: Value,
             _ctx: &ActorContext,
         ) -> Result<Value, AppError> {
-            super::super::last_append::record_append(self.op_ref.clone());
+            crate::task_locals::record_append(self.op_ref.clone());
             Ok(Value::Null)
         }
     }

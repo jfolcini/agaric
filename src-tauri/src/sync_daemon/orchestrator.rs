@@ -53,6 +53,7 @@ use crate::error::AppError;
 use crate::lifecycle::LifecycleHooks;
 use crate::materializer::Materializer;
 use crate::peer_refs::{self, PeerRef};
+use crate::sync_constants::HANDSHAKE_TIMEOUT;
 use crate::sync_events::{SyncEvent, SyncEventSink};
 use crate::sync_net::{self, DiscoveredPeer, MdnsService, SyncCert, SyncConnection, SyncServer};
 use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
@@ -689,12 +690,14 @@ pub(crate) async fn run_sync_session(
         }
 
         let incoming: SyncMessage = conn.recv_json().await?;
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            orch.handle_message(incoming),
-        )
-        .await
-        .map_err(|_| AppError::InvalidOperation("handle_message timed out after 120s".into()))??;
+        let response = tokio::time::timeout(HANDSHAKE_TIMEOUT, orch.handle_message(incoming))
+            .await
+            .map_err(|_| {
+                AppError::InvalidOperation(format!(
+                    "handle_message timed out after {}s",
+                    HANDSHAKE_TIMEOUT.as_secs()
+                ))
+            })??;
         match response {
             Some(response) => {
                 conn.send_json(&response).await?;

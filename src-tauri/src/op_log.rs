@@ -148,10 +148,14 @@ pub async fn append_local_op_in_tx(
 
     // FEAT-4h slice 3: populate the task-local `LAST_APPEND` cell so the
     // MCP dispatch layer can attach an `OpRef` to the emitted
-    // `mcp:activity` entry for per-entry Undo. Silent no-op outside an
-    // `mcp::last_append::LAST_APPEND` scope — i.e. every frontend-invoked
+    // `mcp:activity` entry for per-entry Undo. Silent no-op outside a
+    // `task_locals::LAST_APPEND` scope — i.e. every frontend-invoked
     // command.
-    crate::mcp::last_append::record_append(crate::op::OpRef {
+    //
+    // MAINT-150 (j): the task-local lives in `crate::task_locals` (a
+    // neutral home) rather than `crate::mcp`, so this core module no
+    // longer depends on the `mcp` integration.
+    crate::task_locals::record_append(crate::op::OpRef {
         device_id: device_id.to_string(),
         seq,
     });
@@ -1802,10 +1806,10 @@ mod tests {
     /// `LAST_APPEND` task-local with the freshly-inserted `(device_id,
     /// seq)` pair when a scope is active. Outside a scope (the
     /// frontend-invoked path) the call is a silent no-op — that path is
-    /// covered in `mcp::last_append::tests::record_append_outside_scope_is_silent_noop`.
+    /// covered in `task_locals::tests::record_append_outside_scope_is_silent_noop`.
     #[tokio::test]
     async fn append_local_op_in_tx_populates_last_append_inside_scope() {
-        use crate::mcp::last_append::LAST_APPEND;
+        use crate::task_locals::LAST_APPEND;
         use std::cell::Cell;
 
         let (pool, _dir) = test_pool().await;

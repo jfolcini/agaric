@@ -1,5 +1,6 @@
 use crate::error::AppError;
 use crate::peer_refs;
+use crate::sync_constants::HANDSHAKE_TIMEOUT;
 use crate::sync_events::SyncEventSink;
 use crate::sync_net::SyncConnection;
 use crate::sync_protocol::{DeviceHead, SyncMessage, SyncOrchestrator, SyncState};
@@ -231,12 +232,14 @@ pub(crate) async fn handle_incoming_sync(
     // ── Message loop (same structure as initiator) ────────────────────────
     while !orch.is_terminal() {
         let incoming: SyncMessage = conn.recv_json().await?;
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            orch.handle_message(incoming),
-        )
-        .await
-        .map_err(|_| AppError::InvalidOperation("handle_message timed out after 120s".into()))??;
+        let response = tokio::time::timeout(HANDSHAKE_TIMEOUT, orch.handle_message(incoming))
+            .await
+            .map_err(|_| {
+                AppError::InvalidOperation(format!(
+                    "handle_message timed out after {}s",
+                    HANDSHAKE_TIMEOUT.as_secs()
+                ))
+            })??;
 
         match response {
             Some(resp) => {

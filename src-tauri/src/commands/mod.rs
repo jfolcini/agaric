@@ -102,9 +102,10 @@ pub use mcp::{
 };
 pub use pages::{
     export_page_markdown, export_page_markdown_inner, get_page_aliases, get_page_aliases_inner,
-    get_page_inner, import_markdown, import_markdown_inner, list_page_links, list_page_links_inner,
-    list_pages_inner, resolve_page_by_alias, resolve_page_by_alias_inner, set_page_aliases,
-    set_page_aliases_inner, PageSubtreeResponse, MCP_PAGE_LIMIT_CAP,
+    get_page_inner, get_page_unscoped_inner, import_markdown, import_markdown_inner,
+    list_page_links, list_page_links_inner, list_pages_inner, resolve_page_by_alias,
+    resolve_page_by_alias_inner, set_page_aliases, set_page_aliases_inner, PageSubtreeResponse,
+    MCP_PAGE_LIMIT_CAP,
 };
 pub use properties::{
     create_property_def, create_property_def_inner, delete_property, delete_property_def,

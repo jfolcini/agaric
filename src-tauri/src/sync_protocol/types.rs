@@ -58,45 +58,108 @@ impl From<OpTransfer> for OpRecord {
 }
 
 /// Messages exchanged between two sync peers.
+///
+/// # Valid wire-level message sequence
+///
+/// The full session is driven by two cooperating state machines: the
+/// per-session [`SyncOrchestrator`](super::SyncOrchestrator) (defined in
+/// [`crate::sync_protocol::orchestrator`]) drives the head-exchange →
+/// op-stream → merge → complete pipeline, and the surrounding
+/// [`crate::sync_daemon`] orchestrator drives the post-complete
+/// snapshot and file-transfer sub-flows. The valid order on the wire
+/// is:
+///
+/// 1. **`HeadExchange`** — exactly once per session, in both
+///    directions. Sent first by the initiator, replied by the
+///    responder. Carries the latest `(device_id, seq, hash)` tuple per
+///    advertised device. A second `HeadExchange` mid-session is a
+///    protocol violation and transitions to
+///    [`SyncState::Failed`](super::SyncState::Failed).
+///
+/// 2. **`OpBatch`** — zero or more, in either direction, after the
+///    peer-relevant `HeadExchange` has been processed. Every batch
+///    carries `is_last`; the final batch sets `is_last: true` to
+///    flush the receiver's accumulator and trigger the per-session
+///    apply + merge.
+///
+/// 3. **`SyncComplete`** — exactly once per side, after that side has
+///    streamed its final `OpBatch`. Carries `last_hash` (the receiver's
+///    new frontier-of-record), which is written to `peer_refs` to
+///    bookmark the next session's starting point.
+///
+/// 4. **`ResetRequired`** — terminal *side-exit* in place of
+///    `SyncComplete`, sent by the responder when its op log has been
+///    compacted past the initiator's advertised heads (i.e. a delta
+///    replay is impossible). Triggers the snapshot sub-flow below;
+///    the per-session state machine never accepts another delta
+///    message after this point.
+///
+/// 5. **`SnapshotOffer` → `SnapshotAccept` | `SnapshotReject`**
+///    (post-`ResetRequired` only) — driven by
+///    [`crate::sync_daemon::snapshot_transfer`], not the per-session
+///    state machine. Responder offers; initiator accepts (and then
+///    receives the blob in binary frames) or rejects (and the session
+///    closes). `SnapshotOffer` arriving outside this sub-flow is a
+///    protocol error.
+///
+/// 6. **`FileRequest` → (`FileOffer` + binary frames + `FileReceived`)*
+///    → `FileTransferComplete`** (post-`SyncComplete` only) — driven
+///    by [`crate::sync_files`], not the per-session state machine.
+///    Both peers run this exchange in turn (initiator first, then
+///    responder) so each side can pull missing attachments. These
+///    variants must therefore **never** reach the per-session
+///    `SyncOrchestrator::handle_message` dispatch.
+///
+/// 7. **`Error { message }`** — any side may send at any point to
+///    abort. The receiver transitions to
+///    [`SyncState::Failed`](super::SyncState::Failed); the connection
+///    is closed and the daemon retries on the next scheduled tick.
+///
+/// See [`crate::sync_protocol::orchestrator`] (per-session ASCII
+/// diagram) and [`crate::sync_daemon::orchestrator`] (daemon-level
+/// orchestration) for the source-of-truth narrative.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SyncMessage {
-    HeadExchange {
-        heads: Vec<DeviceHead>,
-    },
-    OpBatch {
-        ops: Vec<OpTransfer>,
-        is_last: bool,
-    },
-    ResetRequired {
-        reason: String,
-    },
-    SnapshotOffer {
-        size_bytes: u64,
-    },
+    /// First exchanged in a session; advertises `(device_id, seq, hash)`
+    /// tuples. Both peers must send exactly one.
+    HeadExchange { heads: Vec<DeviceHead> },
+    /// Streamed after `HeadExchange`. The batch carrying `is_last: true`
+    /// flushes the receiver's accumulator and triggers apply + merge.
+    OpBatch { ops: Vec<OpTransfer>, is_last: bool },
+    /// Responder side-exit: our op log was compacted past the
+    /// initiator's heads, so a delta replay is impossible. Triggers
+    /// the snapshot sub-flow in [`crate::sync_daemon::snapshot_transfer`].
+    ResetRequired { reason: String },
+    /// Snapshot sub-flow only (post-`ResetRequired`). Responder offers
+    /// the latest local snapshot blob's size; initiator decides.
+    SnapshotOffer { size_bytes: u64 },
+    /// Initiator accepts the offered snapshot; responder follows up with
+    /// `size_bytes` of binary frames.
     SnapshotAccept,
+    /// Initiator declines (size cap, integrity check, etc.). Session ends.
     SnapshotReject,
-    SyncComplete {
-        last_hash: String,
-    },
-    Error {
-        message: String,
-    },
+    /// Per-side terminal: this side has finished sending and bookmarks
+    /// `last_hash` as its new frontier-of-record in `peer_refs`.
+    SyncComplete { last_hash: String },
+    /// Any side may send at any time to abort the session.
+    Error { message: String },
+    /// File-transfer sub-flow only (post-`SyncComplete`).
     /// Request file transfer for missing attachments.
-    FileRequest {
-        attachment_ids: Vec<String>,
-    },
+    FileRequest { attachment_ids: Vec<String> },
+    /// File-transfer sub-flow only.
     /// Offer a file for transfer (metadata before binary data).
     FileOffer {
         attachment_id: String,
         size_bytes: u64,
         blake3_hash: String,
     },
-    /// File transfer complete — receiver confirms integrity.
-    FileReceived {
-        attachment_id: String,
-    },
-    /// No more files to transfer.
+    /// File-transfer sub-flow only.
+    /// Receiver confirms hash + write succeeded for `attachment_id`.
+    FileReceived { attachment_id: String },
+    /// File-transfer sub-flow only.
+    /// "No more files from this side" sentinel — concludes one half of
+    /// the bidirectional file-transfer phase.
     FileTransferComplete,
 }
 

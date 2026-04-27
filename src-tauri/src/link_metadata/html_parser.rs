@@ -4,6 +4,33 @@
 //! on `&str` inputs and return owned strings or `Option<String>`.
 
 // ---------------------------------------------------------------------------
+// Auth-detection heuristics (MAINT-152(c))
+// ---------------------------------------------------------------------------
+//
+// `detect_auth_required` scans the response body for two ladders of fingerprints
+// that strongly suggest a login wall: form action paths and title keywords.
+// Both ladders used to be hand-unrolled `if … || …` chains; they are now
+// data-driven so adding a new heuristic (e.g. `/oauth`, "verify your email")
+// is a one-line array push rather than a control-flow edit.
+
+/// Path roots seen on form `action="…"` attributes that indicate the form
+/// posts to a login / auth flow. Each base is checked against both the
+/// double-quoted (`action="/login`) and single-quoted (`action='/login`)
+/// forms inline below.
+const AUTH_FORM_ACTION_BASES: &[&str] = &["/login", "/auth", "/signin", "/sso"];
+
+/// Keywords that, when present in a `<title>`, strongly suggest the page
+/// is a login wall. Compared against the lowercased title.
+const AUTH_TITLE_KEYWORDS: &[&str] = &[
+    "sign in",
+    "log in",
+    "login",
+    "authenticate",
+    "sso",
+    "access denied",
+];
+
+// ---------------------------------------------------------------------------
 // Public API (re-exported from `link_metadata::mod`)
 // ---------------------------------------------------------------------------
 
@@ -73,16 +100,14 @@ pub fn detect_auth_required(status: u16, original_url: &str, final_url: &str, bo
         {
             return true;
         }
-        // Check for login-related form actions or URL paths
-        if body_lower.contains("action=\"/login")
-            || body_lower.contains("action='/login")
-            || body_lower.contains("action=\"/auth")
-            || body_lower.contains("action='/auth")
-            || body_lower.contains("action=\"/signin")
-            || body_lower.contains("action='/signin")
-            || body_lower.contains("action=\"/sso")
-            || body_lower.contains("action='/sso")
-        {
+        // Check for login-related form actions or URL paths.
+        // MAINT-152(c): driven by `AUTH_FORM_ACTION_BASES`; each base is
+        // matched against both the `"` and `'` quote variants so the
+        // heuristic survives templating engines that pick either style.
+        if AUTH_FORM_ACTION_BASES.iter().any(|base| {
+            body_lower.contains(&format!("action=\"{base}"))
+                || body_lower.contains(&format!("action='{base}"))
+        }) {
             return true;
         }
     }
@@ -107,15 +132,14 @@ pub fn detect_auth_required(status: u16, original_url: &str, final_url: &str, bo
         }
     }
 
-    // Title contains auth-related keywords (case-insensitive)
+    // Title contains auth-related keywords (case-insensitive).
+    // MAINT-152(c): driven by `AUTH_TITLE_KEYWORDS` so a new keyword is a
+    // one-line array push.
     if let Some(title) = parse_title(body) {
         let title_lower = title.to_lowercase();
-        if title_lower.contains("sign in")
-            || title_lower.contains("log in")
-            || title_lower.contains("login")
-            || title_lower.contains("authenticate")
-            || title_lower.contains("sso")
-            || title_lower.contains("access denied")
+        if AUTH_TITLE_KEYWORDS
+            .iter()
+            .any(|kw| title_lower.contains(kw))
         {
             return true;
         }
@@ -144,89 +168,82 @@ fn extract_title_tag(html: &str) -> Option<String> {
     }
 }
 
-/// Extract content attribute from `<meta property="name" content="...">`.
-fn extract_meta_content(html: &str, property: &str) -> Option<String> {
+/// MAINT-152(f) / 08-MISC-010 — iterate every `<tag …>` element in `html`,
+/// calling `f` with the **lowercased** element string (suitable for
+/// predicate matching) and the **original-case** element string (suitable
+/// for attribute-value extraction). The first `Some(value)` returned by
+/// `f` short-circuits and is returned; otherwise `None` once no further
+/// `tag_open` literal occurs.
+///
+/// `tag_open` is the literal opening sequence (e.g. `"<meta "`, `"<link "`)
+/// — note the trailing space, which avoids matching `<meta-foo>` etc.
+///
+/// Behaviour preserved from the previous hand-rolled callers: an unclosed
+/// `<tag` (no `>` follows) breaks the scan rather than continuing past it
+/// (the find-loop would otherwise spin on the same start). Real-world
+/// HTML rarely hits this; mostly-broken HTML produces `None`, which is
+/// the right outcome for callers (downstream falls back to defaults).
+fn find_first_tag<F, T>(html: &str, tag_open: &str, mut f: F) -> Option<T>
+where
+    F: FnMut(&str, &str) -> Option<T>,
+{
     let lower = html.to_lowercase();
-    let prop_pattern = format!("property=\"{property}\"");
-    let prop_pattern_single = format!("property='{property}'");
-
-    // Search for all <meta tags and find one with the right property
     let mut search_pos = 0;
-    while let Some(meta_start) = lower[search_pos..].find("<meta ") {
-        let abs_start = search_pos + meta_start;
+    while let Some(rel_start) = lower[search_pos..].find(tag_open) {
+        let abs_start = search_pos + rel_start;
         let tag_end = match lower[abs_start..].find('>') {
             Some(e) => abs_start + e,
             None => break,
         };
-        let tag = &lower[abs_start..=tag_end];
-
-        if tag.contains(&prop_pattern) || tag.contains(&prop_pattern_single) {
-            // Extract content attribute from original case HTML
-            let orig_tag = &html[abs_start..=tag_end];
-            if let Some(content) = extract_attribute_value(orig_tag, "content") {
-                let decoded = decode_html_entities(&content);
-                return Some(decoded);
-            }
+        let tag_lower = &lower[abs_start..=tag_end];
+        let tag_orig = &html[abs_start..=tag_end];
+        if let Some(v) = f(tag_lower, tag_orig) {
+            return Some(v);
         }
         search_pos = tag_end + 1;
     }
     None
+}
+
+/// Extract content attribute from `<meta property="name" content="...">`.
+fn extract_meta_content(html: &str, property: &str) -> Option<String> {
+    let prop_pattern = format!("property=\"{property}\"");
+    let prop_pattern_single = format!("property='{property}'");
+    find_first_tag(html, "<meta ", |tag_lower, tag_orig| {
+        if tag_lower.contains(&prop_pattern) || tag_lower.contains(&prop_pattern_single) {
+            extract_attribute_value(tag_orig, "content").map(|c| decode_html_entities(&c))
+        } else {
+            None
+        }
+    })
 }
 
 /// Extract content from `<meta name="name" content="...">`.
 fn extract_meta_name_content(html: &str, name: &str) -> Option<String> {
-    let lower = html.to_lowercase();
     let name_pattern = format!("name=\"{name}\"");
     let name_pattern_single = format!("name='{name}'");
-
-    let mut search_pos = 0;
-    while let Some(meta_start) = lower[search_pos..].find("<meta ") {
-        let abs_start = search_pos + meta_start;
-        let tag_end = match lower[abs_start..].find('>') {
-            Some(e) => abs_start + e,
-            None => break,
-        };
-        let tag = &lower[abs_start..=tag_end];
-
-        if tag.contains(&name_pattern) || tag.contains(&name_pattern_single) {
-            let orig_tag = &html[abs_start..=tag_end];
-            if let Some(content) = extract_attribute_value(orig_tag, "content") {
-                let decoded = decode_html_entities(&content);
-                return Some(decoded);
-            }
+    find_first_tag(html, "<meta ", |tag_lower, tag_orig| {
+        if tag_lower.contains(&name_pattern) || tag_lower.contains(&name_pattern_single) {
+            extract_attribute_value(tag_orig, "content").map(|c| decode_html_entities(&c))
+        } else {
+            None
         }
-        search_pos = tag_end + 1;
-    }
-    None
+    })
 }
 
 /// Extract href from `<link rel="icon" href="...">` or `<link rel="shortcut icon" href="...">`.
 fn extract_link_icon_href(html: &str) -> Option<String> {
-    let lower = html.to_lowercase();
-
-    let mut search_pos = 0;
-    while let Some(link_start) = lower[search_pos..].find("<link ") {
-        let abs_start = search_pos + link_start;
-        let tag_end = match lower[abs_start..].find('>') {
-            Some(e) => abs_start + e,
-            None => break,
-        };
-        let tag = &lower[abs_start..=tag_end];
-
-        // Check for rel="icon" or rel="shortcut icon"
-        if tag.contains("rel=\"icon\"")
-            || tag.contains("rel='icon'")
-            || tag.contains("rel=\"shortcut icon\"")
-            || tag.contains("rel='shortcut icon'")
+    find_first_tag(html, "<link ", |tag_lower, tag_orig| {
+        if tag_lower.contains("rel=\"icon\"")
+            || tag_lower.contains("rel='icon'")
+            || tag_lower.contains("rel=\"shortcut icon\"")
+            || tag_lower.contains("rel='shortcut icon'")
         {
-            let orig_tag = &html[abs_start..=tag_end];
-            if let Some(href) = extract_attribute_value(orig_tag, "href") {
-                return Some(href);
-            }
+            extract_attribute_value(tag_orig, "href")
+        } else {
+            None
         }
-        search_pos = tag_end + 1;
-    }
-    None
+    })
 }
 
 /// Extract an attribute value from an HTML tag string.
@@ -253,34 +270,20 @@ fn extract_attribute_value(tag: &str, attr: &str) -> Option<String> {
 
 /// Extract the URL from a `<meta http-equiv="refresh" content="0;url=...">` tag.
 fn extract_meta_refresh_url(html: &str) -> Option<String> {
-    let lower = html.to_lowercase();
-
-    let mut search_pos = 0;
-    while let Some(meta_start) = lower[search_pos..].find("<meta ") {
-        let abs_start = search_pos + meta_start;
-        let tag_end = match lower[abs_start..].find('>') {
-            Some(e) => abs_start + e,
-            None => break,
-        };
-        let tag = &lower[abs_start..=tag_end];
-
-        if tag.contains("http-equiv=\"refresh\"")
-            || tag.contains("http-equiv='refresh'")
-            || tag.contains("http-equiv=refresh")
+    find_first_tag(html, "<meta ", |tag_lower, tag_orig| {
+        if tag_lower.contains("http-equiv=\"refresh\"")
+            || tag_lower.contains("http-equiv='refresh'")
+            || tag_lower.contains("http-equiv=refresh")
         {
-            let orig_tag = &html[abs_start..=tag_end];
-            if let Some(content) = extract_attribute_value(orig_tag, "content") {
-                // Parse content="0;url=https://..." or content="0; url=https://..."
-                let content_lower = content.to_lowercase();
-                if let Some(url_pos) = content_lower.find("url=") {
-                    let url = content[url_pos + 4..].trim().to_string();
-                    return Some(url);
-                }
-            }
+            // Parse content="0;url=https://..." or content="0; url=https://..."
+            let content = extract_attribute_value(tag_orig, "content")?;
+            let content_lower = content.to_lowercase();
+            let url_pos = content_lower.find("url=")?;
+            Some(content[url_pos + 4..].trim().to_string())
+        } else {
+            None
         }
-        search_pos = tag_end + 1;
-    }
-    None
+    })
 }
 
 /// Extract origin (scheme + host + port) from a URL.
