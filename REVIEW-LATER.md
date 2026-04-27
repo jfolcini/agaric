@@ -33,6 +33,9 @@ Previously resolved: 542+ items across 159 sessions.
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L |
 | MAINT-110 | MAINT | `pairing.rs` — remove dead ChaCha20-Poly1305 + HKDF machinery (`session_key`, `encrypt_message` / `decrypt_message`, `derive_session_key`); pairing exchange is plaintext JSON over mTLS and the derived key is never read in production. Drops `chacha20poly1305` + `hkdf` crates. | S |
 | MAINT-111 | MAINT | Spike `rmcp` (official Rust MCP SDK) vs the hand-rolled JSON-RPC 2.0 dispatch in `mcp/server.rs` (~492 LOC of framing + `make_success` / `make_error` / `parse_request` / method-dispatch boilerplate); keep existing `ToolRegistry` + activity-feed if the adapter stays thin | M |
+| MAINT-112 | MAINT | `CommandTx` newtype around `sqlx::Transaction<'_, Sqlite>` — consolidate the `pool.begin()` + `BEGIN IMMEDIATE` + `_in_tx` helpers + post-commit materializer dispatch dance (115 `BEGIN IMMEDIATE` literals, 5 `*_in_tx` helpers, 140 call sites) behind a single `CommandTx::begin_immediate` + `commit_and_dispatch`. Opportunistic DRY, no behaviour change. | M |
+| MAINT-113 | MAINT | `ConflictFreeBlockId` newtype to lift invariant #9 (`is_conflict = 0` + `depth < 100` in every recursive CTE over `blocks`) into the type system — 220 `is_conflict = 0` SQL occurrences across 70 files. LOW-priority refactor for elegance, not correctness; the convention + review + documented invariant are already working. Do NOT do on a deadline. | L |
+| MAINT-114 | MAINT | Audit `.github/workflows/` (4 files — `ci.yml`, `_validate.yml`, `release.yml`, `release-tag.yml`) for consolidation. Minimum wins likely 4 → 3 (fold `release-tag.yml` into `release.yml` as `workflow_dispatch`); full 4 → 2 (validate + release) probably not cleanly achievable without losing the per-push-vs-per-tag split. Spike first, commit only if the merged file is not worse than the pair. | S–M |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
@@ -674,6 +677,139 @@ If the adapter is clean, estimate a ~300–500 LOC reduction in `server.rs` with
 **Cost:** M (2–8h for the spike; full migration would be L if pursued).
 **Risk:** M — external binary surface, coexistence with existing actor + activity-feed patterns.
 **Impact:** M (conditional on spike outcome) — reduces framing boilerplate and tracks the MCP spec upstream rather than reimplementing it.
+
+### MAINT-112 — `CommandTx` newtype to DRY up the `BEGIN IMMEDIATE` + `_in_tx` + dispatch dance
+
+**What:** The command layer repeats the same 3-step transaction dance in ~115 places:
+
+1. `let mut tx = pool.begin().await?;` (or `sqlx::query!("BEGIN IMMEDIATE").execute(&*pool).await?` — inconsistent across call sites).
+2. Call one or more `*_in_tx` helpers (`append_local_op_in_tx` in `op_log.rs:81`, `flush_draft_in_tx` / `delete_draft_in_tx` in `draft.rs:82,132`, `apply_reverse_in_tx` in `commands/history.rs:32`, `migration_marker_set_in_tx` in `spaces/bootstrap.rs:486`) — 5 helpers total, 140 `_in_tx` occurrences across 32 files.
+3. `tx.commit().await?;` followed by an ad-hoc `Materializer::dispatch_background(...)` / `dispatch_foreground(...)` call — the enqueue point drifts (sometimes before commit, sometimes inside a spawned task, sometimes inside the caller). Evidence of drift: session 495 closed H-5 and H-6, both caused by materializer dispatch being decoupled from the committing transaction.
+
+**Evidence (non-test callsite density):**
+
+```text
+17  src-tauri/src/recurrence/compute.rs
+11  src-tauri/src/commands/blocks/crud.rs
+10  src-tauri/src/spaces/bootstrap.rs
+ 9  src-tauri/src/op_log.rs
+ 9  src-tauri/src/commands/spaces.rs
+ 8  src-tauri/src/draft.rs
+ 8  src-tauri/src/commands/history.rs
+ 6  src-tauri/src/commands/compaction.rs
+...
+115  BEGIN IMMEDIATE literal occurrences total
+```
+
+**Fix sketch:**
+
+```rust
+pub struct CommandTx<'a> {
+    inner: sqlx::Transaction<'a, Sqlite>,
+    pending_dispatch: Vec<BackgroundTask>,
+}
+
+impl<'a> CommandTx<'a> {
+    pub async fn begin_immediate(pool: &'a WritePool) -> Result<Self> {
+        let mut inner = pool.begin().await?;
+        sqlx::query!("BEGIN IMMEDIATE").execute(&mut *inner).await?;  // TODO: verify sqlx doesn't nest
+        Ok(Self { inner, pending_dispatch: Vec::new() })
+    }
+
+    pub fn enqueue(&mut self, task: BackgroundTask) { self.pending_dispatch.push(task) }
+
+    pub async fn commit_and_dispatch(self, materializer: &Materializer) -> Result<()> {
+        self.inner.commit().await?;
+        for task in self.pending_dispatch { materializer.dispatch_background(task); }
+        Ok(())
+    }
+}
+
+impl<'a> std::ops::Deref for CommandTx<'a> {
+    type Target = sqlx::Transaction<'a, Sqlite>;
+    fn deref(&self) -> &Self::Target { &self.inner }
+}
+impl<'a> std::ops::DerefMut for CommandTx<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.inner }
+}
+```
+
+Then the 5 `*_in_tx` helpers change their parameter from `&mut sqlx::Transaction<'_, Sqlite>` to `&mut CommandTx<'_>` (the `DerefMut` impl keeps existing `sqlx::query!(...).execute(&mut *tx)` call sites working unchanged). Keep the `_in_tx` suffix — it is load-bearing for grep + code review; only the parameter type changes.
+
+**Why it matters:** Centralising (a) the `BEGIN IMMEDIATE` pragma so every write-path transaction is guaranteed to hold the write lock from the first statement, and (b) the post-commit dispatch so a missing enqueue (H-5 / H-6 class) fails closed rather than silently leaving the materializer stale. Also removes the chance of the "did the caller remember to `dispatch_background` after commit?" review burden that recurs in session logs.
+
+**Why it is not urgent:** The current code works. The invariant is held by review, same as invariant #9 (`is_conflict = 0`). None of the recent HIGH-severity findings root-cause to "we literally forgot to start a tx" — they root-cause to "we forgot to enqueue a materializer task after a specific commit", which the `commit_and_dispatch` sketch above addresses specifically.
+
+**Scope (honest):**
+
+- 1 new module (`src-tauri/src/db/tx.rs` or similar), ~100 LOC + tests.
+- 5 helper signature changes (`op_log.rs:81`, `draft.rs:82,132`, `commands/history.rs:32`, `spaces/bootstrap.rs:486`).
+- ~115 callsites to migrate (most of which become shorter — net LOC reduction expected).
+- `#[cfg(test)]` fixtures that begin transactions manually (~10 files under `tests/`).
+
+**Cost:** M (2–8h) for the newtype + migrating the top-5 callsite files. Remainder can land incrementally under the same ID (split into MAINT-112a / MAINT-112b / ... if the first PR is bigger than one focused session).
+**Risk:** Low — pure refactor, no behaviour change if `commit_and_dispatch` preserves current enqueue ordering. Compile-time coverage is the safety net (every `_in_tx` caller breaks on signature change and must be updated before it compiles).
+**Impact:** S — reduces boilerplate, makes the "tx + commit + dispatch" triple an atomic API rather than a 3-step ritual, enables adding tracing / retry / deadlock observability in one place.
+
+### MAINT-113 — `ConflictFreeBlockId` newtype to lift invariant #9 into the type system
+
+**What:** AGENTS.md "Key Architectural Invariants" #9 reads:
+
+> Recursive CTEs over `blocks` must filter `is_conflict = 0` in the recursive member, and bound `depth < 100` to prevent runaway recursion on corrupted data. Conflict copies leak into results otherwise.
+
+This invariant is currently enforced by code review + grep + one-line comments. It is baked into **220 `is_conflict = 0` SQL occurrences across 70 source files** (plus 3 more in `migrations/`). Every new query touching `blocks` must remember to add it.
+
+**Alternative design:** Split the `BlockId` primitive into two types:
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct BlockId(String);        // raw — may refer to a conflict copy or deleted block
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct ActiveBlockId(String);  // materialised AND is_conflict = 0 AND deleted_at IS NULL
+```
+
+Query helpers that return "active" blocks (`list_children`, `get_descendants`, `list_page_links`, every recursive CTE wrapped behind a Rust fn) return `Vec<ActiveBlockId>`. Query helpers that accept only active input take `&ActiveBlockId`. Conversion `BlockId → ActiveBlockId` goes through a single checked gate (`verify_active(&BlockId) -> Result<ActiveBlockId>`) that runs the `is_conflict = 0 AND deleted_at IS NULL` predicate exactly once. Recursive CTEs hidden behind these helpers keep their `AND is_conflict = 0` in SQL — the newtype just prevents callers from accidentally feeding a raw `BlockId` into a path that assumes active.
+
+**Why this is a LOW-priority refactor:**
+
+- The invariant is already documented (AGENTS.md #9), already tested (the `block_tag_inherited` materialised cache has an oracle CTE that verifies the filter is honoured), and already flagged by review (session logs show "missing `is_conflict = 0`" is caught before merge).
+- No shipped HIGH/CRITICAL bug traces back to a missed filter in the last ~50 sessions. The tension is correctness-by-convention vs. correctness-by-types, not correctness vs. incorrectness.
+- Scope is genuinely large — 220 SQL sites are the *floor* (each one lives in a function with a Rust signature); the real work is touching **every** producer/consumer of `BlockId` and deciding whether it returns raw or active. Honest estimate: 70 files, hundreds of function signature changes, a `specta`-bindings ripple to the frontend (extra TS type), and a round of test fixture updates.
+- The serde wire format must stay `String` (both directions) so sync + IPC aren't affected — handled with `#[serde(transparent)]`.
+
+**Do not take this on a deadline.** Land only as opportunistic cleanup — e.g., when a specific module is already being rewritten for another reason, convert its signatures over and leave the rest of the codebase on `BlockId` for another session. The existing `is_conflict = 0` + `depth < 100` convention is **not broken**; it is **not elegant**.
+
+**Cost:** L (8h+ at minimum; realistically 2–4 sessions if done wholesale).
+**Risk:** M — pervasive API change. Sync / MCP / specta bindings must round-trip identically. Mixing raw and active block IDs in a single data structure (e.g., `BlockTreeNode` with both active children and "recently-deleted" preview siblings) needs explicit policy.
+**Impact:** M (if shipped) — eliminates an entire class of "forgot to filter conflicts" bugs at compile time. Invariant #9 in AGENTS.md could reference the type instead of a prose rule.
+
+**Decision:** Defer indefinitely. Revisit only if a future `is_conflict = 0` miss ships a user-visible regression. Keep in REVIEW-LATER as a filed design note so it is not reinvented from scratch next time.
+
+### MAINT-114 — Consolidation audit of `.github/workflows/`
+
+**What:** Four workflow files today:
+
+| File | Trigger | Jobs |
+|---|---|---|
+| `.github/workflows/_validate.yml` (135 LOC) | `workflow_call` | prek-equivalent (lint + fmt + clippy + nextest + vitest + playwright + sqlx offline check + MCP smoke) |
+| `.github/workflows/ci.yml` (288 LOC) | push (non-tag) + PR | calls `_validate.yml` → desktop build matrix (ubuntu / windows / macos) + android aarch64/x86_64 build |
+| `.github/workflows/release.yml` (~450 LOC) | push `v*` tag | calls `_validate.yml` → verify-version → desktop build matrix + sign + android APK + draft GitHub Release |
+| `.github/workflows/release-tag.yml` (78 LOC) | `workflow_dispatch` only (`-f version=…`) | runs `scripts/bump-version.sh --commit --tag --push`; the tag push then re-triggers `release.yml` |
+
+The initial one-line recommendation was "4 → 2 (validate + release)". On inspection that is too aggressive. `ci.yml` and `release.yml` have genuinely different reasons to exist (per-push non-tag build vs. per-tag signed-release pipeline), and `release-tag.yml` is a thin entry-point wrapper around `bump-version.sh` that exists so the maintainer does not have to type the bump + tag + push dance manually.
+
+**Realistic consolidation wins (ranked by ROI):**
+
+1. **Fold `release-tag.yml` into `release.yml` as a `workflow_dispatch` job** — 4 → 3. The bump-version step would sit above the build matrix, gated by `if: github.event_name == 'workflow_dispatch'`; the build matrix remains tag-triggered. Saves one file, removes the "tag push re-triggers a different workflow" indirection. Mild downside: `release.yml` grows by 78 LOC, and a dispatched version bump run that fails before the tag push no longer leaves a small, focused log (failure appears inside the big Release file). Probably worth it, but not huge.
+2. **Keep `_validate.yml` as reusable** — already optimal. Called by both ci.yml and release.yml, avoids duplicating 135 LOC of setup. Leave alone.
+3. **Do NOT merge `ci.yml` into `release.yml`** — the build matrix would have to be double-gated (`if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')` etc.), artifact upload names would conflict between "per-push smoke bundle" and "signed release bundle", and the signed-release path needs secrets that per-push builds must not have access to. The current split is a principled least-privilege boundary; collapsing it would require narrower secret scoping per step, which is more complex than the current file split.
+
+**Proposed outcome:** Attempt 4 → 3. Only commit if the merged `release.yml` is not longer than `ci.yml` + `release.yml` + `release-tag.yml` combined, AND the `workflow_dispatch` path is at least as discoverable in the GitHub Actions UI as the standalone "Release Tag" entry. Otherwise abandon — a tidy file split is worth more than a tidy file count.
+
+**Cost:** S–M (spike ~2h; full migration including docs-drift checks ~4h).
+**Risk:** Low-to-medium — release pipeline is load-bearing. Test the merged workflow by dispatching against a throwaway tag (`0.0.0-test-consolidation`) on a fork or a draft release.
+**Impact:** S — one fewer file to navigate, slight simplification of the "how do I cut a release?" mental model. Not pressure relief.
 
 ## PERF — Performance items
 
