@@ -1427,68 +1427,19 @@ fn dedup_hash() {
     );
 }
 
-#[test]
-fn batch_groups() {
-    let groups = group_tasks_by_block_id(vec![
-        MaterializeTask::ApplyOp(fake_op_record(
-            "edit_block",
-            r#"{"block_id":"blk-A","to_text":"a1"}"#,
-        )),
-        MaterializeTask::ApplyOp(fake_op_record(
-            "edit_block",
-            r#"{"block_id":"blk-B","to_text":"b1"}"#,
-        )),
-        MaterializeTask::ApplyOp(fake_op_record(
-            "edit_block",
-            r#"{"block_id":"blk-A","to_text":"a2"}"#,
-        )),
-        MaterializeTask::RebuildTagsCache,
-    ]);
-    assert_eq!(
-        groups.len(),
-        3,
-        "should produce 3 groups: blk-A, blk-B, and ungrouped"
-    );
-    assert!(
-        groups.last().unwrap().0.is_none(),
-        "last group should have no block_id for non-ApplyOp tasks"
-    );
-}
-#[test]
-fn batch_order() {
-    let groups = group_tasks_by_block_id(vec![
-        MaterializeTask::ApplyOp(fake_op_record(
-            "edit_block",
-            r#"{"block_id":"blk-X","to_text":"first"}"#,
-        )),
-        MaterializeTask::ApplyOp(fake_op_record(
-            "edit_block",
-            r#"{"block_id":"blk-X","to_text":"second"}"#,
-        )),
-        MaterializeTask::ApplyOp(fake_op_record(
-            "edit_block",
-            r#"{"block_id":"blk-X","to_text":"third"}"#,
-        )),
-    ]);
-    assert_eq!(
-        groups.len(),
-        1,
-        "all ops for same block should be in one group"
-    );
-    assert_eq!(groups[0].1.len(), 3, "group should contain all 3 ops");
-    for (i, exp) in ["first", "second", "third"].iter().enumerate() {
-        match &groups[0].1[i] {
-            MaterializeTask::ApplyOp(r) => assert!(
-                r.payload.contains(exp),
-                "op at index {i} should contain '{exp}'"
-            ),
-            o => panic!("expected ApplyOp, got {o:?}"),
-        }
-    }
-}
-
+/// H-5 / H-6 (2026-04) regression guard: two `ApplyOp` tasks targeting
+/// *different* block_ids are now processed strictly FIFO (no JoinSet
+/// bucketing). This test pins that both blocks see their edits in the
+/// order the ops were enqueued and that `fg_processed` advances twice.
+///
+/// Historically this test was named `parallel_groups` and relied on the
+/// JoinSet parallel-group dispatch to run the two ops concurrently.
+/// That dispatch path was deleted for H-5 / H-6 because SQLite
+/// serialises writes at the engine level (single writer in WAL mode),
+/// so parallel buckets bought no throughput while creating FK-ordering
+/// and bucketing-key hazards.
 #[tokio::test]
-async fn parallel_groups() {
+async fn foreground_distinct_block_edits_land_in_fifo_order() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     insert_block_direct(&pool, "PAR_A", "content", "original-A").await;
@@ -1538,7 +1489,7 @@ async fn parallel_groups() {
     );
     assert!(
         mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 2,
-        "should process at least 2 foreground tasks for parallel groups"
+        "should process at least 2 foreground tasks for the two distinct-block edits"
     );
 }
 
@@ -4537,5 +4488,206 @@ async fn cleanup_orphaned_attachments_unlink_error_is_non_fatal() {
     assert!(
         !removable.exists(),
         "removable orphan must still be unlinked even if another file failed",
+    );
+}
+
+// ======================================================================
+// H-5 / H-6 (2026-04) — foreground FIFO regression tests
+// ======================================================================
+//
+// These tests pin the post-fix contract: the foreground segment runs
+// tasks strictly FIFO, with no JoinSet bucketing by `block_id`. Pre-fix,
+// two cascading `ApplyOp` tasks (parent then child) could land in
+// different buckets keyed on their respective block_ids and race on
+// apply — producing an SQLite FK violation on the child's `parent_id`
+// when the child raced ahead of the parent. `BatchApplyOps` likewise
+// keyed on `records[0].block_id` only, so a batch touching blocks
+// `X, Y, Z` could run in parallel with an independent `ApplyOp` for
+// `Y`, racing to mutate the same row.
+//
+// Both races are structurally impossible after the JoinSet path was
+// removed (SQLite serialises writes anyway, so the "parallelism"
+// bought no throughput while introducing real hazards).
+
+/// H-5 regression: a parent-create op followed by a child-create op
+/// whose `parent_id` references the parent must both land cleanly when
+/// enqueued as two distinct `ApplyOp` tasks back-to-back. Pre-fix,
+/// these would have been routed to different buckets (key = parent.id
+/// and key = child.id) and dispatched to a JoinSet, creating a race
+/// window where the child's INSERT could hit SQLite's FK check before
+/// the parent's INSERT committed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn h5_parent_and_child_create_both_land_under_strict_fifo() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let parent = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("H5_PARENT"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "parent".into(),
+        }),
+    )
+    .await;
+    let child = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("H5_CHILD"),
+            block_type: "content".into(),
+            // Forces parent→child FK ordering.
+            parent_id: Some(BlockId::test_id("H5_PARENT")),
+            position: Some(1),
+            content: "child".into(),
+        }),
+    )
+    .await;
+
+    // Two separate `ApplyOp` tasks enqueued back-to-back. Under the
+    // pre-fix JoinSet dispatch these hashed to different buckets (one
+    // per block_id) and raced; the strict-FIFO path must land both
+    // deterministically.
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(parent))
+        .await
+        .unwrap();
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(child))
+        .await
+        .unwrap();
+    mat.flush_foreground().await.unwrap();
+
+    let parent_row: Option<String> =
+        sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'H5_PARENT'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        parent_row.as_deref(),
+        Some("parent"),
+        "parent block must be materialized"
+    );
+
+    let child_row: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT content, parent_id FROM blocks WHERE id = 'H5_CHILD'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        child_row.0.as_deref(),
+        Some("child"),
+        "child block must be materialized after parent"
+    );
+    assert_eq!(
+        child_row.1.as_deref(),
+        Some("H5_PARENT"),
+        "child.parent_id must point at the parent that landed first"
+    );
+
+    // Neither apply should have hit the retry path — under strict FIFO
+    // the FK-ordering race that previously forced a retry is gone.
+    assert_eq!(
+        mat.metrics().fg_apply_dropped.load(AtomicOrdering::Relaxed),
+        0,
+        "no apply should be dropped under strict FIFO"
+    );
+    assert_eq!(
+        mat.metrics().fg_errors.load(AtomicOrdering::Relaxed),
+        0,
+        "no foreground error should surface; both applies must succeed on the first attempt"
+    );
+}
+
+/// H-6 regression: a `BatchApplyOps` containing multiple block_ids
+/// followed by an independent `ApplyOp` targeting one of the batch's
+/// non-first block_ids must serialize correctly — the edit must land
+/// AFTER the batch's create, producing the edited content.
+///
+/// Pre-fix, the batch's grouping key was `records[0].block_id` (the
+/// `X` here), so the independent `ApplyOp` for `Y` hashed to a
+/// different bucket and raced the batch via JoinSet. The edit could
+/// reach `Y` before the batch had inserted the `Y` row, dropping the
+/// edit (UPDATE affects 0 rows) or erroring (depending on op type).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn h6_batch_and_concurrent_apply_op_serialize_in_fifo() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let create_x = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("H6_X"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "x-initial".into(),
+        }),
+    )
+    .await;
+    let create_y = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("H6_Y"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(2),
+            content: "y-initial".into(),
+        }),
+    )
+    .await;
+    // Batch with two different block_ids — H6_X first so the pre-fix
+    // bucketing key would have been H6_X.
+    let batch = MaterializeTask::BatchApplyOps(StdArc::new(vec![create_x, create_y]));
+
+    // Independent edit targeting H6_Y (the batch's *second* record).
+    // Pre-fix, this landed in a different bucket from the batch and
+    // raced.
+    let edit_y = make_op_record(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("H6_Y"),
+            to_text: "y-edited".into(),
+            prev_edit: None,
+        }),
+    )
+    .await;
+
+    mat.enqueue_foreground(batch).await.unwrap();
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(edit_y))
+        .await
+        .unwrap();
+    mat.flush_foreground().await.unwrap();
+
+    let y_content: Option<String> =
+        sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'H6_Y'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        y_content.as_deref(),
+        Some("y-edited"),
+        "edit must land AFTER the batch's create — strict FIFO guarantees no race"
+    );
+
+    let x_content: Option<String> =
+        sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'H6_X'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        x_content.as_deref(),
+        Some("x-initial"),
+        "batch's other block (H6_X, the former bucketing-key record) must also land"
+    );
+
+    assert_eq!(
+        mat.metrics().fg_apply_dropped.load(AtomicOrdering::Relaxed),
+        0,
+        "no apply should be dropped under strict FIFO"
+    );
+    assert_eq!(
+        mat.metrics().fg_errors.load(AtomicOrdering::Relaxed),
+        0,
+        "no foreground error should surface"
     );
 }

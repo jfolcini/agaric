@@ -12,7 +12,7 @@ use crate::op_log::OpRecord;
 use consumer::process_single_foreground_task;
 pub use coordinator::Materializer;
 #[cfg(test)]
-use dedup::{dedup_tasks, group_tasks_by_block_id};
+use dedup::dedup_tasks;
 #[cfg(test)]
 use handlers::{handle_background_task, handle_foreground_task};
 pub use metrics::{QueueMetrics, StatusInfo};

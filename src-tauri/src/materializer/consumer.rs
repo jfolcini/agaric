@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc;
 use tracing::Instrument;
 
-use super::dedup::{dedup_tasks, group_tasks_by_block_id};
+use super::dedup::dedup_tasks;
 use super::handlers::{handle_background_task, handle_foreground_task};
 use super::metrics::QueueMetrics;
 use super::MaterializeTask;
@@ -107,30 +107,35 @@ async fn process_foreground_segment(
     metrics: &Arc<QueueMetrics>,
     gcal_handle: &Arc<OnceLock<GcalConnectorHandle>>,
 ) {
-    let groups = group_tasks_by_block_id(tasks);
-    if groups.len() <= 1 {
-        for (_block_id, group_tasks) in groups {
-            for task in group_tasks {
-                process_single_foreground_task(pool, task, metrics, gcal_handle).await;
-            }
-        }
-        return;
-    }
-    let mut join_set = tokio::task::JoinSet::new();
-    for (_block_id, group_tasks) in groups {
-        let pool = pool.clone();
-        let metrics = Arc::clone(metrics);
-        let gcal_handle = Arc::clone(gcal_handle);
-        join_set.spawn(async move {
-            for task in group_tasks {
-                process_single_foreground_task(&pool, task, &metrics, &gcal_handle).await;
-            }
-        });
-    }
-    while let Some(result) = join_set.join_next().await {
-        if let Err(e) = result {
-            tracing::error!(error = %e, "foreground group task panicked");
-        }
+    // H-5 / H-6 (2026-04): the foreground segment used to bucket tasks
+    // by `extract_block_id(task)` and dispatch each bucket in parallel
+    // via `tokio::task::JoinSet`. That was unsafe for two reasons:
+    //
+    //   H-5: a `CreateBlock` cascade — parent op + immediate child op in
+    //        the same segment — split into two buckets (key = parent.id
+    //        vs. key = child.id). The buckets ran concurrently; if the
+    //        child bucket's apply raced ahead of the parent bucket's
+    //        apply, SQLite rejected the child's `INSERT` on the
+    //        `blocks.parent_id` FK. Production masked this because the
+    //        consumer retries once after a 100 ms backoff, but the race
+    //        is reproducible under normal sync replay.
+    //
+    //   H-6: `BatchApplyOps` used only `records[0].block_id` as its
+    //        grouping key, so a batch whose first record targeted `X`
+    //        but whose remaining records touched `Y, Z, …` could run in
+    //        parallel with an independent `ApplyOp` for one of those
+    //        non-first block_ids, racing to mutate the same row.
+    //
+    // The fix is to drop the bucketing entirely and run tasks strictly
+    // FIFO. SQLite serialises writes at the engine level (WAL, single
+    // writer), so the JoinSet branch never actually gained throughput —
+    // one transaction always waited on the other. Serial execution
+    // preserves insertion order across both `ApplyOp` and `BatchApplyOps`
+    // variants, guarantees parent-before-child ordering, and collapses
+    // the "which bucket does this land in" question the batch grouping
+    // key could not answer correctly.
+    for task in tasks {
+        process_single_foreground_task(pool, task, metrics, gcal_handle).await;
     }
 }
 
