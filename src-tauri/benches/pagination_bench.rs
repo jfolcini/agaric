@@ -144,13 +144,15 @@ fn bench_list_children(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("first_page", total), &total, |b, _| {
             let page = PageRequest::new(None, Some(50)).unwrap();
             b.to_async(&rt)
-                .iter(|| list_children(&pool, Some("PARENT"), &page));
+                .iter(|| list_children(&pool, Some("PARENT"), &page, None));
         });
 
         // Mid-point cursor page
         let mid_cursor = rt.block_on(async {
             let half = PageRequest::new(None, Some((total / 2) as i64)).unwrap();
-            let resp = list_children(&pool, Some("PARENT"), &half).await.unwrap();
+            let resp = list_children(&pool, Some("PARENT"), &half, None)
+                .await
+                .unwrap();
             resp.next_cursor
         });
 
@@ -158,7 +160,7 @@ fn bench_list_children(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("cursor_page", total), &total, |b, _| {
                 let page = PageRequest::new(mid_cursor.clone(), Some(50)).unwrap();
                 b.to_async(&rt)
-                    .iter(|| list_children(&pool, Some("PARENT"), &page));
+                    .iter(|| list_children(&pool, Some("PARENT"), &page, None));
             });
         }
     }
@@ -179,19 +181,21 @@ fn bench_list_by_type(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("first_page", total), &total, |b, _| {
             let page = PageRequest::new(None, Some(50)).unwrap();
-            b.to_async(&rt).iter(|| list_by_type(&pool, "page", &page));
+            b.to_async(&rt)
+                .iter(|| list_by_type(&pool, "page", &page, None));
         });
 
         let mid_cursor = rt.block_on(async {
             let half = PageRequest::new(None, Some((total / 2) as i64)).unwrap();
-            let resp = list_by_type(&pool, "page", &half).await.unwrap();
+            let resp = list_by_type(&pool, "page", &half, None).await.unwrap();
             resp.next_cursor
         });
 
         if mid_cursor.is_some() {
             group.bench_with_input(BenchmarkId::new("cursor_page", total), &total, |b, _| {
                 let page = PageRequest::new(mid_cursor.clone(), Some(50)).unwrap();
-                b.to_async(&rt).iter(|| list_by_type(&pool, "page", &page));
+                b.to_async(&rt)
+                    .iter(|| list_by_type(&pool, "page", &page, None));
             });
         }
     }
@@ -212,19 +216,19 @@ fn bench_list_trash(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("first_page", total), &total, |b, _| {
             let page = PageRequest::new(None, Some(50)).unwrap();
-            b.to_async(&rt).iter(|| list_trash(&pool, &page));
+            b.to_async(&rt).iter(|| list_trash(&pool, &page, None));
         });
 
         let mid_cursor = rt.block_on(async {
             let half = PageRequest::new(None, Some((total / 2) as i64)).unwrap();
-            let resp = list_trash(&pool, &half).await.unwrap();
+            let resp = list_trash(&pool, &half, None).await.unwrap();
             resp.next_cursor
         });
 
         if mid_cursor.is_some() {
             group.bench_with_input(BenchmarkId::new("cursor_page", total), &total, |b, _| {
                 let page = PageRequest::new(mid_cursor.clone(), Some(50)).unwrap();
-                b.to_async(&rt).iter(|| list_trash(&pool, &page));
+                b.to_async(&rt).iter(|| list_trash(&pool, &page, None));
             });
         }
     }

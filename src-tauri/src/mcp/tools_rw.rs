@@ -1171,7 +1171,7 @@ mod tests {
                     )
                     .await
                     .expect("happy path");
-                LAST_APPEND.with(|c| c.take())
+                LAST_APPEND.with(Cell::take)
             })
             .await;
 

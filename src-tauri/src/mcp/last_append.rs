@@ -53,7 +53,7 @@ mod tests {
         let got = LAST_APPEND
             .scope(Cell::new(None), async {
                 record_append(op_ref.clone());
-                LAST_APPEND.with(|c| c.take())
+                LAST_APPEND.with(Cell::take)
             })
             .await;
 
@@ -79,7 +79,7 @@ mod tests {
             .scope(Cell::new(None), async {
                 record_append(first.clone());
                 record_append(second.clone());
-                LAST_APPEND.with(|c| c.take())
+                LAST_APPEND.with(Cell::take)
             })
             .await;
 
@@ -102,7 +102,7 @@ mod tests {
                         seq: 99,
                     });
                     // Writer reads back its own value.
-                    LAST_APPEND.with(|c| c.take())
+                    LAST_APPEND.with(Cell::take)
                 })
                 .await
         });
@@ -111,7 +111,7 @@ mod tests {
             LAST_APPEND
                 .scope(Cell::new(None), async {
                     // Reader never writes — must see None.
-                    LAST_APPEND.with(|c| c.take())
+                    LAST_APPEND.with(Cell::take)
                 })
                 .await
         });

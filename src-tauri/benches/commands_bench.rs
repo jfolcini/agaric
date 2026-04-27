@@ -332,6 +332,7 @@ fn bench_list_blocks_empty(c: &mut Criterion) {
                     None,
                     None,
                     Some(50),
+                    None,
                 )
                 .await
                 .unwrap()
@@ -364,6 +365,7 @@ fn bench_list_blocks_10_items(c: &mut Criterion) {
                     None,
                     None,
                     Some(50),
+                    None,
                 )
                 .await
                 .unwrap()
@@ -398,6 +400,7 @@ fn bench_list_blocks_100_items(c: &mut Criterion) {
                     None,
                     None,
                     Some(200),
+                    None,
                 )
                 .await
                 .unwrap()
@@ -433,6 +436,7 @@ fn bench_list_blocks_paginate_10_of_100(c: &mut Criterion) {
                     None,
                     None,
                     Some(10),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -450,6 +454,7 @@ fn bench_list_blocks_paginate_10_of_100(c: &mut Criterion) {
                         None,
                         Some(cursor),
                         Some(10),
+                        None,
                     )
                     .await
                     .unwrap();
@@ -501,6 +506,7 @@ fn bench_list_blocks_with_type_filter(c: &mut Criterion) {
                     None,
                     None,
                     Some(50),
+                    None,
                 )
                 .await
                 .unwrap()
@@ -562,7 +568,7 @@ fn bench_batch_resolve(c: &mut Criterion) {
                     let pool = pool.clone();
                     let ids = ids.clone();
                     async move {
-                        batch_resolve_inner(&pool, ids, BENCH_SPACE_ID.to_string())
+                        batch_resolve_inner(&pool, ids, Some(BENCH_SPACE_ID.to_string()))
                             .await
                             .unwrap()
                     }
@@ -757,6 +763,7 @@ fn bench_list_blocks_at_scale(c: &mut Criterion) {
                             None,
                             None,
                             Some(50),
+                            None,
                         )
                         .await
                         .unwrap()

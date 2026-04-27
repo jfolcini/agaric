@@ -2125,9 +2125,11 @@ mod tests {
 
         // The full window is now primed, AND the previously-queued
         // out-of-window date survives (we dispatch, we do not clear).
-        // `usize` cast is safe: `MAX_WINDOW_DAYS` is a small positive const.
+        // `try_from` is infallible at runtime for our 90-day const but
+        // keeps clippy's truncation lint happy without a suppression.
+        let window = usize::try_from(MAX_WINDOW_DAYS).expect("MAX_WINDOW_DAYS fits usize");
         assert!(
-            dirty.len() >= MAX_WINDOW_DAYS as usize + 1,
+            dirty.len() > window,
             "force_resync must prime full window AND retain prior dirty entries; got {}",
             dirty.len()
         );
