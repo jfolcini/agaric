@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 54 open items — 46 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12) + 5 frontend test-quality (TEST-56, TEST-61, TEST-62, TEST-63, TEST-64).
 
-Previously resolved: 583+ items across 165 sessions.
+Previously resolved: 583+ items across 482 sessions (per SESSION-LOG.md unique session count; latest is session 513).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; only frontend test-quality items remain.**
 
