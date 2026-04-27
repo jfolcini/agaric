@@ -24,5 +24,11 @@ mod tests;
 // (`crate::recurrence::shift_date_once`, `crate::recurrence::handle_recurrence`).
 // `shift_date` is currently module-internal (used only by
 // `compute::handle_recurrence` and the tests inside this module).
-pub(crate) use compute::handle_recurrence;
+// `handle_recurrence` (the pool-based wrapper) is no longer called from
+// production after H-4 — `set_todo_state_inner` runs the recurrence inside
+// its own `CommandTx` via `handle_recurrence_in_tx`. The wrapper is kept
+// for tests in `compute::tests_h17_m77` and for ad-hoc consumers that
+// might surface in the future; `#[allow(dead_code)]` is set on the wrapper
+// itself rather than re-exporting it crate-wide and triggering a warning.
+pub(crate) use compute::handle_recurrence_in_tx;
 pub(crate) use parser::shift_date_once;

@@ -257,6 +257,73 @@ pub(crate) fn extract_block_id_from_payload(payload_json: &str) -> Option<String
 }
 
 // ---------------------------------------------------------------------------
+// Op log immutability bypass (H-13)
+// ---------------------------------------------------------------------------
+//
+// Migration 0036 installs BEFORE UPDATE / BEFORE DELETE triggers on `op_log`
+// that ABORT unless a sentinel row is present in `_op_log_mutation_allowed`.
+// The compaction code path is the only sanctioned bypass; it MUST wrap its
+// op_log mutation in:
+//
+//     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+//     enable_op_log_mutation_bypass(&mut tx).await?;
+//     // ... UPDATE / DELETE FROM op_log ...
+//     disable_op_log_mutation_bypass(&mut tx).await?;
+//     tx.commit().await?;
+//
+// Connection scoping is achieved via transactional discipline rather than
+// physical schema scoping (SQLite forbids triggers from referencing temp
+// tables, so the originally-proposed `temp.` prefix from H-13 cannot work).
+// Because BEGIN IMMEDIATE serialises writers and the sentinel is DELETEd
+// before commit, sibling connections never observe the sentinel as present.
+
+/// Enable the op_log mutation bypass on `tx`.
+///
+/// Inserts a sentinel row into `_op_log_mutation_allowed` so the BEFORE
+/// UPDATE / BEFORE DELETE triggers on `op_log` permit mutations for the
+/// remainder of `tx`. Because the INSERT is part of `tx`'s pending writes,
+/// sibling connections cannot observe it (WAL semantics).
+///
+/// Callers MUST invoke [`disable_op_log_mutation_bypass`] before commit so
+/// the sentinel is removed from the WAL before the writer lock is released
+/// — preventing it from ever becoming visible to other connections. On
+/// rollback the row is discarded automatically.
+///
+/// # Errors
+/// Returns [`AppError`] if the INSERT fails (e.g. the underlying connection
+/// has been closed).
+pub async fn enable_op_log_mutation_bypass(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+) -> Result<(), AppError> {
+    sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Disable the op_log mutation bypass on `tx`.
+///
+/// Removes any sentinel rows from `_op_log_mutation_allowed`. MUST be
+/// called before commit when [`enable_op_log_mutation_bypass`] was called
+/// earlier on the same `tx`; failing to do so would commit the sentinel
+/// and silently grant every subsequent connection a global bypass.
+///
+/// On rollback this is unnecessary (the INSERT is rolled back too) but
+/// calling it is still safe.
+///
+/// # Errors
+/// Returns [`AppError`] if the DELETE fails (e.g. the underlying connection
+/// has been closed).
+pub async fn disable_op_log_mutation_bypass(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM _op_log_mutation_allowed")
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Read helpers
 // ---------------------------------------------------------------------------
 
@@ -1258,20 +1325,22 @@ mod tests {
         }
     }
 
-    // ── Immutability gap documentation ──────────────────────────────────
+    // ── Immutability triggers (H-13) ────────────────────────────────────
 
-    /// The op_log immutability invariant is enforced by code convention,
-    /// not by database triggers.  This test documents the gap: UPDATE and
-    /// DELETE succeed at the SQL level even though the op_log is supposed
-    /// to be strictly append-only.
+    /// Migration 0036 installs BEFORE UPDATE / BEFORE DELETE triggers on
+    /// `op_log` that ABORT with the documented message unless the
+    /// compaction bypass sentinel is present. This test asserts the
+    /// trigger now fires for bare UPDATE/DELETE statements issued
+    /// outside the compaction code path.
     ///
-    /// If a trigger is added later to enforce immutability, this test
-    /// should be updated to assert that UPDATE and DELETE fail.
+    /// Was previously `op_log_update_not_blocked_by_schema` — documented
+    /// the gap (no enforcement). H-13 closed that gap; the assertion is
+    /// inverted accordingly.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn op_log_update_not_blocked_by_schema() {
+    async fn op_log_update_blocked_by_trigger() {
         let (pool, _dir) = test_pool().await;
 
-        // Append an op so there is a row to mutate.
+        // Append an op so there is a row to attempt to mutate.
         append_local_op_at(
             &pool,
             TEST_DEVICE,
@@ -1281,39 +1350,192 @@ mod tests {
         .await
         .unwrap();
 
-        // Attempt UPDATE — currently succeeds (no trigger guards op_log).
+        // Attempt UPDATE — must ABORT with the H-13 trigger message.
         let update_result =
             sqlx::query("UPDATE op_log SET payload = '{}' WHERE device_id = ? AND seq = 1")
                 .bind(TEST_DEVICE)
                 .execute(&pool)
                 .await;
 
+        let update_err = update_result.expect_err("bare UPDATE on op_log must ABORT (H-13)");
+        let update_msg = format!("{update_err:?}");
         assert!(
-            update_result.is_ok(),
-            "UPDATE should succeed (no immutability trigger): {:?}",
-            update_result.unwrap_err(),
+            update_msg.contains("op_log is append-only"),
+            "UPDATE should abort with H-13 trigger message, got: {update_msg}"
         );
-        assert_eq!(
-            update_result.unwrap().rows_affected(),
-            1,
-            "expected exactly one row updated",
+        assert!(
+            update_msg.contains("UPDATE forbidden outside compaction"),
+            "UPDATE abort message must name the operation, got: {update_msg}"
         );
 
-        // Attempt DELETE — currently succeeds (no trigger guards op_log).
+        // Confirm the row is unchanged (trigger fired BEFORE the UPDATE
+        // touched the row).
+        let payload: String = sqlx::query_scalar!(
+            "SELECT payload FROM op_log WHERE device_id = ? AND seq = 1",
+            TEST_DEVICE
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_ne!(
+            payload, "{}",
+            "row payload must be untouched after aborted UPDATE"
+        );
+
+        // Attempt DELETE — must ABORT with the H-13 trigger message.
         let delete_result = sqlx::query("DELETE FROM op_log WHERE device_id = ? AND seq = 1")
             .bind(TEST_DEVICE)
             .execute(&pool)
             .await;
 
+        let delete_err = delete_result.expect_err("bare DELETE on op_log must ABORT (H-13)");
+        let delete_msg = format!("{delete_err:?}");
         assert!(
-            delete_result.is_ok(),
-            "DELETE should succeed (no immutability trigger): {:?}",
-            delete_result.unwrap_err(),
+            delete_msg.contains("op_log is append-only"),
+            "DELETE should abort with H-13 trigger message, got: {delete_msg}"
         );
+        assert!(
+            delete_msg.contains("DELETE forbidden outside compaction"),
+            "DELETE abort message must name the operation, got: {delete_msg}"
+        );
+
+        // Confirm the row is still present (trigger fired BEFORE the DELETE
+        // removed the row).
+        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "op_log row must survive aborted DELETE");
+    }
+
+    /// The compaction bypass helper pair must let UPDATE/DELETE proceed
+    /// when invoked through the documented enable → mutate → disable →
+    /// commit dance. Mirrors the production compaction code path.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn compaction_path_with_bypass_succeeds() {
+        let (pool, _dir) = test_pool().await;
+
+        append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            make_create_payload("BLK-COMPACT"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Run the canonical compaction dance: BEGIN IMMEDIATE → enable →
+        // UPDATE / DELETE → disable → commit.
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        super::enable_op_log_mutation_bypass(&mut tx).await.unwrap();
+
+        let update_res = sqlx::query(
+            "UPDATE op_log SET payload = '{\"compacted\":true}' WHERE device_id = ? AND seq = 1",
+        )
+        .bind(TEST_DEVICE)
+        .execute(&mut *tx)
+        .await
+        .expect("UPDATE inside bypass must succeed");
         assert_eq!(
-            delete_result.unwrap().rows_affected(),
+            update_res.rows_affected(),
             1,
-            "expected exactly one row deleted",
+            "exactly one row should be updated under bypass"
+        );
+
+        let delete_res = sqlx::query("DELETE FROM op_log WHERE device_id = ? AND seq = 1")
+            .bind(TEST_DEVICE)
+            .execute(&mut *tx)
+            .await
+            .expect("DELETE inside bypass must succeed");
+        assert_eq!(
+            delete_res.rows_affected(),
+            1,
+            "exactly one row should be deleted under bypass"
+        );
+
+        super::disable_op_log_mutation_bypass(&mut tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        // After commit the op_log is empty (DELETE took effect) and the
+        // sentinel is gone (so subsequent connections still see the
+        // immutability invariant).
+        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "DELETE under bypass must have taken effect");
+
+        let sentinel: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM _op_log_mutation_allowed")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sentinel, 0, "bypass sentinel must be cleared after commit");
+    }
+
+    /// Verify that enabling the bypass on connection A does not leak the
+    /// sentinel to a sibling connection B: while A holds an open tx with
+    /// the sentinel inserted (uncommitted), B must (a) not see the
+    /// sentinel via a SELECT, and (b) once A commits with the sentinel
+    /// cleared, observe a bare UPDATE still aborting.
+    ///
+    /// This is the H-13 connection-isolation guarantee: WAL semantics
+    /// ensure the sentinel is invisible across connections while it lives
+    /// only as a pending write inside A's tx.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn compaction_bypass_does_not_leak_to_sibling_connection() {
+        let (pool, _dir) = test_pool().await;
+
+        // Append an op so there is a row B can attempt to mutate.
+        append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            make_create_payload("BLK-LEAK"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Connection A: open a write tx and enable the bypass. Hold the
+        // tx open without committing.
+        let mut tx_a = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        super::enable_op_log_mutation_bypass(&mut tx_a)
+            .await
+            .unwrap();
+
+        // Connection B (separate read from the pool): must not observe
+        // A's uncommitted sentinel insert. WAL gives B a snapshot from
+        // before A's BEGIN IMMEDIATE.
+        let sentinel_seen_by_b: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM _op_log_mutation_allowed")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            sentinel_seen_by_b, 0,
+            "sibling connection must not observe A's uncommitted bypass sentinel"
+        );
+
+        // Tear down A cleanly: clear the sentinel and commit.
+        super::disable_op_log_mutation_bypass(&mut tx_a)
+            .await
+            .unwrap();
+        tx_a.commit().await.unwrap();
+
+        // Connection B (post-A-commit): a bare UPDATE on op_log must
+        // still ABORT with the H-13 trigger message — proving the
+        // bypass A briefly held did not leak past A's tx boundary.
+        let result =
+            sqlx::query("UPDATE op_log SET payload = '{}' WHERE device_id = ? AND seq = 1")
+                .bind(TEST_DEVICE)
+                .execute(&pool)
+                .await;
+        let err = result.expect_err("sibling connection's UPDATE must ABORT after A's commit");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("op_log is append-only"),
+            "sibling UPDATE should abort with H-13 trigger message, got: {msg}"
         );
     }
 

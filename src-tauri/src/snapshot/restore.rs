@@ -83,7 +83,17 @@ pub async fn apply_snapshot(
     sqlx::query("DELETE FROM property_definitions")
         .execute(&mut *tx)
         .await?;
+    // H-13: the BEFORE DELETE trigger on op_log (migration 0036) blocks bare
+    // DELETEs. Although `apply_snapshot` is technically the RESET path
+    // rather than compaction, it is the other documented "controlled
+    // wholesale op_log wipe" in the system (the AGENTS.md invariant says
+    // "except compaction" but the snapshot-driven RESET is an equivalently
+    // intentional mutation). Surface this finding in REVIEW-LATER if the
+    // wording needs tightening; for now we extend the same bypass mechanism
+    // here so sync RESET continues to function.
+    crate::op_log::enable_op_log_mutation_bypass(&mut tx).await?;
     sqlx::query("DELETE FROM op_log").execute(&mut *tx).await?;
+    crate::op_log::disable_op_log_mutation_bypass(&mut tx).await?;
 
     // M-66 — surface dropped drafts via a warn line.
     //

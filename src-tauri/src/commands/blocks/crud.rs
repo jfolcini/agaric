@@ -1,8 +1,8 @@
 use crate::db::{CommandTx, WritePool};
 use crate::device::DeviceId;
 use crate::op::{
-    validate_set_property, CreateBlockPayload, DeleteBlockPayload, EditBlockPayload,
-    PurgeBlockPayload, RestoreBlockPayload, SetPropertyPayload,
+    validate_set_property, CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload,
+    EditBlockPayload, PurgeBlockPayload, RestoreBlockPayload, SetPropertyPayload,
 };
 
 use tracing::instrument;
@@ -1499,6 +1499,92 @@ pub(crate) async fn set_property_in_tx(
         },
         op_record,
     ))
+}
+
+/// Delete (or clear) a property on a block inside an existing transaction.
+///
+/// Sibling of [`set_property_in_tx`] for the recurrence/timestamp paths in
+/// [`set_todo_state_inner`] (H-4) that need to clear `created_at` /
+/// `completed_at` as part of a multi-op atomic state transition. Unlike
+/// [`delete_property_core`](super::super::delete_property_core) (which opens
+/// its own `BEGIN IMMEDIATE` and dispatches background work on commit), this
+/// helper runs entirely inside the caller's transaction. The caller is
+/// responsible for `tx.enqueue_background(op)` + `tx.commit_and_dispatch(...)`.
+///
+/// Reserved keys (`todo_state` / `priority` / `due_date` / `scheduled_date`)
+/// clear the matching column on `blocks`; non-reserved keys delete the row
+/// from `block_properties`.
+///
+/// Returns the [`op_log::OpRecord`] for the appended `DeleteProperty` op so
+/// the caller can queue background dispatch.
+pub(crate) async fn delete_property_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: &str,
+    block_id: &str,
+    key: &str,
+) -> Result<op_log::OpRecord, AppError> {
+    // 1. Validate block exists (TOCTOU-safe — read inside the same tx as
+    //    the write below).
+    let exists = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        block_id,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    if exists.is_none() {
+        return Err(AppError::NotFound(format!(
+            "block '{block_id}' (not found or deleted)"
+        )));
+    }
+
+    // 2. Append DeleteProperty op.
+    let payload = OpPayload::DeleteProperty(DeletePropertyPayload {
+        block_id: BlockId::from_trusted(block_id),
+        key: key.to_owned(),
+    });
+    let op_record =
+        op_log::append_local_op_in_tx(&mut *tx, device_id, payload, now_rfc3339()).await?;
+
+    // 3. Materialize: clear the column for reserved keys, otherwise delete
+    //    the `block_properties` row. Mirrors `delete_property_core`.
+    if is_reserved_property_key(key) {
+        match key {
+            "todo_state" => {
+                sqlx::query!("UPDATE blocks SET todo_state = NULL WHERE id = ?", block_id)
+                    .execute(&mut **tx)
+                    .await?;
+            }
+            "priority" => {
+                sqlx::query!("UPDATE blocks SET priority = NULL WHERE id = ?", block_id)
+                    .execute(&mut **tx)
+                    .await?;
+            }
+            "due_date" => {
+                sqlx::query!("UPDATE blocks SET due_date = NULL WHERE id = ?", block_id)
+                    .execute(&mut **tx)
+                    .await?;
+            }
+            "scheduled_date" => {
+                sqlx::query!(
+                    "UPDATE blocks SET scheduled_date = NULL WHERE id = ?",
+                    block_id
+                )
+                .execute(&mut **tx)
+                .await?;
+            }
+            _ => unreachable!(
+                "is_reserved_property_key('{key}') returned true for an unrecognised key"
+            ),
+        }
+    } else {
+        sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
+            .bind(block_id)
+            .bind(key)
+            .execute(&mut **tx)
+            .await?;
+    }
+
+    Ok(op_record)
 }
 
 /// Tauri command: create a new block. Delegates to

@@ -91,7 +91,7 @@ pub async fn set_property_inner(
 
 /// Set the todo state on a block (TODO / DOING / DONE or clear).
 ///
-/// Validates the value and delegates to [`set_property_inner`] with the
+/// Validates the value and delegates to [`set_property_in_tx`] with the
 /// reserved `"todo_state"` key.  Also auto-populates `created_at` and
 /// `completed_at` timestamps as regular `block_properties` rows based on
 /// state transitions.
@@ -99,6 +99,15 @@ pub async fn set_property_inner(
 /// When transitioning to DONE and the block has a `repeat` property, a new
 /// sibling block is created with TODO state and the dates shifted forward
 /// by the recurrence interval.
+///
+/// # Atomicity (H-4)
+///
+/// All writes — the state-change op, the `created_at`/`completed_at`
+/// timestamp writes, and the recurrence-sibling creation — run inside
+/// a single `BEGIN IMMEDIATE` transaction so a crash mid-sequence
+/// can never leave a `done` state with no `completed_at` and no
+/// next-occurrence sibling. Either every step commits, or every step
+/// rolls back.
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn set_todo_state_inner(
     pool: &SqlitePool,
@@ -134,33 +143,54 @@ pub async fn set_todo_state_inner(
         }
     }
 
-    // Fetch current block to check existing todo_state for transition logic
+    // H-4: open one IMMEDIATE tx covering every write below — the
+    // state change, the `created_at`/`completed_at` timestamp writes,
+    // and the recurrence-sibling creation. A pre-fix crash mid-sequence
+    // could leave a `done` state with no `completed_at` and no
+    // next-occurrence sibling — see REVIEW-LATER H-4 for the rationale.
+    let mut tx = CommandTx::begin_immediate(pool, "set_todo_state").await?;
+
+    // FEAT-5i — snapshot pre-mutation agenda-relevant state once for
+    // the post-commit `notify_gcal_for_op` call below. Skip the extra
+    // SELECT when no connector is wired (common in tests).
+    let gcal_snapshot = if materializer.is_gcal_hook_active() {
+        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
+    } else {
+        None
+    };
+
+    // Fetch current block (inside tx so prev_state is read in the same
+    // serialized window as the writes below) to drive transition logic.
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut **tx)
     .await?;
 
-    let existing = existing
+    let _ = existing
+        .as_ref()
         .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
 
-    let prev_state = existing.todo_state.as_deref().map(String::from);
-    let new_state = state.as_deref().map(String::from);
+    let prev_state = existing.as_ref().and_then(|b| b.todo_state.clone());
+    let new_state = state.clone();
 
-    let result = set_property_inner(
-        pool,
+    let (result, todo_op) = set_property_in_tx(
+        &mut tx,
         device_id,
-        materializer,
         block_id.clone(),
-        "todo_state".to_string(),
+        "todo_state",
         state,
         None,
         None,
         None,
     )
     .await?;
+    // Keep `todo_op` clone for the post-commit GCal notify (the queued
+    // background dispatch consumes the original).
+    let todo_op_for_gcal = todo_op.clone();
+    tx.enqueue_background(todo_op);
 
     // Auto-populate timestamps based on state transitions
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
@@ -168,82 +198,78 @@ pub async fn set_todo_state_inner(
     match (prev_state.as_deref(), new_state.as_deref()) {
         // null → TODO/DOING: set created_at
         (None, Some("TODO" | "DOING")) => {
-            set_property_inner(
-                pool,
+            let (_, op) = set_property_in_tx(
+                &mut tx,
                 device_id,
-                materializer,
                 block_id.clone(),
-                "created_at".to_string(),
+                "created_at",
                 None,
                 None,
                 Some(today),
                 None,
             )
             .await?;
+            tx.enqueue_background(op);
         }
         // DONE → TODO/DOING: set created_at, clear completed_at
         (Some("DONE"), Some("TODO" | "DOING")) => {
-            set_property_inner(
-                pool,
+            let (_, op) = set_property_in_tx(
+                &mut tx,
                 device_id,
-                materializer,
                 block_id.clone(),
-                "created_at".to_string(),
+                "created_at",
                 None,
                 None,
                 Some(today),
                 None,
             )
             .await?;
-            delete_property_core(
-                pool,
-                device_id,
-                materializer,
-                block_id.clone(),
-                "completed_at".to_string(),
-            )
-            .await?;
+            tx.enqueue_background(op);
+            let op = delete_property_in_tx(&mut tx, device_id, &block_id, "completed_at").await?;
+            tx.enqueue_background(op);
         }
         // TODO/DOING → DONE: set completed_at
         (Some("TODO" | "DOING"), Some("DONE")) => {
-            set_property_inner(
-                pool,
+            let (_, op) = set_property_in_tx(
+                &mut tx,
                 device_id,
-                materializer,
                 block_id.clone(),
-                "completed_at".to_string(),
+                "completed_at",
                 None,
                 None,
                 Some(today),
                 None,
             )
             .await?;
+            tx.enqueue_background(op);
         }
         // Any → null (un-tasking): clear both
         (Some(_), None) => {
-            delete_property_core(
-                pool,
-                device_id,
-                materializer,
-                block_id.clone(),
-                "created_at".to_string(),
-            )
-            .await?;
-            delete_property_core(
-                pool,
-                device_id,
-                materializer,
-                block_id.clone(),
-                "completed_at".to_string(),
-            )
-            .await?;
+            let op = delete_property_in_tx(&mut tx, device_id, &block_id, "created_at").await?;
+            tx.enqueue_background(op);
+            let op = delete_property_in_tx(&mut tx, device_id, &block_id, "completed_at").await?;
+            tx.enqueue_background(op);
         }
         _ => {} // Same state or other transitions — no timestamp changes
     }
 
-    // Recurrence: when transitioning to DONE, delegate to recurrence module
+    // Recurrence: when transitioning to DONE, delegate to recurrence
+    // module — using the in-tx form so the sibling creation rolls back
+    // alongside the state change if anything below fails.
     if new_state.as_deref() == Some("DONE") && prev_state.as_deref() != Some("DONE") {
-        crate::recurrence::handle_recurrence(pool, device_id, materializer, &block_id).await?;
+        crate::recurrence::handle_recurrence_in_tx(&mut tx, device_id, &block_id).await?;
+    }
+
+    tx.commit_and_dispatch(materializer).await?;
+
+    // FEAT-5i — notify GCal connector post-commit. Only the
+    // `todo_state` op is agenda-relevant for GCal (created_at /
+    // completed_at are not in `is_agenda_relevant_key`'s set; the
+    // recurrence sibling's CreateBlock + SetProperty ops do not have a
+    // pre-mutation snapshot since the block is brand new and are
+    // therefore picked up by the periodic reconcile sweep).
+    if let Some(snapshot) = gcal_snapshot {
+        materializer.notify_gcal_for_op(&todo_op_for_gcal, &snapshot);
     }
 
     Ok(result)

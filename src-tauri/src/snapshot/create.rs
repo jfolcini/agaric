@@ -287,6 +287,14 @@ pub async fn compact_op_log(
     // frontier.  The seq guard ensures that ops written after the Phase 1
     // read (which would have seq > up_to_seqs[device]) are never deleted,
     // even if their created_at happens to be before the cutoff.
+    //
+    // H-13: enable the op_log mutation bypass for the duration of this tx.
+    // The BEFORE DELETE trigger on op_log (migration 0036) would otherwise
+    // ABORT every per-device DELETE below. The bypass is cleared via
+    // `disable_op_log_mutation_bypass` before commit so it never escapes
+    // this transaction.
+    crate::op_log::enable_op_log_mutation_bypass(&mut tx).await?;
+
     let mut deleted_count: u64 = 0;
     for (dev_id, max_seq) in &data.up_to_seqs {
         let res = sqlx::query(
@@ -299,6 +307,11 @@ pub async fn compact_op_log(
         .await?;
         deleted_count += res.rows_affected();
     }
+
+    // H-13: clear the bypass before any subsequent statements run inside
+    // this tx, and crucially before COMMIT — leaving it set would leak the
+    // sentinel row to every other connection in the pool.
+    crate::op_log::disable_op_log_mutation_bypass(&mut tx).await?;
 
     // Cleanup old snapshots (inlined to stay within this transaction)
     let keep: i64 = 3;

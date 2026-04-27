@@ -4124,3 +4124,162 @@ async fn bug20_todo_state_fallback_when_definition_deleted() {
 
     mat.shutdown();
 }
+
+// ======================================================================
+// H-4 — set_todo_state atomicity across state change + timestamps + recurrence
+// ======================================================================
+
+/// H-4: when the recurrence-sibling creation inside `set_todo_state_inner`
+/// fails, the entire transaction (state flip to DONE, completed_at write,
+/// sibling creation) must roll back. Pre-fix the state flip and timestamp
+/// writes ran on separate transactions from the recurrence sibling, so a
+/// failure in the recurrence step left the user stuck with a `done` state
+/// and no next-occurrence sibling.
+///
+/// Trigger mechanism: a corrupt `repeat-until` value planted directly into
+/// `block_properties` (bypassing the ISO-date validation in
+/// `set_property_inner`) causes `set_property_in_tx`'s validation to reject
+/// it when copying to the new sibling, which propagates out through
+/// `handle_recurrence_in_tx` and rolls the entire `CommandTx` back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_todo_state_atomic_when_recurrence_fails() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Set up a TODO block with due_date and a daily repeat rule.
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task with corrupt repeat-until (H-4)".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        Some("2025-06-15".into()),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "repeat".into(),
+        Some("daily".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Plant the corrupt repeat-until that will cause the sibling-copy
+    // step inside handle_recurrence_in_tx to fail validation.
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)")
+        .bind(&block.id)
+        .bind("repeat-until")
+        .bind("not-a-date")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Snapshot pre-call state so we can assert it survived rollback.
+    let pre_state: Option<String> =
+        sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+            .bind(&block.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(pre_state.as_deref(), Some("TODO"));
+
+    let ops_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Try to flip to DONE. This should fail because the recurrence step
+    // inside the same tx hits the corrupt repeat-until.
+    let result =
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into())).await;
+
+    assert!(
+        result.is_err(),
+        "set_todo_state_inner DONE should propagate the recurrence validation error, got {result:?}"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("Invalid date format") || err_msg.contains("not-a-date"),
+        "error should be the date-format validation rejection, got: {err_msg}"
+    );
+
+    // H-4 contract: state did NOT transition.
+    let post_state: Option<String> =
+        sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+            .bind(&block.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        post_state.as_deref(),
+        Some("TODO"),
+        "rolled-back tx must leave todo_state unchanged"
+    );
+
+    // No completed_at was written.
+    let completed_at: Option<String> = sqlx::query_scalar(
+        "SELECT value_date FROM block_properties WHERE block_id = ? AND key = 'completed_at'",
+    )
+    .bind(&block.id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap()
+    .flatten();
+    assert!(
+        completed_at.is_none(),
+        "rolled-back tx must NOT write completed_at, got: {completed_at:?}"
+    );
+
+    // No recurrence sibling was created.
+    let sibling_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks
+         WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL",
+    )
+    .bind(&block.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        sibling_count, 0,
+        "rolled-back tx must NOT create a recurrence sibling, got: {sibling_count}"
+    );
+
+    // No partial op_log entries from the failed call survived.
+    let ops_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        ops_after, ops_before,
+        "rolled-back tx must leave op_log unchanged (before={ops_before}, after={ops_after})"
+    );
+
+    mat.shutdown();
+}
