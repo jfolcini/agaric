@@ -439,6 +439,13 @@ pub type DirtySet = BTreeSet<NaiveDate>;
 
 /// Outcome of one cycle invocation.  Communicated to the outer loop
 /// so it can decide whether to retry with backoff.
+///
+/// `HardFailure` carries the structured [`GcalErrorKind`] so callers
+/// (and tests) can match on the variant directly instead of doing
+/// substring matching on a formatted string.  Use the [`Display`]
+/// impl for log lines — the per-variant format is centralised in
+/// [`kind_display`] and shared with [`classify_date_err`] so the cycle
+/// and per-date paths stay byte-equivalent for the same kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CycleOutcome {
     /// Cycle ran to completion.  Some / all dates may have been
@@ -450,7 +457,41 @@ pub enum CycleOutcome {
     LeaseUnavailable,
     /// Hard failure that requires operator intervention.  Outer loop
     /// does not retry; Settings UI surfaces the error via the emitter.
-    HardFailure(String),
+    HardFailure(GcalErrorKind),
+}
+
+impl std::fmt::Display for CycleOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ok => f.write_str("ok"),
+            Self::LeaseUnavailable => f.write_str("lease_unavailable"),
+            Self::HardFailure(kind) => f.write_str(&kind_display(kind)),
+        }
+    }
+}
+
+/// Canonical string form of a [`GcalErrorKind`] for the cycle's
+/// log/UI surface.  Shared between the [`CycleOutcome`] [`Display`]
+/// impl and [`classify_date_err`] so the two classifiers cannot
+/// drift out of sync on per-variant wording (REVIEW-LATER MAINT-140
+/// + MAINT-151(h)).
+///
+/// These strings are intentionally distinct from
+/// [`GcalErrorKind`]'s thiserror [`Display`] output — they are the
+/// short, machine-greppable summaries used in tracing fields, not
+/// the user-facing prose carried inside [`AppError`].
+fn kind_display(kind: &GcalErrorKind) -> String {
+    match kind {
+        GcalErrorKind::Unauthorized => "unauthorized (reauth required)".to_owned(),
+        GcalErrorKind::Forbidden(msg) => format!("forbidden: {msg}"),
+        GcalErrorKind::RateLimited { retry_after_ms } => {
+            format!("rate_limited: retry after {retry_after_ms}ms")
+        }
+        GcalErrorKind::ServerError { status } => format!("server_error: HTTP {status}"),
+        GcalErrorKind::InvalidRequest(msg) => format!("invalid_request: {msg}"),
+        GcalErrorKind::CalendarGone => "calendar_gone".to_owned(),
+        GcalErrorKind::EventGone => "event_gone".to_owned(),
+    }
 }
 
 /// Run a single cycle end-to-end.  Entry point for the unit-test
@@ -520,13 +561,11 @@ pub async fn run_cycle<C: GcalClient>(
             }
             Err(DateFailure::Unauthorized) => {
                 emitter.emit(GcalEvent::ReauthRequired);
-                return Ok(CycleOutcome::HardFailure(
-                    "unauthorized (reauth required)".to_owned(),
-                ));
+                return Ok(CycleOutcome::HardFailure(GcalErrorKind::Unauthorized));
             }
             Err(DateFailure::Forbidden(msg)) => {
                 emitter.emit(GcalEvent::PushDisabled);
-                return Ok(CycleOutcome::HardFailure(format!("forbidden: {msg}")));
+                return Ok(CycleOutcome::HardFailure(GcalErrorKind::Forbidden(msg)));
             }
             Err(DateFailure::Skipped(reason)) => {
                 tracing::warn!(
@@ -562,39 +601,31 @@ fn classify_cycle_failure(
     err: &AppError,
 ) -> Result<CycleOutcome, AppError> {
     if let AppError::Gcal(kind) = err {
+        // Side effects (event emission) per kind — only the variants
+        // the Settings UI surfaces a banner for fire here.  The
+        // remaining recognised variants (rate-limit / 5xx /
+        // invalid-request) are silent at the emitter level; the
+        // tracing log line in [`spawn_connector`] still records them.
         match kind {
-            GcalErrorKind::Unauthorized => {
-                emitter.emit(GcalEvent::ReauthRequired);
-                return Ok(CycleOutcome::HardFailure(
-                    "unauthorized (reauth required)".to_owned(),
-                ));
-            }
-            GcalErrorKind::Forbidden(msg) => {
-                emitter.emit(GcalEvent::PushDisabled);
-                return Ok(CycleOutcome::HardFailure(format!("forbidden: {msg}")));
-            }
-            GcalErrorKind::RateLimited { retry_after_ms } => {
-                return Ok(CycleOutcome::HardFailure(format!(
-                    "rate_limited: retry after {retry_after_ms}ms"
-                )));
-            }
-            GcalErrorKind::ServerError { status } => {
-                return Ok(CycleOutcome::HardFailure(format!(
-                    "server_error: HTTP {status}"
-                )));
-            }
-            GcalErrorKind::InvalidRequest(msg) => {
-                return Ok(CycleOutcome::HardFailure(format!("invalid_request: {msg}")));
-            }
+            GcalErrorKind::Unauthorized => emitter.emit(GcalEvent::ReauthRequired),
+            GcalErrorKind::Forbidden(_) => emitter.emit(GcalEvent::PushDisabled),
             _ => {}
         }
+        return Ok(CycleOutcome::HardFailure(kind.clone()));
     }
+    // Non-Gcal `AppError` is unexpected here (every transport-layer
+    // failure is mapped to `AppError::Gcal(...)` upstream in `api.rs`)
+    // — log it and surface as a synthetic `InvalidRequest` so the
+    // outer loop's `HardFailure` branch still fires + clears the
+    // dirty set, matching the pre-MAINT-140 behaviour.
     tracing::error!(
         target: "gcal",
         error = ?err,
         "hard failure in cycle setup",
     );
-    Ok(CycleOutcome::HardFailure(err.to_string()))
+    Ok(CycleOutcome::HardFailure(GcalErrorKind::InvalidRequest(
+        err.to_string(),
+    )))
 }
 
 /// Evaluate a single date: fetch agenda entries, compute digest, hash,
@@ -715,29 +746,32 @@ async fn push_date<C: GcalClient>(
 
 /// Map an [`AppError`] raised from a per-event client call onto the
 /// [`DateFailure`] taxonomy used by [`push_date`].
+///
+/// Per-variant string formatting is centralised in [`kind_display`]
+/// so this classifier and [`classify_cycle_failure`] cannot drift
+/// (REVIEW-LATER MAINT-140 + MAINT-151(h)).  Outer enum-variant
+/// routing (`Unauthorized` / `Forbidden` / `CalendarGone` end the
+/// cycle; everything else is `Skipped`) stays here — only the
+/// reason-string formatting goes through the helper.
 fn classify_date_err(err: &AppError, _emitter: &Arc<dyn GcalEventEmitter>) -> DateFailure {
     if let AppError::Gcal(kind) = err {
         match kind {
-            GcalErrorKind::Unauthorized => return DateFailure::Unauthorized,
-            GcalErrorKind::Forbidden(msg) => return DateFailure::Forbidden(msg.clone()),
-            GcalErrorKind::CalendarGone => return DateFailure::CalendarGone,
-            GcalErrorKind::EventGone => {
-                return DateFailure::Skipped("event_gone".to_owned());
-            }
-            GcalErrorKind::RateLimited { retry_after_ms } => {
-                return DateFailure::Skipped(format!("rate_limited: {retry_after_ms}ms"));
-            }
-            GcalErrorKind::ServerError { status } => {
-                return DateFailure::Skipped(format!("server_error: HTTP {status}"));
-            }
-            GcalErrorKind::InvalidRequest(msg) => {
-                return DateFailure::Skipped(format!("invalid_request: {msg}"));
-            }
+            GcalErrorKind::Unauthorized => DateFailure::Unauthorized,
+            GcalErrorKind::Forbidden(msg) => DateFailure::Forbidden(msg.clone()),
+            GcalErrorKind::CalendarGone => DateFailure::CalendarGone,
+            // EventGone / RateLimited / ServerError / InvalidRequest
+            // are all "skip this date, retry on next sweep" — the
+            // reason string comes from the shared formatter.
+            GcalErrorKind::EventGone
+            | GcalErrorKind::RateLimited { .. }
+            | GcalErrorKind::ServerError { .. }
+            | GcalErrorKind::InvalidRequest(_) => DateFailure::Skipped(kind_display(kind)),
         }
+    } else {
+        DateFailure::Other(AppError::Validation(format!(
+            "gcal.connector.unexpected_error: {err}"
+        )))
     }
-    DateFailure::Other(AppError::Validation(format!(
-        "gcal.connector.unexpected_error: {err}"
-    )))
 }
 
 /// Recover from a `CalendarGone` response: wipe the map, reset the
@@ -1085,7 +1119,8 @@ async fn run_task_loop<C: GcalClient + ?Sized>(
                             | Ok(CycleOutcome::LeaseUnavailable) => {
                                 dirty.clear();
                             }
-                            Ok(CycleOutcome::HardFailure(reason)) => {
+                            Ok(CycleOutcome::HardFailure(kind)) => {
+                                let reason = kind_display(&kind);
                                 tracing::warn!(
                                     target: "gcal",
                                     reason = %reason,
@@ -1885,8 +1920,11 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            matches!(outcome, CycleOutcome::HardFailure(ref msg) if msg.contains("unauthorized")),
-            "401 on first-connect must surface HardFailure(unauthorized), got {outcome:?}"
+            matches!(
+                outcome,
+                CycleOutcome::HardFailure(GcalErrorKind::Unauthorized)
+            ),
+            "401 on first-connect must surface HardFailure(Unauthorized), got {outcome:?}"
         );
         assert!(
             rec.events().contains(&GcalEvent::ReauthRequired),

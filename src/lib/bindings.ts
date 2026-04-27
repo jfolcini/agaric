@@ -153,6 +153,11 @@ export const commands = {
 } | null, AppErrorSchema>(__TAURI_INVOKE("get_peer_ref", { peerId })),
 	// Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`].
 	deletePeerRef: (peerId: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("delete_peer_ref", { peerId })),
+	/**
+	 *  Tauri command: rename a paired sync peer's display name (or clear
+	 *  it back to the device-supplied value when `device_name` is `None`).
+	 *  Delegates to [`update_peer_name_inner`].
+	 */
 	updatePeerName: (peerId: string, deviceName: string | null) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("update_peer_name", { peerId, deviceName })),
 	// Tauri command: set a peer's last-known network address for direct connection.
 	setPeerAddress: (peerId: string, address: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("set_peer_address", { peerId, address })),
@@ -262,7 +267,18 @@ export const commands = {
 	 *  Delegates to [`trash_descendant_counts_inner`].
 	 */
 	trashDescendantCounts: (rootIds: string[]) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("trash_descendant_counts", { rootIds })),
+	/**
+	 *  Tauri command: fetch (or refresh) link metadata for a URL. Cache
+	 *  hits return immediately; stale or missing entries trigger an HTTP
+	 *  fetch and an upsert into the cache. Delegates to
+	 *  [`fetch_link_metadata_inner`].
+	 */
 	fetchLinkMetadata: (url: string) => typedError<LinkMetadata, AppErrorSchema>(__TAURI_INVOKE("fetch_link_metadata", { url })),
+	/**
+	 *  Tauri command: read cached link metadata only (no network fetch).
+	 *  Returns `None` if the URL has not been seen. Delegates to
+	 *  [`get_link_metadata_inner`].
+	 */
 	getLinkMetadata: (url: string) => typedError<{
 	url: string,
 	title: string | null,
@@ -271,7 +287,18 @@ export const commands = {
 	fetched_at: string,
 	auth_required: boolean,
 } | null, AppErrorSchema>(__TAURI_INVOKE("get_link_metadata", { url })),
+	/**
+	 *  Tauri command: gather bug-report metadata (app version, OS, arch,
+	 *  device id, recent ERROR/WARN log lines). Delegates to
+	 *  [`collect_bug_report_metadata_inner`].
+	 */
 	collectBugReportMetadata: () => typedError<BugReport, AppErrorSchema>(__TAURI_INVOKE("collect_bug_report_metadata")),
+	/**
+	 *  Tauri command: enumerate the log files eligible for inclusion in a
+	 *  bug-report ZIP, applying per-file size caps and optional PII
+	 *  redaction (home path, device id, GCal email, peer device ids).
+	 *  Delegates to [`read_logs_for_report_inner`].
+	 */
 	readLogsForReport: (redact: boolean) => typedError<LogFileEntry[], AppErrorSchema>(__TAURI_INVOKE("read_logs_for_report", { redact })),
 	// Tauri command: return the current MCP RO status for the Settings tab.
 	getMcpStatus: () => typedError<McpStatus, AppErrorSchema>(__TAURI_INVOKE("get_mcp_status")),
@@ -306,10 +333,34 @@ export const commands = {
 	mcpRwSetEnabled: (enabled: boolean) => typedError<boolean, AppErrorSchema>(__TAURI_INVOKE("mcp_rw_set_enabled", { enabled })),
 	// Tauri command: disconnect every in-flight RW MCP connection.
 	mcpRwDisconnectAll: () => typedError<null, AppErrorSchema>(__TAURI_INVOKE("mcp_rw_disconnect_all")),
+	/**
+	 *  Tauri command: report the GCal connector's connect/sync status to
+	 *  the Settings tab. Delegates to [`get_gcal_status_inner`].
+	 */
 	getGcalStatus: () => typedError<GcalStatus, AppErrorSchema>(__TAURI_INVOKE("get_gcal_status")),
+	/**
+	 *  Tauri command: poke the GCal connector to run a resync immediately
+	 *  (rather than waiting for the next scheduled tick). Delegates to
+	 *  [`force_gcal_resync_inner`].
+	 */
 	forceGcalResync: () => typedError<null, AppErrorSchema>(__TAURI_INVOKE("force_gcal_resync")),
+	/**
+	 *  Tauri command: disconnect the GCal account (revoke tokens, optionally
+	 *  delete the synced calendar). Delegates to [`disconnect_gcal_inner`].
+	 */
 	disconnectGcal: (deleteCalendar: boolean) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("disconnect_gcal", { deleteCalendar })),
+	/**
+	 *  Tauri command: update the GCal sync window (days before/after today
+	 *  that are mirrored to the connected calendar). The value is clamped
+	 *  to `[MIN_WINDOW_DAYS, MAX_WINDOW_DAYS]` in the inner. Delegates to
+	 *  [`set_gcal_window_days_inner`].
+	 */
 	setGcalWindowDays: (n: number) => typedError<number, AppErrorSchema>(__TAURI_INVOKE("set_gcal_window_days", { n })),
+	/**
+	 *  Tauri command: update the GCal privacy mode (`"full"` vs.
+	 *  `"minimal"` event-body sharing). Delegates to
+	 *  [`set_gcal_privacy_mode_inner`].
+	 */
 	setGcalPrivacyMode: (mode: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("set_gcal_privacy_mode", { mode })),
 	// Tauri command: list every space. Delegates to [`list_spaces_inner`].
 	listSpaces: () => typedError<SpaceRow[], AppErrorSchema>(__TAURI_INVOKE("list_spaces")),
@@ -445,7 +496,10 @@ export type BugReport = {
 	os: string,
 	arch: string,
 	device_id: string,
-	// Last ~20 error/warn lines from today's `agaric.log`, newest last.
+	/**
+	 *  Last [`RECENT_ERRORS_CAP`] error/warn lines from today's
+	 *  `agaric.log`, newest last.
+	 */
 	recent_errors: string[],
 };
 

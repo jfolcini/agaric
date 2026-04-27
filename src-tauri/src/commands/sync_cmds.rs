@@ -342,6 +342,9 @@ pub async fn delete_peer_ref(pool: State<'_, WritePool>, peer_id: String) -> Res
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: rename a paired sync peer's display name (or clear
+/// it back to the device-supplied value when `device_name` is `None`).
+/// Delegates to [`update_peer_name_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]

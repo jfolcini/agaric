@@ -133,17 +133,21 @@ pub async fn apply_snapshot(
     // Each table uses a chunk size derived from MAX_SQL_PARAMS / num_columns
     // to stay within SQLite's bind-parameter limit.
 
-    // -- blocks (12 columns) --
-    const BLOCKS_COLS: usize = 12;
-    const BLOCKS_CHUNK: usize = MAX_SQL_PARAMS / BLOCKS_COLS; // 83
+    // -- blocks (13 columns) --
+    // MAINT-133: `conflict_type` joined the column list at SCHEMA_VERSION = 3.
+    // Older v1/v2 snapshots decode it as `None` (via `serde(default)` on the
+    // struct field), which is exactly what `merge/resolve.rs` writes for
+    // non-conflict blocks anyway, so the INSERT below is safe for both cases.
+    const BLOCKS_COLS: usize = 13;
+    const BLOCKS_CHUNK: usize = MAX_SQL_PARAMS / BLOCKS_COLS; // 76
     for chunk in data.tables.blocks.chunks(BLOCKS_CHUNK) {
         let placeholders: Vec<&str> = chunk
             .iter()
-            .map(|_| "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .map(|_| "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .collect();
         let sql = format!(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, \
-             deleted_at, is_conflict, conflict_source, \
+             deleted_at, is_conflict, conflict_source, conflict_type, \
              todo_state, priority, due_date, scheduled_date) VALUES {}",
             placeholders.join(", ")
         );
@@ -158,6 +162,7 @@ pub async fn apply_snapshot(
                 .bind(&b.deleted_at)
                 .bind(b.is_conflict)
                 .bind(&b.conflict_source)
+                .bind(&b.conflict_type)
                 .bind(&b.todo_state)
                 .bind(&b.priority)
                 .bind(&b.due_date)

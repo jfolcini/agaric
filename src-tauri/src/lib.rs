@@ -38,6 +38,7 @@ pub mod sync_net;
 pub mod sync_protocol;
 pub mod sync_scheduler;
 pub mod tag_inheritance;
+pub mod tag_inheritance_macros;
 pub mod tag_query;
 pub mod ulid;
 pub mod word_diff;

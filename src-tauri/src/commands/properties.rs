@@ -12,7 +12,43 @@ use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
 
+use super::sanitize_internal_error;
 use super::*;
+
+/// MAINT-147 (e): defensive fallback validation for reserved property
+/// keys (`todo_state`, `priority`) when the corresponding row in
+/// `property_definitions` has been deleted.
+///
+/// `set_property_in_tx` is the primary line of validation — it
+/// consults the live `property_definitions.options` JSON. If that row
+/// is missing (stale schema, manual delete, fresh test DB), this
+/// helper re-enforces the seeded built-in defaults so a missing
+/// definition cannot silently relax the reserved-key contract.
+///
+/// `def_row_present` is the boolean result of fetching
+/// `property_definitions WHERE key = '<key>'` — fed in by the caller
+/// so each reserved key keeps its own literal-keyed `sqlx::query!`
+/// statement (the per-key literals are already cached in `.sqlx/`,
+/// and avoiding a parameterised lookup here means no cache
+/// regeneration is required).
+///
+/// `defaults` is the ordered list of allowed values; the error
+/// message echoes them verbatim so the frontend toast lines up with
+/// the user's mental model of "TODO/DOING/DONE" or "1/2/3".
+fn validate_reserved_property_value(
+    def_row_present: bool,
+    key: &str,
+    value: &str,
+    defaults: &[&str],
+) -> Result<(), AppError> {
+    if !def_row_present && !defaults.contains(&value) {
+        return Err(AppError::Validation(format!(
+            "{key} '{value}' is not in allowed options: {}",
+            defaults.join(", ")
+        )));
+    }
+    Ok(())
+}
 
 /// MAINT-134: Emit `EVENT_PROPERTY_CHANGED` with a log-on-error
 /// fallback so a transient emit failure does not propagate as a
@@ -127,20 +163,18 @@ pub async fn set_todo_state_inner(
         // `set_property_in_tx` already performs this check when the
         // definition exists; this fallback guards the case where the
         // definition has been deleted, ensuring the built-in defaults are
-        // still enforced.
+        // still enforced. MAINT-147 (e): the validation logic is shared
+        // with `set_priority_inner` via `validate_reserved_property_value`.
         let def_row =
             sqlx::query!("SELECT options FROM property_definitions WHERE key = 'todo_state'")
                 .fetch_optional(pool)
                 .await?;
-        if def_row.is_none() {
-            let default_options = ["TODO", "DOING", "DONE"];
-            if !default_options.iter().any(|d| d == s) {
-                return Err(AppError::Validation(format!(
-                    "todo_state '{s}' is not in allowed options: {}",
-                    default_options.join(", ")
-                )));
-            }
-        }
+        validate_reserved_property_value(
+            def_row.is_some(),
+            "todo_state",
+            s,
+            &["TODO", "DOING", "DONE"],
+        )?;
     }
 
     // H-4: open one IMMEDIATE tx covering every write below — the
@@ -305,20 +339,13 @@ pub async fn set_priority_inner(
         // options for validation (handled inside `set_property_in_tx`).
         // If the definition row has been deleted, fall back to the
         // built-in seeded options so reserved-key validation remains
-        // enforced. Mirrors `set_todo_state_inner`.
+        // enforced. Mirrors `set_todo_state_inner` via the shared
+        // `validate_reserved_property_value` helper (MAINT-147 (e)).
         let def_row =
             sqlx::query!("SELECT options FROM property_definitions WHERE key = 'priority'")
                 .fetch_optional(pool)
                 .await?;
-        if def_row.is_none() {
-            let default_options = ["1", "2", "3"];
-            if !default_options.iter().any(|d| d == l) {
-                return Err(AppError::Validation(format!(
-                    "priority '{l}' is not in allowed options: {}",
-                    default_options.join(", ")
-                )));
-            }
-        }
+        validate_reserved_property_value(def_row.is_some(), "priority", l, &["1", "2", "3"])?;
     }
     set_property_inner(
         pool,
@@ -858,7 +885,7 @@ pub async fn create_property_def(
 ) -> Result<PropertyDefinition, AppError> {
     create_property_def_inner(&write_pool.0, key, value_type, options)
         .await
-        .map_err(super::sanitize_internal_error)
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: list all property definitions. Delegates to [`list_property_defs_inner`].
@@ -870,7 +897,7 @@ pub async fn list_property_defs(
 ) -> Result<Vec<PropertyDefinition>, AppError> {
     list_property_defs_inner(&read_pool.0)
         .await
-        .map_err(super::sanitize_internal_error)
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: update options for a select-type definition. Delegates to [`update_property_def_options_inner`].

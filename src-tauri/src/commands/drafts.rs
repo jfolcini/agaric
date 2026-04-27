@@ -82,17 +82,9 @@ pub async fn flush_draft_inner(
     }
 
     // 4. prev_edit lookup (same logic as edit_block_inner) inside the tx.
-    let prev_edit_row = sqlx::query!(
-        "SELECT device_id, seq FROM op_log \
-         WHERE json_extract(payload, '$.block_id') = ? \
-         AND op_type IN ('edit_block', 'create_block') \
-         ORDER BY created_at DESC \
-         LIMIT 1",
-        block_id
-    )
-    .fetch_optional(&mut *tx)
-    .await?;
-    let prev_edit = prev_edit_row.map(|r| (r.device_id, r.seq));
+    //    MAINT-147 (b): delegates to the shared helper in
+    //    `commands::blocks::crud` so both call sites stay in lockstep.
+    let prev_edit = super::blocks::find_prev_edit_in_tx(&mut tx, &block_id).await?;
 
     // 5. Append the edit_block op + delete the draft row, on the outer tx.
     draft::flush_draft_in_tx(&mut tx, device_id, &block_id, &content, prev_edit).await?;

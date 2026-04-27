@@ -51,7 +51,11 @@ use sqlx::SqlitePool;
 
 use super::actor::{ActorContext, ACTOR};
 use super::handler_utils::{parse_args, to_tool_result};
-use super::registry::{ToolDescription, ToolRegistry};
+use super::registry::{
+    ToolDescription, ToolRegistry, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE,
+    TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS,
+    TOOL_LIST_TAGS, TOOL_SEARCH,
+};
 use crate::commands::{
     get_block_inner, get_page_inner, journal_for_date_inner, list_backlinks_grouped_inner,
     list_pages_inner, list_projected_agenda_inner, list_property_defs_inner, list_tags_inner,
@@ -231,19 +235,29 @@ impl ReadOnlyTools {
     }
 }
 
+/// Static tool-description list for the read-only MCP surface.
+///
+/// Lifted out of [`ToolRegistry::list_tools`] so callers that need the
+/// names without a constructed registry (notably the privacy-guard test
+/// in `summarise.rs`, MAINT-136) can drive iteration from the live
+/// metadata. The `&self` impl below just delegates here.
+pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
+    vec![
+        tool_desc_list_pages(),
+        tool_desc_get_page(),
+        tool_desc_search(),
+        tool_desc_get_block(),
+        tool_desc_list_backlinks(),
+        tool_desc_list_tags(),
+        tool_desc_list_property_defs(),
+        tool_desc_get_agenda(),
+        tool_desc_journal_for_date(),
+    ]
+}
+
 impl ToolRegistry for ReadOnlyTools {
     fn list_tools(&self) -> Vec<ToolDescription> {
-        vec![
-            tool_desc_list_pages(),
-            tool_desc_get_page(),
-            tool_desc_search(),
-            tool_desc_get_block(),
-            tool_desc_list_backlinks(),
-            tool_desc_list_tags(),
-            tool_desc_list_property_defs(),
-            tool_desc_get_agenda(),
-            tool_desc_journal_for_date(),
-        ]
+        list_tool_descriptions()
     }
 
     fn call_tool(
@@ -269,15 +283,15 @@ impl ToolRegistry for ReadOnlyTools {
             ACTOR
                 .scope(scoped, async move {
                     match name.as_str() {
-                        "list_pages" => handle_list_pages(&pool, args).await,
-                        "get_page" => handle_get_page(&pool, args).await,
-                        "search" => handle_search(&pool, args).await,
-                        "get_block" => handle_get_block(&pool, args).await,
-                        "list_backlinks" => handle_list_backlinks(&pool, args).await,
-                        "list_tags" => handle_list_tags(&pool, args).await,
-                        "list_property_defs" => handle_list_property_defs(&pool, args).await,
-                        "get_agenda" => handle_get_agenda(&pool, args).await,
-                        "journal_for_date" => {
+                        TOOL_LIST_PAGES => handle_list_pages(&pool, args).await,
+                        TOOL_GET_PAGE => handle_get_page(&pool, args).await,
+                        TOOL_SEARCH => handle_search(&pool, args).await,
+                        TOOL_GET_BLOCK => handle_get_block(&pool, args).await,
+                        TOOL_LIST_BACKLINKS => handle_list_backlinks(&pool, args).await,
+                        TOOL_LIST_TAGS => handle_list_tags(&pool, args).await,
+                        TOOL_LIST_PROPERTY_DEFS => handle_list_property_defs(&pool, args).await,
+                        TOOL_GET_AGENDA => handle_get_agenda(&pool, args).await,
+                        TOOL_JOURNAL_FOR_DATE => {
                             // M-82: route `journal_for_date` to the writer
                             // pool because `journal_for_date_inner` opens
                             // `BEGIN IMMEDIATE` and inserts into `op_log` +
@@ -303,7 +317,7 @@ impl ToolRegistry for ReadOnlyTools {
 
 fn tool_desc_list_pages() -> ToolDescription {
     ToolDescription {
-        name: "list_pages".to_string(),
+        name: TOOL_LIST_PAGES.to_string(),
         description: "List all pages with cursor pagination.".to_string(),
         input_schema: json!({
             "type": "object",
@@ -323,7 +337,7 @@ fn tool_desc_list_pages() -> ToolDescription {
 
 fn tool_desc_get_page() -> ToolDescription {
     ToolDescription {
-        name: "get_page".to_string(),
+        name: TOOL_GET_PAGE.to_string(),
         description:
             "Fetch a page and a paginated slice of its non-conflict subtree (grandchildren included)."
                 .to_string(),
@@ -347,7 +361,7 @@ fn tool_desc_get_page() -> ToolDescription {
 
 fn tool_desc_search() -> ToolDescription {
     ToolDescription {
-        name: "search".to_string(),
+        name: TOOL_SEARCH.to_string(),
         description: "Full-text search across block content (FTS5). Returns BlockRow records; \
                       content is truncated to 512 chars per result."
             .to_string(),
@@ -377,7 +391,7 @@ fn tool_desc_search() -> ToolDescription {
 
 fn tool_desc_get_block() -> ToolDescription {
     ToolDescription {
-        name: "get_block".to_string(),
+        name: TOOL_GET_BLOCK.to_string(),
         description:
             "Fetch a single block by ULID. Returns the BlockRow including soft-deleted blocks."
                 .to_string(),
@@ -394,7 +408,7 @@ fn tool_desc_get_block() -> ToolDescription {
 
 fn tool_desc_list_backlinks() -> ToolDescription {
     ToolDescription {
-        name: "list_backlinks".to_string(),
+        name: TOOL_LIST_BACKLINKS.to_string(),
         description: "List backlinks for a block, grouped by source page.".to_string(),
         input_schema: json!({
             "type": "object",
@@ -416,7 +430,7 @@ fn tool_desc_list_backlinks() -> ToolDescription {
 
 fn tool_desc_list_tags() -> ToolDescription {
     ToolDescription {
-        name: "list_tags".to_string(),
+        name: TOOL_LIST_TAGS.to_string(),
         description: "List every tag in the tag cache (no prefix filter).".to_string(),
         input_schema: json!({
             "type": "object",
@@ -435,7 +449,7 @@ fn tool_desc_list_tags() -> ToolDescription {
 
 fn tool_desc_list_property_defs() -> ToolDescription {
     ToolDescription {
-        name: "list_property_defs".to_string(),
+        name: TOOL_LIST_PROPERTY_DEFS.to_string(),
         description: "List every property definition (typed property schema).".to_string(),
         input_schema: json!({
             "type": "object",
@@ -447,7 +461,7 @@ fn tool_desc_list_property_defs() -> ToolDescription {
 
 fn tool_desc_get_agenda() -> ToolDescription {
     ToolDescription {
-        name: "get_agenda".to_string(),
+        name: TOOL_GET_AGENDA.to_string(),
         description:
             "Project the agenda (repeating tasks + due/scheduled blocks) for a date range."
                 .to_string(),
@@ -471,7 +485,7 @@ fn tool_desc_get_agenda() -> ToolDescription {
 
 fn tool_desc_journal_for_date() -> ToolDescription {
     ToolDescription {
-        name: "journal_for_date".to_string(),
+        name: TOOL_JOURNAL_FOR_DATE.to_string(),
         description:
             "Return the journal page for a specific date in the given space, creating it if missing. Idempotent per-space."
                 .to_string(),
@@ -501,14 +515,14 @@ fn tool_desc_journal_for_date() -> ToolDescription {
 // ---------------------------------------------------------------------------
 
 async fn handle_list_pages(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
-    let args: ListPagesArgs = parse_args("list_pages", args)?;
+    let args: ListPagesArgs = parse_args(TOOL_LIST_PAGES, args)?;
     let limit = args.limit.map(|l| l.clamp(1, LIST_RESULT_CAP));
     let resp = list_pages_inner(pool, args.cursor, limit).await?;
     to_tool_result(&resp)
 }
 
 async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
-    let args: GetPageArgs = parse_args("get_page", args)?;
+    let args: GetPageArgs = parse_args(TOOL_GET_PAGE, args)?;
     let limit = args.limit.map(|l| l.clamp(1, LIST_RESULT_CAP));
     // FEAT-3 Phase 7: `get_page_inner` requires a `space_id` and rejects
     // requests for pages outside that space. MCP agents are intentionally
@@ -546,7 +560,7 @@ async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppErr
 }
 
 async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
-    let args: SearchArgs = parse_args("search", args)?;
+    let args: SearchArgs = parse_args(TOOL_SEARCH, args)?;
     // Hard-cap at SEARCH_RESULT_CAP regardless of what the caller asked
     // for. PageRequest::new would otherwise clamp to MAX_PAGE_SIZE=200.
     let limit = Some(
@@ -580,13 +594,13 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
 }
 
 async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
-    let args: GetBlockArgs = parse_args("get_block", args)?;
+    let args: GetBlockArgs = parse_args(TOOL_GET_BLOCK, args)?;
     let resp = get_block_inner(pool, args.block_id).await?;
     to_tool_result(&resp)
 }
 
 async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
-    let args: ListBacklinksArgs = parse_args("list_backlinks", args)?;
+    let args: ListBacklinksArgs = parse_args(TOOL_LIST_BACKLINKS, args)?;
     let limit = args.limit.map(|l| l.clamp(1, LIST_RESULT_CAP));
     let resp =
         list_backlinks_grouped_inner(pool, args.block_id, None, None, args.cursor, limit).await?;
@@ -594,7 +608,7 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
 }
 
 async fn handle_list_tags(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
-    let args: ListTagsArgs = parse_args("list_tags", args)?;
+    let args: ListTagsArgs = parse_args(TOOL_LIST_TAGS, args)?;
     let limit = args.limit.map(|l| l.clamp(1, LIST_RESULT_CAP));
     let resp = list_tags_inner(pool, limit).await?;
     to_tool_result(&resp)
@@ -603,13 +617,13 @@ async fn handle_list_tags(pool: &SqlitePool, args: Value) -> Result<Value, AppEr
 async fn handle_list_property_defs(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     // Validate the arg object even though it is always empty — catches
     // typos like `{"prefix": "foo"}` and surfaces them as -32602.
-    let _: ListPropertyDefsArgs = parse_args("list_property_defs", args)?;
+    let _: ListPropertyDefsArgs = parse_args(TOOL_LIST_PROPERTY_DEFS, args)?;
     let resp = list_property_defs_inner(pool).await?;
     to_tool_result(&resp)
 }
 
 async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
-    let args: GetAgendaArgs = parse_args("get_agenda", args)?;
+    let args: GetAgendaArgs = parse_args(TOOL_GET_AGENDA, args)?;
     let resp =
         list_projected_agenda_inner(pool, args.start_date, args.end_date, args.limit).await?;
     to_tool_result(&resp)
@@ -621,10 +635,10 @@ async fn handle_journal_for_date(
     device_id: &str,
     args: Value,
 ) -> Result<Value, AppError> {
-    let args: JournalForDateArgs = parse_args("journal_for_date", args)?;
+    let args: JournalForDateArgs = parse_args(TOOL_JOURNAL_FOR_DATE, args)?;
     let date = chrono::NaiveDate::parse_from_str(&args.date, "%Y-%m-%d").map_err(|e| {
         AppError::Validation(format!(
-            "tool `journal_for_date`: `date` must be YYYY-MM-DD — {e}"
+            "tool `{TOOL_JOURNAL_FOR_DATE}`: `date` must be YYYY-MM-DD — {e}"
         ))
     })?;
     let resp = journal_for_date_inner(pool, device_id, materializer, date, &args.space_id).await?;

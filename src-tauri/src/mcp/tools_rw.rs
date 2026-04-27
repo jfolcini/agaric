@@ -44,7 +44,10 @@ use sqlx::SqlitePool;
 
 use super::actor::{ActorContext, ACTOR};
 use super::handler_utils::{parse_args, to_tool_result};
-use super::registry::{ToolDescription, ToolRegistry};
+use super::registry::{
+    ToolDescription, ToolRegistry, TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_CREATE_PAGE,
+    TOOL_DELETE_BLOCK, TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT,
+};
 use crate::commands::{
     add_tag_inner, create_block_inner, delete_block_inner, edit_block_inner, set_property_inner,
 };
@@ -135,16 +138,26 @@ impl ReadWriteTools {
     }
 }
 
+/// Static tool-description list for the read-write MCP surface.
+///
+/// Lifted out of [`ToolRegistry::list_tools`] so callers that need the
+/// names without a constructed registry (notably the privacy-guard test
+/// in `summarise.rs`, MAINT-136) can drive iteration from the live
+/// metadata. The `&self` impl below just delegates here.
+pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
+    vec![
+        tool_desc_append_block(),
+        tool_desc_update_block_content(),
+        tool_desc_set_property(),
+        tool_desc_add_tag(),
+        tool_desc_create_page(),
+        tool_desc_delete_block(),
+    ]
+}
+
 impl ToolRegistry for ReadWriteTools {
     fn list_tools(&self) -> Vec<ToolDescription> {
-        vec![
-            tool_desc_append_block(),
-            tool_desc_update_block_content(),
-            tool_desc_set_property(),
-            tool_desc_add_tag(),
-            tool_desc_create_page(),
-            tool_desc_delete_block(),
-        ]
+        list_tool_descriptions()
     }
 
     fn call_tool(
@@ -162,21 +175,23 @@ impl ToolRegistry for ReadWriteTools {
             ACTOR
                 .scope(scoped, async move {
                     match name.as_str() {
-                        "append_block" => {
+                        TOOL_APPEND_BLOCK => {
                             handle_append_block(&pool, &materializer, &device_id, args).await
                         }
-                        "update_block_content" => {
+                        TOOL_UPDATE_BLOCK_CONTENT => {
                             handle_update_block_content(&pool, &materializer, &device_id, args)
                                 .await
                         }
-                        "set_property" => {
+                        TOOL_SET_PROPERTY => {
                             handle_set_property(&pool, &materializer, &device_id, args).await
                         }
-                        "add_tag" => handle_add_tag(&pool, &materializer, &device_id, args).await,
-                        "create_page" => {
+                        TOOL_ADD_TAG => {
+                            handle_add_tag(&pool, &materializer, &device_id, args).await
+                        }
+                        TOOL_CREATE_PAGE => {
                             handle_create_page(&pool, &materializer, &device_id, args).await
                         }
-                        "delete_block" => {
+                        TOOL_DELETE_BLOCK => {
                             handle_delete_block(&pool, &materializer, &device_id, args).await
                         }
                         other => Err(AppError::NotFound(format!("unknown tool `{other}`"))),
@@ -193,7 +208,7 @@ impl ToolRegistry for ReadWriteTools {
 
 fn tool_desc_append_block() -> ToolDescription {
     ToolDescription {
-        name: "append_block".to_string(),
+        name: TOOL_APPEND_BLOCK.to_string(),
         description: "Append a content block under an existing parent. The block_type is \
                       always `content` — agents cannot create pages or tags through this tool."
             .to_string(),
@@ -222,7 +237,7 @@ fn tool_desc_append_block() -> ToolDescription {
 
 fn tool_desc_update_block_content() -> ToolDescription {
     ToolDescription {
-        name: "update_block_content".to_string(),
+        name: TOOL_UPDATE_BLOCK_CONTENT.to_string(),
         description: "Replace the content of an existing block. Reversible via page history."
             .to_string(),
         input_schema: json!({
@@ -239,7 +254,7 @@ fn tool_desc_update_block_content() -> ToolDescription {
 
 fn tool_desc_set_property() -> ToolDescription {
     ToolDescription {
-        name: "set_property".to_string(),
+        name: TOOL_SET_PROPERTY.to_string(),
         description: "Set (upsert) a typed property on a block. Exactly one of value_text / \
                       value_num / value_date / value_ref must be provided."
             .to_string(),
@@ -261,7 +276,7 @@ fn tool_desc_set_property() -> ToolDescription {
 
 fn tool_desc_add_tag() -> ToolDescription {
     ToolDescription {
-        name: "add_tag".to_string(),
+        name: TOOL_ADD_TAG.to_string(),
         description: "Apply an existing tag to a block. Does NOT create tags — the tag block \
                       must already exist (create tags from the UI)."
             .to_string(),
@@ -279,7 +294,7 @@ fn tool_desc_add_tag() -> ToolDescription {
 
 fn tool_desc_create_page() -> ToolDescription {
     ToolDescription {
-        name: "create_page".to_string(),
+        name: TOOL_CREATE_PAGE.to_string(),
         description: "Create a new top-level page with the given title. The page has no parent \
                       (pages are always top-level in Agaric's model)."
             .to_string(),
@@ -296,7 +311,7 @@ fn tool_desc_create_page() -> ToolDescription {
 
 fn tool_desc_delete_block() -> ToolDescription {
     ToolDescription {
-        name: "delete_block".to_string(),
+        name: TOOL_DELETE_BLOCK.to_string(),
         description: "Soft-delete a block and its descendants. Reversible via page history \
                       (agents never get the non-reversible purge path)."
             .to_string(),
@@ -326,7 +341,7 @@ async fn handle_append_block(
     device_id: &str,
     args: Value,
 ) -> Result<Value, AppError> {
-    let args: AppendBlockArgs = parse_args("append_block", args)?;
+    let args: AppendBlockArgs = parse_args(TOOL_APPEND_BLOCK, args)?;
     let resp = create_block_inner(
         pool,
         device_id,
@@ -346,7 +361,7 @@ async fn handle_update_block_content(
     device_id: &str,
     args: Value,
 ) -> Result<Value, AppError> {
-    let args: UpdateBlockContentArgs = parse_args("update_block_content", args)?;
+    let args: UpdateBlockContentArgs = parse_args(TOOL_UPDATE_BLOCK_CONTENT, args)?;
     let resp = edit_block_inner(pool, device_id, materializer, args.block_id, args.content).await?;
     to_tool_result(&resp)
 }
@@ -357,7 +372,7 @@ async fn handle_set_property(
     device_id: &str,
     args: Value,
 ) -> Result<Value, AppError> {
-    let args: SetPropertyArgs = parse_args("set_property", args)?;
+    let args: SetPropertyArgs = parse_args(TOOL_SET_PROPERTY, args)?;
     // Enforce the exactly-one-value invariant at the tool boundary so the
     // agent gets a structured error instead of relying on the backend's
     // inner validation (which surfaces the same AppError::Validation, but
@@ -373,8 +388,8 @@ async fn handle_set_property(
     .count();
     if provided != 1 {
         return Err(AppError::Validation(format!(
-            "tool `set_property`: exactly one of value_text / value_num / value_date / value_ref \
-             must be provided (got {provided})"
+            "tool `{TOOL_SET_PROPERTY}`: exactly one of value_text / value_num / value_date / \
+             value_ref must be provided (got {provided})"
         )));
     }
 
@@ -399,7 +414,7 @@ async fn handle_add_tag(
     device_id: &str,
     args: Value,
 ) -> Result<Value, AppError> {
-    let args: AddTagArgs = parse_args("add_tag", args)?;
+    let args: AddTagArgs = parse_args(TOOL_ADD_TAG, args)?;
     let resp = add_tag_inner(pool, device_id, materializer, args.block_id, args.tag_id).await?;
     to_tool_result(&resp)
 }
@@ -410,7 +425,7 @@ async fn handle_create_page(
     device_id: &str,
     args: Value,
 ) -> Result<Value, AppError> {
-    let args: CreatePageArgs = parse_args("create_page", args)?;
+    let args: CreatePageArgs = parse_args(TOOL_CREATE_PAGE, args)?;
     let resp = create_block_inner(
         pool,
         device_id,
@@ -430,7 +445,7 @@ async fn handle_delete_block(
     device_id: &str,
     args: Value,
 ) -> Result<Value, AppError> {
-    let args: DeleteBlockArgs = parse_args("delete_block", args)?;
+    let args: DeleteBlockArgs = parse_args(TOOL_DELETE_BLOCK, args)?;
     let resp = delete_block_inner(pool, device_id, materializer, args.block_id).await?;
     to_tool_result(&resp)
 }

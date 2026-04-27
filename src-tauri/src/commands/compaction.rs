@@ -66,6 +66,11 @@ pub async fn get_compaction_status_inner(pool: &SqlitePool) -> Result<Compaction
         .fetch_one(pool)
         .await?;
 
+    // SAFETY: MAINT-147 (j). `DEFAULT_RETENTION_DAYS = 90u64`, a
+    // compile-time constant well below `i64::MAX`. `u64::cast_signed`
+    // is the documented happy-path conversion to `i64` for values that
+    // fit; here the bound (90) is many orders of magnitude smaller, so
+    // the cast is infallible.
     let cutoff = chrono::Utc::now()
         - chrono::Duration::days(crate::snapshot::DEFAULT_RETENTION_DAYS.cast_signed());
     let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
@@ -126,6 +131,13 @@ pub async fn compact_op_log_cmd_inner(
         return Err(AppError::Validation("retention_days.too_small".into()));
     }
 
+    // SAFETY: MAINT-147 (j). `retention_days` was just bounded above by
+    // `MIN_RETENTION_DAYS = 7u64`. The IPC boundary's `u64` payload can
+    // in principle overflow `i64` at `2^63`, but at one day per increment
+    // that value is meaningless (~25 quintillion years); SQLite's own
+    // `chrono::Duration::days` would saturate long before. The signed
+    // cast is therefore safe for any retention window the UI will ever
+    // produce.
     let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days.cast_signed());
     let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 

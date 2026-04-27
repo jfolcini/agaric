@@ -305,6 +305,8 @@ pub async fn set_gcal_privacy_mode_inner(pool: &SqlitePool, mode: &str) -> Resul
 // Tauri wrappers
 // ---------------------------------------------------------------------------
 
+/// Tauri command: report the GCal connector's connect/sync status to
+/// the Settings tab. Delegates to [`get_gcal_status_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -316,6 +318,9 @@ pub async fn get_gcal_status(
     get_gcal_status_inner(&pool.inner().0, &token_store.inner().0, device_id.as_str()).await
 }
 
+/// Tauri command: poke the GCal connector to run a resync immediately
+/// (rather than waiting for the next scheduled tick). Delegates to
+/// [`force_gcal_resync_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -326,6 +331,8 @@ pub async fn force_gcal_resync(
     Ok(())
 }
 
+/// Tauri command: disconnect the GCal account (revoke tokens, optionally
+/// delete the synced calendar). Delegates to [`disconnect_gcal_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -346,6 +353,10 @@ pub async fn disconnect_gcal(
     .await
 }
 
+/// Tauri command: update the GCal sync window (days before/after today
+/// that are mirrored to the connected calendar). The value is clamped
+/// to `[MIN_WINDOW_DAYS, MAX_WINDOW_DAYS]` in the inner. Delegates to
+/// [`set_gcal_window_days_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -356,6 +367,9 @@ pub async fn set_gcal_window_days(
     set_gcal_window_days_inner(&pool.inner().0, n).await
 }
 
+/// Tauri command: update the GCal privacy mode (`"full"` vs.
+/// `"minimal"` event-body sharing). Delegates to
+/// [`set_gcal_privacy_mode_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]

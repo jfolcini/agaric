@@ -3,10 +3,10 @@
 //! Provides two read-only commands consumed by the in-app bug-report dialog:
 //!
 //! - `collect_bug_report_metadata` — gathers app version, OS, arch, device ID,
-//!   and the last ~20 error/warn lines from today's log file.
+//!   and the last [`RECENT_ERRORS_CAP`] error/warn lines from today's log file.
 //! - `read_logs_for_report` — enumerates rolled log files, capping per-file
-//!   size, skipping anything older than 7 days, and optionally redacting
-//!   home paths + device IDs.
+//!   size, skipping anything older than [`MAX_ROLLED_AGE_DAYS`] days, and
+//!   optionally redacting home paths + device IDs.
 //!
 //! The frontend composes these with the user-entered title/description,
 //! optionally writes a ZIP to disk via `downloadBlob`, and opens a prefilled
@@ -49,7 +49,8 @@ pub struct BugReport {
     pub os: String,
     pub arch: String,
     pub device_id: String,
-    /// Last ~20 error/warn lines from today's `agaric.log`, newest last.
+    /// Last [`RECENT_ERRORS_CAP`] error/warn lines from today's
+    /// `agaric.log`, newest last.
     pub recent_errors: Vec<String>,
 }
 
@@ -62,8 +63,8 @@ pub struct LogFileEntry {
 
 /// Maximum bytes read from any single log file. Larger files are truncated
 /// to the last `MAX_FILE_BYTES` bytes with a leading `…[truncated N bytes]`
-/// marker. 2 MB is generous enough for dozens of sessions without exploding
-/// the resulting ZIP.
+/// marker. The current value (2 MiB) is generous enough for dozens of
+/// sessions without exploding the resulting ZIP.
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Maximum age (in days) of a rolled log file to include in the export.
@@ -72,9 +73,10 @@ const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_ROLLED_AGE_DAYS: i64 = 7;
 
 /// Per-line byte ceiling applied during redaction. Lines longer than this
-/// are truncated to a `…[truncated N chars]` marker. 8 KB is well above any
-/// reasonable log line and catches pathological cases (massive stack traces,
-/// serialised snapshots) without silently dropping content.
+/// are truncated to a `…[truncated N chars]` marker. The current value
+/// (8 KiB) is well above any reasonable log line and catches pathological
+/// cases (massive stack traces, serialised snapshots) without silently
+/// dropping content.
 const MAX_LINE_BYTES: usize = 8 * 1024;
 
 /// Cap on the number of recent error/warn lines surfaced in
@@ -105,7 +107,7 @@ fn extract_recent_errors<'a, I: Iterator<Item = &'a str>>(lines: I) -> Vec<Strin
 /// failures (no log dir, permission denied) should not also break the
 /// report surface.
 ///
-/// M-31: reuses [`read_capped_file`] (cap = [`MAX_FILE_BYTES`] = 2 MB) so
+/// M-31: reuses [`read_capped_file`] (cap = [`MAX_FILE_BYTES`]) so
 /// a chatty session that grows `agaric.log` to tens of MB does not stall
 /// the bug-report dialog's IPC thread on a multi-MB
 /// `fs::read_to_string` followed by a full-buffer line scan. The cap is
@@ -134,7 +136,7 @@ fn recent_errors_from_log_dir(log_dir: &Path) -> Vec<String> {
 }
 
 fn read_errors_from_path(path: &Path) -> Vec<String> {
-    // M-31: cap the read at MAX_FILE_BYTES (2 MB) using the same helper
+    // M-31: cap the read at [`MAX_FILE_BYTES`] using the same helper
     // as `read_logs_for_report_inner`. On oversized files the helper
     // prepends a `…[truncated …]` marker line; that marker contains
     // neither " ERROR " nor " WARN " so it is naturally filtered out by
@@ -174,6 +176,9 @@ pub fn collect_bug_report_metadata_inner(
     })
 }
 
+/// Tauri command: gather bug-report metadata (app version, OS, arch,
+/// device id, recent ERROR/WARN log lines). Delegates to
+/// [`collect_bug_report_metadata_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -186,6 +191,7 @@ pub async fn collect_bug_report_metadata(
         .app_data_dir()
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
     collect_bug_report_metadata_inner(&data_dir, device_id.as_str().to_string())
+        .map_err(super::sanitize_internal_error)
 }
 
 // ---------------------------------------------------------------------------
@@ -235,10 +241,31 @@ fn read_capped_file(path: &Path) -> std::io::Result<String> {
     ))
 }
 
+/// MAINT-147 (i): bundle of optional redaction inputs threaded through
+/// [`redact_line`] and [`redact_log`]. Grew organically as H-9a added
+/// GCal-email and peer-device scrubs; gluing the four parameters into a
+/// single context kept the call sites from sprouting another argument
+/// every time the redaction allow-list expanded.
+///
+/// Every field is "absent → noop" by construction:
+/// `home`/`device_id`/`gcal_email = None` skip the corresponding
+/// `String::replace`, and an empty `peer_device_ids` slice yields zero
+/// loop iterations. Callers that don't yet know one of the inputs (e.g.
+/// early boot before the SQLite pool is online) can pass
+/// [`RedactionContext::default()`] and rely on the catch-all email
+/// regex and the line-length cap as a final safety net.
+#[derive(Debug, Default, Clone, Copy)]
+struct RedactionContext<'a> {
+    home: Option<&'a str>,
+    device_id: Option<&'a str>,
+    gcal_email: Option<&'a str>,
+    peer_device_ids: &'a [String],
+}
+
 /// Redact a single line by, in order:
 ///  1. Replacing `$HOME` prefixes (and any absolute path beginning with `/`
-///     except bracketed log-fmt tokens) with `~` when `home` is given.
-///  2. Blanking any occurrence of `device_id` with `[REDACTED_DEVICE_ID]`.
+///     except bracketed log-fmt tokens) with `~` when `ctx.home` is given.
+///  2. Blanking any occurrence of `ctx.device_id` with `[REDACTED_DEVICE_ID]`.
 ///  3. **H-9a:** Replacing the user's GCal account email (if known) with
 ///     `[REDACTED:GCAL_EMAIL]`.
 ///  4. **H-9a:** Replacing every known peer device ID (from `peer_refs`)
@@ -249,30 +276,24 @@ fn read_capped_file(path: &Path) -> std::io::Result<String> {
 ///     fields, and third-party log lines that the specific scrubs miss.
 ///  6. Truncating the result to [`MAX_LINE_BYTES`] chars.
 ///
-/// All three new scrubs are additive — passing `None` / `&[]` is a noop,
-/// preserving the previous semantics for callers that have not yet been
-/// updated (e.g. early boot before the SQLite pool is online).
-fn redact_line(
-    line: &str,
-    home: Option<&str>,
-    device_id: Option<&str>,
-    gcal_email: Option<&str>,
-    peer_device_ids: &[String],
-) -> String {
+/// All three new scrubs are additive — a default-constructed
+/// [`RedactionContext`] is a noop, preserving the previous semantics
+/// for callers that have not yet been updated.
+fn redact_line(line: &str, ctx: &RedactionContext<'_>) -> String {
     let mut out = line.to_string();
-    if let Some(home) = home {
+    if let Some(home) = ctx.home {
         if !home.is_empty() {
             out = out.replace(home, "~");
         }
     }
-    if let Some(id) = device_id {
+    if let Some(id) = ctx.device_id {
         if !id.is_empty() {
             out = out.replace(id, "[REDACTED_DEVICE_ID]");
         }
     }
     // H-9a (1): specific GCal account email replaced BEFORE the generic
     // email regex so the known account keeps its precise tag.
-    if let Some(email) = gcal_email {
+    if let Some(email) = ctx.gcal_email {
         if !email.is_empty() {
             out = out.replace(email, "[REDACTED:GCAL_EMAIL]");
         }
@@ -280,7 +301,7 @@ fn redact_line(
     // H-9a (2): every known peer device ID — the local `device_id` is
     // already covered above, but cross-device sync logs reference peer IDs
     // verbatim and must be scrubbed independently.
-    for peer in peer_device_ids {
+    for peer in ctx.peer_device_ids {
         if !peer.is_empty() {
             out = out.replace(peer.as_str(), "[REDACTED:PEER_DEVICE_ID]");
         }
@@ -306,13 +327,7 @@ fn redact_line(
 }
 
 /// Apply line-by-line redaction to an entire log file's contents.
-fn redact_log(
-    contents: &str,
-    home: Option<&str>,
-    device_id: Option<&str>,
-    gcal_email: Option<&str>,
-    peer_device_ids: &[String],
-) -> String {
+fn redact_log(contents: &str, ctx: &RedactionContext<'_>) -> String {
     let mut out = String::with_capacity(contents.len());
     for line in contents.split_inclusive('\n') {
         // `split_inclusive` preserves the trailing `\n`; strip it before
@@ -321,13 +336,7 @@ fn redact_log(
             Some(body) => (body, "\n"),
             None => (line, ""),
         };
-        out.push_str(&redact_line(
-            body,
-            home,
-            device_id,
-            gcal_email,
-            peer_device_ids,
-        ));
+        out.push_str(&redact_line(body, ctx));
         out.push_str(newline);
     }
     out
@@ -408,7 +417,16 @@ pub fn read_logs_for_report_inner(
             .unwrap_or("agaric.log")
             .to_string();
         let final_contents = if redact {
-            redact_log(&contents, home, device_id, gcal_email, peer_device_ids)
+            // MAINT-147 (i): bundle the four optional inputs into a
+            // single RedactionContext so future allow-list extensions
+            // don't grow the parameter list of every redaction helper.
+            let ctx = RedactionContext {
+                home,
+                device_id,
+                gcal_email,
+                peer_device_ids,
+            };
+            redact_log(&contents, &ctx)
         } else {
             contents
         };
@@ -475,6 +493,10 @@ async fn fetch_redaction_extras(pool: &SqlitePool) -> (Option<String>, Vec<Strin
     (gcal_email, peer_device_ids)
 }
 
+/// Tauri command: enumerate the log files eligible for inclusion in a
+/// bug-report ZIP, applying per-file size caps and optional PII
+/// redaction (home path, device id, GCal email, peer device ids).
+/// Delegates to [`read_logs_for_report_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -610,7 +632,7 @@ mod tests {
         let log_dir = log_dir_for_app_data(dir.path());
         fs::create_dir_all(&log_dir).unwrap();
 
-        // Write > MAX_FILE_BYTES (2 MB) of filler followed by a clearly
+        // Write > MAX_FILE_BYTES of filler followed by a clearly
         // identifiable ERROR line at the tail.
         let cap = usize::try_from(MAX_FILE_BYTES).unwrap_or(usize::MAX);
         let mut contents = String::with_capacity(cap + 4_096);
@@ -716,7 +738,7 @@ mod tests {
         let log_dir = dir.path();
         let path = log_dir.join("agaric.log");
 
-        // Write > MAX_FILE_BYTES (2 MB) of content with a clearly-identifiable
+        // Write > MAX_FILE_BYTES of content with a clearly-identifiable
         // tail line.
         let cap = usize::try_from(MAX_FILE_BYTES).unwrap_or(usize::MAX);
         let mut contents = String::with_capacity(cap + 2_048);
@@ -795,7 +817,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let log_dir = dir.path();
 
-        // Build a line longer than MAX_LINE_BYTES (8 KB).
+        // Build a line longer than MAX_LINE_BYTES.
         let mut long_line = String::with_capacity(MAX_LINE_BYTES + 100);
         long_line.push_str("2025-01-01 INFO [agaric] ");
         while long_line.len() < MAX_LINE_BYTES + 50 {
@@ -852,7 +874,7 @@ mod tests {
         // ...then a 4-byte codepoint (😀 = U+1F600) so the byte cut lands
         // inside it.
         s.push('😀');
-        let out = redact_line(&s, None, None, None, &[]);
+        let out = redact_line(&s, &RedactionContext::default());
         assert!(out.contains("…[truncated"), "must carry truncation marker");
         // No panic = success. Verify the output is still valid UTF-8 (it
         // inherently is since it's a `String`).
@@ -862,21 +884,33 @@ mod tests {
     #[test]
     fn redact_line_no_home_no_device_is_identity_on_short_lines() {
         let line = "2025-01-01 INFO nothing to redact";
-        assert_eq!(redact_line(line, None, None, None, &[]), line);
+        assert_eq!(redact_line(line, &RedactionContext::default()), line);
     }
 
     #[test]
     fn redact_line_empty_home_is_noop() {
         let line = "2025-01-01 path=/home/alice/x";
         // Empty home must NOT replace all forward-slashes or similar.
-        let out = redact_line(line, Some(""), None, None, &[]);
+        let out = redact_line(
+            line,
+            &RedactionContext {
+                home: Some(""),
+                ..Default::default()
+            },
+        );
         assert_eq!(out, line);
     }
 
     #[test]
     fn redact_line_empty_device_id_is_noop() {
         let line = "2025-01-01 device=abc";
-        let out = redact_line(line, None, Some(""), None, &[]);
+        let out = redact_line(
+            line,
+            &RedactionContext {
+                device_id: Some(""),
+                ..Default::default()
+            },
+        );
         assert_eq!(out, line);
     }
 
@@ -888,7 +922,13 @@ mod tests {
     #[test]
     fn redact_line_replaces_gcal_email() {
         let line = "2025-01-01 INFO [gcal] account=me@gmail.com synced 12 events";
-        let out = redact_line(line, None, None, Some("me@gmail.com"), &[]);
+        let out = redact_line(
+            line,
+            &RedactionContext {
+                gcal_email: Some("me@gmail.com"),
+                ..Default::default()
+            },
+        );
         assert!(
             !out.contains("me@gmail.com"),
             "GCal email must be redacted, got: {out}"
@@ -919,7 +959,13 @@ mod tests {
             "2025-01-01 DEBUG [sync] peers={} forwarded to {}, {}",
             peers[0], peers[1], peers[2],
         );
-        let out = redact_line(&line, None, None, None, &peers);
+        let out = redact_line(
+            &line,
+            &RedactionContext {
+                peer_device_ids: &peers,
+                ..Default::default()
+            },
+        );
         for peer in &peers {
             assert!(
                 !out.contains(peer.as_str()),
@@ -942,7 +988,7 @@ mod tests {
         let line = "2025-01-01 ERROR upstream=random@example.com timed out";
         // Note: gcal_email is None here — the only email present is NOT
         // the user's GCal account, so it MUST fall to the catch-all regex.
-        let out = redact_line(line, None, None, None, &[]);
+        let out = redact_line(line, &RedactionContext::default());
         assert!(
             !out.contains("random@example.com"),
             "unknown email must be redacted, got: {out}"
@@ -960,7 +1006,13 @@ mod tests {
     #[test]
     fn redact_line_specific_email_takes_precedence_over_regex() {
         let line = "2025-01-01 INFO oauth.account=me@gmail.com refreshed";
-        let out = redact_line(line, None, None, Some("me@gmail.com"), &[]);
+        let out = redact_line(
+            line,
+            &RedactionContext {
+                gcal_email: Some("me@gmail.com"),
+                ..Default::default()
+            },
+        );
         assert!(
             out.contains("[REDACTED:GCAL_EMAIL]"),
             "GCal-specific marker must win, got: {out}"
@@ -980,7 +1032,7 @@ mod tests {
     #[test]
     fn redact_line_email_regex_handles_multiple_emails_in_one_line() {
         let line = "2025-01-01 ERROR cc=alice@example.com,bob@other.org delivery failed";
-        let out = redact_line(line, None, None, None, &[]);
+        let out = redact_line(line, &RedactionContext::default());
         assert!(
             !out.contains("alice@example.com"),
             "first email must be redacted, got: {out}"
@@ -1002,7 +1054,14 @@ mod tests {
     #[test]
     fn redact_line_no_pii_input_unchanged() {
         let line = "2025-01-01 INFO [agaric] db.pool=2W+4R writer=available";
-        let out = redact_line(line, Some("/home/alice"), Some("dev-id"), None, &[]);
+        let out = redact_line(
+            line,
+            &RedactionContext {
+                home: Some("/home/alice"),
+                device_id: Some("dev-id"),
+                ..Default::default()
+            },
+        );
         assert_eq!(
             out, line,
             "line with no PII must pass through unchanged, got: {out}"

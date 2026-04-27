@@ -34,6 +34,13 @@
 
 use serde_json::Value;
 
+use super::registry::{
+    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_CREATE_PAGE, TOOL_DELETE_BLOCK, TOOL_GET_AGENDA,
+    TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES,
+    TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_TAGS, TOOL_SEARCH, TOOL_SET_PROPERTY,
+    TOOL_UPDATE_BLOCK_CONTENT,
+};
+
 /// Number of leading characters of a ULID we expose in summary strings.
 /// 8 chars is enough to be visually distinguishable in a feed but short
 /// enough that the user does not memorise the full id from the feed
@@ -75,25 +82,28 @@ fn has_more(v: &Value) -> bool {
 pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
     match name {
         // ---- read-only (tools_ro) ----
-        "list_pages" => summarise_list_pages(args, result),
-        "get_page" => summarise_get_page(args, result),
-        "search" => summarise_search(args, result),
-        "get_block" => summarise_get_block(args, result),
-        "list_backlinks" => summarise_list_backlinks(args, result),
-        "list_tags" => summarise_list_tags(args, result),
-        "list_property_defs" => summarise_list_property_defs(args, result),
-        "get_agenda" => summarise_get_agenda(args, result),
-        "journal_for_date" => summarise_journal_for_date(args, result),
+        TOOL_LIST_PAGES => summarise_list_pages(args, result),
+        TOOL_GET_PAGE => summarise_get_page(args, result),
+        TOOL_SEARCH => summarise_search(args, result),
+        TOOL_GET_BLOCK => summarise_get_block(args, result),
+        TOOL_LIST_BACKLINKS => summarise_list_backlinks(args, result),
+        TOOL_LIST_TAGS => summarise_list_tags(args, result),
+        TOOL_LIST_PROPERTY_DEFS => summarise_list_property_defs(args, result),
+        TOOL_GET_AGENDA => summarise_get_agenda(args, result),
+        TOOL_JOURNAL_FOR_DATE => summarise_journal_for_date(args, result),
         // ---- read-write (tools_rw) ----
-        "append_block" => summarise_append_block(args, result),
-        "update_block_content" => summarise_update_block_content(args, result),
-        "set_property" => summarise_set_property(args, result),
-        "add_tag" => summarise_add_tag(args, result),
-        "create_page" => summarise_create_page(args, result),
-        "delete_block" => summarise_delete_block(args, result),
+        TOOL_APPEND_BLOCK => summarise_append_block(args, result),
+        TOOL_UPDATE_BLOCK_CONTENT => summarise_update_block_content(args, result),
+        TOOL_SET_PROPERTY => summarise_set_property(args, result),
+        TOOL_ADD_TAG => summarise_add_tag(args, result),
+        TOOL_CREATE_PAGE => summarise_create_page(args, result),
+        TOOL_DELETE_BLOCK => summarise_delete_block(args, result),
         // Defensive default — keeps the activity feed working when
         // someone adds a new tool without a summariser. This is the
-        // pre-FEAT-4k behaviour for every entry.
+        // pre-FEAT-4k behaviour for every entry. The MAINT-136 privacy
+        // guard test in this module asserts every registered MCP tool
+        // has a non-fallback summariser arm above; if you add a tool
+        // without one the test fails in CI.
         other => other.to_string(),
     }
 }
@@ -822,10 +832,21 @@ mod tests {
     // Cross-cutting privacy guard — every public summariser must
     // refuse to leak the secret payloads regardless of how they appear
     // in the args / result envelope.
+    //
+    // MAINT-136: this test iterates over the **live** tool-description
+    // lists exposed by `tools_ro::list_tool_descriptions()` and
+    // `tools_rw::list_tool_descriptions()`, rather than a hand-typed
+    // sibling list. Adding a new tool to either registry without also
+    // adding a `summarise.rs` arm now fails the bare-name fallback
+    // assertion below — closing the silent-failure trap where a new
+    // tool would land in the activity feed with the bare tool name.
     // -----------------------------------------------------------------
 
     #[test]
     fn privacy_guard_no_summariser_leaks_content_or_value_text() {
+        // Args envelope is a kitchen-sink of every secret string + every
+        // ULID-shaped field any registered summariser might inspect.
+        // Any tool that surfaces one of these fields verbatim leaks.
         let dirty_args = json!({
             "query": "SECRET_QUERY",
             "title": "SECRET_TITLE",
@@ -840,35 +861,21 @@ mod tests {
             "start_date": "2025-01-01",
             "end_date": "2025-01-31",
         });
-        let dirty_result_block = json!({
+
+        // Per-tool result shapes. Some summarisers expect a result
+        // *object* (with `id`, `items`, `page`, `children`, …);
+        // `list_tags` / `list_property_defs` / `get_agenda` expect a
+        // top-level *array*. The `kitchen` shape covers every
+        // object-shaped summariser plus the defensive default for any
+        // future tool added without a per-tool entry below.
+        let kitchen = json!({
             "id": ULID_A,
             "block_type": "content",
             "content": "SECRET_BLOCK_CONTENT",
             "parent_id": ULID_B,
-        });
-        let dirty_result_page = json!({
+            "items": [{ "id": ULID_A, "content": "SECRET_BLOCK_CONTENT" }],
             "page": { "id": ULID_A, "content": "SECRET_TITLE" },
-            "children": [
-                { "id": ULID_B, "content": "SECRET_BLOCK_CONTENT" }
-            ],
-            "has_more": false,
-        });
-        let dirty_result_search = json!({
-            "items": [
-                { "id": ULID_A, "content": "SECRET_BLOCK_CONTENT" }
-            ],
-            "has_more": false,
-        });
-        let dirty_result_tags = json!([
-            { "tag_id": ULID_TAG, "name": "SECRET_TAG_NAME", "usage_count": 1, "updated_at": "x" }
-        ]);
-        let dirty_result_defs = json!([
-            { "key": "notes", "value_type": "text", "options": null, "created_at": "x" }
-        ]);
-        let dirty_result_agenda = json!([
-            { "block": { "id": ULID_A, "content": "SECRET_BLOCK_CONTENT" }, "projected_date": "2025-01-05", "source": "due_date" }
-        ]);
-        let dirty_result_backlinks = json!({
+            "children": [{ "id": ULID_B, "content": "SECRET_BLOCK_CONTENT" }],
             "groups": [
                 { "page_id": ULID_B, "page_title": "SECRET_TITLE", "blocks": [{}] }
             ],
@@ -876,39 +883,63 @@ mod tests {
             "filtered_count": 1,
             "has_more": false,
             "truncated": false,
-        });
-        let dirty_result_delete = json!({
-            "block_id": ULID_A,
-            "deleted_at": "2025-01-01",
             "descendants_affected": 3,
+            "block_id": ULID_A,
+            "tag_id": ULID_TAG,
+            "deleted_at": "2025-01-01",
         });
-        let dirty_result_tag = json!({ "block_id": ULID_A, "tag_id": ULID_TAG });
+        let result_tags = json!([
+            { "tag_id": ULID_TAG, "name": "SECRET_TAG_NAME", "usage_count": 1, "updated_at": "x" }
+        ]);
+        let result_defs = json!([
+            { "key": "notes", "value_type": "text", "options": null, "created_at": "x" }
+        ]);
+        let result_agenda = json!([
+            { "block": { "id": ULID_A, "content": "SECRET_BLOCK_CONTENT" }, "projected_date": "2025-01-05", "source": "due_date" }
+        ]);
 
-        // (name, args, result) tuples — one per registered summariser.
-        let cases: Vec<(&str, &Value, &Value)> = vec![
-            ("list_pages", &dirty_args, &dirty_result_search),
-            ("get_page", &dirty_args, &dirty_result_page),
-            ("search", &dirty_args, &dirty_result_search),
-            ("get_block", &dirty_args, &dirty_result_block),
-            ("list_backlinks", &dirty_args, &dirty_result_backlinks),
-            ("list_tags", &dirty_args, &dirty_result_tags),
-            ("list_property_defs", &dirty_args, &dirty_result_defs),
-            ("get_agenda", &dirty_args, &dirty_result_agenda),
-            ("journal_for_date", &dirty_args, &dirty_result_block),
-            ("append_block", &dirty_args, &dirty_result_block),
-            ("update_block_content", &dirty_args, &dirty_result_block),
-            ("set_property", &dirty_args, &dirty_result_block),
-            ("add_tag", &dirty_args, &dirty_result_tag),
-            ("create_page", &dirty_args, &dirty_result_block),
-            ("delete_block", &dirty_args, &dirty_result_delete),
-        ];
-        for (name, args, result) in cases {
-            let s = summarise(name, args, result);
-            assert_no_secrets(&s);
-            // No full ULID anywhere — only the prefix.
-            assert_no_full_ulid(&s, ULID_A);
-            assert_no_full_ulid(&s, ULID_B);
-            assert_no_full_ulid(&s, ULID_TAG);
+        let result_for = |name: &str| -> &Value {
+            match name {
+                TOOL_LIST_TAGS => &result_tags,
+                TOOL_LIST_PROPERTY_DEFS => &result_defs,
+                TOOL_GET_AGENDA => &result_agenda,
+                _ => &kitchen,
+            }
+        };
+
+        // Drive iteration from the live registries — the `&self` impls
+        // delegate to these same free fns, so this is the same set of
+        // names served on the wire.
+        let mut all_descriptions = super::super::tools_ro::list_tool_descriptions();
+        all_descriptions.extend(super::super::tools_rw::list_tool_descriptions());
+        assert!(
+            !all_descriptions.is_empty(),
+            "registry returned zero tools — privacy guard would be vacuous",
+        );
+
+        for desc in &all_descriptions {
+            let summary = summarise(&desc.name, &dirty_args, result_for(&desc.name));
+
+            // Privacy invariants — never leak block content, page
+            // titles, value_text, tag display names, or query strings.
+            assert_no_secrets(&summary);
+            // Never leak the full ULID — only the 8-char prefix is OK.
+            assert_no_full_ulid(&summary, ULID_A);
+            assert_no_full_ulid(&summary, ULID_B);
+            assert_no_full_ulid(&summary, ULID_TAG);
+
+            // Drift detector: if a tool registered with the live
+            // `tools_ro` / `tools_rw` registry has no matching arm in
+            // `summarise()`, it falls through to the default arm
+            // (`other => other.to_string()`) and the activity feed
+            // ends up with just the bare tool name. Adding a new tool
+            // without a summariser entry will fail this assertion.
+            assert_ne!(
+                summary, desc.name,
+                "tool `{}` has no registered summariser — falls through to bare-name \
+                 default arm in `summarise()`. Add a `summarise_<name>` arm.",
+                desc.name,
+            );
         }
     }
 }
