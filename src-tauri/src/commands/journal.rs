@@ -5,7 +5,7 @@ use sqlx::SqlitePool;
 use tauri::State;
 use tracing::instrument;
 
-use crate::db::WritePool;
+use crate::db::{CommandTx, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -133,8 +133,9 @@ async fn resolve_or_create_journal_page(
 
     // M-22: BEGIN IMMEDIATE eagerly acquires the writer lock, serialising
     // concurrent calls for the same date so the SELECT and the eventual
-    // INSERT are atomic with respect to each other.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // INSERT are atomic with respect to each other. MAINT-112: CommandTx
+    // couples commit + post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "resolve_or_create_journal_page").await?;
 
     // FEAT-3p5: look for an existing page whose content matches the date
     // exactly AND whose `space` ref property points at the requested
@@ -159,12 +160,14 @@ async fn resolve_or_create_journal_page(
         date,
         space_id,
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
 
     if let Some(row) = existing {
         // Found it — release the writer lock and return without creating.
-        tx.commit().await?;
+        // No op_records enqueued, so `commit_without_dispatch` is the
+        // semantic match.
+        tx.commit_without_dispatch().await?;
         return Ok(row);
     }
 
@@ -185,7 +188,7 @@ async fn resolve_or_create_journal_page(
              )"#,
         space_id,
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     if space_ok.is_none() {
         return Err(AppError::Validation(format!(
@@ -227,12 +230,11 @@ async fn resolve_or_create_journal_page(
     )
     .await?;
 
-    tx.commit().await?;
-
-    // Fire-and-forget background cache dispatch for both ops (mirrors the
+    // Commit + fire-and-forget dispatch for both ops (mirrors the
     // post-commit dispatch in `create_page_in_space`).
-    materializer.dispatch_background_or_warn(&page_op_record);
-    materializer.dispatch_background_or_warn(&space_op_record);
+    tx.enqueue_background(page_op_record);
+    tx.enqueue_background(space_op_record);
+    tx.commit_and_dispatch(materializer).await?;
 
     Ok(block)
 }
@@ -340,7 +342,8 @@ mod tests {
     /// every test in this module so the resolver always has a valid
     /// space to scope under.
     async fn mk_space(pool: &SqlitePool, name: &str) -> String {
-        create_space_inner(pool, DEV, name.into(), None)
+        let materializer = Materializer::new(pool.clone());
+        create_space_inner(pool, DEV, &materializer, name.into(), None)
             .await
             .expect("create_space must succeed")
             .into_string()

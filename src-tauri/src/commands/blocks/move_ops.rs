@@ -1,4 +1,4 @@
-use crate::db::WritePool;
+use crate::db::{CommandTx, WritePool};
 use crate::device::DeviceId;
 use crate::op::MoveBlockPayload;
 use tracing::instrument;
@@ -52,15 +52,17 @@ pub async fn move_block_inner(
     // 3. Single IMMEDIATE transaction: validation + op_log + move.
     //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     //    SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
-    //    and the actual mutation.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    //    and the actual mutation. MAINT-112: CommandTx couples commit
+    //    + post-commit dispatch so a failed commit never leaks the
+    //    op_record to the materializer.
+    let mut tx = CommandTx::begin_immediate(pool, "move_block").await?;
 
     // Validate block exists and is not deleted (TOCTOU-safe)
     let existing = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     if existing.is_none() {
         return Err(AppError::NotFound(format!(
@@ -74,7 +76,7 @@ pub async fn move_block_inner(
             r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
             pid
         )
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
         if exists.is_none() {
             return Err(AppError::NotFound(format!("parent block '{pid}'")));
@@ -102,7 +104,7 @@ pub async fn move_block_inner(
             pid,
             block_id
         )
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
         if cycle.is_some() {
             return Err(AppError::Validation("cycle detected".into()));
@@ -137,7 +139,7 @@ pub async fn move_block_inner(
             pid,
             block_id
         )
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await?;
 
         let parent_depth = depths.parent_depth;
@@ -159,7 +161,7 @@ pub async fn move_block_inner(
         .bind(&new_parent_id)
         .bind(new_position)
         .bind(&block_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     // Update page_id for the moved block and all its descendants.
@@ -169,7 +171,7 @@ pub async fn move_block_inner(
             "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END FROM blocks WHERE id = ?"
         )
         .bind(pid)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?
         .flatten()
     } else {
@@ -180,7 +182,7 @@ pub async fn move_block_inner(
     let is_page: bool =
         sqlx::query_scalar::<_, String>("SELECT block_type FROM blocks WHERE id = ?")
             .bind(&block_id)
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut **tx)
             .await?
             == "page";
 
@@ -188,7 +190,7 @@ pub async fn move_block_inner(
         sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
             .bind(&new_page_id)
             .bind(&block_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
     }
 
@@ -218,16 +220,15 @@ pub async fn move_block_inner(
     )
     .bind(&block_id)
     .bind(&effective_page_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // P-4: Recompute inherited tags for moved subtree
     crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &block_id).await?;
 
-    tx.commit().await?;
-
-    // 6. Dispatch background cache tasks (fire-and-forget)
-    materializer.dispatch_background_or_warn(&op_record);
+    // 6. Commit + dispatch background cache tasks (fire-and-forget).
+    tx.enqueue_background(op_record);
+    tx.commit_and_dispatch(materializer).await?;
 
     // 7. Return response
     Ok(MoveResponse {

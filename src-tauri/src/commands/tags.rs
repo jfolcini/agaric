@@ -5,7 +5,7 @@ use tracing::instrument;
 
 use tauri::State;
 
-use crate::db::{ReadPool, WritePool};
+use crate::db::{CommandTx, ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -57,15 +57,16 @@ pub async fn add_tag_inner(
     // 2. Single IMMEDIATE transaction: validation + op_log + block_tags write.
     //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     //    SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
-    //    and the actual mutation.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    //    and the actual mutation. MAINT-112: CommandTx couples commit +
+    //    post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "add_tag").await?;
 
     // Validate block exists and is not deleted (TOCTOU-safe)
     let exists = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     if exists.is_none() {
         return Err(AppError::NotFound(format!(
@@ -78,7 +79,7 @@ pub async fn add_tag_inner(
         "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
         tag_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     match tag_row {
         None => {
@@ -101,7 +102,7 @@ pub async fn add_tag_inner(
         block_id,
         tag_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     if dup.is_some() {
         return Err(AppError::InvalidOperation("tag already applied".into()));
@@ -115,16 +116,15 @@ pub async fn add_tag_inner(
     sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
         .bind(&block_id)
         .bind(&tag_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     // P-4: Propagate inherited tag to descendants
     crate::tag_inheritance::propagate_tag_to_descendants(&mut tx, &block_id, &tag_id).await?;
 
-    tx.commit().await?;
-
-    // 5. Dispatch background cache tasks (fire-and-forget)
-    materializer.dispatch_background_or_warn(&op_record);
+    // 5. Commit + dispatch background cache tasks (fire-and-forget).
+    tx.enqueue_background(op_record);
+    tx.commit_and_dispatch(materializer).await?;
 
     // 6. Return response
     Ok(TagResponse { block_id, tag_id })
@@ -156,15 +156,16 @@ pub async fn remove_tag_inner(
     // 2. Single IMMEDIATE transaction: validation + op_log + block_tags write.
     //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     //    SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
-    //    and the actual mutation.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    //    and the actual mutation. MAINT-112: CommandTx couples commit +
+    //    post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "remove_tag").await?;
 
     // Validate block exists and is not deleted (TOCTOU-safe)
     let exists = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     if exists.is_none() {
         return Err(AppError::NotFound(format!(
@@ -178,7 +179,7 @@ pub async fn remove_tag_inner(
         block_id,
         tag_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     if assoc.is_none() {
         return Err(AppError::NotFound("tag association".into()));
@@ -192,16 +193,15 @@ pub async fn remove_tag_inner(
     sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
         .bind(&block_id)
         .bind(&tag_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     // P-4: Clean up inherited tag entries
     crate::tag_inheritance::remove_inherited_tag(&mut tx, &block_id, &tag_id).await?;
 
-    tx.commit().await?;
-
-    // 5. Dispatch background cache tasks (fire-and-forget)
-    materializer.dispatch_background_or_warn(&op_record);
+    // 5. Commit + dispatch background cache tasks (fire-and-forget).
+    tx.enqueue_background(op_record);
+    tx.commit_and_dispatch(materializer).await?;
 
     // 6. Return response
     Ok(TagResponse { block_id, tag_id })

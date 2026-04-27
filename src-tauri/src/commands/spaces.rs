@@ -26,7 +26,7 @@ use tauri::State;
 use tracing::instrument;
 
 use crate::commands::{create_block_in_tx, set_property_in_tx};
-use crate::db::{ReadPool, WritePool};
+use crate::db::{CommandTx, ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -123,16 +123,22 @@ pub async fn list_spaces(pool: State<'_, ReadPool>) -> Result<Vec<SpaceRow>, App
 /// - [`AppError::NotFound`] — `parent_id` does not refer to a live block.
 /// - Other [`AppError`] variants propagated from
 ///   [`create_block_in_tx`] / [`set_property_in_tx`].
-#[instrument(skip(pool, content), err)]
+#[instrument(skip(pool, materializer, content), err)]
 pub async fn create_page_in_space_inner(
     pool: &SqlitePool,
     device_id: &str,
+    materializer: &Materializer,
     parent_id: Option<String>,
     content: String,
     space_id: String,
 ) -> Result<BlockId, AppError> {
-    // Single write transaction — both ops land together or neither does.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // MAINT-112: CommandTx couples commit + post-commit dispatch. The
+    // previous implementation returned without dispatching and the
+    // wrapper re-queried op_log to find the two freshly-appended rows —
+    // a classic "missing dispatch" footgun if a future caller forgot
+    // the re-query step. Enqueuing the two op records during the
+    // transaction makes dispatch structurally inseparable from commit.
+    let mut tx = CommandTx::begin_immediate(pool, "create_page_in_space").await?;
 
     // 1. Validate `space_id` upfront inside the tx. The target must
     //    exist as a live, non-conflict block AND carry `is_space = 'true'`.
@@ -151,7 +157,7 @@ pub async fn create_page_in_space_inner(
              )"#,
         space_id,
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     if space_ok.is_none() {
         return Err(AppError::Validation(format!(
@@ -161,7 +167,7 @@ pub async fn create_page_in_space_inner(
 
     // 2. Create the page block. `create_block_in_tx` generates the ULID,
     //    appends a `CreateBlock` op, and inserts the materialized row.
-    let (block, _page_op_record) = create_block_in_tx(
+    let (block, page_op_record) = create_block_in_tx(
         &mut tx,
         device_id,
         "page".to_string(),
@@ -173,12 +179,13 @@ pub async fn create_page_in_space_inner(
     )
     .await?;
     let new_page_id = BlockId::from_trusted(&block.id);
+    tx.enqueue_background(page_op_record);
 
     // 3. Stamp the `space` ref property. Ops are emitted in the order
     //    (create → set) so a sync peer materializes them in the same
     //    order and never observes a page without its space property in
     //    steady state.
-    set_property_in_tx(
+    let (_block, space_op_record) = set_property_in_tx(
         &mut tx,
         device_id,
         block.id.clone(),
@@ -189,8 +196,9 @@ pub async fn create_page_in_space_inner(
         Some(space_id),
     )
     .await?;
+    tx.enqueue_background(space_op_record);
 
-    tx.commit().await?;
+    tx.commit_and_dispatch(materializer).await?;
     Ok(new_page_id)
 }
 
@@ -199,9 +207,8 @@ pub async fn create_page_in_space_inner(
 /// Returns a plain `String` (the new page's ULID) rather than `BlockId`
 /// to keep the specta-generated bindings the simple shape the frontend
 /// expects. Background cache tasks (tag-inheritance, block-tag-refs,
-/// FTS indexing) are dispatched after the ops are committed — we
-/// deliberately wait until the full page-create-plus-set-property pair
-/// is durable before scheduling derived-state work.
+/// FTS indexing) are dispatched inside `_inner` via `CommandTx` — the
+/// wrapper only needs to thread `materializer` through.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -216,63 +223,15 @@ pub async fn create_page_in_space(
     let id = create_page_in_space_inner(
         &pool.0,
         device_id.as_str(),
+        &materializer,
         parent_id,
         content,
-        space_id.clone(),
+        space_id,
     )
     .await
     .map_err(sanitize_internal_error)?;
 
-    // After the commit succeeds, enqueue the same background cache
-    // rebuilds that `create_block` would trigger. We re-read the
-    // freshly-appended op records rather than threading them through
-    // the _inner return type — the materializer operates on `OpRecord`
-    // so we need the hash + seq + timestamps the op_log stamped.
-    dispatch_background_for_page_create(&pool.0, &materializer, id.as_str(), &space_id).await;
-
     Ok(id.into_string())
-}
-
-/// Re-fetch and dispatch the two ops that `create_page_in_space_inner`
-/// emitted so background caches (tag-inheritance, FTS, pages_cache,
-/// projected agenda) stay consistent. Silent on lookup failure — the
-/// rows were just committed by the same task, but the background-
-/// dispatch layer already logs warnings via
-/// `Materializer::dispatch_background_or_warn` when it fails.
-async fn dispatch_background_for_page_create(
-    pool: &SqlitePool,
-    materializer: &Materializer,
-    page_id: &str,
-    _space_id: &str,
-) {
-    // Fetch the two most recent op_log rows for this block — both were
-    // appended inside the same transaction above, so they are the
-    // highest-`seq` rows for this device that carry `block_id = ?`.
-    // ORDER BY seq ASC so we dispatch CreateBlock before SetProperty.
-    let rows = sqlx::query_as!(
-        crate::op_log::OpRecord,
-        r#"SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at
-           FROM op_log
-           WHERE block_id = ?
-           ORDER BY seq ASC"#,
-        page_id,
-    )
-    .fetch_all(pool)
-    .await;
-    match rows {
-        Ok(rows) => {
-            for rec in &rows {
-                materializer.dispatch_background_or_warn(rec);
-            }
-        }
-        Err(e) => {
-            tracing::warn!(
-                page_id,
-                error = %e,
-                "create_page_in_space: failed to re-fetch op records for background dispatch"
-            );
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -304,20 +263,24 @@ async fn dispatch_background_for_page_create(
 /// Propagates [`AppError`] variants from
 /// [`create_block_in_tx`] / [`set_property_in_tx`] (e.g. validation
 /// failures on the block-type or property-key path).
-#[instrument(skip(pool, name, accent_color), err)]
+#[instrument(skip(pool, materializer, name, accent_color), err)]
 pub async fn create_space_inner(
     pool: &SqlitePool,
     device_id: &str,
+    materializer: &Materializer,
     name: String,
     accent_color: Option<String>,
 ) -> Result<BlockId, AppError> {
-    // Single write transaction — every op lands together or none does.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // MAINT-112: CommandTx couples commit + post-commit dispatch. See
+    // `create_page_in_space_inner` for the rationale — enqueuing
+    // during the transaction removes the post-commit re-fetch helper
+    // this function previously required.
+    let mut tx = CommandTx::begin_immediate(pool, "create_space").await?;
 
     // 1. Create the page block. The space's display name lives in
     //    `blocks.content`, exactly like the seeded Personal / Work
     //    spaces — see `crate::spaces::bootstrap`.
-    let (block, _create_op) = create_block_in_tx(
+    let (block, create_op) = create_block_in_tx(
         &mut tx,
         device_id,
         "page".to_string(),
@@ -329,10 +292,11 @@ pub async fn create_space_inner(
     )
     .await?;
     let new_space_id = BlockId::from_trusted(&block.id);
+    tx.enqueue_background(create_op);
 
     // 2. Stamp the `is_space = 'true'` text property. This is the flag
     //    that `list_spaces_inner` filters on.
-    set_property_in_tx(
+    let (_block, is_space_op) = set_property_in_tx(
         &mut tx,
         device_id,
         block.id.clone(),
@@ -343,12 +307,13 @@ pub async fn create_space_inner(
         None,
     )
     .await?;
+    tx.enqueue_background(is_space_op);
 
     // 3. Optional accent color (FEAT-3p10 consumer). Stored as
     //    `value_text` so the palette token (`accent-violet`,
     //    `accent-blue`, …) survives serialisation as-is.
     if let Some(color) = accent_color {
-        set_property_in_tx(
+        let (_block, accent_op) = set_property_in_tx(
             &mut tx,
             device_id,
             block.id.clone(),
@@ -359,9 +324,10 @@ pub async fn create_space_inner(
             None,
         )
         .await?;
+        tx.enqueue_background(accent_op);
     }
 
-    tx.commit().await?;
+    tx.commit_and_dispatch(materializer).await?;
     Ok(new_space_id)
 }
 
@@ -369,8 +335,8 @@ pub async fn create_space_inner(
 ///
 /// Returns a plain `String` (the new space's ULID). Background cache
 /// rebuilds (FTS, tag-inheritance, agenda projection) are dispatched
-/// for the two-or-three ops that landed so derived state stays fresh —
-/// the helper mirrors `create_page_in_space`'s pattern.
+/// inside `_inner` via `CommandTx`; the wrapper only threads
+/// `materializer` through.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -381,47 +347,17 @@ pub async fn create_space(
     name: String,
     accent_color: Option<String>,
 ) -> Result<String, AppError> {
-    let id = create_space_inner(&pool.0, device_id.as_str(), name, accent_color)
-        .await
-        .map_err(sanitize_internal_error)?;
-
-    dispatch_background_for_space_create(&pool.0, &materializer, id.as_str()).await;
+    let id = create_space_inner(
+        &pool.0,
+        device_id.as_str(),
+        &materializer,
+        name,
+        accent_color,
+    )
+    .await
+    .map_err(sanitize_internal_error)?;
 
     Ok(id.into_string())
-}
-
-/// Dispatch background cache rebuilds for the ops emitted by
-/// `create_space_inner`. Mirrors `dispatch_background_for_page_create`
-/// — silently logs (and continues) on lookup failure.
-async fn dispatch_background_for_space_create(
-    pool: &SqlitePool,
-    materializer: &Materializer,
-    space_id: &str,
-) {
-    let rows = sqlx::query_as!(
-        crate::op_log::OpRecord,
-        r#"SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at
-           FROM op_log
-           WHERE block_id = ?
-           ORDER BY seq ASC"#,
-        space_id,
-    )
-    .fetch_all(pool)
-    .await;
-    match rows {
-        Ok(rows) => {
-            for rec in &rows {
-                materializer.dispatch_background_or_warn(rec);
-            }
-        }
-        Err(e) => {
-            tracing::warn!(
-                space_id,
-                error = %e,
-                "create_space: failed to re-fetch op records for background dispatch"
-            );
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -666,11 +602,13 @@ mod tests {
     #[tokio::test]
     async fn create_page_in_space_happy_path() {
         let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
         bootstrap_spaces(&pool, DEV).await.unwrap();
 
         let new_id = create_page_in_space_inner(
             &pool,
             DEV,
+            &materializer,
             None,
             "My page".into(),
             SPACE_PERSONAL_ULID.to_owned(),
@@ -705,6 +643,7 @@ mod tests {
     #[tokio::test]
     async fn create_page_in_space_emits_two_ops_atomically() {
         let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
         bootstrap_spaces(&pool, DEV).await.unwrap();
 
         let before = count_op_log(&pool).await;
@@ -712,6 +651,7 @@ mod tests {
         let new_id = create_page_in_space_inner(
             &pool,
             DEV,
+            &materializer,
             None,
             "Atomic ops page".into(),
             SPACE_PERSONAL_ULID.to_owned(),
@@ -737,12 +677,15 @@ mod tests {
     #[tokio::test]
     async fn create_page_in_space_rejects_nonexistent_space() {
         let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
         bootstrap_spaces(&pool, DEV).await.unwrap();
 
         let before = count_op_log(&pool).await;
 
         let bogus = "01JXXXX0000000000000000000".to_owned();
-        let result = create_page_in_space_inner(&pool, DEV, None, "Rejected".into(), bogus).await;
+        let result =
+            create_page_in_space_inner(&pool, DEV, &materializer, None, "Rejected".into(), bogus)
+                .await;
 
         assert!(
             matches!(result, Err(AppError::Validation(_))),
@@ -758,6 +701,7 @@ mod tests {
     #[tokio::test]
     async fn create_page_in_space_rejects_target_without_is_space() {
         let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
         bootstrap_spaces(&pool, DEV).await.unwrap();
 
         // A live page block that is NOT a space (no `is_space` property).
@@ -766,8 +710,15 @@ mod tests {
 
         let before = count_op_log(&pool).await;
 
-        let result =
-            create_page_in_space_inner(&pool, DEV, None, "Nope".into(), plain_id.to_owned()).await;
+        let result = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &materializer,
+            None,
+            "Nope".into(),
+            plain_id.to_owned(),
+        )
+        .await;
 
         assert!(
             matches!(result, Err(AppError::Validation(_))),
@@ -783,6 +734,7 @@ mod tests {
     #[tokio::test]
     async fn create_page_in_space_rejects_deleted_space_target() {
         let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
         bootstrap_spaces(&pool, DEV).await.unwrap();
 
         // Soft-delete the Work space via direct SQL (bypassing the
@@ -800,6 +752,7 @@ mod tests {
         let result = create_page_in_space_inner(
             &pool,
             DEV,
+            &materializer,
             None,
             "Should not land".into(),
             SPACE_WORK_ULID.to_owned(),
@@ -820,6 +773,7 @@ mod tests {
     #[tokio::test]
     async fn create_page_in_space_rejects_conflict_space_target() {
         let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
         bootstrap_spaces(&pool, DEV).await.unwrap();
 
         // Flip `is_conflict = 1` on the Work space directly.
@@ -836,6 +790,7 @@ mod tests {
         let result = create_page_in_space_inner(
             &pool,
             DEV,
+            &materializer,
             None,
             "Should not land".into(),
             SPACE_WORK_ULID.to_owned(),
@@ -856,6 +811,7 @@ mod tests {
     #[tokio::test]
     async fn create_page_in_space_with_parent_id_creates_nested_page() {
         let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
         bootstrap_spaces(&pool, DEV).await.unwrap();
 
         // Seed a parent page inside Personal so the child inherits the
@@ -863,6 +819,7 @@ mod tests {
         let parent_id = create_page_in_space_inner(
             &pool,
             DEV,
+            &materializer,
             None,
             "Parent".into(),
             SPACE_PERSONAL_ULID.to_owned(),
@@ -874,6 +831,7 @@ mod tests {
         let child_id = create_page_in_space_inner(
             &pool,
             DEV,
+            &materializer,
             Some(parent.clone()),
             "Child".into(),
             SPACE_PERSONAL_ULID.to_owned(),
@@ -962,11 +920,18 @@ mod tests_p6 {
     #[tokio::test]
     async fn create_space_with_accent_color_writes_all_three_properties() {
         let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
         bootstrap_spaces(&pool, DEV).await.unwrap();
 
-        let new_id = create_space_inner(&pool, DEV, "Foo".into(), Some("accent-violet".into()))
-            .await
-            .expect("create_space must succeed with accent color");
+        let new_id = create_space_inner(
+            &pool,
+            DEV,
+            &materializer,
+            "Foo".into(),
+            Some("accent-violet".into()),
+        )
+        .await
+        .expect("create_space must succeed with accent color");
         let id = new_id.as_str();
 
         // 1. Block row materialised: page block carrying the user-supplied name.
@@ -1013,9 +978,10 @@ mod tests_p6 {
     #[tokio::test]
     async fn create_space_without_accent_color_skips_accent_property() {
         let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
         bootstrap_spaces(&pool, DEV).await.unwrap();
 
-        let new_id = create_space_inner(&pool, DEV, "Bar".into(), None)
+        let new_id = create_space_inner(&pool, DEV, &materializer, "Bar".into(), None)
             .await
             .expect("create_space must succeed without accent color");
         let id = new_id.as_str();
@@ -1061,11 +1027,12 @@ mod tests_p6 {
         use crate::materializer::Materializer;
 
         let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
         bootstrap_spaces(&pool, DEV).await.unwrap();
         let mat = Materializer::new(pool.clone());
 
         // Create a fresh user-created space.
-        let space_id = create_space_inner(&pool, DEV, "Project".into(), None)
+        let space_id = create_space_inner(&pool, DEV, &materializer, "Project".into(), None)
             .await
             .expect("create_space must succeed");
         let space_id_str = space_id.to_string();
@@ -1074,6 +1041,7 @@ mod tests_p6 {
         let _page_id = create_page_in_space_inner(
             &pool,
             DEV,
+            &materializer,
             None,
             "Inside Project".into(),
             space_id_str.clone(),
@@ -1117,11 +1085,12 @@ mod tests_p6 {
         use crate::materializer::Materializer;
 
         let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
         bootstrap_spaces(&pool, DEV).await.unwrap();
         let mat = Materializer::new(pool.clone());
 
         // Create an empty user-created space and immediately delete it.
-        let space_id = create_space_inner(&pool, DEV, "Empty".into(), None)
+        let space_id = create_space_inner(&pool, DEV, &materializer, "Empty".into(), None)
             .await
             .expect("create_space must succeed");
         let space_id_str = space_id.to_string();
@@ -1144,6 +1113,7 @@ mod tests_p6 {
     #[tokio::test]
     async fn create_space_emits_three_ops_atomically_when_accent_supplied() {
         let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
         bootstrap_spaces(&pool, DEV).await.unwrap();
 
         let before = sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM op_log"#)
@@ -1151,9 +1121,15 @@ mod tests_p6 {
             .await
             .unwrap();
 
-        let new_id = create_space_inner(&pool, DEV, "Tri".into(), Some("accent-blue".into()))
-            .await
-            .expect("create_space must succeed");
+        let new_id = create_space_inner(
+            &pool,
+            DEV,
+            &materializer,
+            "Tri".into(),
+            Some("accent-blue".into()),
+        )
+        .await
+        .expect("create_space must succeed");
         let id = new_id.as_str();
 
         let after = sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM op_log"#)

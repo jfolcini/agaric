@@ -8,7 +8,7 @@ use tracing::instrument;
 use tauri::Manager;
 use tauri::State;
 
-use crate::db::{ReadPool, WritePool};
+use crate::db::{CommandTx, ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -95,14 +95,15 @@ pub async fn add_attachment_inner(
     });
 
     // Single IMMEDIATE transaction: validation + op_log + attachments write.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "add_attachment").await?;
 
     // Validate block exists and is not deleted (TOCTOU-safe inside tx)
     let exists = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     if exists.is_none() {
         return Err(AppError::NotFound(format!(
@@ -143,13 +144,12 @@ pub async fn add_attachment_inner(
     .bind(size_bytes)
     .bind(&fs_path)
     .bind(&now)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
-    tx.commit().await?;
-
-    // Fire-and-forget background cache dispatch
-    materializer.dispatch_background_or_warn(&op_record);
+    // Commit + fire-and-forget background cache dispatch.
+    tx.enqueue_background(op_record);
+    tx.commit_and_dispatch(materializer).await?;
 
     Ok(AttachmentRow {
         id: attachment_id,
@@ -190,7 +190,8 @@ pub async fn delete_attachment_inner(
     attachment_id: String,
 ) -> Result<(), AppError> {
     // Single IMMEDIATE transaction: validation + op_log + delete.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "delete_attachment").await?;
 
     // Validate attachment exists AND fetch its fs_path in one query.
     // The fs_path goes into the op-log payload (so remote peers / future
@@ -199,7 +200,7 @@ pub async fn delete_attachment_inner(
         r#"SELECT fs_path FROM attachments WHERE id = ?"#,
         attachment_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     let Some(row) = row else {
         return Err(AppError::NotFound(format!("attachment '{attachment_id}'")));
@@ -218,10 +219,16 @@ pub async fn delete_attachment_inner(
     // Delete from attachments table within same transaction
     sqlx::query("DELETE FROM attachments WHERE id = ?")
         .bind(&attachment_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
-    tx.commit().await?;
+    // Commit + fire-and-forget background cache dispatch. The cache
+    // dispatch enqueues before the post-commit unlink, then
+    // `commit_and_dispatch` fires them in order (commit → dispatch).
+    // The unlink below is independent — the materializer reads from
+    // the committed op_log entry, not from the filesystem.
+    tx.enqueue_background(op_record);
+    tx.commit_and_dispatch(materializer).await?;
 
     // C-3b: unlink the on-disk file *after* the commit. The op-log entry is
     // authoritative — failures here are logged and reconciled later by the
@@ -246,9 +253,6 @@ pub async fn delete_attachment_inner(
             );
         }
     }
-
-    // Fire-and-forget background cache dispatch
-    materializer.dispatch_background_or_warn(&op_record);
 
     Ok(())
 }

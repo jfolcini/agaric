@@ -137,19 +137,40 @@ pub async fn begin_immediate_logged(
 /// preserved deliberately — it is load-bearing for grep + code review
 /// and every call site keeps its familiar shape.
 ///
-/// This is the phase-A surface. A later phase may add wrapper methods
-/// for `dispatch_edit_background` / `dispatch_op` if usage warrants, but
-/// 22 of the 25 post-commit dispatch sites go through
-/// `dispatch_background_or_warn`, so this one variant covers the
-/// dominant pattern.
+/// MAINT-112 phase B added a second dispatch variant —
+/// [`CommandTx::enqueue_edit_background`] — for the one `edit_block`
+/// caller (`crud::edit_block_inner`) that needs the `block_type` hint.
+/// `dispatch_op` (foreground + background) is not yet wrapped; the
+/// single in-tree caller is in a different context (remote-op apply)
+/// and does not pair with a `CommandTx` transaction.
+///
+/// A post-commit dispatch queued by [`CommandTx::enqueue_background`]
+/// or [`CommandTx::enqueue_edit_background`]. Drained by
+/// [`CommandTx::commit_and_dispatch`] in FIFO order. Dispatch failures
+/// follow the `_or_warn` convention — logged via
+/// `dispatch_background_or_warn` / a direct `logger.warn` path for the
+/// `Edit` variant, never propagated to the caller.
+enum PendingDispatch {
+    /// Plain op dispatch — invokes [`Materializer::dispatch_background_or_warn`].
+    Background(crate::op_log::OpRecord),
+    /// Edit-op dispatch with a `block_type` hint — invokes
+    /// [`Materializer::dispatch_edit_background`] and warns on error.
+    /// The materializer uses the hint to pick a narrower cache-rebuild
+    /// fan-out for content vs. tag vs. page edits.
+    EditBackground {
+        record: crate::op_log::OpRecord,
+        block_type: String,
+    },
+}
+
 pub struct CommandTx {
     /// The live `BEGIN IMMEDIATE` transaction. `'static` because
     /// `pool.begin_with(...)` internally clones the pool handle.
     inner: sqlx::Transaction<'static, Sqlite>,
-    /// Op records to dispatch to the materializer's background queue
-    /// once the transaction commits successfully. FIFO order —
-    /// `commit_and_dispatch` drains them in enqueue order.
-    pending_background: Vec<crate::op_log::OpRecord>,
+    /// Op records to dispatch to the materializer once the transaction
+    /// commits successfully. FIFO order — `commit_and_dispatch` drains
+    /// them in enqueue order.
+    pending: Vec<PendingDispatch>,
     /// Label used by [`begin_immediate_logged`] for slow-acquire logs.
     /// Stored here only so diagnostic code (future: a debug-assert on
     /// Drop with a pending queue) can name the originating command.
@@ -170,7 +191,7 @@ impl CommandTx {
         let inner = begin_immediate_logged(pool, label).await?;
         Ok(Self {
             inner,
-            pending_background: Vec::new(),
+            pending: Vec::new(),
             label,
         })
     }
@@ -187,11 +208,34 @@ impl CommandTx {
     /// Multiple records may be enqueued from the same transaction —
     /// typical for batch operations such as [`crate::commands::history::revert_ops_inner`].
     pub fn enqueue_background(&mut self, record: crate::op_log::OpRecord) {
-        self.pending_background.push(record);
+        self.pending.push(PendingDispatch::Background(record));
     }
 
-    /// Commit the transaction, then drain the pending queue via
-    /// `Materializer::dispatch_background_or_warn` in enqueue order.
+    /// Queue an `edit_block` op record with a `block_type` hint for
+    /// post-commit dispatch.
+    ///
+    /// Invokes [`Materializer::dispatch_edit_background`] during
+    /// `commit_and_dispatch`. Dispatch failures are logged at warn level
+    /// (matching the `_or_warn` convention used for the plain
+    /// [`enqueue_background`](Self::enqueue_background) variant) rather
+    /// than propagated — the op itself has already committed, so a
+    /// missed cache rebuild is recoverable and non-fatal.
+    ///
+    /// `block_type` is the post-edit type ("content" / "page" / "tag")
+    /// the materializer uses to pick a narrower rebuild fan-out.
+    pub fn enqueue_edit_background(
+        &mut self,
+        record: crate::op_log::OpRecord,
+        block_type: impl Into<String>,
+    ) {
+        self.pending.push(PendingDispatch::EditBackground {
+            record,
+            block_type: block_type.into(),
+        });
+    }
+
+    /// Commit the transaction, then drain the pending queue into the
+    /// materializer in enqueue order.
     ///
     /// If `commit()` fails, no dispatches fire and the error is
     /// propagated. This is the desired behaviour — a failed commit means
@@ -199,17 +243,32 @@ impl CommandTx {
     /// not be told about them.
     ///
     /// Returns the number of dispatches that fired. Dispatch failures
-    /// are handled by `dispatch_background_or_warn`'s internal
-    /// `logger.warn` path; they do not surface here.
+    /// are logged at warn level and do not surface here.
     pub async fn commit_and_dispatch(
         mut self,
         materializer: &crate::materializer::Materializer,
     ) -> Result<usize, sqlx::Error> {
         self.inner.commit().await?;
-        let drained = std::mem::take(&mut self.pending_background);
+        let drained = std::mem::take(&mut self.pending);
         let count = drained.len();
-        for record in &drained {
-            materializer.dispatch_background_or_warn(record);
+        for entry in drained {
+            match entry {
+                PendingDispatch::Background(record) => {
+                    materializer.dispatch_background_or_warn(&record);
+                }
+                PendingDispatch::EditBackground { record, block_type } => {
+                    if let Err(e) = materializer.dispatch_edit_background(&record, &block_type) {
+                        tracing::warn!(
+                            op_type = %record.op_type,
+                            seq = record.seq,
+                            device_id = %record.device_id,
+                            block_type = %block_type,
+                            error = %e,
+                            "failed to dispatch edit background cache task"
+                        );
+                    }
+                }
+            }
         }
         Ok(count)
     }
@@ -222,7 +281,7 @@ impl CommandTx {
     /// discarded silently.
     pub async fn commit_without_dispatch(mut self) -> Result<(), sqlx::Error> {
         self.inner.commit().await?;
-        self.pending_background.clear();
+        self.pending.clear();
         Ok(())
     }
 
@@ -232,17 +291,20 @@ impl CommandTx {
     /// Identical in effect to dropping the `CommandTx` without
     /// committing, but surfaces any rollback error to the caller.
     pub async fn rollback(mut self) -> Result<(), sqlx::Error> {
-        self.pending_background.clear();
+        self.pending.clear();
         self.inner.rollback().await
     }
 
     /// Number of op records currently queued for post-commit dispatch.
     ///
     /// Useful in tests that want to assert exactly how many cache
-    /// rebuilds a command will schedule.
+    /// rebuilds a command will schedule. Counts both
+    /// [`enqueue_background`](Self::enqueue_background) and
+    /// [`enqueue_edit_background`](Self::enqueue_edit_background)
+    /// entries.
     #[must_use]
     pub fn pending_len(&self) -> usize {
-        self.pending_background.len()
+        self.pending.len()
     }
 }
 

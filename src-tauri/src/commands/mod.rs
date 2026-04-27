@@ -15,7 +15,7 @@ use specta::Type;
 use sqlx::SqlitePool;
 use tauri::State;
 
-use crate::db::ReadPool;
+use crate::db::{CommandTx, ReadPool};
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::now_rfc3339;
@@ -589,15 +589,17 @@ async fn delete_property_core(
     block_id: String,
     key: String,
 ) -> Result<(), AppError> {
-    // 1. Begin IMMEDIATE transaction
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // 1. Begin IMMEDIATE transaction (MAINT-112: CommandTx couples
+    //    commit + post-commit dispatch so a failed commit never leaks
+    //    an op_record to the materializer).
+    let mut tx = CommandTx::begin_immediate(pool, "delete_property_core").await?;
 
     // 2. Validate block exists and is not deleted (TOCTOU-safe)
     let exists = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     if exists.is_none() {
         return Err(AppError::NotFound(format!(
@@ -629,17 +631,17 @@ async fn delete_property_core(
         match key.as_str() {
             "todo_state" => {
                 sqlx::query!("UPDATE blocks SET todo_state = NULL WHERE id = ?", block_id)
-                    .execute(&mut *tx)
+                    .execute(&mut **tx)
                     .await?;
             }
             "priority" => {
                 sqlx::query!("UPDATE blocks SET priority = NULL WHERE id = ?", block_id)
-                    .execute(&mut *tx)
+                    .execute(&mut **tx)
                     .await?;
             }
             "due_date" => {
                 sqlx::query!("UPDATE blocks SET due_date = NULL WHERE id = ?", block_id)
-                    .execute(&mut *tx)
+                    .execute(&mut **tx)
                     .await?;
             }
             "scheduled_date" => {
@@ -647,7 +649,7 @@ async fn delete_property_core(
                     "UPDATE blocks SET scheduled_date = NULL WHERE id = ?",
                     block_id
                 )
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
             }
             _ => unreachable!(
@@ -658,14 +660,15 @@ async fn delete_property_core(
         sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
             .bind(&block_id)
             .bind(&key)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
     }
 
-    tx.commit().await?;
-
-    // 5. Dispatch background cache tasks (fire-and-forget)
-    materializer.dispatch_background_or_warn(&op_record);
+    // 5. Dispatch background cache tasks after commit (fire-and-forget).
+    //    Clone op_record for the queue so the post-commit `notify_gcal_for_op`
+    //    call below still has access to the original.
+    tx.enqueue_background(op_record.clone());
+    tx.commit_and_dispatch(materializer).await?;
 
     // FEAT-5i — notify GCal connector post-commit.
     if let Some(snapshot) = gcal_snapshot {

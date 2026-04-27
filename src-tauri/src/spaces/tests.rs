@@ -712,8 +712,10 @@ async fn assert_every_page_has_space_or_is_space(pool: &SqlitePool) {
 #[tokio::test]
 async fn property_every_page_has_space_after_bootstrap_under_mixed_create_paths() {
     use crate::commands::create_page_in_space_inner;
+    use crate::materializer::Materializer;
 
     let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
 
     // 1. Bootstrap.
     bootstrap_spaces(&pool, DEV).await.unwrap();
@@ -723,6 +725,7 @@ async fn property_every_page_has_space_after_bootstrap_under_mixed_create_paths(
     let p1 = create_page_in_space_inner(
         &pool,
         DEV,
+        &materializer,
         None,
         "Notes from JournalPage".into(),
         SPACE_PERSONAL_ULID.to_owned(),
@@ -735,6 +738,7 @@ async fn property_every_page_has_space_after_bootstrap_under_mixed_create_paths(
     let p2 = create_page_in_space_inner(
         &pool,
         DEV,
+        &materializer,
         None,
         "Work brief".into(),
         SPACE_WORK_ULID.to_owned(),
@@ -744,6 +748,7 @@ async fn property_every_page_has_space_after_bootstrap_under_mixed_create_paths(
     let _p3 = create_page_in_space_inner(
         &pool,
         DEV,
+        &materializer,
         Some(p1.as_str().to_owned()),
         "Sub-page".into(),
         SPACE_PERSONAL_ULID.to_owned(),

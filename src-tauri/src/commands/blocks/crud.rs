@@ -1,4 +1,4 @@
-use crate::db::WritePool;
+use crate::db::{CommandTx, WritePool};
 use crate::device::DeviceId;
 use crate::op::{
     validate_set_property, CreateBlockPayload, DeleteBlockPayload, EditBlockPayload,
@@ -211,11 +211,12 @@ pub async fn create_block_inner(
     parent_id: Option<String>,
     position: Option<i64>,
 ) -> Result<BlockRow, AppError> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "create_block").await?;
     let (block, op_record) =
         create_block_in_tx(&mut tx, device_id, block_type, content, parent_id, position).await?;
-    tx.commit().await?;
-    materializer.dispatch_background_or_warn(&op_record);
+    tx.enqueue_background(op_record);
+    tx.commit_and_dispatch(materializer).await?;
     Ok(block)
 }
 
@@ -284,40 +285,21 @@ pub async fn create_block_inner_with_space(
         // semantics (append after last sibling). If a future caller
         // needs explicit positioning for top-level pages we can extend
         // the helper; today no callsite uses it.
+        //
+        // MAINT-112: `_inner` now dispatches background cache rebuilds
+        // via `CommandTx::commit_and_dispatch`; the previous re-fetch
+        // + loop is gone because the op records never leave the
+        // transaction scope.
         let _position = position;
-        let new_page_id =
-            crate::commands::create_page_in_space_inner(pool, device_id, parent_id, content, sid)
-                .await?;
-
-        // Dispatch background cache rebuilds for both ops
-        // (CreateBlock + SetProperty). Re-read the freshly-appended op
-        // log rows so the materializer sees the canonical
-        // `OpRecord` shape.
-        let new_page_id_str = new_page_id.as_str().to_owned();
-        let rows = sqlx::query_as!(
-            crate::op_log::OpRecord,
-            r#"SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at
-               FROM op_log
-               WHERE block_id = ?
-               ORDER BY seq ASC"#,
-            new_page_id_str,
+        let new_page_id = crate::commands::create_page_in_space_inner(
+            pool,
+            device_id,
+            materializer,
+            parent_id,
+            content,
+            sid,
         )
-        .fetch_all(pool)
-        .await;
-        match rows {
-            Ok(rows) => {
-                for rec in &rows {
-                    materializer.dispatch_background_or_warn(rec);
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    page_id = new_page_id.as_str(),
-                    error = %e,
-                    "create_block (page path): failed to re-fetch op records for background dispatch"
-                );
-            }
-        }
+        .await?;
 
         // Re-fetch the materialized BlockRow so the caller (Tauri IPC)
         // can return the same shape `create_block_inner` would.
@@ -360,8 +342,10 @@ pub async fn edit_block_inner(
     // All reads (block existence, prev_edit lookup) happen inside the tx
     // to prevent TOCTOU races (a concurrent delete_block could soft-delete
     // the block between validation and update, and another edit could make
-    // the prev_edit reference stale).
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // the prev_edit reference stale). MAINT-112: CommandTx couples commit
+    // + post-commit dispatch via `enqueue_edit_background` (the
+    // block-type-aware variant that restricts the cache rebuild fan-out).
+    let mut tx = CommandTx::begin_immediate(pool, "edit_block").await?;
 
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
@@ -369,7 +353,7 @@ pub async fn edit_block_inner(
         r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
 
     let existing = existing
@@ -404,7 +388,7 @@ pub async fn edit_block_inner(
          LIMIT 1",
         block_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     let prev_edit = prev_edit_row.map(|r| (r.device_id, r.seq));
 
@@ -425,17 +409,17 @@ pub async fn edit_block_inner(
     sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
         .bind(&to_text)
         .bind(&block_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
-    tx.commit().await?;
-
-    // 5. Dispatch background cache tasks (fire-and-forget).
-    // Use dispatch_edit_background with the block_type hint so only
-    // relevant caches are rebuilt (e.g. content blocks skip tags/pages).
-    if let Err(e) = materializer.dispatch_edit_background(&op_record, &block_type) {
-        tracing::warn!(error = %e, "failed to dispatch background cache task");
-    }
+    // 5. Commit + dispatch edit background cache tasks (fire-and-forget).
+    //    The `block_type` hint restricts the rebuild fan-out so content
+    //    blocks skip tags/pages cache work.
+    //
+    //    Clone `op_record` for the dispatch queue so the post-commit
+    //    `notify_gcal_for_op` call still has the original.
+    tx.enqueue_edit_background(op_record.clone(), block_type.clone());
+    tx.commit_and_dispatch(materializer).await?;
 
     // FEAT-5i — notify GCal connector post-commit.
     if let Some(snapshot) = gcal_snapshot {
@@ -486,14 +470,14 @@ pub async fn delete_block_inner(
     // SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
     // and the actual mutation.
     //
-    // MAINT-30: use `begin_immediate_logged` so lock-storm stalls on the
-    // cascade path surface in the log instead of being silently absorbed
-    // by the pool's 5s busy_timeout.
-    let mut tx = crate::db::begin_immediate_logged(pool, "cmd_delete_block").await?;
+    // MAINT-30 + MAINT-112: `CommandTx::begin_immediate` inherits the
+    // slow-acquire tracing from `begin_immediate_logged` AND couples
+    // commit + post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "cmd_delete_block").await?;
 
     // Validate inside transaction (TOCTOU-safe)
     let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
     let row = row.ok_or_else(|| AppError::NotFound(format!("block '{block_id}'")))?;
     if row.deleted_at.is_some() {
@@ -516,7 +500,7 @@ pub async fn delete_block_inner(
          WHERE block_id = ? AND key = 'is_space' AND value_text = 'true'",
         block_id,
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?
     .is_some();
     if is_space_block {
@@ -532,7 +516,7 @@ pub async fn delete_block_inner(
              )",
             block_id,
         )
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await?;
         if child_count > 0 {
             return Err(AppError::InvalidOperation(format!(
@@ -571,16 +555,17 @@ pub async fn delete_block_inner(
     ))
     .bind(&block_id)
     .bind(&now)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // P-4: Remove inherited entries for soft-deleted subtree
     crate::tag_inheritance::remove_subtree_inherited(&mut tx, &block_id).await?;
 
-    tx.commit().await?;
-
-    // Fire-and-forget background cache dispatch
-    materializer.dispatch_background_or_warn(&op_record);
+    // Commit + fire-and-forget background cache dispatch.
+    // Clone op_record for the queue so the post-commit
+    // `notify_gcal_for_op` call still has the original.
+    tx.enqueue_background(op_record.clone());
+    tx.commit_and_dispatch(materializer).await?;
 
     // FEAT-5i — notify GCal connector post-commit.
     if let Some(snapshot) = gcal_snapshot {
@@ -619,11 +604,13 @@ pub async fn restore_block_inner(
     // and the actual mutation.
     //
     // MAINT-30: slow-acquire timed via `begin_immediate_logged`.
-    let mut tx = crate::db::begin_immediate_logged(pool, "cmd_restore_block").await?;
+    // MAINT-30 + MAINT-112: CommandTx inherits slow-acquire tracing from
+    // begin_immediate_logged AND couples commit + post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "cmd_restore_block").await?;
 
     // Validate inside transaction (TOCTOU-safe)
     let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
 
     match row {
@@ -679,16 +666,17 @@ pub async fn restore_block_inner(
     ))
     .bind(&block_id)
     .bind(&deleted_at_ref)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // P-4: Recompute inherited tags for restored subtree
     crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &block_id).await?;
 
-    tx.commit().await?;
-
-    // Fire-and-forget background cache dispatch
-    materializer.dispatch_background_or_warn(&op_record);
+    // Commit + fire-and-forget background cache dispatch. Clone
+    // op_record for the queue so the post-commit `notify_gcal_for_op`
+    // call still has the original.
+    tx.enqueue_background(op_record.clone());
+    tx.commit_and_dispatch(materializer).await?;
 
     // FEAT-5i — notify GCal connector post-commit.
     if let Some(snapshot) = gcal_snapshot {
@@ -727,11 +715,13 @@ pub async fn purge_block_inner(
     // MAINT-30: slow-acquire timed via `begin_immediate_logged`. Purge is
     // the most cascade-heavy write path and the most likely to show
     // contention under load.
-    let mut tx = crate::db::begin_immediate_logged(pool, "cmd_purge_block").await?;
+    // MAINT-30 + MAINT-112: CommandTx inherits slow-acquire tracing from
+    // begin_immediate_logged AND couples commit + post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "cmd_purge_block").await?;
 
     // Validate inside transaction (TOCTOU-safe)
     let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
 
     match row {
@@ -758,7 +748,7 @@ pub async fn purge_block_inner(
     // Defer FK checks until commit — the entire subtree will be gone by then
     // so no constraints will be violated.
     sqlx::query("PRAGMA defer_foreign_keys = ON")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     // PURGE is the documented exception to invariant #9: the purge CTE
@@ -777,7 +767,7 @@ pub async fn purge_block_inner(
             OR tag_id IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // block_tag_inherited (P-4)
@@ -789,7 +779,7 @@ pub async fn purge_block_inner(
             OR inherited_from IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // block_properties: owned by descendants
@@ -799,7 +789,7 @@ pub async fn purge_block_inner(
          WHERE block_id IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // block_properties: value_ref pointing into the subtree (NULLify)
@@ -809,7 +799,7 @@ pub async fn purge_block_inner(
          WHERE value_ref IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // block_links: either end may be in the subtree
@@ -820,7 +810,7 @@ pub async fn purge_block_inner(
             OR target_id IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // agenda_cache
@@ -830,7 +820,7 @@ pub async fn purge_block_inner(
          WHERE block_id IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // tags_cache
@@ -840,7 +830,7 @@ pub async fn purge_block_inner(
          WHERE tag_id IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // pages_cache
@@ -850,7 +840,7 @@ pub async fn purge_block_inner(
          WHERE page_id IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // attachments
@@ -860,7 +850,7 @@ pub async fn purge_block_inner(
          WHERE block_id IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // block_drafts
@@ -870,7 +860,7 @@ pub async fn purge_block_inner(
          WHERE block_id IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // Nullify conflict_source refs from blocks outside the subtree
@@ -880,7 +870,7 @@ pub async fn purge_block_inner(
          WHERE conflict_source IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // fts_blocks (FTS5 virtual table — no FK, must be cleaned explicitly)
@@ -890,7 +880,7 @@ pub async fn purge_block_inner(
          WHERE block_id IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // page_aliases
@@ -900,7 +890,7 @@ pub async fn purge_block_inner(
          WHERE page_id IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // projected_agenda_cache
@@ -910,7 +900,7 @@ pub async fn purge_block_inner(
          WHERE block_id IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // Delete blocks (deferred FK allows single-statement batch)
@@ -920,15 +910,14 @@ pub async fn purge_block_inner(
          WHERE id IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     let count = result.rows_affected();
 
-    tx.commit().await?;
-
-    // Fire-and-forget background cache dispatch
-    materializer.dispatch_background_or_warn(&op_record);
+    // Commit + fire-and-forget background cache dispatch.
+    tx.enqueue_background(op_record);
+    tx.commit_and_dispatch(materializer).await?;
 
     Ok(PurgeResponse {
         block_id,
@@ -947,7 +936,8 @@ pub async fn restore_all_deleted_inner(
     device_id: &str,
     materializer: &Materializer,
 ) -> Result<BulkTrashResponse, AppError> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "bulk_restore_trash").await?;
 
     // Find root-level deleted blocks for op-log entries.
     // A "root" is a deleted block whose parent is either NULL, doesn't exist,
@@ -964,7 +954,7 @@ pub async fn restore_all_deleted_inner(
            ) \
          )"
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await?;
 
     if roots.is_empty() {
@@ -991,7 +981,10 @@ pub async fn restore_all_deleted_inner(
     }
 
     let mut op_records = Vec::new();
-    // Append one RestoreBlock op per root for sync compatibility
+    // Append one RestoreBlock op per root for sync compatibility.
+    // Each op_record is both enqueued for post-commit background
+    // dispatch AND retained (via clone) for the post-commit GCal
+    // notify loop.
     for root in &roots {
         let deleted_at_ref = root
             .deleted_at
@@ -1003,12 +996,13 @@ pub async fn restore_all_deleted_inner(
         });
         let op_record =
             op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+        tx.enqueue_background(op_record.clone());
         op_records.push(op_record);
     }
 
     // Bulk restore: clear deleted_at on ALL deleted blocks
     let result = sqlx::query!("UPDATE blocks SET deleted_at = NULL WHERE deleted_at IS NOT NULL")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     let count = result.rows_affected();
@@ -1018,12 +1012,8 @@ pub async fn restore_all_deleted_inner(
         crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &root.id).await?;
     }
 
-    tx.commit().await?;
-
-    // Dispatch background cache tasks for each root
-    for op_record in &op_records {
-        materializer.dispatch_background_or_warn(op_record);
-    }
+    // Commit + drain enqueued background dispatches in FIFO order.
+    tx.commit_and_dispatch(materializer).await?;
 
     // FEAT-5i — notify GCal connector post-commit, one event per root.
     for (op_record, snapshot) in op_records.iter().zip(gcal_snapshots.iter()) {
@@ -1047,7 +1037,8 @@ pub async fn purge_all_deleted_inner(
     device_id: &str,
     materializer: &Materializer,
 ) -> Result<BulkTrashResponse, AppError> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "purge_all_deleted").await?;
 
     // Find root-level deleted blocks for op-log entries
     let roots = sqlx::query!(
@@ -1062,7 +1053,7 @@ pub async fn purge_all_deleted_inner(
            ) \
          )"
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await?;
 
     if roots.is_empty() {
@@ -1070,19 +1061,18 @@ pub async fn purge_all_deleted_inner(
     }
 
     let now = now_rfc3339();
-    let mut op_records = Vec::new();
     for root in &roots {
         let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
             block_id: BlockId::from_trusted(&root.id),
         });
         let op_record =
             op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
-        op_records.push(op_record);
+        tx.enqueue_background(op_record);
     }
 
     // Defer FK checks until commit
     sqlx::query("PRAGMA defer_foreign_keys = ON")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     // Cleanup for every table referencing `blocks.id`: match any row whose
@@ -1099,7 +1089,7 @@ pub async fn purge_all_deleted_inner(
          WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL) \
             OR tag_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // block_tag_inherited
@@ -1109,7 +1099,7 @@ pub async fn purge_all_deleted_inner(
             OR tag_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL) \
             OR inherited_from IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // block_properties: owned by deleted blocks
@@ -1117,7 +1107,7 @@ pub async fn purge_all_deleted_inner(
         "DELETE FROM block_properties \
          WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // block_properties: value_ref pointing to deleted blocks
@@ -1125,7 +1115,7 @@ pub async fn purge_all_deleted_inner(
         "UPDATE block_properties SET value_ref = NULL \
          WHERE value_ref IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // block_links
@@ -1134,7 +1124,7 @@ pub async fn purge_all_deleted_inner(
          WHERE source_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL) \
             OR target_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // agenda_cache
@@ -1142,7 +1132,7 @@ pub async fn purge_all_deleted_inner(
         "DELETE FROM agenda_cache \
          WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // tags_cache
@@ -1150,7 +1140,7 @@ pub async fn purge_all_deleted_inner(
         "DELETE FROM tags_cache \
          WHERE tag_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // pages_cache
@@ -1158,7 +1148,7 @@ pub async fn purge_all_deleted_inner(
         "DELETE FROM pages_cache \
          WHERE page_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // Collect attachment paths BEFORE deleting rows
@@ -1166,7 +1156,7 @@ pub async fn purge_all_deleted_inner(
         "SELECT fs_path FROM attachments \
          WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await?;
 
     // attachments
@@ -1174,7 +1164,7 @@ pub async fn purge_all_deleted_inner(
         "DELETE FROM attachments \
          WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // block_drafts
@@ -1182,7 +1172,7 @@ pub async fn purge_all_deleted_inner(
         "DELETE FROM block_drafts \
          WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // Nullify conflict_source refs from non-deleted blocks
@@ -1190,7 +1180,7 @@ pub async fn purge_all_deleted_inner(
         "UPDATE blocks SET conflict_source = NULL \
          WHERE conflict_source IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // fts_blocks
@@ -1198,7 +1188,7 @@ pub async fn purge_all_deleted_inner(
         "DELETE FROM fts_blocks \
          WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // page_aliases
@@ -1206,7 +1196,7 @@ pub async fn purge_all_deleted_inner(
         "DELETE FROM page_aliases \
          WHERE page_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // projected_agenda_cache
@@ -1214,16 +1204,19 @@ pub async fn purge_all_deleted_inner(
         "DELETE FROM projected_agenda_cache \
          WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // Delete all deleted blocks
     let result = sqlx::query!("DELETE FROM blocks WHERE deleted_at IS NOT NULL")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     let count = result.rows_affected();
-    tx.commit().await?;
+    // Commit + drain the queued PurgeBlock op records for background
+    // dispatch. Attachment-file unlink runs after dispatch (cache
+    // rebuilds are independent of the filesystem side effect).
+    tx.commit_and_dispatch(materializer).await?;
 
     // Post-commit: delete physical attachment files
     for path in &attachment_rows {
@@ -1249,11 +1242,6 @@ pub async fn purge_all_deleted_inner(
                 "failed to remove attachment file after purge"
             );
         }
-    }
-
-    // Dispatch background cache tasks
-    for op_record in &op_records {
-        materializer.dispatch_background_or_warn(op_record);
     }
 
     Ok(BulkTrashResponse {
