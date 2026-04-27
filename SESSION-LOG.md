@@ -1,5 +1,117 @@
 # Session Log
 
+## Session 507 — Architecture audit → MAINT-112 CommandTx end-to-end + H-5/H-6 close + clippy-1.95 sweep (2026-04-27)
+
+**3 items closed (MAINT-112, H-5, H-6), 3 items filed (MAINT-112/113/114), 19 pre-existing clippy errors swept.** Long-arc session driven by an adversarial architecture audit that tested "is the architecture fit for purpose?" against four parallel explorer subagents + two reviewer subagents. The explorers produced the usual exaggerations — a claimed "70:1 LOC of sync per 1 LOC of commands" that was actually ~0.78:1, a "velocity-negative momentum" framing that the data refuted, a "ConflictFreeBlockId newtype fixes everything" recommendation the reviewer rescoped to "do not do on a deadline". The reviewers' pass refuted every dramatic recommendation; the verdict landed on **SHIP — architecture is fit for purpose, do not revisit any earlier decision, do not refactor significantly**. Three opportunistic-cleanup items came out of that audit and were filed: MAINT-112 (CommandTx), MAINT-113 (ConflictFreeBlockId, deferred indefinitely), MAINT-114 (workflows consolidation, spike first). MAINT-112 was then executed end-to-end in two phases, the pre-existing clippy-1.95 regression in the tree was swept, and the remaining two HIGH-severity materializer items (H-5, H-6) were closed — with a fix that rejected the pass-2 recommendations in favour of a simpler "remove the JoinSet entirely" redesign.
+
+**REVIEW-LATER impact:**
+
+- **Top-level:** 95 open items → 94 (MAINT-112 closed, MAINT-113 + MAINT-114 filed, net change −1 since the audit also filed those three in a prior commit within this session's window). Summary text: `58 planned work` → `57`.
+- **Backend Code Review appendix — HIGH findings:** `(6)` → `(4)` after H-5 + H-6 deleted.
+- **Stray cross-references cleaned:** MAINT-112's detail block had incorrectly cited "session 495 closed H-5 and H-6" (those items were still open until this session, and they describe JoinSet parallelism in the consumer, not the missing-dispatch failure class in the command layer — MAINT-112's actual concern). Reworded the two misattributions + removed a dangling "cf. H-3 / H-4 / H-5" reference in L-133 (only H-3 actually describes the unscoped-pages-after-bootstrap mechanism).
+
+**Commits (5) in execution order:**
+
+| # | Hash | Summary | Files / Δ |
+|---|---|---|---|
+| 1 | `4b33d6c` | `docs(review-later): add MAINT-112 + MAINT-113 + MAINT-114 — architecture-audit follow-ups` | `REVIEW-LATER.md`, +136 / −1 |
+| 2 | `dabe449` | `feat(db): MAINT-112 — CommandTx newtype + migrate history.rs (phase A)` | 2 files, +509 / −26 |
+| 3 | `d1fcf01` | `chore(clippy): clippy-1.95 sweep + bench signature drift — cargo clippy --all-targets -D warnings clean` | 12 files, +72 / −60 |
+| 4 | `8c095d6` | `feat(db): MAINT-112 phase B — complete CommandTx migration across every paired begin+dispatch site` | 15 files, +467 / −420 |
+| 5 | `9206e0a` | `fix(materializer): close H-5 + H-6 — remove JoinSet parallel dispatch, run foreground tasks strictly FIFO` | 5 files, +261 / −274 |
+
+**Arc of the session:**
+
+| Phase | Activity | Outcome |
+|---|---|---|
+| 1. Audit | 4 explorer subagents on op-log/materializer/sync, frontend stores/editor, tech debt + REVIEW-LATER + commit patterns, deps + build + platforms. Then 2 adversarial reviewer subagents per the user's "review the findings for exaggerations and hallucinations" instruction. | Verdict: **SHIP — fit for purpose, no revisit, no refactor.** Every dramatic recommendation (drop sync in v1, abandon roving editor, drop Tauri, drop sqlx) refuted. Three opportunistic-cleanup items fell out. |
+| 2. File follow-ups | `REVIEW-LATER.md` gains MAINT-112 (CommandTx), MAINT-113 (ConflictFreeBlockId, deferred indefinitely), MAINT-114 (workflows audit). | Commit 1. |
+| 3. Phase A | Introduce `CommandTx` newtype with `Deref`/`DerefMut` to `sqlx::Transaction<'static, Sqlite>`, `enqueue_background` + `commit_and_dispatch` + `commit_without_dispatch` + `rollback` + `pending_len`, 8 unit tests. Migrate 3 callsites in `commands/history.rs` (`undo_page_op_inner`, `redo_page_op_inner`, `revert_ops_inner`) as the proof-of-concept. | Commit 2. Reviewer subagent: SHIP, high confidence. One doc precision nit applied in-place. |
+| 4. Clippy sweep | Pre-existing clippy-1.95 tightening + bench signature drift had left `cargo clippy --all-targets -- -D warnings` broken on HEAD (verified via `git stash` before/after). 19 issues across 7 categories: 7× `.with(|c| c.take())` → `.with(Cell::take)`, 3× `>= x + 1` → `> x`, 1× `usize::try_from(MAX_WINDOW_DAYS)` (truncation lint), 2× cast tidies in `backlink/tests.rs`, 5× doc-quote marker rewordings in `bug_report.rs`, 1× `items_after_test_module` reorder in `sync_net/connection.rs`, and 18 bench callsite fixes across 4 bench files for post-FEAT-3-Phase-2 `space_id` signature drift. | Commit 3. |
+| 5. Phase B | Migrate every remaining production site that pairs `BEGIN IMMEDIATE` with a post-commit `dispatch_background*` (20 callsites across 11 files). `CommandTx` gains an `EditBackground { record, block_type }` variant for the single `edit_block_inner` caller that needs the block-type hint. `create_page_in_space_inner` + `create_space_inner` gain a `&Materializer` parameter and dispatch via `commit_and_dispatch` internally; both helper functions that had previously re-queried `op_log` post-commit to recover the freshly-appended rows (`dispatch_background_for_page_create` + `dispatch_background_for_space_create`) plus the identical re-fetch block in `create_block_inner_with_space` are **deleted entirely** — the op records never leave the transaction scope now. Python scripts handle the mechanical `&mut *tx` → `&mut **tx` rewrite (scoped to each migrated function's line range) and the 13 test-site materializer injections. Specta bindings regenerated cleanly (trailing-whitespace diff only; no public IPC signature changes). | Commit 4. Reviewer subagent: SHIP, high confidence, all 15 rubric items AFFIRM. |
+| 6. H-5 / H-6 | The previous reviewer had not-quite-pushed on two HIGH items that MAINT-112's problem statement touched adjacent-to (the `dispatch_background_or_warn`-after-commit framing). On direct investigation: they describe a DIFFERENT bug class — the foreground consumer's `JoinSet` parallelism, bucketed by `extract_block_id(task)`, that could race parent/child CreateBlock ops (H-5) or could run a batch in parallel with an independent `ApplyOp` for one of the batch's non-first block_ids (H-6). The pass-2 recommendations in REVIEW-LATER called for a "root-of-op" grouping key (H-5) or multi-key overlap detection (H-6). Both were rejected in favour of a simpler fix: **delete the JoinSet, run foreground tasks strictly FIFO.** SQLite serialises writes at the engine level (WAL, single writer), so the JoinSet path bought no throughput. | Commit 5. Reviewer subagent: SHIP, high confidence, all 14 rubric items AFFIRM (one UNVERIFIABLE on historical MAINT-46 observability, resolved as "no regression"). |
+
+**`CommandTx` surface (final shape, after phases A + B):**
+
+```rust
+// src/db.rs
+pub struct CommandTx { /* inner: Transaction<'static>; pending: Vec<PendingDispatch>; label */ }
+impl CommandTx {
+    pub async fn begin_immediate(&SqlitePool, label: &'static str) -> Result<Self, sqlx::Error>;
+    pub fn enqueue_background(&mut self, OpRecord);
+    pub fn enqueue_edit_background(&mut self, OpRecord, impl Into<String>);
+    pub async fn commit_and_dispatch(self, &Materializer) -> Result<usize, sqlx::Error>;
+    pub async fn commit_without_dispatch(self) -> Result<(), sqlx::Error>;
+    pub async fn rollback(self) -> Result<(), sqlx::Error>;
+    pub fn pending_len(&self) -> usize;
+}
+impl Deref<Target = Transaction<'static, Sqlite>>;
+impl DerefMut<Target = Transaction<'static, Sqlite>>;
+```
+
+**Migrated callsites (23 total across phases A + B):**
+
+| File | Function | Phase |
+|---|---|---|
+| `commands/history.rs` | `undo_page_op_inner`, `redo_page_op_inner`, `revert_ops_inner` | A |
+| `commands/mod.rs` | `delete_property_core` | B |
+| `commands/blocks/move_ops.rs` | `move_block_inner` | B |
+| `commands/properties.rs` | `set_property_inner` | B |
+| `recurrence/compute.rs` | `handle_recurrence` (warn log loses 2 context fields — `(device_id, seq)` still uniquely identifies the op) | B |
+| `commands/journal.rs` | `resolve_or_create_journal_page` (early-return uses `commit_without_dispatch`) | B |
+| `commands/tags.rs` | `add_tag_inner`, `remove_tag_inner` | B |
+| `commands/attachments.rs` | `add_attachment_inner`, `delete_attachment_inner` (post-commit unlink order swapped: `commit → dispatch → unlink` instead of `commit → unlink → dispatch`; benign because the materializer reads from the committed op_log, not the filesystem) | B |
+| `commands/pages.rs` | `import_markdown_inner` (batch enqueue in loop) | B |
+| `commands/spaces.rs` | `create_page_in_space_inner`, `create_space_inner` (both gained a `&Materializer` parameter; the two dispatch-for-*-create helpers + the identical re-fetch block in `crud::create_block_inner_with_space` deleted) | B |
+| `commands/blocks/crud.rs` | `create_block_inner`, `edit_block_inner` (uses `enqueue_edit_background`), `delete_block_inner`, `restore_block_inner`, `purge_block_inner`, `bulk_restore_trash_inner`, `purge_all_deleted_inner` | B |
+
+**H-5 / H-6 fix diff (commit 5):**
+
+| File | Change |
+|---|---|
+| `src/materializer/consumer.rs` | `process_foreground_segment` — 30-line JoinSet dispatch (with a `groups.len() <= 1` fast-path) collapsed to a single FIFO for-loop. Multi-paragraph comment pins the rationale in-place so the next reviewer does not reintroduce the bucketing as an "optimisation". |
+| `src/materializer/dedup.rs` | `extract_block_id` + `group_tasks_by_block_id` helpers deleted along with their 4 unit tests — no live consumers remained, `-D warnings` would flag as dead. `dedup_tasks` + `hash_id` retained for the background queue's per-block task dedup. |
+| `src/materializer/mod.rs` | Narrowed `#[cfg(test)] use dedup::{dedup_tasks, group_tasks_by_block_id};` → `#[cfg(test)] use dedup::dedup_tasks;`. |
+| `src/materializer/tests.rs` | Deleted `batch_groups` / `batch_order` (tested the deleted helper). Renamed `parallel_groups` → `foreground_distinct_block_edits_land_in_fifo_order`. Appended H-5 + H-6 regression tests (`h5_parent_and_child_create_both_land_under_strict_fifo`, `h6_batch_and_concurrent_apply_op_serialize_in_fifo`) — both pin final block state + assert `fg_errors == 0` + `fg_apply_dropped == 0` (verifying the retry path was NOT taken). |
+
+**Reviews:**
+
+- Audit phase: 2 reviewer subagents (one on backend/sync audit, one on frontend + tech-debt audit). Key refutations: "70:1 sync-to-commands LOC" was actually ~0.78:1 (the explorer had included test files in the sync side); "velocity-negative momentum" was refuted by the data (sessions 489–498 closed 105 items with 4 new files); "abandon roving editor" directly contradicts the documented ARCHITECTURE.md constraint.
+- Phase A reviewer: SHIP, high confidence, 10/10 rubric items AFFIRM. One doc precision nit (explicit `&mut *cmd_tx` vs. coerced `&mut cmd_tx`) applied in-place.
+- Phase B reviewer: SHIP, high confidence, 15/15 rubric items AFFIRM.
+- H-5 / H-6 reviewer: SHIP, high confidence, 14/14 rubric items AFFIRM (one UNVERIFIABLE on MAINT-46 historical observability — resolved as "no regression": the malformed-payload warn that previously lived inside the deleted `extract_block_id` now surfaces inside `apply_op_tx`'s `serde_json` parse path, same observability).
+
+**Process notes:**
+
+- **Adversarial review works.** Every high-confidence exploratory claim was tested against the code; ~1/3 were refuted or significantly downgraded (the "70:1" figure, the "velocity-negative" framing, the "abandon roving editor" recommendation). The architecture-is-fit-for-purpose verdict held up under two rounds of pressure. **Rule of thumb emerging:** explorer-only reviews are dramatic by bias; a paired reviewer subagent is cheap insurance.
+- **"Delete it" as a fix strategy beat both pass-2 recommendations for H-5 / H-6.** Pass-2 proposed "root-of-op" grouping (H-5) or multi-key overlap detection (H-6); both were more elaborate than necessary. The right question was "does SQLite's WAL single-writer semantics let the JoinSet dispatch do useful work?" — answer no, so the correct simplification was "delete the JoinSet". The reviewer subagent explicitly affirmed that the simpler fix was superior to both pass-2 proposals.
+- **Python scripts for mechanical rewrites pay off at scale.** The phase B migration included ~115 `&mut *tx` → `&mut **tx` rewrites scoped to specific function bodies, plus ~17 `create_page_in_space_inner(...)` test-callsite rewrites to inject `&materializer` as the 3rd argument, plus ~13 `let materializer = Materializer::new(pool.clone())` injections at the top of affected test functions. Writing one Python script per rewrite class and scoping each to a function line-range was faster and safer than manual editing across 15 files.
+- **Pre-existing clippy drift is a tree-level liability.** The clippy-1.95 sweep pre-empted the prek `cargo-clippy` hook: without that sweep, every subsequent commit would have failed the hook on files the commit didn't touch. Landing the sweep as its own commit (separate from MAINT-112 phase B) made both commits cleaner to review and leaves a cleaner audit trail.
+- **Specta bindings regenerate cleanly when only `_inner` signatures change.** Phase B touched 11 `_inner` functions but no Tauri command signatures. The regenerated `src/lib/bindings.ts` diff was trailing-whitespace-only. This is the expected behaviour — the `tauri-specta` pipeline reflects only the `#[tauri::command]` surface, not inner helpers.
+- **5 commits in one session is on the high end.** Each commit had its own reviewer pass, so the review budget was ~4 subagent rounds including the initial audit. In a MORE-focused session I would have merged phases A + B into one commit and folded the clippy sweep into "phase A compile-prep". The separation was deliberate here so the audit-prompted filing could stand alone and so the clippy sweep could land without mixing MAINT-112 concerns.
+
+**Files touched this session (30 unique code + 2 docs):**
+
+- `REVIEW-LATER.md` (MAINT-112/113/114 filing → MAINT-112 closure → H-5/H-6 closure + cross-reference cleanup)
+- `SESSION-LOG.md` (this entry)
+- `src-tauri/src/db.rs` (CommandTx module + tests)
+- `src-tauri/src/commands/mod.rs`, `commands/attachments.rs`, `commands/blocks/crud.rs`, `commands/blocks/move_ops.rs`, `commands/journal.rs`, `commands/pages.rs`, `commands/properties.rs`, `commands/spaces.rs`, `commands/tags.rs`, `commands/history.rs`, `commands/bug_report.rs`
+- `src-tauri/src/mcp/last_append.rs`, `mcp/tools_ro.rs`, `mcp/tools_rw.rs`
+- `src-tauri/src/materializer/consumer.rs`, `materializer/dedup.rs`, `materializer/mod.rs`, `materializer/tests.rs`
+- `src-tauri/src/recurrence/compute.rs`, `merge/resolve.rs`, `backlink/tests.rs`, `gcal_push/connector.rs`, `op_log.rs`, `sync_net/connection.rs`
+- `src-tauri/src/command_integration_tests/common.rs`, `src-tauri/src/spaces/tests.rs`
+- `src-tauri/benches/commands_bench.rs`, `benches/fts_bench.rs`, `benches/pagination_bench.rs`, `benches/undo_redo.rs`
+- `src/lib/bindings.ts` (specta regen, whitespace only)
+
+**Verification at every phase:**
+
+- `cargo nextest run -p agaric` — 2988/2988 pass (+2 skipped) at the end of the H-5/H-6 fix. Consistent green at every phase along the way.
+- `cargo clippy --all-targets --no-deps -- -D warnings` — exit 0 at every phase after commit 3.
+- `cargo fmt --all --check` — clean.
+- `npx tsc -b --noEmit` — exit 0.
+
+---
+
 ## Session 506 — Core/materializer/compaction sweep: 4 BCR items (M-1 + M-2 + M-10 + L-42) (2026-04-27)
 
 **4 items closed.** A non-sync defensive-coding batch spanning Core (M-1 ULID normalization on `attachment_id`), Materializer (M-10 refcount-bump clone for `BatchApplyOps`), Commands (System) (L-42 real `compact_op_log` deleted count), and a doc-accuracy fix (M-2 — ARCHITECTURE.md §15 names the actual sanitization mechanism). 3 parallel build subagents + 1 orchestrator-direct doc update; all 4 first-pass cleanly with no review-required fixes.
