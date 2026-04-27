@@ -1,13 +1,20 @@
 import { expect, test, waitForBoot } from './helpers'
 
 /**
- * E2E coverage for FEAT-12 — PageBrowser starred-on-top grouping.
+ * E2E coverage for FEAT-12 + FEAT-14 — PageBrowser unified
+ * `Starred` + `Pages` model.
  *
  * The PageBrowser used to ship a toolbar Star toggle that filtered the
  * list down to starred pages only. FEAT-12 replaced that filter with
  * always-visible grouping: starred pages render on top under a
- * "Starred" section header, non-starred under "Other pages", and
- * sort applies independently within each group.
+ * `Starred` section header, non-starred under `Other pages`, and sort
+ * applies independently within each group. FEAT-14 then unified the
+ * two organising axes (favourites vs hierarchy) into a stable
+ * two-section model: `Starred` (flat, conditional) + `Pages` (single
+ * section interleaving top-level flat pages and namespace roots). A
+ * starred-and-namespaced page renders twice — once flat in `Starred`
+ * with its full `work/foo` title, once nested under `Pages` in its
+ * namespace position.
  *
  * Seed data (tauri-mock seed):
  *   PAGE_GETTING_STARTED ("Getting Started")
@@ -16,8 +23,9 @@ import { expect, test, waitForBoot } from './helpers'
  *   PAGE_PROJECTS ("Projects")
  *   PAGE_MEETINGS ("Meetings")
  *
- * Five seeded pages, none contain `/` so tree mode is not engaged on
- * mount. Persistence lives in localStorage at the `starred-pages` key.
+ * Five seeded pages, none contain `/` so the namespace tree is empty
+ * on mount. Persistence lives in localStorage at the `starred-pages`
+ * key.
  */
 
 async function openPagesView(page: import('@playwright/test').Page) {
@@ -26,7 +34,7 @@ async function openPagesView(page: import('@playwright/test').Page) {
   await expect(page.getByRole('listbox')).toBeVisible()
 }
 
-test.describe('FEAT-12 — PageBrowser starred-on-top grouping', () => {
+test.describe('FEAT-12 + FEAT-14 — PageBrowser unified Starred + Pages model', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     // Reset starred-pages so each test starts from a clean slate even
@@ -34,13 +42,15 @@ test.describe('FEAT-12 — PageBrowser starred-on-top grouping', () => {
     await page.evaluate(() => window.localStorage.removeItem('starred-pages'))
   })
 
-  test('no group headers visible when no pages are starred', async ({ page }) => {
+  test('no Starred header visible when no pages are starred; Pages still renders', async ({
+    page,
+  }) => {
     await openPagesView(page)
 
-    // Both group containers should be absent on a vault with zero
-    // starred pages. The "Starred" section is hidden because it would
-    // be empty; with no starred page rendered, grouping is inactive.
+    // The `Starred` section is hidden because it would be empty.
     await expect(page.locator('[data-page-section="starred"]')).toHaveCount(0)
+    // The `Pages` section renders all flat seeded pages.
+    await expect(page.locator('[data-page-section="pages"]')).toBeVisible()
     // The viewport's accessible name reflects the non-grouped state.
     const listbox = page.getByRole('listbox')
     await expect(listbox).toHaveAttribute('aria-label', 'Page list')
@@ -57,8 +67,8 @@ test.describe('FEAT-12 — PageBrowser starred-on-top grouping', () => {
 
     // Starred header is now visible.
     await expect(page.locator('[data-page-section="starred"]')).toBeVisible()
-    // Other-pages header is also visible (non-starred remain).
-    await expect(page.locator('[data-page-section="other"]')).toBeVisible()
+    // Pages header is also visible (non-starred remain).
+    await expect(page.locator('[data-page-section="pages"]')).toBeVisible()
 
     // Quick Notes is now the first option in the listbox.
     const firstOption = page.getByRole('option').first()
@@ -105,7 +115,7 @@ test.describe('FEAT-12 — PageBrowser starred-on-top grouping', () => {
     await expect(options.nth(1)).toContainText('Quick Notes')
   })
 
-  test('unstarring drops the page back into Other pages', async ({ page }) => {
+  test('unstarring drops the page back into Pages', async ({ page }) => {
     await openPagesView(page)
 
     // Star then unstar "Quick Notes" — should round-trip out of the
@@ -129,25 +139,29 @@ test.describe('FEAT-12 — PageBrowser starred-on-top grouping', () => {
     // Star "Quick Notes" so we have a populated Starred group.
     await page.locator('[data-page-item]:has-text("Quick Notes") .star-toggle').click()
     await expect(page.locator('[data-page-section="starred"]')).toBeVisible()
-    await expect(page.locator('[data-page-section="other"]')).toBeVisible()
+    await expect(page.locator('[data-page-section="pages"]')).toBeVisible()
 
     // Search for "Project" — only "Projects" matches; the Starred
-    // group becomes empty so its header should hide while the
-    // Other-pages header stays visible.
+    // group becomes empty so its header should hide while the Pages
+    // header stays visible.
     const search = page.getByPlaceholder('Search pages...')
     await search.fill('Project')
 
     await expect(page.locator('[data-page-section="starred"]')).toHaveCount(0)
-    await expect(page.locator('[data-page-section="other"]')).toBeVisible()
+    await expect(page.locator('[data-page-section="pages"]')).toBeVisible()
     await expect(page.getByRole('option')).toHaveCount(1)
     await expect(page.getByRole('option').first()).toContainText('Projects')
   })
 
-  test('tree mode (titles with "/") renders without grouping headers', async ({ page }) => {
+  test('FEAT-14: namespaced pages and starred pages coexist in the unified layout', async ({
+    page,
+  }) => {
     await openPagesView(page)
 
-    // Create a namespaced page — the moment any title contains "/",
-    // PageBrowser switches to tree mode and bypasses grouping.
+    // Create a namespaced page — under FEAT-14, this no longer flips
+    // the entire view to a tree-only mode. The flat seeded pages
+    // continue to render alongside the new namespace tree under
+    // `Pages`, and any starred page keeps its `Starred` row.
     const newPageInput = page.getByPlaceholder('New page name...')
     await newPageInput.fill('work/project-a')
     await page.getByRole('button', { name: /New Page/i }).click()
@@ -156,14 +170,14 @@ test.describe('FEAT-12 — PageBrowser starred-on-top grouping', () => {
     // its editor view).
     await openPagesView(page)
 
-    // Star a page — even with starred, tree mode should not render
-    // group headers because namespace hierarchy wins.
+    // Star a flat page — under FEAT-14 the `Starred` header DOES
+    // render even when namespaced pages exist.
     await page.locator('[data-page-item]:has-text("Quick Notes") .star-toggle').click()
 
-    // No section headers should be visible in tree mode. The "work"
-    // namespace folder should appear instead.
-    await expect(page.locator('[data-page-section="starred"]')).toHaveCount(0)
-    await expect(page.locator('[data-page-section="other"]')).toHaveCount(0)
+    // Both sections render.
+    await expect(page.locator('[data-page-section="starred"]')).toBeVisible()
+    await expect(page.locator('[data-page-section="pages"]')).toBeVisible()
+    // The `work` namespace folder appears inside `Pages`.
     await expect(page.getByText('work', { exact: true })).toBeVisible()
   })
 })

@@ -687,11 +687,11 @@ const resources = {
       'pageBrowser.pageList': 'Page list',
       'pageBrowser.pageListGrouped': 'Page list, grouped by starred',
       'pageBrowser.starredSection': 'Starred',
-      'pageBrowser.otherPagesSection': 'Other pages',
+      'pageBrowser.pagesSection': 'Pages',
       'pageBrowser.starredSectionLabel_one': 'Starred, {{count}} page',
       'pageBrowser.starredSectionLabel_other': 'Starred, {{count}} pages',
-      'pageBrowser.otherPagesSectionLabel_one': 'Other pages, {{count}} page',
-      'pageBrowser.otherPagesSectionLabel_other': 'Other pages, {{count}} pages',
+      'pageBrowser.pagesSectionLabel_one': 'Pages, {{count}} page',
+      'pageBrowser.pagesSectionLabel_other': 'Pages, {{count}} pages',
 
       // Due Panel (agenda: due_date + scheduled_date + date properties + date tags)
       'duePanel.headerOne': '1 Agenda',

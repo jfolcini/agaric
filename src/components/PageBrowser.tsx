@@ -30,7 +30,7 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
-import { buildPageTree } from '@/lib/page-tree'
+import { buildPageTree, type PageTreeNode } from '@/lib/page-tree'
 import { getRecentPages } from '@/lib/recent-pages'
 import { getStarredPages, isStarred, toggleStarred } from '@/lib/starred-pages'
 import { cn } from '@/lib/utils'
@@ -48,17 +48,249 @@ import { ViewHeader } from './ViewHeader'
 type SortOption = 'alphabetical' | 'recent' | 'created'
 
 /**
- * Sentinel row type fed to `useVirtualizer`. The flat list renders headers
- * and pages from a single typed union so the virtualizer can size each row
- * independently (~36px headers, ~44px pages). Tree mode renders from
- * `treeNodes` instead and never produces headers.
+ * FEAT-14 — Unified `Starred` + `Pages` row model.
+ *
+ * The virtualizer renders a single ordered list of rows produced by the
+ * grouping memo. Three row kinds:
+ *
+ *  - `header`: section header (`starred` or `pages`). 36 px.
+ *  - `page`:   a flat page row (used inside `Starred`, and inside
+ *              `Pages` for top-level non-namespaced pages). 44 px.
+ *  - `tree-page`: a namespace-root row inside `Pages` that delegates
+ *              recursive subtree rendering to `PageTreeItem`. The
+ *              `depth` is always 0 at the top level — the discriminated
+ *              `kind` exists so subtree rendering happens via
+ *              `PageTreeItem`, not the flat row template. 44 px (the
+ *              row itself; descendants render inside the same DOM
+ *              wrapper). Variant chosen over an optional `treeNode`
+ *              payload on `'page'` so the row template stays small and
+ *              `filteredPages[idx]` semantics differ cleanly between
+ *              the two (a `tree-page` may not map to a single
+ *              `BlockRow`).
+ *
+ * A starred page that also has `/` in its title appears twice: once as
+ * a `page` row inside `Starred` (full `work/foo` title) and once nested
+ * inside its `tree-page` root inside `Pages`. Both copies share the
+ * same `starredRevision` source and update together on star toggle.
  */
 type PageBrowserRow =
-  | { kind: 'header'; section: 'starred' | 'other'; count: number }
+  | { kind: 'header'; section: 'starred' | 'pages'; count: number }
   | { kind: 'page'; page: BlockRow; pageIndex: number }
+  | { kind: 'tree-page'; node: PageTreeNode; pageIndex: number; depth: number }
 
 const HEADER_ROW_HEIGHT = 36
 const PAGE_ROW_HEIGHT = 44
+
+/**
+ * Top-level unit fed to the `Pages` section's sort comparator. Each
+ * unit is either a flat top-level page (no `/` in its title) or a
+ * namespace root (`PageTreeNode` with `name` = the first segment).
+ * Sorted together by the active comparator at the top level.
+ */
+type PagesTopLevelUnit = { type: 'page'; page: BlockRow } | { type: 'tree'; node: PageTreeNode }
+
+/** Walk a tree node, collecting every page id reachable below it. */
+function collectDescendantPageIds(node: PageTreeNode, out: string[]): void {
+  if (node.pageId) out.push(node.pageId)
+  for (const child of node.children) collectDescendantPageIds(child, out)
+}
+
+/**
+ * Return value of the row-grouping computation. Pulled to a named
+ * type so the two branch helpers below share a stable shape.
+ */
+interface GroupedRowsResult {
+  filteredPages: Array<BlockRow | null>
+  groupedRows: PageBrowserRow[]
+  pageIndexToRowIndex: number[]
+  hasStarred: boolean
+  hasPages: boolean
+}
+
+/**
+ * Single-page (or empty) flat-vault branch — preserved from FEAT-12,
+ * avoids visual noise on a brand-new vault. Only kicks in when the
+ * lone page is non-namespaced; a single namespaced page falls
+ * through to the multi-page branch so the tree shape renders
+ * consistently with the multi-namespaced-page case. Extracted from
+ * the grouping memo so each helper stays under biome's cognitive
+ * complexity threshold.
+ */
+function buildSinglePageBranch(
+  filteredPagesUnsorted: BlockRow[],
+  sortPages: (input: BlockRow[]) => BlockRow[],
+): GroupedRowsResult {
+  const sorted = sortPages(filteredPagesUnsorted)
+  const rows: PageBrowserRow[] = sorted.map((page, pageIndex) => ({
+    kind: 'page',
+    page,
+    pageIndex,
+  }))
+  const idMap = sorted.map((_, i) => i)
+  return {
+    filteredPages: sorted as Array<BlockRow | null>,
+    groupedRows: rows,
+    pageIndexToRowIndex: idMap,
+    hasStarred: false,
+    hasPages: sorted.length > 0,
+  }
+}
+
+/**
+ * Multi-page branch — produces the unified `Starred` + `Pages` row
+ * model described in the FEAT-14 doc-comment on `PageBrowserRow`.
+ * Extracted from the grouping memo to keep biome's cognitive
+ * complexity below 25 per function.
+ */
+function buildMultiPageBranch(
+  filteredPagesUnsorted: BlockRow[],
+  sortPages: (input: BlockRow[]) => BlockRow[],
+  sortOption: SortOption,
+): GroupedRowsResult {
+  const starredSet = new Set(getStarredPages())
+  const starredFiltered: BlockRow[] = []
+  // Pages section input. A page enters here when:
+  //   - it is non-starred (always), OR
+  //   - it is starred AND namespaced (the duplication case — also
+  //     appears in `Starred` for direct access).
+  // A starred non-namespaced page lives ONLY in `Starred`; including
+  // it under `Pages` too would duplicate the row without value.
+  const pagesSourcePages: BlockRow[] = []
+  for (const p of filteredPagesUnsorted) {
+    const starred = starredSet.has(p.id)
+    const isNamespaced = (p.content ?? '').includes('/')
+    if (starred) starredFiltered.push(p)
+    if (!starred || isNamespaced) pagesSourcePages.push(p)
+  }
+
+  // `Starred` section: flat list, sorted independently by the
+  // active comparator. Renders the FULL title (e.g. `work/foo`) so
+  // a starred-and-namespaced page is recognizable at a glance.
+  const starredSorted = sortPages(starredFiltered)
+
+  // `Pages` section: build a single tree from every input page so
+  // hybrid nodes (a page named `work` with children under
+  // `work/...`) merge into one root rather than rendering twice.
+  // Each root then becomes a top-level unit:
+  //   - root.pageId set AND no children → render as a flat `page`
+  //     row (single-segment top-level page).
+  //   - otherwise → render as a `tree-page` row (pure namespace OR
+  //     hybrid). `PageTreeItem` handles the hybrid case internally.
+  // Subtree child order tracks `pagesSorted` input order.
+  const pagesSorted = sortPages(pagesSourcePages)
+  const allRoots = buildPageTree(pagesSorted)
+  const topLevelUnits: PagesTopLevelUnit[] = allRoots.map((node) => {
+    if (node.pageId && node.children.length === 0) {
+      const page = filteredPagesUnsorted.find((p) => p.id === node.pageId)
+      if (page) return { type: 'page', page }
+    }
+    return { type: 'tree', node }
+  })
+
+  // Sort the heterogeneous top-level list. Comparator semantics
+  // mirror `sortPages`: alphabetical → name; created → newest
+  // descendant ULID (or own ULID for flat); recent → newest
+  // descendant visit time (or own for flat) with name fallback.
+  const recentMap =
+    sortOption === 'recent' ? new Map(getRecentPages().map((rp) => [rp.id, rp.visitedAt])) : null
+  const sortedTopLevel = sortTopLevelUnits(topLevelUnits, sortOption, recentMap)
+
+  const rows: PageBrowserRow[] = []
+  const idMap: number[] = []
+  const pageRows: Array<BlockRow | null> = []
+  let pageIndex = 0
+  if (starredSorted.length > 0) {
+    rows.push({ kind: 'header', section: 'starred', count: starredSorted.length })
+    for (const page of starredSorted) {
+      idMap.push(rows.length)
+      rows.push({ kind: 'page', page, pageIndex })
+      pageRows.push(page)
+      pageIndex += 1
+    }
+  }
+  if (sortedTopLevel.length > 0) {
+    rows.push({ kind: 'header', section: 'pages', count: sortedTopLevel.length })
+    for (const unit of sortedTopLevel) {
+      idMap.push(rows.length)
+      if (unit.type === 'page') {
+        rows.push({ kind: 'page', page: unit.page, pageIndex })
+        pageRows.push(unit.page)
+      } else {
+        rows.push({ kind: 'tree-page', node: unit.node, pageIndex, depth: 0 })
+        // A namespace root has no single backing page (or is a
+        // hybrid — `node.pageId` may be set). For keyboard Enter on
+        // the row we record the hybrid page if present, else null.
+        pageRows.push(
+          unit.node.pageId
+            ? (filteredPagesUnsorted.find((p) => p.id === unit.node.pageId) ?? null)
+            : null,
+        )
+      }
+      pageIndex += 1
+    }
+  }
+  return {
+    filteredPages: pageRows,
+    groupedRows: rows,
+    pageIndexToRowIndex: idMap,
+    hasStarred: starredSorted.length > 0,
+    hasPages: sortedTopLevel.length > 0,
+  }
+}
+
+/**
+ * Sort the heterogeneous "top-level units" list (flat page rows + tree
+ * roots) under `Pages`. Comparator semantics mirror `sortPages`:
+ *
+ *  - alphabetical → by page.content (flat) / node.name (tree).
+ *  - created → by ULID (flat = own id; tree = newest descendant id).
+ *  - recent → by visit time with name fallback (flat = own time;
+ *    tree = newest descendant time across its subtree).
+ *
+ * Pulled to module scope so the memo dependency list stays clean.
+ */
+function sortTopLevelUnits(
+  units: PagesTopLevelUnit[],
+  sortOption: SortOption,
+  recentMap: Map<string, string> | null,
+): PagesTopLevelUnit[] {
+  const out = [...units]
+  const nameOf = (u: PagesTopLevelUnit): string =>
+    u.type === 'page' ? (u.page.content ?? '') : u.node.name
+  const createdIdOf = (u: PagesTopLevelUnit): string => {
+    if (u.type === 'page') return u.page.id
+    const ids: string[] = []
+    collectDescendantPageIds(u.node, ids)
+    return ids.length > 0 ? ids.reduce((a, b) => (a > b ? a : b)) : ''
+  }
+  const recentTimeOf = (u: PagesTopLevelUnit): string | null => {
+    if (recentMap == null) return null
+    if (u.type === 'page') return recentMap.get(u.page.id) ?? null
+    const ids: string[] = []
+    collectDescendantPageIds(u.node, ids)
+    let best: string | null = null
+    for (const id of ids) {
+      const t = recentMap.get(id)
+      if (t && (best == null || t > best)) best = t
+    }
+    return best
+  }
+  if (sortOption === 'alphabetical') {
+    out.sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
+  } else if (sortOption === 'created') {
+    out.sort((a, b) => createdIdOf(b).localeCompare(createdIdOf(a)))
+  } else if (sortOption === 'recent') {
+    out.sort((a, b) => {
+      const at = recentTimeOf(a)
+      const bt = recentTimeOf(b)
+      if (at && bt) return bt.localeCompare(at)
+      if (at) return -1
+      if (bt) return 1
+      return nameOf(a).localeCompare(nameOf(b))
+    })
+  }
+  return out
+}
 
 const SORT_STORAGE_KEY = 'page-browser-sort'
 
@@ -273,8 +505,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   /**
    * Pages narrowed by the search input + alias resolver.
-   * Sort/grouping is applied below — this keeps both branches (tree and
-   * grouped flat list) consuming the same filtered pool.
+   * Sort/grouping is applied below — both `Starred` and `Pages`
+   * sections consume the same filtered pool.
    */
   const filteredPagesUnsorted = useMemo(() => {
     const trimmed = filterText.trim()
@@ -288,102 +520,56 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     )
   }, [pages, filterText, aliasMatchId])
 
-  const isTreeMode = useMemo(
-    () => filteredPagesUnsorted.some((p) => p.content?.includes('/')),
-    [filteredPagesUnsorted],
-  )
-
   /**
-   * FEAT-12 — starred-on-top grouping for the flat list view.
+   * FEAT-14 — Unified `Starred` + `Pages` row buckets.
    *
-   * Tree mode is intentionally bypassed: namespace hierarchy wins, no
-   * grouping is overlaid on it. A 0- or 1-page vault renders flat with
-   * no headers (avoids visual noise on a brand-new vault).
+   * Replaces the FEAT-12 `isTreeMode ? flat : grouped` cliff with a
+   * stable two-section model:
    *
-   * `filteredPages` keeps a page-only ordered array so
-   * `useListKeyboardNavigation` (and Home/End/PageUp/PageDown) can keep
-   * iterating page rows without skipping logic. Sentinel header rows
-   * are interspersed only at render time via `groupedRows`.
+   *  - `Starred` (flat, conditional): every starred filtered page,
+   *    rendered with its full title (`work/foo` not just `foo`),
+   *    sorted by the active comparator independently of `Pages`.
+   *  - `Pages`: a single section that interleaves top-level flat
+   *    pages (titles without `/`) and namespace roots (expandable
+   *    `PageTreeItem`s). Top-level units are sorted together by the
+   *    active comparator. Subtree rendering is unchanged below the
+   *    root level — `PageTreeItem` recurses internally.
+   *
+   * A starred page that also has `/` in its title appears **twice**:
+   * once as a flat row in `Starred`, once nested in its tree position
+   * inside `Pages`. Each row counts independently for keyboard nav
+   * (`pageIndexToRowIndex` walks duplicates), so arrow-down through a
+   * starred-and-namespaced duplicate naturally walks past the same
+   * page twice. Star toggle from either copy bumps `starredRevision`
+   * and updates both rows immediately.
+   *
+   * Sentinel header rows are interleaved only at render time. The
+   * single-page-vault branch is preserved (1 page → no chrome at all).
    */
-  const { filteredPages, groupedRows, pageIndexToRowIndex, hasGrouping } = useMemo(() => {
-    // Subscribe to starred revisions so toggleStar bumps re-run this
-    // memo and pages move between groups immediately.
-    starredRevision
-
-    // Tree mode: keep legacy flat sort, no grouping.
-    if (isTreeMode) {
-      const sorted = sortPages(filteredPagesUnsorted)
-      return {
-        filteredPages: sorted,
-        groupedRows: [] as PageBrowserRow[],
-        pageIndexToRowIndex: [] as number[],
-        hasGrouping: false,
-      }
-    }
-
-    // Single-page (or empty) vault: flat, no headers.
-    if (pages.length <= 1) {
-      const sorted = sortPages(filteredPagesUnsorted)
-      const rows: PageBrowserRow[] = sorted.map((page, pageIndex) => ({
-        kind: 'page',
-        page,
-        pageIndex,
-      }))
-      const idMap = sorted.map((_, i) => i)
-      return {
-        filteredPages: sorted,
-        groupedRows: rows,
-        pageIndexToRowIndex: idMap,
-        hasGrouping: false,
-      }
-    }
-
-    const starredSet = new Set(getStarredPages())
-    const starred: BlockRow[] = []
-    const other: BlockRow[] = []
-    for (const p of filteredPagesUnsorted) {
-      if (starredSet.has(p.id)) starred.push(p)
-      else other.push(p)
-    }
-    const starredSorted = sortPages(starred)
-    const otherSorted = sortPages(other)
-    const orderedPages = [...starredSorted, ...otherSorted]
-
-    const rows: PageBrowserRow[] = []
-    const idMap: number[] = []
-    let pageIndex = 0
-    if (starredSorted.length > 0) {
-      rows.push({ kind: 'header', section: 'starred', count: starredSorted.length })
-      for (const page of starredSorted) {
-        idMap.push(rows.length)
-        rows.push({ kind: 'page', page, pageIndex })
-        pageIndex += 1
-      }
-    }
-    if (otherSorted.length > 0) {
-      rows.push({ kind: 'header', section: 'other', count: otherSorted.length })
-      for (const page of otherSorted) {
-        idMap.push(rows.length)
-        rows.push({ kind: 'page', page, pageIndex })
-        pageIndex += 1
-      }
-    }
-    return {
-      filteredPages: orderedPages,
-      groupedRows: rows,
-      pageIndexToRowIndex: idMap,
-      // `hasGrouping === true` iff at least one starred page exists in
-      // the filtered set; this is the only signal needed to render the
-      // "Other pages" divider and toggle the grouped viewport label.
-      hasGrouping: starredSorted.length > 0,
-    }
-  }, [pages.length, filteredPagesUnsorted, isTreeMode, sortPages, starredRevision])
-
-  const treeNodes = useMemo(
-    () => (isTreeMode ? buildPageTree(filteredPages) : []),
-    [isTreeMode, filteredPages],
+  // Whether ANY page in the unfiltered set is namespaced. Used only
+  // to decide whether to take the single-page-vault shortcut. Pulled
+  // out so the grouping memo below doesn't read `pages` directly
+  // (keeps its dependency surface tight and lets biome's
+  // useExhaustiveDependencies trace stay clean).
+  const hasAnyNamespacedPage = useMemo(
+    () => pages.some((p) => (p.content ?? '').includes('/')),
+    [pages],
   )
-  const virtualItemCount = isTreeMode ? treeNodes.length : groupedRows.length
+  const isSinglePageVault = pages.length <= 1 && !hasAnyNamespacedPage
+
+  const { filteredPages, groupedRows, pageIndexToRowIndex, hasStarred, hasPages } = useMemo(() => {
+    // Subscribe to starred revisions so toggleStar bumps re-run this
+    // memo and pages move between sections immediately. Bare
+    // reference is intentional — `getStarredPages()` is read inside
+    // `buildMultiPageBranch` from localStorage, which biome can't
+    // trace; this expression keeps the dep surface honest.
+    starredRevision
+    return isSinglePageVault
+      ? buildSinglePageBranch(filteredPagesUnsorted, sortPages)
+      : buildMultiPageBranch(filteredPagesUnsorted, sortPages, sortOption)
+  }, [isSinglePageVault, filteredPagesUnsorted, sortPages, sortOption, starredRevision])
+
+  const virtualItemCount = groupedRows.length
 
   const {
     focusedIndex,
@@ -408,11 +594,16 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const virtualizer = useVirtualizer({
     count: virtualItemCount,
     getScrollElement: () => listRef.current,
-    // Tree mode: every row is a page (44px). Flat mode: header rows
-    // (~36px) sentinel-interspersed between page rows (~44px).
+    // Header rows (~36px) sentinel-interspersed between page rows
+    // (~44px) and tree-page rows (~44px for the root; descendants
+    // render inside the same DOM wrapper).
     estimateSize: (index) => {
-      if (isTreeMode) return PAGE_ROW_HEIGHT
-      return groupedRows[index]?.kind === 'header' ? HEADER_ROW_HEIGHT : PAGE_ROW_HEIGHT
+      const row = groupedRows[index]
+      if (row?.kind === 'header') return HEADER_ROW_HEIGHT
+      // Both `page` and `tree-page` share the 44px row height. The
+      // virtualizer's `measureElement` ref handler later corrects to
+      // actual height when descendants expand the wrapper.
+      return PAGE_ROW_HEIGHT
     },
     overscan: 5,
   })
@@ -439,10 +630,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // page-only `filteredPages` array; sentinel headers shift the row
   // index in the virtualizer, so map through `pageIndexToRowIndex`.
   useEffect(() => {
-    if (focusedIndex < 0 || isTreeMode) return
+    if (focusedIndex < 0) return
     const rowIndex = pageIndexToRowIndex[focusedIndex] ?? focusedIndex
     virtualizer.scrollToIndex(rowIndex, { align: 'auto' })
-  }, [focusedIndex, isTreeMode, virtualizer, pageIndexToRowIndex])
+  }, [focusedIndex, virtualizer, pageIndexToRowIndex])
 
   const isFiltering = filterText.trim().length > 0
 
@@ -458,19 +649,33 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     transform: `translateY(${start}px)`,
   })
 
-  const renderTreeRow = (virtualRow: VirtualItem): React.ReactElement | null => {
-    const node = treeNodes[virtualRow.index]
-    if (!node) return null
+  const renderTreePageRow = (
+    virtualRow: VirtualItem,
+    row: Extract<PageBrowserRow, { kind: 'tree-page' }>,
+  ): React.ReactElement => {
+    const { node, pageIndex, depth } = row
+    // Tree-page rows wrap a recursive `PageTreeItem` whose own
+    // buttons handle activation/expand. The wrapper itself is NOT a
+    // listbox `option` (we'd violate the listbox-with-options pattern
+    // by nesting button rows underneath it). For keyboard-nav
+    // visibility we apply a focus ring on the wrapper when the row
+    // is the focused page index — `aria-selected` is intentionally
+    // omitted here because it is only meaningful on `role="option"`.
     return (
       <div
         key={virtualRow.key}
         data-index={virtualRow.index}
         ref={virtualizer.measureElement}
+        data-page-tree-row
+        data-page-index={pageIndex}
+        className={cn(
+          focusedIndex === pageIndex && 'rounded-lg ring-2 ring-inset ring-ring/50 bg-accent/30',
+        )}
         style={rowStyle(virtualRow.start)}
       >
         <PageTreeItem
           node={node}
-          depth={0}
+          depth={depth}
           onNavigate={(pageId, title) => onPageSelect?.(pageId, title)}
           onCreateUnder={handleCreateUnder}
           filterText={filterText.trim()}
@@ -488,15 +693,15 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     const isStarredHeader = row.section === 'starred'
     const visibleLabel = isStarredHeader
       ? t('pageBrowser.starredSection')
-      : t('pageBrowser.otherPagesSection')
+      : t('pageBrowser.pagesSection')
     const accessibleLabel = isStarredHeader
       ? t('pageBrowser.starredSectionLabel', { count: row.count })
-      : t('pageBrowser.otherPagesSectionLabel', { count: row.count })
+      : t('pageBrowser.pagesSectionLabel', { count: row.count })
     const labelId = `${sectionLabelId}-${row.section}`
-    // The "Other pages" header gets a thin top divider when it follows
-    // the Starred section, separating the two groups visually without
+    // The `Pages` header gets a thin top divider when it follows the
+    // `Starred` section, separating the two groups visually without
     // an extra DOM node.
-    const showDivider = !isStarredHeader && hasGrouping
+    const showDivider = !isStarredHeader && hasStarred
     return (
       // biome-ignore lint/a11y/useSemanticElements: WAI-ARIA listbox-with-groups pattern (`<fieldset>` is a form-control container — wrong semantics inside `role="listbox"`)
       <div
@@ -695,7 +900,13 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         viewportProps={{
           role: 'listbox',
           tabIndex: 0,
-          'aria-label': hasGrouping ? t('pageBrowser.pageListGrouped') : t('pageBrowser.pageList'),
+          'aria-label': hasStarred ? t('pageBrowser.pageListGrouped') : t('pageBrowser.pageList'),
+          // Section presence flags exposed for tests / styling hooks.
+          // FEAT-14 — the unified model means either or both can be
+          // present independently; consumers that want section-aware
+          // chrome key off these data attributes.
+          'data-has-starred': hasStarred ? 'true' : 'false',
+          'data-has-pages': hasPages ? 'true' : 'false',
         }}
       >
         {isFiltering && filteredPages.length === 0 ? (
@@ -709,10 +920,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
             }}
           >
             {virtualizer.getVirtualItems().map((virtualRow) => {
-              if (isTreeMode) return renderTreeRow(virtualRow)
               const row = groupedRows[virtualRow.index]
               if (!row) return null
               if (row.kind === 'header') return renderHeaderRow(virtualRow, row)
+              if (row.kind === 'tree-page') return renderTreePageRow(virtualRow, row)
               return renderPageRow(virtualRow, row)
             })}
           </div>
