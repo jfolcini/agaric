@@ -438,8 +438,9 @@ describe('toast feedback', () => {
 
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
-    // Give the promise time to settle
-    await new Promise((r) => setTimeout(r, 10))
+    // Drain microtasks: the .then() callback + the async function it wraps
+    await Promise.resolve()
+    await Promise.resolve()
 
     expect(mockedToast).not.toHaveBeenCalled()
 
@@ -467,7 +468,9 @@ describe('toast feedback', () => {
 
     fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
 
-    await new Promise((r) => setTimeout(r, 10))
+    // Drain microtasks: the .then() callback + the async function it wraps
+    await Promise.resolve()
+    await Promise.resolve()
 
     expect(mockedToast).not.toHaveBeenCalled()
 
@@ -598,7 +601,9 @@ describe('refresh after undo/redo', () => {
 
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
-    await new Promise((r) => setTimeout(r, 10))
+    // Drain microtasks: the .then() callback + the async function it wraps
+    await Promise.resolve()
+    await Promise.resolve()
 
     expect(mockLoad).not.toHaveBeenCalled()
 
@@ -722,7 +727,9 @@ describe('screen reader announcements (UX-282)', () => {
 
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
-    await new Promise((r) => setTimeout(r, 10))
+    // Drain microtasks: the .then() callback + the async function it wraps
+    await Promise.resolve()
+    await Promise.resolve()
 
     expect(mockedAnnounce).not.toHaveBeenCalled()
 

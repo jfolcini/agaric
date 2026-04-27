@@ -2,8 +2,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
+import { makeBlock } from '../../__tests__/fixtures'
 import {
   createPageBlockStore,
   PageBlockContext,
@@ -18,24 +19,14 @@ let pageStore: StoreApi<PageBlockState>
 const wrapper = ({ children }: { children: ReactNode }) =>
   createElement(PageBlockContext.Provider, { value: pageStore }, children)
 
-function makeBlock(id: string, parentId: string | null = null) {
-  return {
-    id,
-    block_type: 'content' as const,
-    content: `Block ${id}`,
-    parent_id: parentId,
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-    depth: 0,
-  }
-}
+const originalOnNewAction = useUndoStore.getState().onNewAction
+afterEach(() => {
+  useUndoStore.setState({
+    ...useUndoStore.getState(),
+    onNewAction: originalOnNewAction,
+    pages: new Map(),
+  })
+})
 
 function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockMultiSelect>[0]>) {
   return {
@@ -53,7 +44,11 @@ beforeEach(() => {
   mockedInvoke.mockResolvedValue(undefined)
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({
-    blocks: [makeBlock('BLOCK_1'), makeBlock('BLOCK_2'), makeBlock('BLOCK_3')],
+    blocks: [
+      makeBlock({ id: 'BLOCK_1' }),
+      makeBlock({ id: 'BLOCK_2' }),
+      makeBlock({ id: 'BLOCK_3' }),
+    ],
   })
 })
 
@@ -179,7 +174,7 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
 
   it('filters out child blocks whose parent is also selected', async () => {
     pageStore.setState({
-      blocks: [makeBlock('PARENT'), makeBlock('CHILD', 'PARENT')],
+      blocks: [makeBlock({ id: 'PARENT' }), makeBlock({ id: 'CHILD', parent_id: 'PARENT' })],
     })
     const params = makeDefaultParams({
       selectedBlockIds: ['PARENT', 'CHILD'],

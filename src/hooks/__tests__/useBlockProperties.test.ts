@@ -17,6 +17,7 @@ import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
+import { makeBlock } from '../../__tests__/fixtures'
 import { announce } from '../../lib/announcer'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '../../lib/priority-levels'
 import {
@@ -35,24 +36,7 @@ let pageStore: StoreApi<PageBlockState>
 const wrapper = ({ children }: { children: ReactNode }) =>
   createElement(PageBlockContext.Provider, { value: pageStore }, children)
 
-function makeBlock(id: string, todoState: string | null = null, priority: string | null = null) {
-  return {
-    id,
-    block_type: 'content' as const,
-    content: `Block ${id}`,
-    parent_id: null,
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: todoState,
-    priority,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-    depth: 0,
-  }
-}
+const originalOnNewAction = useUndoStore.getState().onNewAction
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -63,11 +47,16 @@ beforeEach(() => {
 
 afterEach(() => {
   __resetPriorityLevelsForTests()
+  useUndoStore.setState({
+    ...useUndoStore.getState(),
+    onNewAction: originalOnNewAction,
+    pages: new Map(),
+  })
 })
 
 describe('useBlockProperties getTodoState', () => {
   it('returns todo_state from block store', () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -75,7 +64,7 @@ describe('useBlockProperties getTodoState', () => {
   })
 
   it('returns null when block has no todo_state', () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -91,7 +80,7 @@ describe('useBlockProperties getTodoState', () => {
 
 describe('useBlockProperties handleToggleTodo', () => {
   it('cycles from none to TODO', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -110,7 +99,7 @@ describe('useBlockProperties handleToggleTodo', () => {
   })
 
   it('cycles from TODO to DOING', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -128,7 +117,7 @@ describe('useBlockProperties handleToggleTodo', () => {
   })
 
   it('cycles from DOING to DONE (UX-202/UX-234)', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'DOING')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'DOING' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -146,7 +135,7 @@ describe('useBlockProperties handleToggleTodo', () => {
   })
 
   it('cycles from DONE to CANCELLED (UX-202/UX-234)', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'DONE')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'DONE' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -164,7 +153,7 @@ describe('useBlockProperties handleToggleTodo', () => {
   })
 
   it('cycles from CANCELLED to none', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'CANCELLED')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'CANCELLED' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -182,7 +171,7 @@ describe('useBlockProperties handleToggleTodo', () => {
   })
 
   it('reverts optimistic update on IPC failure', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })] })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
@@ -197,7 +186,7 @@ describe('useBlockProperties handleToggleTodo', () => {
   })
 
   it('completes a full cycle: null → TODO → DOING → DONE → CANCELLED → null (UX-202/UX-234)', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -214,7 +203,7 @@ describe('useBlockProperties handleToggleTodo', () => {
 
 describe('useBlockProperties handleTogglePriority', () => {
   it('cycles from none to 1', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -232,7 +221,7 @@ describe('useBlockProperties handleTogglePriority', () => {
   })
 
   it('cycles from 1 to 2', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', priority: '1' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -250,7 +239,7 @@ describe('useBlockProperties handleTogglePriority', () => {
   })
 
   it('cycles from 2 to 3', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '2')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', priority: '2' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -268,7 +257,7 @@ describe('useBlockProperties handleTogglePriority', () => {
   })
 
   it('cycles from 3 to none', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '3')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', priority: '3' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -286,7 +275,7 @@ describe('useBlockProperties handleTogglePriority', () => {
   })
 
   it('handles unknown priority value by cycling to none', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, 'X')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', priority: 'X' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -302,7 +291,7 @@ describe('useBlockProperties handleTogglePriority', () => {
   })
 
   it('reverts optimistic update on IPC failure', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', priority: '1' })] })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
@@ -318,7 +307,10 @@ describe('useBlockProperties handleTogglePriority', () => {
 
   it('does not affect other blocks in the store', async () => {
     pageStore.setState({
-      blocks: [makeBlock('BLOCK_1', null, '1'), makeBlock('BLOCK_2', 'TODO', '2')],
+      blocks: [
+        makeBlock({ id: 'BLOCK_1', priority: '1' }),
+        makeBlock({ id: 'BLOCK_2', todo_state: 'TODO', priority: '2' }),
+      ],
     })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
@@ -340,7 +332,7 @@ describe('useBlockProperties handleTogglePriority', () => {
 
 describe('useBlockProperties handleTogglePriority — configurable levels (UX-201b)', () => {
   it('reads the cycle at click time (not at hook mount)', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -377,7 +369,7 @@ describe('useBlockProperties handleTogglePriority — configurable levels (UX-20
 
   it('cycles through custom alphabetical levels', async () => {
     setPriorityLevels(['High', 'Mid', 'Low'])
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -408,7 +400,7 @@ const mockedAnnounce = vi.mocked(announce)
 
 describe('useBlockProperties handleToggleTodo toast and announcer', () => {
   it('shows toast error on IPC failure', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })] })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
@@ -421,7 +413,7 @@ describe('useBlockProperties handleToggleTodo toast and announcer', () => {
   })
 
   it('announces new state via announcer on successful toggle', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -434,7 +426,7 @@ describe('useBlockProperties handleToggleTodo toast and announcer', () => {
   })
 
   it('announces "none" when cycling back to no state', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'CANCELLED')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'CANCELLED' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -447,7 +439,7 @@ describe('useBlockProperties handleToggleTodo toast and announcer', () => {
   })
 
   it('does not announce on IPC failure', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })] })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
@@ -462,7 +454,7 @@ describe('useBlockProperties handleToggleTodo toast and announcer', () => {
 
 describe('useBlockProperties handleTogglePriority toast and announcer', () => {
   it('shows toast error on IPC failure', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', priority: '1' })] })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
@@ -475,7 +467,7 @@ describe('useBlockProperties handleTogglePriority toast and announcer', () => {
   })
 
   it('does not call toast error on successful toggle', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', priority: '1' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -500,7 +492,10 @@ describe('useBlockProperties undo notifications', () => {
   })
 
   it('handleToggleTodo calls onNewAction after successful IPC', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')], rootParentId: 'PAGE_1' })
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })],
+      rootParentId: 'PAGE_1',
+    })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -512,7 +507,10 @@ describe('useBlockProperties undo notifications', () => {
   })
 
   it('handleTogglePriority calls onNewAction after successful IPC', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')], rootParentId: 'PAGE_1' })
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'BLOCK_1', priority: '1' })],
+      rootParentId: 'PAGE_1',
+    })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -524,7 +522,10 @@ describe('useBlockProperties undo notifications', () => {
   })
 
   it('handleToggleTodo does not call onNewAction on IPC failure', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')], rootParentId: 'PAGE_1' })
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })],
+      rootParentId: 'PAGE_1',
+    })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
@@ -537,7 +538,10 @@ describe('useBlockProperties undo notifications', () => {
   })
 
   it('handleTogglePriority does not call onNewAction on IPC failure', async () => {
-    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')], rootParentId: 'PAGE_1' })
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'BLOCK_1', priority: '1' })],
+      rootParentId: 'PAGE_1',
+    })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })

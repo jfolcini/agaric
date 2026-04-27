@@ -642,7 +642,7 @@ describe('PairingDialog', () => {
     await user.click(cancelBtn)
 
     await waitFor(() => {
-      expect(focusSpy).toHaveBeenCalled()
+      expect(focusSpy).toHaveBeenCalledTimes(1)
     })
 
     document.body.removeChild(triggerRef.current)

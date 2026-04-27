@@ -31,6 +31,7 @@ vi.mock('../useBlockPropertyEvents', () => ({
   useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: mockInvalidationKey })),
 }))
 
+import { makeBlock } from '../../__tests__/fixtures'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
 import { useBlockPropertyEvents } from '../useBlockPropertyEvents'
 import { clearProjectedCache, extractUlidRefs, useDuePanelData } from '../useDuePanelData'
@@ -45,25 +46,6 @@ const emptyResponse = {
   items: [],
   next_cursor: null,
   has_more: false,
-}
-
-function makeBlock(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 'B1',
-    block_type: 'block',
-    content: 'test block',
-    parent_id: 'PAGE1',
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: '2025-06-15',
-    scheduled_date: null,
-    page_id: 'PAGE1',
-    ...overrides,
-  }
 }
 
 beforeEach(() => {

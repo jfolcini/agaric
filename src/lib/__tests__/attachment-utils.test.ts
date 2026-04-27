@@ -20,7 +20,7 @@ describe('attachment-utils', () => {
     it('returns asset URL when in Tauri environment', () => {
       ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
       const result = getAssetUrl('/path/to/file.png')
-      expect(result).not.toBeNull()
+      expect(result).toBe('asset://localhost/%2Fpath%2Fto%2Ffile.png')
       expect(mockedConvertFileSrc).toHaveBeenCalledWith('/path/to/file.png')
     })
 

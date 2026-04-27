@@ -1,8 +1,8 @@
 import { act, renderHook } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeBlock } from '../../__tests__/fixtures'
 import { announce } from '../../lib/announcer'
-import type { FlatBlock } from '../../lib/tree-utils'
 import { useBlockKeyboardHandlers } from '../useBlockKeyboardHandlers'
 
 vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
@@ -27,32 +27,13 @@ vi.mock('@/lib/logger', () => ({
 
 const mockedAnnounce = vi.mocked(announce)
 
-function makeFlatBlock(id: string, depth = 0, content = `Block ${id}`): FlatBlock {
-  return {
-    id,
-    block_type: 'content',
-    content,
-    parent_id: null,
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-    depth,
-  }
-}
-
 function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockKeyboardHandlers>[0]>) {
   return {
     focusedBlockId: 'B' as string | null,
     collapsedVisible: [
-      makeFlatBlock('A', 0, 'Alpha'),
-      makeFlatBlock('B', 0, 'Beta'),
-      makeFlatBlock('C', 0, 'Charlie'),
+      makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
+      makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
     ],
     rovingEditor: {
       editor: null as null,
@@ -118,7 +99,10 @@ describe('useBlockKeyboardHandlers handleFocusPrev', () => {
   it('announces empty block for block with no content', () => {
     const params = makeDefaultParams({
       focusedBlockId: 'B',
-      collapsedVisible: [makeFlatBlock('A', 0, ''), makeFlatBlock('B', 0, 'Beta')],
+      collapsedVisible: [
+        makeBlock({ id: 'A', depth: 0, content: '' }),
+        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
+      ],
     })
     const { result } = renderHook(() => useBlockKeyboardHandlers(params))
 
@@ -183,7 +167,7 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
 
   it('prevents deletion of last remaining block', () => {
     const params = makeDefaultParams({
-      collapsedVisible: [makeFlatBlock('A')],
+      collapsedVisible: [makeBlock({ id: 'A' })],
       focusedBlockId: 'A',
     })
     const { result } = renderHook(() => useBlockKeyboardHandlers(params))
@@ -209,7 +193,7 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
 
   it('sets focused to null when single block after delete', () => {
     const params = makeDefaultParams({
-      collapsedVisible: [makeFlatBlock('A'), makeFlatBlock('B')],
+      collapsedVisible: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })],
       focusedBlockId: 'B',
     })
 
@@ -837,9 +821,9 @@ describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
     const params = makeDefaultParams({
       focusedBlockId: 'B',
       collapsedVisible: [
-        makeFlatBlock('A', 0, 'Alpha'),
-        makeFlatBlock('B', 0, ''),
-        makeFlatBlock('C', 0, 'Charlie'),
+        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+        makeBlock({ id: 'B', depth: 0, content: '' }),
+        makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
       ],
     })
     params.justCreatedBlockIds.current.add('B')
@@ -859,9 +843,9 @@ describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
     const params = makeDefaultParams({
       focusedBlockId: 'B',
       collapsedVisible: [
-        makeFlatBlock('A', 0, 'Alpha'),
-        makeFlatBlock('B', 0, ''),
-        makeFlatBlock('C', 0, 'Charlie'),
+        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+        makeBlock({ id: 'B', depth: 0, content: '' }),
+        makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
       ],
     })
     // B is NOT in justCreatedBlockIds

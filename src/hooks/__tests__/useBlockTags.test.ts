@@ -15,8 +15,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
+import { makeBlock } from '../../__tests__/fixtures'
 import {
   createPageBlockStore,
   PageBlockContext,
@@ -33,23 +34,14 @@ let pageStore: StoreApi<PageBlockState>
 const wrapper = ({ children }: { children: ReactNode }) =>
   createElement(PageBlockContext.Provider, { value: pageStore }, children)
 
-function makeTagBlock(id: string, content: string) {
-  return {
-    id,
-    block_type: 'tag' as const,
-    content,
-    parent_id: null,
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    depth: 0,
-  }
-}
+const originalOnNewAction = useUndoStore.getState().onNewAction
+afterEach(() => {
+  useUndoStore.setState({
+    ...useUndoStore.getState(),
+    onNewAction: originalOnNewAction,
+    pages: new Map(),
+  })
+})
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }
 
@@ -66,7 +58,15 @@ beforeEach(() => {
 describe('useBlockTags allTags', () => {
   it('loads tag blocks on mount', async () => {
     const tagBlocks = {
-      items: [makeTagBlock('TAG_1', 'Work'), makeTagBlock('TAG_2', 'Personal')],
+      items: [
+        makeBlock({ id: 'TAG_1', block_type: 'tag' as const, content: 'Work', page_id: null }),
+        makeBlock({
+          id: 'TAG_2',
+          block_type: 'tag' as const,
+          content: 'Personal',
+          page_id: null,
+        }),
+      ],
       next_cursor: null,
       has_more: false,
     }
@@ -429,7 +429,12 @@ describe('useBlockTags handleRemoveTag', () => {
 
 describe('useBlockTags handleCreateTag', () => {
   it('creates tag block and adds tag to the block', async () => {
-    const createdBlock = makeTagBlock('NEW_TAG_1', 'NewTag')
+    const createdBlock = makeBlock({
+      id: 'NEW_TAG_1',
+      block_type: 'tag' as const,
+      content: 'NewTag',
+      page_id: null,
+    })
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
@@ -469,7 +474,12 @@ describe('useBlockTags handleCreateTag', () => {
   })
 
   it('trims whitespace from tag name', async () => {
-    const createdBlock = makeTagBlock('NEW_TAG_1', 'Trimmed')
+    const createdBlock = makeBlock({
+      id: 'NEW_TAG_1',
+      block_type: 'tag' as const,
+      content: 'Trimmed',
+      page_id: null,
+    })
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
@@ -520,7 +530,12 @@ describe('useBlockTags handleCreateTag', () => {
   })
 
   it('creates tag but does not add to block when blockId is null', async () => {
-    const createdBlock = makeTagBlock('NEW_TAG_1', 'Solo')
+    const createdBlock = makeBlock({
+      id: 'NEW_TAG_1',
+      block_type: 'tag' as const,
+      content: 'Solo',
+      page_id: null,
+    })
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
@@ -557,7 +572,12 @@ describe('useBlockTags handleCreateTag', () => {
   })
 
   it('updates resolve store with created tag', async () => {
-    const createdBlock = makeTagBlock('NEW_TAG_1', 'Resolved')
+    const createdBlock = makeBlock({
+      id: 'NEW_TAG_1',
+      block_type: 'tag' as const,
+      content: 'Resolved',
+      page_id: null,
+    })
     const resolveSetSpy = vi.fn()
     useResolveStore.setState({ ...useResolveStore.getState(), set: resolveSetSpy })
 
@@ -631,7 +651,12 @@ describe('useBlockTags handleCreateTag', () => {
   })
 
   it('shows toast error when addTag fails after successful createBlock', async () => {
-    const createdBlock = makeTagBlock('NEW_TAG_1', 'PartialFail')
+    const createdBlock = makeBlock({
+      id: 'NEW_TAG_1',
+      block_type: 'tag' as const,
+      content: 'PartialFail',
+      page_id: null,
+    })
     const onNewActionSpy = vi.fn()
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 

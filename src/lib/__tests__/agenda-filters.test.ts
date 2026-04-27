@@ -7,31 +7,12 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeBlock } from '../../__tests__/fixtures'
 import { executeAgendaFilters, toFutureDatePreset, toPastDatePreset } from '../agenda-filters'
-import type { BlockRow } from '../tauri'
 
 const mockedInvoke = vi.mocked(invoke)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }
-
-function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
-  return {
-    id: 'block-1',
-    block_type: 'block',
-    content: 'Test block',
-    parent_id: null,
-    page_id: null,
-    position: null,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    ...overrides,
-  }
-}
 
 beforeEach(() => {
   vi.clearAllMocks()

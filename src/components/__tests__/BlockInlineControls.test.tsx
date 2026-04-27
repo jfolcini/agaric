@@ -534,10 +534,12 @@ describe('BlockInlineControls', () => {
 
     it('has no a11y violations when overflow button is rendered', async () => {
       const { container } = renderControls(makeProps({ filteredProperties: fourProps }))
-      await waitFor(async () => {
-        const results = await axe(container)
-        expect(results).toHaveNoViolations()
-      })
+      await waitFor(
+        async () => {
+          expect(await axe(container)).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
     })
   })
 

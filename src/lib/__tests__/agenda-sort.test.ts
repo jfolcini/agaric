@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeBlock } from '../../__tests__/fixtures'
 import {
   groupByDate,
   groupByPage,
@@ -11,7 +12,6 @@ import {
   sortByState,
 } from '../agenda-sort'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '../priority-levels'
-import type { BlockRow } from '../tauri'
 
 beforeEach(() => {
   __resetPriorityLevelsForTests()
@@ -20,25 +20,6 @@ beforeEach(() => {
 afterEach(() => {
   __resetPriorityLevelsForTests()
 })
-
-function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
-  return {
-    id: 'B1',
-    block_type: 'block',
-    content: 'test',
-    parent_id: null,
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-    ...overrides,
-  }
-}
 
 describe('sortAgendaBlocks', () => {
   it('sorts by date ascending', () => {
@@ -115,6 +96,20 @@ describe('sortAgendaBlocks', () => {
 })
 
 describe('groupByDate', () => {
+  // TEST-64: pin the system clock so groupByDate's internal `new Date()` matches
+  // the `todayStr` constructed in the "Overdue group is always first" test.
+  // Otherwise a midnight crossing between the two `new Date()` calls flakes the test.
+  // Local-time timestamp (no `Z`) so `.getDate()` / `.getMonth()` resolve identically
+  // in every CI / dev timezone.
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2025-01-15T12:00:00'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('puts overdue non-DONE tasks in Overdue group', () => {
     const blocks = [makeBlock({ id: 'B1', due_date: '2020-01-01', todo_state: 'TODO' })]
     const groups = groupByDate(blocks)
@@ -152,8 +147,11 @@ describe('groupByDate', () => {
   })
 
   it('Overdue group is always first', () => {
-    const now = new Date()
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    // TEST-64: hardcoded `todayStr` aligned with the fake system time set in beforeEach.
+    // Previously this constructed `todayStr` from `new Date()` and then groupByDate
+    // called `new Date()` again — across midnight, the two values diverged and the
+    // "Today" assertion flaked.
+    const todayStr = '2025-01-15'
     const blocks = [
       makeBlock({ id: 'today', due_date: todayStr, todo_state: 'TODO' }),
       makeBlock({ id: 'overdue', due_date: '2020-01-01', todo_state: 'TODO' }),

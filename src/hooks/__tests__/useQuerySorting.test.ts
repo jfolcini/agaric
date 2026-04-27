@@ -1,26 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BlockRow } from '../../lib/tauri'
+import { makeBlock } from '../../__tests__/fixtures'
 import { compareValues, useQuerySorting } from '../useQuerySorting'
-
-function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
-  return {
-    id: 'BLK001',
-    block_type: 'content',
-    content: 'Test block',
-    parent_id: null,
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-    ...overrides,
-  }
-}
 
 describe('compareValues', () => {
   it('returns 0 when both values are null', () => {

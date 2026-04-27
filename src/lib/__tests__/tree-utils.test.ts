@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { BlockRow } from '../tauri'
+import { makeBlock } from '../../__tests__/fixtures'
 import {
   buildFlatTree,
   computePosition,
@@ -15,39 +15,27 @@ import {
 } from '../tree-utils'
 
 // ── Helpers ──────────────────────────────────────────────────────────────
+// Thin positional-arg wrappers around the shared `makeBlock` fixture
+// (TEST-61). The wrappers preserve the call-site ergonomics of these
+// tree-tests (lots of `mkBlock('a', null, 1)` calls) without duplicating
+// field-level defaults.
 
-/** Create a minimal BlockRow for testing. */
 function mkBlock(
   id: string,
   parentId: string | null,
   position: number | null,
   content = '',
-): BlockRow {
-  return {
-    id,
-    block_type: 'text',
-    content,
-    parent_id: parentId,
-    position,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-  }
+): FlatBlock {
+  return makeBlock({ id, parent_id: parentId, position, content })
 }
 
-/** Create a FlatBlock for testing. */
 function mkFlat(
   id: string,
   parentId: string | null,
   position: number | null,
   depth: number,
 ): FlatBlock {
-  return { ...mkBlock(id, parentId, position), depth }
+  return makeBlock({ id, parent_id: parentId, position, depth })
 }
 
 // ── buildFlatTree ────────────────────────────────────────────────────────

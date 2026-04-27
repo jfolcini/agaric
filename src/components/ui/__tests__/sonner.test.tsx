@@ -20,7 +20,7 @@ describe('Toaster', () => {
   it('renders without errors', () => {
     const { container } = render(<Toaster />)
     // Sonner renders a section or list element as the toaster root
-    expect(container).toBeTruthy()
+    expect(container.querySelector('section, ol, ul')).not.toBeNull()
   })
 
   it('forwards ref', () => {

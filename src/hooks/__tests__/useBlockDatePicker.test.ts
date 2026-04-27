@@ -2,8 +2,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
+import { makeBlock } from '../../__tests__/fixtures'
 import { announce } from '../../lib/announcer'
 import {
   createPageBlockStore,
@@ -22,24 +23,16 @@ let pageStore: StoreApi<PageBlockState>
 const wrapper = ({ children }: { children: ReactNode }) =>
   createElement(PageBlockContext.Provider, { value: pageStore }, children)
 
-function makeBlock(id: string) {
-  return {
-    id,
-    block_type: 'content' as const,
-    content: `Block ${id}`,
-    parent_id: null,
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-    depth: 0,
-  }
-}
+const originalOnNewAction = useUndoStore.getState().onNewAction
+const originalSpaceState = useSpaceStore.getState()
+afterEach(() => {
+  useUndoStore.setState({
+    ...useUndoStore.getState(),
+    onNewAction: originalOnNewAction,
+    pages: new Map(),
+  })
+  useSpaceStore.setState(originalSpaceState)
+})
 
 function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockDatePicker>[0]>) {
   return {
@@ -59,7 +52,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockedInvoke.mockResolvedValue(undefined)
   pageStore = createPageBlockStore('PAGE_1')
-  pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+  pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
   // BUG-1 / H-3b — `handleDateMode` now routes through `createPageInSpace`,
   // which reads `currentSpaceId` from the space store. Seed a deterministic
   // active space so the date-mode flow has a target.

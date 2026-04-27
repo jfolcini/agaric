@@ -24,8 +24,12 @@ describe('BUG_REPORT_EVENT', () => {
 
 describe('dispatchBugReport', () => {
   const listener = vi.fn<(e: Event) => void>()
+  const originalWindow = globalThis.window
 
   afterEach(() => {
+    if (originalWindow !== undefined) {
+      ;(globalThis as { window?: Window }).window = originalWindow
+    }
     window.removeEventListener(BUG_REPORT_EVENT, listener)
     listener.mockReset()
   })
@@ -54,13 +58,10 @@ describe('dispatchBugReport', () => {
   })
 
   it('is a no-op when window is undefined (SSR safety)', () => {
-    const originalWindow = globalThis.window
     // jsdom provides `window`; simulate SSR by deleting the global.
+    // afterEach restores it from the captured originalWindow.
     delete (globalThis as { window?: Window }).window
 
     expect(() => dispatchBugReport({ message: 'ssr' })).not.toThrow()
-
-    // Restore so subsequent tests still have a working DOM
-    ;(globalThis as { window?: Window }).window = originalWindow
   })
 })

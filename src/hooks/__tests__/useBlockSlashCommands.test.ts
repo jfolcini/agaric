@@ -2,8 +2,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
+import { makeBlock } from '../../__tests__/fixtures'
 import {
   createPageBlockStore,
   PageBlockContext,
@@ -38,24 +39,14 @@ let pageStore: StoreApi<PageBlockState>
 const wrapper = ({ children }: { children: ReactNode }) =>
   createElement(PageBlockContext.Provider, { value: pageStore }, children)
 
-function makeBlock(id: string, content = '', parentId: string | null = null) {
-  return {
-    id,
-    block_type: 'content' as const,
-    content,
-    parent_id: parentId,
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-    depth: 0,
-  }
-}
+const originalOnNewAction = useUndoStore.getState().onNewAction
+afterEach(() => {
+  useUndoStore.setState({
+    ...useUndoStore.getState(),
+    onNewAction: originalOnNewAction,
+    pages: new Map(),
+  })
+})
 
 function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockSlashCommands>[0]>) {
   return {
@@ -69,7 +60,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockSlashCo
     datePickerCursorPos: { current: undefined as number | undefined },
     setDatePickerMode: vi.fn(),
     setDatePickerOpen: vi.fn(),
-    blocks: [makeBlock('BLOCK_1', 'hello', 'PAGE_1')],
+    blocks: [makeBlock({ id: 'BLOCK_1', content: 'hello', parent_id: 'PAGE_1' })],
     load: vi.fn(async () => {}),
     t: vi.fn((key: string) => key),
     ...overrides,
@@ -80,7 +71,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockedInvoke.mockResolvedValue(undefined)
   pageStore = createPageBlockStore('PAGE_1')
-  pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'hello', 'PAGE_1')] })
+  pageStore.setState({
+    blocks: [makeBlock({ id: 'BLOCK_1', content: 'hello', parent_id: 'PAGE_1' })],
+  })
 })
 
 describe('SLASH_COMMANDS', () => {
