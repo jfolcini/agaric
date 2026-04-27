@@ -1051,7 +1051,7 @@ mod tests {
         .await
         .unwrap();
 
-        let client_conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
+        let client_conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
             .await
             .unwrap();
 

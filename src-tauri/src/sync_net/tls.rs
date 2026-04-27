@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use sha2::{Digest, Sha256};
 
@@ -172,10 +172,27 @@ pub(super) fn build_server_tls_config(cert: &SyncCert) -> Result<rustls::ServerC
 ///
 /// The observed hash is stored in `observed_hash` so the caller can retrieve
 /// it after the TLS handshake.
+///
+/// `expected_remote_id` (M-56): when `Some(eid)`, the verifier additionally
+/// requires the certificate CN to be exactly `agaric-{eid}` — i.e. the TLS
+/// handshake is bound to the specific device the caller intended to reach.
+/// On first-pair flows where the peer device id is not yet known, callers
+/// pass `None` to preserve TOFU semantics (the existing `agaric-` prefix
+/// check still applies in either case).
+///
+/// `observed_hash` (M-57): a single-write/single-read channel from the
+/// verifier (called from inside the rustls handshake task) back to the
+/// caller (which reads after the handshake completes). Implemented with
+/// `OnceLock` rather than `Mutex<Option<...>>` so a panic inside the
+/// verifier cannot poison the cell — `OnceLock::set` returns `Err(value)`
+/// on second-call paths (verify_server_cert can be invoked once per
+/// certificate in the chain; only the leaf is meaningful), which we
+/// deliberately discard via `.ok()`.
 #[derive(Debug)]
 pub(super) struct PinningCertVerifier {
     pub(super) expected_hash: Option<String>,
-    pub(super) observed_hash: Arc<std::sync::Mutex<Option<String>>>,
+    pub(super) expected_remote_id: Option<String>,
+    pub(super) observed_hash: Arc<OnceLock<String>>,
 }
 
 impl rustls::client::danger::ServerCertVerifier for PinningCertVerifier {
@@ -191,10 +208,12 @@ impl rustls::client::danger::ServerCertVerifier for PinningCertVerifier {
         let hash = Sha256::digest(end_entity.as_ref());
         let hex_hash: String = hash.iter().map(|b| format!("{b:02x}")).collect();
 
-        // Store observed hash for the caller.
-        if let Ok(mut guard) = self.observed_hash.lock() {
-            *guard = Some(hex_hash.clone());
-        }
+        // M-57: record observed hash for the caller. `set` only succeeds
+        // once; a second call on the same `OnceLock` (e.g. for an
+        // intermediate cert in a chain) returns `Err(value)`, which we
+        // discard — the leaf cert is the first one passed and that's the
+        // one we want to pin.
+        let _ = self.observed_hash.set(hex_hash.clone());
 
         // If we have an expected hash, enforce it.
         if let Some(ref expected) = self.expected_hash {
@@ -205,7 +224,14 @@ impl rustls::client::danger::ServerCertVerifier for PinningCertVerifier {
             }
         }
 
-        // Verify CN matches expected device ID format (S-2: defense-in-depth)
+        // Verify CN matches expected device ID format (S-2: defense-in-depth).
+        // M-56: when the caller knows which device they expect to reach
+        // (`expected_remote_id = Some(eid)`), additionally bind the TLS
+        // handshake to that identity by requiring CN == `agaric-{eid}`.
+        // Without this, on first connect (no stored hash), any peer with
+        // an `agaric-*` cert would pass TLS and the device-id mismatch
+        // would only be caught later by the orchestrator's HeadExchange
+        // path — too late if the connection already streamed bytes.
         use x509_parser::prelude::*;
         if let Ok((_, parsed)) = X509Certificate::from_der(end_entity.as_ref()) {
             let cn = parsed
@@ -215,7 +241,15 @@ impl rustls::client::danger::ServerCertVerifier for PinningCertVerifier {
                 .and_then(|attr| attr.as_str().ok());
             match cn {
                 Some(name) if name.starts_with("agaric-") => {
-                    // Valid device certificate
+                    if let Some(ref expected_id) = self.expected_remote_id {
+                        let observed_id = &name["agaric-".len()..];
+                        if observed_id != expected_id {
+                            return Err(rustls::Error::General(format!(
+                                "certificate CN device id mismatch: expected \
+                                 agaric-{expected_id}, got agaric-{observed_id}"
+                            )));
+                        }
+                    }
                 }
                 _ => {
                     return Err(rustls::Error::General(

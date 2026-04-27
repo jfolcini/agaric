@@ -368,7 +368,7 @@ async fn tls_roundtrip_json_exchange() {
     .unwrap();
 
     // Connect client (no cert pinning)
-    let mut client = connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
+    let mut client = connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
         .await
         .unwrap();
 
@@ -403,6 +403,7 @@ async fn cert_pinning_correct_hash_succeeds() {
     let conn = connect_to_peer(
         &format!("127.0.0.1:{port}"),
         Some(&expected_hash),
+        None,
         &client_cert,
     )
     .await;
@@ -433,8 +434,13 @@ async fn cert_pinning_wrong_hash_fails() {
 
     // Connect with wrong hash
     let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
-    let result =
-        connect_to_peer(&format!("127.0.0.1:{port}"), Some(wrong_hash), &client_cert).await;
+    let result = connect_to_peer(
+        &format!("127.0.0.1:{port}"),
+        Some(wrong_hash),
+        None,
+        &client_cert,
+    )
+    .await;
     assert!(
         result.is_err(),
         "connection with wrong cert hash should fail"
@@ -461,7 +467,7 @@ async fn connection_refused_returns_error() {
     install_crypto_provider();
     let client_cert = generate_self_signed_cert("conn-refused").unwrap();
     // Use a port that's almost certainly not listening
-    let result = connect_to_peer("127.0.0.1:1", None, &client_cert).await;
+    let result = connect_to_peer("127.0.0.1:1", None, None, &client_cert).await;
     assert!(result.is_err(), "connection to closed port should fail");
 }
 
@@ -481,7 +487,7 @@ async fn binary_message_roundtrip() {
     .await
     .unwrap();
 
-    let mut client = connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
+    let mut client = connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
         .await
         .unwrap();
 
@@ -503,7 +509,7 @@ async fn peer_cert_hash_populated_on_client() {
 
     let (server, port) = SyncServer::start(&cert, |_conn| {}).await.unwrap();
 
-    let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
+    let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
         .await
         .unwrap();
     let hash = conn.peer_cert_hash();
@@ -528,7 +534,8 @@ fn cn_verification_accepts_valid_agaric_cert() {
 
     let verifier = PinningCertVerifier {
         expected_hash: Some(cert.cert_hash.clone()),
-        observed_hash: Arc::new(std::sync::Mutex::new(None)),
+        expected_remote_id: None,
+        observed_hash: Arc::new(std::sync::OnceLock::new()),
     };
 
     let ee = rustls::pki_types::CertificateDer::from(cert_der);
@@ -569,7 +576,8 @@ fn cn_verification_rejects_non_agaric_cn() {
 
     let verifier = PinningCertVerifier {
         expected_hash: Some(hex_hash),
-        observed_hash: Arc::new(std::sync::Mutex::new(None)),
+        expected_remote_id: None,
+        observed_hash: Arc::new(std::sync::OnceLock::new()),
     };
 
     let ee = rustls::pki_types::CertificateDer::from(bad_der);
@@ -598,7 +606,8 @@ fn cn_verification_rejects_unparseable_cert() {
 
     let verifier = PinningCertVerifier {
         expected_hash: None,
-        observed_hash: Arc::new(std::sync::Mutex::new(None)),
+        expected_remote_id: None,
+        observed_hash: Arc::new(std::sync::OnceLock::new()),
     };
 
     // Garbage DER bytes that cannot be parsed as X.509
@@ -623,6 +632,162 @@ fn cn_verification_rejects_unparseable_cert() {
     );
 }
 
+// -- 8b. M-56 / M-57 regressions --------------------------------------
+
+/// M-56 regression: when the caller declares which device they expect
+/// to reach via `expected_remote_id`, a cert whose CN is `agaric-{other}`
+/// (well-formed, not pinned to a hash, valid otherwise) **must** be
+/// rejected at the TLS handshake. Previously, on first-pair flows
+/// (`expected_hash = None`), any peer presenting an `agaric-*` cert
+/// would pass verification and the device-id mismatch would only
+/// surface later in the orchestrator's HeadExchange path — bytes already
+/// flowed over a connection bound to the wrong device.
+#[test]
+fn m56_verifier_rejects_cn_for_unexpected_device_id() {
+    install_crypto_provider();
+    let cert = generate_self_signed_cert("DEVICE_B").unwrap();
+    let cert_der = pem_to_der(&cert.cert_pem).unwrap();
+
+    let verifier = PinningCertVerifier {
+        expected_hash: None,
+        expected_remote_id: Some("DEVICE_A".to_string()),
+        observed_hash: Arc::new(std::sync::OnceLock::new()),
+    };
+
+    let ee = rustls::pki_types::CertificateDer::from(cert_der);
+    let server_name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+    let now = rustls::pki_types::UnixTime::now();
+
+    let result = rustls::client::danger::ServerCertVerifier::verify_server_cert(
+        &verifier,
+        &ee,
+        &[],
+        &server_name,
+        &[],
+        now,
+    );
+    assert!(
+        result.is_err(),
+        "M-56: cert with CN agaric-DEVICE_B must be rejected when \
+         expected_remote_id = Some(\"DEVICE_A\"), got Ok"
+    );
+    let err_msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        err_msg.contains("device id mismatch")
+            && err_msg.contains("DEVICE_A")
+            && err_msg.contains("DEVICE_B"),
+        "M-56: error must name expected and observed device ids, got: {err_msg}"
+    );
+}
+
+/// M-56 happy path: when `expected_remote_id` matches the cert CN,
+/// verification proceeds (subject to other checks). This pins the
+/// non-rejection branch so a future refactor that accidentally inverts
+/// the comparison would fail loudly.
+#[test]
+fn m56_verifier_accepts_cn_for_matching_device_id() {
+    install_crypto_provider();
+    let cert = generate_self_signed_cert("DEVICE_A").unwrap();
+    let cert_der = pem_to_der(&cert.cert_pem).unwrap();
+
+    let verifier = PinningCertVerifier {
+        expected_hash: None,
+        expected_remote_id: Some("DEVICE_A".to_string()),
+        observed_hash: Arc::new(std::sync::OnceLock::new()),
+    };
+
+    let ee = rustls::pki_types::CertificateDer::from(cert_der);
+    let server_name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+    let now = rustls::pki_types::UnixTime::now();
+
+    let result = rustls::client::danger::ServerCertVerifier::verify_server_cert(
+        &verifier,
+        &ee,
+        &[],
+        &server_name,
+        &[],
+        now,
+    );
+    assert!(
+        result.is_ok(),
+        "M-56: cert with CN agaric-DEVICE_A must pass when \
+         expected_remote_id = Some(\"DEVICE_A\"), got: {result:?}"
+    );
+}
+
+/// M-57 regression: the verifier's `observed_hash` channel is now an
+/// `Arc<OnceLock<String>>`. The first successful `verify_server_cert`
+/// must populate the cell with the leaf cert's hex SHA-256, and a
+/// subsequent verify call (e.g. for an intermediate in a chain) must
+/// **not** clobber the leaf hash and must **not** poison the cell —
+/// because there is no mutex and `OnceLock::set` simply returns
+/// `Err(value)` once already initialised.
+#[test]
+fn m57_observed_hash_is_set_once_and_survives_repeated_verify() {
+    install_crypto_provider();
+
+    // Two distinct certs so we can detect overwrite if the invariant ever breaks.
+    let cert_leaf = generate_self_signed_cert("LEAF_DEVICE").unwrap();
+    let cert_other = generate_self_signed_cert("OTHER_DEVICE").unwrap();
+    assert_ne!(
+        cert_leaf.cert_hash, cert_other.cert_hash,
+        "test setup: leaf and other certs must hash differently"
+    );
+
+    let observed: Arc<std::sync::OnceLock<String>> = Arc::new(std::sync::OnceLock::new());
+    let verifier = PinningCertVerifier {
+        expected_hash: None,
+        expected_remote_id: None,
+        observed_hash: observed.clone(),
+    };
+
+    let server_name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+    let now = rustls::pki_types::UnixTime::now();
+
+    // First call — leaf cert. Must succeed and populate the OnceLock.
+    let leaf_der = pem_to_der(&cert_leaf.cert_pem).unwrap();
+    let leaf_ee = rustls::pki_types::CertificateDer::from(leaf_der);
+    rustls::client::danger::ServerCertVerifier::verify_server_cert(
+        &verifier,
+        &leaf_ee,
+        &[],
+        &server_name,
+        &[],
+        now,
+    )
+    .expect("M-57: first verify must succeed for a valid agaric-* cert");
+    assert_eq!(
+        observed.get().map(String::as_str),
+        Some(cert_leaf.cert_hash.as_str()),
+        "M-57: leaf cert hash must be recorded on first verify"
+    );
+
+    // Second call — different cert. Must NOT overwrite the first
+    // (OnceLock semantics) and the cell must remain readable. There is
+    // no mutex, so a panic in the verifier could not poison the cell —
+    // assert the observable property: the value stays put.
+    let other_der = pem_to_der(&cert_other.cert_pem).unwrap();
+    let other_ee = rustls::pki_types::CertificateDer::from(other_der);
+    let _ = rustls::client::danger::ServerCertVerifier::verify_server_cert(
+        &verifier,
+        &other_ee,
+        &[],
+        &server_name,
+        &[],
+        now,
+    );
+    assert_eq!(
+        observed.get().map(String::as_str),
+        Some(cert_leaf.cert_hash.as_str()),
+        "M-57: second verify call must not overwrite the leaf cert hash"
+    );
+    assert_ne!(
+        observed.get().map(String::as_str),
+        Some(cert_other.cert_hash.as_str()),
+        "M-57: OnceLock must hold first writer, not the second"
+    );
+}
+
 // -- 9. mTLS peer certificate extraction (B-33 / B-34) ----------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -644,7 +809,7 @@ async fn mtls_server_extracts_peer_cert_hash() {
     .unwrap();
 
     // Connect client with its cert (mTLS)
-    let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
+    let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
         .await
         .unwrap();
 
@@ -681,7 +846,7 @@ async fn mtls_server_extracts_peer_cert_cn() {
     .await
     .unwrap();
 
-    let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
+    let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
         .await
         .unwrap();
 
@@ -763,7 +928,7 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
     .unwrap();
 
     let addr = format!("127.0.0.1:{port}");
-    let mut client_conn = connect_to_peer(&addr, None, &cert_bob).await.unwrap();
+    let mut client_conn = connect_to_peer(&addr, None, None, &cert_bob).await.unwrap();
 
     let mut server_conn = tokio::time::timeout(std::time::Duration::from_secs(5), server_conn_rx)
         .await
@@ -870,7 +1035,7 @@ async fn mtls_reconnection_with_correct_cert_hash_succeeds() {
     let addr = format!("127.0.0.1:{port}");
 
     // ── First connection: no pinning (initial pairing) ──
-    let client_conn1 = connect_to_peer(&addr, None, &cert_bob).await.unwrap();
+    let client_conn1 = connect_to_peer(&addr, None, None, &cert_bob).await.unwrap();
     let recorded_hash = client_conn1
         .peer_cert_hash()
         .expect("first connection should capture server cert hash");
@@ -889,7 +1054,7 @@ async fn mtls_reconnection_with_correct_cert_hash_succeeds() {
     server_conn1.close().await.ok();
 
     // ── Second connection: with pinning using recorded hash ──
-    let mut client_conn2 = connect_to_peer(&addr, Some(&recorded_hash), &cert_bob)
+    let mut client_conn2 = connect_to_peer(&addr, Some(&recorded_hash), None, &cert_bob)
         .await
         .expect("reconnection with correct cert hash should succeed");
 
@@ -935,7 +1100,7 @@ async fn mtls_reconnection_with_wrong_cert_hash_fails() {
     let addr = format!("127.0.0.1:{port}");
     let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
 
-    let result = connect_to_peer(&addr, Some(wrong_hash), &cert_bob).await;
+    let result = connect_to_peer(&addr, Some(wrong_hash), None, &cert_bob).await;
 
     let err_msg = match result {
         Err(e) => e.to_string(),
@@ -970,7 +1135,7 @@ async fn mtls_tofu_store_and_verify_round_trip() {
         .await
         .unwrap();
 
-    let conn = connect_to_peer(&format!("127.0.0.1:{port_v1}"), None, &client_cert)
+    let conn = connect_to_peer(&format!("127.0.0.1:{port_v1}"), None, None, &client_cert)
         .await
         .unwrap();
 
@@ -1004,6 +1169,7 @@ async fn mtls_tofu_store_and_verify_round_trip() {
     let result = connect_to_peer(
         &format!("127.0.0.1:{port_v2}"),
         Some(pinned_hash),
+        None,
         &client_cert,
     )
     .await;
@@ -1232,7 +1398,7 @@ async fn accept_loop_handles_multiple_successive_connections() {
     // Two back-to-back accepts: both should succeed without the loop
     // wedging or accumulating spurious failure counts.
     for attempt in 0..2 {
-        let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert).await;
+        let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert).await;
         assert!(
             conn.is_ok(),
             "M-53: attempt {attempt} must succeed, got {:?}",

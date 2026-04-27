@@ -2,7 +2,7 @@ use crate::error::AppError;
 use crate::peer_refs;
 use crate::sync_events::SyncEventSink;
 use crate::sync_net::SyncConnection;
-use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
+use crate::sync_protocol::{DeviceHead, SyncMessage, SyncOrchestrator, SyncState};
 use crate::sync_scheduler::SyncScheduler;
 
 /// Result of verifying the peer's TLS certificate against its claimed identity.
@@ -85,6 +85,19 @@ pub(crate) async fn handle_incoming_sync(
 
     // ── Receive the initiator's first message ─────────────────────────────
     let first_msg: SyncMessage = conn.recv_json().await?;
+
+    // M-58: capture the initiator's advertised heads BEFORE the
+    // orchestrator consumes `first_msg`. If the session later exits in
+    // `ResetRequired` we need these heads to verify our snapshot's
+    // `up_to_seqs` actually covers the remote's frontier — otherwise
+    // `try_offer_snapshot_catchup` would silently re-apply an older
+    // snapshot. For non-HeadExchange first messages (a protocol
+    // violation) we leave it empty; the orchestrator will reject the
+    // session before we ever reach the snapshot offer path.
+    let remote_heads: Vec<DeviceHead> = match &first_msg {
+        SyncMessage::HeadExchange { heads } => heads.clone(),
+        _ => Vec::new(),
+    };
 
     // ── Per-peer mutual exclusion ─────────────────────────────────────────
     // We can only identify the peer after seeing the HeadExchange.
@@ -258,6 +271,7 @@ pub(crate) async fn handle_incoming_sync(
             &pool_ref,
             &event_sink,
             &remote_id,
+            &remote_heads,
         )
         .await
         {
