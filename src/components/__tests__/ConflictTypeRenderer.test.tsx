@@ -428,9 +428,7 @@ describe('ConflictTypeRenderer', () => {
         />,
       )
 
-      const results = await axe(container, {
-        rules: { 'color-contrast': { enabled: false } },
-      })
+      const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
 
@@ -452,9 +450,7 @@ describe('ConflictTypeRenderer', () => {
         />,
       )
 
-      const results = await axe(container, {
-        rules: { 'color-contrast': { enabled: false } },
-      })
+      const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
 
@@ -476,9 +472,7 @@ describe('ConflictTypeRenderer', () => {
         />,
       )
 
-      const results = await axe(container, {
-        rules: { 'color-contrast': { enabled: false } },
-      })
+      const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
   })

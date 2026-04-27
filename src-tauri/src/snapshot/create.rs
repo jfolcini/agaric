@@ -364,9 +364,8 @@ pub async fn cleanup_old_snapshots(pool: &SqlitePool, keep: usize) -> Result<u64
     if keep == 0 {
         return Ok(0);
     }
-    // keep is a small configuration value (typically < 100); safe to cast
-    #[allow(clippy::cast_possible_wrap)]
-    let keep_i64 = keep as i64;
+    let keep_i64: i64 = i64::try_from(keep)
+        .expect("invariant: keep is a small configuration value (typically < 100) and fits in i64");
     let result = sqlx::query(
         "DELETE FROM log_snapshots WHERE status = 'pending' \
          OR id NOT IN \

@@ -156,11 +156,12 @@ pass_filenames = false
 types_or = ["ts", "tsx"]
 
 # agents-md-count-tables: keep the "<N>+ tests" / "<N> files" claims
-# in AGENTS.md and src/__tests__/AGENTS.md within ±50% of reality.
+# in AGENTS.md and src/__tests__/AGENTS.md within ±25% of reality.
 # Tolerance is intentionally loose — the docs use round numbers
 # ("7300+", not "7917") so equality checks would force doc churn on
-# every test add. ±50% catches the "doc says 100, actual is 1" class
-# of drift that MAINT-97 / MAINT-99 are aimed at. Easy half of MAINT-99.
+# every test add. ±25% catches the kind of doc drift that
+# MAINT-97 / MAINT-99 are aimed at without firing on incremental
+# growth. Easy half of MAINT-99.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -246,7 +247,7 @@ repo = "local"
 [[repos.hooks]]
 id = "knip"
 name = "knip"
-entry = "npx knip --no-exit-code"
+entry = "npx knip"
 language = "system"
 pass_filenames = false
 types = ["ts", "tsx"]

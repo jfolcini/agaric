@@ -83,7 +83,10 @@ impl SyncEventSink for SharedEventSink {
 pub struct SyncDaemon {
     shutdown_notify: Arc<Notify>,
     cancel: Arc<AtomicBool>,
-    #[allow(dead_code)]
+    /// Read only by `#[cfg(test)] mod tests` — assertions that the
+    /// daemon holds a handle (e.g. in dormant mode) and to await
+    /// graceful shutdown. The production drop path doesn't need it.
+    #[cfg_attr(not(test), allow(dead_code))]
     handle: Option<JoinHandle<()>>,
 }
 

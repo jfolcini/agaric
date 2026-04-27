@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-64 open items — 56 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12) + 5 frontend test-quality (TEST-56, TEST-61, TEST-62, TEST-63, TEST-64).
+56 open items — 48 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12) + 5 frontend test-quality (TEST-56, TEST-61, TEST-62, TEST-63, TEST-64).
 
-Previously resolved: 585+ items across 482 sessions (per SESSION-LOG.md unique session count; latest is session 514).
+Previously resolved: 593+ items across 482 sessions (per SESSION-LOG.md unique session count; latest is session 515).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; only frontend test-quality items remain.**
 
@@ -64,15 +64,7 @@ Previously resolved: 585+ items across 482 sessions (per SESSION-LOG.md unique s
 | MAINT-150 | MAINT | LOW cleanup batch — MCP. (a) `SEARCH_SNIPPET_CAP` doc says "UTF-8 bytes" but impl uses `chars().take(...)` (Unicode scalars) — fix doc or rename. (b) Bare `200` error-clip literal at `mcp/server.rs:507` unlike every other cap. (c) `LIST_RESULT_CAP = 100` duplicates `commands::MCP_PAGE_LIMIT_CAP = 100` — `pub use` the commands constant. (d) JSON schemas hand-authored via `json!` macros with no compile-time link to arg structs (`ListPagesArgs`, etc.) — introduce `schemars` derive or struct-field-doc + equivalence test. (e) `wrap_tool_result_error` at `mcp/server.rs:381` marked `#[allow(dead_code)]` with outdated FEAT-4h justification; no real caller — delete. (f) `emit_tool_completion` has 8 positional string args with `#[allow(clippy::too_many_arguments)]` — bundle into a struct. (g) `handle_get_page` at `mcp/tools_ro.rs:518` runs its own SQL space lookup, violating the "thin wrapper" invariant from the module header — push into `commands::pages`. (h) RO/RW `call_tool` dispatch skeletons share boilerplate (ACTOR.scope wrapper, clone boilerplate, unknown-tool fallthrough) — extract shared helper. (i) `bin/agaric-mcp.rs` locally redefines `APP_IDENTIFIER` / `MCP_RO_SOCKET_FILENAME` / `MCP_RO_PIPE_PATH` instead of importing from `mcp/mod.rs`. (j) `mcp/last_append.rs` is consumed from `op_log::append_local_op_in_tx` — inverted dependency direction; relocate task-local to `crate::op::last_append` or a neutral `task_locals` module. | S–M |
 | MAINT-151 | MAINT | LOW cleanup batch — GCal. (a) `/*on_event*/ false` bool-with-comment across 5 call sites in `gcal_push/api.rs` — replace with `enum NotFoundMeans { CalendarGone, EventGone }`. (b) Magic `status: 0` sentinel for transport failures in `GcalErrorKind::ServerError` at `gcal_push/api.rs:673-682` — add `Transport(String)` variant or a documented `NO_RESPONSE: u16 = 0` constant. (c) Bare `Duration::from_secs(30)` HTTP client timeout at `api.rs:699` — hoist to named const next to other tuning constants. (d) `OAuthClient` re-parses three URLs and rebuilds the typestated client on every call at `oauth.rs:307-340, 366-384` — cache parsed `AuthUrl`/`TokenUrl`/`RedirectUrl` in the struct. (e) Empty-string `SecretString` refresh-token "placeholder" at `oauth.rs:658-666` — use `Option<SecretString>` so the missing-refresh case is type-visible. (f) `is_revocation_error` at `oauth.rs:749-758` is a trivial one-line `matches!` — inline at the single call site. (g) Unused `_emitter` parameter on `classify_date_err` at `connector.rs:716-741`. (h) `classify_date_err` + `classify_cycle_failure` duplicate per-variant arms — share a `kind_display(&GcalErrorKind) -> String` helper (pairs with MAINT-140). (i) `set_setting` UPDATE SQL inlined inside BEGIN IMMEDIATE txn at `connector.rs:770-790` because `models::set_setting` takes `&SqlitePool` — add `set_setting_in_tx<'a, E: Executor<'a, Database=Sqlite>>` generic helper. (j) Repeated `serde_json::from_str` validate-then-discard across `compute_for_edit_block` / `_delete_block` / `_restore_block` in `dirty_producer.rs:256-389` — collapse into one content-change helper. (k) `is_agenda_relevant_key` at `dirty_producer.rs:75-88` mixes hyphenated (`repeat-until`) and underscored (`repeat_interval`) property keys without a canonical list — define a constant array (ideally shared with the property writers). (l) Four TODO-state literals (`"TODO"`/`"DOING"`/`"DONE"`/`"CANCELLED"`) hard-coded in `digest.rs:161-164, 324-333` — no canonical enum exists today; either introduce one or pin an exhaustiveness test. | M |
 | MAINT-152 | MAINT | LOW cleanup batch — misc features. (a) Seven ~20-line batch-INSERT scaffolds in `snapshot/restore.rs::apply_snapshot:126-278` share the same shape — a narrow helper would collapse ~150L (kept LOW because sqlx bind-builder ergonomics make a generic awkward). (b) Minor `+Nm`/`+Ny` arithmetic duplication between recurrence paths in `recurrence/compute.rs`. (c) `link_metadata/html_parser.rs` auth-detection heuristics are a hardcoded lookup-ladder rather than a data-driven list. (d) `snapshot/restore.rs` hardcodes cache-wipe order and cache-rebuild order as two separate sequences of `sqlx::query(...)` / enum-variant literals — drive both loops from a single inventory constant so new cache tables can't be forgotten. (e) `migrate_personal_pages_to_work` in `spaces/bootstrap.rs` is a one-shot migration (~160L) with no kill-date plan. (f) Plus the remaining 08-MISC-008..010, 014, 016 items documented in `/tmp/agaric-review/pass1/08-misc-features.md`. | M |
-| MAINT-153 | MAINT | `knip.json` `ignoreBinaries` field is populated with SPDX license identifiers (`ISC`, `Apache-2.0`, `BSD-3-Clause`, `BSD-2-Clause`, `MPL-2.0`, `MIT-0`, `CC0-1.0`, `Python-2.0`, `BlueOak-1.0.0`, `CC-BY-3.0`, `CC-BY-4.0`, `0BSD`) instead of binary executable names. Per knip's schema, `ignoreBinaries` ignores CLI executables referenced from `package.json` scripts; the current values match nothing and silently disable whatever real `unlisted binaries` warnings were originally provoking the entry. The prek hook also passes `--no-exit-code`, so the misuse goes undetected. License whitelisting already lives correctly in `prek.toml:227` (`license-checker --onlyAllow=...`). Fix: delete the `ignoreBinaries` array, run `npx knip` once, address whatever real warnings appear. | S |
-| MAINT-154 | MAINT | E2E console-error watcher's second allowlist pattern at `e2e/helpers.ts:53-60` is `/Failed to load resource/` — matches every 4xx/5xx network error chromium emits, not just the favicon 404 the rationale mentions. Real signals it silences: broken `<img src>`, missing fonts, dropped attachment URLs, mock-handler `null` responses returning 404, any backend command 4xx in production builds. Tighten to a single regex requiring both signals together: `/favicon\.ico.*Failed to load resource\|Failed to load resource.*favicon/`, OR replace both `/favicon/` + `/Failed to load resource/` patterns with `/Failed to load resource: the server responded with a status of 404 \(Not Found\) at .*\/favicon\.ico/`. | S |
-| MAINT-155 | MAINT | `#[allow(clippy::cast_possible_truncation/sign_loss/possible_wrap)]` at 22 sites in `src-tauri/src/` (notably `recurrence/compute.rs:160-163,319` for `repeat_seq`/`count` from `block_properties.value_num`; `materializer/coordinator.rs:196,394,636,638,642` for SQL `COUNT(*)` and millis-since-epoch; `commands/agenda.rs:135,283`; `cache/projected_agenda.rs:107`; `db.rs:943` for `SLOW_ACQUIRE_WARN_MS`; `hash.rs:86`; `recovery/boot.rs:107`; `recurrence/parser.rs:68,90`; `materializer/dispatch.rs:194`; `materializer/metrics.rs:69`; `commands/queries.rs:279`). The comment documents an invariant; the cast doesn't enforce it. A schema migration, sync bug, or malformed remote op record could violate the invariant and the cast would silently wrap. Replace each with `try_into().expect("invariant: <text>")` — same documentation, but fails loudly when the invariant breaks. The 16 module-level `#![allow(clippy::cast_possible_wrap)]` in `benches/*.rs` are fine — leave those (deliberately lax for loop indices in non-shipping code). | S–M |
-| MAINT-156 | MAINT | `#[allow(dead_code)]` "future feature" scaffolding violates AGENTS.md's "never include code paths or alternate implementations that aren't being used". Sites: `gcal_push/connector.rs:1182` (`set_fixed_calendar_id` — "Used by tests in future sub-items"), `:1221` (`call_count`), `:1226` (`remote_event_count` — both "Reserved for future integration tests"); `mcp/server.rs:381` (`wrap_tool_result_error` — comment claims FEAT-4j wire contract, FEAT-4j not yet shipped — also flagged by MAINT-150(e)); `sync_daemon/mod.rs:86` (`handle: Option<JoinHandle<()>>` field — comment says "future debug-assert on Drop", never read today). Drift vector: signatures move out from under the scaffolding before the future feature lands; the scaffolding then gets rewritten from scratch. Fix: delete each, OR `#[cfg(feature = "<flag>")]`-gate behind the unmerged feature, OR convert `#[allow(dead_code)]` → `#[cfg(test)]` if it's truly only used by tests. | S |
-| MAINT-157 | MAINT | axe `color-contrast: { enabled: false }` at 7 sites in `ConflictListItem.test.tsx:633,652,674,696` and `ConflictTypeRenderer.test.tsx:432,456,480` claims "axe-core's static color analysis doesn't account for CSS custom properties (OKLch tokens)". Stale rationale: axe-core 4.7 (Apr 2023) added CSS-custom-property resolution; this repo runs axe-core 4.11.3. Fix: remove the 7 overrides, run `npm test src/components/__tests__/ConflictListItem.test.tsx src/components/__tests__/ConflictTypeRenderer.test.tsx`. Green → suppressions were stale, delete them. Red → real WCAG-AA contrast failure on conflict badges to fix in the OKLch tokens (light + dark themes). | S |
-| MAINT-158 | MAINT | `vi.spyOn(console, 'error').mockImplementation(() => {})` at 9+ sites — `FeatureErrorBoundary.test.tsx` (×7 at L51/70/84/125/139/163/189), `ErrorBoundary.test.tsx:57`, `useBatchCounts.test.ts:132` — silences all console.error during the test but never asserts the call count or message. A regression that adds a *new, unrelated* console.error in the same test body slips through silently. The TEST-4 e2e watcher's design (assert errors are exactly empty) is the right pattern; the unit tests should mirror it. Fix: at each site, add `expect(spy).toHaveBeenCalledTimes(N)` (with N = the deliberate-error count) AND `expect(spy).toHaveBeenCalledWith(expect.stringContaining('<expected message>'))` after the test body, plus `spy.mockRestore()`. Logger.test.ts and markdown-serializer.test.ts spies are excluded — those genuinely test the logging/warn surface itself. | S |
 | MAINT-159 | MAINT | `scripts/check-ipc-error-path.mjs` only enforces error-path coverage for `src/components/*.tsx` top-level files (`files = "^src/components/([^/]+\\.tsx\|...)$"` in `prek.toml:189`). Subdirectory components in `src/components/agent-access/`, `src/components/journal/`, `src/components/block-tree/`, `src/components/backlink-filter/`, and the new `src/components/settings/` (after MAINT-128) are out of scope. The script header itself documents this as a "HARD-NARROWED" scope with a deferred FOLLOW-UP. Subdirectory components import from `@/lib/tauri` and may have no error-path test today — the gate doesn't fire. Fix: walk `src/components/**/*.tsx` recursively (update both the script's file walk and the prek `files` regex), then address whatever new gaps the recursive walk surfaces. Land AFTER MAINT-128 so the new subdirectories from the god-component split are in place. | S |
-| MAINT-160 | MAINT | `scripts/check-tauri-mock-parity.mjs` `KNOWN_UNMOCKED` allowlist (12 commands at L46-72: 5 GCal — `disconnect_gcal`/`force_gcal_resync`/`get_gcal_status`/`set_gcal_privacy_mode`/`set_gcal_window_days`; 7 MCP — `get_mcp_rw_socket_path`/`get_mcp_rw_status`/`get_mcp_socket_path`/`get_mcp_status`/`mcp_disconnect_all`/`mcp_rw_disconnect_all`/`mcp_rw_set_enabled`/`mcp_set_enabled`; plus `trash_descendant_counts` and `quick_capture_block`) silences mock-parity with the rationale "covered by per-component vitest with explicit mocks". But vitest mocks don't cover Playwright e2e flows — those run against the in-browser tauri-mock layer. Today no Playwright spec exercises the GCal Settings tab or the Agent Access (MCP) tab so the gap is tolerable, but the debt grows silently every time a new GCal/MCP feature ships. Fix: for each unmocked command, either (a) add a mock handler in `src/lib/tauri-mock/handlers.ts` (preferred), OR (b) add an inline comment proving no Playwright spec exercises its surface AND that no future spec is planned. Pairs with MAINT-123 (typed HANDLERS map). `trash_descendant_counts` is already MAINT-123. | S–M |
-| MAINT-161 | MAINT | `scripts/check-agents-md-counts.mjs` tolerance band (`TOLERANCE = 0.5` at L48, ±50%) is too loose — AGENTS.md claims `Vitest (7300+ tests)` while actual is 8530 (a 16.8% drift) and the hook stays silent. The hook exists explicitly to prevent "doc says 100, actual is 1" drift but the band catches only 10x divergence today. Fix: tighten `TOLERANCE` to `0.25` (±25%) in the script, then in the same commit update AGENTS.md test-count claims to current numbers so the new band passes. (The current `7300+` and `2100+` round numbers were chosen specifically to avoid churn on every test add — the round-number convention can stay, but the gap between claim and reality should be ≤25%.) | S |
 | MAINT-162 | MAINT | ARIA role re-evaluation for list views — `nested-interactive: { enabled: false }` at ~20 axe sites (`PageBrowser.test.tsx`, `TrashView.test.tsx`, `ConflictList.test.tsx`, `HistoryListItem.test.tsx`, `StaticBlock.test.tsx` ×7, `TagFilterPanel.test.tsx`) and `aria-required-children: { enabled: false }` at `PageBrowser.test.tsx:2187` (FEAT-14 mixed-mode list with options + tree-button rows) both paper over the same root cause: `role="listbox"` + `role="option"` on rows that contain action buttons (star, delete, navigate). Per WAI-ARIA APG, options must be atomic and non-interactive — the suppressions silence a real screen-reader-broken state. Correct primitive is `role="grid"` + `role="row"` + `role="gridcell"` which explicitly permits nested interactive widgets. Pairs with MAINT-128: when each god-component is split (PageBrowser, TrashView, ConflictList, HistoryView, StaticBlock), re-evaluate the list role choice and remove the axe suppressions. PageBrowser specifically has the strongest case for grid given the FEAT-14 mixed-mode children. May be deferred behind MAINT-128 or shipped earlier as a per-file role flip — the role change is independent of the file-size split. | M |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
@@ -1346,209 +1338,6 @@ Precondition for MAINT-132's broader consolidation story.
 **Risk:** Low.
 **Impact:** S–M.
 
-### MAINT-153 — `knip.json` `ignoreBinaries` populated with SPDX license identifiers
-
-**What:** `knip.json:7-20` contains:
-
-```json
-"ignoreBinaries": [
-  "ISC", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "MPL-2.0",
-  "MIT-0", "CC0-1.0", "Python-2.0", "BlueOak-1.0.0",
-  "CC-BY-3.0", "CC-BY-4.0", "0BSD"
-]
-```
-
-These are SPDX license identifiers, not binary executable names. Per knip's schema, `ignoreBinaries` ignores **CLI executables referenced from `package.json` scripts** (e.g., `node`, `npm`, `playwright`). Strings like `ISC` will never match anything knip considers a binary, so the array is effectively a no-op for its stated purpose.
-
-**Diagnosis path:** what almost certainly happened — at some point knip emitted "unlisted binaries" warnings for these names because something in the dependency graph (probably a sub-package's bin entry) had its `bin.<name>` set to its license identifier instead of an executable name. Adding the names to `ignoreBinaries` silenced those specific warnings. But:
-
-1. The prek hook (`prek.toml:249`) also passes `--no-exit-code`, so knip runs as advisory-only — no signal at all today.
-2. License whitelisting already lives correctly in `prek.toml:227` (`license-checker --onlyAllow=...`) and `src-tauri/deny.toml [licenses]` — there's no need to express it in `knip.json`.
-3. The misuse silently disables whatever real `unlisted binaries` warning was actually firing, and now also disables any *future* such warning that happens to share a name with one of the listed strings.
-
-**Fix:**
-
-1. Delete the entire `ignoreBinaries` array from `knip.json`.
-2. Run `npx knip` once locally (without `--no-exit-code`).
-3. Address whatever real warnings appear. If `unlisted binaries` fires for legitimate executables (e.g., a `package.json` script references a tool not in `dependencies`/`devDependencies`), add THOSE names — not the licenses.
-4. Optionally drop `--no-exit-code` from `prek.toml:249` so knip becomes a hard gate again.
-
-**Cost:** S.
-**Risk:** Low — the field is currently doing nothing useful. Worst case: knip fires warnings that need addressing.
-**Impact:** Low individually, but restores compile-time signal that has been silently lost.
-
-### MAINT-154 — E2E console-error watcher `/Failed to load resource/` regex too broad
-
-**What:** `e2e/helpers.ts:50-60`:
-
-```ts
-const IGNORED_CONSOLE_ERROR_PATTERNS: RegExp[] = [
-  // Vite dev server does not serve `/favicon.ico`; chromium logs a 404 on
-  // every page load. Same filter as the original `smoke.spec.ts` listener.
-  /favicon/,
-  // Generic "Failed to load resource: the server responded with a status of
-  // 404 (Not Found)" wrapper that accompanies the favicon 404 above.
-  /Failed to load resource/,
-]
-```
-
-The first pattern (`/favicon/`) is fine — narrowly scoped. The second (`/Failed to load resource/`) is **dangerously broad**: it matches *every* 4xx/5xx network error chromium emits, including:
-
-- Broken `<img src>` URLs (e.g., a stale attachment reference)
-- Missing fonts (CSS `@font-face` source 404)
-- Missing favicon variants (already covered by pattern 1)
-- Mock-handler `null` responses that the framework converts to 404
-- Any backend command that returns 4xx in production builds (e.g., `purge_block` failing on a non-existent block)
-
-In every case the e2e watcher's `expectNoConsoleErrors` afterEach should fire and surface the regression. Today it doesn't.
-
-**Fix (one of):**
-
-1. Tighten to a single regex requiring both favicon AND the wrapper signal together:
-   ```ts
-   /favicon\.ico.*Failed to load resource|Failed to load resource.*favicon/
-   ```
-2. Or replace both `/favicon/` + `/Failed to load resource/` with one tight pattern:
-   ```ts
-   /Failed to load resource: the server responded with a status of 404 \(Not Found\) at .*\/favicon\.ico/
-   ```
-
-Option 2 is preferred — it's the literal text chromium emits when it can't fetch the favicon, and matches nothing else.
-
-**Cost:** S.
-**Risk:** Low — worst case the e2e suite surfaces real failures it was previously silencing, which is the desired outcome.
-**Impact:** M — restores end-to-end signal on a broad class of resource-loading regressions.
-
-### MAINT-155 — Replace `#[allow(clippy::cast_*)]` with `try_into().expect("invariant: ...")`
-
-**What:** `src-tauri/src/` carries 22 `#[allow(clippy::cast_possible_truncation)]` / `cast_sign_loss` / `cast_possible_wrap` annotations. The pattern is universally:
-
-```rust
-// repeat_seq is a non-negative whole number stored as f64
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-let seq = repeat_seq as i64;
-```
-
-The comment documents an invariant; the cast does not enforce it. If a schema migration widens a column, a sync bug delivers a malformed remote op, or a future `INSERT` path bypasses the validator, the cast silently wraps — there is no signal at runtime and the lint signal is suppressed forever.
-
-**Notable sites:**
-
-| File | Lines | What's being cast |
-|---|---|---|
-| `recurrence/compute.rs` | 160-163, 319 | `repeat_seq` / `repeat_count` from `block_properties.value_num` (f64 → i64) |
-| `materializer/coordinator.rs` | 196, 394, 636, 638, 642 | SQL `COUNT(*)` (i64 → u64) and millis-since-epoch (u128 → u64 → u32) |
-| `commands/agenda.rs` | 135, 283 | `cap` config + `repeat_count` from db |
-| `cache/projected_agenda.rs` | 107 | Same as `commands/agenda.rs:283` |
-| `db.rs` | 943 | `SLOW_ACQUIRE_WARN_MS` constant (u128 → u64) |
-| `hash.rs` | 86 | `cursor.position()` (≤ buffer size, usize → u32) |
-| `recovery/boot.rs` | 107 | Elapsed millis for boot recovery |
-| `recurrence/parser.rs` | 68, 90 | `rem_euclid(12) + 1 ∈ [1, 12]` (i32 → u32) |
-| `materializer/dispatch.rs` | 194 | Millis since epoch |
-| `materializer/metrics.rs` | 69 | Millis since epoch |
-| `commands/queries.rs` | 279 | Search-blocks loop counter |
-
-**Fix:** Replace each `#[allow(...)] let x = expr as T;` with:
-
-```rust
-let x: T = expr
-    .try_into()
-    .expect("invariant: <one-line statement of why this fits>");
-```
-
-The `expect()` documents the invariant AND fails loudly when it's violated. For the `as u32` from a `u64`/`u128` time-since-epoch, the safer construct is `u32::try_from(ms).unwrap_or(u32::MAX)` (saturating) when truncation is acceptable — pick the right shape per site.
-
-**Out of scope:** the 16 module-level `#![allow(clippy::cast_possible_wrap)]` in `src-tauri/benches/*.rs`. Bench code intentionally lax for loop-index casts; production-only fix.
-
-**Cost:** S–M (~22 sites × 5–10 min each = 2–4h).
-**Risk:** Low — `try_into().expect()` is strictly more conservative. If any site genuinely wraps today, the fix surfaces a real bug.
-**Impact:** M — restores cast-safety lint signal AND adds a runtime guard at every cast point.
-
-### MAINT-156 — `#[allow(dead_code)]` "future feature" scaffolding violates AGENTS.md
-
-**What:** AGENTS.md mandates "never include code paths or alternate implementations that aren't being used". Several sites ship dead code labelled "used by tests in future sub-items" / "Reserved for future integration tests" / "future debug-assert":
-
-| File | Line | Symbol | Comment |
-|---|---|---|---|
-| `gcal_push/connector.rs` | 1182 | `set_fixed_calendar_id` | "Used by tests in future sub-items" |
-| `gcal_push/connector.rs` | 1221 | `call_count` | "Reserved for future integration tests" |
-| `gcal_push/connector.rs` | 1226 | `remote_event_count` | "Reserved for future integration tests" |
-| `mcp/server.rs` | 381 | `wrap_tool_result_error` | Comment claims FEAT-4j wire contract; FEAT-4j not yet shipped. Also flagged by MAINT-150(e). |
-| `sync_daemon/mod.rs` | 86 | `handle: Option<JoinHandle<()>>` field | "Stored for future debug-assert on Drop with pending queue" — never read today |
-
-**Drift vector:** Future feature scaffolding rots. Six months from now the future feature gets redesigned; the scaffolding is wrong but invisible because no caller compile-checks against it. When the feature finally lands, the scaffolding is rewritten from scratch. The dead code shipped to every user in every release until then.
-
-**Fix:** Per site, pick one:
-
-1. **Delete** — preferred. File or extend a REVIEW-LATER item describing what to write *when* the feature lands.
-2. **Feature-gate** — `#[cfg(feature = "<flag>")]` if the parent feature already has a flag in `Cargo.toml`. The code only compiles in opted-in builds, so it can't drift unnoticed.
-3. **Test-only** — convert `#[allow(dead_code)]` → `#[cfg(test)]`. Compiler enforces "called from tests only" automatically.
-
-**Cost:** S — the largest site (`gcal_push/connector.rs:1182-1227`) is ~50L; everything else is single-symbol.
-**Risk:** Low — deleting unused code can only break an unimplemented feature.
-**Impact:** S — keeps the production binary lean and the dead-code lint signal intact.
-
-### MAINT-157 — axe `color-contrast: { enabled: false }` likely-stale rationale
-
-**What:** 7 sites disable axe's `color-contrast` rule on conflict-badge tests:
-
-| File | Lines |
-|---|---|
-| `src/components/__tests__/ConflictListItem.test.tsx` | 633, 652, 674, 696 |
-| `src/components/__tests__/ConflictTypeRenderer.test.tsx` | 432, 456, 480 |
-
-Rationale (paraphrased from comments): "axe-core's static color analysis doesn't account for CSS custom properties (OKLch tokens)".
-
-**Why this is suspect:** axe-core 4.7 (Apr 2023) added CSS custom property resolution. This repo runs `axe-core 4.11.3` (`node_modules/axe-core/package.json`). The rationale predates the upstream fix; the suppression may now be silencing either nothing (false positive long since fixed) or a real WCAG-AA contrast failure on the conflict badges.
-
-**Fix:** A 30-second experiment:
-
-1. Remove the 7 `'color-contrast': { enabled: false }` overrides from both files.
-2. Run `npm test src/components/__tests__/ConflictListItem.test.tsx src/components/__tests__/ConflictTypeRenderer.test.tsx`.
-3. **Green** → suppressions were stale. Delete them and document the removal.
-4. **Red** → real contrast failure on the conflict badges. Inspect the OKLch tokens used (`--conflict-move-foreground` on `--conflict-move`, etc., in `src/index.css`) — fix in light AND dark themes — and the suppressions go away naturally.
-
-**Cost:** S (30 min if green; 1–2 h if red and tokens need adjusting).
-**Risk:** Low — even if reds appear, the fix is per-token CSS adjustment.
-**Impact:** S–M — either way, one of "stale rationale removed" or "real WCAG bug fixed" is achieved.
-
-### MAINT-158 — `vi.spyOn(console, 'error')` test mocks lack count assertions
-
-**What:** Several tests use `const spy = vi.spyOn(console, 'error').mockImplementation(() => {})` without ever asserting `spy.toHaveBeenCalledTimes(N)` or `spy.toHaveBeenCalledWith(...)`. The pattern silences ALL console.error during the test — including unrelated regressions — without verifying that the silencing is bounded to the expected error.
-
-**Sites:** (9+ confirmed)
-
-| File | Lines |
-|---|---|
-| `src/components/__tests__/FeatureErrorBoundary.test.tsx` | 51, 70, 84, 125, 139, 163, 189 (×7) |
-| `src/components/__tests__/ErrorBoundary.test.tsx` | 57 |
-| `src/hooks/__tests__/useBatchCounts.test.ts` | 132 |
-
-**Excluded** (these are appropriate uses — they test the logger/warn surface itself):
-
-- `src/lib/__tests__/logger.test.ts:52-53` (testing the logger)
-- `src/editor/__tests__/markdown-serializer.test.ts:179, 187, 1958, 2054, 2078, 2099, 2116` (testing serializer warning behaviour with explicit per-test expectations on the spy)
-- `src/components/__tests__/AttachmentList.test.tsx:183` (already binds to `consoleErrorSpy` — likely asserted)
-
-The TEST-4 e2e watcher's design (assert errors are exactly empty, not just "non-fatal") is the right pattern. The unit tests should mirror it.
-
-**Fix:** At each problematic site, replace
-```ts
-vi.spyOn(console, 'error').mockImplementation(() => {})
-// ... test body ...
-```
-with
-```ts
-const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
-// ... test body ...
-expect(spy).toHaveBeenCalledTimes(1)              // exact N from the deliberate error
-expect(spy).toHaveBeenCalledWith(expect.stringContaining('<expected text>'))
-spy.mockRestore()
-```
-
-**Cost:** S (~9 sites × 5 min each = 45 min).
-**Risk:** Low — only adds assertions; failing tests after this change ARE real regressions to investigate.
-**Impact:** M — closes a class of "regression slipped past unit tests" gaps.
-
 ### MAINT-159 — `check-ipc-error-path.mjs` only enforces top-level `src/components/*.tsx`
 
 **What:** The hook (`scripts/check-ipc-error-path.mjs` + `prek.toml:189`) requires every IPC-calling component to have an error-path test, but its file regex (`^src/components/([^/]+\.tsx|...)$`) only matches **top-level** files in `src/components/`. Subdirectories are out of scope:
@@ -1572,48 +1361,6 @@ Land **after** MAINT-128 — the god-component split creates new subdirectories,
 **Cost:** S (15 min for the script + regex change; effort to fix exposed gaps depends on what surfaces).
 **Risk:** Low.
 **Impact:** M — closes a class of "IPC rejection silently swallowed" regressions in subdirectory components.
-
-### MAINT-160 — `check-tauri-mock-parity.mjs` `KNOWN_UNMOCKED` allowlist (12 commands)
-
-**What:** `scripts/check-tauri-mock-parity.mjs:46-72` allowlists 12 IPC commands as "intentionally not mocked":
-
-- **Google Calendar (5):** `disconnect_gcal`, `force_gcal_resync`, `get_gcal_status`, `set_gcal_privacy_mode`, `set_gcal_window_days`
-- **MCP (7):** `get_mcp_rw_socket_path`, `get_mcp_rw_status`, `get_mcp_socket_path`, `get_mcp_status`, `mcp_disconnect_all`, `mcp_rw_disconnect_all`, `mcp_rw_set_enabled`, `mcp_set_enabled`
-- **Other (2):** `trash_descendant_counts` (also MAINT-123), `quick_capture_block`
-
-Stated rationale: "covered by per-component vitest with explicit mocks". But vitest mocks live in `vi.mock()` per-test setup; Playwright e2e flows run against the in-browser tauri-mock layer (`src/lib/tauri-mock/handlers.ts`). The two are **separate worlds** — a per-component vitest mock proves nothing about whether the e2e flow that triggers the same IPC call gets a sensible response.
-
-**Why it isn't biting today:** no Playwright spec exercises the GCal Settings tab or the Agent Access (MCP) tab today, so the gap is dormant. But every new GCal/MCP feature that ships without a Playwright spec, AND every new GCal/MCP-touching code path that an existing spec accidentally exercises, silently degrades.
-
-**Fix:** For each unmocked command, pick one:
-
-1. **Add a mock handler** in `src/lib/tauri-mock/handlers.ts` (preferred — closes the gap structurally). Stubs returning sensible defaults (`{ status: 'idle' }`, etc.) are usually 5 lines each.
-2. **Document the spec gap** with an inline comment proving (a) no Playwright spec exercises its surface today and (b) no future spec is planned (e.g., the surface is desktop-only / dev-only).
-
-`trash_descendant_counts` is already on MAINT-123's docket. Pairs with that item — once `HANDLERS` is typed against `bindings.ts`, mock drift on these 12 commands becomes a compile error.
-
-**Cost:** S–M — handler stubs are quick; the audit "is there a Playwright spec for this surface?" is the slow part.
-**Risk:** Low — adding mock handlers can only close gaps, not create them.
-**Impact:** M — eliminates the silent-degradation vector for the GCal/MCP surfaces.
-
-### MAINT-161 — `check-agents-md-counts.mjs` ±50% tolerance is too loose
-
-**What:** `scripts/check-agents-md-counts.mjs:48` sets `const TOLERANCE = 0.5` (±50% drift allowed before the hook fires). The hook exists to catch "doc says 100, actual is 1" drift, but the band is so wide that ordinary working drift goes undetected.
-
-**Today's reality:** AGENTS.md claims `Vitest (7300+ tests)`. Actual count is **8530** — a 16.8% drift. The hook is silent. Similarly `Rust tests (2100+ tests)` claim sits at ~2996 actual (42.7% drift, just inside the band). Both are reading materially out of date.
-
-The round-number convention (`7300+` not `7917`) is fine — it's there to avoid doc churn on every test add. But the ±50% band is one bit shy of a 10x divergence; ±25% is the right balance between "no churn on small changes" and "catches a stale claim".
-
-**Fix:**
-
-1. Change `TOLERANCE = 0.5` to `TOLERANCE = 0.25` in `scripts/check-agents-md-counts.mjs`.
-2. In the **same commit**, update AGENTS.md test-count claims to current numbers (or rounded numbers within ±25% of current). At time of writing: vitest is `8500+`, Rust nextest is `3000+`.
-
-The two changes must land together so the new band passes immediately.
-
-**Cost:** S (5 min for the script + 5 min for AGENTS.md numbers).
-**Risk:** None.
-**Impact:** S — restores meaningful drift detection on a doc surface developers rely on.
 
 ### MAINT-162 — ARIA role re-evaluation for list views (`role="listbox"` → `role="grid"`)
 

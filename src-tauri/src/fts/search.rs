@@ -378,9 +378,8 @@ pub async fn search_fts(
         db_query = db_query.bind(tag_id);
     }
     if !active_tag_ids.is_empty() {
-        // active_tag_ids.len() is a small count; safe to convert
-        #[allow(clippy::cast_possible_wrap)]
-        let tag_count = active_tag_ids.len() as i64;
+        let tag_count: i64 = i64::try_from(active_tag_ids.len())
+            .expect("invariant: active_tag_ids is a small filter list and its len fits in i64");
         db_query = db_query.bind(tag_count);
     }
     if let Some(sid) = space_id {

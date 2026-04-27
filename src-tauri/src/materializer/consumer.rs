@@ -93,11 +93,14 @@ pub(super) async fn run_foreground(
 /// rendering. Monotonicity is not required — we record the most recent
 /// successful batch time.
 fn record_last_materialize(metrics: &QueueMetrics) {
-    #[allow(clippy::cast_possible_truncation)]
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
+    // Millis since epoch fits in u64 for millions of years; saturate on overflow.
+    let now_ms = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX);
     metrics.last_materialize_ms.store(now_ms, Ordering::Relaxed);
 }
 

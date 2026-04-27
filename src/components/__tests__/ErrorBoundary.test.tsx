@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import type React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { _resetRateLimits } from '../../lib/logger'
 
 vi.mock('lucide-react', () => ({
   AlertCircle: (props: { className?: string }) => (
@@ -53,8 +54,15 @@ function ThrowingChildWithStack(): React.ReactElement {
   throw err
 }
 
+let consoleErrorSpy: ReturnType<typeof vi.spyOn>
+
 beforeEach(() => {
-  vi.spyOn(console, 'error').mockImplementation(() => {})
+  // Reset the logger's rate-limit map so each test sees a fresh budget —
+  // the boundary always logs the same module:message key, and after 5
+  // tests the logger's `console.error` call would be suppressed, breaking
+  // the deterministic count assertions below.
+  _resetRateLimits()
+  consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
   relaunchMock.mockReset()
 })
 
@@ -84,6 +92,11 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('test render error')).toBeInTheDocument()
     expect(screen.getByTestId('alert-circle-icon')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Reload/i })).toBeInTheDocument()
+
+    // React 19 logs the caught error once; the boundary's logger.error call
+    // adds a second formatted log.
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('test render error'))
   })
 
   it('calls Tauri relaunch on Reload click', async () => {
@@ -99,6 +112,9 @@ describe('ErrorBoundary', () => {
     await user.click(screen.getByRole('button', { name: /Reload/i }))
 
     expect(relaunchMock).toHaveBeenCalledTimes(1)
+
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('test render error'))
   })
 
   it('falls back to window.location.reload when plugin rejects', async () => {
@@ -123,6 +139,13 @@ describe('ErrorBoundary', () => {
 
     expect(relaunchMock).toHaveBeenCalledTimes(1)
     expect(reloadMock).toHaveBeenCalledTimes(1)
+
+    // The deliberate render-time throw triggers React 19's caught-error log
+    // plus the boundary's logger.error. The plugin rejection is silently
+    // caught — `relaunch().catch(() => window.location.reload())` — so it
+    // does not add a console.error.
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('test render error'))
   })
 
   it('logs error via logger', () => {
@@ -132,8 +155,11 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>,
     )
 
-    // ErrorBoundary now uses logger.error which calls console.error with a formatted string
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('test render error'))
+    // ErrorBoundary uses logger.error which calls console.error with a
+    // formatted string. React 19 also logs the caught error itself, so we
+    // expect exactly two calls.
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('test render error'))
   })
 
   it('axe accessibility audit on fallback', async () => {
@@ -145,6 +171,9 @@ describe('ErrorBoundary', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('test render error'))
   })
 
   it('renders a "Report this crash" button alongside Reload', () => {
@@ -158,6 +187,9 @@ describe('ErrorBoundary', () => {
     expect(screen.getByRole('button', { name: /Report this crash/i })).toBeInTheDocument()
     // Dialog is not open by default.
     expect(screen.queryByTestId('bug-report-dialog')).not.toBeInTheDocument()
+
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('test render error'))
   })
 
   it('opens BugReportDialog prefilled with the caught error message and stack', async () => {
@@ -175,5 +207,8 @@ describe('ErrorBoundary', () => {
     expect(screen.getByTestId('bug-dialog-description')).toHaveTextContent(
       'at mock (file.ts:10:20)',
     )
+
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('crash with stack'))
   })
 })
