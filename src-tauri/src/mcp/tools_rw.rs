@@ -43,6 +43,7 @@ use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
 use super::actor::{ActorContext, ACTOR};
+use super::handler_utils::{parse_args, to_tool_result};
 use super::registry::{ToolDescription, ToolRegistry};
 use crate::commands::{
     add_tag_inner, create_block_inner, delete_block_inner, edit_block_inner, set_property_inner,
@@ -102,15 +103,6 @@ struct CreatePageArgs {
 #[serde(deny_unknown_fields)]
 struct DeleteBlockArgs {
     block_id: String,
-}
-
-/// Convert a serde-json deserialization error into an
-/// `AppError::Validation` with the tool name embedded. Used for every
-/// handler's arg parse so bad input maps to `-32602 invalid params` at
-/// the JSON-RPC layer.
-fn parse_args<T: serde::de::DeserializeOwned>(tool: &str, args: Value) -> Result<T, AppError> {
-    serde_json::from_value::<T>(args)
-        .map_err(|e| AppError::Validation(format!("tool `{tool}`: invalid arguments — {e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -345,7 +337,7 @@ async fn handle_append_block(
         args.position,
     )
     .await?;
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 async fn handle_update_block_content(
@@ -356,7 +348,7 @@ async fn handle_update_block_content(
 ) -> Result<Value, AppError> {
     let args: UpdateBlockContentArgs = parse_args("update_block_content", args)?;
     let resp = edit_block_inner(pool, device_id, materializer, args.block_id, args.content).await?;
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 async fn handle_set_property(
@@ -398,7 +390,7 @@ async fn handle_set_property(
         args.value_ref,
     )
     .await?;
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 async fn handle_add_tag(
@@ -409,7 +401,7 @@ async fn handle_add_tag(
 ) -> Result<Value, AppError> {
     let args: AddTagArgs = parse_args("add_tag", args)?;
     let resp = add_tag_inner(pool, device_id, materializer, args.block_id, args.tag_id).await?;
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 async fn handle_create_page(
@@ -429,7 +421,7 @@ async fn handle_create_page(
         None,
     )
     .await?;
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 async fn handle_delete_block(
@@ -440,7 +432,7 @@ async fn handle_delete_block(
 ) -> Result<Value, AppError> {
     let args: DeleteBlockArgs = parse_args("delete_block", args)?;
     let resp = delete_block_inner(pool, device_id, materializer, args.block_id).await?;
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 // ---------------------------------------------------------------------------

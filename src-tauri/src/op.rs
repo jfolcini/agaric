@@ -321,16 +321,13 @@ impl OpPayload {
         }
     }
 
-    /// Normalize all ULID-typed fields to uppercase Crockford base32.
-    ///
-    /// BlockId fields auto-normalize to uppercase Crockford base32 on
-    /// construction and deserialization. This function is retained as a
-    /// call-site marker for the normalization contract.
-    pub fn normalize_block_ids(&mut self) {
-        // BlockId fields auto-normalize to uppercase Crockford base32 on
-        // construction and deserialization. This function is retained as a
-        // call-site marker for the normalization contract.
-    }
+    /// No-op contract marker: BlockId fields already auto-normalize to
+    /// uppercase Crockford base32 on construction and deserialization
+    /// (see `BlockId::from_trusted` and the `Deserialize` impl). This
+    /// method is retained as an explicit call-site marker so the
+    /// normalization invariant is greppable from the op-log append
+    /// path; the body is intentionally empty.
+    pub fn normalize_block_ids(&mut self) {}
 }
 
 /// Validate that a [`SetPropertyPayload`] has exactly one non-null value field

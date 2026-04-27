@@ -44,6 +44,98 @@ fn extract_prev_edit(record: &OpRecord) -> Result<Option<(String, i64)>, AppErro
     }
 }
 
+/// Outcome of a single edit-chain walk.
+enum WalkOutcome {
+    /// Walked the chain to its root (or terminated on a local cycle).
+    /// The returned `Vec` does **not** include the original `start` key —
+    /// only its ancestors, in walk order.
+    Completed(Vec<(String, i64)>),
+    /// The `stop_at` predicate matched on this key — the walk halted
+    /// before reaching the root.
+    Stopped((String, i64)),
+}
+
+/// Fetch the `prev_edit` pointer of `(device_id, seq)`.
+///
+/// When `has_snapshots` is true and the row is missing, treat the absence
+/// as compaction-induced chain breakage and surface a clear
+/// [`AppError::InvalidOperation`] instead of the bare `NotFound` —
+/// otherwise propagate the original error.  Used by [`walk_edit_chain`]
+/// as the per-step lookup primitive so the compaction-aware error
+/// message lives in exactly one place.
+async fn fetch_prev_edit(
+    pool: &SqlitePool,
+    device_id: &str,
+    seq: i64,
+    has_snapshots: bool,
+) -> Result<Option<(String, i64)>, AppError> {
+    match get_op_by_seq(pool, device_id, seq).await {
+        Ok(record) => extract_prev_edit(&record),
+        Err(AppError::NotFound(_)) if has_snapshots => Err(AppError::InvalidOperation(format!(
+            "edit chain broken at ({device_id}, {seq}) — likely due to op log compaction; \
+             LCA requires intact chains"
+        ))),
+        Err(e) => Err(e),
+    }
+}
+
+/// Walk an edit chain backwards from `start`, following `prev_edit` pointers.
+///
+/// The walk terminates when one of the following happens:
+/// 1. `stop_at(key)` returns `true` for an ancestor — yields
+///    [`WalkOutcome::Stopped`] with that key.
+/// 2. A local cycle is detected (`key` already visited within this walk) —
+///    yields [`WalkOutcome::Completed`] with the keys collected so far.
+/// 3. The chain reaches a `create_block` op (no further `prev_edit`) —
+///    yields [`WalkOutcome::Completed`].
+/// 4. The chain exceeds [`MAX_LCA_STEPS`] — returns
+///    [`AppError::InvalidOperation`] (true fail-fast cap).
+///
+/// `start` itself is never passed to `stop_at`; only its ancestors are.
+async fn walk_edit_chain<F>(
+    pool: &SqlitePool,
+    start: &(String, i64),
+    has_snapshots: bool,
+    mut stop_at: F,
+) -> Result<WalkOutcome, AppError>
+where
+    F: FnMut(&(String, i64)) -> bool,
+{
+    let mut chain: Vec<(String, i64)> = Vec::new();
+    // Local cycle-detection set, seeded with `start` so a `prev_edit`
+    // pointing back at the chain head terminates the walk immediately.
+    let mut visited: HashSet<(String, i64)> = HashSet::new();
+    visited.insert((start.0.clone(), start.1));
+
+    let mut next: Option<(String, i64)> =
+        fetch_prev_edit(pool, &start.0, start.1, has_snapshots).await?;
+    // M-4: bound the walk so a pathologically long acyclic chain
+    // cannot issue an unbounded number of writer-pool acquires.  The
+    // HashSet-based cycle break still terminates true cycles, but a
+    // long acyclic chain (e.g. corruption with no repeated key) must
+    // also fail fast.
+    let mut steps: usize = 0;
+    while let Some(key) = next.take() {
+        if stop_at(&key) {
+            return Ok(WalkOutcome::Stopped(key));
+        }
+        if visited.contains(&key) {
+            break; // cycle detected — stop walking
+        }
+        steps += 1;
+        if steps >= MAX_LCA_STEPS {
+            return Err(AppError::InvalidOperation(format!(
+                "find_lca exceeded max steps ({MAX_LCA_STEPS}) walking chain"
+            )));
+        }
+        visited.insert(key.clone());
+        chain.push(key);
+        let last = chain.last().unwrap();
+        next = fetch_prev_edit(pool, &last.0, last.1, has_snapshots).await?;
+    }
+    Ok(WalkOutcome::Completed(chain))
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -53,6 +145,23 @@ fn extract_prev_edit(record: &OpRecord) -> Result<Option<(String, i64)>, AppErro
 /// Uses `INSERT OR IGNORE` on the composite PK `(device_id, seq)` so that
 /// duplicate delivery is idempotent. Rejects ops whose hash does
 /// not match the recomputed hash of the record fields.
+///
+/// ## On `parent_seqs` ordering
+///
+/// `verify_op_hash` re-runs the writer's exact hash recipe against the
+/// stored `parent_seqs` JSON, which makes the integrity check
+/// **self-consistent under the current scheme** — any tampering with the
+/// `parent_seqs` string (including reordering its entries) breaks the
+/// hash and is rejected above.
+///
+/// We therefore do **not** re-verify that `parent_seqs` is in canonical
+/// lexicographic order on the read side.  Canonical ordering is enforced
+/// by the writer ([`append_merge_op`] sorts before hashing) and any
+/// non-canonical ordering written by an older or bugged peer would still
+/// produce a self-consistent hash that round-trips correctly through
+/// `find_lca` and friends.  Adding a runtime ordering assertion here
+/// would invalidate otherwise-valid existing op log rows produced under
+/// earlier writer code paths.
 pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bool, AppError> {
     // Verify the hash matches the record contents
     if !verify_op_hash(
@@ -222,127 +331,45 @@ pub async fn find_lca(
     op_a: &(String, i64),
     op_b: &(String, i64),
 ) -> Result<Option<(String, i64)>, AppError> {
-    // Check if compaction has occurred (snapshots exist)
+    // Check if compaction has occurred (snapshots exist).  Drives the
+    // compaction-aware error reporting inside `fetch_prev_edit`.
     let has_snapshots: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
             .fetch_one(pool)
             .await?;
+    let has_snapshots = has_snapshots > 0;
 
-    // Collect chain A into a Vec (owns the Strings), then build a
-    // borrowed HashSet for O(1) lookups during the chain-B walk.
-    let mut chain_a: Vec<(String, i64)> = Vec::new();
-    {
-        // Track visited nodes in a HashSet for O(1) cycle detection
-        // instead of the previous O(n) linear scan on each step.
-        let mut visited_a: HashSet<(String, i64)> = HashSet::new();
-        visited_a.insert((op_a.0.clone(), op_a.1));
+    // Walk chain A to its root (or local cycle) and collect every key.
+    // Chain A has no early-exit predicate.
+    let chain_a = match walk_edit_chain(pool, op_a, has_snapshots, |_| false).await? {
+        WalkOutcome::Completed(c) => c,
+        // Unreachable: predicate is constant `false`.
+        WalkOutcome::Stopped(_) => unreachable!("chain A predicate never matches"),
+    };
 
-        // Process op_a by borrowing from the parameter — no clone needed.
-        let mut next: Option<(String, i64)> = match get_op_by_seq(pool, &op_a.0, op_a.1).await {
-            Ok(record) => extract_prev_edit(&record)?,
-            Err(AppError::NotFound(_)) if has_snapshots > 0 => {
-                return Err(AppError::InvalidOperation(format!(
-                    "edit chain broken at ({}, {}) — likely due to op log compaction; \
-                         LCA requires intact chains",
-                    op_a.0, op_a.1
-                )));
-            }
-            Err(e) => return Err(e),
-        };
-        // M-4: bound the walk so a pathologically long chain cannot
-        // issue an unbounded number of writer-pool acquires.  The
-        // HashSet-based cycle break still terminates true cycles, but
-        // a long acyclic chain (e.g. corruption with no repeated key)
-        // must also fail fast.
-        let mut steps_a: usize = 0;
-        while let Some(key) = next.take() {
-            if visited_a.contains(&key) {
-                break; // cycle detected — stop walking
-            }
-            steps_a += 1;
-            if steps_a >= MAX_LCA_STEPS {
-                return Err(AppError::InvalidOperation(format!(
-                    "find_lca exceeded max steps ({MAX_LCA_STEPS}) walking chain A"
-                )));
-            }
-            visited_a.insert(key.clone());
-            chain_a.push(key);
-            let last = chain_a.last().unwrap();
-            match get_op_by_seq(pool, &last.0, last.1).await {
-                Ok(record) => next = extract_prev_edit(&record)?,
-                Err(AppError::NotFound(_)) if has_snapshots > 0 => {
-                    return Err(AppError::InvalidOperation(format!(
-                        "edit chain broken at ({}, {}) — likely due to op log compaction; \
-                         LCA requires intact chains",
-                        last.0, last.1
-                    )));
-                }
-                Err(e) => return Err(e),
-            }
-        }
-    }
-    // References into op_a (parameter) and chain_a (Vec) are stable now.
+    // Build a borrowed visited set covering op_a + chain_a for O(1)
+    // intersection checks during the chain-B walk.
     let mut visited: HashSet<(&str, i64)> = HashSet::with_capacity(chain_a.len() + 1);
     visited.insert((&op_a.0, op_a.1));
     for (s, n) in &chain_a {
         visited.insert((s.as_str(), *n));
     }
 
-    // Walk chain B, checking each step against the visited set.
-    // op_b is checked by borrowing from the parameter — no clone needed.
+    // op_b itself may sit inside chain A — short-circuit before walking.
     if visited.contains(&(op_b.0.as_str(), op_b.1)) {
         return Ok(Some(op_b.clone()));
     }
-    let mut chain_b: Vec<(String, i64)> = Vec::new();
+
+    // Walk chain B with an early-exit predicate that fires on the first
+    // ancestor present in chain A's visited set — that ancestor is the LCA.
+    match walk_edit_chain(pool, op_b, has_snapshots, |key| {
+        visited.contains(&(key.0.as_str(), key.1))
+    })
+    .await?
     {
-        // Track visited nodes in chain B with a HashSet for O(1) cycle detection.
-        let mut visited_b: HashSet<(String, i64)> = HashSet::new();
-        visited_b.insert((op_b.0.clone(), op_b.1));
-
-        let mut next: Option<(String, i64)> = match get_op_by_seq(pool, &op_b.0, op_b.1).await {
-            Ok(record) => extract_prev_edit(&record)?,
-            Err(AppError::NotFound(_)) if has_snapshots > 0 => {
-                return Err(AppError::InvalidOperation(format!(
-                    "edit chain broken at ({}, {}) — likely due to op log compaction; \
-                         LCA requires intact chains",
-                    op_b.0, op_b.1
-                )));
-            }
-            Err(e) => return Err(e),
-        };
-        // M-4: same step-cap as chain A above.
-        let mut steps_b: usize = 0;
-        while let Some(key) = next.take() {
-            if visited.contains(&(key.0.as_str(), key.1)) {
-                return Ok(Some(key));
-            }
-            if visited_b.contains(&key) {
-                break; // cycle detected — stop walking
-            }
-            steps_b += 1;
-            if steps_b >= MAX_LCA_STEPS {
-                return Err(AppError::InvalidOperation(format!(
-                    "find_lca exceeded max steps ({MAX_LCA_STEPS}) walking chain B"
-                )));
-            }
-            visited_b.insert(key.clone());
-            chain_b.push(key);
-            let last = chain_b.last().unwrap();
-            match get_op_by_seq(pool, &last.0, last.1).await {
-                Ok(record) => next = extract_prev_edit(&record)?,
-                Err(AppError::NotFound(_)) if has_snapshots > 0 => {
-                    return Err(AppError::InvalidOperation(format!(
-                        "edit chain broken at ({}, {}) — likely due to op log compaction; \
-                         LCA requires intact chains",
-                        last.0, last.1
-                    )));
-                }
-                Err(e) => return Err(e),
-            }
-        }
+        WalkOutcome::Stopped(key) => Ok(Some(key)),
+        WalkOutcome::Completed(_) => Ok(None),
     }
-
-    Ok(None)
 }
 
 /// Extract the text content at a given op.

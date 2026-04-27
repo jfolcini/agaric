@@ -1,3 +1,53 @@
+//! # `sync_protocol` orchestrator
+//!
+//! Pure, per-session state machine that drives a single sync exchange
+//! through the lifecycle:
+//!
+//! ```text
+//! Idle
+//!   → ExchangingHeads          (HeadExchange sent / received)
+//!   → StreamingOps             (OpBatch chunks, possibly multi-batch)
+//!   → ApplyingOps              (apply remote ops to local op log)
+//!   → Merging                  (block-level conflict / LWW resolution)
+//!   → Complete                 (terminal: SyncComplete bookkeeping done)
+//!
+//! plus terminal side-exits:
+//!   → ResetRequired            (responder's log compacted past our heads)
+//!   → Failed(reason)           (protocol violation or fatal error)
+//! ```
+//!
+//! ## What this module owns
+//!
+//! * Validating that an incoming [`SyncMessage`] is appropriate for the
+//!   current [`SyncState`] (out-of-order messages transition to
+//!   [`SyncState::Failed`]).
+//! * Computing what ops to send the remote in response to its
+//!   `HeadExchange`, chunking them into [`OP_BATCH_SIZE`] batches, and
+//!   draining the queue via [`SyncOrchestrator::next_message`].
+//! * Buffering received [`OpTransfer`]s across multi-batch streams and
+//!   applying them in one atomic pass when `is_last: true` arrives.
+//! * Performing the post-apply block-level merge.
+//! * Emitting fine-grained progress events through an attached
+//!   [`crate::sync_events::SyncEventSink`].
+//!
+//! ## What this module does **not** own
+//!
+//! * Peer discovery, scheduling, backoff, per-peer locking, connection
+//!   setup, TOFU cert pinning — see [`crate::sync_daemon::orchestrator`].
+//! * Snapshot catch-up — once the machine reaches
+//!   [`SyncState::ResetRequired`], the daemon layer drives the
+//!   snapshot sub-flow via [`crate::sync_daemon::snapshot_transfer`].
+//!   `handle_message` will *reject* a `SnapshotOffer` if it ever
+//!   arrives at the protocol layer (see the dispatch arm below).
+//! * File transfer — once the machine reaches [`SyncState::Complete`],
+//!   the daemon layer hands the connection to
+//!   [`crate::sync_files::run_file_transfer_initiator`] /
+//!   [`crate::sync_files::run_file_transfer_responder`], which read
+//!   the `FileRequest` / `FileOffer` / `FileReceived` /
+//!   `FileTransferComplete` messages directly off the wire. These
+//!   variants must therefore **never** reach `handle_message`; the
+//!   dispatch defends against regressions with a `debug_assert!`.
+
 use sqlx::SqlitePool;
 use std::collections::VecDeque;
 
@@ -15,6 +65,53 @@ use crate::peer_refs;
 
 /// Drives a single sync session through the head-exchange → op-stream →
 /// merge → complete lifecycle.
+///
+/// # Field invariants
+///
+/// * **`remote_device_id`** is `None` until the first
+///   [`SyncMessage::HeadExchange`] is processed. After that it holds
+///   the first non-self `device_id` advertised in the remote's heads
+///   list — or `Some(String::new())` if the remote only carried our
+///   own device's heads (a peer that has never originated its own
+///   ops). On `SyncComplete`, an empty `remote_device_id` is
+///   back-filled from `expected_remote_id` (set by the daemon from
+///   the mTLS / mDNS peer identity); if neither is available the
+///   session transitions to [`SyncState::Failed`] rather than write a
+///   bogus `peer_id = ""` row to `peer_refs` (BUG-27).
+///
+/// * **`expected_remote_id`** is set once at construction by the
+///   daemon (via [`SyncOrchestrator::with_expected_remote_id`]) and is
+///   immutable for the rest of the session. It serves two purposes:
+///   (1) reject a `HeadExchange` whose remote `device_id` does not
+///   match the peer the daemon connected to, and (2) the
+///   `SyncComplete` fallback described above.
+///
+/// * **`received_ops`** accumulates [`OpTransfer`]s across consecutive
+///   `OpBatch` messages with `is_last: false`. When the batch carrying
+///   `is_last: true` arrives, the buffer is drained in one
+///   `std::mem::take` and applied atomically; the field is then
+///   `Vec::new()` for the rest of the session. A protocol violation
+///   that delivers `OpBatch` after `SyncComplete` is rejected by the
+///   state-validation match before reaching the apply path.
+///
+/// * **`pending_op_transfers`** is the dual: ops *we* owe the remote.
+///   It is populated when entering [`SyncState::StreamingOps`] (after
+///   processing the remote's `HeadExchange`) and drained in batches
+///   of [`OP_BATCH_SIZE`] via [`SyncOrchestrator::next_message`]. The
+///   transport layer is expected to call `next_message` in a loop
+///   after each call to `handle_message` to drain remaining chunks.
+///
+/// * **`state`** is the source of truth for the state machine.
+///   `session.state` is a mirror kept in sync at every transition for
+///   external observers (the daemon reads it via `session()` after
+///   each step). [`SyncOrchestrator::is_complete`] returns `true`
+///   only for [`SyncState::Complete`]; [`SyncOrchestrator::is_terminal`]
+///   returns `true` for any of `Complete`, `Failed(_)`, or
+///   `ResetRequired` — the three states from which no further
+///   messages will be processed (the state-validation match rejects
+///   anything that arrives in `Complete` / `Failed`, and the daemon
+///   exits the message loop on `ResetRequired` to hand off to
+///   snapshot catch-up).
 pub struct SyncOrchestrator {
     pool: SqlitePool,
     device_id: String,
@@ -170,15 +267,13 @@ impl SyncOrchestrator {
                 | SyncMessage::SnapshotAccept
                 | SyncMessage::SnapshotReject,
             ) => {}
-            // File transfer messages accepted in TransferringFiles or StreamingOps state
-            (
-                SyncState::TransferringFiles | SyncState::StreamingOps,
-                SyncMessage::FileRequest { .. }
-                | SyncMessage::FileOffer { .. }
-                | SyncMessage::FileReceived { .. }
-                | SyncMessage::FileTransferComplete,
-            ) => {}
-            // File transfer messages in other states are ignored gracefully
+            // File-transfer messages must never reach the protocol
+            // orchestrator — they are read directly off the wire by
+            // `sync_files::run_file_transfer_{initiator,responder}` after
+            // the daemon-layer loop exits on `SyncState::Complete`. This
+            // arm exists only to keep the match exhaustive; the dispatch
+            // match below `debug_assert!`s on the same variants so a
+            // future regression fails loudly in tests.
             (
                 _,
                 SyncMessage::FileRequest { .. }
@@ -453,18 +548,26 @@ impl SyncOrchestrator {
             )),
             SyncMessage::SnapshotAccept | SyncMessage::SnapshotReject => Ok(None),
 
-            // ---- File transfer (F-14) ----------------------------------------
-            // These messages are handled by the sync daemon's file transfer
-            // phase (sync_files module).  The orchestrator accepts them for
-            // state-machine correctness but delegates actual I/O to the daemon.
-            SyncMessage::FileRequest { .. } => {
-                self.state = SyncState::TransferringFiles;
-                self.session.state = SyncState::TransferringFiles;
+            // ---- File transfer (F-14) ---------------------------------------
+            // File-transfer messages are read directly off the wire by
+            // `sync_files::run_file_transfer_{initiator,responder}` after the
+            // daemon-layer loop exits on `SyncState::Complete`. They must
+            // never enter `handle_message` — if one does, it indicates a
+            // regression in the daemon dispatch path (e.g., a future change
+            // that forgets to hand the connection off after the orchestrator
+            // signals completion). debug_assert in tests, degrade gracefully
+            // in release so a stray message cannot brick a sync session.
+            SyncMessage::FileRequest { .. }
+            | SyncMessage::FileOffer { .. }
+            | SyncMessage::FileReceived { .. }
+            | SyncMessage::FileTransferComplete => {
+                debug_assert!(
+                    false,
+                    "file-transfer message reached the protocol orchestrator; \
+                     these are handled by sync_files.rs after SyncComplete"
+                );
                 Ok(None)
             }
-            SyncMessage::FileOffer { .. } => Ok(None),
-            SyncMessage::FileReceived { .. } => Ok(None),
-            SyncMessage::FileTransferComplete => Ok(None),
         }
     }
 

@@ -8,6 +8,14 @@ use serde::Serialize;
 use specta::Type;
 use std::sync::LazyLock;
 
+/// Maximum block-tree depth permitted by the import parser.  Blocks
+/// nested below this level are flattened to this depth and a warning is
+/// emitted.  The cap matches the recursive-CTE depth bound enforced
+/// throughout the materialiser (see AGENTS.md "Recursive CTEs over
+/// `blocks`") and prevents pathologically deep imports from triggering
+/// query-time recursion limits.
+const MAX_IMPORT_DEPTH: usize = 20;
+
 /// A parsed block from the import.
 #[derive(Debug, Clone)]
 pub struct ParsedBlock {
@@ -116,11 +124,12 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         i += 1;
     }
 
-    // Clamp depth to 20 (flatten deeper blocks) and track how many were clamped
+    // Clamp depth to MAX_IMPORT_DEPTH (flatten deeper blocks) and track
+    // how many were clamped.
     let mut clamped_count: usize = 0;
     for block in &mut blocks {
-        if block.depth > 20 {
-            block.depth = 20;
+        if block.depth > MAX_IMPORT_DEPTH {
+            block.depth = MAX_IMPORT_DEPTH;
             clamped_count += 1;
         }
     }
@@ -128,7 +137,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     let mut warnings = Vec::new();
     if clamped_count > 0 {
         warnings.push(format!(
-            "{clamped_count} block(s) exceeded maximum depth of 20 and were flattened"
+            "{clamped_count} block(s) exceeded maximum depth of {MAX_IMPORT_DEPTH} and were flattened"
         ));
     }
 

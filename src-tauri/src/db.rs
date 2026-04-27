@@ -411,11 +411,29 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
     })
 }
 
-/// Initialize a single combined pool (legacy API, kept for backward compatibility
-/// in tests that don't need pool separation).
+/// Initialize a single combined pool — **test/bench-only fixture**.
 ///
-/// This creates a single pool with `max_connections(5)` — the old behavior.
-/// Prefer [`init_pools`] for production use.
+/// ## When to use which
+///
+/// | Use case | API |
+/// |----------|-----|
+/// | Production app startup (`lib.rs::setup`) | [`init_pools`] |
+/// | Anything that needs the production split-pool semantics — `query_only = ON` reader, dedicated writer | [`init_pools`] |
+/// | Unit tests / benches that just need a working migrated DB and don't care about reader/writer separation | `init_pool` (this fn) |
+///
+/// This creates one pool with `max_connections(5)` — the legacy
+/// pre-pool-split behaviour, retained because the vast majority of
+/// tests and benches don't need a `query_only` reader pool to
+/// exercise their unit under test.  Tests that *do* need to verify
+/// behaviour under split-pool wiring (e.g. M-82-style pool-mismatch
+/// regressions, MCP read-only tooling) must call [`init_pools`]
+/// instead — see the `tools_ro::tests_m82` module for a worked
+/// example.
+///
+/// **Do not use `init_pool` from production code paths.**  All
+/// non-test/bench callers should use [`init_pools`] so the
+/// `query_only` pragma rejects accidental writes through the read
+/// pool at the SQLite engine level.
 pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, crate::error::AppError> {
     let connect_options = base_connect_options(db_path);
 

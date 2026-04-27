@@ -1277,6 +1277,59 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn refresh_with_empty_stored_refresh_token_returns_clean_error() {
+        // REVIEW-LATER TEST-45: pin the behaviour when the token store
+        // returns a `Token` whose `refresh` is `SecretString::from("")`.
+        // Realistic causes: the initial OAuth flow didn't capture a
+        // refresh token (Google only returns one on first consent with
+        // `access_type=offline` + `prompt=consent`), token-store
+        // corruption, or a test-fixture regression.
+        //
+        // `oauth2::RefreshToken::new("")` is a thin newtype wrapper —
+        // it does NOT panic on the empty string (verified by reading
+        // the `new_secret_type!` macro in `oauth2-5.0.0/src/types.rs`).
+        // The empty value is therefore forwarded to the token endpoint
+        // as `refresh_token=` and Google responds with `invalid_grant`,
+        // which `classify_refresh_error` maps to
+        // `AppError::Gcal(GcalErrorKind::Unauthorized)`.  The
+        // `fetch_with_auto_refresh` wrapper recognises that variant via
+        // `is_revocation_error` and emits `gcal:reauth_required` —
+        // exactly the right user-facing outcome (the user has to redo
+        // the OAuth flow because there is no usable refresh token).
+        //
+        // This test pins that error variant so a future change (e.g. a
+        // synchronous local validation that returns a different error
+        // before the network call, or any drift in `classify_refresh_error`)
+        // breaks loudly instead of silently degrading the reauth UX.
+        let mock = MockServer::start().await;
+        let client = build_client(&mock).await;
+
+        // Mimic Google's response to an empty `refresh_token` form
+        // parameter: 400 + `invalid_grant`.  We do not pin the exact
+        // body shape — only that it is the standard OAuth2 invalid_grant
+        // error response that triggers the revocation taxonomy.
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "invalid_grant",
+                "error_description": "Bad Request",
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let empty_refresh = dummy_token("old-access", "");
+        let result = client.refresh_token(&empty_refresh).await;
+        assert!(
+            matches!(result, Err(AppError::Gcal(GcalErrorKind::Unauthorized))),
+            "empty stored refresh token must surface AppError::Gcal(Unauthorized) \
+             (current behaviour pinned by REVIEW-LATER TEST-45 — see test docstring), \
+             got {result:?}"
+        );
+    }
+
     // ── fetch_with_auto_refresh ────────────────────────────────────
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

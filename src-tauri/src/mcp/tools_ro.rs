@@ -50,6 +50,7 @@ use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
 use super::actor::{ActorContext, ACTOR};
+use super::handler_utils::{parse_args, to_tool_result};
 use super::registry::{ToolDescription, ToolRegistry};
 use crate::commands::{
     get_block_inner, get_page_inner, journal_for_date_inner, list_backlinks_grouped_inner,
@@ -167,15 +168,6 @@ struct JournalForDateArgs {
     /// space" must pick one explicitly (typically the first space
     /// surfaced via `list_spaces`).
     space_id: String,
-}
-
-/// Convert a serde-json deserialization error into an
-/// `AppError::Validation` with the tool name embedded. Used for every
-/// handler's arg parse so bad input maps to `-32602 invalid params` at
-/// the JSON-RPC layer.
-fn parse_args<T: serde::de::DeserializeOwned>(tool: &str, args: Value) -> Result<T, AppError> {
-    serde_json::from_value::<T>(args)
-        .map_err(|e| AppError::Validation(format!("tool `{tool}`: invalid arguments — {e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -512,7 +504,7 @@ async fn handle_list_pages(pool: &SqlitePool, args: Value) -> Result<Value, AppE
     let args: ListPagesArgs = parse_args("list_pages", args)?;
     let limit = args.limit.map(|l| l.clamp(1, LIST_RESULT_CAP));
     let resp = list_pages_inner(pool, args.cursor, limit).await?;
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
@@ -550,7 +542,7 @@ async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppErr
         )));
     };
     let resp = get_page_inner(pool, &args.page_id, &space_id, args.cursor, limit).await?;
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
@@ -584,13 +576,13 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
             }
         }
     }
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetBlockArgs = parse_args("get_block", args)?;
     let resp = get_block_inner(pool, args.block_id).await?;
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
@@ -598,14 +590,14 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
     let limit = args.limit.map(|l| l.clamp(1, LIST_RESULT_CAP));
     let resp =
         list_backlinks_grouped_inner(pool, args.block_id, None, None, args.cursor, limit).await?;
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 async fn handle_list_tags(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListTagsArgs = parse_args("list_tags", args)?;
     let limit = args.limit.map(|l| l.clamp(1, LIST_RESULT_CAP));
     let resp = list_tags_inner(pool, limit).await?;
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 async fn handle_list_property_defs(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
@@ -613,14 +605,14 @@ async fn handle_list_property_defs(pool: &SqlitePool, args: Value) -> Result<Val
     // typos like `{"prefix": "foo"}` and surfaces them as -32602.
     let _: ListPropertyDefsArgs = parse_args("list_property_defs", args)?;
     let resp = list_property_defs_inner(pool).await?;
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetAgendaArgs = parse_args("get_agenda", args)?;
     let resp =
         list_projected_agenda_inner(pool, args.start_date, args.end_date, args.limit).await?;
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 async fn handle_journal_for_date(
@@ -636,7 +628,7 @@ async fn handle_journal_for_date(
         ))
     })?;
     let resp = journal_for_date_inner(pool, device_id, materializer, date, &args.space_id).await?;
-    Ok(serde_json::to_value(resp)?)
+    to_tool_result(&resp)
 }
 
 // ---------------------------------------------------------------------------
