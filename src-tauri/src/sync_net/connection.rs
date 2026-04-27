@@ -286,6 +286,37 @@ fn describe_message(msg: &Message) -> String {
     }
 }
 
+/// Create an in-memory WebSocket pair for testing sync protocol flows.
+#[cfg(test)]
+pub async fn test_connection_pair() -> (SyncConnection, SyncConnection) {
+    let (a, b) = tokio::io::duplex(64 * 1024);
+    let ws_a = WebSocketStream::from_raw_socket(
+        a,
+        tokio_tungstenite::tungstenite::protocol::Role::Server,
+        None,
+    )
+    .await;
+    let ws_b = WebSocketStream::from_raw_socket(
+        b,
+        tokio_tungstenite::tungstenite::protocol::Role::Client,
+        None,
+    )
+    .await;
+
+    (
+        SyncConnection {
+            inner: InnerStream::Test(ws_a),
+            peer_cert_hash_val: None,
+            peer_cert_cn_val: None,
+        },
+        SyncConnection {
+            inner: InnerStream::Test(ws_b),
+            peer_cert_hash_val: None,
+            peer_cert_cn_val: None,
+        },
+    )
+}
+
 #[cfg(test)]
 mod describe_message_tests {
     use super::describe_message;
@@ -449,35 +480,4 @@ mod describe_message_tests {
              got {emoji_count} in: {s}",
         );
     }
-}
-
-/// Create an in-memory WebSocket pair for testing sync protocol flows.
-#[cfg(test)]
-pub async fn test_connection_pair() -> (SyncConnection, SyncConnection) {
-    let (a, b) = tokio::io::duplex(64 * 1024);
-    let ws_a = WebSocketStream::from_raw_socket(
-        a,
-        tokio_tungstenite::tungstenite::protocol::Role::Server,
-        None,
-    )
-    .await;
-    let ws_b = WebSocketStream::from_raw_socket(
-        b,
-        tokio_tungstenite::tungstenite::protocol::Role::Client,
-        None,
-    )
-    .await;
-
-    (
-        SyncConnection {
-            inner: InnerStream::Test(ws_a),
-            peer_cert_hash_val: None,
-            peer_cert_cn_val: None,
-        },
-        SyncConnection {
-            inner: InnerStream::Test(ws_b),
-            peer_cert_hash_val: None,
-            peer_cert_cn_val: None,
-        },
-    )
 }

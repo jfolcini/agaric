@@ -598,12 +598,12 @@ mod tests {
     /// M-31: a chatty session can grow `agaric.log` to tens of MB; the
     /// bug-report dialog must not stall the IPC thread on an unbounded
     /// `fs::read_to_string` of the live log. With the cap applied, a
-    /// >2 MB file completes well under 200 ms even with an ERROR line
+    /// 2+ MB file completes well under 200 ms even with an ERROR line
     /// at the very tail. The threshold is set with CI variability in
     /// mind — local dev machines see ~5 ms, but shared GitHub-Actions
     /// runners regularly land in the 50–95 ms band; without the cap
-    /// the same file took >1 s. 200 ms keeps the regression-detection
-    /// signal (ratio >5×) without flaking the public CI.
+    /// the same file took over 1 s. 200 ms keeps the regression-detection
+    /// signal (ratio over 5×) without flaking the public CI.
     #[test]
     fn collect_metadata_completes_quickly_for_oversized_log_file() {
         let dir = TempDir::new().unwrap();

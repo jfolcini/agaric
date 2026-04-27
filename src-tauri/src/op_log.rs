@@ -1608,7 +1608,7 @@ mod tests {
                 .unwrap();
                 tx.commit().await.unwrap();
 
-                let captured = LAST_APPEND.with(|c| c.take());
+                let captured = LAST_APPEND.with(Cell::take);
                 (record, captured)
             })
             .await;

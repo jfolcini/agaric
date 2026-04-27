@@ -351,7 +351,7 @@ fn bench_list_page_history_100k_ops(c: &mut Criterion) {
             let page_id = page_id.clone();
             async move {
                 let page = PageRequest::new(None, Some(50)).unwrap();
-                pagination::list_page_history(&pool, &page_id, None, &page)
+                pagination::list_page_history(&pool, &page_id, None, None, &page)
                     .await
                     .unwrap()
             }
@@ -379,7 +379,7 @@ fn bench_list_page_history_deep_nesting(c: &mut Criterion) {
             let root_page_id = root_page_id.clone();
             async move {
                 let page = PageRequest::new(None, Some(50)).unwrap();
-                pagination::list_page_history(&pool, &root_page_id, None, &page)
+                pagination::list_page_history(&pool, &root_page_id, None, None, &page)
                     .await
                     .unwrap()
             }

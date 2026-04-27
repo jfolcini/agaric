@@ -437,7 +437,7 @@ mod tests_m74_m76 {
         // task before this assertion runs.
         let bg_high = mat.metrics().bg_high_water.load(Ordering::Relaxed);
         assert!(
-            bg_high >= baseline_bg_high + 1,
+            bg_high > baseline_bg_high,
             "bg_high_water must advance by at least 1 after \
              create_conflict_copy_with_reindex (was {baseline_bg_high}, now {bg_high})"
         );
@@ -448,7 +448,7 @@ mod tests_m74_m76 {
         mat.flush_background().await.unwrap();
         let bg_processed = mat.metrics().bg_processed.load(Ordering::Relaxed);
         assert!(
-            bg_processed >= baseline_bg_processed + 1,
+            bg_processed > baseline_bg_processed,
             "background consumer must have processed at least one task \
              (was {baseline_bg_processed}, now {bg_processed})"
         );

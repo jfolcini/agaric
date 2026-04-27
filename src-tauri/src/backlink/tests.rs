@@ -3325,7 +3325,7 @@ async fn eval_backlink_query_grouped_total_count_matches_visible_results() {
             "content",
             "self",
             Some("TARGET"),
-            Some(idx as i64 + 1),
+            Some(i64::try_from(idx).expect("loop index fits i64") + 1),
         )
         .await;
         insert_block_link(&pool, blk, "TARGET").await;
@@ -3354,8 +3354,7 @@ async fn eval_backlink_query_grouped_total_count_matches_visible_results() {
 
     let visible: usize = resp.groups.iter().map(|g| g.blocks.len()).sum();
     assert_eq!(
-        visible,
-        usize::try_from(resp.total_count).unwrap(),
+        visible, resp.total_count,
         "total_count must equal the sum of rendered group blocks (no badge/render drift)"
     );
 
