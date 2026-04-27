@@ -175,13 +175,17 @@ describe('useJournalAutoCreate', () => {
   })
 
   it('cleans up keyboard listener on unmount', () => {
-    const opts = makeOptions({ pageMap: new Map([['2025-06-15', 'p1']]) })
+    const spy = vi.fn()
+    const opts = makeOptions({ pageMap: new Map(), handleAddBlock: spy })
+    const removeEventListenerSpy = vi.spyOn(document, 'removeEventListener')
     const { unmount } = renderHook(() => useJournalAutoCreate(opts))
+
+    // Hook auto-creates on mount; clear so we only observe post-unmount calls.
+    spy.mockClear()
 
     unmount()
 
-    const spy = vi.fn()
-    opts.handleAddBlock = spy
+    expect(removeEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function))
 
     act(() => {
       const event = new KeyboardEvent('keydown', { key: 'n', bubbles: true })
@@ -189,5 +193,6 @@ describe('useJournalAutoCreate', () => {
     })
 
     expect(spy).not.toHaveBeenCalled()
+    removeEventListenerSpy.mockRestore()
   })
 })

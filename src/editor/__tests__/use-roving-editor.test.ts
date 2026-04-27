@@ -1,4 +1,4 @@
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { Editor } from '@tiptap/core'
 import Bold from '@tiptap/extension-bold'
 import Document from '@tiptap/extension-document'
@@ -539,9 +539,7 @@ describe('useRovingEditor integration (renderHook)', () => {
   /** Helper: render the hook and wait for editor initialization */
   async function setup() {
     const hook = renderHook(() => useRovingEditor())
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 50))
-    })
+    await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
     return hook
   }
 

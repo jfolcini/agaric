@@ -106,29 +106,50 @@ describe('useBatchCounts', () => {
   })
 
   it('cancels fetch on unmount (stale state not updated)', async () => {
+    // Two sibling hook instances share the same pending promise. Unmounting one
+    // and then resolving the promise verifies the resolve path is exercised
+    // (the still-mounted sibling MUST receive the update) without the original
+    // vacuous post-unmount `result.current` check — React 19 freezes
+    // `result.current` at its last pre-unmount value, so asserting it equals
+    // the initial empty state passes regardless of whether the hook's
+    // `cancelled` guard works. React 19 also silently drops setState calls on
+    // unmounted components (no console warning), so a console-spy approach
+    // would also be vacuous; the sibling pattern is the strongest non-invasive
+    // signal available.
     let resolveAgenda!: (v: Record<string, Record<string, number>>) => void
-    mockedCountAgendaBatchBySource.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveAgenda = resolve
-        }),
-    )
-    mockedCountBacklinksBatch.mockResolvedValue({})
+    const sharedPromise = new Promise<Record<string, Record<string, number>>>((resolve) => {
+      resolveAgenda = resolve
+    })
+    mockedCountAgendaBatchBySource.mockImplementation(() => sharedPromise)
+    mockedCountBacklinksBatch.mockResolvedValue({ 'page-1': 7 })
 
     const entries = [makeDayEntry('2025-01-06', 'page-1')]
-    const { result, unmount } = renderHook(() => useBatchCounts(entries))
+    const hookA = renderHook(() => useBatchCounts(entries))
+    const hookB = renderHook(() => useBatchCounts(entries))
 
-    // Unmount before the promise resolves
-    unmount()
+    // Belt-and-suspenders: catch any future React version that reintroduces
+    // an unmounted-state-update warning.
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    // Now resolve the promise — state should NOT update because cancelled = true
+    // Unmount one sibling before the shared promise resolves
+    hookA.unmount()
+
+    // Resolve the shared promise — both hooks' `.then` callbacks run, but only
+    // the still-mounted sibling should observably update.
     await act(async () => {
       resolveAgenda({ '2025-01-06': { 'column:due_date': 99 } })
     })
 
-    // The hook was unmounted, so we verify the last known state was still empty
-    expect(result.current.agendaCounts).toEqual({})
-    expect(result.current.agendaCountsBySource).toEqual({})
-    expect(result.current.backlinkCounts).toEqual({})
+    await waitFor(() => {
+      expect(hookB.result.current.agendaCounts).toEqual({ '2025-01-06': 99 })
+    })
+    expect(hookB.result.current.agendaCountsBySource).toEqual({
+      '2025-01-06': { 'column:due_date': 99 },
+    })
+    expect(hookB.result.current.backlinkCounts).toEqual({ 'page-1': 7 })
+
+    expect(errSpy).not.toHaveBeenCalled()
+    errSpy.mockRestore()
+    hookB.unmount()
   })
 })

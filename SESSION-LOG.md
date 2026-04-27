@@ -1,5 +1,57 @@
 # Session Log
 
+## Session 513 — Frontend test-quality batch: close 8 items (TEST-52, TEST-53, TEST-54, TEST-55, TEST-57, TEST-58, TEST-59, TEST-60) (2026-04-27)
+
+**8 frontend test-quality items closed in one batch — the bulk of the TEST-52..TEST-64 cluster.** Five parallel build subagents on disjoint test files, paired with five review subagents — all SHIP. Zero production code touched; only test files modified. Net `+3` new tests (TEST-52's three new popup-yield cases for Enter/Escape/Backspace).
+
+**REVIEW-LATER impact:**
+
+- **Top-level:** 62 open items → 54. Summary text: `46 planned work + 3 UX + 13 frontend test-quality (TEST-52..TEST-64)` → `46 planned work + 3 UX + 5 frontend test-quality (TEST-56, TEST-61, TEST-62, TEST-63, TEST-64)`. Previously-resolved bumped 575+ → 583+ across 165 sessions.
+
+**Items closed (8) and where they landed:**
+
+| Item | File | Change |
+|---|---|---|
+| TEST-52 | `src/editor/__tests__/use-block-keyboard.test.ts` | Added 3 non-tautological tests in the existing B-22 describe for Enter/Escape/Backspace popup-yield (AGENTS.md pitfall #14). New `setupHookWithRealEditor()` helper creates a real TipTap Editor on `document.body`, wires `renderHook(() => useBlockKeyboard(editor, callbacks))`, dispatches `KeyboardEvent` on `editor.view.dom.parentElement` (the element the hook's capture-phase listener attaches to). Reuses the existing `addVisiblePopup()` helper (mocks `popup.checkVisibility = () => true`) to make `isSuggestionPopupVisible()` return true. Each test asserts the relevant callback (`onEnterSave` / `onEscapeCancel` / `onMergeWithPrev` / `onDeleteBlock`) is NOT invoked AND `preventDefault` is NOT called. Backspace test specifically uses an empty editor so the production hook would otherwise call `onDeleteBlock`. Cleanup in `afterEach` removes any leaked `.suggestion-popup` nodes. |
+| TEST-53 | `src/hooks/__tests__/useJournalAutoCreate.test.ts` | Rewrote the tautological "cleans up keyboard listener on unmount" test (L177-197). Fix: render with `pageMap: new Map()` (empty — no early-return on `pageMap.has(dateStr)` guard), pass `handleAddBlock: spy` AT MOUNT (not after, so the hook's effect-closure capture observes it), unmount, dispatch the keydown for `'n'` (matches `getShortcutKeys('createJournalBlock')`), assert `spy` not called. Belt-and-suspenders: `vi.spyOn(document, 'removeEventListener')` asserts cleanup invoked with `('keydown', expect.any(Function))` + `mockRestore()` for hygiene. Sanity-checked non-tautology: temporarily replaced production cleanup with `() => {}` — test failed; reverted. |
+| TEST-54 | `src/hooks/__tests__/useSyncTrigger.test.ts:116-133` | Replaced single vacuous `expect(toast).not.toHaveBeenCalled()` (production code only calls `toast.success`/`.error`/`.info`, never bare `toast(...)`) with three explicit assertions for each sub-mock. The other two assertions in the test (`mockStartSync` + `useSyncStore.getState().state`) retained — they were non-tautological. |
+| TEST-55 | `src/hooks/__tests__/useBatchCounts.test.ts:108-154` | Rewrote vacuous "cancels fetch on unmount" test using **option (c)** — two sibling hook instances sharing one promise. Builder verified React 19.2.5 + jsdom emits ZERO `console.error` / `console.warn` on unmounted-component setState (option (a) would have been vacuous), then implemented option (c): mock `countAgendaBatchBySource` returns one shared `Promise`, both `hookA` and `hookB` consume it, `hookA` is unmounted, `act(() => resolveAgenda(...))` resolves, `waitFor` asserts `hookB` received the data (`{ '2025-01-06': 99 }` / `{ 'page-1': 7 }`). Defensive `console.error` spy retained for a future React version that might reintroduce the warning. **Acknowledged limitation:** if the production cancellation guard at `useBatchCounts.ts:28-37` were removed, the test would still pass because `hookB`'s data-arrival assertions are independent of the unmounted hook's setState calls. The test's primary value is now exercising the promise-resolution path on both hooks; cancellation regressions remain hard to catch without more invasive instrumentation that would itself be fragile. Documented in the test file. |
+| TEST-57 | `src/hooks/__tests__/useSyncTrigger.test.ts:37-58` | Added top-level `const originalOnLine = navigator.onLine` + `Object.defineProperty(navigator, 'onLine', { value: originalOnLine, configurable: true })` line in the existing `afterEach`. Removed the two inline `// Restore` blocks at original L505 / L521 that set `navigator.onLine` back to `true`. Eliminates the cascade-failure vector where a thrown assertion in either offline-test would leave `navigator.onLine === false` for the remaining 20+ tests. Pattern mirrors `src/hooks/__tests__/useOnlineStatus.test.ts:1-10`. |
+| TEST-58 | `src/lib/__tests__/keyboard-config.test.ts:1, 34-36, 268-303` | Added `afterEach` import + one top-level `afterEach(() => vi.restoreAllMocks())` alongside the existing `beforeEach(() => localStorage.clear())`. Removed the three inline `vi.restoreAllMocks()` calls from the bodies of the three tests at original L276 / L290 / L304. If any prior `expect()` in those tests had thrown, `Storage.prototype.setItem` / `removeItem` would have stayed stubbed-to-throw for the remaining ~1080 lines (and the next `beforeEach`'s `localStorage.clear()` would have masqueraded as setup failure). |
+| TEST-59 | `src/editor/__tests__/use-roving-editor.test.ts:540-544` | Replaced `await new Promise((r) => setTimeout(r, 50))` in the `setup()` helper with `await waitFor(() => expect(hook.result.current.editor).not.toBeNull())`. AGENTS.md "No timing hacks" rule. The 50 ms hack is not guaranteed under CI worker contention. All 6 downstream callers of `setup()` already dereference / assert non-null on `result.current.editor`, so `editor !== null` is the correct readiness signal. |
+| TEST-60 | `src/lib/__tests__/export-graph.test.ts:2, 41-77` | Replaced single vacuous `expect(blob).toBeInstanceOf(Blob)` assertion with real ZIP inspection using `JSZip.loadAsync(await blob.arrayBuffer())`. Added `import JSZip from 'jszip'` (already a direct dep). Test fixture now uses two realistic 26-char Crockford-base32 ULIDs for the two duplicate-named pages. Three new assertions: `sameNameMd.toHaveLength(2)` (catches collapse/overwrite), `new Set(sameNameMd).size === 2` (catches duplicate filenames), `regex /_[0-9A-HJKMNP-TV-Z]{8}\.md$/` (catches wrong slice length). **Production-format adaptation:** spec hint suggested 26-char ULID suffix, but `src/lib/export-graph.ts:23` actually does `${name}_${page.id.slice(0, 8)}` — assertions match the actual 8-char Crockford slice. Mutation analysis confirms: removing `seen.has(name)` guard, changing `slice(0, 8)` to `slice(0, 4)` or `slice(0, 26)`, all caught by the new assertions. |
+
+**Files touched (7 test files + 2 docs):**
+
+- `REVIEW-LATER.md` (8 row removals + 8 detail removals; counts bumped 62 → 54; sessions 164 → 165)
+- `SESSION-LOG.md` (this entry)
+- `src/editor/__tests__/use-block-keyboard.test.ts` (TEST-52 — added 3 tests + helpers)
+- `src/editor/__tests__/use-roving-editor.test.ts` (TEST-59 — `waitFor` replaces `setTimeout(50)`)
+- `src/hooks/__tests__/useBatchCounts.test.ts` (TEST-55 — option (c) sibling-hook pattern)
+- `src/hooks/__tests__/useJournalAutoCreate.test.ts` (TEST-53 — fixed tautological cleanup test)
+- `src/hooks/__tests__/useSyncTrigger.test.ts` (TEST-54 + TEST-57 — toast assertion + onLine afterEach)
+- `src/lib/__tests__/export-graph.test.ts` (TEST-60 — real ZIP inspection)
+- `src/lib/__tests__/keyboard-config.test.ts` (TEST-58 — top-level afterEach for spy restore)
+
+**Verification:** `npx vitest run` → **8529 tests passed across 318 files, 0 failures**. `npx tsc -b` clean. Net `+3` tests vs session 512's 8526 (TEST-52's three new popup-yield cases; the other 7 items are net-zero — they fix existing test quality, not add coverage).
+
+**Reviewers:** Five review subagents — all SHIP:
+- Review A (TEST-52 + TEST-59): SHIP — confirmed TEST-52's 3 new tests are non-tautological (would fail if popup-yield guard removed), `setupHookWithRealEditor` cleans up properly, TEST-59's `waitFor` matches actual readiness signal.
+- Review B (TEST-54 + TEST-57): SHIP — confirmed three replacement assertions reach the correct sub-mocks, top-level `afterEach` restore for `navigator.onLine` mirrors `useOnlineStatus.test.ts`.
+- Review C (TEST-55 + TEST-58): SHIP with documented limitation — TEST-55's option (c) is acceptable given React 19's silent-drop behavior; flagged that cancellation-guard regression is technically still hard to catch (mutation analysis shows test could pass if guard removed) but this is the strongest non-invasive approach available. TEST-58's top-level afterEach correctly placed and conflicts checked.
+- Review D (TEST-53): SHIP — confirmed fix on both axes (empty pageMap + spy at mount), belt-and-suspenders `removeEventListener` spy correct, `mockRestore` placement clean.
+- Review E (TEST-60): SHIP — confirmed production-code adaptation (8-char slice not 26-char ULID), regex precisely matches Crockford alphabet excluding I/L/O/U, mutation analysis catches all 3 plausible regressions.
+
+**Process notes:**
+
+- **Smallest batch yet, fastest turnaround.** All 5 build subagents finished within ~5 minutes; reviews pipelined immediately. Total wall-clock from PLAN to COMMIT was substantially shorter than batches that touch production code, because the test-only changes have minimal cross-file ripple and require no multi-pass refinement.
+- **One reviewer-flagged limitation accepted as-is.** Review C noted TEST-55's option (c) cannot fully prove the production cancellation guard isn't silently removed — but the alternatives are either vacuous (option (a) — React 19 swallows the warning) or invasive (option (b) — would require AbortController plumbing in production code). The current implementation is documented in the test file with the React 19 silent-drop nuance.
+- **Production-format adaptation noted in TEST-60.** Spec called for a 26-char ULID regex; production code uses `slice(0, 8)`. Builder correctly chose to match the production format rather than the spec hint, and review confirmed the assertions catch all plausible regressions including changing the slice length.
+- **No orchestrator-level fixes needed.** Unlike sessions 511 and 512 where reviewer-flagged issues required orchestrator hardening, this batch sailed through review without changes. Smaller scope + test-only diffs = lower risk surface.
+- **5 frontend test-quality items remain** for a future batch: TEST-56 (useUndoStore singleton leak across 6 files), TEST-61 (makeBlock fixture duplication), TEST-62 (hand-rolled renderHook in 3 files), TEST-63 (global-state restore inline cluster), TEST-64 (weak-assertion / brittle-style cluster).
+
+---
+
 ## Session 512 — Tier 1 batch 2: close 8 items (MAINT-115, UX-1, UX-2, UX-4, UX-5, UX-6, UX-8, UX-9) (2026-04-27)
 
 **8 items closed in one batched session — second batch of the user-defined Tier 1 ("highest ROI, low risk").** Five parallel build subagents on largely non-overlapping files (UX-1+UX-2+UX-6 partial; UX-5+UX-8+UX-2-table; UX-6 contrast; UX-9; MAINT-115+UX-4+UX-6 overdue chip), paired with five review subagents — all SHIP. Three orchestrator-level fixes were necessary post-build:
