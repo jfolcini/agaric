@@ -20,8 +20,19 @@ type ScrollAreaProps = React.ComponentProps<typeof ScrollAreaPrimitive.Root> & {
   viewportRef?: React.Ref<HTMLDivElement> | undefined
   /** Extra classes applied to the viewport (e.g. padding that must live inside the scroller). */
   viewportClassName?: string | undefined
-  /** Extra props applied to the viewport (e.g. role, tabIndex, aria-label for listbox semantics). */
-  viewportProps?: React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Viewport> | undefined
+  /**
+   * Extra props applied to the viewport (e.g. role, tabIndex, aria-label
+   * for listbox semantics; arbitrary `data-*` attributes for test or
+   * styling hooks). The intersection with `Record<...>` lets callers
+   * thread `data-*` flags without `as` casts at the callsite — Radix's
+   * generated viewport prop type doesn't include an index signature for
+   * `data-*` even though they're valid HTML.
+   */
+  viewportProps?:
+    | (React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Viewport> & {
+        [dataAttr: `data-${string}`]: string | undefined
+      })
+    | undefined
 }
 
 const ScrollArea = ({

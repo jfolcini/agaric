@@ -1499,7 +1499,7 @@ describe('PageBrowser', () => {
 
       // Starred header now visible.
       expect(screen.getByText('Starred')).toBeInTheDocument()
-      expect(screen.getByText('Other pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages')).toBeInTheDocument()
 
       // Cherry is now first in the page-only listbox.
       titles = within(screen.getByRole('listbox'))
@@ -1623,8 +1623,8 @@ describe('PageBrowser', () => {
         .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
       expect(titles).toEqual(['Banana', 'Apple', 'Cherry'])
 
-      // Unstar Banana → falls back into Other pages, headers disappear
-      // (no starred pages remain).
+      // Unstar Banana → falls back into Pages, the Starred header
+      // disappears (no starred pages remain).
       const bananaRowAgain = screen.getByText('Banana').closest('.group') as HTMLElement
       await user.click(within(bananaRowAgain).getByRole('button', { name: /unstar page/i }))
 
@@ -1635,7 +1635,7 @@ describe('PageBrowser', () => {
       expect(titles).toEqual(['Apple', 'Banana', 'Cherry'])
     })
 
-    it('FEAT-12: tree mode renders without grouping headers', async () => {
+    it('FEAT-14: namespaced pages render under the unified Pages section alongside Starred', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -1649,11 +1649,16 @@ describe('PageBrowser', () => {
       render(<PageBrowser />)
       await screen.findByText('project-a')
 
-      // Tree mode bypasses grouping — namespace hierarchy wins.
-      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
-      expect(screen.queryByText('Other pages')).not.toBeInTheDocument()
-      // Tree shape intact.
+      // Under FEAT-14 the unified model NO LONGER bypasses Starred when
+      // namespaced pages are present. Starred renders the starred-and-
+      // namespaced page (full title); Pages renders the namespace tree.
+      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Pages')).toBeInTheDocument()
+      // Namespace tree shape intact under Pages.
       expect(screen.getByText('work')).toBeInTheDocument()
+      // Both leaves still reachable inside the tree.
+      expect(screen.getByText('project-a')).toBeInTheDocument()
+      expect(screen.getByText('project-b')).toBeInTheDocument()
     })
 
     it('FEAT-12: zero-starred hides the Starred header', async () => {
@@ -1670,11 +1675,12 @@ describe('PageBrowser', () => {
       await screen.findByText('Apple')
 
       // Spec: "zero starred → hide the Starred header (no empty section)".
-      // The non-empty "Other pages" group keeps its own header.
+      // The non-empty "Pages" section keeps its own header.
       expect(container.querySelector('[data-page-section="starred"]')).toBeNull()
+      expect(container.querySelector('[data-page-section="pages"]')).not.toBeNull()
     })
 
-    it('FEAT-12: all-starred hides the Other-pages header', async () => {
+    it('FEAT-12: all-starred hides the Pages header', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -1689,7 +1695,7 @@ describe('PageBrowser', () => {
       await screen.findByText('Apple')
 
       expect(screen.getByText('Starred')).toBeInTheDocument()
-      expect(screen.queryByText('Other pages')).not.toBeInTheDocument()
+      expect(screen.queryByText('Pages')).not.toBeInTheDocument()
     })
 
     it('FEAT-12: single-page vault renders flat with no headers', async () => {
@@ -1704,7 +1710,7 @@ describe('PageBrowser', () => {
       await screen.findByText('Solo')
 
       expect(screen.queryByText('Starred')).not.toBeInTheDocument()
-      expect(screen.queryByText('Other pages')).not.toBeInTheDocument()
+      expect(screen.queryByText('Pages')).not.toBeInTheDocument()
     })
 
     it('FEAT-12: search narrows both groups; emptied group hides its header', async () => {
@@ -1725,15 +1731,15 @@ describe('PageBrowser', () => {
 
       // Both headers visible at start.
       expect(screen.getByText('Starred')).toBeInTheDocument()
-      expect(screen.getByText('Other pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages')).toBeInTheDocument()
 
       // Search for "Other" → starred group becomes empty, only the
-      // "Other pages" header remains.
+      // "Pages" header remains.
       const searchInput = screen.getByPlaceholderText('Search pages...')
       await user.type(searchInput, 'Other')
 
       expect(screen.queryByText('Starred')).not.toBeInTheDocument()
-      expect(screen.getByText('Other pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages')).toBeInTheDocument()
       expect(screen.queryByText('StarredApple')).not.toBeInTheDocument()
     })
 
@@ -1760,11 +1766,11 @@ describe('PageBrowser', () => {
       // Accessible name is "Starred, 2 pages" (sr-only span).
       expect(starredGroup).toHaveAccessibleName('Starred, 2 pages')
 
-      const otherGroup = container.querySelector(
-        '[data-page-section="other"]',
+      const pagesGroup = container.querySelector(
+        '[data-page-section="pages"]',
       ) as HTMLElement | null
-      expect(otherGroup).not.toBeNull()
-      expect(otherGroup).toHaveAccessibleName('Other pages, 1 page')
+      expect(pagesGroup).not.toBeNull()
+      expect(pagesGroup).toHaveAccessibleName('Pages, 1 page')
     })
 
     it('FEAT-12: viewport aria-label switches to grouped variant when starred exist', async () => {
@@ -1864,7 +1870,7 @@ describe('PageBrowser', () => {
 
       // Both group headers must render.
       expect(screen.getByText('Starred')).toBeInTheDocument()
-      expect(screen.getByText('Other pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages')).toBeInTheDocument()
 
       await waitFor(async () => {
         const results = await axe(container, {
@@ -1905,7 +1911,252 @@ describe('PageBrowser', () => {
       })
     })
 
-    it('FEAT-12: a11y audit passes on tree mode (grouping bypassed)', async () => {
+    // ---------------------------------------------------------------
+    // FEAT-14: unified Starred + Pages model
+    // ---------------------------------------------------------------
+
+    it('FEAT-14: starred (non-namespaced) and namespaced pages coexist', async () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'work/foo' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      const { container } = render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      // Starred section renders the starred flat page.
+      expect(screen.getByText('Starred')).toBeInTheDocument()
+      // Pages section renders the namespace tree.
+      expect(screen.getByText('Pages')).toBeInTheDocument()
+      expect(screen.getByText('work')).toBeInTheDocument()
+      // The flat starred page lives inside the Starred section group.
+      const starredGroup = container.querySelector(
+        '[data-page-section="starred"]',
+      ) as HTMLElement | null
+      expect(starredGroup).not.toBeNull()
+      // The leaf inside `work` resolves to `foo`.
+      expect(screen.getByText('foo')).toBeInTheDocument()
+    })
+
+    it('FEAT-14: top-level flat pages and namespace roots interleave under Pages alphabetically', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Inbox' }),
+          makePage({ id: 'P2', content: 'work/foo' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      const { container } = render(<PageBrowser />)
+      await screen.findByText('Inbox')
+
+      // Pages section renders both an `Inbox` flat row and a `work`
+      // namespace root, sorted together alphabetically.
+      expect(screen.getByText('Pages')).toBeInTheDocument()
+      // Walk each rendered page row in DOM order — `Inbox` (option) +
+      // `work` (tree-page wrapper). Alphabetical => Inbox before work.
+      const pageRows = Array.from(
+        container.querySelectorAll('[data-page-item], [data-page-tree-row]'),
+      ) as HTMLElement[]
+      expect(pageRows).toHaveLength(2)
+      // First row: Inbox (option/flat).
+      expect(pageRows[0]?.textContent).toMatch(/Inbox/)
+      // Second row: work (tree wrapper).
+      expect(pageRows[1]?.textContent).toMatch(/work/)
+    })
+
+    it('FEAT-14: a starred-and-namespaced page renders TWICE — once in Starred, once nested in Pages', async () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'work/foo' }),
+          makePage({ id: 'P2', content: 'Inbox' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Inbox')
+
+      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Pages')).toBeInTheDocument()
+
+      // The starred copy renders the FULL title `work/foo`.
+      expect(screen.getByText('work/foo')).toBeInTheDocument()
+      // The tree leaf inside `work` renders just the segment `foo`.
+      // `getAllByText('foo')` returns the leaf-segment match (1 node);
+      // the full-title match `work/foo` is found via `getByText` above.
+      expect(screen.getAllByText('foo')).toHaveLength(1)
+      // `work` namespace root renders.
+      expect(screen.getByText('work')).toBeInTheDocument()
+    })
+
+    it('FEAT-14: star toggle from either copy of a duplicated row updates BOTH copies', async () => {
+      const user = userEvent.setup()
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'work/foo' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('work/foo')
+
+      // Starred section renders the starred copy (full-title flat row
+      // with the unstar affordance). Clicking unstar should:
+      //   1. Drop the row from Starred (Starred section disappears).
+      //   2. Mark the leaf inside `work` as unstarred too — only the
+      //      `Pages` section remains.
+      const starredCopy = screen.getByText('work/foo').closest('[data-page-item]') as HTMLElement
+      const unstarBtn = within(starredCopy).getByRole('button', { name: /unstar page/i })
+      await user.click(unstarBtn)
+
+      // Starred section gone — both copies refreshed via
+      // `starredRevision`.
+      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      expect(screen.getByText('Pages')).toBeInTheDocument()
+      // The tree-leaf copy is still visible.
+      expect(screen.getByText('foo')).toBeInTheDocument()
+    })
+
+    it('FEAT-14: filter narrows Pages to empty → Pages header hides, Starred remains', async () => {
+      const user = userEvent.setup()
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'StarredApple' }),
+          makePage({ id: 'P2', content: 'work/foo' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('StarredApple')
+
+      // Both sections render initially.
+      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Pages')).toBeInTheDocument()
+
+      const search = screen.getByPlaceholderText('Search pages...')
+      await user.type(search, 'StarredApple')
+
+      // Starred-only — Pages header hidden.
+      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.queryByText('Pages')).not.toBeInTheDocument()
+    })
+
+    it('FEAT-14: filter narrows Starred to empty → Starred header hides, Pages remains', async () => {
+      const user = userEvent.setup()
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'StarredApple' }),
+          makePage({ id: 'P2', content: 'work/foo' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('StarredApple')
+
+      const search = screen.getByPlaceholderText('Search pages...')
+      await user.type(search, 'work')
+
+      // Pages-only — Starred header hidden.
+      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      expect(screen.getByText('Pages')).toBeInTheDocument()
+      expect(screen.getByText('work')).toBeInTheDocument()
+    })
+
+    it('FEAT-14: keyboard ArrowDown walks every visible row in render order, including duplicates', async () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'work/foo' }),
+          makePage({ id: 'P2', content: 'Inbox' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Inbox')
+
+      // Render order under FEAT-14:
+      //   row 0: Starred header
+      //   row 1: page row `work/foo` (starred flat copy, pageIndex=0)
+      //   row 2: Pages header
+      //   row 3: page row `Inbox` (pageIndex=1)        — alphabetical: I<w
+      //   row 4: tree-page row `work` (pageIndex=2)
+      // pageIndexToRowIndex = [1, 3, 4]
+      // filteredPages.length = 3 (one per visible page row, including
+      // the duplicate `work/foo` in Starred).
+
+      // Initial focus: pageIndex 0 = the starred `work/foo` flat copy.
+      const initiallyFocused = document.querySelector(
+        '[data-page-item][aria-selected="true"]',
+      ) as HTMLElement | null
+      expect(initiallyFocused).not.toBeNull()
+      expect(initiallyFocused?.querySelector('.page-browser-item-title')?.textContent).toMatch(
+        /work\/foo/,
+      )
+
+      // ArrowDown → pageIndex 1 (Inbox flat row inside Pages).
+      fireEvent.keyDown(document, { key: 'ArrowDown' })
+      const second = document.querySelector(
+        '[data-page-item][aria-selected="true"]',
+      ) as HTMLElement | null
+      expect(second?.querySelector('.page-browser-item-title')?.textContent).toBe('Inbox')
+
+      // ArrowDown → pageIndex 2 (the `work` tree-page wrapper). The
+      // wrapper carries the focus ring class but no aria-selected (it
+      // isn't a listbox option). Verify via the focused-index ring.
+      fireEvent.keyDown(document, { key: 'ArrowDown' })
+      const treeWrapper = document.querySelector(
+        '[data-page-tree-row][data-page-index="2"]',
+      ) as HTMLElement | null
+      expect(treeWrapper).not.toBeNull()
+      // Focus ring class applied via cn() when focusedIndex === pageIndex.
+      expect(treeWrapper?.className).toMatch(/ring-2/)
+
+      // End → wrap to last page row (the tree-page `work` row,
+      // pageIndex 2). Already there — verify End is a no-op visually.
+      fireEvent.keyDown(document, { key: 'End' })
+      const endWrapper = document.querySelector(
+        '[data-page-tree-row][data-page-index="2"]',
+      ) as HTMLElement | null
+      expect(endWrapper?.className).toMatch(/ring-2/)
+    })
+
+    it('FEAT-14: empty vault renders the EmptyState component (no section chrome)', async () => {
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<PageBrowser />)
+      // EmptyState renders a translation key that includes "No pages
+      // yet" (see `pageBrowser.noPages`).
+      await waitFor(() => {
+        expect(screen.getByText(/No pages yet/i)).toBeInTheDocument()
+      })
+
+      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      expect(screen.queryByText('Pages')).not.toBeInTheDocument()
+      // The viewport's section presence flags reflect "neither".
+      const viewport = document.querySelector('[data-slot="scroll-area-viewport"]')
+      expect(viewport?.getAttribute('data-has-starred')).toBe('false')
+      expect(viewport?.getAttribute('data-has-pages')).toBe('false')
+    })
+
+    it('FEAT-14: a11y audit passes on the unified Starred + Pages layout with namespaced rows', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -1919,15 +2170,20 @@ describe('PageBrowser', () => {
       const { container } = render(<PageBrowser />)
       await screen.findByText('project-a')
 
+      // Both sections render under FEAT-14: Starred (the starred-and-
+      // namespaced page) and Pages (the namespace tree).
+      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Pages')).toBeInTheDocument()
+
       await waitFor(async () => {
         const results = await axe(container, {
           rules: {
             // listbox+option pattern intentionally nests interactive
             // chevron / star / delete buttons in each row.
             'nested-interactive': { enabled: false },
-            // Tree mode renders `PageTreeItem` (button rows) inside the
-            // listbox viewport — pre-existing pattern that predates
-            // FEAT-12 and is orthogonal to the grouping change.
+            // The `Pages` section renders `PageTreeItem` (button rows)
+            // inside the listbox viewport for namespace roots — same
+            // pattern as the pre-FEAT-14 tree-mode path.
             'aria-required-children': { enabled: false },
           },
         })
