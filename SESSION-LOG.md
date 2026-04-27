@@ -1,5 +1,51 @@
 # Session Log
 
+## Session 508 — Backend test-quality batch: close 8 TEST items (TEST-40, 41, 43, 44, 46, 47, 48, 49) (2026-04-27)
+
+**8 TEST items closed in one batched session.** Six parallel build subagents on non-overlapping backend test files, paired with four review subagents (one per work-cluster). Pure test-only changes — no production code touched anywhere. The keyring-store subagent stalled mid-task and was replaced by direct orchestrator edits; everything else completed cleanly on the first pass.
+
+**REVIEW-LATER impact:**
+
+- **Top-level:** 94 open items → 86. Summary text: `24 test-quality (11 backend TEST-40..TEST-43, TEST-45..TEST-51 + 13 frontend TEST-52..TEST-64)` → `17 test-quality (4 backend TEST-42, TEST-45, TEST-50, TEST-51 + 13 frontend TEST-52..TEST-64)`. Previously-resolved bumped 542+ → 550+ across 160 sessions.
+- **Backend test-quality block prose:** "12 items below bundle the 40 confirmed findings" → "items below bundle the remaining open findings".
+
+**Items closed (8) and where they landed:**
+
+| Item | File(s) | Change |
+|---|---|---|
+| TEST-40 | `commands/tests/tag_cmd_tests.rs` | Added `add_tag_deleted_block_returns_not_found` + `remove_tag_deleted_block_returns_not_found`; both `cascade_soft_delete` then assert `Err(AppError::NotFound(_))`. |
+| TEST-41 | `commands/tests/tag_cmd_tests.rs` | Added `assert_eq!(count, 1)` op_log assertions to `add_tag_success` + `remove_tag_success` using `SELECT COUNT(*) FROM op_log WHERE op_type = 'add_tag' / 'remove_tag' AND json_extract(payload, '$.block_id') = ?`. |
+| TEST-43 | `command_integration_tests/trash_integration.rs` | Extended `purge_all_deleted_cleans_dependent_tables` to seed + assert cleanup of `page_aliases` and `projected_agenda_cache` (the two FK tables the production purge in `crud.rs:1194-1208` deletes but the test ignored). |
+| TEST-44 | `soft_delete/mod.rs` | Added `cascade_soft_delete_skips_conflict_copies` — exercises invariant #9 (`is_conflict = 0` filter in the recursive CTE) by inserting a normal child + a conflict-copy child and asserting the conflict copy is NOT swept into the cascade. |
+| TEST-46 | `gcal_push/keyring_store.rs` | Rewrote `keyring_store_never_falls_back_to_plaintext_on_unavailable` to assert on the store's own `Err(AppError::Validation("keyring.unavailable: ..."))` return instead of a sibling `MemBackend` the store could never write to. Multi-line comment documents that the store has only one write path (no plaintext fallback exists in production). |
+| TEST-47 | `materializer/tests.rs` | Tightened 7 metric-count assertions from `>= N` to `assert_eq!(.., N + 1)` accounting for the `Barrier` task that `flush_*` enqueues and that increments the same counter on dequeue. `high_water_*` tests intentionally untouched (high-water is recorded at enqueue, no barrier accounting). |
+| TEST-48 | `materializer/tests.rs` | Added `assert_eq!(fg_errors, 1)` to `apply_op_invalid_payload` and `apply_op_unknown_op` — they previously asserted nothing, only proving "didn't panic". |
+| TEST-49 | `dag/tests.rs`, `op.rs`, `commands/tests/undo_redo_tests.rs`, `mcp/tools_ro.rs`, `snapshots/agaric_lib__op_log__tests__snapshot_op_record_after_create_block.snap` | Six assertion-hygiene fixes: `is_err()` → `matches!(.., Err(AppError::InvalidOperation(_)))`; missing `is_ok()` message; `!is_empty()` → `assert_eq!(.., 3)`; two MCP `is_ok()` checks gained shape destructures (`is_array()` / `items` field); stale `assertion_line: 792` removed via `cargo insta test --force-update-snapshots`. (Site 6, `sync_daemon/tests.rs:239`, was found already fixed in upstream commit `e8ccd27` — no change.) |
+
+**Files touched (10):**
+
+- `REVIEW-LATER.md` (8 detail sections + 7 summary rows removed; counts bumped 94 → 86)
+- `SESSION-LOG.md` (this entry)
+- `src-tauri/src/commands/tests/tag_cmd_tests.rs` (273 → 348 lines)
+- `src-tauri/src/command_integration_tests/trash_integration.rs` (extended one test)
+- `src-tauri/src/soft_delete/mod.rs` (one new test)
+- `src-tauri/src/gcal_push/keyring_store.rs` (one test rewritten)
+- `src-tauri/src/materializer/tests.rs` (7 assertions tightened + 2 added)
+- `src-tauri/src/dag/tests.rs`, `src-tauri/src/op.rs`, `src-tauri/src/commands/tests/undo_redo_tests.rs`, `src-tauri/src/mcp/tools_ro.rs` (assertion-hygiene)
+- `src-tauri/src/snapshots/agaric_lib__op_log__tests__snapshot_op_record_after_create_block.snap` (metadata header only)
+
+**Verification:** `cd src-tauri && cargo nextest run` → **2991 tests run: 2991 passed, 2 skipped**. No regressions across the full suite.
+
+**Reviewers:** Four review subagents, each on a distinct work-cluster — Review-1 (TEST-40+41), Review-2 (TEST-43+44), Review-3 (TEST-47+48), Review-4 (TEST-49), plus Review-5 (TEST-46 after the orchestrator-direct fix). All five came back SHIP with no outstanding follow-ups. The TEST-46 reviewer additionally cross-checked the `KeyringTokenStore` for any plaintext-fallback path (none exists; the production store has only one write path through its wrapped `KeyringBackend`), confirming the new assertion-on-`result` framing is the meaningful regression guard.
+
+**Process notes:**
+
+- **Six-parallel subagent dispatch with non-overlapping files.** Each test file was owned by exactly one subagent so no merge-conflict risk. No worktrees needed.
+- **Subagent stall handling.** TEST-46's subagent ran for ~10 min without producing output or modifying the target file; killed the shell and the orchestrator did the fix directly (~5 lines). The fallback worked because the file was already pre-read for review-readiness, so the orchestrator had full context.
+- **Subagent-driven REVIEW-LATER.md edits are race-prone.** The TEST-44 subagent updated REVIEW-LATER.md inline (removed its row + detail section + bumped the summary count from 94 → 93) before the others were done. The other 7 closures were rolled up by the orchestrator at the end. For future batches: subagents should NOT edit REVIEW-LATER.md; the orchestrator handles all REVIEW-LATER edits in one pass after every subagent reports back. (The TEST-44 subagent's edits were correct in content, but the workflow risks two subagents racing to bump the same `93 → 92` line with stale snapshots.)
+- **Pipelined review while builds finish.** As each build subagent reported, its review subagent launched in parallel — at peak there were 3 active builds + 3 active reviews running concurrently (6 total). End-to-end wall clock was bounded by the longest build (TEST-46's stall) rather than the sum.
+- **One commit, one prek run.** All 10 file changes ship in a single commit so the `prek run --all-files` hook covers the whole batch.
+
 ## Session 507 — Architecture audit → MAINT-112 CommandTx end-to-end + H-5/H-6 close + clippy-1.95 sweep (2026-04-27)
 
 **3 items closed (MAINT-112, H-5, H-6), 3 items filed (MAINT-112/113/114), 19 pre-existing clippy errors swept.** Long-arc session driven by an adversarial architecture audit that tested "is the architecture fit for purpose?" against four parallel explorer subagents + two reviewer subagents. The explorers produced the usual exaggerations — a claimed "70:1 LOC of sync per 1 LOC of commands" that was actually ~0.78:1, a "velocity-negative momentum" framing that the data refuted, a "ConflictFreeBlockId newtype fixes everything" recommendation the reviewer rescoped to "do not do on a deadline". The reviewers' pass refuted every dramatic recommendation; the verdict landed on **SHIP — architecture is fit for purpose, do not revisit any earlier decision, do not refactor significantly**. Three opportunistic-cleanup items came out of that audit and were filed: MAINT-112 (CommandTx), MAINT-113 (ConflictFreeBlockId, deferred indefinitely), MAINT-114 (workflows consolidation, spike first). MAINT-112 was then executed end-to-end in two phases, the pre-existing clippy-1.95 regression in the tree was swept, and the remaining two HIGH-severity materializer items (H-5, H-6) were closed — with a fix that rejected the pass-2 recommendations in favour of a simpler "remove the JoinSet entirely" redesign.
