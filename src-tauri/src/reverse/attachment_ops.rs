@@ -22,6 +22,7 @@ pub async fn reverse_delete_attachment(
     record: &OpRecord,
 ) -> Result<OpPayload, AppError> {
     let payload: crate::op::DeleteAttachmentPayload = serde_json::from_str(&record.payload)?;
+    let attachment_id = payload.attachment_id.as_str();
     let original = sqlx::query!(
         r#"SELECT payload FROM op_log
          WHERE op_type = 'add_attachment'
@@ -29,7 +30,7 @@ pub async fn reverse_delete_attachment(
          AND (created_at < ?2 OR (created_at = ?2 AND seq < ?3))
          ORDER BY created_at DESC, seq DESC
          LIMIT 1"#,
-        payload.attachment_id,
+        attachment_id,
         record.created_at,
         record.seq
     )

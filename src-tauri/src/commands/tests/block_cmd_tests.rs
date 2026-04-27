@@ -2405,7 +2405,8 @@ async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
     let parsed: crate::op::DeleteAttachmentPayload =
         serde_json::from_str(&del_op.payload).expect("delete_attachment payload must parse");
     assert_eq!(
-        parsed.attachment_id, att.id,
+        parsed.attachment_id.as_str(),
+        att.id,
         "op-log payload attachment_id must match"
     );
     assert_eq!(

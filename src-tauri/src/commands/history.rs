@@ -164,7 +164,7 @@ pub async fn apply_reverse_in_tx(
         OpPayload::DeleteAttachment(p) => {
             let result = sqlx::query("UPDATE attachments SET deleted_at = ? WHERE id = ?")
                 .bind(now_rfc3339())
-                .bind(&p.attachment_id)
+                .bind(p.attachment_id.as_str())
                 .execute(&mut **tx)
                 .await?;
             if result.rows_affected() == 0 {

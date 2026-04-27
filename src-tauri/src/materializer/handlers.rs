@@ -48,7 +48,9 @@ pub(super) async fn handle_foreground_task(
             // rolled back would send the connector chasing a ghost.
             let mut tx = pool.begin().await?;
             let mut pending_events: Vec<DeferredNotification> = Vec::new();
-            for record in records {
+            // M-10: `records` is `&Arc<Vec<OpRecord>>`; `.iter()` derefs
+            // through `Arc -> Vec` to yield `&OpRecord` without copying.
+            for record in records.iter() {
                 let snapshot = snapshot_for_op(&mut tx, record).await?;
                 if let Err(e) = apply_op_tx(&mut tx, record).await {
                     tracing::warn!(
@@ -496,7 +498,7 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
                      (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) \
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
-            .bind(&p.attachment_id)
+            .bind(p.attachment_id.as_str())
             .bind(p.block_id.as_str())
             .bind(&p.filename)
             .bind(&p.fs_path)
@@ -509,7 +511,7 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
         OpType::DeleteAttachment => {
             let p: DeleteAttachmentPayload = serde_json::from_str(&record.payload)?;
             sqlx::query("DELETE FROM attachments WHERE id = ?")
-                .bind(&p.attachment_id)
+                .bind(p.attachment_id.as_str())
                 .execute(&mut *conn)
                 .await?;
         }

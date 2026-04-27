@@ -1288,7 +1288,7 @@ async fn perf26_delete_attachment_stores_null_block_id() {
         &pool,
         "dev-perf26b",
         OpPayload::AddAttachment(AddAttachmentPayload {
-            attachment_id: "ATT-1".into(),
+            attachment_id: BlockId::test_id("ATT-1"),
             block_id: bid.clone(),
             mime_type: "text/plain".into(),
             filename: "x.txt".into(),
@@ -1302,7 +1302,7 @@ async fn perf26_delete_attachment_stores_null_block_id() {
         &pool,
         "dev-perf26b",
         OpPayload::DeleteAttachment(DeleteAttachmentPayload {
-            attachment_id: "ATT-1".into(),
+            attachment_id: BlockId::test_id("ATT-1"),
             fs_path: "/tmp/x.txt".into(),
         }),
     )

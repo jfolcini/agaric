@@ -182,7 +182,7 @@ mod tests {
             "restore_block",
             r#"{"block_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}"#,
         );
-        let task = MaterializeTask::BatchApplyOps(vec![malformed, healthy]);
+        let task = MaterializeTask::BatchApplyOps(std::sync::Arc::new(vec![malformed, healthy]));
         assert_eq!(
             extract_block_id(&task),
             None,
