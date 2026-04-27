@@ -787,7 +787,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Net findings in this report | 333 |
 | **Critical** | **1** |
 | **High** | **6** |
-| **Medium** | **41** |
+| **Medium** | **36** |
 | **Low** | **124** |
 | **Info / nits** | **125** |
 
@@ -807,9 +807,9 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Cache + Pagination | 0 | 0 | 6 | 12 | 6 |
 | Commands (CRUD) | 0 | 1 | 6 | 9 | 13 |
 | Commands (System) | 0 | 2 | 12 | 13 | 6 |
-| Sync stack | 0 | 3 | 17 | 25 | 5 |
+| Sync stack | 0 | 3 | 13 | 25 | 5 |
 | Search & Links | 0 | 2 | 4 | 16 | 19 |
-| Lifecycle / Snapshots | 0 | 0 | 18 | 16 | 8 |
+| Lifecycle / Snapshots | 0 | 0 | 17 | 16 | 8 |
 | MCP | 0 | 0 | 6 | 12 | 8 |
 | GCal / Spaces / Drafts | 0 | 0 | 9 | 11 | 9 |
 
@@ -1235,69 +1235,14 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 06/F16
 - **Status:** Open
 
-### M-54 — `sync_cert.rs::get_or_create_sync_cert` is not atomic across `.pem` and `.hash`
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_cert.rs:71-113` (write path); `:116-150` (`read_existing_cert` recovery gap)
-- **What:** Sequence is: `create_new` `.pem` → write data → `sync_all` → `create_new` `.hash` → write hash → `sync_all`. The error arm of the second `create_new` (line 94-98) cleans up `.pem`, but a process crash / power loss between the two `sync_all`s leaves `.pem` intact and `.hash` absent. `read_existing_cert` (line 137) then errors with "hash file missing or unreadable" with **no recovery path** — sync will not start until the user manually deletes `.pem`.
-- **Why it matters:** Power loss / OOM-kill mid-write is exactly the accidental-corruption failure mode AGENTS.md asks us to defend against. "Transaction atomicity" is named in the threat model as a defensive-effort target.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Best fix: drop the `.hash` file entirely (it's deterministically derivable from `.pem` — see L-Sync-related cleanup), removing the multi-file invariant. Failing that: write to `.pem.tmp` + `.hash.tmp` then `rename` both before declaring success, or have `read_existing_cert` recover by deleting an orphaned `.pem` and re-running `get_or_create_sync_cert`.
-- **Pass-1 source:** 06/F20
-- **Status:** Open
 
-### M-56 — `connect_to_peer` does not bind TLS handshake to the expected device's CN
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_net/connection.rs:33-66`; `src-tauri/src/sync_net/tls.rs:181-233` (`PinningCertVerifier`); orchestrator-side check at `src-tauri/src/sync_protocol/orchestrator.rs:207-222`
-- **What:** `PinningCertVerifier::verify_server_cert` checks that CN starts with `agaric-` (line 217) and the optional `expected_hash` (line 200), but does not verify CN matches `expected_remote_id`. The device-id check is deferred to the orchestrator's HeadExchange path; at TLS-handshake time on first connect (no stored hash yet), any `agaric-*` cert is accepted.
-- **Why it matters:** Not an attacker concern under our threat model — but a robustness one. A misconfigured network where two of the user's own devices both respond on the same address (NAT loopback weirdness, port reuse) will TLS-succeed against whichever cert arrived first; the inconsistency is caught later at HeadExchange. Detecting it at handshake fails fast and yields a clearer error.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Plumb the expected `peer_id` into `connect_to_peer`, hand it to `PinningCertVerifier`, and reject certs whose `agaric-{device_id}` CN does not match when present. Keep first-connect-without-hash behaviour intact (TOFU) but always assert the CN device-id once known.
-- **Pass-1 source:** 06/F35
-- **Status:** Open
 
-### M-57 — `connect_to_peer` blocks rustls handshake on a `std::sync::Mutex`
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_net/connection.rs:33-66`; verifier writes at `src-tauri/src/sync_net/tls.rs:195-197`
-- **What:** `Arc<std::sync::Mutex<Option<String>>>` is shared between the caller and `PinningCertVerifier`. The verifier writes the observed cert hash inside `verify_server_cert`; the caller reads it after the handshake. The pattern works but is fragile — a panic inside verification poisons the mutex, and the caller's `lock()` then returns `Err`, mapped to `sync_err`.
-- **Why it matters:** Maintainability — capturing a single value via a poisonable mutex during a sync RPC is dirty. Any future rustls change to call the verifier on a different thread amplifies the fragility. Not a runtime hazard today.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace with `Arc<OnceLock<String>>` (set inside the verifier, read after handshake) or an `Arc<AtomicCell<Option<String>>>`-style primitive. Avoids poisoning entirely and makes the single-write-single-read intent obvious.
-- **Pass-1 source:** 06/F36
-- **Status:** Open
 
-### M-58 — `try_offer_snapshot_catchup` always offers the latest snapshot, regardless of whether it covers the remote's frontier
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_daemon/snapshot_transfer.rs:119-195`
-- **What:** When the remote signals `ResetRequired`, the function calls `get_latest_snapshot(pool)` and offers it without comparing the snapshot's `up_to_seqs` against the remote's heads (which the orchestrator already has on the session). If the snapshot happens to be ahead of the remote (typical case) this is fine; if compaction policy ever changes and retention windows drift, this becomes a hard-to-diagnose silent failure.
-- **Why it matters:** Defensive-coding gap — the invariant "the offered snapshot covers the remote's frontier" is implicit, never asserted. Catching the violation cheaply now is much easier than chasing a future regression.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Before offering, read the remote heads from the orchestrator session and assert the snapshot's `up_to_seqs` covers them; if it doesn't, send `Error` instead of `SnapshotOffer` so the receiver fails loudly.
-- **Pass-1 source:** 06/F38
-- **Status:** Open
 
 ### Search & Links
 
 ### Lifecycle / Snapshots / Merge / Recurrence
 
-### M-66 — `apply_snapshot` drops `block_drafts` without surfacing potentially unflushed work
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/snapshot/restore.rs:90-92`
-- **What:** RESET wipes `block_drafts` inside the same `BEGIN IMMEDIATE` that clears `op_log` and core tables. Any draft saved after the snapshot was taken is silently lost: there is no log line, no count returned, no test asserting the drop.
-- **Why it matters:** RESET is invoked by FEAT-6 snapshot-driven catch-up; on a peer with mid-edit drafts the user's typing is silently discarded with no warning to the materializer or sync UI.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Read `COUNT(*) FROM block_drafts` before the DELETE and emit `tracing::warn!` with the count and block_ids; consider extending the existing `SnapshotData` return so callers can surface "N drafts dropped" in the sync UI.
-- **Pass-1 source:** 08/F6
-- **Status:** Open
 
 ### M-67 — `apply_snapshot` cache-rebuild tasks use `try_enqueue_background` (silent drop)
 - **Domain:** Lifecycle
