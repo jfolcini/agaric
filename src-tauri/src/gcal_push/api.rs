@@ -243,27 +243,17 @@ impl GcalApi {
             id: String,
         }
 
-        self.bucket.lock().await.take().await;
-
         let url = format!("{}/calendars", self.base_url);
-        let req = CreateCalendarReq { summary: name };
-
-        let resp = self
-            .client
-            .post(&url)
-            .bearer_auth(token.access.expose_secret())
-            .json(&req)
-            .send()
-            .await
-            .map_err(|e| reqwest_to_gcal_err(&e))?;
-
-        let status = resp.status();
-        if status.is_success() {
-            let body: CreateCalendarResp =
-                resp.json().await.map_err(|e| reqwest_to_gcal_err(&e))?;
-            return Ok(body.id);
-        }
-        Err(classify_error(status, &resp_headers(&resp), false).into())
+        let body: CreateCalendarResp = self
+            .send_json(
+                reqwest::Method::POST,
+                &url,
+                token,
+                Some(&CreateCalendarReq { summary: name }),
+                /*on_event*/ false,
+            )
+            .await?;
+        Ok(body.id)
     }
 
     /// Delete the dedicated calendar.  Invoked when the user chooses
@@ -278,22 +268,14 @@ impl GcalApi {
     /// its own layer).
     #[tracing::instrument(skip(self, token), err)]
     pub async fn delete_calendar(&self, token: &Token, calendar_id: &str) -> Result<(), AppError> {
-        self.bucket.lock().await.take().await;
-
         let url = format!("{}/calendars/{}", self.base_url, calendar_id);
-        let resp = self
-            .client
-            .delete(&url)
-            .bearer_auth(token.access.expose_secret())
-            .send()
-            .await
-            .map_err(|e| reqwest_to_gcal_err(&e))?;
-
-        let status = resp.status();
-        if status.is_success() {
-            return Ok(());
-        }
-        Err(classify_error(status, &resp_headers(&resp), /*on_event*/ false).into())
+        self.send_empty(
+            reqwest::Method::DELETE,
+            &url,
+            token,
+            /*on_event*/ false,
+        )
+        .await
     }
 
     /// Insert a new event into the dedicated calendar.  Returns the
@@ -310,28 +292,20 @@ impl GcalApi {
         calendar_id: &str,
         event: &Event,
     ) -> Result<EventResponse, AppError> {
-        self.bucket.lock().await.take().await;
-
         let url = format!("{}/calendars/{}/events", self.base_url, calendar_id);
         let wire_event = WireEvent::from_digest_event(event)?;
-
-        let resp = self
-            .client
-            .post(&url)
-            .bearer_auth(token.access.expose_secret())
-            .json(&wire_event)
-            .send()
-            .await
-            .map_err(|e| reqwest_to_gcal_err(&e))?;
-
-        let status = resp.status();
-        if status.is_success() {
-            let body: WireEventResponse = resp.json().await.map_err(|e| reqwest_to_gcal_err(&e))?;
-            return body.into_event_response();
-        }
         // 404 on /calendars/{id}/events targets the calendar, not a
         // specific event — map to CalendarGone.
-        Err(classify_error(status, &resp_headers(&resp), /*on_event*/ false).into())
+        let body: WireEventResponse = self
+            .send_json(
+                reqwest::Method::POST,
+                &url,
+                token,
+                Some(&wire_event),
+                /*on_event*/ false,
+            )
+            .await?;
+        body.into_event_response()
     }
 
     /// Patch an existing event.  Only fields set on `patch` are
@@ -350,29 +324,21 @@ impl GcalApi {
         event_id: &str,
         patch: &EventPatch,
     ) -> Result<EventResponse, AppError> {
-        self.bucket.lock().await.take().await;
-
         let url = format!(
             "{}/calendars/{}/events/{}",
             self.base_url, calendar_id, event_id
         );
         let wire_patch = WireEventPatch::from_patch(patch);
-
-        let resp = self
-            .client
-            .patch(&url)
-            .bearer_auth(token.access.expose_secret())
-            .json(&wire_patch)
-            .send()
-            .await
-            .map_err(|e| reqwest_to_gcal_err(&e))?;
-
-        let status = resp.status();
-        if status.is_success() {
-            let body: WireEventResponse = resp.json().await.map_err(|e| reqwest_to_gcal_err(&e))?;
-            return body.into_event_response();
-        }
-        Err(classify_error(status, &resp_headers(&resp), /*on_event*/ true).into())
+        let body: WireEventResponse = self
+            .send_json(
+                reqwest::Method::PATCH,
+                &url,
+                token,
+                Some(&wire_patch),
+                /*on_event*/ true,
+            )
+            .await?;
+        body.into_event_response()
     }
 
     /// Delete a single event.  Idempotent-ish — if the event was
@@ -388,25 +354,12 @@ impl GcalApi {
         calendar_id: &str,
         event_id: &str,
     ) -> Result<(), AppError> {
-        self.bucket.lock().await.take().await;
-
         let url = format!(
             "{}/calendars/{}/events/{}",
             self.base_url, calendar_id, event_id
         );
-        let resp = self
-            .client
-            .delete(&url)
-            .bearer_auth(token.access.expose_secret())
-            .send()
+        self.send_empty(reqwest::Method::DELETE, &url, token, /*on_event*/ true)
             .await
-            .map_err(|e| reqwest_to_gcal_err(&e))?;
-
-        let status = resp.status();
-        if status.is_success() {
-            return Ok(());
-        }
-        Err(classify_error(status, &resp_headers(&resp), /*on_event*/ true).into())
     }
 
     /// GET a single event.  Used by FEAT-5e's reconcile sweep to
@@ -437,15 +390,84 @@ impl GcalApi {
         calendar_id: &str,
         event_id: &str,
     ) -> Result<Option<EventResponse>, AppError> {
-        self.bucket.lock().await.take().await;
-
         let url = format!(
             "{}/calendars/{}/events/{}",
             self.base_url, calendar_id, event_id
         );
+        // 404 on event path → treat as "gone"; map to Ok(None) so the
+        // reconcile sweep can simply re-insert.
+        let body: WireEventResponse = match self
+            .send_json::<(), _>(
+                reqwest::Method::GET,
+                &url,
+                token,
+                None,
+                /*on_event*/ true,
+            )
+            .await
+        {
+            Ok(b) => b,
+            Err(AppError::Gcal(GcalErrorKind::EventGone)) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        body.into_event_response().map(Some)
+    }
+
+    // ---------------------------------------------------------------
+    // Private HTTP helpers — shared skeleton for every public method:
+    // bucket-take → bearer auth → optional JSON body → send → translate
+    // via `reqwest_to_gcal_err` / `classify_error`.  `on_event` is the
+    // same bool passed to `classify_error` (event vs calendar path);
+    // MAINT-151(a) will replace it with a `PathKind` enum.
+    // ---------------------------------------------------------------
+
+    /// Issue a request that expects a JSON body in the response and
+    /// optionally serialises a JSON body in the request.
+    async fn send_json<B, T>(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        token: &Token,
+        body: Option<&B>,
+        on_event: bool,
+    ) -> Result<T, AppError>
+    where
+        B: Serialize + ?Sized,
+        T: serde::de::DeserializeOwned,
+    {
+        self.bucket.lock().await.take().await;
+
+        let mut req = self
+            .client
+            .request(method, url)
+            .bearer_auth(token.access.expose_secret());
+        if let Some(b) = body {
+            req = req.json(b);
+        }
+        let resp = req.send().await.map_err(|e| reqwest_to_gcal_err(&e))?;
+
+        let status = resp.status();
+        if status.is_success() {
+            return resp.json::<T>().await.map_err(|e| reqwest_to_gcal_err(&e));
+        }
+        Err(classify_error(status, &resp_headers(&resp), on_event).into())
+    }
+
+    /// Issue a request that does not send or expect a JSON body — the
+    /// success path is just "HTTP 2xx, drop the body".  Used by the
+    /// two `delete_*` paths.
+    async fn send_empty(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        token: &Token,
+        on_event: bool,
+    ) -> Result<(), AppError> {
+        self.bucket.lock().await.take().await;
+
         let resp = self
             .client
-            .get(&url)
+            .request(method, url)
             .bearer_auth(token.access.expose_secret())
             .send()
             .await
@@ -453,15 +475,9 @@ impl GcalApi {
 
         let status = resp.status();
         if status.is_success() {
-            let body: WireEventResponse = resp.json().await.map_err(|e| reqwest_to_gcal_err(&e))?;
-            return body.into_event_response().map(Some);
+            return Ok(());
         }
-        match classify_error(status, &resp_headers(&resp), /*on_event*/ true) {
-            // 404 on event path → treat as "gone"; map to Ok(None) so
-            // the reconcile sweep can simply re-insert.
-            GcalErrorKind::EventGone => Ok(None),
-            other => Err(other.into()),
-        }
+        Err(classify_error(status, &resp_headers(&resp), on_event).into())
     }
 }
 

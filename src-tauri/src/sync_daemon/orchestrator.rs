@@ -1,3 +1,47 @@
+//! # `sync_daemon` orchestrator
+//!
+//! Per-process daemon that owns everything *around* a single sync
+//! session. Concretely:
+//!
+//! * **Peer discovery** — mDNS browse + announce, including the
+//!   Android `WifiManager.MulticastLock` workaround (BUG-39) and the
+//!   graceful-fallback path when raw multicast UDP is unavailable
+//!   (BUG-38).
+//! * **Per-peer scheduling** — exponential backoff, "due for resync"
+//!   tick, foreground/background gating (PERF-24), and a dormant-mode
+//!   waiter that defers mDNS / TLS listener startup until the user
+//!   pairs a device (PERF-25).
+//! * **Per-peer mutual exclusion** — a `try_lock_peer` mutex prevents
+//!   two concurrent sessions with the same device.
+//! * **Connection setup** — multi-address connect with TOFU cert
+//!   pinning (L-62) and address persistence to `peer_refs`.
+//! * **Snapshot catch-up orchestration** — when the per-session state
+//!   machine reaches [`SyncState::ResetRequired`], this layer hands
+//!   control to [`super::snapshot_transfer`] for a snapshot-driven
+//!   recovery (FEAT-6).
+//! * **File-transfer orchestration** — after the per-session state
+//!   machine reaches [`SyncState::Complete`], this layer hands control
+//!   to [`crate::sync_files`] for the bidirectional attachment
+//!   transfer phase (F-14).
+//! * **Event emission** — bridges [`crate::sync_events::SyncEventSink`]
+//!   into the per-session [`SyncOrchestrator`] and surfaces
+//!   daemon-level lifecycle events (mDNS disabled, connection
+//!   failure, sync complete) directly.
+//! * **Cancellation** — owns the [`AtomicBool`] cancel flag observed
+//!   by `run_sync_session` and threaded into `sync_files` so the user
+//!   can abort multi-gigabyte attachment transfers (M-46, M-47).
+//!
+//! ## What this module does **not** own
+//!
+//! The per-session HeadExchange → OpBatch → ApplyingOps → Merging →
+//! Complete state machine lives in
+//! [`crate::sync_protocol::orchestrator`]. This module instantiates a
+//! [`SyncOrchestrator`] per session, feeds it messages received from
+//! the wire, and forwards the orchestrator's responses back — but the
+//! state-machine semantics (which message is valid in which state, how
+//! `received_ops` accumulates, when to enter terminal states) are the
+//! protocol layer's concern, not this layer's.
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

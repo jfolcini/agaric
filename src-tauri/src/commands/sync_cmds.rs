@@ -196,10 +196,11 @@ pub async fn confirm_pairing_inner(
     };
     verify_device_exchange(&msg, None, Some(&expected_passphrase))?;
 
-    // Derive a session from the (now-verified) passphrase to keep the
-    // key derivation path exercised. The actual shared key will be used
-    // for future encrypted exchanges; today we just confirm the HKDF
-    // path is reachable.
+    // Construct a session object for API symmetry with the initiator
+    // path; immediately discard it. The pairing exchange's
+    // confidentiality and authenticity come from the mTLS + TOFU-cert-pin
+    // layer in `crate::sync_net::connection`, not from any application-
+    // layer derived key — see the `pairing` module-level doc.
     let _session = PairingSession::from_passphrase(&passphrase, device_id, &remote_device_id);
 
     // Store the peer ref

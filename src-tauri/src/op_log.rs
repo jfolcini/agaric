@@ -37,28 +37,6 @@ impl OpRecord {
 }
 
 // ---------------------------------------------------------------------------
-// Macro: reduce boilerplate in serialize_inner_payload
-// ---------------------------------------------------------------------------
-
-/// Every [`OpPayload`] variant wraps a `Serialize` struct and the match arm is
-/// always `Ok(serde_json::to_string(inner)?)`.  This macro generates the full
-/// match block so we don't repeat the same line 12 times.
-macro_rules! serialize_variant {
-    ($op:expr; $($variant:ident),+ $(,)?) => {
-        match $op {
-            $(OpPayload::$variant(p) => {
-                // Serialize to Value first for canonical key ordering (BTreeMap).
-                // serde_json::to_string on derive(Serialize) uses declaration
-                // order — deterministic within a serde version but not across
-                // versions.  Going through Value ensures alphabetical key order.
-                let value = serde_json::to_value(p)?;
-                Ok(serde_json::to_string(&value)?)
-            },)+
-        }
-    };
-}
-
-// ---------------------------------------------------------------------------
 // Write path
 // ---------------------------------------------------------------------------
 
@@ -124,8 +102,7 @@ pub async fn append_local_op_in_tx(
         let prev_seq = seq - 1;
         // Phase 1 has exactly one parent; Phase 4 multi-parent DAG will
         // extend this to multiple entries with proper sorting.
-        // Construct JSON directly to avoid Vec allocation + sort overhead.
-        Some(format!(r#"[["{}",{}]]"#, device_id, prev_seq))
+        Some(serde_json::to_string(&vec![(device_id, prev_seq)])?)
     } else {
         None
     };
@@ -221,11 +198,27 @@ pub async fn append_local_op_at(
 /// embeds the tag. We want the `op_log.payload` column to store *only* the
 /// operation-specific data — the `op_type` is already in its own column.
 pub(crate) fn serialize_inner_payload(op_payload: &OpPayload) -> Result<String, AppError> {
-    serialize_variant!(op_payload;
-        CreateBlock, EditBlock, DeleteBlock, RestoreBlock,
-        PurgeBlock, MoveBlock, AddTag, RemoveTag,
-        SetProperty, DeleteProperty, AddAttachment, DeleteAttachment,
-    )
+    // Every [`OpPayload`] variant wraps a `Serialize` struct and the match
+    // arm is always the same — serialize via `serde_json::Value` so the
+    // resulting JSON has canonical (alphabetical) key ordering.  Going
+    // through `Value` (a `BTreeMap` under the hood) is what guarantees the
+    // ordering: `serde_json::to_string` on `derive(Serialize)` types uses
+    // declaration order, which is deterministic within a serde version but
+    // not across versions.
+    match op_payload {
+        OpPayload::CreateBlock(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::EditBlock(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::DeleteBlock(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::RestoreBlock(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::PurgeBlock(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::MoveBlock(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::AddTag(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::RemoveTag(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::SetProperty(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::DeleteProperty(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::AddAttachment(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::DeleteAttachment(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+    }
 }
 
 /// Extract the `block_id` from a serialized payload JSON string.
