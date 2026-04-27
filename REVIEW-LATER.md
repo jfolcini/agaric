@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-74 open items — 37 planned work (FEAT/MAINT/PERF/PUB) + 12 UX-1..UX-12 + 25 test-quality (12 backend TEST-40..TEST-51 + 13 frontend TEST-52..TEST-64).
+95 open items — 58 planned work (FEAT/MAINT/PERF/PUB) + 12 UX-1..UX-12 + 25 test-quality (12 backend TEST-40..TEST-51 + 13 frontend TEST-52..TEST-64).
 
 Previously resolved: 542+ items across 159 sessions.
 
@@ -55,6 +55,27 @@ Previously resolved: 542+ items across 159 sessions.
 | MAINT-129 | MAINT | Duplication cleanup batch — **byte-identical** pairs to delete: `renderKeys()` at `KeyboardSettingsTab.tsx:23-43` ≡ `KeyboardShortcuts.tsx:68-88` (extract to `src/lib/render-keyboard-shortcut.tsx`); `formatSize` at `AttachmentList.tsx:26-30` ≡ `src/lib/attachment-utils.ts:22-26`; `MimeIcon` / `AttachmentMimeIcon` map duplicated between `AttachmentList.tsx:49-57` and `AttachmentRenderer.tsx:9-17`; `dueDateColor` at `BlockInlineControls.tsx:35-41` ≡ `AgendaResults.tsx:68-72`; `formatDateISO` in `BlockListItem.tsx:65-70` duplicates `src/lib/date-utils.formatDate`; `relativeTime` in `AttachmentList.tsx:32-46` (also hardcodes English) duplicates `src/lib/format-relative-time.ts`. **Near-identical** pairs: `handleMergeWithPrev` L226-296 ≡ `handleMergeById` L298-361 in `useBlockKeyboardHandlers.ts` (~70L of duplicated revert logic); 4 fetch-filter-extractUlid-batchResolve-merge effects in `useDuePanelData.ts` (L167-214 / L218-280 / L283-354 / L357-430); focus-ring + scroll-into-view + dep-reset triad in 6 list views (`LinkedReferences`, `UnlinkedReferences`, `HistoryView`, `PageBrowser`, `TrashView`, `ConflictList` — all carry the same `biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset`) — extract `useFocusedRowEffect`; `useLocalStoragePreference<T>(key, default)` hook to unify 3 inconsistent read/write/catch variants (`DuePanel.tsx:57-86`, `useAgendaPreferences.ts:16-34`, `DeadlineWarningSection`). | M |
 | MAINT-130 | MAINT | Dead code + naming + convention-drift batch — dead: `EditableBlock.tsx:293` stray `;('EditableBlock')` statement; stale `export { getAssetUrl }` at `StaticBlock.tsx:32` (0 production importers); stale `export { EDITOR_PORTAL_SELECTORS }` at `EditableBlock.tsx:28` (0 production importers — also fix `src/__tests__/AGENTS.md:616` doc drift); `PRIORITY_DISPLAY` at `BlockInlineControls.tsx:29` (legacy, only own tests import); `StaticBlock.tsx:33` back-compat re-export of `renderRichContent` (8 production importers should import from canonical path); `QueryResult.tsx:21-26` dead re-exports; partial dead at `AgendaFilterBuilder.tsx:27-36` (keep only `AgendaSortGroupControls` which `journal/AgendaView.tsx:13` consumes); `src/editor/types.ts` — 22 of 23 builder functions are only imported by tests (move to `__tests__/builders.ts`). Naming / collision: `src/components/BlockContextMenu.tsx` (floating menu) vs `src/components/block-tree/BlockContextMenu.tsx` (batch toolbar) same symbol name, different components (rename one); `src/hooks/use-mobile.ts` is the sole kebab-case hook file among 56 camelCase siblings (7 non-test importers; rename to `useIsMobile.ts`); `.helpers.ts` suffix on 3 files — adopt or drop consistently. Convention drift: `PageTitleEditor.tsx:21-25` and `TemplatesView.tsx:220-225` use `[...].join(' ')` instead of `cn()`; `SpaceManageDialog.tsx:652` uses bare `overflow-y-auto` on DialogContent instead of `ScrollArea` (lone straggler after UX-208 migration); `TemplatesView`, `PropertyDefinitionsList`, `SourcePageFilter` hand-roll `<Input className="pl-9">` + absolute `<Search>` instead of the existing `SearchInput` primitive used by `TrashView` / `TagFilterPanel` / `AddFilterRow`; direct DOM mutation from `useEffect` in `ConflictList.tsx:287-300` / `LinkedReferences.tsx:251-265` / `UnlinkedReferences.tsx:250-265` (React can overwrite on re-render). Create `<ConfirmDestructiveAction>` wrapper over `AlertDialog` and migrate `PairingDialog` / `GoogleCalendarSettingsTab` / `AgentAccessSettingsTab` / `DeviceManagement` (three different confirm patterns today; last two have none on destructive actions). Extract `useStarredPages` hook so `PageBrowser` / `PageHeader` stop calling `toggleStarred` + `starredRevision` counter directly. `BlockRefPicker` is the odd picker out among 5 — add `addInputRule` + `onCreate` + module-augmented `Commands` to match siblings, AND fix `use-roving-editor.ts:280-281 / 340-342` Pattern-C ref plumbing (reads `.current` at configure time, defeats the ref) — migrate to wrapper-closure pattern that `TagRef.configure` at L309-313 uses. Factor out `createPickerPlugin(cfg)` for the ~50-70 LOC/file shared `addProseMirrorPlugins` shell across the 5 pickers (keep per-picker `addInputRules` separate). | M |
 | MAINT-131 | MAINT | Block-surface Tauri coupling — 8 presentational components in `src/components/` import functions from `src/lib/tauri` directly (`StaticBlock`, `EditableBlock`, `SortableBlock`, `BlockListItem`, `BlockPropertyEditor`, `BlockPropertyDrawer`, `ImageResizeToolbar`, `LinkEditPopover`). Notable double-IPC: `SortableBlock.tsx:155` calls `listAttachments(blockId)` AND `StaticBlock` via `useBlockAttachments` also calls `listAttachments` for every visible block (1 IPC → 2 IPCs per block row on the page). Add backend `get_batch_attachment_counts(block_ids)` (mirrors the existing `json_each`-backed batch patterns in `fts.rs` / `backlink/query.rs`), wrap per-IPC calls in hooks (`usePropertySave` already exists; add `useBlockReschedule`, `useLinkMetadata`). Prevents isolated rendering (Storybook, unit tests w/o full mocks) too. | L |
+| MAINT-132 | MAINT | Consolidate hand-written recursive CTEs. Ancestor walks at `commands/blocks/move_ops.rs:93-109` (cycle detection) + `commands/blocks/crud.rs:99-110` (depth check) and descendant walks at `commands/history.rs:51-64` / `:72-81` (DeleteBlock/RestoreBlock cascades) are still inline. `block_descendants.rs` macros cover descendant walks but not ancestors, and history.rs is not on the documented exception list at `block_descendants.rs:36-38`. Every hand-written CTE risks forgetting invariant #9 (`is_conflict = 0` + `depth < 100`). Extend the macro family to cover ancestor walks + `find_lca` chain-walking; migrate history.rs to the existing `descendants_cte_*!()` macros. | M |
+| MAINT-133 | MAINT | **Possible data-loss bug surfaced by review.** `BlockSnapshot` (`snapshot/types.rs:15-33`), the snapshot SELECT (`snapshot/create.rs:21`), and the restore INSERT (`snapshot/restore.rs:135-154`) all omit the `conflict_type` column that migration `0007_add_conflict_type.sql:3` adds to `blocks` and that `merge/resolve.rs:117-127` populates on every conflict copy (values `Text`/`Property`/`Move`/`DeleteEdit`). On any snapshot round-trip (restore, peer snapshot catch-up) every conflict block's `conflict_type` becomes NULL. **Write a round-trip test first to confirm the regression is reachable**, then add the column to the struct + SELECT + INSERT and bump `snapshot::SCHEMA_VERSION`. | S–M |
+| MAINT-134 | MAINT | Extract `emit_property_changed_event(app, block_id, changed_keys)` helper in `commands/properties.rs`. Six Tauri command wrappers (`set_property`, `set_todo_state`, `set_priority`, `set_due_date`, `set_scheduled_date`, `delete_property` at `properties.rs:654-848`) repeat the same ~12-line "call inner → emit `EVENT_PROPERTY_CHANGED` → log-on-error" block verbatim. Any change to the event payload or emission strategy touches 6 sites today. | S |
+| MAINT-135 | MAINT | Move MCP `parse_args<T>` (duplicated at `mcp/tools_ro.rs:176` and `mcp/tools_rw.rs:111`) plus a new `to_tool_result<T: Serialize>(resp) -> Result<Value, AppError>` into `mcp/mod.rs`. Every RO/RW handler today repeats both bits of ceremony; collapsing them makes each handler ~2 lines. | S |
+| MAINT-136 | MAINT | MCP tool-name centralization + registry-driven privacy guard. Each of ~15 MCP tool names is duplicated across 4 sites (ToolDescription, `call_tool` match, `parse_args` error prefix, `summarise.rs` dispatch) with no compile-time link — drift hazard. The privacy-guard test (`mcp/summarise.rs::privacy_guard_no_summariser_leaks_content_or_value_text`) maintains a separate hand-typed list of 15 names; adding a tool without a summariser silently falls through to bare tool name. Introduce `&'static str` constants (or a `ToolName` enum) and drive the privacy guard by iterating the registry rather than a frozen list. | S–M |
+| MAINT-137 | MAINT | Extract `#[cfg(test)]` mega-blocks to sibling `tests.rs` files. Production / test line counts: `mcp/server.rs` 3053 total / ~915 prod, `mcp/tools_ro.rs` 2138 / ~645, `mcp/tools_rw.rs` 1189 / ~449, `sync_files.rs` 2393 / ~720. Mechanical move; no production refactor required. Matches the already-established pattern in `sync_daemon/`, `sync_protocol/`, `sync_net/`. Immediately reduces scan time on the largest backend files. Do in one commit per file so CI cache invalidation stays bounded. | S–M |
+| MAINT-138 | MAINT | Extract GCal HTTP send helper. All 6 public methods on `GcalApi` (`gcal_push/api.rs:231-466`) — `create_dedicated_calendar`, `delete_calendar`, `insert_event`, `patch_event`, `delete_event`, `get_event` — repeat the same skeleton (`bucket.lock().await.take()` → URL `format!` → `.bearer_auth(token.access.expose_secret())` → `.send()` → `reqwest_to_gcal_err` → status branch → `classify_error`). Introduce `async fn send<B, T>(&self, method, path, token, body, path_kind: PathKind) -> Result<Option<T>, AppError>`; each public method becomes ~5 lines. | S |
+| MAINT-139 | MAINT | Collapse the `GcalClient` trait + `GcalApiAdapter` in `gcal_push/connector.rs:97-212`. The ~115 lines of forwarders exist only so `MockGcalClient` can be substituted in tests, but `GcalApi` already supports a configurable base URL (used by `wiremock` in existing tests), and the parallel API has already drifted (`patch_event` returns `EventResponse` in `api.rs` but `()` through the adapter). Either (a) retire the trait+adapter and test `GcalApi` directly against `wiremock`, or (b) make `GcalApi` itself `impl GcalClient`. Also eliminates the 40-line `ClientAdapter` nested trait impl inside `run_task_loop` (`connector.rs:957-996`) that only exists to paper over generics vs trait object. | M |
+| MAINT-140 | MAINT | Type `CycleOutcome::HardFailure`. Currently `HardFailure(String)` at `gcal_push/connector.rs:442-454, 524-597` discards structured `GcalErrorKind` variants into formatted strings at every call site (`"unauthorized (reauth required)"`, `"rate_limited: retry after {…}ms"`, `"server_error: HTTP {status}"`, `"invalid_request: {msg}"`). Task loop only uses it for logging. Replace with `HardFailure(GcalErrorKind)` (or a narrower `HardFailureReason` enum); keep a `Display` impl for log lines. Also unifies `classify_date_err` + `classify_cycle_failure` which duplicate per-variant arms. | S |
+| MAINT-141 | MAINT | `tag_inheritance.rs` (1324L) embeds **11** `WITH RECURSIVE` blocks and **14** literal `depth < 100` bounds, bypassing the `block_descendants.rs` macro infrastructure. Add `subtree_cte_*!()` macros covering the tag-inheritance walks; replace literal `100` with a named `MAX_TAG_INHERITANCE_DEPTH` constant (or reuse a crate-wide one). Precondition for MAINT-132's broader consolidation. | M |
+| MAINT-142 | MAINT | Split `tag_inheritance.rs` (1324L) into `tag_inheritance/mod.rs` (dispatcher) + `incremental.rs` + `rebuild.rs` + `tests.rs` — matches the pattern used by sibling modules. The file documents `apply_op_tag_inheritance` as "the" single entry point but 7 other `pub async fn` are also callable; demote helpers to `pub(crate)` as part of the split. Deliver after MAINT-141 so the macros move first. | M |
+| MAINT-143 | MAINT | Dedup leaf-resolution SQL shared between `tag_query/resolve.rs` and `backlink/filters.rs`. The query is literally copy-pasted with a comment in one file acknowledging it. UX-250 inline-ref union behaviour risks diverging silently between the two copies. Move to one location and call from both sites. | S |
+| MAINT-144 | MAINT | Dedup `MAX(position) + 1` sibling-placement SQL. Identical query (with the same BUG-24 `NULL_POSITION_SENTINEL` exclusion hack) lives in `merge/resolve.rs:84-98` and `recurrence/compute.rs:166-180`. Extract `async fn next_sibling_position_excluding_sentinel(tx, parent_id) -> i64` and call from both. | S |
+| MAINT-145 | MAINT | Clarify sync orchestrator boundaries + delete dead protocol-layer arms. `sync_daemon/orchestrator.rs` owns peer discovery, scheduling, per-peer locking, snapshot+file transfer orchestration; `sync_protocol/orchestrator.rs` owns the HeadExchange→OpBatch→Merge→Complete state machine. Add module-level doc comments stating each layer's responsibility explicitly, and delete the file-transfer message arms at `sync_protocol/orchestrator.rs:460-467` that are never reached (file transfer is handled entirely by `sync_files.rs` after `SyncComplete`). Also a good place to document `SyncOrchestrator` invariants (when `remote_device_id` is populated, how `received_ops` accumulates, meaning of `is_terminal`). | S |
+| MAINT-146 | MAINT | LOW cleanup batch — core / op log. (a) `OpPayload::normalize_block_ids()` at `op.rs:329-333` is an empty method whose name misleads — rename `_assert_normalized()` or remove. (b) `serialize_variant!` macro wraps a single 12-arm match at `op_log.rs:46-59` — inline. (c) `dag::find_lca` at `dag.rs:220-346` duplicates two chain-walk loops with the same error message in 4 places — extract `walk_edit_chain(pool, start, max_steps, has_snapshots)`. (d) `insert_remote_op` doesn't verify canonical `parent_seqs` ordering (documentation-only; hash re-verify is self-consistent under current design). (e) Hardcoded `20` import-depth limit at `import.rs:119-126, 198-202` — introduce `const MAX_IMPORT_DEPTH: usize = 20;`. (f) `op_log.rs:128` builds JSON with `format!(r#"[["{}",{}]]"#, …)` — use `serde_json::to_string(&vec![(device_id, prev_seq)])?`. (g) `db.rs` `init_pool` / `init_pools` split would benefit from a short "when to use which" doc comment. | S |
+| MAINT-147 | MAINT | LOW cleanup batch — commands. (a) `purge_block_inner` at `commands/blocks/crud.rs:716-937` is ~221L with ~15 near-identical `DELETE`/`UPDATE` blocks; introduce a `purge_descendants_table!()` macro for the uniform DELETE-by-IN case (~10 of 15 blocks). (b) `prev_edit` lookup duplicated between `crud.rs:398-409` and `drafts.rs:84-95` — extract `find_prev_edit_in_tx`. (c) ~99 `#[tauri::command]` wrappers repeat `State` + `.map_err(sanitize_internal_error)`; add a pre-commit check (not a macro — macros obstruct specta). (d) Two `dispatch_background_for_*` helpers in `commands/spaces.rs` differ only by an error-message string — unify. (e) `set_todo_state_inner` / `set_priority_inner` (`commands/properties.rs:92-104, 253-265`) duplicate the "fetch def → fallback to defaults" validation with different default arrays — extract helper. (f) Unused `_space_id: &str` parameter in `spaces::dispatch_background_for_page_create:246`. (g) Mixed `sanitize_internal_error` vs `super::sanitize_internal_error` import paths in `properties.rs` — normalize. (h) `bug_report.rs` comments reference hardcoded "2 MB" / "7 days" / "8 KB" alongside the named constants — reference the constants by name. (i) `redact_line` growing param list at `bug_report.rs:255-306` — bundle into `RedactionContext` struct. (j) `DEFAULT_RETENTION_DAYS.cast_signed()` in `commands/compaction.rs:70, 129` with no safety comment — add a one-liner or wrap in a helper. (k) Missing doc comments on command wrappers at `link_metadata.rs:60/71`, `gcal.rs:309/320/330/350/360`, `bug_report.rs:178/479`, `sync_cmds.rs:345`. | S–M |
+| MAINT-148 | MAINT | LOW cleanup batch — materializer / cache / pagination / backlink. (a) 10 identical `match read_pool { Some(rp) => ..._split(...), None => ...(...) }` arms in `materializer/handlers.rs::handle_background_task:754-820` — extract split-or-single dispatch helper. (b) Every cache module (`cache/tags.rs`, `pages.rs`, `agenda.rs`, `block_links.rs`, …) repeats "start timer → log 'rebuilding X' → log 'rebuilt X' + duration" boilerplate — provide `rebuild_with_timing(name, closure)` in `cache/mod.rs`. (c) `Cursor { id, position: None, deleted_at: None, seq: None, rank: None }` pattern duplicated across 10 files in `pagination/` — add `cursor_for_id`, `cursor_for_id_and_position`, etc. helpers. (d) `sort_by_property_text`/`_num`/`_date` in `backlink/sort.rs` + their fetch helpers share identical shape — extract a generic parameterized by fetch+comparator. (e) ULID reference regexes (`TAG_REF_RE`, `PAGE_LINK_RE`, `ULID_LINK_RE`) defined in both `fts/strip.rs` and `cache/mod.rs` — canonicalize one definition. (f) Fg/bg retry loops in `materializer/consumer.rs` have different shapes — shared `retry_with_backoff` helper would reduce divergence risk. (g) Unused `_metrics: &QueueMetrics` parameter on `handle_foreground_task:22-26`. (h) Doc-comment passes on ordering invariants (`FULL_CACHE_REBUILD_TASKS` dependencies, retry-schedule rationale, two-tier fg/bg retry semantics, consumer's `INITIAL_BACKOFF_MS` pointing at `retry_queue.rs`'s persistent schedule). | M |
+| MAINT-149 | MAINT | LOW cleanup batch — sync stack. (a) Binary frame chunking duplicated between `sync_daemon/snapshot_transfer.rs:295-304, 463-497` and `sync_files.rs:385-392, 573-592` — extract `send_binary_chunked` / `receive_binary_chunked` in `sync_net/connection.rs`. (b) Sync-wide constants duplicated (120s handshake timeout in `sync_daemon/server.rs:235` + `sync_daemon/orchestrator.rs:649`; 5 MB chunk size in `snapshot_transfer.rs` + `sync_files.rs:35`; others) — consolidate in one `sync_constants.rs` with rationale comments. (c) `SyncOrchestrator` invariants (when `remote_device_id` is populated, how `received_ops` accumulates) undocumented. (d) `SyncMessage` enum in `sync_protocol/types.rs` has no documentation of valid message sequences (HeadExchange → OpBatch → SyncComplete → snapshot/file-transfer). (e) `#[allow(unused_imports)]` / `#[allow(dead_code)]` in `sync_daemon/mod.rs:51-54, 86` are defensible but deserve one-line justifications. (f) `pairing.rs` / `sync_cert.rs` relationship split across three files with no module-level narrative of their role in the pairing flow. (g) `peer_refs::update_on_sync` accepts empty-string `last_sent_hash` sentinel (used by snapshot catch-up) that is undocumented — use `Option<&str>` or comment. (h) File-transfer phase in `sync_files.rs` emits no progress/completion events unlike other sync phases — thread the existing `event_sink` in. | M |
+| MAINT-150 | MAINT | LOW cleanup batch — MCP. (a) `SEARCH_SNIPPET_CAP` doc says "UTF-8 bytes" but impl uses `chars().take(...)` (Unicode scalars) — fix doc or rename. (b) Bare `200` error-clip literal at `mcp/server.rs:507` unlike every other cap. (c) `LIST_RESULT_CAP = 100` duplicates `commands::MCP_PAGE_LIMIT_CAP = 100` — `pub use` the commands constant. (d) JSON schemas hand-authored via `json!` macros with no compile-time link to arg structs (`ListPagesArgs`, etc.) — introduce `schemars` derive or struct-field-doc + equivalence test. (e) `wrap_tool_result_error` at `mcp/server.rs:381` marked `#[allow(dead_code)]` with outdated FEAT-4h justification; no real caller — delete. (f) `emit_tool_completion` has 8 positional string args with `#[allow(clippy::too_many_arguments)]` — bundle into a struct. (g) `handle_get_page` at `mcp/tools_ro.rs:518` runs its own SQL space lookup, violating the "thin wrapper" invariant from the module header — push into `commands::pages`. (h) RO/RW `call_tool` dispatch skeletons share boilerplate (ACTOR.scope wrapper, clone boilerplate, unknown-tool fallthrough) — extract shared helper. (i) `bin/agaric-mcp.rs` locally redefines `APP_IDENTIFIER` / `MCP_RO_SOCKET_FILENAME` / `MCP_RO_PIPE_PATH` instead of importing from `mcp/mod.rs`. (j) `mcp/last_append.rs` is consumed from `op_log::append_local_op_in_tx` — inverted dependency direction; relocate task-local to `crate::op::last_append` or a neutral `task_locals` module. | S–M |
+| MAINT-151 | MAINT | LOW cleanup batch — GCal. (a) `/*on_event*/ false` bool-with-comment across 5 call sites in `gcal_push/api.rs` — replace with `enum NotFoundMeans { CalendarGone, EventGone }`. (b) Magic `status: 0` sentinel for transport failures in `GcalErrorKind::ServerError` at `gcal_push/api.rs:673-682` — add `Transport(String)` variant or a documented `NO_RESPONSE: u16 = 0` constant. (c) Bare `Duration::from_secs(30)` HTTP client timeout at `api.rs:699` — hoist to named const next to other tuning constants. (d) `OAuthClient` re-parses three URLs and rebuilds the typestated client on every call at `oauth.rs:307-340, 366-384` — cache parsed `AuthUrl`/`TokenUrl`/`RedirectUrl` in the struct. (e) Empty-string `SecretString` refresh-token "placeholder" at `oauth.rs:658-666` — use `Option<SecretString>` so the missing-refresh case is type-visible. (f) `is_revocation_error` at `oauth.rs:749-758` is a trivial one-line `matches!` — inline at the single call site. (g) Unused `_emitter` parameter on `classify_date_err` at `connector.rs:716-741`. (h) `classify_date_err` + `classify_cycle_failure` duplicate per-variant arms — share a `kind_display(&GcalErrorKind) -> String` helper (pairs with MAINT-140). (i) `set_setting` UPDATE SQL inlined inside BEGIN IMMEDIATE txn at `connector.rs:770-790` because `models::set_setting` takes `&SqlitePool` — add `set_setting_in_tx<'a, E: Executor<'a, Database=Sqlite>>` generic helper. (j) Repeated `serde_json::from_str` validate-then-discard across `compute_for_edit_block` / `_delete_block` / `_restore_block` in `dirty_producer.rs:256-389` — collapse into one content-change helper. (k) `is_agenda_relevant_key` at `dirty_producer.rs:75-88` mixes hyphenated (`repeat-until`) and underscored (`repeat_interval`) property keys without a canonical list — define a constant array (ideally shared with the property writers). (l) Four TODO-state literals (`"TODO"`/`"DOING"`/`"DONE"`/`"CANCELLED"`) hard-coded in `digest.rs:161-164, 324-333` — no canonical enum exists today; either introduce one or pin an exhaustiveness test. | M |
+| MAINT-152 | MAINT | LOW cleanup batch — misc features. (a) Seven ~20-line batch-INSERT scaffolds in `snapshot/restore.rs::apply_snapshot:126-278` share the same shape — a narrow helper would collapse ~150L (kept LOW because sqlx bind-builder ergonomics make a generic awkward). (b) Minor `+Nm`/`+Ny` arithmetic duplication between recurrence paths in `recurrence/compute.rs`. (c) `link_metadata/html_parser.rs` auth-detection heuristics are a hardcoded lookup-ladder rather than a data-driven list. (d) `snapshot/restore.rs` hardcodes cache-wipe order and cache-rebuild order as two separate sequences of `sqlx::query(...)` / enum-variant literals — drive both loops from a single inventory constant so new cache tables can't be forgotten. (e) `migrate_personal_pages_to_work` in `spaces/bootstrap.rs` is a one-shot migration (~160L) with no kill-date plan. (f) Plus the remaining 08-MISC-008..010, 014, 016 items documented in `/tmp/agaric-review/pass1/08-misc-features.md`. | M |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
@@ -1288,6 +1309,408 @@ Do NOT add unused locales (no `es.ts`, no `fr.ts`) — single-locale stays. Pure
 **Cost:** L — 1 backend command + 1 hook + refactor of 8 components (probably 3 PRs).
 **Risk:** Low — additive IPC, existing per-block calls can coexist during migration.
 **Impact:** M — eliminates doubled IPC on every page mount AND enables isolated rendering (Storybook, unit tests w/o full mocks) for block-surface components.
+
+### MAINT-132 — Consolidate hand-written recursive CTEs behind `block_descendants` macros
+
+**What:** Four command files still hand-write recursive CTEs that should use (or extend) the existing `block_descendants.rs` macros:
+
+- `commands/blocks/move_ops.rs:93-109` — ancestor walk for cycle detection before a move.
+- `commands/blocks/crud.rs:99-110` — ancestor walk for depth-limit check on parent change.
+- `commands/history.rs:51-64` — descendant walk for the DeleteBlock cascade (byte-for-byte mirror of `descendants_cte_active!()`).
+- `commands/history.rs:72-81` — descendant walk for RestoreBlock cascade (mirror of `descendants_cte_standard!()`).
+
+`block_descendants.rs:36-38` lists three documented call-sites that are intentionally inline; history.rs is **not** in that list.
+
+**Why:** Every hand-written recursive CTE is a chance to forget AGENTS.md invariant #9 — `is_conflict = 0` in the recursive member and `depth < 100` to bound runaway recursion on corrupted data. Both hand-written descendant walks in history.rs currently carry the invariant, but that survives only as long as every copy-editor remembers it.
+
+**Fix:**
+
+1. Add an ancestor-walk macro family to `block_descendants.rs` (`ancestors_cte_active!()`, `ancestors_cte_standard!()`, parameterized the same way as the descendant variants).
+2. Apply to `move_ops.rs` and `crud.rs`.
+3. Migrate history.rs to the existing `descendants_cte_*!()` macros.
+4. Optional stretch: factor `dag::find_lca`'s chain-walk loop (see MAINT-146 item c) to use a shared helper if the macro surface naturally covers it.
+
+**Cost:** M (2–8 h) — macro authoring + 4 call-site migrations + integration tests to cover `is_conflict=1` subtrees for each migrated call.
+**Risk:** Low — the existing macro pattern is well-established; every call site has an integration test today.
+**Impact:** M — eliminates invariant #9 drift risk across the four cited sites and makes adding a fifth trivial.
+
+### MAINT-133 — (possible bug) `BlockSnapshot` silently drops `conflict_type` on restore
+
+**What:** Migration `0007_add_conflict_type.sql:3` adds a `conflict_type TEXT` column to the `blocks` table (values `Text`, `Property`, `Move`, `DeleteEdit`). `merge/resolve.rs:117-127` writes it on every conflict-copy block. The snapshot pipeline does **not** carry it:
+
+- `snapshot/types.rs:15-33` — `BlockSnapshot` struct has no `conflict_type` field.
+- `snapshot/create.rs:21` — the SELECT list does not include `conflict_type`.
+- `snapshot/restore.rs:135-154` — the INSERT does not bind `conflict_type`.
+
+On any snapshot round-trip (user-triggered restore, peer snapshot catch-up during sync-reset), every conflict-copy block is re-inserted with `conflict_type` NULL — silent data loss.
+
+**Why this is in REVIEW-LATER rather than being fixed immediately:** the review did not reproduce the regression end-to-end; it identified the structural drop by reading the schema + snapshot pipeline. Before shipping a fix, confirm the bug is reachable.
+
+**Fix:**
+
+1. Write a round-trip test: seed a conflict copy with a non-NULL `conflict_type`, run `create_snapshot` → `apply_snapshot`, assert the column survives.
+2. If the test fails as expected, add `conflict_type: Option<String>` to `BlockSnapshot`, include it in the SELECT list, bind it in the INSERT, bump `snapshot::SCHEMA_VERSION` (see `snapshot/mod.rs`), and add a format-compat test asserting older-version snapshots still round-trip (NULL for missing column).
+
+**Cost:** S–M — the fix is tiny; the test + `SCHEMA_VERSION` bump + backward-compat coverage is the real work.
+**Risk:** Low–Medium — additive struct field; `SCHEMA_VERSION` bump rejects older-format snapshots unless the decoder tolerates missing fields (verify).
+**Impact:** H — restores conflict metadata fidelity across snapshot boundaries; prevents a silent integrity regression on every sync-reset / peer bootstrap.
+
+### MAINT-134 — Extract `emit_property_changed_event` helper in `commands/properties.rs`
+
+**What:** Six Tauri command wrappers in `commands/properties.rs` repeat the same ~12-line block verbatim:
+
+- `set_property` at L654-668
+- `set_todo_state` at L676-703
+- `set_priority` at L717-744
+- `set_due_date` at L751-778
+- `set_scheduled_date` at L785-813
+- `delete_property` at L820-848
+
+Each: `let resp = set_*_inner(...).await.map_err(sanitize_internal_error)?; if let Err(e) = app.emit(EVENT_PROPERTY_CHANGED, PropertyChangedEvent { block_id: ..., changed_keys: ... }) { logger::warn(...) } Ok(resp)`.
+
+**Fix:**
+
+```rust
+fn emit_property_changed_event(
+    app: &tauri::AppHandle,
+    block_id: String,
+    changed_keys: Vec<String>,
+) {
+    if let Err(e) = app.emit(EVENT_PROPERTY_CHANGED, PropertyChangedEvent { block_id, changed_keys }) {
+        tracing::warn!(?e, "failed to emit EVENT_PROPERTY_CHANGED");
+    }
+}
+```
+
+Call from all 6 wrappers. If other commands start emitting the same event, move the helper to `commands/mod.rs` or a new `commands/event_helpers.rs`.
+
+**Cost:** S.
+**Risk:** Low — mechanical extraction; the per-site behaviour is identical.
+**Impact:** M — one place to change the event payload, the log level, or add a future retry.
+
+### MAINT-135 — Move MCP `parse_args<T>` + `to_tool_result<T>` into a shared module
+
+**What:** `parse_args<T: DeserializeOwned>(args: Value) -> Result<T, AppError>` is defined verbatim at both `mcp/tools_ro.rs:176` and `mcp/tools_rw.rs:111`. Every RO/RW handler also repeats `serde_json::to_value(resp).map_err(|e| ...)?`.
+
+**Fix:**
+
+1. Move `parse_args<T>` to `mcp/mod.rs` (or a new `mcp/handler_utils.rs`); both RO and RW tools import it.
+2. Add `fn to_tool_result<T: Serialize>(value: &T) -> Result<serde_json::Value, AppError>` with the same error prefix style used in the existing implementations.
+3. Convert each handler from its current 4-line ceremony to `let args: Args = parse_args(args)?; let resp = impl_fn(&pool, args).await?; to_tool_result(&resp)`.
+
+**Cost:** S — mostly mechanical text edits.
+**Risk:** Low — behaviour-preserving; each handler has a test.
+**Impact:** M — easier to add new handlers; one place to change arg-parsing error shape if MCP spec evolves.
+
+### MAINT-136 — Centralize MCP tool names; drive privacy guard from the registry
+
+**What:** Each of ~15 MCP tool names is spelled out at 4 unrelated sites with no compile-time link:
+
+1. `ToolDescription` entry (tool name string in the schema).
+2. `call_tool` match arm (dispatch).
+3. `parse_args` error prefix (diagnostic `"<tool_name>: …"`).
+4. `mcp/summarise.rs` match that selects a privacy-preserving summary.
+
+And `mcp/summarise.rs::privacy_guard_no_summariser_leaks_content_or_value_text` keeps a separately-maintained hand-typed list of 15 names. Adding a tool that forgets a summariser silently falls through to emitting the bare tool name (not a block content leak, but a sign the guard didn't fire for that tool).
+
+**Fix:**
+
+- Define `pub(crate) const TOOL_<NAME>: &str = "<name>";` in `mcp/registry.rs` (or a new `mcp/tool_names.rs`). Use the constants at all 4 sites. Consider a `ToolName` enum if stringly-typed becomes awkward.
+- Rewrite the privacy-guard test to iterate `registry.tools()` — fail if any registered tool has no match arm in `summarise.rs` — instead of matching against a hand-maintained list.
+
+**Cost:** S–M — straightforward text edits + one test rewrite.
+**Risk:** Low — purely name-centralization.
+**Impact:** M — eliminates the 4-site fan-out drift hazard and closes a silent-failure trap for new tools.
+
+### MAINT-137 — Extract `#[cfg(test)]` mega-blocks to sibling `tests.rs` files
+
+**What:** Four of the largest backend files are mostly test code, making them harder to scan than necessary:
+
+| File | Total lines | Production | Tests |
+|---|---|---|---|
+| `mcp/server.rs` | 3053 | ~915 | ~2138 |
+| `mcp/tools_ro.rs` | 2138 | ~645 | ~1493 |
+| `mcp/tools_rw.rs` | 1189 | ~449 | ~740 |
+| `sync_files.rs` | 2393 | ~720 | ~1673 |
+
+The established repo pattern elsewhere (`sync_daemon/tests.rs`, `sync_protocol/tests.rs`, `sync_net/tests.rs`, `materializer/tests.rs`) is to keep the production code in `foo.rs` and move the test module into a sibling `tests.rs` re-attached via `#[cfg(test)] mod tests;`.
+
+**Fix:** Move each file's test block into a sibling `tests.rs`. One commit per file so CI cache invalidation stays bounded. No behaviour change.
+
+**Cost:** S–M — mechanical per file; biggest one is `mcp/server.rs`.
+**Risk:** Low — test-only move; any test-only helpers (`use super::*;`) are preserved by the pattern.
+**Impact:** M — immediately halves the "what does this file do" scan time on the four largest files.
+
+### MAINT-138 — Extract GCal HTTP send helper
+
+**What:** All 6 public methods on `GcalApi` share the same skeleton:
+
+```text
+self.bucket.lock().await.take().await;
+let url = format!(..., self.base_url, ...);
+let resp = self.client
+    .<method>(&url)
+    .bearer_auth(token.access.expose_secret())
+    ...
+    .send().await.map_err(reqwest_to_gcal_err)?;
+let status = resp.status();
+if status.is_success() { ...parse... }
+else { Err(classify_error(status, &resp_headers(&resp), /* on_event */ ...)?) }
+```
+
+Sites: `create_dedicated_calendar`, `delete_calendar`, `insert_event`, `patch_event`, `delete_event`, `get_event` in `gcal_push/api.rs:231-466`.
+
+**Fix:** Private
+
+```rust
+async fn send<B: Serialize, T: DeserializeOwned>(
+    &self,
+    method: reqwest::Method,
+    path: &str,
+    token: &OAuthToken,
+    body: Option<&B>,
+    path_kind: PathKind,   // CalendarPath | EventPath — see MAINT-151(a)
+) -> Result<Option<T>, AppError> { ... }
+```
+
+Each public method shrinks to ~5 lines. Pairs with MAINT-151(a), which replaces the `/*on_event*/ bool` convention with a `PathKind` enum that parameterizes this helper.
+
+**Cost:** S.
+**Risk:** Low — behaviour-preserving; `wiremock`-based tests cover each endpoint.
+**Impact:** M — six near-duplicate bodies collapse; adding a new endpoint is a couple of lines.
+
+### MAINT-139 — Collapse `GcalClient` trait + `GcalApiAdapter`
+
+**What:** `gcal_push/connector.rs:97-212` declares a `GcalClient` trait that mirrors every `GcalApi` method and a `GcalApiAdapter` that forwards each call; ~115 lines of forwarders that exist only so tests can substitute `MockGcalClient`. The two APIs have already drifted:
+
+- `GcalApi::patch_event` returns `EventResponse`; the trait's `patch_event` returns `()` (adapter throws the response away).
+- Each shape change requires 3 edits: `api.rs`, the trait, the adapter.
+
+`connector.rs:957-996` defines yet another 40-line `ClientAdapter` trait impl **inside** `run_task_loop`, only because `run_cycle` is generic over `C: GcalClient` (Sized) while the outer task holds `Arc<dyn GcalClient>` (?Sized). This is architectural friction, not a real adapter.
+
+**Fix (one of):**
+
+- **(a)** Retire the trait + adapter entirely. `GcalApi` already supports a configurable base URL via `shared_client_with_base_url` — existing wiremock tests prove this. Port the connector tests to point at a `wiremock` instance and drop the `Mock*` machinery.
+- **(b)** Keep the trait for dynamic-dispatch in the task loop, but have `GcalApi` itself `impl GcalClient` directly (no adapter). Kill the nested `ClientAdapter` inside `run_task_loop` by changing `run_cycle` to take `&dyn GcalClient`.
+
+**Cost:** M — the test migration (a) or generics refactor (b) is the real work.
+**Risk:** M — external test surface for the connector changes; run the full gcal integration suite after.
+**Impact:** M — ~150 LOC gone and one fewer API surface to keep in sync.
+
+### MAINT-140 — Type `CycleOutcome::HardFailure`; unify error classifiers
+
+**What:** `gcal_push/connector.rs:442-454, 524-597` define `CycleOutcome::HardFailure(String)` and the construction sites format every `GcalErrorKind` variant into a string (`"unauthorized (reauth required)"`, `"rate_limited: retry after {retry_after_ms}ms"`, `"server_error: HTTP {status}"`, `"invalid_request: {msg}"`, etc.). The task loop only uses `HardFailure(String)` for logging — the structural routing already happened via emitter calls earlier. Any downstream caller that wants to react programmatically has to string-match.
+
+A second classifier, `classify_date_err` at `connector.rs:716-741`, duplicates every arm for a different result taxonomy (`DateFailure` instead of `CycleOutcome`).
+
+**Fix:**
+
+1. Change `CycleOutcome::HardFailure(String)` to `HardFailure(GcalErrorKind)` (or a narrower `HardFailureReason` enum if needed). Keep a `Display` impl for log lines.
+2. Factor `fn kind_display(kind: &GcalErrorKind) -> String` and use from both `classify_cycle_failure` and `classify_date_err` — or route both through a single `classify(err, scope: ErrorScope) -> Classification`.
+
+**Cost:** S — enum-variant change + touch every construction site; classifier unification is a few helper functions.
+**Risk:** Low — compiler-checked after the variant change.
+**Impact:** M — a future `GcalErrorKind` variant only needs updates at `kind_display`, not at 5 formatting sites.
+
+### MAINT-141 — `tag_inheritance.rs` recursive CTE macros + `MAX_DEPTH` constant
+
+**What:** `tag_inheritance.rs` (1324L) embeds **11** `WITH RECURSIVE` blocks and **14** literal `depth < 100` bounds directly in SQL. It is the single largest concentration of raw recursive-CTE SQL in the backend and bypasses the `block_descendants.rs` macro infrastructure that exists for exactly this purpose.
+
+**Fix:**
+
+1. Define `const MAX_TAG_INHERITANCE_DEPTH: usize = 100;` at the top of the module (or reuse a crate-wide constant if one exists).
+2. Add `subtree_cte_*!()` macros for the tag-inheritance-specific walks (the shape differs slightly from the `block_descendants` descendant walks — tag inheritance walks tags *up* the tree, and also joins `block_tags`). Parameterize on guard-predicate + active/standard variants like the existing macros.
+3. Replace every `WITH RECURSIVE` block in the file with a macro invocation.
+4. Replace every literal `100` in the macros with `MAX_TAG_INHERITANCE_DEPTH`.
+
+Precondition for MAINT-132's broader consolidation story.
+
+**Cost:** M — macro authoring + 11 call-site rewrites + regression tests that exercise deep subtrees.
+**Risk:** Medium — tag inheritance is a correctness-critical materialized cache; any drift breaks Agenda + backlinks.
+**Impact:** M — eliminates the single largest lint-free copy-paste risk site for invariant #9.
+
+### MAINT-142 — Split `tag_inheritance.rs` into `mod.rs` + `incremental.rs` + `rebuild.rs` + `tests.rs`
+
+**What:** `tag_inheritance.rs` is 1324 lines and exposes ~8 top-level `pub async fn` (`apply_op_tag_inheritance` documented as "the" single entry point, plus 7 helpers). The documented single-entry-point invariant is not enforced by visibility — every helper is `pub`.
+
+**Fix:**
+
+1. Refactor into `tag_inheritance/` directory: `mod.rs` (dispatcher + re-exports), `incremental.rs` (per-op handlers), `rebuild.rs` (full-cache rebuild from snapshot-like state), `tests.rs` (#[cfg(test)] block).
+2. Demote every helper to `pub(crate)`; make `apply_op_tag_inheritance` the only `pub` surface.
+3. Deliver **after** MAINT-141 so the macro extraction stays inside one file before the structural split.
+
+**Cost:** M — straight-up file-level refactor; test module moves verbatim.
+**Risk:** Low — no logic change; the call graph (only `materializer/handlers.rs` imports this module) is small.
+**Impact:** M — readable seams for a critical subsystem; discourages new cross-helper coupling.
+
+### MAINT-143 — Deduplicate `tag_query/resolve.rs` leaf SQL shared with `backlink/filters.rs`
+
+**What:** `tag_query/resolve.rs` contains a leaf-resolution query that is also copy-pasted into `backlink/filters.rs` (with a four-word comment in `backlink/filters.rs` admitting this: roughly "duplicated from tag_query"). UX-250 ships "inline-ref union" behaviour — any future change to that union semantic risks silently diverging between the two copies.
+
+**Fix:** Move the leaf SQL (the query itself — not the calling-code structure, which differs legitimately) to one location (`tag_query/resolve.rs` is the natural home) and have `backlink/filters.rs` call through. Add a single shared integration test that pins the UX-250 inline-ref union behaviour so any future drift triggers a CI failure.
+
+**Cost:** S.
+**Risk:** Low.
+**Impact:** M — removes a real silent-drift hazard in an already-subtle reference-resolution path.
+
+### MAINT-144 — Deduplicate `MAX(position) + 1` sibling-placement SQL
+
+**What:** Identical "find the next sibling position, excluding the `NULL_POSITION_SENTINEL`" query lives in two places:
+
+- `merge/resolve.rs:84-98`
+- `recurrence/compute.rs:166-180`
+
+Both carry the same BUG-24 sentinel-exclusion hack. Each call issues the same `MAX(position) + 1` SQL with the same `WHERE position != ?sentinel` filter.
+
+**Fix:** Extract
+
+```rust
+pub(crate) async fn next_sibling_position_excluding_sentinel(
+    tx: &mut Transaction<'_, Sqlite>,
+    parent_id: &str,
+) -> Result<i64, AppError> { ... }
+```
+
+into a shared module (e.g., `sql_utils.rs` or a new `block_positions.rs`). Call from both sites.
+
+**Cost:** S.
+**Risk:** Low — two call sites, both covered by tests.
+**Impact:** S — one place for BUG-24 follow-ups; no more silent drift between merge-conflict sibling placement and recurrence sibling placement.
+
+### MAINT-145 — Clarify sync orchestrator boundaries + delete dead protocol-layer arms
+
+**What:** There are two orchestrators with fuzzy boundaries:
+
+- `sync_daemon/orchestrator.rs` (838 lines) — peer discovery, backoff, per-peer locking, mDNS event routing, snapshot catch-up orchestration, file-transfer orchestration.
+- `sync_protocol/orchestrator.rs` (513 lines) — HeadExchange → OpBatch → Merge → Complete state machine.
+
+The protocol orchestrator at `sync_protocol/orchestrator.rs:460-467` accepts file-transfer message variants (FileRequest / FileOffer / FileReceived / FileTransferComplete) and does nothing with them — file transfer is actually handled entirely by `sync_files.rs` after `SyncComplete`. Those arms are dead code that misleads readers.
+
+In addition, the `SyncOrchestrator` struct has multiple undocumented invariants: when `remote_device_id` becomes `Some`, when `pending_op_transfers` is populated, how `received_ops` accumulates across `OpBatch` messages, and the distinct semantics of the three terminal states (Complete / Failed / ResetRequired).
+
+**Fix:**
+
+1. Add module-level doc comments to both orchestrator files explicitly stating each layer's responsibilities.
+2. Delete the dead file-transfer match arms in `sync_protocol/orchestrator.rs:460-467` (or convert them to `debug_assert!(false, "file-transfer messages must not reach the protocol orchestrator")` if extra paranoia is warranted).
+3. Add a doc comment to `SyncOrchestrator` describing the state lifecycle and each invariant.
+4. Optional: consider moving `sync_daemon/snapshot_transfer.rs` under `sync_protocol/` since it is part of the core protocol (ResetRequired → SnapshotOffer/Accept/Reject) rather than a daemon concern — but only if a follow-up session wants to; this is not required for the documentation fix.
+
+**Cost:** S.
+**Risk:** Low — deleting unreachable match arms; documentation edits only.
+**Impact:** M — eliminates misleading code paths and makes future sync protocol changes safer.
+
+### MAINT-146 — LOW cleanup batch — core / op log
+
+Small, low-risk items. Each is independent; batch only for accounting.
+
+- **(a)** `OpPayload::normalize_block_ids()` at `op.rs:329-333` is an empty method with a doc comment duplicated in the body. Either rename `_assert_normalized()` (contract marker) or remove and rely on `BlockId` deserialization normalization.
+- **(b)** `serialize_variant!` macro at `op_log.rs:46-59` wraps a single 12-arm match that is called once. Inline it at the one call site.
+- **(c)** `dag::find_lca` at `dag.rs:220-346` duplicates two near-identical nested chain-walk loops (chain A then chain B) with the same error message in 4 places. Extract `walk_edit_chain(pool, start, max_steps, has_snapshots)`.
+- **(d)** `dag::insert_remote_op` at `dag.rs:71-95` does not verify canonical lexicographic ordering of `parent_seqs` (hash re-verification is self-consistent under the current scheme, so this is **docs-only**). Add a doc comment or a soft assertion in a future tightening.
+- **(e)** Hardcoded `20` import-depth limit at `import.rs:119-126, 198-202`. Introduce `const MAX_IMPORT_DEPTH: usize = 20;`.
+- **(f)** `op_log.rs:128` builds JSON with `format!(r#"[["{}",{}]]"#, device_id, prev_seq)` instead of `serde_json::to_string(&vec![(device_id, prev_seq)])?`. Premature optimization — Phase 1 has a single parent.
+- **(g)** `db.rs` `init_pool` / `init_pools` split has an unclear "when to use which" story; add a one-paragraph doc comment on `init_pool` clarifying test-only usage.
+
+**Cost:** S.
+**Risk:** Low across the board.
+**Impact:** S–M — each item is minor; the batch is mainly about paying down small drift hazards.
+
+### MAINT-147 — LOW cleanup batch — commands
+
+- **(a)** `purge_block_inner` at `commands/blocks/crud.rs:716-937` is ~221 lines of ~15 near-identical `DELETE` / `UPDATE` blocks. Extract a `purge_descendants_table!()` macro for the uniform DELETE-by-IN case (~10 of 15 blocks); leave variant cases (multi-column deletes, nullify-column updates) inline.
+- **(b)** `prev_edit` lookup query duplicated between `crud.rs:398-409` and `drafts.rs:84-95`. Extract `find_prev_edit_in_tx(tx, block_id)`.
+- **(c)** ~99 `#[tauri::command]` wrappers across `commands/` repeat `State` extraction + `.map_err(sanitize_internal_error)`. Do **not** macro-extract (macros obstruct specta's type extraction). Instead add a pre-commit check that every `#[tauri::command]` returning `Result<_, AppError>` ends with `.map_err(sanitize_internal_error)`.
+- **(d)** Two `dispatch_background_for_*` helpers in `commands/spaces.rs:242-276, 396-425` differ only by an error-message string. Unify.
+- **(e)** `set_todo_state_inner` / `set_priority_inner` at `commands/properties.rs:92-104, 253-265` duplicate the "fetch def → fallback to defaults" validation with different default arrays. Extract `validate_reserved_property_value(pool, key, value, defaults)`.
+- **(f)** Unused `_space_id: &str` parameter in `commands/spaces.rs:246` (`dispatch_background_for_page_create`). Remove.
+- **(g)** Mixed `sanitize_internal_error` vs `super::sanitize_internal_error` import paths in `commands/properties.rs`. Normalize to a single top-of-file `use super::sanitize_internal_error;`.
+- **(h)** `bug_report.rs:67, 72, 78, 83` defines `MAX_FILE_BYTES`, `MAX_ROLLED_AGE_DAYS`, `MAX_LINE_BYTES`, `RECENT_ERRORS_CAP` but surrounding comments/error messages still say "2 MB" / "7 days" / "8 KB". Reference the constants by name instead.
+- **(i)** `redact_line` at `bug_report.rs:255-306` has a growing optional-parameter list; bundle into a `RedactionContext { home, device_id, gcal_email, peer_device_ids }` struct.
+- **(j)** `DEFAULT_RETENTION_DAYS.cast_signed()` at `commands/compaction.rs:70, 129` has no safety comment. Add a one-liner or wrap in `fn retention_days_to_duration(days: u64) -> chrono::Duration`.
+- **(k)** Missing doc comments on Tauri command wrappers at `link_metadata.rs:60/71`, `gcal.rs:309/320/330/350/360`, `bug_report.rs:178/479`, `sync_cmds.rs:345` (the pass-1 reviewer incorrectly cited sites in `crud.rs`/`tags.rs`/`queries.rs` that are already documented; these are the actual undocumented wrappers).
+
+**Cost:** S–M.
+**Risk:** Low.
+**Impact:** M — aggregate.
+
+### MAINT-148 — LOW cleanup batch — materializer / cache / pagination / backlink
+
+- **(a)** 10 identical `match read_pool { Some(rp) => ..._split(...), None => ...(...) }` arms at `materializer/handlers.rs::handle_background_task:754-820`. Extract a single `dispatch_split_or_single(read_pool, split_fn, single_fn)` helper.
+- **(b)** Every cache module (`cache/tags.rs`, `pages.rs`, `agenda.rs`, `block_links.rs`, others) repeats "start timer → log 'rebuilding X' → log 'rebuilt X' + duration" boilerplate. Provide `rebuild_with_timing(name, closure)` in `cache/mod.rs`; each module's public rebuild becomes a one-liner wrapper.
+- **(c)** `Cursor { id, position: None, deleted_at: None, seq: None, rank: None }` construction duplicated across 10 files in `pagination/` (each sets a different subset to `Some`). Add `cursor_for_id`, `cursor_for_id_and_position`, `cursor_for_id_and_deleted_at`, etc. helpers in `pagination/mod.rs`.
+- **(d)** `sort_by_property_text` / `_num` / `_date` in `backlink/sort.rs:41-180` and their fetch helpers share identical shape; extract a generic parameterized by fetch+comparator.
+- **(e)** ULID reference regexes (`TAG_REF_RE`, `PAGE_LINK_RE`, `ULID_LINK_RE`) are defined in both `fts/strip.rs` and `cache/mod.rs` with slightly different names. Canonicalize one definition (ideally in `cache/mod.rs` or a new `ulid::refs` module) and re-use.
+- **(f)** Foreground and background retry loops in `materializer/consumer.rs` have subtly different shapes (single sleep vs for-loop). Factor `retry_with_backoff(task, max_retries, backoff, f)` helper used by both; reduces future divergence risk.
+- **(g)** Unused `_metrics: &QueueMetrics` parameter on `materializer/handlers.rs::handle_foreground_task:22-26`. Remove; add back when actually needed.
+- **(h)** Doc-comment pass: document the `FULL_CACHE_REBUILD_TASKS` ordering semantics at `materializer/dispatch.rs:10-29` (arms independent? dependency-ordered?), the two-tier fg/bg retry semantics at `consumer.rs`, and cross-reference the `retry_queue.rs` persistent schedule from the consumer's in-memory `INITIAL_BACKOFF_MS`.
+
+**Cost:** M.
+**Risk:** Low — each item is behaviour-preserving.
+**Impact:** M.
+
+### MAINT-149 — LOW cleanup batch — sync stack
+
+- **(a)** Binary frame chunking duplicated between `sync_daemon/snapshot_transfer.rs:295-304, 463-497` and `sync_files.rs:385-392, 573-592`. Extract `send_binary_chunked(conn, data, chunk_size)` and `receive_binary_chunked(conn, size_bytes)` in `sync_net/connection.rs`; use from both callers. (Five-megabyte chunk size is duplicated too; see item (b).)
+- **(b)** Sync-wide constants duplicated: 120-second handshake timeout hardcoded at `sync_daemon/server.rs:235` and `sync_daemon/orchestrator.rs:649`; 5 MB chunk size at `snapshot_transfer.rs` and `sync_files.rs:35`; and others. Consolidate in a new `sync_constants.rs` module with a short rationale comment next to each constant.
+- **(c)** `SyncOrchestrator` invariants documented in MAINT-145 — split here for LOW-batch accounting if MAINT-145 doesn't absorb it.
+- **(d)** `SyncMessage` enum at `sync_protocol/types.rs:60-101` has no documentation of valid message sequences (HeadExchange first → OpBatch → SyncComplete → optional snapshot/file-transfer). Add a doc comment.
+- **(e)** `#[allow(unused_imports)]` / `#[allow(dead_code)]` in `sync_daemon/mod.rs:51-54, 86` are defensible (the unused-imports are `pub(crate) use` re-exports only touched by `#[cfg(test)]` siblings; the `handle: Option<JoinHandle<()>>` is held to prevent task cancellation) — add a one-line justification comment next to each.
+- **(f)** The `pairing.rs` ↔ `sync_cert.rs` relationship is scattered across three files (`commands/sync_cmds.rs` orchestrates) with no module-level narrative. Add module-level doc comments to both explaining their role in the pairing flow and the handoff to TOFU pinning in `peer_refs`.
+- **(g)** `peer_refs::update_on_sync` accepts empty-string `last_sent_hash` as a "we sent nothing" sentinel (snapshot catch-up path) that is undocumented. Use `Option<&str>` or add a doc comment.
+- **(h)** File-transfer phase in `sync_files.rs` emits no progress/completion events unlike the protocol orchestrator and snapshot_transfer, so the frontend cannot show file-transfer progress. Thread the existing `event_sink` into `sync_files.rs` and emit `Progress { state: "file_transfer", ... }` + `Complete { ... }`.
+
+**Cost:** M.
+**Risk:** Low — mostly docs + mechanical extraction.
+**Impact:** M — better observability (h) + fewer magic numbers (b) are the biggest wins.
+
+### MAINT-150 — LOW cleanup batch — MCP
+
+- **(a)** `SEARCH_SNIPPET_CAP` doc says "UTF-8 bytes" but implementation uses `chars().take(...)` (Unicode scalars). Fix the doc or rename the constant.
+- **(b)** Bare `200` error-clip literal at `mcp/server.rs:507`; unlike every other cap which is a named constant.
+- **(c)** `LIST_RESULT_CAP = 100` duplicates `commands::MCP_PAGE_LIMIT_CAP = 100`. `pub use` the `commands` constant.
+- **(d)** JSON schemas for tool args are hand-authored via `json!` macros, with no compile-time link to the Rust arg structs (`ListPagesArgs`, etc.). Either use `schemars` derive on the structs or add an equivalence test (parse the schema + parse a sample arg with the struct + check fields match).
+- **(e)** `wrap_tool_result_error` at `mcp/server.rs:381` is marked `#[allow(dead_code)]` with an outdated FEAT-4h justification; it has no real caller. Delete.
+- **(f)** `emit_tool_completion` has 8 positional string arguments with `#[allow(clippy::too_many_arguments)]`; swappable-at-call-site hazard. Bundle into a struct.
+- **(g)** `handle_get_page` at `mcp/tools_ro.rs:518` runs its own SQL space lookup, violating the "thin wrapper" invariant stated in the module header. Push the lookup into `commands::pages` and call from both MCP and the Tauri command.
+- **(h)** RO and RW `call_tool` dispatch skeletons share boilerplate (ACTOR.scope wrapper, clone boilerplate, unknown-tool fallthrough). Extract a shared dispatch helper.
+- **(i)** `bin/agaric-mcp.rs` locally redefines `APP_IDENTIFIER` / `MCP_RO_SOCKET_FILENAME` / `MCP_RO_PIPE_PATH` instead of importing from `mcp/mod.rs` despite being in the same crate. Replace with `use crate::mcp::{APP_IDENTIFIER, ...};`.
+- **(j)** `mcp/last_append.rs` exports a task-local that is consumed from `op_log::append_local_op_in_tx:172-180` — every local op append goes through it. `op_log` is a core module and `mcp` is an integration; the dependency direction is inverted. Relocate the task-local to `crate::op::last_append` or a neutral `task_locals` module. (Not an architectural change per AGENTS.md: no new table / op type / store / queue / sync message type.)
+
+**Cost:** S–M.
+**Risk:** Low.
+**Impact:** M — tightens the MCP layer and eliminates a dependency inversion.
+
+### MAINT-151 — LOW cleanup batch — GCal
+
+- **(a)** `/*on_event*/ false` bool-with-comment in `gcal_push/api.rs:266, 296, 334, 375, 409, 459` and the `classify_error` signature. Replace with `enum PathKind { CalendarPath, EventPath }` — threads into MAINT-138's `send` helper.
+- **(b)** Magic `status: 0` sentinel for transport failures in `GcalErrorKind::ServerError` at `gcal_push/api.rs:673-682`. Add a dedicated `Transport(String)` variant or a `pub const NO_RESPONSE: u16 = 0;` near the enum with a doc comment.
+- **(c)** Bare `Duration::from_secs(30)` HTTP client timeout at `api.rs:699`. Hoist to a named constant near the other tuning constants (rate-limit QPS/burst, retry-after defaults).
+- **(d)** `OAuthClient` re-parses three URLs and rebuilds the typestated `oauth2` `Client` on every `begin_authorize` / `exchange_code` / `refresh_token` call at `oauth.rs:307-340, 366-384, 393-394, 463, 491`. Cache parsed `AuthUrl` / `TokenUrl` / `RedirectUrl` in `OAuthClient`.
+- **(e)** Empty-string `SecretString` refresh-token placeholder at `oauth.rs:658-666` relies on "caller will overwrite" convention. Use `(AccessPart, Option<SecretString>)` so the missing-refresh case is type-visible; callers merge explicitly.
+- **(f)** `is_revocation_error` at `oauth.rs:749-758` is a one-line `matches!` with 10 lines of doc/signature boilerplate around it. Inline at the single call site (~line 565).
+- **(g)** Unused `_emitter` parameter on `classify_date_err` at `connector.rs:716-741`. Remove — three call sites.
+- **(h)** `classify_date_err` + `classify_cycle_failure` share nearly every arm; merges cleanly with MAINT-140. Keep here as LOW-batch reminder if MAINT-140 doesn't absorb it.
+- **(i)** `set_setting` UPDATE + NotFound check is inlined inside a BEGIN IMMEDIATE transaction at `connector.rs:770-790` because `models::set_setting` takes `&SqlitePool` and can't run on a `Transaction`. Add `set_setting_in_tx<'a, E: Executor<'a, Database = Sqlite>>(executor: E, key, value) -> Result<(), AppError>`; both call sites funnel through it.
+- **(j)** `compute_for_edit_block` / `compute_for_delete_block` / `compute_for_restore_block` in `dirty_producer.rs:256-389` each deserialize the payload into a typed struct and discard it (`let _payload: ... = serde_json::from_str(...).ok()?;`). Collapse into a single content-change helper, or drop the deserialization (the `op_type` dispatch already gates it).
+- **(k)** `is_agenda_relevant_key` at `dirty_producer.rs:75-88` mixes hyphenated (`"repeat-until"`, `"repeat-count"`) and underscored (`"repeat_interval"`, `"repeat_unit"`) property-key styles. Define a canonical constant array (ideally shared with the property writers); audit for unintentional typos.
+- **(l)** Four TODO-state literals (`"TODO"`/`"DOING"`/`"DONE"`/`"CANCELLED"`) hard-coded in `digest.rs:161-164, 324-333` — no canonical `TodoState` enum exists crate-wide (the state is stringly-typed throughout). Either introduce the enum or pin an exhaustiveness test that enumerates every allowed variant and asserts `state_marker` returns a non-fallback marker for each.
+
+**Cost:** M.
+**Risk:** Low–Medium for (d), (e), (i); Low for the rest.
+**Impact:** M — trims several drift hazards in the largest integration module.
+
+### MAINT-152 — LOW cleanup batch — misc features (snapshot / recurrence / merge / link_metadata / spaces)
+
+- **(a)** `snapshot/restore.rs::apply_snapshot:126-278` replicates the same ~20-line batch-INSERT scaffold 7 times for 7 tables (~150 lines of near-identical code). A generic helper is awkward given sqlx's bind-builder ergonomics; a `batch_insert_snapshot_rows!()` macro keyed on table + columns is the more pragmatic shape. Kept LOW because the current code is trivially scannable top-to-bottom and each block is self-contained.
+- **(b)** Minor `+Nm` / `+Ny` arithmetic duplication between monthly and yearly recurrence paths in `recurrence/compute.rs`.
+- **(c)** `link_metadata/html_parser.rs` auth-detection heuristics use a hardcoded lookup ladder rather than a data-driven list of `{ host_pattern, indicator }` tuples; adding a new site requires editing control flow rather than data.
+- **(d)** `snapshot/restore.rs` hardcodes cache-wipe order and cache-rebuild order as two separate sequences of `sqlx::query(...)` and enum-variant literals. New cache tables are easy to miss on both sequences. Drive both loops from a single inventory constant (e.g., `CACHE_TABLES: &[(CacheTable, RebuildTask)]`) so adding a new cache updates both flows atomically.
+- **(e)** `migrate_personal_pages_to_work` in `spaces/bootstrap.rs` is a one-shot upgrade migration (~160 LoC) with no kill-date plan. File a follow-up item (or set a kill-date in the function's doc comment) to delete after a known installed-base inflection point.
+- **(f)** Minor items 08-MISC-008 through 08-MISC-010, 08-MISC-014, and 08-MISC-016 in `/tmp/agaric-review/pass1/08-misc-features.md` — `reverse/*` pattern duplication, tiny dead-comment cleanup in `merge/detect.rs`, recurrence parser match-arm consolidation, `spaces/bootstrap.rs` idempotent-guard comment tightening, deeplink argv-parsing helper. Each is a few minutes.
+
+**Cost:** M — (a) is the largest single item; everything else is S.
+**Risk:** Low.
+**Impact:** S–M.
 
 ## PERF — Performance items
 
