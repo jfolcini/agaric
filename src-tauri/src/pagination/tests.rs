@@ -2033,6 +2033,101 @@ async fn list_agenda_range_exhaustive_walk_returns_all_items_once() {
     );
 }
 
+#[tokio::test]
+async fn list_agenda_range_cursor_uses_ac_date_not_block_dates_h8() {
+    // H-8 regression: the cursor must encode `ac.date`, not
+    // `b.due_date` / `b.scheduled_date`. When an agenda_cache row's
+    // date comes from a non-column source (e.g. a property), the
+    // cursor would otherwise drift and page 2 would skip or duplicate
+    // entries at the page boundary.
+    //
+    // Setup: 3 blocks all with `b.due_date = '2025-01-01'` (the
+    // "wrong" date that the old extract_date_for_cursor would pick)
+    // but `agenda_cache.date` set to '2025-03-10', '2025-03-11',
+    // '2025-03-12' respectively, with `source = 'property:custom_due'`.
+    // Page 1 (limit 2) returns the first two. Page 2 with the cursor
+    // must return ONLY the third — neither skipping it nor
+    // re-returning the second.
+    let (pool, _dir) = test_pool().await;
+
+    // ULIDs ordered such that lexicographic comparison is stable.
+    let entries = [
+        ("01J0000000000000000000000A", "2025-03-10"),
+        ("01J0000000000000000000000B", "2025-03-11"),
+        ("01J0000000000000000000000C", "2025-03-12"),
+    ];
+    for (id, ac_date) in &entries {
+        // Block has the "wrong" due_date — the cursor MUST NOT pick this up.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, due_date, page_id) \
+             VALUES (?, 'content', ?, '2025-01-01', NULL)",
+        )
+        .bind(id)
+        .bind(format!("event {id}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+        // agenda_cache uses a non-column source: a custom property.
+        insert_agenda_entry(&pool, ac_date, id, "property:custom_due").await;
+    }
+
+    // Page 1: limit 2 → expect A, B with a non-null cursor.
+    let r1 = list_agenda_range(
+        &pool,
+        "2025-03-01",
+        "2025-03-31",
+        None,
+        &PageRequest::new(None, Some(2)).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r1.items.len(), 2, "page 1 must contain 2 rows");
+    assert!(r1.has_more, "page 1 must indicate more pages");
+    assert_eq!(r1.items[0].id, "01J0000000000000000000000A");
+    assert_eq!(r1.items[1].id, "01J0000000000000000000000B");
+    let cursor_str = r1.next_cursor.expect("page 1 must yield a cursor");
+
+    // Decode the cursor and assert it stashed the SECOND row's
+    // `ac.date` ('2025-03-11'), NOT the block's `due_date` ('2025-01-01').
+    let cursor = Cursor::decode(&cursor_str).expect("cursor must decode");
+    assert_eq!(
+        cursor.deleted_at.as_deref(),
+        Some("2025-03-11"),
+        "cursor.deleted_at must encode ac.date, not b.due_date — \
+         this is the H-8 regression"
+    );
+    assert_eq!(
+        cursor.id, "01J0000000000000000000000B",
+        "cursor.id must be the second row's id"
+    );
+
+    // Page 2: feed the cursor back. Must return ONLY the third row.
+    let r2 = list_agenda_range(
+        &pool,
+        "2025-03-01",
+        "2025-03-31",
+        None,
+        &PageRequest::new(Some(cursor_str), Some(2)).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        r2.items.len(),
+        1,
+        "page 2 must return exactly the remaining row — \
+         not skipped, not duplicated"
+    );
+    assert!(!r2.has_more, "page 2 must be terminal");
+    assert!(
+        r2.next_cursor.is_none(),
+        "terminal page must have no cursor"
+    );
+    assert_eq!(
+        r2.items[0].id, "01J0000000000000000000000C",
+        "page 2 must contain the third row"
+    );
+}
+
 // ====================================================================
 // insta snapshot tests — BlockRow and PageResponse
 // ====================================================================
