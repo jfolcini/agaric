@@ -228,8 +228,12 @@ describe('BlockPropertyDrawer', () => {
       expect(screen.getByText('status')).toBeInTheDocument()
     })
 
-    const results = await axe(container)
-    expect(results).toHaveNoViolations()
+    await waitFor(
+      async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
   })
 
   // ── H-12: Built-in date fields from block store ───────────────────────

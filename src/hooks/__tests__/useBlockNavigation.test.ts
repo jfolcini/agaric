@@ -15,27 +15,8 @@
 
 import { renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BlockRow } from '../../lib/tauri'
+import { makeBlock } from '../../__tests__/fixtures'
 import { useBlockNavigation } from '../useBlockNavigation'
-
-function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
-  return {
-    id: 'BLOCK_1',
-    block_type: 'block',
-    content: 'test block',
-    parent_id: 'PAGE_1',
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: 'PAGE_1',
-    ...overrides,
-  }
-}
 
 function makeKeyboardEvent(key: string): {
   key: string
@@ -56,7 +37,9 @@ describe('useBlockNavigation', () => {
 
     const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
-    result.current.handleBlockClick(makeBlock())
+    result.current.handleBlockClick(
+      makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: 'PAGE_1' }),
+    )
 
     expect(onNavigateToPage).toHaveBeenCalledWith('PAGE_1', 'My Page', 'BLOCK_1')
   })
@@ -71,7 +54,7 @@ describe('useBlockNavigation', () => {
 
     const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
-    result.current.handleBlockClick(makeBlock({ page_id: 'PAGE_2', id: 'B2' }))
+    result.current.handleBlockClick(makeBlock({ id: 'B2', parent_id: 'PAGE_1', page_id: 'PAGE_2' }))
 
     expect(onNavigateToPage).toHaveBeenCalledWith('PAGE_2', 'Beta Page', 'B2')
   })
@@ -83,7 +66,9 @@ describe('useBlockNavigation', () => {
 
     const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
-    result.current.handleBlockClick(makeBlock({ page_id: 'UNKNOWN_PAGE' }))
+    result.current.handleBlockClick(
+      makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: 'UNKNOWN_PAGE' }),
+    )
 
     expect(onNavigateToPage).toHaveBeenCalledWith('UNKNOWN_PAGE', 'Untitled', 'BLOCK_1')
   })
@@ -101,7 +86,9 @@ describe('useBlockNavigation', () => {
       }),
     )
 
-    result.current.handleBlockClick(makeBlock({ page_id: 'UNKNOWN_PAGE' }))
+    result.current.handleBlockClick(
+      makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: 'UNKNOWN_PAGE' }),
+    )
 
     expect(onNavigateToPage).toHaveBeenCalledWith('UNKNOWN_PAGE', 'Sans titre', 'BLOCK_1')
   })
@@ -114,7 +101,7 @@ describe('useBlockNavigation', () => {
     const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     result.current.handleBlockClick(
-      makeBlock({ page_id: 'PAGE_ROOT', parent_id: 'PARENT_BLOCK', id: 'NESTED' }),
+      makeBlock({ id: 'NESTED', parent_id: 'PARENT_BLOCK', page_id: 'PAGE_ROOT' }),
     )
 
     expect(onNavigateToPage).toHaveBeenCalledWith('PAGE_ROOT', 'My Page', 'NESTED')
@@ -127,7 +114,9 @@ describe('useBlockNavigation', () => {
 
     const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
-    result.current.handleBlockClick(makeBlock({ page_id: null }))
+    result.current.handleBlockClick(
+      makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: null }),
+    )
 
     expect(onNavigateToPage).not.toHaveBeenCalled()
   })
@@ -140,7 +129,11 @@ describe('useBlockNavigation', () => {
       useBlockNavigation({ onNavigateToPage: undefined, pageTitles }),
     )
 
-    expect(() => result.current.handleBlockClick(makeBlock())).not.toThrow()
+    expect(() =>
+      result.current.handleBlockClick(
+        makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: 'PAGE_1' }),
+      ),
+    ).not.toThrow()
   })
 
   // 6. handleBlockKeyDown triggers click on Enter key
@@ -151,7 +144,10 @@ describe('useBlockNavigation', () => {
     const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     const event = makeKeyboardEvent('Enter')
-    result.current.handleBlockKeyDown(event as unknown as React.KeyboardEvent, makeBlock())
+    result.current.handleBlockKeyDown(
+      event as unknown as React.KeyboardEvent,
+      makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: 'PAGE_1' }),
+    )
 
     expect(onNavigateToPage).toHaveBeenCalledWith('PAGE_1', 'My Page', 'BLOCK_1')
     expect(event.preventDefault).toHaveBeenCalledTimes(1)
@@ -165,7 +161,10 @@ describe('useBlockNavigation', () => {
     const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     const event = makeKeyboardEvent(' ')
-    result.current.handleBlockKeyDown(event as unknown as React.KeyboardEvent, makeBlock())
+    result.current.handleBlockKeyDown(
+      event as unknown as React.KeyboardEvent,
+      makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: 'PAGE_1' }),
+    )
 
     expect(onNavigateToPage).toHaveBeenCalledWith('PAGE_1', 'My Page', 'BLOCK_1')
     expect(event.preventDefault).toHaveBeenCalledTimes(1)
@@ -179,7 +178,10 @@ describe('useBlockNavigation', () => {
     const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     const event = makeKeyboardEvent('Tab')
-    result.current.handleBlockKeyDown(event as unknown as React.KeyboardEvent, makeBlock())
+    result.current.handleBlockKeyDown(
+      event as unknown as React.KeyboardEvent,
+      makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: 'PAGE_1' }),
+    )
 
     expect(onNavigateToPage).not.toHaveBeenCalled()
     expect(event.preventDefault).not.toHaveBeenCalled()
@@ -192,7 +194,10 @@ describe('useBlockNavigation', () => {
     const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     const event = makeKeyboardEvent('Escape')
-    result.current.handleBlockKeyDown(event as unknown as React.KeyboardEvent, makeBlock())
+    result.current.handleBlockKeyDown(
+      event as unknown as React.KeyboardEvent,
+      makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: 'PAGE_1' }),
+    )
 
     expect(onNavigateToPage).not.toHaveBeenCalled()
     expect(event.preventDefault).not.toHaveBeenCalled()
@@ -205,7 +210,10 @@ describe('useBlockNavigation', () => {
     const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     const event = makeKeyboardEvent('a')
-    result.current.handleBlockKeyDown(event as unknown as React.KeyboardEvent, makeBlock())
+    result.current.handleBlockKeyDown(
+      event as unknown as React.KeyboardEvent,
+      makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: 'PAGE_1' }),
+    )
 
     expect(onNavigateToPage).not.toHaveBeenCalled()
     expect(event.preventDefault).not.toHaveBeenCalled()

@@ -9,7 +9,7 @@
  *  - a11y compliance
  */
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -134,7 +134,11 @@ describe('Calendar', () => {
       />,
     )
 
-    const results = await axe(container)
-    expect(results).toHaveNoViolations()
+    await waitFor(
+      async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
   })
 })

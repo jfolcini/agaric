@@ -60,6 +60,8 @@ describe('seed data', () => {
     expect(titles).toContain('Projects')
     expect(titles).toContain('Meetings')
     expect(titles).toContain('Meeting Notes Template')
+    // The 6th seed page is the dynamic daily page (YYYY-MM-DD).
+    expect(titles.some((t) => /^\d{4}-\d{2}-\d{2}$/.test(t as string))).toBe(true)
   })
 
   it('populates tags', () => {

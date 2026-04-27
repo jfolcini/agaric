@@ -128,11 +128,17 @@ describe('getDateRangeForFilter', () => {
 })
 
 describe('getTodayString', () => {
-  it('returns today formatted as YYYY-MM-DD', () => {
+  beforeEach(() => {
     vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('returns today formatted as YYYY-MM-DD', () => {
     vi.setSystemTime(new Date(2026, 3, 10))
     expect(getTodayString()).toBe('2026-04-10')
-    vi.useRealTimers()
   })
 })
 

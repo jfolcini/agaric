@@ -1,7 +1,4 @@
-import { act } from '@testing-library/react'
-import { createElement } from 'react'
-import type { Root } from 'react-dom/client'
-import { createRoot } from 'react-dom/client'
+import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   LONG_PRESS_DELAY,
@@ -9,41 +6,8 @@ import {
   useBlockTouchLongPress,
 } from '../useBlockTouchLongPress'
 
-function renderHook<T>(hookFn: () => T): {
-  result: { current: T }
-  unmount: () => void
-} {
-  const container = document.createElement('div')
-  document.body.appendChild(container)
-  let root: Root
-
-  const result = { current: undefined as unknown as T }
-
-  function TestComponent(): null {
-    result.current = hookFn()
-    return null
-  }
-
-  act(() => {
-    root = createRoot(container)
-    root.render(createElement(TestComponent))
-  })
-
-  return {
-    result,
-    unmount() {
-      act(() => {
-        root.unmount()
-      })
-      container.remove()
-    },
-  }
-}
-
 describe('useBlockTouchLongPress', () => {
   beforeEach(() => {
-    // biome-ignore lint/suspicious/noExplicitAny: React test env global
-    ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
     vi.useFakeTimers()
   })
 

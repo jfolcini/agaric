@@ -1,7 +1,4 @@
-import { act } from '@testing-library/react'
-import { createElement } from 'react'
-import type { Root } from 'react-dom/client'
-import { createRoot } from 'react-dom/client'
+import { renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DEEPLINK_EVENT_NAVIGATE_TO_BLOCK,
@@ -49,40 +46,11 @@ vi.mock('@/lib/tauri', () => ({
   getCurrentDeepLink: (...args: unknown[]) => mockGetCurrentDeepLink(...args),
 }))
 
-// -- Minimal renderHook helper (matches existing project pattern) -------------
-
-function renderHook(hookFn: () => void): { unmount: () => void } {
-  const container = document.createElement('div')
-  document.body.appendChild(container)
-  let root: Root
-
-  function TestComponent(): null {
-    hookFn()
-    return null
-  }
-
-  act(() => {
-    root = createRoot(container)
-    root.render(createElement(TestComponent))
-  })
-
-  return {
-    unmount() {
-      act(() => {
-        root.unmount()
-      })
-      container.remove()
-    },
-  }
-}
-
 // -- Setup / teardown ---------------------------------------------------------
 
 let hadTauriInternals: boolean
 
 beforeEach(() => {
-  // biome-ignore lint/suspicious/noExplicitAny: React test env global
-  ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   vi.clearAllMocks()
 
   hadTauriInternals = '__TAURI_INTERNALS__' in window

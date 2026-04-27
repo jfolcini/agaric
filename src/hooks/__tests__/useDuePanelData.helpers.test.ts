@@ -7,32 +7,14 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { BlockRow, ResolvedBlock } from '../../lib/tauri'
+import { makeBlock } from '../../__tests__/fixtures'
+import type { ResolvedBlock } from '../../lib/tauri'
 import {
   applySourceFilter,
   buildTitleMap,
   collectResolveIds,
   extractUlidRefs,
 } from '../useDuePanelData'
-
-function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
-  return {
-    id: 'B1',
-    block_type: 'block',
-    content: 'test block',
-    parent_id: 'PAGE1',
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: '2025-06-15',
-    scheduled_date: null,
-    page_id: 'PAGE1',
-    ...overrides,
-  }
-}
 
 describe('applySourceFilter', () => {
   const date = '2025-06-15'

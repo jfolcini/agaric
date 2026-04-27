@@ -14,6 +14,7 @@
 
 import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { makeBlock } from '../../__tests__/fixtures'
 import type { FlatBlock } from '../../lib/tree-utils'
 import { useBlockZoom } from '../useBlockZoom'
 
@@ -25,30 +26,6 @@ vi.mock('../../lib/tree-utils', async (importOriginal) => {
   }
 })
 
-function makeBlock(
-  id: string,
-  depth: number,
-  parentId: string | null = null,
-  content?: string,
-): FlatBlock {
-  return {
-    id,
-    block_type: 'content',
-    content: content ?? `Block ${id}`,
-    parent_id: parentId,
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-    depth,
-  }
-}
-
 describe('useBlockZoom', () => {
   // Tree structure:
   //   A (depth 0)
@@ -57,11 +34,11 @@ describe('useBlockZoom', () => {
   //     D (depth 1, parent A)
   //   E (depth 0)
   const allBlocks: FlatBlock[] = [
-    makeBlock('A', 0, null, 'Page'),
-    makeBlock('B', 1, 'A', 'Section'),
-    makeBlock('C', 2, 'B', 'Detail'),
-    makeBlock('D', 1, 'A', 'Other'),
-    makeBlock('E', 0, null, 'Second'),
+    makeBlock({ id: 'A', depth: 0, parent_id: null, content: 'Page' }),
+    makeBlock({ id: 'B', depth: 1, parent_id: 'A', content: 'Section' }),
+    makeBlock({ id: 'C', depth: 2, parent_id: 'B', content: 'Detail' }),
+    makeBlock({ id: 'D', depth: 1, parent_id: 'A', content: 'Other' }),
+    makeBlock({ id: 'E', depth: 0, parent_id: null, content: 'Second' }),
   ]
 
   it('starts with no zoom and empty breadcrumbs', () => {
@@ -195,8 +172,8 @@ describe('useBlockZoom', () => {
 
   it('handles block with null content in breadcrumbs', () => {
     const blocksWithNull: FlatBlock[] = [
-      { ...makeBlock('X', 0), content: null },
-      makeBlock('Y', 1, 'X'),
+      { ...makeBlock({ id: 'X', depth: 0, content: 'Block X' }), content: null },
+      makeBlock({ id: 'Y', depth: 1, parent_id: 'X', content: 'Block Y' }),
     ]
     const { result } = renderHook(() => useBlockZoom(blocksWithNull, blocksWithNull))
 

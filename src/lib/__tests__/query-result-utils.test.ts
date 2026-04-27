@@ -3,28 +3,8 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
+import { makeBlock } from '../../__tests__/fixtures'
 import { handleBlockNavigation, resolveBlockDisplay } from '../query-result-utils'
-import type { BlockRow } from '../tauri'
-
-/** Helper to create a minimal BlockRow for testing. */
-function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
-  return {
-    id: 'block-1',
-    block_type: 'heading',
-    content: 'Default block content that is long enough to test truncation behaviour',
-    parent_id: 'page-1',
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: 'page-1',
-    ...overrides,
-  }
-}
 
 // ---------------------------------------------------------------------------
 // resolveBlockDisplay

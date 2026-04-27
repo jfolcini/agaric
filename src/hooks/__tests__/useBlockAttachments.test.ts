@@ -14,7 +14,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 import {
   createPageBlockStore,
@@ -30,6 +30,15 @@ const mockedToastError = vi.mocked(toast.error)
 let pageStore: StoreApi<PageBlockState>
 const wrapper = ({ children }: { children: ReactNode }) =>
   createElement(PageBlockContext.Provider, { value: pageStore }, children)
+
+const originalOnNewAction = useUndoStore.getState().onNewAction
+afterEach(() => {
+  useUndoStore.setState({
+    ...useUndoStore.getState(),
+    onNewAction: originalOnNewAction,
+    pages: new Map(),
+  })
+})
 
 function makeAttachmentRow(id: string, blockId: string, filename: string) {
   return {

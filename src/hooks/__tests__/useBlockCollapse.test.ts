@@ -12,61 +12,28 @@
  */
 
 import { act, renderHook } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeBlock } from '../../__tests__/fixtures'
 import type { FlatBlock } from '../../lib/tree-utils'
 import { useBlockCollapse } from '../useBlockCollapse'
 
-function makeBlock(id: string, depth: number, parentId: string | null = null): FlatBlock {
-  return {
-    id,
-    block_type: 'content',
-    content: `Block ${id}`,
-    parent_id: parentId,
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-    depth,
-  }
-}
-
-// Mock localStorage
-const store: Record<string, string> = {}
-const localStorageMock = {
-  getItem: vi.fn((key: string) => store[key] ?? null),
-  setItem: vi.fn((key: string, value: string) => {
-    store[key] = value
-  }),
-  removeItem: vi.fn((key: string) => {
-    delete store[key]
-  }),
-  clear: vi.fn(() => {
-    for (const key of Object.keys(store)) delete store[key]
-  }),
-  get length() {
-    return Object.keys(store).length
-  },
-  key: vi.fn((_index: number) => null),
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
-  localStorageMock.clear()
-  Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock, writable: true })
+  localStorage.clear()
+})
+
+afterEach(() => {
+  localStorage.clear()
+  vi.restoreAllMocks()
 })
 
 describe('useBlockCollapse', () => {
   const flatBlocks: FlatBlock[] = [
-    makeBlock('A', 0),
-    makeBlock('B', 1, 'A'),
-    makeBlock('C', 2, 'B'),
-    makeBlock('D', 1, 'A'),
-    makeBlock('E', 0),
+    makeBlock({ id: 'A', depth: 0, content: 'Block A' }),
+    makeBlock({ id: 'B', depth: 1, parent_id: 'A', content: 'Block B' }),
+    makeBlock({ id: 'C', depth: 2, parent_id: 'B', content: 'Block C' }),
+    makeBlock({ id: 'D', depth: 1, parent_id: 'A', content: 'Block D' }),
+    makeBlock({ id: 'E', depth: 0, content: 'Block E' }),
   ]
 
   it('starts with empty collapsedIds', () => {
@@ -158,19 +125,20 @@ describe('useBlockCollapse', () => {
   })
 
   it('persists collapsed IDs to localStorage', () => {
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
     const { result } = renderHook(() => useBlockCollapse(flatBlocks))
 
     act(() => {
       result.current.toggleCollapse('A')
     })
 
-    expect(localStorageMock.setItem).toHaveBeenCalledWith('collapsed_ids', expect.any(String))
-    const stored = JSON.parse(localStorageMock.setItem.mock.calls[0]?.[1] as string) as string[]
+    expect(setItemSpy).toHaveBeenCalledWith('collapsed_ids', expect.any(String))
+    const stored = JSON.parse(setItemSpy.mock.calls[0]?.[1] as string) as string[]
     expect(stored).toContain('A')
   })
 
   it('restores collapsed IDs from localStorage on init', () => {
-    store['collapsed_ids'] = JSON.stringify(['B'])
+    localStorage.setItem('collapsed_ids', JSON.stringify(['B']))
 
     const { result } = renderHook(() => useBlockCollapse(flatBlocks))
 
@@ -187,7 +155,11 @@ describe('useBlockCollapse', () => {
   })
 
   it('handles blocks with no parent-child relationships', () => {
-    const flatList = [makeBlock('X', 0), makeBlock('Y', 0), makeBlock('Z', 0)]
+    const flatList = [
+      makeBlock({ id: 'X', depth: 0, content: 'Block X' }),
+      makeBlock({ id: 'Y', depth: 0, content: 'Block Y' }),
+      makeBlock({ id: 'Z', depth: 0, content: 'Block Z' }),
+    ]
     const { result } = renderHook(() => useBlockCollapse(flatList))
     expect(result.current.hasChildrenSet.size).toBe(0)
     expect(result.current.visibleBlocks).toEqual(flatList)

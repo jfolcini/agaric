@@ -57,7 +57,8 @@ vi.mock('@/lib/logger', () => ({
 
 // ── Imports ──────────────────────────────────────────────────────────────
 
-import type { FlatBlock, Projection } from '../../lib/tree-utils'
+import { makeBlock } from '../../__tests__/fixtures'
+import type { Projection } from '../../lib/tree-utils'
 import { computePosition, getDragDescendants, getProjection } from '../../lib/tree-utils'
 import { useIsMobile } from '../use-mobile'
 import { useBlockDnD } from '../useBlockDnD'
@@ -69,41 +70,17 @@ const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-function makeFlatBlock(
-  id: string,
-  depth = 0,
-  parentId: string | null = null,
-  position = 0,
-): FlatBlock {
-  return {
-    id,
-    block_type: 'block',
-    content: `Block ${id}`,
-    parent_id: parentId,
-    position,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-    depth,
-  }
-}
-
 function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockDnD>[0]>) {
   return {
     blocks: [
-      makeFlatBlock('A', 0, null, 0),
-      makeFlatBlock('B', 0, null, 1),
-      makeFlatBlock('C', 0, null, 2),
+      makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+      makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+      makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
     ],
     collapsedVisible: [
-      makeFlatBlock('A', 0, null, 0),
-      makeFlatBlock('B', 0, null, 1),
-      makeFlatBlock('C', 0, null, 2),
+      makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+      makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+      makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
     ],
     rootParentId: null,
     rovingEditor: { activeBlockId: null },
@@ -284,9 +261,9 @@ describe('useBlockDnD', () => {
   describe('handleDragEnd (parent/depth change)', () => {
     it('calls moveToParent when projected indicates depth change', () => {
       const blocks = [
-        makeFlatBlock('A', 0, null, 0),
-        makeFlatBlock('B', 0, null, 1),
-        makeFlatBlock('C', 0, null, 2),
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+        makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
       ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
@@ -313,9 +290,9 @@ describe('useBlockDnD', () => {
 
     it('calls moveToParent when projected indicates parent change', () => {
       const blocks = [
-        makeFlatBlock('A', 0, null, 0),
-        makeFlatBlock('B', 1, 'A', 0),
-        makeFlatBlock('C', 0, null, 1),
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 1, parent_id: 'A', position: 0, content: 'Block B' }),
+        makeBlock({ id: 'C', depth: 0, parent_id: null, position: 1, content: 'Block C' }),
       ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
@@ -341,9 +318,9 @@ describe('useBlockDnD', () => {
 
     it('calls moveToParent when active.id !== over.id even at same depth', () => {
       const blocks = [
-        makeFlatBlock('A', 0, null, 0),
-        makeFlatBlock('B', 0, null, 1),
-        makeFlatBlock('C', 0, null, 2),
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+        makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
       ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
@@ -367,7 +344,10 @@ describe('useBlockDnD', () => {
     })
 
     it('resets DnD state after dragEnd', () => {
-      const blocks = [makeFlatBlock('A', 0, null, 0), makeFlatBlock('B', 0, null, 1)]
+      const blocks = [
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+      ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
       const projection: Projection = { depth: 1, parentId: 'A', maxDepth: 1, minDepth: 0 }
@@ -394,9 +374,9 @@ describe('useBlockDnD', () => {
   describe('handleDragEnd (same-level reorder)', () => {
     it('calls reorder when no projection and active.id !== over.id', () => {
       const blocks = [
-        makeFlatBlock('A', 0, null, 0),
-        makeFlatBlock('B', 0, null, 1),
-        makeFlatBlock('C', 0, null, 2),
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+        makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
       ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
@@ -428,7 +408,10 @@ describe('useBlockDnD', () => {
     })
 
     it('does not call reorder when overIndex is -1', () => {
-      const blocks = [makeFlatBlock('A', 0, null, 0), makeFlatBlock('B', 0, null, 1)]
+      const blocks = [
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+      ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
       mockedGetProjection.mockReturnValue(null as unknown as Projection)
@@ -475,7 +458,10 @@ describe('useBlockDnD', () => {
 
   describe('handleDragEnd (same block, no change)', () => {
     it('does nothing when active.id === over.id and no depth/parent change', () => {
-      const blocks = [makeFlatBlock('A', 0, null, 0), makeFlatBlock('B', 0, null, 1)]
+      const blocks = [
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+      ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
       // Projection shows same depth and same parent
@@ -550,9 +536,9 @@ describe('useBlockDnD', () => {
   describe('activeDescendants / visibleItems memo', () => {
     it('calls getDragDescendants when activeId is set', () => {
       const blocks = [
-        makeFlatBlock('A', 0, null, 0),
-        makeFlatBlock('A1', 1, 'A', 0),
-        makeFlatBlock('B', 0, null, 1),
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'A1', depth: 1, parent_id: 'A', position: 0, content: 'Block A1' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
       ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
@@ -569,10 +555,10 @@ describe('useBlockDnD', () => {
 
     it('excludes descendants from visibleItems during drag', () => {
       const blocks = [
-        makeFlatBlock('A', 0, null, 0),
-        makeFlatBlock('A1', 1, 'A', 0),
-        makeFlatBlock('A2', 1, 'A', 1),
-        makeFlatBlock('B', 0, null, 1),
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'A1', depth: 1, parent_id: 'A', position: 0, content: 'Block A1' }),
+        makeBlock({ id: 'A2', depth: 1, parent_id: 'A', position: 1, content: 'Block A2' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
       ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
@@ -593,9 +579,9 @@ describe('useBlockDnD', () => {
 
     it('returns full collapsedVisible when no drag is active', () => {
       const blocks = [
-        makeFlatBlock('A', 0, null, 0),
-        makeFlatBlock('A1', 1, 'A', 0),
-        makeFlatBlock('B', 0, null, 1),
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'A1', depth: 1, parent_id: 'A', position: 0, content: 'Block A1' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
       ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
       const { result } = renderHook(() => useBlockDnD(params))
@@ -635,9 +621,9 @@ describe('useBlockDnD', () => {
 
     it('calls getProjection with correct args when both activeId and overId are set', () => {
       const blocks = [
-        makeFlatBlock('A', 0, null, 0),
-        makeFlatBlock('B', 0, null, 1),
-        makeFlatBlock('C', 0, null, 2),
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+        makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
       ]
       const params = makeDefaultParams({
         blocks,
@@ -668,7 +654,10 @@ describe('useBlockDnD', () => {
     })
 
     it('updates projected when offsetLeft changes via handleDragMove', () => {
-      const blocks = [makeFlatBlock('A', 0, null, 0), makeFlatBlock('B', 0, null, 1)]
+      const blocks = [
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+      ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
       const projection1: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
@@ -744,7 +733,9 @@ describe('useBlockDnD', () => {
 
   describe('edge cases', () => {
     it('handles dragEnd when activeBlock not found in blocks', () => {
-      const blocks = [makeFlatBlock('A', 0, null, 0)]
+      const blocks = [
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+      ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
       // Projection will still be present
@@ -771,7 +762,10 @@ describe('useBlockDnD', () => {
     })
 
     it('handles rootParentId being non-null for parent change comparison', () => {
-      const blocks = [makeFlatBlock('A', 0, 'ROOT', 0), makeFlatBlock('B', 0, 'ROOT', 1)]
+      const blocks = [
+        makeBlock({ id: 'A', depth: 0, parent_id: 'ROOT', position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: 'ROOT', position: 1, content: 'Block B' }),
+      ]
       const params = makeDefaultParams({
         blocks,
         collapsedVisible: blocks,
@@ -799,7 +793,10 @@ describe('useBlockDnD', () => {
     })
 
     it('uses rootParentId fallback when block.parent_id is null', () => {
-      const blocks = [makeFlatBlock('A', 0, null, 0), makeFlatBlock('B', 0, null, 1)]
+      const blocks = [
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+      ]
       const params = makeDefaultParams({
         blocks,
         collapsedVisible: blocks,
@@ -831,9 +828,9 @@ describe('useBlockDnD', () => {
 
     it('handles multiple sequential drag operations', () => {
       const blocks = [
-        makeFlatBlock('A', 0, null, 0),
-        makeFlatBlock('B', 0, null, 1),
-        makeFlatBlock('C', 0, null, 2),
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+        makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
       ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
       mockedGetProjection.mockReturnValue(null as unknown as Projection)
@@ -865,9 +862,9 @@ describe('useBlockDnD', () => {
   describe('handleDragEnd (sentinel)', () => {
     it('calls moveToParent when dropping on sentinel', () => {
       const blocks = [
-        makeFlatBlock('A', 0, null, 0),
-        makeFlatBlock('B', 0, null, 1),
-        makeFlatBlock('C', 0, null, 2),
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+        makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
       ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
@@ -899,7 +896,10 @@ describe('useBlockDnD', () => {
     })
 
     it('passes visibleItems.length as overIndex for sentinel', () => {
-      const blocks = [makeFlatBlock('A', 0, null, 0), makeFlatBlock('B', 0, null, 1)]
+      const blocks = [
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+      ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
       const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
@@ -932,9 +932,9 @@ describe('useBlockDnD', () => {
   describe('handleDragEnd (UX-241 focus restore)', () => {
     it('restores focus on the dragged block after a successful moveToParent', async () => {
       const blocks = [
-        makeFlatBlock('A', 0, null, 0),
-        makeFlatBlock('B', 0, null, 1),
-        makeFlatBlock('C', 0, null, 2),
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+        makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
       ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
@@ -961,9 +961,9 @@ describe('useBlockDnD', () => {
 
     it('restores focus on the dragged block after a successful same-level reorder', async () => {
       const blocks = [
-        makeFlatBlock('A', 0, null, 0),
-        makeFlatBlock('B', 0, null, 1),
-        makeFlatBlock('C', 0, null, 2),
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+        makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
       ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
@@ -987,9 +987,9 @@ describe('useBlockDnD', () => {
 
     it('does NOT restore focus when moveToParent rejects', async () => {
       const blocks = [
-        makeFlatBlock('A', 0, null, 0),
-        makeFlatBlock('B', 0, null, 1),
-        makeFlatBlock('C', 0, null, 2),
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+        makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
       ]
       const moveToParent = vi.fn(async () => {
         throw new Error('move failed')
@@ -1024,9 +1024,9 @@ describe('useBlockDnD', () => {
 
     it('does NOT restore focus when reorder rejects', async () => {
       const blocks = [
-        makeFlatBlock('A', 0, null, 0),
-        makeFlatBlock('B', 0, null, 1),
-        makeFlatBlock('C', 0, null, 2),
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+        makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
       ]
       const reorder = vi.fn(async () => {
         throw new Error('reorder failed')
@@ -1070,7 +1070,10 @@ describe('useBlockDnD', () => {
     })
 
     it('does NOT restore focus when dropping on the same block with no depth/parent change', async () => {
-      const blocks = [makeFlatBlock('A', 0, null, 0), makeFlatBlock('B', 0, null, 1)]
+      const blocks = [
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+      ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
       // Projection matches current depth/parent exactly, and the drag ends on

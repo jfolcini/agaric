@@ -1,45 +1,11 @@
-import { act } from '@testing-library/react'
-import { createElement } from 'react'
-import type { Root } from 'react-dom/client'
-import { createRoot } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   AUTO_DELETE_THRESHOLD,
   REVEAL_THRESHOLD,
   useBlockSwipeActions,
   VERTICAL_CANCEL_THRESHOLD,
 } from '../useBlockSwipeActions'
-
-function renderHook<T>(hookFn: () => T): {
-  result: { current: T }
-  unmount: () => void
-} {
-  const container = document.createElement('div')
-  document.body.appendChild(container)
-  let root: Root
-
-  const result = { current: undefined as unknown as T }
-
-  function TestComponent(): null {
-    result.current = hookFn()
-    return null
-  }
-
-  act(() => {
-    root = createRoot(container)
-    root.render(createElement(TestComponent))
-  })
-
-  return {
-    result,
-    unmount() {
-      act(() => {
-        root.unmount()
-      })
-      container.remove()
-    },
-  }
-}
 
 /** Helper to build a minimal React.TouchEvent from coordinates. */
 function touch(clientX: number, clientY: number) {
@@ -50,11 +16,6 @@ function touch(clientX: number, clientY: number) {
 
 describe('useBlockSwipeActions', () => {
   const originalMatchMedia = window.matchMedia
-
-  beforeEach(() => {
-    // biome-ignore lint/suspicious/noExplicitAny: React test env global
-    ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
-  })
 
   afterEach(() => {
     window.matchMedia = originalMatchMedia

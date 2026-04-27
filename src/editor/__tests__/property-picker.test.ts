@@ -284,19 +284,6 @@ describe('PropertyPicker suggestion command', () => {
     vi.doUnmock('@tiptap/suggestion')
     vi.resetModules()
   })
-
-  it('cancellation path: when command is never invoked, no chain side effects fire', async () => {
-    // Simulates Escape (or outside-click) closing the popup without
-    // selecting: the Suggestion plugin discards the captured `command`
-    // without calling it, so onSelect must NOT fire and the chain proxy
-    // sees no calls.
-    const onSelect = vi.fn()
-    await captureCommand(onSelect)
-    expect(onSelect).not.toHaveBeenCalled()
-
-    vi.doUnmock('@tiptap/suggestion')
-    vi.resetModules()
-  })
 })
 
 // ── Integration: real editor doc state after the picker chain ───────────

@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -34,18 +35,20 @@ describe('ImageResizeToolbar', () => {
     expect(screen.getByText('100%')).toBeInTheDocument()
   })
 
-  it('click fires onWidthChange with correct value', () => {
+  it('click fires onWidthChange with correct value', async () => {
+    const user = userEvent.setup()
     const onWidthChange = vi.fn()
     render(<ImageResizeToolbar blockId="B1" currentWidth="100" onWidthChange={onWidthChange} />)
 
-    fireEvent.click(screen.getByTestId('image-resize-50'))
+    await user.click(screen.getByTestId('image-resize-50'))
     expect(onWidthChange).toHaveBeenCalledWith('50')
   })
 
-  it('click calls setProperty with image_width', () => {
+  it('click calls setProperty with image_width', async () => {
+    const user = userEvent.setup()
     render(<ImageResizeToolbar blockId="B1" currentWidth="100" onWidthChange={vi.fn()} />)
 
-    fireEvent.click(screen.getByTestId('image-resize-25'))
+    await user.click(screen.getByTestId('image-resize-25'))
     expect(mockedSetProperty).toHaveBeenCalledWith({
       blockId: 'B1',
       key: 'image_width',

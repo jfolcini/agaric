@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('relaunchApp', () => {
   const mockRelaunch = vi.fn()
+  const originalLocation = window.location
 
   beforeEach(() => {
     vi.resetModules()
@@ -9,6 +10,11 @@ describe('relaunchApp', () => {
   })
 
   afterEach(() => {
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      writable: true,
+      value: originalLocation,
+    })
     vi.restoreAllMocks()
   })
 
