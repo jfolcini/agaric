@@ -761,7 +761,7 @@ If the adapter is clean, estimate a ~300–500 LOC reduction in `server.rs` with
 
 1. `let mut tx = pool.begin().await?;` (or `sqlx::query!("BEGIN IMMEDIATE").execute(&*pool).await?` — inconsistent across call sites).
 2. Call one or more `*_in_tx` helpers (`append_local_op_in_tx` in `op_log.rs:81`, `flush_draft_in_tx` / `delete_draft_in_tx` in `draft.rs:82,132`, `apply_reverse_in_tx` in `commands/history.rs:32`, `migration_marker_set_in_tx` in `spaces/bootstrap.rs:486`) — 5 helpers total, 140 `_in_tx` occurrences across 32 files.
-3. `tx.commit().await?;` followed by an ad-hoc `Materializer::dispatch_background(...)` / `dispatch_foreground(...)` call — the enqueue point drifts (sometimes before commit, sometimes inside a spawned task, sometimes inside the caller). Evidence of drift: session 495 closed H-5 and H-6, both caused by materializer dispatch being decoupled from the committing transaction.
+3. `tx.commit().await?;` followed by an ad-hoc `Materializer::dispatch_background(...)` / `dispatch_foreground(...)` call — the enqueue point drifts (sometimes before commit, sometimes inside a spawned task, sometimes inside the caller). This is a structural footgun: forgetting the dispatch leaves caches stale until a subsequent write, and dispatching before commit can leak an op to the materializer before it is durably in the log.
 
 **Evidence (non-test callsite density):**
 
@@ -813,9 +813,9 @@ impl<'a> std::ops::DerefMut for CommandTx<'a> {
 
 Then the 5 `*_in_tx` helpers change their parameter from `&mut sqlx::Transaction<'_, Sqlite>` to `&mut CommandTx<'_>` (the `DerefMut` impl keeps existing `sqlx::query!(...).execute(&mut *tx)` call sites working unchanged). Keep the `_in_tx` suffix — it is load-bearing for grep + code review; only the parameter type changes.
 
-**Why it matters:** Centralising (a) the `BEGIN IMMEDIATE` pragma so every write-path transaction is guaranteed to hold the write lock from the first statement, and (b) the post-commit dispatch so a missing enqueue (H-5 / H-6 class) fails closed rather than silently leaving the materializer stale. Also removes the chance of the "did the caller remember to `dispatch_background` after commit?" review burden that recurs in session logs.
+**Why it matters:** Centralising (a) the `BEGIN IMMEDIATE` pragma so every write-path transaction is guaranteed to hold the write lock from the first statement, and (b) the post-commit dispatch so a missing enqueue fails closed rather than silently leaving the materializer stale. Also removes the chance of the "did the caller remember to `dispatch_background` after commit?" review burden that recurs in session logs.
 
-**Why it is not urgent:** The current code works. The invariant is held by review, same as invariant #9 (`is_conflict = 0`). None of the recent HIGH-severity findings root-cause to "we literally forgot to start a tx" — they root-cause to "we forgot to enqueue a materializer task after a specific commit", which the `commit_and_dispatch` sketch above addresses specifically.
+**Why it is not urgent:** The current code works. The invariant is held by review, same as invariant #9 (`is_conflict = 0`). No HIGH-severity finding to date root-causes to "we literally forgot to start a tx" — the concern is "we forgot to enqueue a materializer task after a specific commit", which the `commit_and_dispatch` sketch above addresses specifically.
 
 **Scope (honest):**
 
@@ -2564,7 +2564,7 @@ UX-7 was filed against 2 specific sites. A whole-frontend sweep found more leaks
 
 ---
 
-## HIGH findings (6)
+## HIGH findings (4)
 
 ### H-4 — `set_todo_state_inner` runs the state change, timestamp writes, and recurrence sibling creation across separate transactions
 - **Domain:** Commands / Recurrence
@@ -2576,28 +2576,6 @@ UX-7 was filed against 2 specific sites. A whole-frontend sweep found more leaks
 - **Impact:** High
 - **Recommendation:** Wrap the entire state transition + property writes + recurrence sibling creation in a single `BEGIN IMMEDIATE` via a new `set_todo_state_in_tx`. The recurrence handler already uses `_in_tx` variants — exposes them.
 - **Pass-1 source:** 04-commands-crud / F2
-
-### H-5 — Parallel block_id groups can violate parent→child FK ordering during BatchApplyOps
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/consumer.rs` (JoinSet group dispatch)
-- **What:** The foreground consumer parallelizes independent block_id groups via JoinSet, but a CreateBlock cascade (parent then immediate child) split across two groups can apply child before parent. SQLite FK error on apply.
-- **Why it matters:** Producible during normal sync replay (parent op + child op in a single batch). Currently masked because production retries within 100ms.
-- **Cost:** M
-- **Risk:** Medium (group-key needs to encode lineage, not just block_id)
-- **Impact:** High
-- **Recommendation:** Group by root-of-op (use `parent_id` chain, fall back to block_id when no parent_id) so cascading parent/child stays serialized. Pass 2 noted that the pass-1 reviewer's "PRAGMA defer_foreign_keys" suggestion does NOT fix this because each `apply_op` opens its own tx; need a new grouping key.
-- **Pass-1 source:** 02-materializer / F2
-
-### H-6 — `BatchApplyOps` grouping uses only the first record's block_id
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/dedup.rs`
-- **What:** A `BatchApplyOps` containing N ops over different block_ids is grouped solely by `records[0].block_id`. Other records' block_ids are not represented in the dispatch key.
-- **Why it matters:** Two batches whose first records collide but whose remaining records target different blocks can serialize in unintended ways; conversely, two batches whose first records differ but whose remaining records collide can run in parallel and step on each other.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** High
-- **Recommendation:** Either split BatchApplyOps into per-block-id sub-batches at dispatch time, or compute a multi-key grouping (HashSet of all block_ids; serialize batches whose key sets overlap). Pass 2 confirmed the pass-1 "return None" remediation does NOT serialize because the None bucket still races with other groups via JoinSet.
-- **Pass-1 source:** 02-materializer / F3
 
 ### H-9 — Bug-report redaction allow-list misses GCal email, peer device IDs, and any other PII (parent — split into H-9b, H-9c after H-9a shipped)
 - **Domain:** Commands / System
@@ -3015,8 +2993,8 @@ UX-7 was filed against 2 specific sites. A whole-frontend sweep found more leaks
 ### L-133 — `space` ref-property invariant relies on bootstrap migration but never re-runs
 - **Domain:** GCal / Spaces / Drafts
 - **Location:** `src-tauri/src/spaces/bootstrap.rs:39-86, 92-110`
-- **What:** `is_bootstrap_complete` returns `true` as soon as both seed-space blocks exist with `is_space='true'`, after which `pages_without_space` never runs again. Pages that land in DB without a `space` property after bootstrap (cf. H-3 / H-4 / H-5 — JournalPage / TemplatesView creating unscoped pages, plus any peer-synced legacy CreateBlock op) stay unscoped forever — invisible to space-scoped list queries.
-- **Why it matters:** Combined with the H-3/H-4 leak, this is the mechanism by which the FEAT-3 invariant decays: every new daily-journal page enters DB unscoped and never gets a `space` property. The bootstrap test (`bootstrap_skips_pages_that_already_have_space_property`) only pins that bootstrap is conservative — there is no follow-up sweep.
+- **What:** `is_bootstrap_complete` returns `true` as soon as both seed-space blocks exist with `is_space='true'`, after which `pages_without_space` never runs again. Pages that land in DB without a `space` property after bootstrap (cf. H-3 — JournalPage / TemplatesView creating unscoped pages, plus any peer-synced legacy CreateBlock op) stay unscoped forever — invisible to space-scoped list queries.
+- **Why it matters:** Combined with the H-3 leak, this is the mechanism by which the FEAT-3 invariant decays: every new daily-journal page enters DB unscoped and never gets a `space` property. The bootstrap test (`bootstrap_skips_pages_that_already_have_space_property`) only pins that bootstrap is conservative — there is no follow-up sweep.
 - **Cost:** M
 - **Risk:** Medium
 - **Impact:** Medium
