@@ -39,7 +39,7 @@ pub use super::registry::{PlaceholderRegistry, ToolDescription, ToolRegistry};
 /// MCP protocol version this server implements. Clients that advertise a
 /// different version during `initialize` still get a response — version
 /// negotiation is the client's responsibility per the MCP spec.
-pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
+pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// Name returned in the `serverInfo` block of the `initialize` response.
 pub const MCP_SERVER_NAME: &str = "agaric";
@@ -122,6 +122,17 @@ pub struct ConnectionState {
     pub activity_ctx: Option<super::activity::ActivityContext>,
     pub session_id: String,
 }
+
+// I-MCP-7: compile-time assertion that `ConnectionState` is `Send + Sync`.
+// `serve_unix` / `serve_pipe` spawn a per-connection task that owns the
+// state across `.await` points, so dispatch requires `Send`. Today every
+// field is `Send + Sync`; an accidental `Rc`/`RefCell` would otherwise
+// surface only at the spawn site. Keeping this next to the struct
+// definition pins the contract.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<ConnectionState>();
+};
 
 impl Default for ConnectionState {
     fn default() -> Self {
@@ -1014,6 +1025,47 @@ mod tests {
         assert_eq!(
             result["capabilities"]["tools"]["listChanged"], false,
             "tools.listChanged is false",
+        );
+
+        drop(w);
+        drop(reader);
+        let _ = task.await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn initialize_returns_2025_06_18_protocol_version_m86() {
+        // M-86: the server emits `structuredContent` in tool-call
+        // responses, a field added in MCP `2025-06-18`. The declared
+        // protocol version returned from `initialize` must match — pin
+        // the literal string so future drift away from `2025-06-18`
+        // (without an explicit envelope change) trips this test.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("m86.sock");
+        let (client, task) = connect_pair(&path).await;
+        let (r, mut w) = tokio::io::split(client);
+        let mut reader = BufReader::new(r);
+
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "clientInfo": { "name": "m86-client", "version": "0.0.1" },
+                    "capabilities": {},
+                },
+            }),
+        )
+        .await;
+
+        let response = read_line(&mut reader).await;
+        assert_eq!(
+            response["result"]["protocolVersion"], "2025-06-18",
+            "M-86: server must declare MCP 2025-06-18 to match the \
+             structuredContent envelope it actually emits",
         );
 
         drop(w);

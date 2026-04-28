@@ -331,7 +331,7 @@ pub(crate) async fn handle_incoming_sync(
     // via the orchestrator's `run_sync_session` cancel parameter, which
     // *is* threaded through to `run_file_transfer_initiator`.
     let responder_cancel = std::sync::atomic::AtomicBool::new(false);
-    if orch.is_complete() {
+    if orch.is_succeeded() {
         if let Ok(app_data_dir) = crate::sync_files::app_data_dir_from_pool(&pool_ref).await {
             match crate::sync_files::run_file_transfer_responder(
                 &mut conn,

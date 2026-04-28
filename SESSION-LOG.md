@@ -1,5 +1,59 @@
 # Session Log
 
+## Session 535 — Backend MEDIUM/INFO MCP+Sync+Search+Lifecycle batch — close 7 items (M-86, I-Sync-3, I-Search-8, I-Lifecycle-1, I-Lifecycle-4, I-MCP-5, I-MCP-7) (2026-04-28)
+
+**7 backend REVIEW-LATER items closed in one PROMPT.md batch with 4 parallel build subagents + 2 orchestrator-direct edits.** Theme: small MCP protocol-spec alignment + sync-orchestrator API clarity + Search/Link parser bug + 2 Lifecycle hygiene items + 2 doc-only fixes. All items were `Cost: S`. The combined item count of 7 (instead of the planned 6) was bonus throughput from one subagent (M-86 + I-MCP-7) handling two items in the same file.
+
+**REVIEW-LATER impact:**
+
+- **MEDIUM findings:** 38 → 37 (1 item resolved: M-86; heading also corrected from 44 → 37 to fix a pre-existing off-by-7 drift accumulated across prior sessions).
+- **INFO / nits:** 58 → 52 (6 items resolved: I-Sync-3, I-Search-8, I-Lifecycle-1, I-Lifecycle-4, I-MCP-5, I-MCP-7).
+- **Top-level open count (FEAT/MAINT/PERF/PUB/UX tracker):** 41 → 41.
+- **Previously-resolved counter:** 710+ → 716+ across 502 sessions (latest session 535).
+
+**Items closed (7):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| M-86 | MCP (`mcp/server.rs:42` + new test) — Subagent c005e4b7 (combined with I-MCP-7) | **Bump `MCP_PROTOCOL_VERSION` from `"2024-11-05"` to `"2025-06-18"`.** Pre-fix: server declared the older protocol version while emitting `structuredContent` (a field the MCP spec only added in `2025-06-18`). A pedantic / strict client (or future Claude Desktop release that validates against `2024-11-05`) could reject the response. Post-fix: declared version matches the actual emitted shape. New test `initialize_returns_2025_06_18_protocol_version_m86` pins the literal string in the `initialize` response (so future accidental edits to the constant trip a test, not just a snapshot). No insta snapshots needed updates (none referenced the version string). The remaining `"2024-11-05"` literals in `mcp/server.rs` are intentional — they're CLIENT requests in tests verifying the server accepts mixed-version negotiation per the MCP spec. 244/244 MCP tests PASS. |
+| I-MCP-7 | MCP (`mcp/server.rs:126-134`) — Subagent c005e4b7 (combined with M-86) | **`Send + Sync` compile-time assertion for `ConnectionState`.** Used the **`const _: () = { ... assert_send_sync::<ConnectionState>(); }` static-assertion form** (preferred over `#[test]`) — placed directly in the production module so the contract is enforced on every build, not only test builds. Zero runtime/binary cost (`const fn` evaluated at compile time, the static drops out). An accidental future `Rc` / `RefCell` field would surface at the type definition rather than only at the spawn site. No runtime test needed — compile success IS the verification. |
+| I-Sync-3 | Sync (`sync_protocol/orchestrator.rs:601-617` + 16 caller updates + new test) — Subagent b8482700 | **Rename `is_complete` → `is_succeeded` + doc disambiguation + Failed-state regression test.** Pre-fix: `is_complete()` returned true ONLY for `SyncState::Complete` (succeeded); `is_terminal()` returned true for `Complete | Failed(_) | ResetRequired` (any cannot-progress state). Callers had to remember which one to use; `run_sync_session` correctly used both at different points but the naming made it easy to mistake `is_complete` for `is_terminal`. Post-fix: rename clarifies the semantic — `is_succeeded` is the strict subset of `is_terminal` where the work was successful. Doc-comment now explicitly contrasts the two predicates and explains why the file-transfer gate uses `is_succeeded` (so `Failed(_)` and `ResetRequired` skip file transfer in favour of retry / snapshot-transfer respectively). 16 caller sites updated across 5 files (`sync_protocol/orchestrator.rs`, `sync_protocol/tests.rs`, `sync_integration_tests.rs`, `sync_daemon/orchestrator.rs`, `sync_daemon/server.rs`). New `failed_state_skips_file_transfer_i_sync_3` test drives the orchestrator into `Failed(_)` via `SyncMessage::Error`, asserts both predicate values, and covers `ResetRequired` + `Complete` for full contract coverage. 91/91 sync_protocol + 467/467 broader sync* tests PASS. |
+| I-Search-8 | Search (`link_metadata/html_parser.rs:271-299` + 3 new tests) — Subagent 52811a89 | **Strip surrounding quotes from extracted `meta refresh` URL.** Pre-fix: `extract_meta_refresh_url` matched `content="0;url=https://…"` and sliced `content[url_pos + 4..].trim()` — but if the URL was itself quoted (`content="0;url='https://example.com'"`), the leading `'` was preserved. Downstream `extract_domain` failed to parse, and `detect_auth_required`'s domain comparison degraded to a string-empty match — silent false negative for auth detection. Post-fix: 2-line addition — `let url = url.trim_start_matches(['\'', '"']).trim_end_matches(['\'', '"']);` after the existing `trim()`. Function visibility bumped from private to `pub(super)` so the sibling `tests` module can call it directly (matches the documented convention used by `truncate_str`, `extract_origin`, etc.). 3 new tests cover single-quoted, double-quoted, and unquoted (regression) inputs. 76/76 link_metadata tests PASS. |
+| I-Lifecycle-1 | Lifecycle (`merge/detect.rs:12-26`) — orchestrator-direct | **Document the belt-and-suspenders rationale for `MAX_CHAIN_WALK_ITERATIONS`.** The chain-walk in `walk_to_create_block_root` (and similar callers) tracks BOTH the iteration counter (1000-cap) AND a `HashSet<(device_id, seq)>` of visited keys. Future maintainers were left wondering which guard was "the real one". New doc-comment: visited set is the primary cycle-detection mechanism (catches structural loops in O(N) regardless of length); iteration cap is a defensive backstop for the unexpected (memory corruption, allocator OOM, hash collision) on a chain that is also linearly-long-but-acyclic beyond the cap. Either alone is sufficient for expected failure modes; both together protect against the unexpected at near-zero runtime cost. Pure documentation — no code change. |
+| I-Lifecycle-4 | Lifecycle (`merge/types.rs:33-38` + `merge/apply.rs:84-87` + 3 test consumer updates) — Subagent 0c133ca3 | **Remove dead `MergeOutcome::ConflictCopy.original_kept_ours: bool` field.** The field was hardcoded to `true` at the only construction site in the codebase (`apply.rs:84`); there was no path that constructed `original_kept_ours: false` — the variant was vestigial. Removed cleanly: 8 grep matches (1 in `types.rs`, 1 in `apply.rs`, 6 in `tests.rs`) — 1 construction site collapsed, 2 pattern-match destructurings updated, 2 boolean assertions removed, 1 doc-comment line updated. Inline `// I-Lifecycle-4` explanatory comment in `types.rs` records the rationale. The post-removal compile-pass IS the test (`cargo check --tests` clean, 62/62 merge tests PASS). If the symmetric "kept theirs" branch ever becomes a real outcome, the field can be reintroduced as part of that change. |
+| I-MCP-5 | Docs (`REVIEW-LATER.md:266`) — orchestrator-direct | **Fix REVIEW-LATER.md FEAT-4 internal inconsistency: "8 read tools" → "9 read tools".** Pre-fix: line 266 said "v1 ships the RO socket + 8 read tools only" while lines 388 and 417 said "9". Post-fix: line 266 reads "9 read tools" — consistent across the FEAT-4 entry and matches the shipped `ReadOnlyTools::list_tools()` (9 tools). Pure documentation — no code change. |
+
+**Files touched (this session's batch — 12 modified):**
+
+- Backend MCP (1): `src-tauri/src/mcp/server.rs` (M-86 + I-MCP-7 combined)
+- Backend Sync (5): `src-tauri/src/sync_protocol/orchestrator.rs`, `src-tauri/src/sync_protocol/tests.rs`, `src-tauri/src/sync_integration_tests.rs`, `src-tauri/src/sync_daemon/orchestrator.rs`, `src-tauri/src/sync_daemon/server.rs` (I-Sync-3)
+- Backend Search (2): `src-tauri/src/link_metadata/html_parser.rs`, `src-tauri/src/link_metadata/tests.rs` (I-Search-8)
+- Backend Lifecycle (4): `src-tauri/src/merge/detect.rs` (I-Lifecycle-1 doc), `src-tauri/src/merge/types.rs`, `src-tauri/src/merge/apply.rs`, `src-tauri/src/merge/tests.rs` (I-Lifecycle-4)
+- Docs (2): `REVIEW-LATER.md` (7 items removed; MEDIUM count 44 → 37, INFO count 58 → 52, previously-resolved counter bumped; I-MCP-5 typo fix on line 266), `SESSION-LOG.md` (this entry)
+
+**Verification:** `prek run --all-files` → all hooks PASS. Targeted runs:
+
+- M-86: 1/1 new `_m86` test PASS; 244/244 MCP tests PASS.
+- I-MCP-7: compile-time `const _: () = ...` assertion — `cargo check --lib` PASS confirms `ConnectionState: Send + Sync`.
+- I-Sync-3: 1/1 new `_i_sync_3` test PASS; 91/91 sync_protocol + 467/467 broader sync* tests PASS.
+- I-Search-8: 3/3 new `_i_search_8` tests PASS; 76/76 link_metadata tests PASS (73 pre-existing + 3 new).
+- I-Lifecycle-1: doc-only, no test (covered by existing chain-walk tests).
+- I-Lifecycle-4: `cargo check --tests` clean (compile-pass IS the test); 62/62 merge tests PASS.
+- I-MCP-5: doc-only, no test.
+
+Combined cross-domain run: `cargo nextest run -E '(test(/mcp::/) or test(/sync_protocol::/) or test(/sync_daemon::/) or test(/merge::/) or test(/link_metadata::/))'` → **603/603 PASS**, 2572 skipped.
+
+**Process notes:**
+
+- **Combining 2 items into 1 subagent (M-86 + I-MCP-7) saved a full subagent slot.** Both items touch `mcp/server.rs` (different sections), so a single subagent could handle both atomically without merge conflicts. The c005e4b7 subagent reported back with 3 distinct line ranges in the same file, all non-overlapping. Worth reproducing this pattern when 2+ items share a file.
+- **Parallel-agent merge-state observability.** The c005e4b7 (M-86 + I-MCP-7) subagent reported that during its verification runs it temporarily saw compile errors from the I-Sync-3, I-Lifecycle-4, and I-Lifecycle-1 in-flight changes (cross-file refactors and rename mid-flight). It correctly stashed and verified its own changes in isolation, then restored. This is the same pattern session 530 documented; orchestrator should always re-verify combined state at end-of-batch (which we did with `cargo check --tests` and the 603-test combined run).
+- **REVIEW-LATER.md heading drift accumulated over many sessions.** The MEDIUM heading was off by 7 (claimed 44, actual was 38 pre-batch). This batch corrected to 37 to match reality. Recurring pattern; maybe worth a `prek` hook that asserts `## (LOW|MEDIUM|INFO) findings (N — expanded)` count matches the in-section `### ` count. Filed as a note for a future tooling batch.
+- **I-Sync-3 was a bigger refactor than its `Cost: S` suggests** because of the 16 caller sites across 5 files. The subagent handled all of them in one pass and the verification matrix confirmed zero behavioural change (rename was pure semantics-preserving). This is the kind of refactor that benefits from a focused subagent rather than orchestrator-direct work.
+- **I-Lifecycle-4's "the compile-pass IS the test" pattern is increasingly the right call** for dead-code removal. If the type system enforces the contract, no separate test is needed. Documented in the subagent's report and worth normalizing across future sessions.
+- **I-MCP-5 was a 1-line doc fix.** Almost not worth its own slot — but it was free orchestrator work and completes the FEAT-4 internal consistency before any future MCP-related batch lands. Pattern: trivial doc fixes are good orchestrator-fillers while subagents work.
+
+---
+
 ## Session 534 — Backend INFO Core/Cache cleanup batch — close 6 items (I-Core-1, I-Core-3, I-Core-4, I-Core-6, I-Core-11, I-Cache-2) (2026-04-28)
 
 **6 backend INFO/nits REVIEW-LATER items closed in one PROMPT.md batch with 4 parallel build subagents + 1 orchestrator-direct edit.** Theme: small Core hygiene + observability + atomicity hardening. All items were `Cost: S` and isolated to non-overlapping files (or carefully combined when sharing a file).

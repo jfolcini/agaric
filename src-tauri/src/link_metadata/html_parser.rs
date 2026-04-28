@@ -269,7 +269,11 @@ fn extract_attribute_value(tag: &str, attr: &str) -> Option<String> {
 }
 
 /// Extract the URL from a `<meta http-equiv="refresh" content="0;url=...">` tag.
-fn extract_meta_refresh_url(html: &str) -> Option<String> {
+///
+/// Made `pub(super)` so the sibling `tests` module
+/// (`link_metadata/tests.rs`) can exercise the I-Search-8 quote-stripping
+/// regression directly without having to drive a full HTTP fetch.
+pub(super) fn extract_meta_refresh_url(html: &str) -> Option<String> {
     find_first_tag(html, "<meta ", |tag_lower, tag_orig| {
         if tag_lower.contains("http-equiv=\"refresh\"")
             || tag_lower.contains("http-equiv='refresh'")
@@ -279,7 +283,15 @@ fn extract_meta_refresh_url(html: &str) -> Option<String> {
             let content = extract_attribute_value(tag_orig, "content")?;
             let content_lower = content.to_lowercase();
             let url_pos = content_lower.find("url=")?;
-            Some(content[url_pos + 4..].trim().to_string())
+            // I-Search-8: some servers wrap the URL inside quotes within the
+            // `content` attribute (e.g. `content="0;url='https://example.com'"`).
+            // The outer trim() left the inner quotes; strip them so downstream
+            // `extract_domain` and `detect_auth_required` see a clean URL.
+            let url = content[url_pos + 4..].trim();
+            let url = url
+                .trim_start_matches(['\'', '"'])
+                .trim_end_matches(['\'', '"']);
+            Some(url.to_string())
         } else {
             None
         }

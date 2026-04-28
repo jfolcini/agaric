@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 710+ items across 501 sessions (per SESSION-LOG.md unique session count; latest is session 534).
+Previously resolved: 716+ items across 502 sessions (per SESSION-LOG.md unique session count; latest is session 535).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -263,7 +263,7 @@ Out of scope for this item: cloud-hosted inference, remote agents, multi-user au
 **User decisions recorded up front (do not re-litigate during implementation):**
 
 - **Two sockets, not one.** Read-only access and read-write access live on **separate** Unix-domain sockets (named pipes on Windows) with independent toggles. No runtime scope negotiation, no per-tool allowlist in v1. User points their agent at whichever socket they want to grant.
-- **Read-only first.** v1 ships the RO socket + 8 read tools only. Write tools are deferred to v2 so the user can live with read-only agents before granting mutation. The architecture must leave the RW slot obviously open so v2 is purely additive.
+- **Read-only first.** v1 ships the RO socket + 9 read tools only. Write tools are deferred to v2 so the user can live with read-only agents before granting mutation. The architecture must leave the RW slot obviously open so v2 is purely additive.
 - **Writes (when they land in v2) apply straight to the op log**, tagged with `origin = "agent:<name>"` where `<name>` is the MCP `clientInfo.name` from the handshake. No staging queue, no user-confirmation modal per write. Safety comes from the existing op-log undo (`reverse.rs`) plus a new "recent agent activity" feed and one-click bulk revert.
 - **Non-reversible ops are never exposed to agents**, even with RW. `purge_block` and `delete_attachment` (the two `NonReversible` variants in `AppError`) stay frontend-only. Agents can `delete_block` (reversible soft-delete) but cannot purge.
 
@@ -1552,7 +1552,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Recommendation:** Tauri command `bug_report_preview()` returns the same redacted bundle as the existing submit, but does not upload. The dialog renders it via the existing `ScrollArea` + diff viewer primitives. Cross-references UX-277 (`BugReportDialog` polish — adding "no log-content preview before submit" was already filed there at S cost; this finding promotes it to H-9c with a richer scope).
 - **Status:** Open. Independent of H-9a / H-9b. May supersede the "no log-content preview" item in UX-277 — when H-9c lands, drop the preview bullet from UX-277.
 
-## MEDIUM findings (44 — expanded)
+## MEDIUM findings (37 — expanded)
 
 > Each entry is now a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status) ready to be picked up.
 
@@ -2011,18 +2011,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 09/F4
 - **Status:** Open
 
-### M-86 — Server pinned to MCP `"2024-11-05"` but emits `structuredContent` (a 2025-06-18 feature)
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/server.rs:42` (`MCP_PROTOCOL_VERSION`), `src-tauri/src/mcp/server.rs:247-256` (initialize response), `src-tauri/src/mcp/server.rs:217-218` (handshake comment); `wrap_tool_result_success` envelope (used by every successful tool call).
-- **What:** `MCP_PROTOCOL_VERSION = "2024-11-05"` is the only string the server returns from `initialize`, but `wrap_tool_result_success` includes `structuredContent`, a field that the MCP spec only added in `2025-06-18`. The server is therefore declaring an older protocol version while emitting fields specific to a newer one.
-- **Why it matters:** A pedantic / strict client (or a future Claude Desktop release that validates against `2024-11-05`) could reject responses because `structuredContent` is unexpected for the declared version. Today every client we care about accepts extra fields, but the doc/code drift is real and will trip any future negotiation logic.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Bump `MCP_PROTOCOL_VERSION` to `"2025-06-18"`, update the snapshot at `server.rs:818` and `server.rs:1819`, and verify our two reference clients (Claude Desktop, Cursor) negotiate cleanly. Optionally echo the client's requested version when it parses, with `serverInfo.version` as the authoritative version field.
-- **Pass-1 source:** 09/F26
-- **Status:** Open
-
 ### GCal / Spaces / Drafts
 
 ### L-132 — `claim_lease` does 4 round-trips, could be 2
@@ -2037,7 +2025,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F25
 - **Status:** Open
 
-## INFO / nits (58 — expanded)
+## INFO / nits (52 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2341,18 +2329,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 06/F33
 - **Status:** Open
 
-### I-Sync-3 — `is_complete` only checks `Complete`, not the broader terminal set
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_protocol/orchestrator.rs:471-483`
-- **What:** `is_complete()` returns true only for `SyncState::Complete`; `is_terminal()` returns true for `Complete | Failed(_) | ResetRequired`. Callers must remember which one to use — `run_sync_session` uses both at different points (`while !orch.is_terminal()` for main loop control; `if orch.is_complete()` to gate file transfer).
-- **Why it matters:** Maintainability — confusing API surface. The file-transfer gate is correctly on `is_complete()` (so `ResetRequired` skips it in favour of snapshot transfer), but no test asserts that a sync ending in `Failed(_)` skips file transfer.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Rename `is_complete` to `is_succeeded` (or `is_complete_success`) and add a rustdoc that contrasts it with `is_terminal`. Add a test that `Failed(_)` skips file transfer.
-- **Pass-1 source:** 06/F53
-- **Status:** Open
-
 ### I-Sync-4 — `OpTransfer` and `OpRecord` are structurally identical
 - **Domain:** Sync
 - **Location:** `src-tauri/src/sync_protocol/types.rs:18-58`; cross-ref `src-tauri/src/op_log.rs:13`
@@ -2425,18 +2401,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Resolved by I-Search-2 — once short-token filtering lands in `sanitize_fts_query`, this branch is correct by construction.
 - **Pass-1 source:** 07/F29
-- **Status:** Open
-
-### I-Search-8 — `extract_meta_refresh_url` does not strip surrounding quotes from extracted URL
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/link_metadata/html_parser.rs:255-284` (line 276 in particular)
-- **What:** The pattern matches `content="0;url=https://…"` and slices `content[url_pos + 4..].trim()` directly. If the URL is itself quoted (`content="0;url='https://…'"`), the leading `'` is preserved; downstream `extract_domain('https://…)` fails to parse, and `detect_auth_required`'s domain comparison degrades to a string-empty match — silent false negative for auth detection.
-- **Why it matters:** Rare in practice but the failure mode is silent. Single-line fix.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Strip leading and trailing `'` and `"` from the extracted URL after `trim()`.
-- **Pass-1 source:** 07/F31
 - **Status:** Open
 
 ### I-Search-9 — `BacklinkFilter::BlockType` loads all blocks of type into memory
@@ -2549,18 +2513,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Lifecycle
 
-### I-Lifecycle-1 — `merge_text` chain-walk uses both an iteration cap AND a visited-set
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/merge/detect.rs:51-67`
-- **What:** The loop tracks `iterations` against `MAX_CHAIN_WALK_ITERATIONS = 1000` and also a `HashSet` of visited `(device_id, seq)` keys. Cycles are detected by the visited set in O(N); the iteration counter only fires on linearly-long-but-acyclic chains, which for a single block's edit chain cannot exceed the number of edits. Defensive belt-and-suspenders, not a bug.
-- **Why it matters:** Future maintainer wonders which guard is "the real one" and may remove one. Documented in `chain_walk_detects_cycle` (line 1877) and `max_chain_walk_iterations_is_bounded` (line 2010).
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add a one-line comment explaining the iteration cap is a belt-and-suspenders guard for the corruption case where the visited set somehow misbehaves (memory corruption, OOM panic). Or remove the cap and rely on the visited set.
-- **Pass-1 source:** 08/F18
-- **Status:** Open
-
 ### I-Lifecycle-2 — `create_snapshot` rejects empty op_log with `AppError::Snapshot`
 - **Domain:** Lifecycle
 - **Location:** `src-tauri/src/snapshot/create.rs:79-90`
@@ -2583,18 +2535,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Mirror the structure of `undo_chain_edit_round_trip` (line ~512) for every reversible op type: apply the original op → snapshot a "before" hash of the affected DB rows → apply the reverse → assert "before" matches.
 - **Pass-1 source:** 08/F36
-- **Status:** Open
-
-### I-Lifecycle-4 — `MergeOutcome::ConflictCopy.original_kept_ours` is dead in the field
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/merge/types.rs:33-38`; `src-tauri/src/merge/apply.rs:84-87`
-- **What:** The struct field is hardcoded to `true` at the only construction site in the codebase (`apply.rs:84`). There is no path that constructs `original_kept_ours: false`; the variant is vestigial.
-- **Why it matters:** Future readers will spend time figuring out when the false branch fires. It never does.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either remove the field (caller is the only construction site, change is mechanical), or add a comment + future test stub for the symmetric "kept theirs" branch (which is not currently a possible outcome).
-- **Pass-1 source:** 08/F41
 - **Status:** Open
 
 ### I-Lifecycle-5 — `recovery::cache_refresh` always rebuilds tags+pages even for non-tag/page edits
@@ -2647,18 +2587,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 09/F22
 - **Status:** Open
 
-### I-MCP-5 — REVIEW-LATER.md FEAT-4 says "8 read tools" then "9" two paragraphs apart
-- **Domain:** MCP
-- **Location:** `REVIEW-LATER.md:302` ("v1 ships the RO socket + 8 read tools only"); `REVIEW-LATER.md:388` ("9 read tools"); `REVIEW-LATER.md:417` ("9 read tools"); shipped `src-tauri/src/mcp/tools_ro.rs:212-224` lists 9.
-- **What:** REVIEW-LATER.md is internally inconsistent — line 302 says "8 read tools", lines 388 and 417 say "9". `ReadOnlyTools::list_tools()` ships 9.
-- **Why it matters:** Cosmetic; affects no runtime behaviour. Confusing for anyone reading the FEAT-4 spec for a refresher.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Fix REVIEW-LATER.md line 302 to read "9 read tools".
-- **Pass-1 source:** 09/F23
-- **Status:** Open
-
 ### I-MCP-6 — `tool_response_get_agenda.snap` pins an empty agenda — does not exercise the populated wire shape
 - **Domain:** MCP
 - **Location:** `src-tauri/src/mcp/snapshots/agaric_lib__mcp__tools_ro__tests__tool_response_get_agenda.snap` (5 LOC, body is `[]`); test `src-tauri/src/mcp/tools_ro.rs:1755-1766`.
@@ -2669,18 +2597,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Seed one block with a `due_date` inside the test's date range, redact `block_id` / `date` via insta filters, and pin a single populated entry. Keeps the wire shape under test without making the snapshot date-dependent.
 - **Pass-1 source:** 09/F24
-- **Status:** Open
-
-### I-MCP-7 — `ConnectionState` has no `Send + Sync` compile-time assertion
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/server.rs:96-103` (`ConnectionState`); existing `Send` future test at `src-tauri/src/mcp/registry.rs:236-246` (`placeholder_registry_call_tool_future_is_send`).
-- **What:** Dispatch requires `ConnectionState` to be `Send` because it lives in the per-connection task spawned by `serve_unix` / `serve_pipe`. There is a `Send` test for the registry future, but no compile-time assertion on the struct itself; an accidental `Rc` or `RefCell` field would surface only at the spawn site.
-- **Why it matters:** Defensive plumbing; today every field is `Send + Sync`. Adding the compile-time assertion is three lines and pins the contract at the struct definition.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add `fn assert_send_sync<T: Send + Sync>() {} #[test] fn connection_state_is_send_sync() { assert_send_sync::<ConnectionState>(); }` next to the struct.
-- **Pass-1 source:** 09/F25
 - **Status:** Open
 
 ### I-MCP-9 — `agaric-mcp` stub-binary integration test is `#[ignore]` and not exercised in CI

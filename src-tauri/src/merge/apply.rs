@@ -109,7 +109,6 @@ pub async fn merge_block_text_only(
 
             tracing::warn!(block_id, "merge completed — conflict copy created");
             Ok(MergeOutcome::ConflictCopy {
-                original_kept_ours: true,
                 conflict_block_op: conflict_op,
             })
         }

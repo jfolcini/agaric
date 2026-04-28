@@ -819,7 +819,7 @@ pub(crate) async fn run_sync_session(
     // attachment transfer can be aborted between files when the user
     // hits "cancel sync" (otherwise the run_sync_session loop's cancel
     // check is dead code once we reach this phase).
-    if orch.is_complete() {
+    if orch.is_succeeded() {
         if let Ok(app_data_dir) = crate::sync_files::app_data_dir_from_pool(pool).await {
             match crate::sync_files::run_file_transfer_initiator(conn, pool, &app_data_dir, cancel)
                 .await
