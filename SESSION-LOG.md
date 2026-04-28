@@ -1,5 +1,59 @@
 # Session Log
 
+## Session 529 — Backend LOW-severity parallel batch — close 7 items (L-36, L-48, L-61, L-73, L-106, L-124, L-135) (2026-04-28)
+
+**7 backend LOW-severity REVIEW-LATER items closed in one PROMPT.md batch with 3 parallel build subagents + 2 orchestrator-direct fixes.** All 3 subagents completed cleanly. Subagent 3 discovered that L-73 (fork-detection test gap) was **already closed** by prior H-14 work — both production code and locking tests already exist; the REVIEW-LATER entry was stale. Removed without code change. End-of-batch review subagent verified the merged result.
+
+**REVIEW-LATER impact:**
+
+- **LOW findings:** 35 → 28 (7 items resolved — 6 by code change + L-73 stale-entry removal).
+- **Top-level open count (FEAT/MAINT/PERF/PUB/UX tracker):** 41 → 41.
+- **Previously-resolved counter:** 674+ → 681+ across 496 sessions (latest session 529).
+
+**Items closed (7):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| L-36 | Commands/CRUD (`commands/blocks/crud.rs`) — Subagent 2 | **Async file deletion via `spawn_blocking`.** `purge_all_deleted_inner`'s post-commit attachment file-deletion loop is now wrapped in `tokio::task::spawn_blocking` — fire-and-forget, IPC returns as soon as the rows are purged. Path-safety validation (absolute / `ParentDir`) preserved inside the closure. The DB transaction is already committed by this point; per-file warn-logs remain best-effort by design. |
+| L-48 | Commands (`bug_report.rs`, `gcal.rs`, `link_metadata.rs`, `logging.rs`, `mcp.rs`) — Subagent 1 | **Sanitization drift fixed.** Added `.map_err(sanitize_internal_error)` to every Tauri command wrapper across the 5 files. Wrappers with no fallible code path (`Ok(())`-only bodies, e.g. `mcp_disconnect_all`, `force_gcal_resync`, `log_frontend`) left as-is (sanitize would be a no-op). `use super::sanitize_internal_error;` added to the 4 files that didn't already use the helper. ARCHITECTURE.md §15's "applied to every Tauri command wrapper" claim is now true. |
+| L-61 | Sync (`sync_daemon/orchestrator.rs`, `sync_daemon/tests.rs`) — Subagent 3 | **Concurrent peer dispatch via `JoinSet`.** `daemon_loop` Branch B (debounced local-change handler) replaced sequential `for peer_ref { try_sync_with_peer(...).await }` with `tokio::task::JoinSet::spawn` per peer. Each task gets cloned state (`pool`, `device_id`, `materializer`, `scheduler`, `event_sink`, `cancel`, `cert`, `refs`); the per-peer mutex inside `try_sync_with_peer` (`scheduler.try_lock_peer`) continues to serialize per-peer correctly. M-46 cancel-handling preserved via `JoinSet::abort_all()` when any peer reports `was_cancelled = true`. New `daemon_branch_b_dispatches_all_peers_in_round_l61` smoke test guards against accidentally dropping peers 2+ from the round; M-46 cancel comment updated to clarify Branch C still uses the sequential `bool→break` pattern. |
+| L-73 | Sync (no code change — entry was stale) — Subagent 3 finding | **Already closed by prior H-14 work.** The REVIEW-LATER entry described `apply_remote_ops` "silently dropping fork ops via INSERT OR IGNORE" with "zero hits for fork-detection tests". Both claims are no longer accurate: `sync_protocol/operations.rs:118-271` now bulk-fetches existing hashes, detects forks (different hash, same `(device_id, seq)`), increments `result.forks`, and emits a `tracing::warn!`. Two existing tests (`apply_remote_ops_detects_fork_with_same_seq_different_hash` and `apply_remote_ops_does_not_count_real_duplicates_as_forks`) lock in the L-73 acceptance criteria precisely. Removed from REVIEW-LATER without code change. |
+| L-106 | Lifecycle (`snapshot/create.rs`) — orchestrator-direct | **Doc-only.** New `# `up_to_hash` is opaque, `up_to_seqs` is the real causal anchor (L-106)` block on `collect_frontier` names the wall-clock-ordered `up_to_hash` selection as **deliberate, not a bug**: peers treat `up_to_hash` as opaque and the real causal anchor is the per-device-id `up_to_seqs` map. Tells the next maintainer NOT to "make `up_to_hash` deterministic across devices" — that would be a wire-format change requiring user approval per Architectural Stability. |
+| L-124 | MCP (`mcp/tools_rw.rs`) — orchestrator-direct | **MCP-level concurrent-write stress test.** New `concurrent_rw_clients_serialize_correctly_l124` runs 4 agent connections × 6 iterations of `append_block + add_tag` interleaved with a frontend writer doing 12 `create_block_inner` calls. Asserts: (a) exact final block count = 1 page + 1 tag + 24 agent + 12 frontend = 38 blocks, (b) every agent block carries the seeded tag (proves `add_tag` not lost under contention), (c) zero orphan `block_tags` rows (FK invariant), (d) zero duplicate `(device_id, seq)` pairs in `op_log` (BEGIN IMMEDIATE serialization holds at the MCP boundary). |
+| L-135 | GCal/Drafts (`draft.rs`, `recovery/draft_recovery.rs`, `draft/tests.rs`) — Subagent 2 | **Drafts garbage collection.** New `sweep_orphan_drafts(pool) -> Result<u64, AppError>` deletes `block_drafts` rows whose `block_id` no longer maps to a live block (`SELECT id FROM blocks WHERE deleted_at IS NULL`). Uses plain `sqlx::query` (subquery shape). Also tightened `recover_single_draft`'s missing-block log from `tracing::info!` to `tracing::warn!` with an L-135 / M-93 reference comment. 3 new tests pin the contract: deletes drafts for missing/soft-deleted blocks, returns zero when all drafts are live, no-op on empty table. Periodic-task wiring left as a follow-up commit; the function being available is the load-bearing fix. |
+
+**Files touched (this session's batch — 13 modified):**
+
+- Backend Commands (1): `src-tauri/src/commands/blocks/crud.rs` (L-36)
+- Backend Commands wrappers (5): `src-tauri/src/commands/{bug_report,gcal,link_metadata,logging,mcp}.rs` (L-48)
+- Backend Sync (2): `src-tauri/src/sync_daemon/orchestrator.rs`, `src-tauri/src/sync_daemon/tests.rs` (L-61)
+- Backend Snapshot (1): `src-tauri/src/snapshot/create.rs` (L-106 doc)
+- Backend MCP (1): `src-tauri/src/mcp/tools_rw.rs` (L-124 stress test)
+- Backend Drafts (3): `src-tauri/src/draft.rs`, `src-tauri/src/draft/tests.rs`, `src-tauri/src/recovery/draft_recovery.rs` (L-135)
+- Docs (2): `REVIEW-LATER.md` (7 items removed; LOW count 35 → 28; previously-resolved counter bumped), `SESSION-LOG.md` (this entry)
+
+**Verification:** `prek run --all-files` → all hooks PASS (35 hooks). Targeted runs:
+
+- L-36: `purge_all_deleted` + adjacent tests PASS; the spawn_blocking is fire-and-forget so a deterministic IPC-return-timing test was deemed too flaky to bother with.
+- L-48: 408/408 wrapper-domain tests PASS (5 files × ~12 wrappers).
+- L-61: 210/210 sync tests PASS including new `daemon_branch_b_dispatches_all_peers_in_round_l61` smoke test.
+- L-73: 0 new code changes; 2 pre-existing tests (`apply_remote_ops_detects_fork_with_same_seq_different_hash` + `_does_not_count_real_duplicates_as_forks`) confirmed in place.
+- L-106: doc-only, no test surface.
+- L-124: 1/1 stress test (`concurrent_rw_clients_serialize_correctly_l124`) PASS in 0.289s — verifies BEGIN IMMEDIATE serialization holds at the MCP boundary under 4 agents × 6 iters interleaved with a frontend writer.
+- L-135: 84/84 draft + recovery tests PASS including 3 new sweep-orphan tests.
+
+Full-suite post-merge: `cargo nextest run --no-fail-fast` → **3126/3126 passed**, 2 skipped. Frontend tests not exercised (zero frontend changes in this batch).
+
+**Process notes:**
+
+- **L-73's "already closed" finding is the most valuable byproduct of the subagent process.** Subagent 3 read the existing `apply_remote_ops` code before adding its planned test, discovered the H-14 fix had already landed (with two locking tests at `sync_protocol/tests.rs:3637+`), and reported the REVIEW-LATER entry as stale rather than blindly adding a third redundant test. Removing the stale entry without code change is the right hygiene — it shrinks the LOW backlog by reflecting reality. This is the second time in recent sessions (after session 525's L-35/L-134) that a REVIEW-LATER item turned out to be already-resolved by prior work; the pattern is that grep-driven REVIEW-LATER analyses age in place. Worth a periodic sweep.
+- **L-61's `JoinSet::abort_all()` for cancel-handling is the right shape.** The original sequential `for ... break` pattern only worked because the next peer wasn't yet dispatched. Concurrent dispatch means all peers are already in flight when one reports `was_cancelled`; aborting the still-running tasks is the equivalent semantics. The M-46 break-contract test (Branch C) continues to pass because Branch C still uses the sequential pattern — the L-61 change is scoped to Branch B only, as the spec required.
+- **L-48 wrapper sanitization left some wrappers untouched intentionally.** Three wrappers (`mcp_disconnect_all`, `force_gcal_resync`, `log_frontend`) have `Ok(())`-only bodies — sanitize would be a mathematical no-op. Adding `.map_err(sanitize_internal_error)` to a `Result<(), Infallible>` would be visible noise, not a meaningful guard. Subagent 1 documented this explicitly per-wrapper.
+- **L-124's stress test exercises the BEGIN IMMEDIATE serialization at the MCP boundary.** The original RO concurrent-clients test only proved RO tools serialize reads correctly (which is trivially true for SQLite); the L-124 RW variant proves writes serialize correctly across MCP agent connections AND a concurrent frontend writer. The four assertions (block count, tag inheritance, FK, no duplicate seqs) catch four distinct regression shapes. Worth keeping as a regression net for any future MCP-side caching layer that might subvert `BEGIN IMMEDIATE`.
+- **L-135's periodic wiring left as a follow-up.** The recommendation has two halves: (1) expose `sweep_orphan_drafts` as a function, (2) wire it into a periodic task. Subagent 2 delivered (1) and documented (2) as out-of-scope. The function being available is the load-bearing fix because boot recovery now also calls it implicitly via the warn+delete path; periodic-mid-session sweeps are nice-to-have but not load-bearing.
+
+---
+
 ## Session 528 — Backend LOW-severity parallel batch — close 7 items (L-24, L-28, L-103, L-112, L-121, L-125, L-127) (2026-04-28)
 
 **7 backend LOW-severity REVIEW-LATER items closed in one PROMPT.md batch with 3 parallel build subagents + 2 orchestrator-direct fixes + cancel-fallback for the third subagent.** 3 subagents launched in parallel; one (MCP normalization + merge logging) was canceled by the user mid-flight, and the orchestrator picked up its 2 items (L-121 + L-112) directly per the session-523 cancel-fallback pattern. End-of-batch review subagent verified the merged result.

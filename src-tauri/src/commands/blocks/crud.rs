@@ -1207,31 +1207,39 @@ pub async fn purge_all_deleted_inner(
     // rebuilds are independent of the filesystem side effect).
     tx.commit_and_dispatch(materializer).await?;
 
-    // Post-commit: delete physical attachment files
-    for path in &attachment_rows {
-        let p = std::path::Path::new(path.as_str());
-        if p.is_absolute()
-            || p.components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            let (path_hash, ext) = anonymize_attachment_path(path);
-            tracing::warn!(
-                path_hash = %path_hash,
-                extension = %ext,
-                "skipping attachment deletion: unsafe path"
-            );
-            continue;
+    // L-36: Post-commit attachment-file unlink runs on a blocking thread so
+    // the IPC reply is not held up by per-file `unlink` syscalls. The DB
+    // transaction has already committed at this point, so failed file deletes
+    // do not affect data correctness — the warn-logs are best-effort by
+    // design. The returned `JoinHandle` is intentionally dropped (fire-and-
+    // forget); awaiting it would defeat the point of moving the loop off the
+    // command thread.
+    tokio::task::spawn_blocking(move || {
+        for path in &attachment_rows {
+            let p = std::path::Path::new(path.as_str());
+            if p.is_absolute()
+                || p.components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                let (path_hash, ext) = anonymize_attachment_path(path);
+                tracing::warn!(
+                    path_hash = %path_hash,
+                    extension = %ext,
+                    "skipping attachment deletion: unsafe path"
+                );
+                continue;
+            }
+            if let Err(e) = std::fs::remove_file(path) {
+                let (path_hash, ext) = anonymize_attachment_path(path);
+                tracing::warn!(
+                    path_hash = %path_hash,
+                    extension = %ext,
+                    error = %e,
+                    "failed to remove attachment file after purge"
+                );
+            }
         }
-        if let Err(e) = std::fs::remove_file(path) {
-            let (path_hash, ext) = anonymize_attachment_path(path);
-            tracing::warn!(
-                path_hash = %path_hash,
-                extension = %ext,
-                error = %e,
-                "failed to remove attachment file after purge"
-            );
-        }
-    }
+    });
 
     Ok(BulkTrashResponse {
         affected_count: count,

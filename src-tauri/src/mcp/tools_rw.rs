@@ -1186,4 +1186,194 @@ mod tests {
             op_ref.seq,
         );
     }
+
+    // -------------------------------------------------------------------
+    // L-124: MCP-level concurrent-write stress test
+    //
+    // The RW handlers are 1:1 with `*_inner` calls, each opening its
+    // own `BEGIN IMMEDIATE` transaction. The inner-test level exercises
+    // `BEGIN IMMEDIATE` correctness, but no test interleaves multiple
+    // agent connections across `append_block` / `add_tag` / `delete_block`
+    // AT THE MCP BOUNDARY. This stress test fills that gap so a future
+    // refactor that bypassed the inner — or added an MCP-side cache that
+    // subverted `BEGIN IMMEDIATE` — would surface as duplicate-seq
+    // failures or FK violations under contention.
+    //
+    // Closes REVIEW-LATER L-124.
+    // -------------------------------------------------------------------
+
+    /// 4 agent connections × 6 iterations × `append_block + add_tag` plus
+    /// a single frontend-side writer doing 12 `create_block_inner` calls.
+    /// Total expected blocks: 4×6 (agent appends) + 12 (frontend) = 36.
+    /// All ops must succeed; final block count must match exactly; no FK
+    /// violations on the agent-tag join.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_rw_clients_serialize_correctly_l124() {
+        use std::sync::Arc;
+
+        let (tools, mat, pool, _dir) = mk_tools().await;
+
+        // Seed: one page (parent_id for every append) + one tag.
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "L-124 stress page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        let tag = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "tag".into(),
+            "stress-tag".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        let tools = Arc::new(tools);
+        const AGENTS: usize = 4;
+        const ITERS_PER_AGENT: usize = 6;
+        const FRONTEND_ITERS: usize = 12;
+
+        // Per-agent task: append a block, then add the seeded tag.
+        let mut agent_handles = Vec::with_capacity(AGENTS);
+        for agent_idx in 0..AGENTS {
+            let tools = tools.clone();
+            let parent_id = page.id.clone();
+            let tag_id = tag.id.clone();
+            agent_handles.push(tokio::spawn(async move {
+                for iter in 0..ITERS_PER_AGENT {
+                    let ctx = ActorContext {
+                        actor: Actor::Agent {
+                            name: format!("stress-agent-{agent_idx}"),
+                        },
+                        request_id: format!("a{agent_idx}-i{iter}"),
+                    };
+                    let append_resp = tools
+                        .call_tool(
+                            "append_block",
+                            json!({
+                                "parent_id": parent_id,
+                                "content": format!("agent {agent_idx} block {iter}"),
+                            }),
+                            &ctx,
+                        )
+                        .await
+                        .unwrap_or_else(|e| {
+                            panic!("append_block failed (agent {agent_idx}, iter {iter}): {e:?}")
+                        });
+                    let block_id = append_resp["id"].as_str().unwrap().to_string();
+                    tools
+                        .call_tool(
+                            "add_tag",
+                            json!({"block_id": block_id, "tag_id": tag_id}),
+                            &ctx,
+                        )
+                        .await
+                        .unwrap_or_else(|e| {
+                            panic!("add_tag failed (agent {agent_idx}, iter {iter}): {e:?}")
+                        });
+                }
+            }));
+        }
+
+        // Concurrent frontend writer (uses *_inner directly, simulating
+        // the Tauri command path). Mirrors the pattern in
+        // `concurrent_appends_same_device_serialize_correctly`.
+        let frontend_handle = {
+            let pool = pool.clone();
+            let mat = mat.clone();
+            let parent_id = page.id.clone();
+            tokio::spawn(async move {
+                for iter in 0..FRONTEND_ITERS {
+                    create_block_inner(
+                        &pool,
+                        DEV,
+                        &mat,
+                        "content".into(),
+                        format!("frontend block {iter}"),
+                        Some(parent_id.clone()),
+                        Some((iter + 100) as i64),
+                    )
+                    .await
+                    .unwrap_or_else(|e| panic!("frontend create failed (iter {iter}): {e:?}"));
+                }
+            })
+        };
+
+        for h in agent_handles {
+            h.await.expect("agent task joined");
+        }
+        frontend_handle.await.expect("frontend task joined");
+        settle(&mat).await;
+
+        // Assert exact final block count: 1 page + 1 tag + 4×6 agent blocks
+        // + 12 frontend blocks = 38.
+        let total_blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let expected = 2 + AGENTS * ITERS_PER_AGENT + FRONTEND_ITERS;
+        assert_eq!(
+            total_blocks as usize, expected,
+            "concurrent agent + frontend writes must produce exact block count \
+             (1 page + 1 tag + {AGENTS}×{ITERS_PER_AGENT} agent + {FRONTEND_ITERS} frontend = {expected})",
+        );
+
+        // Assert every agent-created block has the seeded tag — proves
+        // `add_tag` was not lost under contention. Frontend blocks have
+        // no tag, so we count agent-created blocks via a pattern match
+        // on content.
+        let agent_blocks_with_tag: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_tags bt \
+             JOIN blocks b ON b.id = bt.block_id \
+             WHERE bt.tag_id = ? AND b.content LIKE 'agent %'",
+        )
+        .bind(&tag.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            agent_blocks_with_tag as usize,
+            AGENTS * ITERS_PER_AGENT,
+            "every agent block must carry the seeded tag — add_tag must not be lost under contention",
+        );
+
+        // Assert no FK violations or orphan rows: every block_tags row
+        // references real blocks.
+        let orphan_tag_refs: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_tags bt \
+             WHERE NOT EXISTS (SELECT 1 FROM blocks b WHERE b.id = bt.block_id)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            orphan_tag_refs, 0,
+            "no block_tags rows may reference missing blocks (FK invariant)"
+        );
+
+        // op_log monotonicity: every (device_id, seq) pair is unique.
+        let dup_ops: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM (\
+                SELECT device_id, seq, COUNT(*) c FROM op_log \
+                GROUP BY device_id, seq HAVING c > 1\
+             )",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            dup_ops, 0,
+            "op_log must contain no duplicate (device_id, seq) pairs under contention"
+        );
+    }
 }

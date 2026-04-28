@@ -29,6 +29,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use super::sanitize_internal_error;
 use crate::error::AppError;
 use crate::mcp::{
     self, default_mcp_ro_socket_path, default_mcp_rw_socket_path, mcp_ro_enabled, mcp_rw_enabled,
@@ -268,7 +269,7 @@ pub async fn get_mcp_status(
     app: tauri::AppHandle,
     lifecycle: tauri::State<'_, Arc<McpLifecycle>>,
 ) -> Result<McpStatus, AppError> {
-    let app_data_dir = app_data_dir_from_handle(&app)?;
+    let app_data_dir = app_data_dir_from_handle(&app).map_err(sanitize_internal_error)?;
     Ok(get_mcp_status_inner(&app_data_dir, lifecycle.inner()))
 }
 
@@ -277,7 +278,7 @@ pub async fn get_mcp_status(
 #[tauri::command]
 #[specta::specta]
 pub async fn get_mcp_socket_path(app: tauri::AppHandle) -> Result<String, AppError> {
-    let app_data_dir = app_data_dir_from_handle(&app)?;
+    let app_data_dir = app_data_dir_from_handle(&app).map_err(sanitize_internal_error)?;
     Ok(get_mcp_socket_path_inner(&app_data_dir))
 }
 
@@ -340,9 +341,10 @@ pub async fn mcp_set_enabled(
     let gate = toggle_gate.inner().0.clone();
     let _guard = gate.lock().await;
 
-    let app_data_dir = app_data_dir_from_handle(&app)?;
+    let app_data_dir = app_data_dir_from_handle(&app).map_err(sanitize_internal_error)?;
     let lc = lifecycle.inner().clone();
-    let changed = mcp_set_enabled_inner(&app_data_dir, &lc, enabled)?;
+    let changed =
+        mcp_set_enabled_inner(&app_data_dir, &lc, enabled).map_err(sanitize_internal_error)?;
 
     // Start the task if the marker was just created and no serve loop
     // is currently running. `spawn_mcp_ro_task` rechecks the marker file
@@ -445,7 +447,7 @@ pub async fn get_mcp_rw_status(
     app: tauri::AppHandle,
     lifecycle: tauri::State<'_, McpRwLifecycle>,
 ) -> Result<McpRwStatus, AppError> {
-    let app_data_dir = app_data_dir_from_handle(&app)?;
+    let app_data_dir = app_data_dir_from_handle(&app).map_err(sanitize_internal_error)?;
     Ok(get_mcp_rw_status_inner(&app_data_dir, &lifecycle.inner().0))
 }
 
@@ -455,7 +457,7 @@ pub async fn get_mcp_rw_status(
 #[tauri::command]
 #[specta::specta]
 pub async fn get_mcp_rw_socket_path(app: tauri::AppHandle) -> Result<String, AppError> {
-    let app_data_dir = app_data_dir_from_handle(&app)?;
+    let app_data_dir = app_data_dir_from_handle(&app).map_err(sanitize_internal_error)?;
     Ok(get_mcp_rw_socket_path_inner(&app_data_dir))
 }
 
@@ -493,9 +495,10 @@ pub async fn mcp_rw_set_enabled(
     let gate = toggle_gate.inner().0.clone();
     let _guard = gate.lock().await;
 
-    let app_data_dir = app_data_dir_from_handle(&app)?;
+    let app_data_dir = app_data_dir_from_handle(&app).map_err(sanitize_internal_error)?;
     let lc = lifecycle.inner().0.clone();
-    let changed = mcp_rw_set_enabled_inner(&app_data_dir, &lc, enabled)?;
+    let changed =
+        mcp_rw_set_enabled_inner(&app_data_dir, &lc, enabled).map_err(sanitize_internal_error)?;
 
     if enabled && !lc.is_running() {
         mcp::spawn_mcp_rw_task(

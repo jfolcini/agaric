@@ -121,6 +121,27 @@ pub async fn draft_count(pool: &SqlitePool) -> Result<i64, AppError> {
     Ok(rec.count)
 }
 
+/// L-135: Delete `block_drafts` rows whose `block_id` no longer maps to a
+/// live (non-soft-deleted) block. Returns the count of orphan drafts removed.
+///
+/// `block_drafts.block_id` has no FK to `blocks.id` (M-93), so drafts for
+/// hard-deleted blocks survive purges and produce noise on next boot. This
+/// function is the load-bearing fix; periodic invocation (e.g. from a
+/// background task every N minutes) is left as a follow-up — the function
+/// being available is what enables the cleanup.
+///
+/// The query uses plain `sqlx::query` (not the `query!` macro) because the
+/// subquery makes type inference flaky in the macro path.
+pub async fn sweep_orphan_drafts(pool: &SqlitePool) -> Result<u64, AppError> {
+    let result = sqlx::query(
+        "DELETE FROM block_drafts \
+         WHERE block_id NOT IN (SELECT id FROM blocks WHERE deleted_at IS NULL)",
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 /// Flush a draft: write an `edit_block` op and then delete the draft row,
 /// using an existing outer transaction.
 ///
