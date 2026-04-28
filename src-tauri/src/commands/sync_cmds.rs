@@ -77,7 +77,25 @@ pub async fn set_peer_address_inner(
         return Err(AppError::NotFound(format!("peer '{peer_id}' not found")));
     }
 
-    peer_refs::update_last_address(pool, &peer_id, &address).await
+    // L-86: `update_last_address` now returns `NotFound` if the peer row is
+    // gone. We just verified it exists above, so a `NotFound` here is a
+    // TOCTOU race with `delete_peer_ref` — log and swallow per the documented
+    // threat model (peer is the user's own device, not a hostile actor).
+    // Other errors (DB failures, etc.) still propagate.
+    if let Err(e) = peer_refs::update_last_address(pool, &peer_id, &address).await {
+        match &e {
+            AppError::NotFound(_) => {
+                tracing::warn!(
+                    error = %e,
+                    peer_id = %peer_id,
+                    "peer disappeared between existence check and update_last_address; \
+                     race with delete_peer_ref"
+                );
+            }
+            _ => return Err(e),
+        }
+    }
+    Ok(())
 }
 
 /// M-35: Validate a `host:port` string for [`set_peer_address_inner`].

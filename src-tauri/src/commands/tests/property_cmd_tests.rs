@@ -4136,23 +4136,32 @@ async fn bug20_todo_state_fallback_when_definition_deleted() {
 /// failure in the recurrence step left the user stuck with a `done` state
 /// and no next-occurrence sibling.
 ///
-/// Trigger mechanism: a corrupt `repeat-until` value planted directly into
-/// `block_properties` (bypassing the ISO-date validation in
-/// `set_property_inner`) causes `set_property_in_tx`'s validation to reject
-/// it when copying to the new sibling, which propagates out through
-/// `handle_recurrence_in_tx` and rolls the entire `CommandTx` back.
+/// Trigger mechanism (post-L-100): a whitespace `repeat` value planted
+/// directly into `block_properties` (bypassing the L-6 empty-text guard
+/// in `set_property_inner`). `shift_date(due, " ")` returns `None`, so
+/// the L-100 ISO-date check on `repeat-until` never fires; the copy step
+/// then calls `set_property_in_tx(..., "repeat", Some(" "))`, which the
+/// L-6 empty/whitespace guard in `validate_set_property` rejects. The
+/// error propagates out through `handle_recurrence_in_tx` and rolls
+/// the entire `CommandTx` back.
+///
+/// Note: the previous trigger (a corrupt `repeat-until = "not-a-date"`)
+/// no longer reaches the copy step because L-100 now stops the
+/// recurrence early on a malformed `repeat-until`. The H-4 invariant is
+/// independent of L-100 — we just need any corrupt vehicle that
+/// bypasses the early end-condition gates to keep this test green.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_todo_state_atomic_when_recurrence_fails() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    // Set up a TODO block with due_date and a daily repeat rule.
+    // Set up a TODO block with due_date.
     let block = create_block_inner(
         &pool,
         DEV,
         &mat,
         "content".into(),
-        "task with corrupt repeat-until (H-4)".into(),
+        "task with corrupt repeat (H-4)".into(),
         None,
         None,
     )
@@ -4176,27 +4185,16 @@ async fn set_todo_state_atomic_when_recurrence_fails() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_property_inner(
-        &pool,
-        DEV,
-        &mat,
-        block.id.clone(),
-        "repeat".into(),
-        Some("daily".into()),
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    mat.flush_background().await.unwrap();
-
-    // Plant the corrupt repeat-until that will cause the sibling-copy
-    // step inside handle_recurrence_in_tx to fail validation.
-    sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)")
+    // Plant a whitespace `repeat` directly, bypassing the L-6
+    // empty/whitespace guard in `set_property_inner`. The recurrence
+    // flow proceeds past the end-condition gates (no `repeat-until`,
+    // no `repeat-count`, and `reference_date` is `None` because
+    // `shift_date(due, " ")` returns `None`), then the copy step's
+    // `set_property_in_tx` call rejects the whitespace value_text.
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
         .bind(&block.id)
-        .bind("repeat-until")
-        .bind("not-a-date")
+        .bind("repeat")
+        .bind(" ")
         .execute(&pool)
         .await
         .unwrap();
@@ -4216,7 +4214,7 @@ async fn set_todo_state_atomic_when_recurrence_fails() {
         .unwrap();
 
     // Try to flip to DONE. This should fail because the recurrence step
-    // inside the same tx hits the corrupt repeat-until.
+    // inside the same tx hits the corrupt repeat value.
     let result =
         set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into())).await;
 
@@ -4226,8 +4224,8 @@ async fn set_todo_state_atomic_when_recurrence_fails() {
     );
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("Invalid date format") || err_msg.contains("not-a-date"),
-        "error should be the date-format validation rejection, got: {err_msg}"
+        err_msg.contains("set_property.value_text.empty") || err_msg.contains("empty"),
+        "error should be the empty/whitespace value_text rejection, got: {err_msg}"
     );
 
     // H-4 contract: state did NOT transition.

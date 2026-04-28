@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 620+ items across 487 sessions (per SESSION-LOG.md unique session count; latest is session 520).
+Previously resolved: 626+ items across 488 sessions (per SESSION-LOG.md unique session count; latest is session 521).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1925,7 +1925,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (89 — expanded)
+## LOW findings (83 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2177,18 +2177,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 04/F28
 - **Status:** Open
 
-### L-39 — `compute_edit_diff_inner` propagates `serde_json::from_str` errors via `?` (opaque message)
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/history.rs:662-694`
-- **What:** The function fetches an op row, checks `op_type == "edit_block"`, and `serde_json::from_str::<EditBlockPayload>`s the payload. A corrupt row whose payload doesn't match the type collapses through `sanitize_internal_error` to a generic "internal error", losing `(device_id, seq)` and the parser message.
-- **Why it matters:** Diagnostic. The op log is supposed to be append-only and immutable, so this is mostly defensive — but on a corruption-recovery path, knowing which row failed to parse is essential.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace `?` with `.map_err(|e| AppError::InvalidOperation(format!("op ({device_id}, {seq}) payload not parseable as EditBlockPayload: {e}")))` so the underlying row is identified before sanitisation.
-- **Pass-1 source:** 04/F34
-- **Status:** Open
-
 ### Commands System
 
 ### L-40 — `extract_recent_errors` substring match `" ERROR " || " WARN "` is fragile
@@ -2276,18 +2264,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### Sync
-
-### L-56 — `peer_locks` HashMap grows unboundedly
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_scheduler.rs:83-102` (`try_lock_peer`)
-- **What:** `or_insert_with(|| Arc::new(Mutex::new(())))` runs on every `try_lock_peer` call; entries are never removed (project-wide grep: `peer_locks` is only ever written here).
-- **Why it matters:** At realistic single-user single-digit paired-peer count this is dust. Maintainability red flag in a long-lived background service — bounded growth is the right invariant for an unbounded uptime.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Periodically GC entries whose `Arc::strong_count == 1` (no outstanding guard) and that aren't in `peer_refs`. Hourly purge timer is sufficient — no need for a full eviction strategy.
-- **Pass-1 source:** 06/F23
-- **Status:** Open
 
 ### L-57 — `record_failure`'s deterministic doubling vs jittered `next_retry_at`
 - **Domain:** Sync
@@ -2531,18 +2507,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 07/F14
 - **Status:** Open
 
-### L-86 — `update_last_address` silently succeeds when peer doesn't exist
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/peer_refs.rs:196-207`
-- **What:** `update_last_address` returns `Ok(())` regardless of whether the row exists. Sibling helpers `update_on_sync` (`:131-133`), `increment_reset_count` (`:151-153`), `delete_peer_ref` (`:165-167`), and `update_device_name` (`:186-188`) all check `rows_affected == 0` and return `AppError::NotFound`.
-- **Why it matters:** If the peer was just deleted (race with `delete_peer_ref`), the address update silently no-ops and the caller assumes the cache is up to date. Inconsistent contract across sibling helpers makes call-site error handling unreliable.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Match the sibling helpers — return `AppError::NotFound(format!("peer_refs ({peer_id})"))` when `rows_affected() == 0`. Alternatively document explicitly that this is a fire-and-forget update.
-- **Pass-1 source:** 07/F17
-- **Status:** Open
-
 ### L-90 — `read_body_limited` reads entire response into memory before truncating
 - **Domain:** Search & Links
 - **Location:** `src-tauri/src/link_metadata/mod.rs:115-126`
@@ -2627,30 +2591,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Document the lex-monotonic invariant on `op_log.created_at` (in `migrations/0001_initial.sql` schema comment AND in `now_rfc3339()`'s docstring), and add a debug assertion at op-log write paths that the timestamp ends in `Z`.
 - **Pass-1 source:** 08/F4
-- **Status:** Open
-
-### L-99 — Recurrence `repeat-seq` increments only when `repeat-count` is set
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/recurrence/compute.rs:261-316`
-- **What:** `if let Some(count) = repeat_count { … set repeat-seq … }` gates the seq counter on `repeat-count` being set. A user who sets `repeat-seq` alone (e.g., to track total occurrences without bounding) gets a frozen counter. Pass-2 downgraded this from Medium because `repeat-seq` is generally treated as system-managed output, not a user-set bound.
-- **Why it matters:** Surprising semantics; the property-system docs do not specify the gating.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Document the gating semantics in the `repeat-seq` property-definition help text. Optionally always bump `repeat-seq` when any of the three repeat properties is set.
-- **Pass-1 source:** 08/F21
-- **Status:** Open
-
-### L-100 — Recurrence reference-date check uses lexicographic comparison
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/recurrence/compute.rs:65-72`
-- **What:** `if ref_date > until_str.as_str()` is correct only when both strings are exactly `YYYY-MM-DD`. The SELECT reads `value_date` (the typed date column), but `set_property` allows type-loose writes — a `repeat-until` set to `"2025-12-31T23:59:59Z"` would compare against `T` > `-` lex order and the recurrence would never stop.
-- **Why it matters:** Reasonable user input could produce an infinite recurrence chain; the `shift_date` 10000-iter cap guards only the `++` mode.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Validate ISO-8601 date shape (`^\d{4}-\d{2}-\d{2}$`) on `repeat-until` before comparison; emit `tracing::warn!` on malformed input and skip recurrence rather than silently looping forever.
-- **Pass-1 source:** 08/F25
 - **Status:** Open
 
 ### L-102 — `restore_block` does not bound `deleted_at_ref` — wrong-token call is a silent no-op
@@ -2893,18 +2833,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Drop the MCP-side check; instead, add a `caller_context: &str` (or `tool_name: Option<&str>`) parameter to `set_property_inner` that gets included in the `AppError::Validation` message. Keep one source of truth.
 - **Pass-1 source:** 09/F16
-- **Status:** Open
-
-### L-123 — `parse_args` error message includes raw `serde_json::Error` text
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/tools_ro.rs:171-174` (`parse_args`); `src-tauri/src/mcp/tools_rw.rs:111-114` (RW symmetry).
-- **What:** `parse_args` formats failures as `tool '{tool}': invalid arguments — {e}` with `{e}` being the verbatim `serde_json::Error::Display`, including line/column hints into the wire JSON. For a human reading the activity feed, the line/column refers to MCP-internal framing rather than the user's prompt.
-- **Why it matters:** Mild error-UX issue: agents that parse the message structurally are fine, but humans debugging via the activity feed get confusing line/column hints. Local-only, no security relevance.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** For `serde_json::Error::classify() == Category::Data`, emit a structured message like `tool 'append_block': missing required field 'parent_id'` (using `Error::line()` / `Error::column()` only on `tracing::debug!`). Keep verbose serde output on the debug log, surface a concise message to the agent.
-- **Pass-1 source:** 09/F17
 - **Status:** Open
 
 ### L-124 — No MCP-level concurrent-write stress test

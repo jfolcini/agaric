@@ -223,18 +223,24 @@ pub async fn update_device_name(
 ///
 /// Called after each successful sync to cache the peer's address for
 /// direct connection when mDNS discovery is unavailable.
+///
+/// Returns [`AppError::NotFound`] if `peer_id` does not exist.
 pub async fn update_last_address(
     pool: &SqlitePool,
     peer_id: &str,
     address: &str,
 ) -> Result<(), AppError> {
-    sqlx::query!(
+    let result = sqlx::query!(
         "UPDATE peer_refs SET last_address = ? WHERE peer_id = ?",
         address,
         peer_id,
     )
     .execute(pool)
     .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("peer_refs ({peer_id})")));
+    }
     Ok(())
 }
 
@@ -650,5 +656,44 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::NotFound(_)));
+    }
+
+    // ── update_last_address ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn update_last_address_returns_not_found_for_unknown_peer() {
+        let (pool, _dir) = test_pool().await;
+        let err = update_last_address(&pool, "NONEXISTENT", "1.2.3.4:5678")
+            .await
+            .unwrap_err();
+        match err {
+            AppError::NotFound(ref msg) => assert_eq!(
+                msg, "peer_refs (NONEXISTENT)",
+                "NotFound message must match the sibling helpers' format"
+            ),
+            other => panic!(
+                "update_last_address on nonexistent peer must return AppError::NotFound, got {other:?}"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn update_last_address_succeeds_for_existing_peer() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "peer-addr").await.unwrap();
+
+        update_last_address(&pool, "peer-addr", "10.0.0.1:9999")
+            .await
+            .unwrap();
+
+        let peer = get_peer_ref(&pool, "peer-addr")
+            .await
+            .unwrap()
+            .expect("peer-addr must exist");
+        assert_eq!(
+            peer.last_address.as_deref(),
+            Some("10.0.0.1:9999"),
+            "last_address must be persisted"
+        );
     }
 }

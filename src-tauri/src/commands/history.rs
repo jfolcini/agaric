@@ -709,7 +709,20 @@ pub async fn compute_edit_diff_inner(
         return Ok(None);
     }
 
-    let payload: crate::op::EditBlockPayload = serde_json::from_str(&row.payload)?;
+    // Surface a precise, user-actionable error if the on-disk payload cannot
+    // be parsed: include `device_id`, `seq`, and the underlying serde
+    // diagnostic so a corruption-recovery path tells the operator exactly
+    // which row failed.  Using `AppError::InvalidOperation` instead of the
+    // `?`-propagated `AppError::Json` matters because
+    // [`sanitize_internal_error`] (commands/mod.rs) collapses `Json` to a
+    // generic "an internal error occurred" string before it reaches the
+    // frontend, dropping the row identifiers.  `InvalidOperation` is in the
+    // pass-through set, so this message survives sanitisation intact.
+    let payload: crate::op::EditBlockPayload = serde_json::from_str(&row.payload).map_err(|e| {
+        AppError::InvalidOperation(format!(
+            "op ({device_id}, {seq}) payload not parseable as EditBlockPayload: {e}"
+        ))
+    })?;
     let prior =
         crate::reverse::find_prior_text(pool, payload.block_id.as_str(), &row.created_at, seq)
             .await?;
@@ -734,4 +747,216 @@ pub async fn compute_edit_diff(
     compute_edit_diff_inner(&pool.0, device_id, seq)
         .await
         .map_err(sanitize_internal_error)
+}
+
+#[cfg(test)]
+mod tests {
+    //! Inline unit tests for [`compute_edit_diff_inner`] focused on the L-39
+    //! error-path fix: parse failures of `EditBlockPayload` must surface a
+    //! row-identifying [`AppError::InvalidOperation`] (which passes through
+    //! [`super::sanitize_internal_error`] unchanged) rather than a generic
+    //! [`AppError::Json`] (which gets collapsed to "an internal error
+    //! occurred").  Happy-path and dispatch-rule cases live alongside.
+    use super::*;
+    use crate::commands::{create_block_inner, edit_block_inner};
+    use crate::db::init_pool;
+    use crate::materializer::Materializer;
+    use crate::op::{CreateBlockPayload, OpPayload};
+    use crate::op_log::append_local_op_at;
+    use crate::ulid::BlockId;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    const DEV: &str = "L39-test-device";
+    const FIXED_TS: &str = "2025-01-01T00:00:00Z";
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path: PathBuf = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    /// Insert a raw `op_log` row, including the `block_id` index column
+    /// (migration 0030), without going through `append_local_op_at` —
+    /// needed only by the corrupt-payload regression test, where the
+    /// payload is intentionally malformed and would not survive the
+    /// canonicalising serializer used by the real append path.
+    async fn insert_raw_op(
+        pool: &SqlitePool,
+        device_id: &str,
+        seq: i64,
+        op_type: &str,
+        payload: &str,
+        block_id: Option<&str>,
+        created_at: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
+             VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
+        )
+        .bind(device_id)
+        .bind(seq)
+        .bind("test-hash-placeholder")
+        .bind(op_type)
+        .bind(payload)
+        .bind(created_at)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Empty pool + missing `(device_id, seq)` → [`AppError::NotFound`]
+    /// whose message embeds both identifiers so callers (and toast UI)
+    /// can name the missing row.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn compute_edit_diff_inner_returns_not_found_for_missing_op() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = compute_edit_diff_inner(&pool, "DEVICE".into(), 99).await;
+
+        let err = result.expect_err("missing op must return an error");
+        assert!(
+            matches!(err, AppError::NotFound(_)),
+            "expected AppError::NotFound, got: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("DEVICE") && msg.contains("99"),
+            "NotFound message must name (device_id, seq); got: {msg}"
+        );
+    }
+
+    /// Non-`edit_block` ops (e.g. `create_block`) are not diffable —
+    /// `compute_edit_diff_inner` returns `Ok(None)` so the frontend can
+    /// fall back to "no diff available".
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn compute_edit_diff_inner_returns_none_for_non_edit_op() {
+        let (pool, _dir) = test_pool().await;
+
+        // Append a real `create_block` op so the (device_id, seq) lookup
+        // succeeds and we exercise the `op_type != "edit_block"` branch.
+        let bid = BlockId::test_id("BLK1");
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: bid,
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "hello".into(),
+        });
+        let record = append_local_op_at(&pool, DEV, payload, FIXED_TS.into())
+            .await
+            .unwrap();
+
+        let result = compute_edit_diff_inner(&pool, record.device_id, record.seq).await;
+
+        assert!(
+            matches!(result, Ok(None)),
+            "non-edit op must yield Ok(None); got: {result:?}"
+        );
+    }
+
+    /// L-39 regression: a corrupted `edit_block` payload must surface as
+    /// [`AppError::InvalidOperation`] with `(device_id, seq)` and the
+    /// `EditBlockPayload` parser context embedded.  Crucially this is a
+    /// pass-through variant in [`super::sanitize_internal_error`] — the
+    /// previous `?`-propagated `AppError::Json` was collapsed to "an
+    /// internal error occurred", erasing the row identity needed for
+    /// recovery diagnostics.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn compute_edit_diff_inner_returns_invalid_operation_for_corrupt_payload() {
+        let (pool, _dir) = test_pool().await;
+
+        // Malformed: missing the required `block_id` and `to_text` fields.
+        // Direct SQL insert bypasses the canonical serializer (which would
+        // refuse to emit this).
+        insert_raw_op(
+            &pool,
+            DEV,
+            42,
+            "edit_block",
+            r#"{"missing fields":true}"#,
+            None,
+            FIXED_TS,
+        )
+        .await;
+
+        let result = compute_edit_diff_inner(&pool, DEV.into(), 42).await;
+
+        let err = result.expect_err("corrupt payload must return an error");
+        assert!(
+            matches!(err, AppError::InvalidOperation(_)),
+            "expected AppError::InvalidOperation (pass-through in sanitize_internal_error), \
+             got: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains(DEV),
+            "error message must name device_id; got: {msg}"
+        );
+        assert!(
+            msg.contains("42"),
+            "error message must name seq; got: {msg}"
+        );
+        assert!(
+            msg.contains("EditBlockPayload"),
+            "error message must name the parser target; got: {msg}"
+        );
+
+        // Defence-in-depth: confirm the variant is not in the sanitiser's
+        // collapse-set.  If a future refactor adds InvalidOperation to the
+        // set, this assertion forces an explicit decision before silently
+        // regressing the L-39 fix.
+        let sanitised = super::sanitize_internal_error(err);
+        assert!(
+            matches!(sanitised, AppError::InvalidOperation(ref m) if m.contains("EditBlockPayload")),
+            "InvalidOperation must pass through sanitize_internal_error unchanged; \
+             got: {sanitised:?}"
+        );
+    }
+
+    /// Happy path: a real create + edit chain produces a `Some(diff)` with
+    /// at least one [`crate::word_diff::DiffSpan`], confirming
+    /// `find_prior_text` was consulted and `compute_word_diff` was driven.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn compute_edit_diff_inner_returns_diff_for_valid_edit() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let created = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "hello world".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        edit_block_inner(&pool, DEV, &mat, created.id.clone(), "hello rust".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let op_row = sqlx::query!(
+            "SELECT device_id, seq FROM op_log \
+             WHERE op_type = 'edit_block' ORDER BY seq DESC LIMIT 1"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let diff = compute_edit_diff_inner(&pool, op_row.device_id, op_row.seq)
+            .await
+            .expect("happy-path diff must be Ok")
+            .expect("edit_block op must produce Some(diff)");
+
+        assert!(
+            !diff.is_empty(),
+            "diff must contain at least one DiffSpan; got an empty Vec"
+        );
+    }
 }
