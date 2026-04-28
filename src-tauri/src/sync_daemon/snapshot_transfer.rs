@@ -335,12 +335,26 @@ pub(crate) enum CatchupOutcome {
 /// transaction with `PRAGMA defer_foreign_keys = ON`, so a decode or
 /// integrity failure rolls the DB back; the initiator is never left
 /// in a half-restored state.
+///
+/// # peer_refs bookkeeping (L-66)
+///
+/// `expected_remote_id` mirrors the `SyncComplete` fallback in
+/// [`SyncOrchestrator`](crate::sync_protocol::SyncOrchestrator):
+/// when `remote_device_id` is empty (a `HeadExchange` that only
+/// carried our own heads), the function falls back to
+/// `expected_remote_id` for the [`peer_refs`] upsert. If both are
+/// empty the function returns
+/// [`AppError::InvalidOperation`] so the caller records a failed
+/// session instead of silently applying a snapshot whose origin
+/// peer cannot be remembered (the next sync would treat this peer
+/// as fully unknown again).
 pub(crate) async fn try_receive_snapshot_catchup(
     conn: &mut SyncConnection,
     pool: &SqlitePool,
     materializer: &Materializer,
     event_sink: &Arc<dyn SyncEventSink>,
     remote_device_id: &str,
+    expected_remote_id: Option<&str>,
 ) -> Result<CatchupOutcome, AppError> {
     let offer: SyncMessage = conn.recv_json().await?;
     let size_bytes = match offer {
@@ -415,22 +429,44 @@ pub(crate) async fn try_receive_snapshot_catchup(
         "applied snapshot; frontier advanced"
     );
 
+    // L-66: mirror the SyncComplete fallback. Prefer the orchestrator's
+    // session-level `remote_device_id`; if that is empty (HeadExchange
+    // carried only our own heads), fall back to the daemon-provided
+    // `expected_remote_id` (mTLS / mDNS peer identity). If neither is
+    // available, refuse to silently complete: the snapshot is already
+    // durable but a peer_refs row keyed by the empty string would
+    // corrupt the bookkeeping, and the next sync would treat this
+    // peer as fully unknown again.
+    let resolved_peer_id: &str = if !remote_device_id.is_empty() {
+        remote_device_id
+    } else if let Some(expected) = expected_remote_id.filter(|s| !s.is_empty()) {
+        tracing::warn!(
+            expected_remote_id = expected,
+            "remote_device_id was empty at snapshot catch-up; falling back to expected_remote_id"
+        );
+        expected
+    } else {
+        return Err(AppError::InvalidOperation(
+            "snapshot catch-up completed with empty remote_device_id and no expected_remote_id; \
+             refusing to record peer_refs row keyed by empty string (L-66)"
+                .into(),
+        ));
+    };
+
     // Update peer_refs so the scheduler's "last synced" bookkeeping
     // reflects the catch-up. `last_sent_hash` stays empty — we did not
     // send anything in this session. The next scheduled sync will pick
     // up any ops the responder wrote after the snapshot was taken.
-    if !remote_device_id.is_empty() {
-        peer_refs::upsert_peer_ref(pool, remote_device_id).await?;
-        if let Err(e) = peer_refs::update_on_sync(pool, remote_device_id, &up_to_hash, "").await {
-            // Non-fatal: the snapshot itself is already durable, and a
-            // failed bookkeeping update just means the next scheduler
-            // tick will reconsider this peer — not data loss.
-            tracing::warn!(
-                peer_id = %remote_device_id,
-                error = %e,
-                "failed to record snapshot-driven sync in peer_refs"
-            );
-        }
+    peer_refs::upsert_peer_ref(pool, resolved_peer_id).await?;
+    if let Err(e) = peer_refs::update_on_sync(pool, resolved_peer_id, &up_to_hash, "").await {
+        // Non-fatal: the snapshot itself is already durable, and a
+        // failed bookkeeping update just means the next scheduler
+        // tick will reconsider this peer — not data loss.
+        tracing::warn!(
+            peer_id = %resolved_peer_id,
+            error = %e,
+            "failed to record snapshot-driven sync in peer_refs"
+        );
     }
 
     event_sink.on_sync_event(SyncEvent::Complete {
@@ -839,6 +875,7 @@ mod tests {
             &materializer,
             &event_sink,
             REMOTE_DEV,
+            None,
         )
         .await
         .expect("initiator catch-up must succeed with a valid snapshot");
@@ -924,6 +961,7 @@ mod tests {
             &materializer,
             &event_sink,
             REMOTE_DEV,
+            None,
         )
         .await
         .expect("catch-up must return Ok(Rejected) for oversized offer");
@@ -991,6 +1029,7 @@ mod tests {
             &materializer,
             &event_sink,
             REMOTE_DEV,
+            None,
         )
         .await;
         assert!(
@@ -1048,6 +1087,7 @@ mod tests {
             &materializer,
             &event_sink,
             REMOTE_DEV,
+            None,
         )
         .await;
         assert!(result.is_err(), "unexpected message must surface as Err");
@@ -1092,6 +1132,7 @@ mod tests {
             &materializer,
             &event_sink,
             REMOTE_DEV,
+            None,
         )
         .await;
         assert!(result.is_err(), "peer Error must surface as Err");
@@ -1137,5 +1178,137 @@ mod tests {
                 "BINARY_FRAME_CHUNK_SIZE must stay under SyncConnection::MAX_MSG_SIZE"
             );
         }
+    }
+
+    // -----------------------------------------------------------------
+    // L-66: peer_refs fallback (empty remote_device_id)
+    // -----------------------------------------------------------------
+
+    /// Helper for the L-66 fallback / failure tests: drive a successful
+    /// snapshot transfer end-to-end with the given `remote_device_id` /
+    /// `expected_remote_id` pair and return the receive-side result so
+    /// the caller can assert on the resolved peer_refs row (or the
+    /// returned error).
+    async fn run_catchup_with_ids(
+        remote_device_id: &str,
+        expected_remote_id: Option<&str>,
+    ) -> (SqlitePool, TempDir, Result<CatchupOutcome, AppError>) {
+        // Build a "responder" DB with a snapshot to offer.
+        let (resp_pool, _resp_dir) = test_pool().await;
+        let resp_materializer = Materializer::new(resp_pool.clone());
+        seed_one_block(&resp_pool, &resp_materializer, REMOTE_DEV).await;
+        create_snapshot(&resp_pool, REMOTE_DEV).await.unwrap();
+        let (_snap_id, snap_bytes) = get_latest_snapshot(&resp_pool).await.unwrap().unwrap();
+        let expected_size = snap_bytes.len() as u64;
+
+        // Initiator (empty DB).
+        let (init_pool, init_dir) = test_pool().await;
+        let materializer = Materializer::new(init_pool.clone());
+
+        let (mut server_conn, mut client_conn) = test_connection_pair().await;
+        let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+        let bytes_clone = snap_bytes.clone();
+        let server_task = tokio::spawn(async move {
+            server_conn
+                .send_json(&SyncMessage::SnapshotOffer {
+                    size_bytes: expected_size,
+                })
+                .await
+                .unwrap();
+            let accept: SyncMessage = server_conn.recv_json().await.unwrap();
+            assert_eq!(accept, SyncMessage::SnapshotAccept);
+            for chunk in bytes_clone.chunks(BINARY_FRAME_CHUNK_SIZE) {
+                server_conn.send_binary(chunk).await.unwrap();
+            }
+        });
+
+        let result = try_receive_snapshot_catchup(
+            &mut client_conn,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            remote_device_id,
+            expected_remote_id,
+        )
+        .await;
+
+        server_task.await.unwrap();
+        materializer.flush_background().await.unwrap();
+        materializer.shutdown();
+        resp_materializer.shutdown();
+
+        (init_pool, init_dir, result)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn try_receive_snapshot_catchup_falls_back_to_expected_remote_id_when_session_id_empty() {
+        // L-66: HeadExchange sometimes carries only our own heads, so
+        // the initiator's `session.remote_device_id` ends up empty.
+        // The daemon's `expected_remote_id` (from mTLS / mDNS) must
+        // fill in so the peer_refs row uses the real peer identity.
+        let (init_pool, _dir, result) = run_catchup_with_ids("", Some(REMOTE_DEV)).await;
+        result.expect("catch-up must succeed when expected_remote_id provides the fallback");
+
+        // Empty `remote_device_id` must NOT have produced an empty-keyed
+        // peer_refs row.
+        assert!(
+            peer_refs::get_peer_ref(&init_pool, "")
+                .await
+                .unwrap()
+                .is_none(),
+            "fallback path must not write a peer_refs row keyed by empty string",
+        );
+
+        // The fallback peer_id (from expected_remote_id) must own the row.
+        let fallback = peer_refs::get_peer_ref(&init_pool, REMOTE_DEV)
+            .await
+            .unwrap()
+            .expect("expected_remote_id must own the peer_refs row");
+        assert!(
+            fallback.synced_at.is_some(),
+            "synced_at must be populated on the fallback row"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn try_receive_snapshot_catchup_errors_when_both_remote_ids_empty() {
+        // L-66: with neither `remote_device_id` nor `expected_remote_id`
+        // available, the function must fail loudly so the scheduler
+        // records a failed session — silently completing would write a
+        // peer_refs row keyed by the empty string and corrupt the
+        // bookkeeping.
+        let (_init_pool, _dir, result) = run_catchup_with_ids("", None).await;
+        let err = result.expect_err("catch-up must fail when both remote ids are empty");
+        match err {
+            AppError::InvalidOperation(msg) => {
+                assert!(
+                    msg.contains("L-66"),
+                    "error message should reference L-66 for traceability; got {msg:?}",
+                );
+            }
+            other => panic!("expected InvalidOperation, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn try_receive_snapshot_catchup_prefers_session_id_over_expected() {
+        // L-66: when both ids are present and disagree, the
+        // session-level `remote_device_id` (from HeadExchange) wins
+        // because that's the value the protocol actually exchanged.
+        let (init_pool, _dir, result) =
+            run_catchup_with_ids(REMOTE_DEV, Some("OTHER_PEER_FROM_MTLS")).await;
+        result.expect("catch-up must succeed when remote_device_id is non-empty");
+
+        let session_owned = peer_refs::get_peer_ref(&init_pool, REMOTE_DEV)
+            .await
+            .unwrap();
+        let expected_owned = peer_refs::get_peer_ref(&init_pool, "OTHER_PEER_FROM_MTLS")
+            .await
+            .unwrap();
+        assert!(
+            session_owned.is_some() && expected_owned.is_none(),
+            "session-level remote_device_id must own the peer_refs row when both ids are present",
+        );
     }
 }

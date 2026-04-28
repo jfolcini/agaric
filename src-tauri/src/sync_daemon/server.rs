@@ -81,8 +81,15 @@ pub(crate) async fn handle_incoming_sync(
     let pool_ref = pool.clone();
     let event_sink_box: Box<dyn SyncEventSink> =
         Box::new(super::SharedEventSink(std::sync::Arc::clone(&event_sink)));
-    let mut orch = SyncOrchestrator::new(pool, device_id.clone(), materializer)
-        .with_event_sink(event_sink_box);
+
+    // L-71: construction of `orch` is deferred until after the cert
+    // check so we can wire the verified TLS certificate CN into the
+    // orchestrator's `expected_remote_id`. This makes the orchestrator's
+    // internal HeadExchange-vs-expected mismatch path active on the
+    // responder side too — defence-in-depth for the case where the
+    // initiator's HeadExchange identifies a different `device_id` than
+    // the cert claims (a software-bug consistency check; the cert CN
+    // alone is already verified at line ~169 below).
 
     // ── Receive the initiator's first message ─────────────────────────────
     let first_msg: SyncMessage = conn.recv_json().await?;
@@ -218,6 +225,19 @@ pub(crate) async fn handle_incoming_sync(
     } else {
         None
     };
+
+    // L-71: build the orchestrator now that the cert CN is known. If
+    // the connection carried a verified peer cert (the production
+    // path), wire its CN as `expected_remote_id`; the orchestrator's
+    // HeadExchange handler then rejects any first_msg whose advertised
+    // device_id disagrees with what the cert claims. Without a cert
+    // (in-memory test connections), we simply do not set the field —
+    // the existing test harness never fires the mismatch branch.
+    let mut orch = SyncOrchestrator::new(pool, device_id.clone(), materializer)
+        .with_event_sink(event_sink_box);
+    if let Some(cert_cn) = conn.peer_cert_cn() {
+        orch = orch.with_expected_remote_id(cert_cn.to_string());
+    }
 
     // ── Process first message ─────────────────────────────────────────────
     let response = orch.handle_message(first_msg).await?;

@@ -4,43 +4,37 @@ use std::collections::HashMap;
 use crate::error::AppError;
 
 // ---------------------------------------------------------------------------
-// rebuild_agenda_cache (p1-t20)
+// Desired-state SQL (L-27)
 // ---------------------------------------------------------------------------
 
-/// Incremental rebuild of `agenda_cache`.
+/// 4-source UNION ALL projection that computes the desired state of
+/// `agenda_cache` from the live database. Bound from both
+/// [`rebuild_agenda_cache_impl`] (single-pool) and
+/// [`rebuild_agenda_cache_split_impl`] (read/write-split) so the two
+/// implementations cannot silently diverge — any change to the
+/// template-page filter, source semantics, or new column source is made
+/// in exactly one place.
 ///
-/// Instead of a full DELETE + INSERT, this function:
-/// 1. Computes the desired state from the same 4 UNION ALL sources.
-/// 2. Reads the current DB state.
-/// 3. Diffs by PK `(date, block_id)`: inserts missing, deletes stale, updates
-///    rows whose `source` value changed.
+/// Sources, in order (first-wins on PK `(date, block_id)` after
+/// in-memory deduplication):
+/// 1. `block_properties` rows with a non-null `value_date` →
+///    `source = 'property:<key>'`.
+/// 2. `block_tags` referencing tag blocks whose name matches
+///    `date/YYYY-MM-DD` (exactly 15 chars) →
+///    `source = 'tag:<tag_id>'`.
+/// 3. `blocks.due_date` column → `source = 'column:due_date'`.
+/// 4. `blocks.scheduled_date` column → `source = 'column:scheduled_date'`.
 ///
-/// Two data sources:
-/// 1. `block_properties` rows with a non-null `value_date` -> source = `property:<key>`
-/// 2. `block_tags` referencing tag blocks whose name matches `date/YYYY-MM-DD`
-///    (exactly 15 chars) -> source = `tag:<tag_id>`
-/// 3. `blocks.due_date` column -> source = `column:due_date`
-/// 4. `blocks.scheduled_date` column -> source = `column:scheduled_date`
-pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    super::rebuild_with_timing("agenda", || rebuild_agenda_cache_impl(pool)).await
-}
-
-async fn rebuild_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
-    let mut tx = pool.begin().await?;
-
-    // Step 1: Compute desired state from the same 4 UNION ALL sources.
-    // Properties appear first so they win on PK deduplication (first-wins,
-    // replicating INSERT OR IGNORE semantics).
-    //
-    // Template-page filter (FEAT-5a, spec line 812): blocks whose owning
-    // page has a `template` property are excluded from the agenda so the
-    // Google Calendar push layer (and every other agenda consumer) sees
-    // "what is on the agenda" without template scaffolding.  `b.page_id`
-    // is the denormalised root-page column (migration 0027); top-level
-    // tags have `page_id IS NULL` and pass the NOT EXISTS check
-    // vacuously.
-    let desired_rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT date, block_id, source FROM (
+/// Template-page filter (FEAT-5a): every source excludes blocks whose
+/// owning page (`b.page_id`, denormalised by migration 0027) carries a
+/// `template` property, so the agenda surface — and the Google Calendar
+/// push layer that consumes it — never sees template scaffolding.
+/// Top-level tags have `page_id IS NULL` and pass the `NOT EXISTS`
+/// check vacuously.
+///
+/// Conflict-aware (`is_conflict = 0` on every block reference,
+/// invariant #9). Soft-deleted rows excluded.
+const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source FROM (
             SELECT bp.value_date AS date, bp.block_id, 'property:' || bp.key AS source
             FROM block_properties bp
             JOIN blocks b ON b.id = bp.block_id
@@ -90,10 +84,41 @@ async fn rebuild_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
                 SELECT 1 FROM block_properties tp
                 WHERE tp.block_id = b.page_id AND tp.key = 'template'
               )
-        )",
-    )
-    .fetch_all(&mut *tx)
-    .await?;
+        )";
+
+// ---------------------------------------------------------------------------
+// rebuild_agenda_cache (p1-t20)
+// ---------------------------------------------------------------------------
+
+/// Incremental rebuild of `agenda_cache`.
+///
+/// Instead of a full DELETE + INSERT, this function:
+/// 1. Computes the desired state from the same 4 UNION ALL sources.
+/// 2. Reads the current DB state.
+/// 3. Diffs by PK `(date, block_id)`: inserts missing, deletes stale, updates
+///    rows whose `source` value changed.
+///
+/// Two data sources:
+/// 1. `block_properties` rows with a non-null `value_date` -> source = `property:<key>`
+/// 2. `block_tags` referencing tag blocks whose name matches `date/YYYY-MM-DD`
+///    (exactly 15 chars) -> source = `tag:<tag_id>`
+/// 3. `blocks.due_date` column -> source = `column:due_date`
+/// 4. `blocks.scheduled_date` column -> source = `column:scheduled_date`
+pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
+    super::rebuild_with_timing("agenda", || rebuild_agenda_cache_impl(pool)).await
+}
+
+async fn rebuild_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
+    let mut tx = pool.begin().await?;
+
+    // Step 1: Compute desired state from the same 4 UNION ALL sources.
+    // Properties appear first so they win on PK deduplication (first-wins,
+    // replicating INSERT OR IGNORE semantics). Source-of-truth SQL lives
+    // in [`DESIRED_AGENDA_SQL`] so this branch and the read/write-split
+    // branch cannot drift.
+    let desired_rows: Vec<(String, String, String)> = sqlx::query_as(DESIRED_AGENDA_SQL)
+        .fetch_all(&mut *tx)
+        .await?;
 
     // Deduplicate by PK (date, block_id), keeping first occurrence.
     let mut desired: HashMap<(&str, &str), &str> = HashMap::with_capacity(desired_rows.len());
@@ -201,63 +226,11 @@ async fn rebuild_agenda_cache_split_impl(
     let mut read_tx = read_pool.begin().await?;
 
     // Step 1: Compute desired state from the same 4 UNION ALL sources.
-    // Template-page filter mirrors `rebuild_agenda_cache_impl` — see the
-    // comment there for the rationale (FEAT-5a).
-    let desired_rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT date, block_id, source FROM (
-            SELECT bp.value_date AS date, bp.block_id, 'property:' || bp.key AS source
-            FROM block_properties bp
-            JOIN blocks b ON b.id = bp.block_id
-            WHERE bp.value_date IS NOT NULL AND b.deleted_at IS NULL
-              AND b.is_conflict = 0
-              AND NOT EXISTS (
-                SELECT 1 FROM block_properties tp
-                WHERE tp.block_id = b.page_id AND tp.key = 'template'
-              )
-            UNION ALL
-            SELECT SUBSTR(t.content, 6) AS date, bt.block_id, 'tag:' || bt.tag_id AS source
-            FROM block_tags bt
-            JOIN blocks t ON t.id = bt.tag_id
-            JOIN blocks b ON b.id = bt.block_id
-            WHERE t.block_type = 'tag'
-              AND t.content LIKE 'date/%'
-              AND LENGTH(t.content) = 15
-              AND SUBSTR(t.content, 6, 4) GLOB '[0-9][0-9][0-9][0-9]'
-              AND SUBSTR(t.content, 10, 1) = '-'
-              AND SUBSTR(t.content, 11, 2) GLOB '[0-9][0-9]'
-              AND SUBSTR(t.content, 13, 1) = '-'
-              AND SUBSTR(t.content, 14, 2) GLOB '[0-9][0-9]'
-              AND b.deleted_at IS NULL
-              AND t.deleted_at IS NULL
-              AND b.is_conflict = 0
-              AND NOT EXISTS (
-                SELECT 1 FROM block_properties tp
-                WHERE tp.block_id = b.page_id AND tp.key = 'template'
-              )
-            UNION ALL
-            SELECT b.due_date AS date, b.id AS block_id, 'column:due_date' AS source
-            FROM blocks b
-            WHERE b.due_date IS NOT NULL
-              AND b.deleted_at IS NULL
-              AND b.is_conflict = 0
-              AND NOT EXISTS (
-                SELECT 1 FROM block_properties tp
-                WHERE tp.block_id = b.page_id AND tp.key = 'template'
-              )
-            UNION ALL
-            SELECT b.scheduled_date AS date, b.id AS block_id, 'column:scheduled_date' AS source
-            FROM blocks b
-            WHERE b.scheduled_date IS NOT NULL
-              AND b.deleted_at IS NULL
-              AND b.is_conflict = 0
-              AND NOT EXISTS (
-                SELECT 1 FROM block_properties tp
-                WHERE tp.block_id = b.page_id AND tp.key = 'template'
-              )
-        )",
-    )
-    .fetch_all(&mut *read_tx)
-    .await?;
+    // Source-of-truth SQL lives in [`DESIRED_AGENDA_SQL`] so this branch
+    // and the single-pool branch cannot drift (L-27).
+    let desired_rows: Vec<(String, String, String)> = sqlx::query_as(DESIRED_AGENDA_SQL)
+        .fetch_all(&mut *read_tx)
+        .await?;
 
     // Deduplicate by PK (date, block_id), keeping first occurrence.
     let mut desired: HashMap<(&str, &str), &str> = HashMap::with_capacity(desired_rows.len());

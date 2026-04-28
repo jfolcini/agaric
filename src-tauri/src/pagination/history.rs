@@ -16,6 +16,18 @@ use crate::error::AppError;
 ///
 /// Note: This queries ALL op types for a block (create, edit, add_tag,
 /// remove_tag, move, set_property, etc.).
+///
+/// # Cursor seq invariant (L-21)
+///
+/// `op_log.seq` is auto-incremented per device starting at **1** (see
+/// `op_log::append_local_op_in_tx`'s `COALESCE(MAX(seq), 0) + 1`
+/// computation); seq `0` never appears in real rows.
+/// The keyset predicate is short-circuited via `?2 IS NULL` when no
+/// cursor is supplied, so the `cursor_seq = 0` sentinel used in the
+/// no-cursor branch never participates in row comparison. If a future
+/// change introduces seq `0` as a per-device sentinel op, this default
+/// would silently treat it as already-seen — switch `cursor_seq` to
+/// `Option<i64>` and bind it directly at that point.
 pub async fn list_block_history(
     pool: &SqlitePool,
     block_id: &str,
@@ -24,7 +36,9 @@ pub async fn list_block_history(
     let fetch_limit = page.limit + 1;
 
     // `id` in the cursor stores `device_id` for history queries — it is the
-    // tie-breaker because the op_log PK is `(device_id, seq)`.
+    // tie-breaker because the op_log PK is `(device_id, seq)`. The
+    // `cursor_seq = 0` sentinel in the no-cursor branch is safe per the
+    // L-21 doc-block above (op_log seq starts at 1).
     let (cursor_flag, cursor_seq, cursor_device_id): (Option<i64>, i64, &str) =
         match page.after.as_ref() {
             Some(c) => (Some(1), c.seq.unwrap_or(0), &c.id),
@@ -103,7 +117,14 @@ pub async fn list_page_history(
         // FEAT-3 Phase 8 — when `space_id` is `Some`, narrow to ops whose
         // `payload.block_id` belongs to the requested space (matching the
         // pattern used in `pagination/hierarchy.rs:113-134`).
-        let rows = sqlx::query_as::<_, HistoryEntry>(
+        //
+        // L-22: compile-time SQL check via `query_as!` (AGENTS.md
+        // invariant #6). The previous dynamic `query_as::<_, _>` form
+        // bypassed `cargo sqlx prepare` validation; this branch is
+        // entirely static SQL with `?N IS NULL` short-circuits, so the
+        // macro form fits without losing any flexibility.
+        let rows = sqlx::query_as!(
+            HistoryEntry,
             "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at \
              FROM op_log ol \
              WHERE (?1 IS NULL OR ol.op_type = ?1) \
@@ -116,14 +137,14 @@ pub async fn list_page_history(
                     WHERE bp.key = 'space' AND bp.value_ref = ?7)) \
              ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
              LIMIT ?5",
+            op_type_filter,    // ?1
+            cursor_flag,       // ?2
+            cursor_created_at, // ?3
+            cursor_seq,        // ?4
+            fetch_limit,       // ?5
+            cursor_device_id,  // ?6
+            space_id,          // ?7
         )
-        .bind(op_type_filter) // ?1
-        .bind(cursor_flag) // ?2
-        .bind(cursor_created_at) // ?3
-        .bind(cursor_seq) // ?4
-        .bind(fetch_limit) // ?5
-        .bind(cursor_device_id) // ?6
-        .bind(space_id) // ?7
         .fetch_all(pool)
         .await?;
 

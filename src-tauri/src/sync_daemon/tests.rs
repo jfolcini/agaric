@@ -3529,6 +3529,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
         &init_mat,
         &init_sink,
         "FEAT6_RESP",
+        None,
     )
     .await
     .expect("catch-up must succeed end-to-end");

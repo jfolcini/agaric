@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 642+ items across 491 sessions (per SESSION-LOG.md unique session count; latest is session 524).
+Previously resolved: 648+ items across 492 sessions (per SESSION-LOG.md unique session count; latest is session 525).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1925,7 +1925,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (67 — expanded)
+## LOW findings (61 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -1995,30 +1995,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Cache + Pagination
 
-### L-21 — `list_block_history` cursor uses `c.seq.unwrap_or(0)` — relies on op_log seq ≥ 1
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/pagination/history.rs:28-32` (cursor unpack) and `:40-43` (keyset predicate)
-- **What:** When `page.after` is `None` the keyset comparison is short-circuited via `cursor_flag = None`, but the unwrap default is `cursor_seq = 0`. If a real op_log row had `seq = 0`, the predicate `seq < 0 OR (seq = 0 AND device_id < "")` would treat it as already-seen. In practice op_log seqs auto-increment per device starting at 1, so this is fine — but the assumption is undocumented.
-- **Why it matters:** A future change introducing seq 0 (e.g., a per-device introduction sentinel op) would break pagination silently.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Document the seq ≥ 1 assumption in the function header, or — preferred — leave `cursor_seq` as `Option<i64>` and bind it directly so the `?2 IS NULL` short-circuit handles the no-cursor case without needing a sentinel. (`list_block_history` already uses `cursor_flag` for the short-circuit; it just additionally passes `cursor_seq.unwrap_or(0)`.)
-- **Pass-1 source:** 03/F12
-- **Status:** Open
-
-### L-22 — `list_page_history` `__all__` branch uses dynamic `query_as::<_, _>` (no compile-time SQL check)
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/pagination/history.rs:97-115`
-- **What:** The "global history" branch (`page_id == "__all__"`) uses `sqlx::query_as::<_, HistoryEntry>(…)` with `.bind()` instead of the `query_as!` macro, bypassing compile-time SQL validation. The page-scoped branch (`:130-156`) uses `query_as!` correctly. The SQL is short and parameter-only — there is no obvious dynamic-SQL reason; AGENTS.md invariant #6 mandates compile-time queries.
-- **Why it matters:** Schema drift between this query and `op_log`'s columns is only caught at runtime, not at `cargo check`/`cargo sqlx prepare`.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Convert to `sqlx::query_as!`. The `(?N IS NULL OR …)` style parameters are supported by the macro. If a genuinely dynamic codepath is needed in the future, add an inline rationale comment.
-- **Pass-1 source:** 03/F13
-- **Status:** Open
-
 ### L-24 — `cache/block_links.rs` per-target DELETE/INSERT loop — N round-trips per reindex
 - **Domain:** Cache + Pagination
 - **Location:** `src-tauri/src/cache/block_links.rs:59-83` (single-pool) and `:147-168` (split)
@@ -2041,18 +2017,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Either add a code comment in the function explaining the TOCTOU window (and that the next rebuild fixes it), or — heavier — re-read inside the write tx and skip conflicting writes. The comment is cheaper and matches the stated "background, stale-OK" semantics.
 - **Pass-1 source:** 03/F16
-- **Status:** Open
-
-### L-27 — Agenda desired-state SQL duplicated between single-pool and split rebuilds
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/cache/agenda.rs:58-109` (single-pool impl) vs. `:235-286` (split impl)
-- **What:** The 51-line UNION-ALL desired-state query is duplicated verbatim in `rebuild_agenda_cache_impl` and `rebuild_agenda_cache_split_impl`. Any change to the template-page filter, source semantics, or new column source must touch both. There is no test asserting both impls produce identical output for the same input.
-- **Why it matters:** Silent divergence between the two implementations is the kind of bug that escapes review; this review only caught it because both files were read sequentially.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Extract the SQL into `const DESIRED_AGENDA_SQL: &str = "…"` and bind from both, or introduce a `#[cfg(test)]` oracle that runs `rebuild_agenda_cache(&pool)` and `rebuild_agenda_cache_split(&pool, &pool)` on identical fixtures and asserts `agenda_cache` row-set equality.
-- **Pass-1 source:** 03/F19
 - **Status:** Open
 
 ### L-28 — Missing CTE oracle for `rebuild_page_ids` recursive walk
@@ -2079,18 +2043,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Either (a) wrap each per-block / per-property attempt in `tx.savepoint("blk_N")` with `release` on success and `rollback_to` on error, or (b) abort the whole import on the first error and surface warnings as a partial-failure diagnostic. Add a test that injects a validation error mid-file and asserts an all-or-nothing outcome.
 - **Pass-1 source:** 04/F7
-- **Status:** Open
-
-### L-31 — `restore_page_to_op_inner` reads `ops_after` outside the write transaction it eventually opens
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/history.rs:316-403`
-- **What:** The list of ops to revert is computed against the bare pool; only the downstream `revert_ops_inner` opens `BEGIN IMMEDIATE`. New ops landing between the two points (sync replay, edits elsewhere) miss the snapshot and are not reverted.
-- **Why it matters:** The function's contract — "revert everything after the target op" — is technically violated. Threat model is single-user so the practical window is small, but the snapshot semantics are surprising.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either lift the read into the same `BEGIN IMMEDIATE` tx as the revert, or document the snapshot-at-read-time semantics explicitly.
-- **Pass-1 source:** 04/F11
 - **Status:** Open
 
 ### L-32 — `update_property_def_options_inner` does not validate existing rows against the new options set
@@ -2193,18 +2145,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 06/F37
 - **Status:** Open
 
-### L-66 — `try_receive_snapshot_catchup` skips `peer_refs` bookkeeping when `remote_device_id.is_empty()`
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_daemon/snapshot_transfer.rs:340-353`
-- **What:** The peer-refs upsert is gated on `if !remote_device_id.is_empty()`. Empty values arrive when the orchestrator could not infer the remote ID from `HeadExchange` (e.g., responder had only our heads in the list). The snapshot is still applied to the DB, but no peer ref is created — the next sync treats the peer as fully unknown again. Contrast with the SyncComplete fallback at `sync_protocol/orchestrator.rs:368-397` that backfills from `expected_remote_id`.
-- **Why it matters:** Subtle inconsistency between "applied snapshot" and "remembered the sync" — same accidental-divergence family the threat model targets.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Mirror the SyncComplete fallback: if `remote_device_id` is empty, use the orchestrator's `expected_remote_id` (passed in by the caller); if neither is available, return `Err` so the caller records a failure instead of silently completing.
-- **Pass-1 source:** 06/F39
-- **Status:** Open
-
 ### L-67 — Snapshot receiver allocates a single `Vec<u8>` of up to 256 MB
 - **Domain:** Sync
 - **Location:** `src-tauri/src/sync_daemon/snapshot_transfer.rs:372-405`; cap at `:285-300` (`MAX_SNAPSHOT_SIZE`)
@@ -2251,18 +2191,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Replace `pending_ops_to_send: Vec<OpRecord>` with `last_sent_hash: Option<String>` (capture the hash from the last batch as it streams). The full `Vec<OpTransfer>` is still needed in `pending_op_transfers` for retry/ack purposes, but the duplicate buffer can go.
 - **Pass-1 source:** 06/F45
-- **Status:** Open
-
-### L-71 — `SyncOrchestrator` (responder) does not enforce `expected_remote_id`
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_daemon/server.rs:83-84` (orchestrator construction); cert CN check at `:149-200`; `peer_refs::get_peer_ref` lookup at `:109-120`; orchestrator-internal mismatch path at `src-tauri/src/sync_protocol/orchestrator.rs:207-222`
-- **What:** Initiator wires `with_expected_remote_id(peer_id)`; responder calls `SyncOrchestrator::new(...).with_event_sink(...)` only. The responder's two gates are the cert CN check + the `peer_refs::get_peer_ref` "is this peer paired" lookup; the orchestrator's internal `expected_remote_id` mismatch path therefore never fires on the responder side.
-- **Why it matters:** Defense-in-depth for "the responder's orchestrator inferred a different device_id than the cert claims" — currently a silent disagreement. Not adversarial; software-bug consistency.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Pass the cert CN through into the responder-side `SyncOrchestrator::with_expected_remote_id(...)` so the head-exchange parser asserts consistency between what the cert says and what HeadExchange identifies.
-- **Pass-1 source:** 06/F46
 - **Status:** Open
 
 ### L-72 — Test gap: no chaos / partial-transfer recovery test for `sync_files`
