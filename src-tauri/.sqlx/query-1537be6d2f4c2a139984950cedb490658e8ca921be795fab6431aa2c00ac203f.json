@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE blocks SET is_conflict = 1, conflict_type = 'edit' WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "1537be6d2f4c2a139984950cedb490658e8ca921be795fab6431aa2c00ac203f"
+}

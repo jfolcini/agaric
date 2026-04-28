@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT data FROM log_snapshots WHERE id = ? AND status = 'complete'",
+  "describe": {
+    "columns": [
+      {
+        "name": "data",
+        "ordinal": 0,
+        "type_info": "Blob"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "badee4293a9c9ebdbce6b7b7094af9e21e7322dd6b56dfec1ed518fe2fa413b0"
+}

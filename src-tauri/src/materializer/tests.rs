@@ -41,6 +41,10 @@ async fn test_pool() -> (SqlitePool, TempDir) {
     (pool, dir)
 }
 fn fake_op_record(op_type: &str, payload: &str) -> OpRecord {
+    // L-13: cache the parsed block_id sidecar so dispatch consults
+    // the field without re-parsing the (possibly intentionally
+    // malformed) payload of these synthetic records.
+    let block_id = crate::op_log::extract_block_id_from_payload(payload);
     OpRecord {
         device_id: DEV.into(),
         seq: 1,
@@ -49,6 +53,7 @@ fn fake_op_record(op_type: &str, payload: &str) -> OpRecord {
         op_type: op_type.into(),
         payload: payload.into(),
         created_at: FIXED_TS.into(),
+        block_id,
     }
 }
 async fn make_op_record(pool: &SqlitePool, payload: OpPayload) -> OpRecord {

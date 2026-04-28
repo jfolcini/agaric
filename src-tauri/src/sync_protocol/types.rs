@@ -31,6 +31,10 @@ pub struct OpTransfer {
 
 impl From<OpRecord> for OpTransfer {
     fn from(r: OpRecord) -> Self {
+        // `OpRecord::block_id` is a Rust-only sidecar (L-13) and
+        // intentionally not included on the wire — it can always be
+        // recovered from `payload` and is not part of the cross-device
+        // identity of the op.
         Self {
             device_id: r.device_id,
             seq: r.seq,
@@ -45,6 +49,19 @@ impl From<OpRecord> for OpTransfer {
 
 impl From<OpTransfer> for OpRecord {
     fn from(t: OpTransfer) -> Self {
+        // L-13: the wire transfer carries no `block_id` sidecar.
+        // Intentionally leave `block_id` as `None` here — parsing
+        // `payload` for it would add a second `serde_json::from_str`
+        // per sync'd op on top of the validation parse that
+        // `apply_remote_ops` already performs, regressing exactly the
+        // hot path L-13 is meant to optimise. The sync receive path
+        // (`apply_remote_ops`) populates the sidecar from its
+        // existing validation parse so the cost stays at one parse
+        // per op on the sync side. Tests / fixtures that build an
+        // `OpRecord` directly without going through that flow should
+        // populate `block_id` themselves (see e.g.
+        // `merge::detect::tests::make_remote_record` and
+        // `dag::tests::make_remote_record`).
         Self {
             device_id: t.device_id,
             seq: t.seq,
@@ -53,6 +70,7 @@ impl From<OpTransfer> for OpRecord {
             op_type: t.op_type,
             payload: t.payload,
             created_at: t.created_at,
+            block_id: None,
         }
     }
 }

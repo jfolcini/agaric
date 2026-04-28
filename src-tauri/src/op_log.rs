@@ -44,6 +44,27 @@ pub struct OpRecord {
     pub op_type: String,
     pub payload: String,
     pub created_at: String,
+    /// L-13: Rust-only sidecar caching the parsed `block_id` so callers
+    /// on the materializer hot path (`dispatch::enqueue_background_tasks`)
+    /// do not have to re-parse `payload` for the JSON `block_id` field.
+    /// Populated at every construction site:
+    ///   * `append_local_op_in_tx` / `append_merge_op` reads it from the
+    ///     typed [`OpPayload`] (no JSON parse).
+    ///   * DB-read paths (`get_op_by_seq`, `get_ops_since`) populate it
+    ///     from the indexed `op_log.block_id` column added in
+    ///     migration 0030 (no JSON parse).
+    ///   * `From<OpTransfer>` and bespoke row-by-row constructors fall
+    ///     back to `extract_block_id_from_payload` — one parse, exactly
+    ///     once, replacing the previous per-call-site parse.
+    ///
+    /// Marked `#[serde(skip, default)]` so the wire format is unchanged
+    /// (sync still ships `OpTransfer`, which mirrors only the persisted
+    /// columns) and `#[sqlx(default)]` so legacy `FromRow`-using read
+    /// paths that don't `SELECT block_id` continue to compile and
+    /// default the field to `None` instead of failing.
+    #[serde(skip, default)]
+    #[sqlx(default)]
+    pub block_id: Option<String>,
 }
 
 impl OpRecord {
@@ -229,6 +250,10 @@ pub async fn append_local_op_in_tx(
         op_type,
         payload: payload_json,
         created_at,
+        // L-13: cache the typed payload's block_id sidecar so the
+        // materializer hot path (`dispatch::enqueue_background_tasks`)
+        // does not re-parse `payload` to recover the same value.
+        block_id: block_id.map(str::to_owned),
     })
 }
 
@@ -411,9 +436,12 @@ pub async fn get_op_by_seq(
     device_id: &str,
     seq: i64,
 ) -> Result<OpRecord, AppError> {
+    // L-13: include the indexed `block_id` column (migration 0030) so
+    // the read path populates the cached sidecar field with no JSON
+    // parse on either the local-append origin or post-restore reads.
     sqlx::query_as!(
         OpRecord,
-        "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at \
+        "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id \
          FROM op_log WHERE device_id = ? AND seq = ?",
         device_id,
         seq,
@@ -443,9 +471,13 @@ pub async fn get_ops_since(
     device_id: &str,
     after_seq: i64,
 ) -> Result<Vec<OpRecord>, AppError> {
+    // L-13: include the indexed `block_id` column (migration 0030) so
+    // every row in the result set carries the cached sidecar field —
+    // the materializer / sync-stream consumer never needs to re-parse
+    // `payload` for the same value.
     let rows = sqlx::query_as!(
         OpRecord,
-        "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at \
+        "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id \
          FROM op_log WHERE device_id = ? AND seq > ? ORDER BY seq ASC",
         device_id,
         after_seq,
@@ -1355,6 +1387,7 @@ mod tests {
             op_type: "create_block".into(),
             payload: "{}".into(),
             created_at: FIXED_TS.into(),
+            block_id: None,
         }
     }
 
@@ -2139,5 +2172,121 @@ mod tests {
             !contents.contains('~'),
             "the trailing '~' is past the 80-char cap and must not appear in the log, got: {contents:?}"
         );
+    }
+
+    // ── L-13: cached `block_id` sidecar ───────────────────────────────
+
+    /// L-13: every op-type that carries a `block_id` must populate the
+    /// `OpRecord::block_id` sidecar at append-time so the materializer
+    /// hot path (`dispatch::enqueue_background_tasks`) can read it
+    /// without a second JSON parse.  The only payload variant that
+    /// must yield `None` is `delete_attachment` (it identifies its
+    /// target by `attachment_id`, not `block_id`).
+    ///
+    /// This test exercises the full append-time path —
+    /// `append_local_op_at` → `append_local_op_in_tx` →
+    /// `OpPayload::block_id()` → struct literal — for every op type
+    /// returned by `all_op_payloads()`.  Adding a future op type to
+    /// that helper automatically extends this test's coverage.
+    #[tokio::test]
+    async fn op_record_caches_extracted_block_id_l13() {
+        let (pool, _dir) = test_pool().await;
+
+        let mut seq_so_far = 0;
+        for (label, payload) in all_op_payloads() {
+            let expected_block_id: Option<String> = payload.block_id().map(str::to_owned);
+            let record = append_local_op_at(&pool, TEST_DEVICE, payload, FIXED_TS.into())
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("append_local_op_at failed for {label}: {e}");
+                });
+
+            seq_so_far += 1;
+            assert_eq!(record.seq, seq_so_far, "seq monotonicity for {label}");
+            assert_eq!(
+                record.block_id, expected_block_id,
+                "L-13: cached block_id must equal the typed payload's block_id for {label}",
+            );
+
+            // Parity oracle: the cached field must match what
+            // `extract_block_id_from_payload` would have computed at
+            // dispatch time (the parse the sidecar replaces).
+            let from_payload = extract_block_id_from_payload(&record.payload);
+            assert_eq!(
+                record.block_id, from_payload,
+                "L-13: cached block_id must agree with extract_block_id_from_payload for {label} \
+                 (oracle: cached={:?}, parsed={:?})",
+                record.block_id, from_payload,
+            );
+        }
+    }
+
+    /// L-13: a record fetched from the DB via `get_op_by_seq` must
+    /// also carry the cached `block_id` sidecar — populated from the
+    /// indexed `op_log.block_id` column (migration 0030) projected by
+    /// the SELECT.  Without this, a post-restore / cross-session read
+    /// would re-introduce the JSON parse the sidecar was added to
+    /// avoid.
+    #[tokio::test]
+    async fn get_op_by_seq_populates_block_id_sidecar_l13() {
+        let (pool, _dir) = test_pool().await;
+
+        let appended = append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            make_create_payload("BLK-L13"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            appended.block_id.as_deref(),
+            Some("BLK-L13"),
+            "sanity: append-time sidecar must be populated"
+        );
+
+        let fetched = get_op_by_seq(&pool, TEST_DEVICE, appended.seq)
+            .await
+            .unwrap();
+        assert_eq!(
+            fetched.block_id.as_deref(),
+            Some("BLK-L13"),
+            "L-13: DB-read path must populate the cached sidecar from \
+             the indexed op_log.block_id column",
+        );
+    }
+
+    /// L-13 (sibling of `get_op_by_seq_populates_block_id_sidecar_l13`):
+    /// the bulk read path (`get_ops_since`) must also project
+    /// `op_log.block_id` so every row in the result set has the cached
+    /// sidecar populated.  This is the path the materializer uses on
+    /// catch-up after sync; missing the column here would leave the
+    /// sidecar `None` for every replayed op and re-introduce the
+    /// dispatch-time parse.
+    #[tokio::test]
+    async fn get_ops_since_populates_block_id_sidecar_l13() {
+        let (pool, _dir) = test_pool().await;
+
+        for i in 1..=3 {
+            append_local_op_at(
+                &pool,
+                TEST_DEVICE,
+                make_create_payload(&format!("BLK-L13-{i:02}")),
+                FIXED_TS.into(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let ops = get_ops_since(&pool, TEST_DEVICE, 0).await.unwrap();
+        assert_eq!(ops.len(), 3, "expected three rows");
+        for (i, op) in ops.iter().enumerate() {
+            let expected = format!("BLK-L13-{:02}", i + 1);
+            assert_eq!(
+                op.block_id.as_deref(),
+                Some(expected.as_str()),
+                "L-13: get_ops_since must populate block_id sidecar at index {i}",
+            );
+        }
     }
 }

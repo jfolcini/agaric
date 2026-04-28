@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 686+ items across 497 sessions (per SESSION-LOG.md unique session count; latest is session 530).
+Previously resolved: 693+ items across 498 sessions (per SESSION-LOG.md unique session count; latest is session 531).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1913,7 +1913,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (23 — expanded)
+## LOW findings (16 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -1932,18 +1932,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### Materializer
-
-### L-13 — `dedup` parses the same payload JSON multiple times per drain
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/dedup.rs:62-101`, `src-tauri/src/materializer/handlers.rs:140-518` (apply_op_tx)
-- **What:** `extract_block_id` deserialises `record.payload` into `BlockIdHint` once per `ApplyOp` (in `group_tasks_by_block_id`), and then `apply_op_tx` deserialises the same payload again into the typed `CreateBlockPayload` / `BlockIdHint` / etc. For a 1000-op batch drain this is ≈2000 JSON parses where ≈1000 would suffice.
-- **Why it matters:** JSON parsing is one of the heavier per-op costs. Doubling it on the drain hot path matters under sync floods (Android catch-up), where the materializer is already the bottleneck.
-- **Cost:** M (2-8h)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either (a) cache the parsed `block_id` as a sidecar field on `OpRecord` populated at op-log-append time, or (b) carry a typed `OpPayload` enum through the materializer (already partly exists in `op::*Payload`) so payloads are parsed exactly once per op. (a) is the smaller change.
-- **Pass-1 source:** 02/F18
-- **Status:** Open
 
 ### L-15 — Tests cover happy paths well; several risk areas are uncovered
 - **Domain:** Materializer
@@ -1967,20 +1955,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Either (a) move the bg fan-out *into* the fg consumer so it runs only after `apply_op_tx` commits — making the consumer the single scheduler of per-op derived work; or (b) thread a `Notify` keyed on `(device_id, seq)` and have the bg side `notified().await` before running the rebuild it spawned. (a) is cleaner.
 - **Pass-1 source:** 02/F10
-- **Status:** Open
-
-### Commands CRUD
-
-### L-30 — `import_markdown_inner` swallows per-block errors inside one transaction without savepoints
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/pages.rs:243-349`
-- **What:** A single `BEGIN IMMEDIATE` covers the entire import; per-block `create_block_in_tx` and per-property `set_property_in_tx` failures are caught into a `warnings` vec and the loop continues. SQLite does not roll back individual statements within a tx, so the eventual `tx.commit()` may either succeed in an inconsistent partial state or fail wholesale and lose all imported rows.
-- **Why it matters:** The advertised "log warnings, keep going" contract cannot be honoured atomically without savepoints; today's behaviour is undefined under any per-row error.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** Either (a) wrap each per-block / per-property attempt in `tx.savepoint("blk_N")` with `release` on success and `rollback_to` on error, or (b) abort the whole import on the first error and surface warnings as a partial-failure diagnostic. Add a test that injects a validation error mid-file and asserts an all-or-nothing outcome.
-- **Pass-1 source:** 04/F7
 - **Status:** Open
 
 ### Commands System
@@ -2085,30 +2059,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Search & Links
 
-### L-93 — `rebuild_all_split` does N inserts in single tx with no chunking
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/tag_inheritance.rs:464-505`
-- **What:** The split-pool variant reads the full inheritance set (lines 469-485), opens a tx on `write_pool`, deletes all rows, and INSERTs each tuple individually inside that tx. The unified `rebuild_all` (`:435-453`) uses a single recursive-CTE INSERT … SELECT — much faster — but the split variant cannot replicate that because the tuple set is materialized in Rust memory.
-- **Why it matters:** The split-pool pattern was introduced to reduce writer-lock hold time (AGENTS.md "Performance Conventions / Split read/write pool pattern"). For large vaults the current split variant arguably holds the writer longer than the unified variant — defeating the point.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** (a) Chunk the INSERTs into batches of ~500 with multi-row `INSERT … VALUES (?,?,?), (?,?,?), …` and a fresh tx per chunk; or (b) write the read-side tuple set into a temp table on `write_pool` first, then `INSERT INTO block_tag_inherited SELECT … FROM temp` in a single statement.
-- **Pass-1 source:** 07/F24
-- **Status:** Open
-
-### L-94 — `rebuild_all_split` race window: incremental updates between read and write are wiped
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/tag_inheritance.rs:464-505`
-- **What:** The read phase runs against `read_pool` outside any transaction; the write phase opens a separate tx on `write_pool`, runs `DELETE FROM block_tag_inherited`, then re-INSERTs the snapshot read earlier. If a concurrent `apply_op_tag_inheritance` runs an incremental update between the read and the DELETE (e.g. an `AddTag` propagating to descendants), the DELETE wipes those rows and the INSERT re-establishes the older snapshot — silently swallowing the incremental update.
-- **Why it matters:** The materializer dedups `RebuildTagInheritanceCache`, so a missed `AddTag` propagation sits until the next explicit op triggers another rebuild. Users see incorrect inherited-tag membership and there is no follow-up corrector. Unlike `update_fts_for_block_split` (which has a documented "next materializer task corrects it" comment), the rebuild has no equivalent self-healing.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** (a) Run the rebuild on a single pool inside a `BEGIN IMMEDIATE` so concurrent writers serialize behind it; or (b) read inside `BEGIN DEFERRED` on `write_pool` to obtain a snapshot consistent with the eventual DELETE; or (c) compute the new tuple set into a temp table first and DELETE+`INSERT INTO … SELECT` in the same write tx.
-- **Pass-1 source:** 07/F25
-- **Status:** Open
-
 ### Lifecycle
 
 ### L-105 — `apply_snapshot` keeps every restored row in memory at once
@@ -2123,30 +2073,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 08/F31
 - **Status:** Open
 
-### L-108 — Test gap: no oracle test that conflict copies survive their source's compaction
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/snapshot/tests.rs` (file-level gap)
-- **What:** None of the ~50 snapshot/compaction tests exercise the interaction between conflict copies and compaction. After compaction, the original's pre-conflict ops are purged; the conflict copy still references the original via `conflict_source`. A subsequent RESET via `apply_snapshot` may not include the source if it was never re-edited.
-- **Why it matters:** Lifecycle correctness gap; a bug discovered at use time would be opaque since the relevant state is reachable only via a specific compaction/restore sequence.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Add a regression test: create block A, conflict-copy A → A', purge oldest ops via `compact_op_log`, snapshot, RESET, assert both A and A' present and `conflict_source` points correctly.
-- **Pass-1 source:** 08/F35
-- **Status:** Open
-
-### L-109 — Test gap: no test asserting compaction preserves snapshot atomicity on injected error
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/snapshot/tests.rs` (file-level gap)
-- **What:** Every compaction test is a happy-path. There is no test injecting a failure between the INSERT-pending and DELETE-FROM-op_log statements (e.g., a SQLite trigger that ABORTs the DELETE) that asserts the entire compaction rolls back — both the snapshot insert AND the op deletion.
-- **Why it matters:** The whole point of `BEGIN IMMEDIATE` around compaction is atomicity; without a test, a refactor that splits the tx (as `create_snapshot` already does — see M-69) could silently break atomicity.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Add a test using a SQLite trigger that ABORTs on DELETE-from-op_log during compaction; assert the snapshot row is rolled back and op_log is intact. Mirror the `recover_at_boot_records_errors_when_draft_processing_fails` pattern in `recovery/tests.rs`.
-- **Pass-1 source:** 08/F37
-- **Status:** Open
-
 ### MCP
 
 ### L-113 — In-flight tool calls dropped mid-tool-call on `disconnect_all`
@@ -2159,18 +2085,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** On the shutdown branch, log at `info`, then wrap the in-flight future in `tokio::time::timeout(Duration::from_secs(2), fut)` so the current `tools/call` has a chance to return its reply and emit its activity entry before the stream is dropped. Document the trade-off in `mcp_disconnect_all`.
 - **Pass-1 source:** 09/F6
-- **Status:** Open
-
-### L-117 — `task_running` flag is one-shot; never resets while serve loop runs
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/mod.rs:434-450` (RO spawn), `src-tauri/src/mcp/mod.rs:521-537` (RW spawn); consumer `src-tauri/src/commands/mcp.rs:232`.
-- **What:** `lc.task_running.store(true)` runs after `bind_socket` succeeds; `store(false)` runs only after `server::serve` returns. Because the accept loop is an unconditional `loop { listener.accept().await? }` (no shutdown branch — see L-120), `serve` never returns in steady state and `task_running` is monotonic-true. `is_running()` therefore reports true even after the user has flipped the toggle off.
-- **Why it matters:** Diagnostic / observability: `is_running` is misleading after a disable cycle. Combined with L-120, the disable toggle does not actually stop the listener until process restart, so this is consistent ("yes the loop is alive") but masks the root issue.
-- **Cost:** S — automatically resolved by adding a shutdown signal that lets `serve` return.
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Fix together with the accept-loop shutdown work — H-2 is the canonical fix for `mcp_set_enabled(false)` not stopping the accept loop, and L-120 covers the disconnect-signal documentation. Once `serve` actually returns on disable, the existing `store(false)` line at `mod.rs:447-450` fires correctly.
-- **Pass-1 source:** 09/F10
 - **Status:** Open
 
 ### L-118 — TOCTOU race on rapid `mcp_set_enabled` toggling

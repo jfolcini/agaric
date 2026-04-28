@@ -363,6 +363,85 @@ async fn op_transfer_from_op_record_roundtrip() {
     );
 }
 
+/// L-13: the wire-side `From<OpTransfer>` conversion must NOT parse
+/// the payload — `apply_remote_ops` already does a validation parse
+/// and populates the sidecar from that single parse. Doing it here
+/// would double the JSON parse cost on the sync hot path (catch-up
+/// after Android resume, multi-thousand-op batches), regressing
+/// exactly the workload L-13 was filed against. Leaving the sidecar
+/// `None` on the wire conversion is correct as long as
+/// `apply_remote_ops` (the validation-parse piggyback) runs before
+/// any code path that observes `record.block_id` for a sync'd op.
+#[test]
+fn op_transfer_from_leaves_block_id_unpopulated_l13() {
+    let payload = r#"{"block_id":"BLK_L13_RX","block_type":"content","content":"hi","parent_id":null,"position":0}"#;
+    let transfer = OpTransfer {
+        device_id: "remote-dev".into(),
+        seq: 7,
+        parent_seqs: None,
+        hash: "0".repeat(64),
+        op_type: "create_block".into(),
+        payload: payload.into(),
+        created_at: FIXED_TS.into(),
+    };
+
+    let record: OpRecord = transfer.into();
+    assert_eq!(
+        record.block_id, None,
+        "L-13: From<OpTransfer> must NOT parse — block_id sidecar is \
+         populated by `apply_remote_ops` from its existing validation \
+         parse so sync stays at one parse per op (not two)"
+    );
+}
+
+/// L-13: end-to-end sanity for the `apply_remote_ops` block_id
+/// piggy-back. After a sync ingest, the inserted record (visible
+/// through the durable `op_log.block_id` column projected by
+/// `get_op_by_seq`) must carry the cached sidecar, populated from
+/// the single validation parse that already runs on every batch.
+#[tokio::test]
+async fn apply_remote_ops_populates_block_id_sidecar_l13() {
+    use crate::hash::compute_op_hash;
+    use crate::materializer::Materializer;
+    use crate::sync_protocol::apply_remote_ops;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    let payload = r#"{"block_id":"BLK_L13_E2E","block_type":"content","content":"x","parent_id":null,"position":0}"#;
+    let hash = compute_op_hash("remote-dev", 1, None, "create_block", payload);
+    let transfer = OpTransfer {
+        device_id: "remote-dev".into(),
+        seq: 1,
+        parent_seqs: None,
+        hash,
+        op_type: "create_block".into(),
+        payload: payload.into(),
+        created_at: FIXED_TS.into(),
+    };
+
+    let result = apply_remote_ops(&pool, &materializer, vec![transfer])
+        .await
+        .unwrap();
+    assert_eq!(
+        result.inserted, 1,
+        "single new remote op should be inserted"
+    );
+
+    let fetched = crate::op_log::get_op_by_seq(&pool, "remote-dev", 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        fetched.block_id.as_deref(),
+        Some("BLK_L13_E2E"),
+        "L-13: apply_remote_ops must populate op_log.block_id (and \
+         therefore the cached sidecar on subsequent reads) from its \
+         validation parse"
+    );
+
+    materializer.shutdown();
+}
+
 // ── SyncOrchestrator ────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2775,6 +2854,7 @@ async fn text_edit_conflict_still_creates_copy() {
         op_type: "edit_block".into(),
         payload: b_payload,
         created_at: ts_b.into(),
+        block_id: Some("BLK1".into()),
     };
     crate::dag::insert_remote_op(&pool, &b_record)
         .await

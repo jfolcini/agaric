@@ -337,6 +337,9 @@ mod tests_m72 {
         payload: &str,
     ) -> OpRecord {
         let hash = compute_op_hash(device_id, seq, parent_seqs.as_deref(), op_type, payload);
+        // L-13: mirror the production `From<OpTransfer>` path — parse
+        // the block_id once and cache it on the sidecar.
+        let block_id = crate::op_log::extract_block_id_from_payload(payload);
         OpRecord {
             device_id: device_id.to_owned(),
             seq,
@@ -345,6 +348,7 @@ mod tests_m72 {
             op_type: op_type.to_owned(),
             payload: payload.to_owned(),
             created_at: FIXED_TS.to_owned(),
+            block_id,
         }
     }
 

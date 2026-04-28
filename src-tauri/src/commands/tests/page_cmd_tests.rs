@@ -681,6 +681,96 @@ async fn import_markdown_single_transaction() {
     mat.shutdown();
 }
 
+/// L-30: a per-property validation error mid-import must abort the
+/// whole transaction. No page, no blocks, no properties, no op_log
+/// entries should land in the DB. The import returns `Err(...)` rather
+/// than swallowing the failure into `result.warnings`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_aborts_on_first_validation_error_l30() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Baseline: clean DB. Capture counts so the post-error assertions
+    // tolerate any seed rows the test fixture may have added.
+    let blocks_before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let props_before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_properties")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let ops_before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // `priority` is a select-type property whose seeded options are
+    // ["1","2","3"] (migration 0014). `priority:: 99` therefore fails
+    // `set_property_in_tx`'s options-membership check on the second
+    // block, after the first block + page have already been written
+    // inside the open transaction.
+    let content = "- Block 1\n- Block 2\n  priority:: 99\n- Block 3";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        content.into(),
+        Some("AbortTest.md".into()),
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "import must surface the per-property validation error as Err, got: {result:?}"
+    );
+
+    // All-or-nothing: rollback restored the DB to its pre-import state.
+    let blocks_after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        blocks_after.0, blocks_before.0,
+        "no block rows should survive a rolled-back import"
+    );
+
+    let props_after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_properties")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        props_after.0, props_before.0,
+        "no block_properties rows should survive a rolled-back import"
+    );
+
+    let ops_after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        ops_after.0, ops_before.0,
+        "no op_log entries should survive a rolled-back import"
+    );
+
+    // The page row itself must not exist either — even though it was
+    // created before the failing property write, the rollback wipes it.
+    let page_exists: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = ?")
+            .bind("AbortTest")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        page_exists.0, 0,
+        "the page block must not exist after a rolled-back import"
+    );
+
+    mat.shutdown();
+}
+
 // ======================================================================
 // list_page_links (F-33)
 // ======================================================================
