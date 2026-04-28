@@ -650,6 +650,7 @@ pub async fn read_logs_for_report(
         gcal_email.as_deref(),
         &peer_device_ids,
     )
+    .map_err(super::sanitize_internal_error)
 }
 
 #[cfg(test)]

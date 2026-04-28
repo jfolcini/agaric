@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use sqlx::SqlitePool;
 
+use super::sanitize_internal_error;
 use crate::error::AppError;
 use crate::gcal_push::connector::{GcalClient, GcalConnectorHandle};
 use crate::gcal_push::keyring_store::{GcalEvent, GcalEventEmitter, TokenStore};
@@ -315,7 +316,9 @@ pub async fn get_gcal_status(
     token_store: tauri::State<'_, GcalTokenStoreState>,
     device_id: tauri::State<'_, crate::device::DeviceId>,
 ) -> Result<GcalStatus, AppError> {
-    get_gcal_status_inner(&pool.inner().0, &token_store.inner().0, device_id.as_str()).await
+    get_gcal_status_inner(&pool.inner().0, &token_store.inner().0, device_id.as_str())
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: poke the GCal connector to run a resync immediately
@@ -351,6 +354,7 @@ pub async fn disconnect_gcal(
         delete_calendar,
     )
     .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: update the GCal sync window (days before/after today
@@ -364,7 +368,9 @@ pub async fn set_gcal_window_days(
     pool: tauri::State<'_, crate::db::WritePool>,
     n: i32,
 ) -> Result<i32, AppError> {
-    set_gcal_window_days_inner(&pool.inner().0, n).await
+    set_gcal_window_days_inner(&pool.inner().0, n)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: update the GCal privacy mode (`"full"` vs.
@@ -377,7 +383,9 @@ pub async fn set_gcal_privacy_mode(
     pool: tauri::State<'_, crate::db::WritePool>,
     mode: String,
 ) -> Result<(), AppError> {
-    set_gcal_privacy_mode_inner(&pool.inner().0, &mode).await
+    set_gcal_privacy_mode_inner(&pool.inner().0, &mode)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 // ---------------------------------------------------------------------------

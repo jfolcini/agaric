@@ -76,6 +76,30 @@ pub(crate) async fn collect_tables(
 ///
 /// Returns [`AppError::Snapshot`] if the op_log is empty — a snapshot without
 /// any ops to reference is meaningless.
+///
+/// # `up_to_hash` is opaque, `up_to_seqs` is the real causal anchor (L-106)
+///
+/// The "latest hash" returned here is selected via `ORDER BY created_at DESC,
+/// device_id DESC, seq DESC LIMIT 1` — i.e. wall-clock-ordered. Because two
+/// devices' clocks can disagree by seconds (and the op log has no global
+/// monotonic clock), the hash returned depends on which device's wall clock
+/// happened to run ahead of the other. Two devices that took a snapshot at
+/// the same logical point — same `up_to_seqs` vector, same set of ops —
+/// can therefore produce different `up_to_hash` values purely from clock
+/// skew.
+///
+/// This is **deliberate, not a bug**: peers treat `up_to_hash` as opaque
+/// (it's never compared between devices for equality), and the **real
+/// causal anchor is `up_to_seqs`** — a per-device-id `MAX(seq)` map that
+/// behaves like a vector clock and is what `try_offer_snapshot_catchup`
+/// actually consults to decide whether a snapshot covers a remote's
+/// frontier.
+///
+/// If you find yourself reaching for "let's make `up_to_hash` deterministic
+/// across devices" (e.g., hash the snapshot bytes themselves rather than
+/// the latest op), STOP — that is a wire-format change that requires
+/// explicit user approval per AGENTS.md "Architectural Stability". The
+/// current shape is correct for what `up_to_hash` is used for.
 pub(crate) async fn collect_frontier(
     conn: &mut SqliteConnection,
 ) -> Result<(BTreeMap<String, i64>, String), AppError> {

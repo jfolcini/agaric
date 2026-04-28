@@ -241,37 +241,79 @@ pub(crate) async fn daemon_loop(
             }
 
             // Branch B: debounced local-change notification
+            //
+            // L-61: peers are dispatched concurrently via `JoinSet` so a
+            // flaky peer's protocol timeout doesn't hold up the rest of
+            // the round. Per-peer mutual exclusion is still enforced
+            // inside `try_sync_with_peer` via `scheduler.try_lock_peer`,
+            // so simultaneous dispatch is safe — any contender returns
+            // immediately without running a session.
             _ = scheduler.wait_for_debounced_change() => {
                 let refs = list_peer_refs_or_empty(&pool, "debounced_change").await;
+                let mut join_set = tokio::task::JoinSet::new();
                 for peer_ref in &refs {
-                    if let Some(peer) = resolve_peer_address(
+                    let Some(peer) = resolve_peer_address(
                         &peer_ref.peer_id,
                         peer_ref.last_address.as_deref(),
                         &discovered,
-                    ) {
-                        let cancelled = try_sync_with_peer(
+                    ) else {
+                        continue;
+                    };
+                    // Each spawned task owns clones of the shared state.
+                    // `Materializer`, `SqlitePool`, and `SyncCert` clone
+                    // cheaply (Arc-backed); `Vec<PeerRef>` clones once
+                    // per peer per round but the list is small.
+                    let pool = pool.clone();
+                    let device_id = device_id.clone();
+                    let materializer = materializer.clone();
+                    let scheduler = scheduler.clone();
+                    let event_sink = event_sink.clone();
+                    let cancel = cancel.clone();
+                    let cert = cert.clone();
+                    let refs_for_task = refs.clone();
+                    join_set.spawn(async move {
+                        let was_cancelled = try_sync_with_peer(
                             &pool,
                             &device_id,
                             &materializer,
                             &scheduler,
                             &event_sink,
                             &peer,
-                            &refs,
+                            &refs_for_task,
                             &cancel,
                             &cert,
                         )
                         .await;
-                        // M-46: cancel observed during this peer's session →
-                        // stop the whole round, not just the current peer.
-                        // Without this break, peer 2 / 3 / … would each spin
-                        // up fresh sessions because `CancelGuard::drop`
-                        // already cleared the flag.
-                        if cancelled {
-                            tracing::info!(
-                                peer_id = %peer_ref.peer_id,
-                                "cancel observed mid-round; aborting remaining debounced-change peers"
-                            );
-                            break;
+                        (peer.device_id, was_cancelled)
+                    });
+                }
+                while let Some(result) = join_set.join_next().await {
+                    match result {
+                        Ok((peer_id, was_cancelled)) => {
+                            // M-46: when one peer's session reports the
+                            // cancel flag was observed, abort the rest
+                            // of this round's still-in-flight tasks.
+                            // The shared `cancel` flag normally
+                            // propagates on its own, but a peer that
+                            // finishes ahead of others can clear it via
+                            // its `CancelGuard::drop` before slower
+                            // peers observe it — the original sequential
+                            // code worked around this with `break`; the
+                            // concurrent equivalent is `abort_all`.
+                            if was_cancelled {
+                                tracing::info!(
+                                    peer_id = %peer_id,
+                                    "cancel observed mid-round; aborting remaining debounced-change peers"
+                                );
+                                join_set.abort_all();
+                            }
+                        }
+                        Err(e) if e.is_cancelled() => {
+                            // Expected after `abort_all()` above.
+                            tracing::debug!(error = %e, "debounced-change peer task aborted");
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "debounced-change peer task panicked");
                         }
                     }
                 }

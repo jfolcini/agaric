@@ -31,15 +31,18 @@ pub(super) async fn recover_single_draft(
     draft: &crate::draft::Draft,
     existing_block_ids: &HashSet<String>,
 ) -> Result<bool, AppError> {
-    // F07: If the block has been soft-deleted or doesn't exist in the blocks
-    // table, the draft is irrelevant. Just report it as "already flushed" so
-    // it gets cleaned up (the caller deletes all draft rows regardless of
-    // outcome).
+    // F07 / L-135: If the block has been soft-deleted or doesn't exist in
+    // the blocks table, the draft is orphan noise — skip the synthetic op
+    // and report "already flushed" so the caller deletes the draft row.
     //
     // Uses the pre-computed set from the batch query in recover_at_boot
     // instead of a per-draft SELECT COUNT(*) — avoids the N+1 problem.
+    //
+    // Logged at warn level (not info) because an orphan draft for a
+    // missing/deleted block usually means a draft outlived a hard purge
+    // (`block_drafts.block_id` has no FK — M-93) — worth a breadcrumb.
     if !existing_block_ids.contains(&draft.block_id) {
-        tracing::info!(block_id = %draft.block_id, "skipping draft for missing/deleted block");
+        tracing::warn!(block_id = %draft.block_id, "skipping draft for missing/deleted block");
         return Ok(false);
     }
 

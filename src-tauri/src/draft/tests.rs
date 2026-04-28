@@ -518,6 +518,104 @@ async fn flush_draft_when_delete_draft_fails_after_op_commit() {
     );
 }
 
+// ── sweep_orphan_drafts (L-135) ─────────────────────────────────────
+
+/// Seed three drafts:
+///   * `BLOCK_A` — backed by a live block row (must survive the sweep)
+///   * a soft-deleted block id — draft must be removed
+///   * a nonexistent block id — draft must be removed
+///
+/// `block_drafts.block_id` has no FK (M-93), so the sweep is purely SQL-based.
+#[tokio::test]
+async fn sweep_orphan_drafts_deletes_drafts_for_missing_blocks() {
+    let (pool, _dir) = test_pool().await;
+
+    // 1. Live block — draft should survive.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'content', ?, 0)",
+    )
+    .bind(BLOCK_A)
+    .bind("live block")
+    .execute(&pool)
+    .await
+    .unwrap();
+    save_draft(&pool, BLOCK_A, "live draft").await.unwrap();
+
+    // 2. Soft-deleted block — draft should be swept.
+    let soft_deleted = "01HZ0000000000000000SOFTDEL";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, position, deleted_at) \
+         VALUES (?, 'content', ?, 0, '2024-01-01T00:00:00Z')",
+    )
+    .bind(soft_deleted)
+    .bind("trashed")
+    .execute(&pool)
+    .await
+    .unwrap();
+    save_draft(&pool, soft_deleted, "draft for trashed block")
+        .await
+        .unwrap();
+
+    // 3. Nonexistent block id — draft should be swept.
+    let phantom = "01HZ00000000000000000PHANTM";
+    save_draft(&pool, phantom, "draft for phantom block")
+        .await
+        .unwrap();
+
+    assert_eq!(draft_count(&pool).await.unwrap(), 3, "3 drafts seeded");
+
+    let removed = sweep_orphan_drafts(&pool).await.unwrap();
+
+    assert_eq!(removed, 2, "soft-deleted + phantom drafts must be swept");
+    assert_eq!(
+        draft_count(&pool).await.unwrap(),
+        1,
+        "only the live-block draft must remain"
+    );
+    let surviving = get_draft(&pool, BLOCK_A).await.unwrap();
+    assert!(
+        surviving.is_some(),
+        "draft for live block must survive the sweep"
+    );
+    assert!(
+        get_draft(&pool, soft_deleted).await.unwrap().is_none(),
+        "draft for soft-deleted block must be gone"
+    );
+    assert!(
+        get_draft(&pool, phantom).await.unwrap().is_none(),
+        "draft for phantom block must be gone"
+    );
+}
+
+#[tokio::test]
+async fn sweep_orphan_drafts_returns_zero_when_all_drafts_are_live() {
+    let (pool, _dir) = test_pool().await;
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'content', ?, 0)",
+    )
+    .bind(BLOCK_A)
+    .bind("live block")
+    .execute(&pool)
+    .await
+    .unwrap();
+    save_draft(&pool, BLOCK_A, "live draft").await.unwrap();
+
+    let removed = sweep_orphan_drafts(&pool).await.unwrap();
+
+    assert_eq!(removed, 0, "no orphans means no rows removed");
+    assert_eq!(draft_count(&pool).await.unwrap(), 1, "draft preserved");
+}
+
+#[tokio::test]
+async fn sweep_orphan_drafts_no_op_on_empty_table() {
+    let (pool, _dir) = test_pool().await;
+
+    let removed = sweep_orphan_drafts(&pool).await.unwrap();
+
+    assert_eq!(removed, 0, "empty draft table sweeps nothing");
+}
+
 // ── block_id with LIKE wildcard characters ──────────────────────────
 
 /// Block IDs containing SQL LIKE metacharacters (`%`, `_`) must be

@@ -3,6 +3,7 @@
 use sqlx::SqlitePool;
 use tauri::State;
 
+use super::sanitize_internal_error;
 use crate::db::{ReadPool, WritePool};
 use crate::error::AppError;
 use crate::link_metadata::{self, LinkMetadata};
@@ -68,7 +69,9 @@ pub async fn fetch_link_metadata(
     write_pool: State<'_, WritePool>,
     url: String,
 ) -> Result<LinkMetadata, AppError> {
-    fetch_link_metadata_inner(&read_pool.0, &write_pool.0, url).await
+    fetch_link_metadata_inner(&read_pool.0, &write_pool.0, url)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: read cached link metadata only (no network fetch).
@@ -81,7 +84,9 @@ pub async fn get_link_metadata(
     pool: State<'_, ReadPool>,
     url: String,
 ) -> Result<Option<LinkMetadata>, AppError> {
-    get_link_metadata_inner(&pool.0, url).await
+    get_link_metadata_inner(&pool.0, url)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(test)]

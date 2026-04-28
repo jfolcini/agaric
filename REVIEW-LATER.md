@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 674+ items across 495 sessions (per SESSION-LOG.md unique session count; latest is session 528).
+Previously resolved: 681+ items across 496 sessions (per SESSION-LOG.md unique session count; latest is session 529).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1913,7 +1913,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (35 — expanded)
+## LOW findings (28 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -1983,31 +1983,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 04/F7
 - **Status:** Open
 
-### L-36 — `purge_all_deleted_inner` synchronously deletes attachment files on the command thread
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/blocks/crud.rs:976-1063`
-- **What:** After committing the purge transaction, the loop calls `std::fs::remove_file` for each purged attachment serially on the command's await thread. The DB transaction is already released, but the IPC reply is held until every file is gone.
-- **Why it matters:** Empty Trash on a vault with many large attachments stalls the UI even though the FS work is best-effort by design (errors are logged and not propagated).
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Move the file-deletion loop into `tokio::task::spawn_blocking` (or a background materializer task) so the IPC returns as soon as the rows are purged; keep the existing per-file warning logs.
-- **Pass-1 source:** 04/F28
-- **Status:** Open
-
 ### Commands System
-
-### L-48 — Sanitization drift: ARCHITECTURE.md §15 mandates it; five command files skip it
-- **Domain:** Commands (System)
-- **Location:** ARCHITECTURE.md:1259-1263 (invariant) vs `src-tauri/src/commands/{bug_report,gcal,link_metadata,logging,mcp}.rs`. Helper at `src-tauri/src/commands/mod.rs:756-769`.
-- **What:** §15 mandates: *"Database, IO, and JSON errors are replaced with generic 'internal error' messages before reaching the frontend."* The implementation is `sanitize_internal_error` in `commands/mod.rs:756-769`. 16 command files use it; these five skip it: `bug_report.rs` (e.g. lines 139-148, 314-328 — paths leak in `AppError::Io`), `gcal.rs` (every wrapper at lines 270-328), `link_metadata.rs` (lines 50-68), `logging.rs` (both wrappers), `mcp.rs` (every wrapper at lines 170-244, 336-399).
-- **Why it matters:** Within the threat model this is not "exfiltration to attacker" — the helper's own docstring says it is UX-only. But it is still a stated-invariant violation: the doc claims the helper is "applied to every Tauri command wrapper" and the implementation is partial. Toasts surface raw `sqlx::Error` strings and OS paths inconsistently across the app.
-- **Cost:** S — mechanical addition of `.map_err(sanitize_internal_error)` to ~12 wrappers.
-- **Risk:** Low — a few tests that match raw error messages may need updates.
-- **Impact:** Low (UX consistency)
-- **Recommendation:** Add `.map_err(sanitize_internal_error)` to every Tauri command wrapper in the five files. Optionally add a CI golden-test (e.g. `cargo expand` + regex) asserting every `__cmd__*` calls the sanitizer.
-- **Pass-1 source:** 05/F26 (downgraded High→Low — UX consistency, not security)
-- **Status:** Open
 
 ### L-53 — `cancel_pairing` clears pairing slot whether or not a session exists
 - **Domain:** Commands (System)
@@ -2034,18 +2010,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### Sync
-
-### L-61 — `daemon_loop` Branch B processes peers sequentially
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_daemon/orchestrator.rs:196-218`
-- **What:** `for peer_ref in &refs { ... try_sync_with_peer(...).await; }` — each peer's sync is awaited before the next is tried. A peer at the far end of a flaky WiFi link can hold up the entire round up to its protocol timeout (30 s recv + 120 s handle_message bounds it).
-- **Why it matters:** With 3+ paired devices a single misbehaving peer delays every other peer's catch-up of fresh local edits. At single-user 2-3-device scale the impact is bounded, but it's a real UX regression on multi-laptop setups.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** `tokio::spawn` each `try_sync_with_peer` call and await a `JoinSet`. The per-peer mutex (`try_lock_peer`) already prevents two simultaneous sessions to the same peer.
-- **Pass-1 source:** 06/F29
-- **Status:** Open
 
 ### L-65 — mDNS `enable_addr_auto()` announces on every interface
 - **Domain:** Sync
@@ -2093,18 +2057,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Add `mid_transfer_disconnection_does_not_leave_partial_file` using `test_connection_pair` with a manually closed `client_conn` after the first chunk; assert the post-failure invariants above.
 - **Pass-1 source:** 06/F47
-- **Status:** Open
-
-### L-73 — Test gap: no fork-detection test (same `device_id+seq`, different hash)
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_protocol/tests.rs`; `src-tauri/src/sync_integration_tests.rs`; `src-tauri/src/dag.rs`
-- **What:** Project-wide grep for `fork`, `same_seq`, `divergent_hash` returns zero hits. The closest test (`sync_integration_tests.rs:260` "Both sides should now detect divergent edit heads") is testing edit-chain divergence on the *same* seq — different scenario. Today `apply_remote_ops` silently drops fork ops via `INSERT OR IGNORE` (the H-tier follow-up); a test would either lock in current behaviour or motivate the H-14 fix.
-- **Why it matters:** Fork-by-accident (DB rollback, restored backup) is a likely real-world failure mode for the threat model and the system's response is documented nowhere.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium (lights the path for the H-14 lever)
-- **Recommendation:** Add `apply_remote_ops_silently_drops_fork_op_with_same_pk` that inserts `(DEV_A, 1)` first, then applies a *different* op also `(DEV_A, 1)` and asserts (a) only one row in `op_log`, (b) `result.duplicates == 1`, (c) — once the H-14 fix lands — a surfaced fork indication.
-- **Pass-1 source:** 06/F48
 - **Status:** Open
 
 ### L-74 — Test gap: snapshot transfer cancellation / interruption
@@ -2193,18 +2145,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Document the memory ceiling now: warn at `create_snapshot` time when op_log byte size or row count exceeds a configurable threshold. Plan a streaming snapshot format (length-prefixed table chunks) only if/when the user hits the wall — that change is non-trivial and reshapes `SnapshotData`.
 - **Pass-1 source:** 08/F31
-- **Status:** Open
-
-### L-106 — `up_to_hash` is computed by wall-clock ordering, not hash chain
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/snapshot/create.rs:100-106`
-- **What:** "Latest hash" is `SELECT hash FROM op_log ORDER BY created_at DESC, device_id DESC, seq DESC LIMIT 1`. Two devices' clocks can disagree by seconds; the "latest" hash thus depends on whichever device's wall clock ran ahead. Pass-2 noted that `up_to_hash` is treated as opaque by peers and the *real* anchor is `up_to_seqs` (vector clock equivalent), so practical impact is low.
-- **Why it matters:** Sync anchoring on a wall-clock-derived hash is brittle: clock skew between peers can produce a different anchor depending on which side's snapshot is exchanged, causing sporadic re-anchor warnings.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Low
-- **Recommendation:** Either (a) make `up_to_hash` a deterministic hash of the snapshot bytes themselves (anchor identifies *this* snapshot, not "the latest op"); (b) document explicitly that `up_to_hash` is opaque and the real causal anchor is `up_to_seqs`. Discuss with user before changing the wire shape.
-- **Pass-1 source:** 08/F33
 - **Status:** Open
 
 ### L-108 — Test gap: no oracle test that conflict copies survive their source's compaction
@@ -2305,18 +2245,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 09/F11
 - **Status:** Open
 
-### L-124 — No MCP-level concurrent-write stress test
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/tools_ro.rs:1348-1425` (RO-only stress fixture `concurrent_clients_exact_success_count`); RW handlers at `src-tauri/src/mcp/tools_rw.rs:331-444`; backing pattern `src-tauri/src/commands/blocks/crud.rs:184` (`pool.begin_with("BEGIN IMMEDIATE")`).
-- **What:** The RW handlers are 1:1 with `*_inner` calls, each opening its own `BEGIN IMMEDIATE` transaction. That contract is exercised at the inner-test level but not at the MCP boundary — there is no MCP-level stress test that interleaves `append_block` / `delete_block` / `add_tag` across multiple concurrent agent connections (and ideally a frontend-side concurrent writer).
-- **Why it matters:** Today the inners enforce write-pool serialization correctly, so this is a coverage gap rather than a defect. A future refactor that bypassed the inner — or added an MCP-side cache that subverted `BEGIN IMMEDIATE` — would slip through.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Adapt the existing RO `concurrent_clients_exact_success_count` test into an RW variant: 4 agent connections × N (append_block + delete_block + add_tag) interleaved, plus one frontend-side writer, asserting exact final block count and zero FK violations.
-- **Pass-1 source:** 09/F18
-- **Status:** Open
-
 ### M-84 — `journal_for_date` is exposed on the RO server but writes to op_log
 - **Domain:** MCP
 - **Location:** `src-tauri/src/mcp/tools_ro.rs:182-208` (module doc), `src-tauri/src/mcp/tools_ro.rs:212-224` (9-tool list), `src-tauri/src/mcp/tools_ro.rs:245-263` (ACTOR scope), `src-tauri/src/mcp/tools_ro.rs:550-564` (handler); REVIEW-LATER.md FEAT-4 line 199 (lists `journal_for_date` as RO).
@@ -2353,18 +2281,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Defer until profiling shows it matters. If the connector ever drops to a sub-second cycle, batch the reads and writes.
 - **Pass-1 source:** 10/F25
-- **Status:** Open
-
-### L-135 — Drafts module has no garbage-collection path beyond crash recovery
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/draft.rs:34-114`; `ARCHITECTURE.md §12 Crash Recovery`
-- **What:** Drafts are inserted on autosave, deleted on `flush_draft` (blur). If the editor unmounts without a flush event firing (mobile backgrounding, hard kill, crash), the draft survives indefinitely until next boot — when crash recovery emits synthetic edit_block ops for surviving drafts and wipes them all. Within a session there is no upper bound; combined with M-93 (no FK), drafts for hard-deleted blocks survive purges and produce noise on next boot.
-- **Why it matters:** AGENTS.md lists `block_drafts` as the only mutable scratch space; mutable scratch needs eviction policy. Today the only policy is "boot wipes it all", which is fine for crash recovery but weak for long-running session hygiene.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** (1) Add a periodic in-app sweep — every N minutes, delete `block_drafts` rows whose `block_id` no longer maps to a live block (covers M-93's gap until the FK lands). (2) Tighten the boot recovery path (`recovery::recover_drafts`) to skip drafts whose `block_id` does not correspond to a live block, instead of emitting a synthetic op for a missing target. Neither requires a new table / op type.
-- **Pass-1 source:** 10/F30
 - **Status:** Open
 
 ## INFO / nits (68 — expanded)

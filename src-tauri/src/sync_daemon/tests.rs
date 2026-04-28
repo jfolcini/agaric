@@ -2782,6 +2782,87 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     mat.shutdown();
 }
 
+/// L-61 smoke test: Branch B must dispatch ALL paired peers, not just
+/// the first one. Pre-L-61 the loop was `for peer_ref in &refs { ...
+/// .await; }`, so a hypothetical regression that dropped peers 2+ from
+/// the iteration would still pass the single-peer
+/// `daemon_branch_b_local_change_triggers_sync_attempt` above. This
+/// test pins down "all peers in the round get a sync attempt" with two
+/// unreachable peers and asserts BOTH end up with a recorded failure.
+///
+/// We do NOT directly assert wall-clock parallelism here: the existing
+/// harness has no virtual-time hooks for `try_sync_with_peer` and
+/// 127.0.0.1:1 connection refusals are sub-millisecond, so a sequential
+/// vs concurrent dispatch is indistinguishable on the wire. The
+/// concurrency property is guaranteed by the structural shift to
+/// `JoinSet::spawn`; what this test verifies is the smoke property
+/// that the new code dispatches every peer rather than dropping any.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
+    install_crypto_provider();
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::with_intervals(
+        std::time::Duration::from_millis(100),
+        std::time::Duration::from_secs(60),
+    ));
+    let sink = Arc::new(RecordingEventSink::new());
+    let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cert = crate::sync_net::generate_self_signed_cert("BRANCH_B_L61_DEV").unwrap();
+
+    let daemon = SyncDaemon::start(
+        pool.clone(),
+        "BRANCH_B_L61_DEV".into(),
+        mat.clone(),
+        scheduler.clone(),
+        cert,
+        sink_dyn,
+        cancel,
+    )
+    .await
+    .unwrap();
+
+    // Let startup complete and Branch C's first tick pass (no peers → no-op).
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // Insert TWO peer refs, both with unreachable addresses.  Pre-L-61
+    // the sequential loop visited them one at a time; post-L-61 the
+    // JoinSet visits them concurrently.  Either way, both must
+    // accumulate a failure.
+    for peer_id in ["REMOTE_PEER_1", "REMOTE_PEER_2"] {
+        peer_refs::upsert_peer_ref(&pool, peer_id).await.unwrap();
+        sqlx::query("UPDATE peer_refs SET last_address = '127.0.0.1:1' WHERE peer_id = ?")
+            .bind(peer_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // Trigger Branch B by notifying a local change.
+    scheduler.notify_change();
+
+    // Wait for debounce window (100 ms) + connection attempts + margin.
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    let f1 = scheduler.failure_count("REMOTE_PEER_1");
+    let f2 = scheduler.failure_count("REMOTE_PEER_2");
+    assert!(
+        f1 >= 1,
+        "Branch B must dispatch peer 1; got failure_count={f1}"
+    );
+    assert!(
+        f2 >= 1,
+        "Branch B must dispatch peer 2 (regression guard for L-61 \
+         concurrent dispatch dropping later peers); got failure_count={f2}"
+    );
+
+    daemon.shutdown();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    mat.shutdown();
+}
+
 /// Branch C: The periodic resync timer (30 s interval, first tick fires
 /// immediately) calls peers_due_for_resync and attempts sync with overdue
 /// peers.  A peer whose synced_at is NULL is always overdue.
@@ -3695,8 +3776,7 @@ async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
 /// M-46: integration-flavour test that the daemon-loop's "break on
 /// cancel" pattern works correctly. Rather than wiring up three real
 /// peers (which would require live TLS + responders), this test
-/// exercises the EXACT code shape used in Branch B / Branch C of
-/// `daemon_loop`:
+/// exercises the EXACT code shape used in Branch C of `daemon_loop`:
 ///
 /// ```ignore
 /// for peer_ref in &refs {
@@ -3704,6 +3784,11 @@ async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
 ///     if cancelled { break; }
 /// }
 /// ```
+///
+/// (Branch B no longer follows this shape post-L-61 — it dispatches
+/// peers concurrently via `JoinSet` and uses `abort_all()` instead of
+/// `break`. The bool→break contract this test pins down is still the
+/// authoritative shape for Branch C.)
 ///
 /// The `try_sync_with_peer` call is replaced with a stub closure that
 /// returns `true` on the first invocation (peer 1 cancelled mid-session)
@@ -3733,8 +3818,8 @@ async fn daemon_loop_breaks_round_when_cancel_observed_during_first_peer_m46() {
         peer_id == "PEER_1"
     };
 
-    // Exact replica of the Branch B / Branch C pattern in
-    // `daemon_loop` (orchestrator.rs:198-218 / 244-260 post-M-46).
+    // Exact replica of the Branch C pattern in `daemon_loop`
+    // (Branch B uses JoinSet + abort_all post-L-61).
     for peer_ref in &refs {
         let cancelled = stub(&peer_ref.peer_id);
         visited.lock().unwrap().push(peer_ref.peer_id.clone());

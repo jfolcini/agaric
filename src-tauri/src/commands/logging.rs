@@ -1,5 +1,6 @@
 //! Frontend logging command handlers (F-19).
 
+use super::sanitize_internal_error;
 use crate::error::AppError;
 
 /// M-39: per-field byte ceiling applied at the IPC boundary. The
@@ -137,11 +138,11 @@ pub(crate) fn get_log_dir_inner(app_data_dir: &std::path::Path) -> String {
 #[specta::specta]
 pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
     use tauri::Manager;
-    let data_dir = app
-        .path()
+    app.path()
         .app_data_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
-    Ok(get_log_dir_inner(&data_dir))
+        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))
+        .map(|data_dir| get_log_dir_inner(&data_dir))
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(test)]
