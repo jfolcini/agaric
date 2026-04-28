@@ -3869,3 +3869,94 @@ async fn daemon_loop_visits_all_peers_when_no_cancel_observed_m46() {
         "M-46: when no peer reports cancellation, all peers in the round must be visited"
     );
 }
+
+/// L-75: dormant-waiter race vs. immediate shutdown.
+///
+/// The daemon starts dormant (no peers in pool). We then race two events:
+/// (1) a pair-arrival notification (insert peer + `scheduler.notify_change()`)
+/// and (2) `daemon.shutdown()` firing essentially simultaneously. The daemon's
+/// `select!` arms must accept either ordering cleanly:
+///
+/// - If the notify is consumed first: the dormant path transitions into
+///   `daemon_loop`, which then observes the cancel flag on the very next
+///   iteration and returns Ok.
+/// - If the shutdown is consumed first: the dormant path simply exits
+///   without ever entering `daemon_loop`.
+///
+/// In either case:
+///
+/// (a) The daemon task must `await` cleanly within a bounded timeout —
+///     no hang, no panic, no leaked listener.
+/// (b) The peer row inserted by the pair event must persist in `peer_refs`
+///     (regardless of which branch won). This is the "no data loss on
+///     immediate shutdown" invariant: a confirm_pairing that lands and a
+///     simultaneous shutdown must not erase the peer.
+///
+/// Pass-1 source: 06/F51. The previous tests (`dormant_daemon_wakes_on_pair_notification`,
+/// `peers_appeared_*`) cover the happy paths but not this exact interleaving.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dormant_waiter_races_pair_with_immediate_shutdown_l75() {
+    install_crypto_provider();
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let cert = sync_net::generate_self_signed_cert("DEV_LOCAL").unwrap();
+    let event_sink: Arc<dyn crate::sync_events::SyncEventSink> =
+        Arc::new(RecordingEventSink::new());
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    // Pre-condition: no peers, so the daemon enters its dormant waiter
+    // branch on start.
+    assert!(
+        !super::peers_appeared(&pool).await,
+        "pre-condition: pool must have no peers"
+    );
+
+    let daemon = SyncDaemon::start_if_peers_exist(
+        pool.clone(),
+        "DEV_LOCAL".into(),
+        materializer,
+        scheduler.clone(),
+        cert,
+        event_sink,
+        cancel,
+    )
+    .await
+    .unwrap();
+
+    // Race the pair event against the shutdown. Both fire from the
+    // current task with no `await` between them so the daemon's
+    // `select!` arms see them in essentially arbitrary order.
+    peer_refs::upsert_peer_ref(&pool, "PEER_RACE_L75")
+        .await
+        .unwrap();
+    scheduler.notify_change();
+    daemon.shutdown();
+
+    // (a) The daemon task must exit cleanly within a bounded timeout
+    // regardless of which `select!` arm won the race.
+    let handle = daemon.handle;
+    tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+        if let Some(h) = handle {
+            let _ = h.await;
+        }
+    })
+    .await
+    .expect(
+        "L-75: daemon must shut down within 10s when pair-notify and shutdown \
+         race; a hang here means a select! arm leaks across the race window",
+    );
+
+    // (b) The peer row persists. Whichever branch of the race won, the
+    // confirm_pairing-equivalent insert must not be erased by the
+    // simultaneous shutdown.
+    let peer = peer_refs::get_peer_ref(&pool, "PEER_RACE_L75")
+        .await
+        .unwrap();
+    assert!(
+        peer.is_some(),
+        "L-75: peer inserted before shutdown must persist regardless of \
+         which select! arm consumed first; got None"
+    );
+}

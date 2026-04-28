@@ -286,8 +286,12 @@ pub async fn compact_op_log(
 
     // ── Phase 3: Write (brief BEGIN IMMEDIATE transaction) ───────────
     // Only the INSERT, UPDATE, DELETE, and cleanup happen under the
-    // exclusive write lock.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // exclusive write lock. L-7: route through `begin_immediate_logged`
+    // so a stalled writer surfaces as a `warn` instead of disappearing
+    // into the 5s busy_timeout (the wrapper command already uses the
+    // logged variant for the recount tx — this is the matching inner
+    // delete).
+    let mut tx = crate::db::begin_immediate_logged(pool, "compact_op_log_phase3").await?;
 
     // Step 1: INSERT with status='pending'
     sqlx::query(

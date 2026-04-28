@@ -289,12 +289,89 @@ pub async fn apply_remote_ops(
 
     // Enqueue materialization AFTER commit — ensures all ops are durable
     // before any are processed.
+    //
+    // L-68: split the freshly-inserted batch into one
+    // `BatchApplyOps` task per `block_id` instead of a single
+    // monolithic task. Each task becomes its own materializer
+    // transaction in `handlers::handle_foreground_task` (BatchApplyOps
+    // arm), which buys two things on the bulk-sync hot path:
+    //
+    // 1. **Failure isolation.** A bad op for block X (e.g. a remote
+    //    `MoveBlock` whose target parent is missing) only rolls back
+    //    its own group's transaction — the rest of the catch-up batch
+    //    still commits. The pre-L-68 monolith rolled back the entire
+    //    multi-thousand-op batch on any single failure, which the
+    //    foreground retry then re-tried once and dropped, leaving
+    //    every op in the batch un-materialized until the next sync.
+    // 2. **Smaller WAL transactions** that don't starve concurrent
+    //    readers / the local writer for the duration of a 5,000-op
+    //    apply.
+    //
+    // The grouping key is `record.block_id.as_deref()` — the L-13
+    // sidecar populated above. The `DeleteAttachment` variant carries
+    // no `block_id` and is grouped under `None` (a single combined
+    // task per batch).
+    //
+    // Ordering rationale (the cross-group invariant):
+    //
+    // - The materializer's foreground consumer drains its mpsc queue
+    //   strictly **FIFO** (see `consumer::process_foreground_segment`
+    //   — the H-5/H-6 fix dropped the parallel `JoinSet` in 2026-04
+    //   precisely so parent-before-child invariants survive). So the
+    //   order in which we enqueue tasks IS the order they execute.
+    // - We use `HashMap<Option<String>, Vec<OpRecord>>` paired with a
+    //   side `Vec<Option<String>>` that records first-encounter
+    //   order. Iterating that side-vec preserves the input's
+    //   `to_materialize` order at the GROUP level — i.e. the group
+    //   whose first op appeared earliest enqueues first. Since the
+    //   input is already seq-ordered per device (and parent-creates
+    //   appear before child-creates within a well-formed op log),
+    //   this is the only ordering that keeps "parent's group commits
+    //   before child's group" true without serialising everything
+    //   through one transaction. Sorted-by-key (BTreeMap) would
+    //   re-order groups by ULID-lex, which is NOT temporal in
+    //   general and would put a child before its parent on roughly
+    //   half of all batches.
+    // - Within a single group's `Vec<OpRecord>`, ops are pushed in
+    //   the order they were encountered, which is the same per-device
+    //   seq order. So an `EditBlock` always lands after its
+    //   `CreateBlock` for the same block, and a `MoveBlock` lands
+    //   after the edits that preceded it.
+    // - For genuinely out-of-order remote arrivals (e.g. a
+    //   `MoveBlock` whose new-parent ULID has not been created yet
+    //   in the local DB), the per-group transaction rolls back, the
+    //   foreground consumer's single retry runs after a 100 ms
+    //   backoff (see `consumer::process_single_foreground_task`),
+    //   and the parent's group — enqueued AFTER ours but processed
+    //   FIFO before our retry — has already committed by then. This
+    //   is strictly better than the pre-L-68 behaviour, which lost
+    //   the entire batch on any in-batch FK violation.
     if !to_materialize.is_empty() {
-        materializer
-            .enqueue_foreground(MaterializeTask::BatchApplyOps(std::sync::Arc::new(
-                to_materialize,
-            )))
-            .await?;
+        use std::collections::HashMap;
+        // `groups` owns the records; `group_order` records first-encounter
+        // order so iteration order is deterministic AND preserves the input's
+        // group-level temporal ordering (see the comment above for why this
+        // matters vs. BTreeMap's ULID-lex order).
+        let mut groups: HashMap<Option<String>, Vec<OpRecord>> = HashMap::new();
+        let mut group_order: Vec<Option<String>> = Vec::new();
+        for record in to_materialize {
+            let key = record.block_id.clone();
+            if !groups.contains_key(&key) {
+                group_order.push(key.clone());
+            }
+            groups.entry(key).or_default().push(record);
+        }
+        for key in group_order {
+            // Safe to expect: every key in `group_order` was inserted
+            // by the loop above and the corresponding vec is never
+            // removed before this point.
+            let group = groups
+                .remove(&key)
+                .expect("invariant: group_order key always has a populated entry");
+            materializer
+                .enqueue_foreground(MaterializeTask::BatchApplyOps(std::sync::Arc::new(group)))
+                .await?;
+        }
     }
 
     Ok(result)

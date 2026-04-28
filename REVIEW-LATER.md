@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 693+ items across 498 sessions (per SESSION-LOG.md unique session count; latest is session 531).
+Previously resolved: 698+ items across 499 sessions (per SESSION-LOG.md unique session count; latest is session 532).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1913,23 +1913,9 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (16 — expanded)
+## LOW findings (10 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
-
-### Core
-
-### L-7 — Slow-acquire helpers are wired up in only 2 modules
-- **Domain:** Core
-- **Location:** `src-tauri/src/db.rs:6-67` (helpers + threshold constant); production call sites limited to `commands/blocks/crud.rs` and `commands/compaction.rs`
-- **What:** `db::acquire_logged` and `db::begin_immediate_logged` ship with a 100 ms warn threshold and dedicated tests. A grep shows them used in two production modules only; the rest of the codebase still goes through bare `pool.acquire()` / `pool.begin_with("BEGIN IMMEDIATE")`. The file's own doc says *"Migrate call sites gradually — wrap this around `pool.acquire()` only on hot paths…"* but the migration has stalled.
-- **Why it matters:** The 5 s `busy_timeout` makes silent freezes the user-visible symptom of write-lock starvation. Without `acquire_logged` we have no breadcrumb to tell a freeze from a hang. This is operational visibility, not correctness.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Sweep through `materializer/`, `sync_protocol/`, `snapshot/`, and `cache/` in a follow-up and replace `pool.acquire()` / `pool.begin_with("BEGIN IMMEDIATE")` with `db::acquire_logged(&pool, "<module>_<reason>")` / `db::begin_immediate_logged(...)`. No-op behaviour change; pure observability win.
-- **Pass-1 source:** 01/F13
-- **Status:** Open
 
 ### Materializer
 
@@ -2007,54 +1993,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Stream-decode into a temp file (or a bounded ring buffer) and refactor `apply_snapshot` to accept `impl Read` so `zstd::stream::Decoder + tokio::io::copy` can pipe through. Pair with M-51 since the patterns are siblings.
 - **Pass-1 source:** 06/F40
-- **Status:** Open
-
-### L-68 — `apply_remote_ops` enqueues a single `BatchApplyOps` task regardless of size
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_protocol/operations.rs:152-160`
-- **What:** The whole batch is enqueued as one `MaterializeTask::BatchApplyOps(to_materialize)` regardless of size. The materializer's 256-task foreground cap is never the bottleneck here, but the single-task design means independent sub-groups by `block_id` cannot be parallelised across the materializer's `JoinSet`.
-- **Why it matters:** Bulk sync apply is serialised on a single materializer worker; doesn't blow up but doesn't scale to 5,000-op initial syncs either.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** Group `to_materialize` by `block_id` before enqueuing so the materializer's `JoinSet` parallelises independent groups. Be mindful of cross-group ordering invariants for parent-id moves.
-- **Pass-1 source:** 06/F43
-- **Status:** Open
-
-### L-72 — Test gap: no chaos / partial-transfer recovery test for `sync_files`
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_files.rs:581-1908` (test module)
-- **What:** Coverage today: happy path (in-mem and TLS), hash mismatch, large-file chunking, empty transfer. Missing: a test that injects a connection drop *between* binary frames mid-file, asserting (a) the receiver returns `Err`, (b) no half-written file is visible on disk, (c) the attachment row still appears in `find_missing_attachments` so the next sync re-tries.
-- **Why it matters:** The recovery path is the most interesting one for accidental corruption (single-user, not adversarial), and it is currently untested. Pairs naturally with M-48.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Add `mid_transfer_disconnection_does_not_leave_partial_file` using `test_connection_pair` with a manually closed `client_conn` after the first chunk; assert the post-failure invariants above.
-- **Pass-1 source:** 06/F47
-- **Status:** Open
-
-### L-74 — Test gap: snapshot transfer cancellation / interruption
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_daemon/snapshot_transfer.rs` (test module, e.g. line 705 area)
-- **What:** Tests cover oversized offer, corrupted bytes, peer Error, unexpected message, no-snapshot. Missing: (a) connection drop mid-binary-frame during snapshot receive, and (b) user cancellation during snapshot apply. With L-67 in mind, the latter would catch whether `apply_snapshot`'s tx rollback actually leaves the DB in a consistent state when interrupted.
-- **Why it matters:** Snapshot apply is the most destructive sync path (wipes and rebuilds core tables); failure modes deserve explicit tests.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Add a test that drops the test connection mid-binary-frame during snapshot receive and asserts (a) `try_receive_snapshot_catchup` returns `Err`, (b) DB rolls back to its pre-snapshot state (no half-applied rows).
-- **Pass-1 source:** 06/F50
-- **Status:** Open
-
-### L-75 — Test gap: dormant-waiter race
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_daemon/mod.rs:228-298` (dormant waiter); `src-tauri/src/sync_daemon/tests.rs:2789-3000`
-- **What:** `dormant_daemon_wakes_on_pair_notification` and `peers_appeared_*` exist, but none exercise the specific interleaving where `notify_change` fires *between* `scheduler.notified()` consumption and the next `select!` iteration, racing with an immediate shutdown.
-- **Why it matters:** Pair-then-immediate-shutdown timing bugs would be invisible until they bite a user mid-pair.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add a test that races `confirm_pairing` with an immediate daemon `shutdown()` and asserts the daemon either (a) processed the pair before shutdown, or (b) cleanly exited with the pair preserved in `peer_refs`.
-- **Pass-1 source:** 06/F51
 - **Status:** Open
 
 ### Search & Links
