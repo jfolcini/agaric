@@ -2176,16 +2176,68 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn snapshot_get_agenda_response_shape() {
-        let (tools, _mat, _dir) = mk_tools().await;
+        let (tools, mat, _dir) = mk_tools().await;
+
+        // I-MCP-6: seed a single repeating block so the projection has at
+        // least one entry to surface. With an empty DB the response is
+        // `[]`, which never exercises the populated `ProjectedAgendaEntry`
+        // wire shape (`block` / `projected_date` / `source`) — letting a
+        // future field rename slip through silently.
+        let task = create_block_inner(
+            &tools.pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "recurring".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        crate::commands::set_due_date_inner(
+            &tools.pool,
+            DEV,
+            &mat,
+            task.id.clone(),
+            Some("2099-01-03".into()),
+        )
+        .await
+        .unwrap();
+        crate::commands::set_property_inner(
+            &tools.pool,
+            DEV,
+            &mat,
+            task.id.clone(),
+            "repeat".into(),
+            Some("daily".into()),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+        // Force the on-the-fly fallback so the projected_date is purely a
+        // function of (due_date, repeat_rule, requested range) rather than
+        // the wall-clock date the test was run (the cache rebuild anchors
+        // its horizon to `chrono::Local::now`).
+        sqlx::query("DELETE FROM projected_agenda_cache")
+            .execute(&tools.pool)
+            .await
+            .unwrap();
+
         let result = tools
             .call_tool(
                 "get_agenda",
-                json!({"start_date": "2025-01-01", "end_date": "2025-01-07"}),
+                json!({"start_date": "2099-01-04", "end_date": "2099-01-04"}),
                 &test_ctx(),
             )
             .await
             .unwrap();
-        insta::assert_yaml_snapshot!("tool_response_get_agenda", result);
+        insta::assert_yaml_snapshot!("tool_response_get_agenda", result, {
+            "[].block.id" => "[ULID]",
+        });
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

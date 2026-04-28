@@ -19,6 +19,8 @@
 //!
 //! [`recover_at_boot`]: super::recover_at_boot
 
+use sqlx::SqlitePool;
+
 use crate::error::AppError;
 use crate::materializer::{MaterializeTask, Materializer};
 
@@ -26,8 +28,14 @@ use crate::materializer::{MaterializeTask, Materializer};
 /// materializer background queue drains so consumers never observe stale
 /// state.
 ///
+/// `pool` is the reader pool used for the I-Lifecycle-5 gate query that
+/// decides whether the global tag/page cache rebuilds need to fire (the
+/// query only reads from `blocks`, so the read pool is the correct
+/// choice — it must not contend with the materializer's write pool).
+///
 /// This is a no-op when `recovered_block_ids` is empty.
 pub async fn refresh_caches_for_recovered_drafts(
+    pool: &SqlitePool,
     materializer: &Materializer,
     recovered_block_ids: &[String],
 ) -> Result<(), AppError> {
@@ -48,16 +56,36 @@ pub async fn refresh_caches_for_recovered_drafts(
             .await?;
     }
 
-    // A recovered edit may have rewritten the text of a tag or page block.
-    // We cannot tell from the block_id alone, so refresh both caches. Both
-    // tasks are idempotent and inexpensive; they'll be dedup'd by the
-    // background consumer when coalesced with other boot-time rebuilds.
-    materializer
-        .enqueue_background(MaterializeTask::RebuildTagsCache)
-        .await?;
-    materializer
-        .enqueue_background(MaterializeTask::RebuildPagesCache)
-        .await?;
+    // I-Lifecycle-5: gate the tag/page cache rebuilds on whether any
+    // recovered block actually touches a tag or page block. Materializer
+    // dedup collapses repeated calls but doesn't skip the enqueue + Tokio
+    // task spawn cost; for recovered drafts that only touched content
+    // blocks, both rebuilds are pure waste (full O(N) scans of `blocks`).
+    //
+    // Use `json_each` over a JSON array of the recovered IDs so the IN
+    // clause works for any batch size without per-row binding. This
+    // matches the batch-resolve pattern in `fts.rs` / `backlink/query.rs`
+    // (see AGENTS.md anti-pattern #1: avoid N+1 query loops).
+    let block_ids_json = serde_json::to_string(recovered_block_ids)?;
+    let needs_rebuild: Option<i64> = sqlx::query_scalar!(
+        "SELECT 1 \
+         FROM blocks \
+         WHERE id IN (SELECT value FROM json_each(?)) \
+           AND block_type IN ('tag', 'page') \
+         LIMIT 1",
+        block_ids_json,
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    if needs_rebuild.is_some() {
+        materializer
+            .enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await?;
+        materializer
+            .enqueue_background(MaterializeTask::RebuildPagesCache)
+            .await?;
+    }
 
     // Block until all enqueued background tasks (plus anything ahead of us
     // in the queue) have been processed — this closes the stale-cache

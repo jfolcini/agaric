@@ -573,7 +573,13 @@ impl SyncOrchestrator {
                  machine"
                     .into(),
             )),
-            SyncMessage::SnapshotAccept | SyncMessage::SnapshotReject => Ok(None),
+            SyncMessage::SnapshotAccept | SyncMessage::SnapshotReject => {
+                Err(AppError::InvalidOperation(
+                    "SnapshotAccept/SnapshotReject must be handled by snapshot_transfer, \
+                     not the orchestrator"
+                        .into(),
+                ))
+            }
 
             // ---- File transfer (F-14) ---------------------------------------
             // File-transfer messages are read directly off the wire by

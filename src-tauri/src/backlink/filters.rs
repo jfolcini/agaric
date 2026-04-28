@@ -83,6 +83,12 @@ pub(crate) fn ms_to_ulid_prefix(ms: u64) -> String {
         chars[i] = CROCKFORD_ENCODE[(value & 0x1F) as usize];
         value >>= 5;
     }
+    // I-Search-17 SAFETY: every byte in `chars` is sourced from
+    // `CROCKFORD_ENCODE`, which is a `&[u8; 32]` of ASCII characters by
+    // construction (`b"0123456789ABCDEFGHJKMNPQRSTVWXYZ"`). ASCII is a
+    // strict subset of UTF-8, so `from_utf8` cannot fail. The `unwrap` is
+    // therefore panic-free; future readers should not "fix" it by
+    // propagating the error.
     String::from_utf8(chars.to_vec()).unwrap()
 }
 

@@ -15,7 +15,7 @@ use crate::error::AppError;
 use crate::import;
 use crate::import::ImportResult;
 use crate::materializer::Materializer;
-use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse};
+use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse, NULL_POSITION_SENTINEL};
 
 use super::*;
 
@@ -512,10 +512,13 @@ pub async fn get_page_inner(
     // Keyset: `(position, id)`. `NULL_POSITION_SENTINEL` is used as the
     // default cursor-position so positioned rows sort before NULL-position
     // rows, matching the ordering convention in `pagination::list_children`.
-    // NOTE: `pagination::NULL_POSITION_SENTINEL` is `pub(crate)` so we hard-code
-    // its value here rather than widening visibility. `i64::MAX` is reserved
-    // for this sentinel throughout the codebase.
-    const NULL_POSITION_SENTINEL: i64 = i64::MAX;
+    //
+    // I-CommandsCRUD-12: previously hard-coded as a function-local
+    // `const NULL_POSITION_SENTINEL: i64 = i64::MAX;` to avoid widening
+    // `pagination::NULL_POSITION_SENTINEL`'s visibility. Now imported from
+    // `pagination` directly (still `pub(crate)`, intra-crate re-use is the
+    // intended scope), so any future change to the sentinel's value is
+    // automatically picked up here without a silent drift hazard.
     let (cursor_flag, cursor_pos, cursor_id): (Option<i64>, i64, &str) =
         match page_req.after.as_ref() {
             Some(c) => (Some(1), c.position.unwrap_or(NULL_POSITION_SENTINEL), &c.id),

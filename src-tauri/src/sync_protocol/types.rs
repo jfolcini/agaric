@@ -15,7 +15,22 @@ pub struct DeviceHead {
     pub hash: String,
 }
 
-/// Wire-safe representation of an [`OpRecord`] for transmission between peers.
+/// Wire-format mirror of `OpRecord` for sync transfer.
+///
+/// **I-Sync-4 — deliberate boundary, not duplication.** Today every field
+/// matches `op_log::OpRecord` and `From<OpRecord> for OpTransfer` (and the
+/// reverse) is pure pass-through. The split is preserved as a future-proofing
+/// seam: if a v2 wire format ever needs to add a transfer-only field (e.g.
+/// a transfer-time integrity signature, encryption envelope, compression
+/// flag) or omit a DB-only field (e.g. a server-stamped `materialized_at`),
+/// the boundary is already in place — collapsing into `pub type OpTransfer
+/// = OpRecord;` now and re-introducing later would be more work than
+/// maintaining the two trivial structs and their `From` impls.
+///
+/// **Invariant:** the two structs MUST stay structurally identical until
+/// a deliberate v2-shape divergence lands. Adding a new field to `OpRecord`
+/// requires the same field on `OpTransfer` and an update to both `From`
+/// impls. A `#[cfg(test)]` parity test below pins this contract.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OpTransfer {
     pub device_id: String,

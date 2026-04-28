@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 716+ items across 502 sessions (per SESSION-LOG.md unique session count; latest is session 535).
+Previously resolved: 722+ items across 503 sessions (per SESSION-LOG.md unique session count; latest is session 536).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -2025,7 +2025,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F25
 - **Status:** Open
 
-## INFO / nits (52 — expanded)
+## INFO / nits (46 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2277,18 +2277,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 04/F29
 - **Status:** Open
 
-### I-CommandsCRUD-12 — `get_page_inner` hardcodes `NULL_POSITION_SENTINEL = i64::MAX`
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/pages.rs:478-487`
-- **What:** The inline-constant doc-comment justifies the hardcode as: "`pagination::NULL_POSITION_SENTINEL` is `pub(crate)` so we hard-code its value here rather than widening visibility. `i64::MAX` is reserved for this sentinel throughout the codebase." This duplicates a value across module boundaries; if the sentinel is ever changed in `pagination`, this site silently diverges.
-- **Why it matters:** Single-line drift hazard. Trivial to fix.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Re-export `pagination::NULL_POSITION_SENTINEL` through the module's public surface (it already participates in on-the-wire keysets), or add a `#[cfg(test)]` assertion that the hard-coded value matches the source of truth.
-- **Pass-1 source:** 04/F31
-- **Status:** Open
-
 ### I-CommandsCRUD-13 — Missing test coverage for the `is_conflict = 0` filter on the `move_block_inner` cycle CTE
 - **Domain:** Commands (CRUD)
 - **Location:** `src-tauri/src/commands/tests/block_cmd_tests.rs` (no test asserts conflict-aware cycle detection); paired with `move_ops.rs:87-100`
@@ -2316,30 +2304,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### Sync
-
-### I-Sync-1 — `SyncMessage::SnapshotAccept` / `SnapshotReject` arriving on the orchestrator path are silently `Ok(None)`
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_protocol/orchestrator.rs:448-454`
-- **What:** `SnapshotOffer` correctly returns `Err(InvalidOperation("…must be handled by snapshot_transfer…"))` with a comment saying "must never be reached". The very next arm `SnapshotAccept | SnapshotReject => Ok(None)` swallows silently — yet by the same protocol invariant these messages also belong to `snapshot_transfer`, not to the orchestrator state machine.
-- **Why it matters:** A regression that leaks Snapshot-control messages into the orchestrator path will silently no-op instead of surfacing — the same invariant violation, treated inconsistently.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Mirror the `SnapshotOffer` treatment for `SnapshotAccept` and `SnapshotReject` — `Err(InvalidOperation("must be handled by snapshot_transfer"))`.
-- **Pass-1 source:** 06/F33
-- **Status:** Open
-
-### I-Sync-4 — `OpTransfer` and `OpRecord` are structurally identical
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_protocol/types.rs:18-58`; cross-ref `src-tauri/src/op_log.rs:13`
-- **What:** Both structs carry the same fields (`device_id`, `seq`, `parent_seqs`, `hash`, `op_type`, `payload`, `created_at`); `From<OpRecord> for OpTransfer` and the reverse are pure pass-through. `OpRecord` derives `Serialize`/`Deserialize` too, so the wire-vs-DB split is purely conventional.
-- **Why it matters:** Minor maintenance burden — every new field lands twice. No runtime cost.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either keep them as a deliberate boundary (no change, document why) or collapse into a single `pub type OpTransfer = OpRecord;`. Pick one and write the choice down.
-- **Pass-1 source:** 06/F54
-- **Status:** Open
 
 ### I-Sync-5 — `MdnsService::shutdown` consumes `self`
 - **Domain:** Sync
@@ -2475,18 +2439,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 07/F39
 - **Status:** Open
 
-### I-Search-17 — `ms_to_ulid_prefix.unwrap()` lacks SAFETY comment
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/filters.rs:78-86`
-- **What:** Line 85 calls `String::from_utf8(chars.to_vec()).unwrap()`. The bytes are sourced from `CROCKFORD_ENCODE` (line 74) — an ASCII-only constant — so the unwrap is genuinely panic-free. There is no comment justifying the unwrap.
-- **Why it matters:** Future readers may flag this as a panic-risk and either replace it with error-propagating code (defensible but noisy) or leave it confused. A one-line SAFETY comment clarifies forever.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add `// SAFETY: chars are a subset of CROCKFORD_ENCODE which is ASCII; cannot fail UTF-8 validation.` immediately above the unwrap (or switch to `String::from_utf8_lossy(...).into_owned()` which is functionally identical here).
-- **Pass-1 source:** 07/F43
-- **Status:** Open
-
 ### I-Search-18 — Tests for `eval_backlink_query` with `Created { Desc }` + cursor are missing
 - **Domain:** Search & Links
 - **Location:** `src-tauri/src/backlink/tests.rs` — gap; closest tests at `:1003-1022` (`sort_created_desc`, single page) and `:1133-1162` (`pagination_cursor_works`, default Asc sort)
@@ -2537,18 +2489,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 08/F36
 - **Status:** Open
 
-### I-Lifecycle-5 — `recovery::cache_refresh` always rebuilds tags+pages even for non-tag/page edits
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/recovery/cache_refresh.rs:55-65`
-- **What:** Every recovered draft batch triggers `RebuildTagsCache + RebuildPagesCache` (full O(N) rebuilds) — not per-block, but unconditional whenever `recovered_block_ids` is non-empty. The early-return at line 34 handles the empty case. Both calls are already outside the per-draft loop, but they always fire regardless of whether any recovered draft touched a tag/page block.
-- **Why it matters:** Boot latency. Materializer dedup is supposed to collapse repeated calls, but unconditionally enqueueing both rebuilds wastes cycles on edits that touched neither tag nor page blocks.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Gate the two rebuild calls on a single query that detects whether any recovered draft block_id is a tag or page block (e.g., `SELECT 1 FROM blocks WHERE id IN (…) AND block_type IN ('tag', 'page') LIMIT 1`).
-- **Pass-1 source:** 08/F42
-- **Status:** Open
-
 ### MCP
 
 ### I-MCP-1 — `serve_pipe` shutdown bug (Windows-symmetric to the unix accept loop)
@@ -2585,18 +2525,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium (closes a real documentation gap that will cost future contributors hours)
 - **Recommendation:** Add an "MCP server" section to ARCHITECTURE.md covering: transport (UDS / named-pipe), JSON-RPC framing, `ToolRegistry` trait + RO/RW impls, `ActorContext` task-local plumbing, activity ring + event emission, lifecycle (marker file, disconnect signal), and the threat-model carve-out (single-user local, no auth tokens, no malicious-agent budget). Cross-link from AGENTS.md §"Threat Model".
 - **Pass-1 source:** 09/F22
-- **Status:** Open
-
-### I-MCP-6 — `tool_response_get_agenda.snap` pins an empty agenda — does not exercise the populated wire shape
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/snapshots/agaric_lib__mcp__tools_ro__tests__tool_response_get_agenda.snap` (5 LOC, body is `[]`); test `src-tauri/src/mcp/tools_ro.rs:1755-1766`.
-- **What:** `snapshot_get_agenda_response_shape` runs against an empty DB and snapshots `[]`. The wire-shape contract for a populated agenda (a `ProjectedAgendaEntry` with `block_id`, `date`, `repeat_kind`, `priority`, …) is therefore unpinned. A future refactor that renamed a field on `ProjectedAgendaEntry` would not break this snapshot. By contrast, `tool_response_search.snap` and `tool_response_list_pages.snap` include at least one entry.
-- **Why it matters:** Snapshots are supposed to lock the wire contract; an empty snapshot locks only the array shape. Field rename slips through silently.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Seed one block with a `due_date` inside the test's date range, redact `block_id` / `date` via insta filters, and pin a single populated entry. Keeps the wire shape under test without making the snapshot date-dependent.
-- **Pass-1 source:** 09/F24
 - **Status:** Open
 
 ### I-MCP-9 — `agaric-mcp` stub-binary integration test is `#[ignore]` and not exercised in CI
