@@ -277,7 +277,7 @@ impl GcalApi {
     /// its own layer).
     #[tracing::instrument(skip(self, token), err)]
     pub async fn delete_calendar(&self, token: &Token, calendar_id: &str) -> Result<(), AppError> {
-        let url = format!("{}/calendars/{}", self.base_url, calendar_id);
+        let url = join_calendar_path(&self.base_url, calendar_id, &[])?;
         self.send_empty(
             reqwest::Method::DELETE,
             &url,
@@ -301,7 +301,7 @@ impl GcalApi {
         calendar_id: &str,
         event: &Event,
     ) -> Result<EventResponse, AppError> {
-        let url = format!("{}/calendars/{}/events", self.base_url, calendar_id);
+        let url = join_calendar_path(&self.base_url, calendar_id, &["events"])?;
         let wire_event = WireEvent::from_digest_event(event)?;
         // 404 on /calendars/{id}/events targets the calendar, not a
         // specific event — map to CalendarGone.
@@ -333,10 +333,7 @@ impl GcalApi {
         event_id: &str,
         patch: &EventPatch,
     ) -> Result<EventResponse, AppError> {
-        let url = format!(
-            "{}/calendars/{}/events/{}",
-            self.base_url, calendar_id, event_id
-        );
+        let url = join_calendar_path(&self.base_url, calendar_id, &["events", event_id])?;
         let wire_patch = WireEventPatch::from_patch(patch);
         let body: WireEventResponse = self
             .send_json(
@@ -363,10 +360,7 @@ impl GcalApi {
         calendar_id: &str,
         event_id: &str,
     ) -> Result<(), AppError> {
-        let url = format!(
-            "{}/calendars/{}/events/{}",
-            self.base_url, calendar_id, event_id
-        );
+        let url = join_calendar_path(&self.base_url, calendar_id, &["events", event_id])?;
         self.send_empty(
             reqwest::Method::DELETE,
             &url,
@@ -404,10 +398,7 @@ impl GcalApi {
         calendar_id: &str,
         event_id: &str,
     ) -> Result<Option<EventResponse>, AppError> {
-        let url = format!(
-            "{}/calendars/{}/events/{}",
-            self.base_url, calendar_id, event_id
-        );
+        let url = join_calendar_path(&self.base_url, calendar_id, &["events", event_id])?;
         // 404 on event path → treat as "gone"; map to Ok(None) so the
         // reconcile sweep can simply re-insert.
         let body: WireEventResponse = match self
@@ -493,6 +484,38 @@ impl GcalApi {
         }
         Err(classify_error(status, &resp_headers(&resp), not_found_means).into())
     }
+}
+
+/// Build a `/calendars/{calendar_id}[/...suffix]` URL by joining
+/// percent-encoded path segments onto `base_url`.
+///
+/// Uses [`url::Url::path_segments_mut`], which percent-encodes each
+/// pushed segment using the path-segment encode set.  `/`, `?`, `#`,
+/// and other reserved characters inside `calendar_id` / suffix
+/// components are escaped (e.g. `/` → `%2F`); ordinary ASCII calendar
+/// IDs (like `<id>@group.calendar.google.com`) round-trip unchanged.
+///
+/// We pull `url` (already a direct dep via `deeplink`) instead of
+/// `format!`-splicing raw IDs, which would let an `event_id`
+/// containing `/` craft a path like
+/// `/calendars/{cal}/events/foo/bar` — wrong target on the server.
+fn join_calendar_path(
+    base_url: &str,
+    calendar_id: &str,
+    suffix: &[&str],
+) -> Result<String, AppError> {
+    let mut url = url::Url::parse(base_url)
+        .map_err(|e| AppError::Validation(format!("gcal.api.invalid_base_url: {e}")))?;
+    {
+        let mut segs = url
+            .path_segments_mut()
+            .map_err(|()| AppError::Validation("gcal.api.base_url_cannot_be_base".into()))?;
+        segs.push("calendars").push(calendar_id);
+        for s in suffix {
+            segs.push(s);
+        }
+    }
+    Ok(url.into())
 }
 
 // ---------------------------------------------------------------------------
@@ -1459,5 +1482,120 @@ mod tests {
             Some("2026-05-01"),
             "patch end.date must carry the exclusive-end shim across month boundaries"
         );
+    }
+
+    // ── URL-encoding (L-131) ───────────────────────────────────────
+
+    /// Special characters in calendar/event IDs must be percent-encoded
+    /// in the path so they cannot escape their segment.  This is the
+    /// minimum signal that `join_calendar_path` does the right thing
+    /// before we exercise it through wiremock.
+    #[test]
+    fn join_calendar_path_percent_encodes_slash_in_calendar_id() {
+        let url = join_calendar_path("https://example.invalid", "cal/with/slash", &[])
+            .expect("must build url");
+        assert_eq!(url, "https://example.invalid/calendars/cal%2Fwith%2Fslash");
+    }
+
+    #[test]
+    fn join_calendar_path_percent_encodes_event_id_suffix() {
+        let url = join_calendar_path(
+            "https://example.invalid",
+            "cal_ABC",
+            &["events", "evt/with?special#chars"],
+        )
+        .expect("must build url");
+        // `/`, `?`, `#` are all reserved and must be escaped inside a
+        // single path segment.
+        assert_eq!(
+            url,
+            "https://example.invalid/calendars/cal_ABC/events/evt%2Fwith%3Fspecial%23chars"
+        );
+    }
+
+    /// Real Google calendar IDs look like
+    /// `<opaque>@group.calendar.google.com` — those characters are
+    /// safe in a path segment and must NOT be encoded.  Regression
+    /// check that the cleanup did not break ordinary IDs.
+    #[test]
+    fn join_calendar_path_passes_through_google_shaped_calendar_id() {
+        let google_id = "abc123def@group.calendar.google.com";
+        let url = join_calendar_path("https://example.invalid", google_id, &["events"])
+            .expect("must build url");
+        assert_eq!(
+            url,
+            format!("https://example.invalid/calendars/{google_id}/events")
+        );
+    }
+
+    /// The production base URL is `https://www.googleapis.com/calendar/v3`
+    /// — i.e. it carries a path prefix.  `path_segments_mut().push(...)`
+    /// must EXTEND that prefix, not replace it.  Regression guard for
+    /// the most realistic call shape this helper sees in practice.
+    #[test]
+    fn join_calendar_path_extends_existing_base_path() {
+        let url = join_calendar_path(GOOGLE_CALENDAR_BASE_URL, "cal_ABC", &["events", "evt_123"])
+            .expect("must build url");
+        assert_eq!(
+            url,
+            "https://www.googleapis.com/calendar/v3/calendars/cal_ABC/events/evt_123"
+        );
+    }
+
+    /// `Url::path_segments_mut()` returns `Err(())` for cannot-be-a-base
+    /// URLs (e.g. `mailto:`).  The helper must surface this as a
+    /// `Validation` error rather than panicking.
+    #[test]
+    fn join_calendar_path_rejects_cannot_be_a_base_url() {
+        let err = join_calendar_path("mailto:foo@example.invalid", "cal", &[])
+            .expect_err("mailto: is cannot-be-a-base; helper must reject");
+        match err {
+            AppError::Validation(msg) => {
+                assert!(
+                    msg.contains("base_url_cannot_be_base"),
+                    "unexpected validation message: {msg}"
+                );
+            }
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    /// End-to-end: a `delete_calendar` call with a calendar_id
+    /// containing `/` reaches the server with `%2F`, not a literal
+    /// slash that would target a different resource.  Wiremock's
+    /// `path` matcher compares against the percent-encoded request
+    /// URL, so we assert against the encoded form.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn delete_calendar_percent_encodes_calendar_id_with_slash() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/calendars/evil%2Fpath"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        api.delete_calendar(&make_token(), "evil/path")
+            .await
+            .expect("delete_calendar with slash in id must reach the encoded path");
+    }
+
+    /// Sanity: a Google-shaped calendar id still hits the existing
+    /// `/calendars/{id}` mock untouched after switching to
+    /// `join_calendar_path`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn delete_calendar_works_with_google_shaped_id() {
+        let google_id = "abc123def@group.calendar.google.com";
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path(format!("/calendars/{google_id}")))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        api.delete_calendar(&make_token(), google_id)
+            .await
+            .expect("delete_calendar must succeed for a Google-shaped id");
     }
 }

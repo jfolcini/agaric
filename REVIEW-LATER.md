@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 608+ items across 485 sessions (per SESSION-LOG.md unique session count; latest is session 518).
+Previously resolved: 614+ items across 486 sessions (per SESSION-LOG.md unique session count; latest is session 519).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1925,23 +1925,11 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (101 — expanded)
+## LOW findings (95 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
 ### Core
-
-### L-2 — Boot path swallows DB count errors via `unwrap_or(0)`
-- **Domain:** Core
-- **Location:** `src-tauri/src/lib.rs:440-444, 447-453, 468-472, 474-480`
-- **What:** Four `SELECT COUNT(*)` queries at boot (`fts_blocks`, two `blocks` counts, `block_tag_refs`) feed their result through `tauri::async_runtime::block_on(...).unwrap_or(0)`. A DB error is silently coerced to "table is empty", optionally scheduling a rebuild, with no `tracing::warn!` of the error itself. The neighbouring `link_metadata::cleanup_stale` block does log on `Err`, so the inconsistency is visible.
-- **Why it matters:** A DB-level outage at boot (locked file, schema mismatch) gets papered over rather than reported. Bug reports would show "FTS rebuild scheduled for no reason" with no breadcrumb explaining why.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Introduce a small helper `fn log_or_zero(r: Result<i64, sqlx::Error>, ctx: &str) -> i64` that emits `tracing::warn!(error = %e, ctx, "boot count query failed; treating as 0")` and returns `0`. Replace each `.unwrap_or(0)` with `log_or_zero(...)`; mirrors the style used at `lib.rs:412-423`.
-- **Pass-1 source:** 01/F7
-- **Status:** Open
 
 ### L-5 — `append_local_op_in_tx` requires `BEGIN IMMEDIATE` but enforces nothing
 - **Domain:** Core
@@ -1967,31 +1955,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 01/F13
 - **Status:** Open
 
-### L-8 — Legacy `init_pool` skips `PRAGMA optimize`
-- **Domain:** Core
-- **Location:** `src-tauri/src/db.rs:163-177` (legacy) vs `src-tauri/src/db.rs:126-156` (production `init_pools`, optimize at 143)
-- **What:** `init_pools` runs `PRAGMA optimize` after migrations; the legacy `init_pool` (kept for tests that don't need pool separation, per its doc-comment) does not. Tests across at least 14 modules use `init_pool` for fixtures, so the production query-planner state is never exercised by the unit tests.
-- **Why it matters:** Low-risk drift; `init_pool`'s only stated purpose is "backward compatibility in tests that don't need pool separation", so there is no reason for the optimisation pragma to differ. PRAGMA optimize is "safe, idempotent, runs in <100ms" per the surrounding comment.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Copy the `sqlx::query("PRAGMA optimize").execute(&pool).await?;` invocation into `init_pool` immediately after `sqlx::migrate!("./migrations").run(&pool).await?;`. No test changes needed; it's idempotent.
-- **Pass-1 source:** 01/F14
-- **Status:** Open
-
 ### Materializer
-
-### L-12 — `fg_full_waits` increment via TOCTOU read of `tx.capacity()`
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/coordinator.rs:452-454`
-- **What:** `enqueue_foreground` checks `if tx.capacity() == 0 { fg_full_waits.fetch_add(1, …); }` *before* `tx.send(task).await`. `capacity()` is a snapshot — it can be 1 at the check and 0 by the time `send` actually awaits, OR 0 at the check but 1 by the time send completes immediately. The metric over- or under-counts the actual wait events.
-- **Why it matters:** `fg_full_waits` is the documented backpressure indicator (MAINT-24). Treating it as a precise count when sizing capacity will mis-fire either direction; this is a classic TOCTOU on a shared mpsc.
-- **Cost:** S (<2h)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either (a) `tx.try_send()` first; on `Full`, bump `fg_full_waits`, then `tx.send().await`; or (b) measure the duration of the `await` itself and only bump when it exceeds (e.g.) 1 ms. (a) is cleaner and avoids time-based heuristics.
-- **Pass-1 source:** 02/F17
-- **Status:** Open
 
 ### L-13 — `dedup` parses the same payload JSON multiple times per drain
 - **Domain:** Materializer
@@ -2003,18 +1967,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Either (a) cache the parsed `block_id` as a sidecar field on `OpRecord` populated at op-log-append time, or (b) carry a typed `OpPayload` enum through the materializer (already partly exists in `op::*Payload`) so payloads are parsed exactly once per op. (a) is the smaller change.
 - **Pass-1 source:** 02/F18
-- **Status:** Open
-
-### L-14 — `handle_foreground_task` silently drops unexpected variants
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/handlers.rs:78-82`, `src-tauri/src/materializer/handlers.rs:584-605` (bg counterpart)
-- **What:** The catch-all `_ =>` arm logs a `tracing::warn!` and returns `Ok(())`. Any future task variant accidentally enqueued to the foreground queue (e.g. a `RebuildTagsCache` from a misrouted dispatch) is never retried, never persisted, and counts as a successful `fg_processed` increment. The bg-side has the same pattern for `ApplyOp` / `BatchApplyOps` / unknown variants.
-- **Why it matters:** A regression that routes a global cache rebuild to the foreground queue would silently swallow every such task without any test failure or observable signal. This is exactly the kind of bug the test suite cannot catch with happy-path assertions alone.
-- **Cost:** S (<2h)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Promote the warn to an `error` log and either return `AppError::Validation("unexpected …")` so it counts toward `fg_errors` / `bg_errors`, or add `debug_assert!(false, "…")` so test runs catch it while production keeps the resilient `Ok(())` return.
-- **Pass-1 source:** 02/F19
 - **Status:** Open
 
 ### L-15 — Tests cover happy paths well; several risk areas are uncovered
@@ -2639,18 +2591,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 07/F21
 - **Status:** Open
 
-### L-91 — `truncate_str` truncates by bytes despite `max_chars` parameter name
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/link_metadata/html_parser.rs:367-378`
-- **What:** Parameter is `max_chars: usize`, but the comparison `s.len() <= max_chars` operates on bytes and the `is_char_boundary` walk-back is consistent with byte indexing. CJK input (3 bytes/char in UTF-8) gets ~`max_chars / 3` characters in the output.
-- **Why it matters:** A CJK page title with `parse_title`'s 500-char target gets capped at ~166 visible characters — three times more aggressive than the doc claims.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either rename the parameter to `max_bytes` and update the doc, or do char-count truncation with `s.char_indices().nth(max_chars).map(|(i, _)| &s[..i]).unwrap_or(s)`.
-- **Pass-1 source:** 07/F22
-- **Status:** Open
-
 ### L-92 — Tag-rename FTS reindex: unbounded `unique_ids` inside one big tx
 - **Domain:** Search & Links
 - **Location:** `src-tauri/src/fts/index.rs:159-242` (`reindex_fts_references`)
@@ -3099,18 +3039,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Replace `?` with an explicit map: `serde_json::from_str(&json).map_err(|_| AppError::Validation("keyring.malformed_blob".into()))?`. Drop the original error so secret bytes never reach tracing. Add a regression test that injects a malformed JSON blob containing token-shaped data and asserts the error message is the literal `keyring.malformed_blob`.
 - **Pass-1 source:** 10/F21
-- **Status:** Open
-
-### L-131 — `delete_calendar` API path does not URL-encode `calendar_id`
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/gcal_push/api.rs:283, 315, 355-358, 393-396, 442-445`
-- **What:** Every per-calendar URL is built via `format!("{}/calendars/{}/events", self.base_url, calendar_id)` with no percent-encoding. Google calendar IDs follow `<random>@group.calendar.google.com` — ASCII-safe by spec — but a corrupted or maliciously-tampered `gcal_settings.calendar_id` containing `/` or `?` would change the request shape.
-- **Why it matters:** AGENTS.md threat model states no adversarial peers, and `gcal_settings.calendar_id` is essentially trusted (only `create_dedicated_calendar` writes it). However, the local DB is a file on disk that any process with file access can edit, so defence-in-depth is appropriate.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Wrap `calendar_id` and `event_id` in `urlencoding::encode(...)` before the format, or use `reqwest::Url::parse` + `path_segments_mut().push(...)` to push segments with encoding. Add a unit test where `calendar_id` contains `/` and assert the resulting URL is escaped.
-- **Pass-1 source:** 10/F24
 - **Status:** Open
 
 ### L-132 — `claim_lease` does 4 round-trips, could be 2

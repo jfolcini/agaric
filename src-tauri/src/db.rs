@@ -447,6 +447,9 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, crate::error::AppEr
     sqlx::migrate!("./migrations").run(&pool).await?;
     tracing::info!("database migrations complete");
 
+    // L-8: match `init_pools` — refresh planner stats after migrations.
+    sqlx::query("PRAGMA optimize").execute(&pool).await?;
+
     Ok(pool)
 }
 
@@ -528,6 +531,21 @@ mod tests {
             result.is_err(),
             "init_pool with invalid path should return an error"
         );
+    }
+
+    // L-8: legacy `init_pool` should run `PRAGMA optimize` after migrations,
+    // matching production `init_pools`. Real coverage: the call doesn't fail
+    // and the pool is usable for a SELECT afterwards.
+    #[tokio::test]
+    async fn init_pool_runs_pragma_optimize() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.expect("init_pool should succeed");
+        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&pool)
+            .await
+            .expect("post-init SELECT should succeed");
+        assert_eq!(count, 0, "fresh DB should have zero blocks");
     }
 
     // ======================================================================

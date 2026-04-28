@@ -482,16 +482,27 @@ impl Materializer {
 
     pub async fn enqueue_foreground(&self, task: MaterializeTask) -> Result<(), AppError> {
         let tx = self.fg_sender()?;
-        // MAINT-24: Detect backpressure — if the channel is currently full
-        // the `send().await` below will wait. Count that wait so `StatusInfo`
-        // can surface "foreground backpressure" without rummaging through
-        // tokio internals.
-        if tx.capacity() == 0 {
-            self.metrics.fg_full_waits.fetch_add(1, Ordering::Relaxed);
+        // MAINT-24 / L-12: avoid the TOCTOU on `tx.capacity()` — a snapshot
+        // read followed by `send().await` is racy because the consumer can
+        // drain the channel between the check and the send, so the old
+        // `capacity() == 0` precondition under-counted real wait events.
+        // `try_send` first; on `Full` we know we are about to block on a
+        // full channel, so `fg_full_waits` correlates 1:1 with actual
+        // wait events. `Closed` still propagates as a `Channel` error.
+        match tx.try_send(task) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(task)) => {
+                self.metrics.fg_full_waits.fetch_add(1, Ordering::Relaxed);
+                tx.send(task)
+                    .await
+                    .map_err(|e| AppError::Channel(format!("foreground queue send failed: {e}")))?;
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                return Err(AppError::Channel(
+                    "foreground queue send failed: channel closed".into(),
+                ));
+            }
         }
-        tx.send(task)
-            .await
-            .map_err(|e| AppError::Channel(format!("foreground queue send failed: {e}")))?;
         let depth = FOREGROUND_CAPACITY - tx.capacity();
         self.metrics
             .fg_high_water

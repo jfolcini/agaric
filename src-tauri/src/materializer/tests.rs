@@ -1,6 +1,7 @@
 //! Tests for materializer queue coordination, dispatch routing, dedup logic, shutdown, flush barriers, and metrics.
 use super::*;
 use crate::db::init_pool;
+use crate::error::AppError;
 use crate::gcal_push::connector::GcalConnectorHandle;
 use crate::op::{
     AddAttachmentPayload, AddTagPayload, CreateBlockPayload, DeleteAttachmentPayload,
@@ -1678,44 +1679,183 @@ async fn handle_fg_barrier() {
 }
 #[tokio::test]
 async fn handle_fg_unexpected() {
+    // L-14: an unexpected (background-only) variant in the foreground
+    // queue must surface as `Err(Validation)` so the consumer bumps
+    // `fg_errors` and reviewers see a real signal instead of a silent
+    // drop.
     let (pool, _dir) = test_pool().await;
-    assert!(
-        handle_foreground_task(
-            &pool,
-            &MaterializeTask::RebuildTagsCache,
-            &empty_gcal_handle()
-        )
-        .await
-        .is_ok(),
-        "unexpected task in foreground should not error"
-    );
+    let result = handle_foreground_task(
+        &pool,
+        &MaterializeTask::RebuildTagsCache,
+        &empty_gcal_handle(),
+    )
+    .await;
+    match result {
+        Err(AppError::Validation(msg)) => {
+            assert!(
+                msg.contains("unexpected task in foreground queue"),
+                "validation message should describe the misroute, got: {msg}"
+            );
+        }
+        other => panic!("expected Err(Validation), got {other:?}"),
+    }
 }
 #[tokio::test]
 async fn handle_fg_unexpected_reindex() {
+    // L-14: see `handle_fg_unexpected` — same contract for any
+    // background-only variant.
     let (pool, _dir) = test_pool().await;
-    assert!(
-        handle_foreground_task(
-            &pool,
-            &MaterializeTask::ReindexBlockLinks {
-                block_id: "01FAKE00000000000000000000".into()
-            },
-            &empty_gcal_handle()
-        )
-        .await
-        .is_ok(),
-        "unexpected reindex task in foreground should not error"
-    );
+    let result = handle_foreground_task(
+        &pool,
+        &MaterializeTask::ReindexBlockLinks {
+            block_id: "01FAKE00000000000000000000".into(),
+        },
+        &empty_gcal_handle(),
+    )
+    .await;
+    match result {
+        Err(AppError::Validation(msg)) => {
+            assert!(
+                msg.contains("unexpected task in foreground queue"),
+                "validation message should describe the misroute, got: {msg}"
+            );
+        }
+        other => panic!("expected Err(Validation), got {other:?}"),
+    }
 }
 #[tokio::test]
 async fn handle_bg_unexpected_apply() {
+    // L-14 (bg mirror): an `ApplyOp` in the background queue is a
+    // dispatch bug. The handler must return `Err(Validation)` so the
+    // bg consumer bumps `bg_errors`. Block must NOT be created.
     let (pool, _dir) = test_pool().await;
-    handle_background_task(&pool, &MaterializeTask::ApplyOp(fake_op_record("create_block", r#"{"block_id":"X","block_type":"content","content":"t","parent_id":null,"position":null}"#)), None, None).await.unwrap();
-    // ApplyOp in the background queue is a no-op — block must NOT be created
+    let result = handle_background_task(
+        &pool,
+        &MaterializeTask::ApplyOp(fake_op_record(
+            "create_block",
+            r#"{"block_id":"X","block_type":"content","content":"t","parent_id":null,"position":null}"#,
+        )),
+        None,
+        None,
+    )
+    .await;
+    match result {
+        Err(AppError::Validation(msg)) => {
+            assert!(
+                msg.contains("unexpected ApplyOp in background queue"),
+                "validation message should describe the misroute, got: {msg}"
+            );
+        }
+        other => panic!("expected Err(Validation), got {other:?}"),
+    }
     let row = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM blocks WHERE id = 'X'")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(row.0, 0, "ApplyOp in bg queue should be a no-op");
+    assert_eq!(
+        row.0, 0,
+        "ApplyOp in bg queue must not mutate state even though it now errors"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// L-12 / L-14 regression tests
+// ---------------------------------------------------------------------------
+//
+// L-12: `enqueue_foreground` previously inspected `tx.capacity()` BEFORE
+// the awaiting `send` to bump `fg_full_waits`. That snapshot was racy
+// (the consumer can drain between the read and the send) so the metric
+// under-counted real wait events. The fix uses `try_send` first and
+// only bumps the counter on the `Full` arm — guaranteeing 1:1
+// correlation between counter increments and "we actually awaited on a
+// full channel".
+//
+// L-14: misrouted variants in either queue used to log at warn and
+// return Ok(()), silently absorbing dispatch bugs. They now return
+// `Err(AppError::Validation(_))` so consumers bump `fg_errors` /
+// `bg_errors` and reviewers see a real signal.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn enqueue_foreground_does_not_bump_fg_full_waits_when_capacity_available() {
+    // L-12: the happy path — channel has capacity, `try_send` succeeds
+    // immediately, `fg_full_waits` must remain at zero. The old snapshot
+    // check could in principle race (capacity read 0 milliseconds before
+    // send), but more importantly was inverted in spirit: capacity == 0
+    // does not actually mean we waited. The new contract is "the metric
+    // counts real wait events only".
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    let before = mat.metrics().fg_full_waits.load(AtomicOrdering::Relaxed);
+    assert_eq!(before, 0, "fg_full_waits starts at zero");
+
+    // A `Barrier` task is the cheapest valid foreground variant — it
+    // completes synchronously inside the consumer with no I/O, so the
+    // channel will not fill regardless of how fast we enqueue.
+    let n = StdArc::new(tokio::sync::Notify::new());
+    mat.enqueue_foreground(MaterializeTask::Barrier(StdArc::clone(&n)))
+        .await
+        .expect("foreground enqueue should succeed when capacity is available");
+
+    let after = mat.metrics().fg_full_waits.load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        after, 0,
+        "fg_full_waits must not bump when the channel had capacity"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_fg_rebuild_fts_index_returns_validation_err() {
+    // L-14: an explicit second test using a different background-only
+    // variant (`RebuildFtsIndex`) so a future refactor that special-cases
+    // any single variant cannot accidentally re-introduce the silent-Ok
+    // behavior.
+    let (pool, _dir) = test_pool().await;
+    let result = handle_foreground_task(
+        &pool,
+        &MaterializeTask::RebuildFtsIndex,
+        &empty_gcal_handle(),
+    )
+    .await;
+    match result {
+        Err(AppError::Validation(msg)) => {
+            assert!(
+                msg.contains("unexpected task in foreground queue"),
+                "validation message should describe the misroute, got: {msg}"
+            );
+        }
+        other => panic!("expected Err(Validation), got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_bg_unexpected_batch_apply_returns_validation_err() {
+    // L-14 (bg mirror): a `BatchApplyOps` in the background queue is a
+    // dispatch bug — must surface as `Err(Validation)`.
+    let (pool, _dir) = test_pool().await;
+    let batch = StdArc::new(vec![fake_op_record(
+        "create_block",
+        r#"{"block_id":"BAD_BATCH_BLK","block_type":"content","content":"x","parent_id":null,"position":null}"#,
+    )]);
+    let result =
+        handle_background_task(&pool, &MaterializeTask::BatchApplyOps(batch), None, None).await;
+    match result {
+        Err(AppError::Validation(msg)) => {
+            assert!(
+                msg.contains("unexpected BatchApplyOps in background queue"),
+                "validation message should describe the misroute, got: {msg}"
+            );
+        }
+        other => panic!("expected Err(Validation), got {other:?}"),
+    }
+    // The bg arm must not have applied any of the ops.
+    let row = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM blocks WHERE id = 'BAD_BATCH_BLK'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        row.0, 0,
+        "BatchApplyOps in bg queue must not mutate state even though it now errors"
+    );
 }
 
 #[tokio::test]
