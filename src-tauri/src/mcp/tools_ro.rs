@@ -1282,24 +1282,49 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn list_property_defs_happy_path() {
+        // L-115: a fresh DB ships built-in property definitions seeded by
+        // migrations. The exact wire shape is snapshot-locked by
+        // `tool_response_list_property_defs.snap`; this test just pins
+        // (a) a stable subset of must-be-present keys (the four reserved
+        // keys named in AGENTS.md "Architectural Stability — properties
+        // system", which any future migration must preserve), and
+        // (b) cross-checks the response count against the live
+        // `property_definitions` table so adding/removing seeded defs
+        // does not silently desync this assertion from reality.
         let (tools, _mat, _dir) = mk_tools().await;
-        // A fresh DB ships with 19 built-in property definitions seeded
-        // by migrations (todo_state, priority, due_date, scheduled_date,
-        // created_at, completed_at, effort, location, status, url,
-        // assignee, the four repeat-* keys, a handful of legacy aliases,
-        // plus `space` + `is_space` from migration 0035). The exact count
-        // is snapshot-locked; the assertion just pins the non-empty
-        // behaviour.
         let result = tools
             .call_tool("list_property_defs", json!({}), &test_ctx())
             .await
             .expect("happy path");
         let arr = result.as_array().expect("defs array");
+
+        // (a) Stable subset — these four are the reserved-column keys
+        //     enumerated by `op::is_reserved_property_key` and must
+        //     ship in every Agaric build (they back columns on the
+        //     `blocks` table directly).
+        let actual_keys: std::collections::HashSet<&str> = arr
+            .iter()
+            .map(|v| v["key"].as_str().expect("each def has a 'key' string"))
+            .collect();
+        for required in ["todo_state", "priority", "due_date", "scheduled_date"] {
+            assert!(
+                actual_keys.contains(required),
+                "required reserved-property key {required:?} missing from list_property_defs; \
+                 got {actual_keys:?}",
+            );
+        }
+
+        // (b) Cross-check against the live DB so this test detects
+        //     drift in either direction (added or removed migrations)
+        //     without requiring a hand-edited count constant.
+        let live_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM property_definitions")
+            .fetch_one(&tools.pool)
+            .await
+            .expect("count property_definitions");
         assert_eq!(
-            arr.len(),
-            19,
-            "fresh DB ships the seeded property definitions; \
-             update this count (and the snapshot) together if migrations change",
+            arr.len() as i64,
+            live_count,
+            "list_property_defs response count must match live property_definitions row count",
         );
     }
 

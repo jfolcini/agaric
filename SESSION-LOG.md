@@ -1,5 +1,48 @@
 # Session Log
 
+## Session 524 — Backend LOW-severity opportunistic batch — close 3 items (L-23, L-115, L-120) (2026-04-28)
+
+**3 backend LOW-severity REVIEW-LATER items closed as an opportunistic between-batch fill.** Single-orchestrator flow; no subagents. The user flagged "main agent is free, pick a new small fix and do it, don't wait idly", so the batch deliberately stayed tight: one validation tightening, one test brittleness fix, one doc-only clarification. All three are MCP / pagination boundary items in spirit even though they live in different files.
+
+**REVIEW-LATER impact:**
+
+- **LOW findings:** 70 → 67 (3 items resolved by code change).
+- **Top-level open count (FEAT/MAINT/PERF/PUB/UX tracker):** 41 → 41.
+- **Previously-resolved counter:** 639+ → 642+ across 491 sessions (latest session 524).
+
+**Items closed (3):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| L-23 | Cache+Pagination (`pagination/properties.rs`) | **Boundary tightening.** `query_by_property` historically applied two different precedence rules to `value_text` + `value_date` depending on routing branch: reserved-column path (`due_date`, `scheduled_date`) silently picked `value_date.or(value_text)`, while non-reserved path AND-intersected both filters in SQL — almost always returning empty because a `block_properties` row stores its value in exactly one column. The fix rejects the conflict at the boundary with `AppError::Validation`, eliminating the silent-precedence bug shape. Doc-comment reorganised under a "Value filter (L-23)" section that names both historical behaviours. New test `query_by_property_rejects_both_value_filters` exercises both routing branches (non-reserved key `todo`, reserved-column key `due_date`) to pin the contract uniformly. |
+| L-115 | MCP (`mcp/tools_ro.rs`) | **Test brittleness fix.** `list_property_defs_happy_path` previously asserted `arr.len() == 19` against the seeded property defs — every migration that adds or removes a seeded def would surface as a "MCP" failure even though the actual change is in migrations. Replaced with (a) a stable subset check for the four reserved-column keys (`todo_state`, `priority`, `due_date`, `scheduled_date`) per AGENTS.md "Architectural Stability — properties system extension point", and (b) a meta-cross-check that `arr.len()` matches `SELECT COUNT(*) FROM property_definitions` against the live DB so drift in either direction (added / removed seeds) is detected without a hand-edited count constant. The insta snapshot remains the wire-shape oracle. New `.sqlx/` cache entry committed for the count query. |
+| L-120 | MCP (`mcp/mod.rs`) | **Doc-only.** `McpLifecycle::disconnect_all` doc-block now explicitly names the edge-triggered semantics of `Notify::notify_waiters` — only tasks already inside `Notify::notified().await` are woken; connections that arrive *after* the call register a fresh waiter on entry to `run_connection` and observe no permit. Cross-references `shutdown` for the steady-state listener-stop pairing. The behavioural contract is unchanged; this is the documented-but-not-discoverable Tokio trap that the original "wakes every in-flight connection" line obscured. |
+
+**Files touched (this session's batch — 4 modified, 1 new sqlx cache):**
+
+- Backend Cache+Pagination (1): `src-tauri/src/pagination/properties.rs`
+- Backend Pagination tests (1): `src-tauri/src/pagination/tests.rs`
+- Backend MCP (2): `src-tauri/src/mcp/tools_ro.rs`, `src-tauri/src/mcp/mod.rs`
+- Backend sqlx cache (1 new): `src-tauri/.sqlx/query-63e750c2…fe9aa.json` (`SELECT COUNT(*) FROM property_definitions`)
+- Docs (2): `REVIEW-LATER.md` (3 items removed; LOW count 70 → 67; previously-resolved counter bumped), `SESSION-LOG.md` (this entry)
+
+**Verification:** `prek run --all-files` → all hooks PASS (35 hooks). Targeted runs:
+
+- L-23: 19/19 `query_by_property` tests pass including the new boundary-rejection test on both routing branches.
+- L-115: 6/6 `list_property_defs` tests pass; insta snapshot still matches; cross-check survives a fresh `test_pool()`.
+- L-120: doc-only — no test surface; full MCP suite still green.
+
+Full-suite post-merge: `cargo nextest run --no-fail-fast` → **3087/3087 passed**, 2 skipped. Frontend tests not exercised (zero frontend changes in this batch).
+
+**Process notes:**
+
+- **Opportunistic between-batch fill.** Recent sessions (522, 523) ran 6-7-item PROMPT.md batches; this session was an explicit "main agent is free" tap-in for a smaller, tighter set. The structural discipline still applies (test-per-change, doc-update, REVIEW-LATER hygiene) but the orchestration is leaner — no subagents, no worktrees, no review pipelining. Pattern is suitable for any 2-3 item LOW batch where the items are file-disjoint and individually <30 LOC.
+- **`SELECT COUNT(*)` cross-check is reusable.** The L-115 pattern (assert response count matches live `SELECT COUNT(*) FROM <table>`) is the canonical way to keep insta-snapshot tests honest against migration drift — it adds one round-trip but turns "failed because the count is wrong" into "failed because reality drifted from the snapshot, here's exactly which way". Cheap. Worth adopting wherever a snapshot pins row count today.
+- **Edge-triggered Notify is a documented-but-not-discoverable trap.** `Notify::notify_waiters` only wakes tasks already parked inside `Notify::notified().await`. The contract is in the Tokio docs but easy to miss when reading "kill switch" code. The L-120 fix doesn't change behaviour; it makes the trap visible to the next contributor.
+- **L-23 motivates a future API simplification.** With both branches now uniform, the next refactor opportunity is to collapse `value_text: Option<&str>` + `value_date: Option<&str>` into a single `value: Option<PropertyFilterValue>` enum (`Text(&str)` / `Date(&str)`) — making the "exactly one or none" invariant a type-level property instead of a runtime check. Filed implicitly as a future refactor; not added to REVIEW-LATER because the current shape now behaves correctly.
+
+---
+
 ## Session 523 — Backend LOW-severity cleanup batch — close 6 items (L-29, L-35, L-51, L-52, L-128, L-134) (2026-04-28)
 
 **6 backend LOW-severity REVIEW-LATER items closed in one PROMPT.md batch.** Mixed orchestrator-direct + subagent flow. Both build subagents (L-35+L-134 in `commands/spaces.rs` and L-52 in `commands/bug_report.rs`) were canceled by the user mid-flight; the orchestrator picked up both directly. **Two items (L-35 + L-134) were discovered to be already resolved** by an earlier session's MAINT-112 `CommandTx` migration — `dispatch_background_for_page_create` no longer exists, op records are now threaded through `tx.enqueue_background(...)` and dispatched via `tx.commit_and_dispatch(materializer)`. They were removed from REVIEW-LATER without code changes. The remaining four items (L-29, L-51, L-52, L-128) were all small enough to apply directly. One pipelined review subagent confirmed PASS for all four and applied one micro-fix (clippy `assertions_on_constants` allow on the new tripwire test).

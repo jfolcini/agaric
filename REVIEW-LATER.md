@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 639+ items across 490 sessions (per SESSION-LOG.md unique session count; latest is session 523).
+Previously resolved: 642+ items across 491 sessions (per SESSION-LOG.md unique session count; latest is session 524).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1925,7 +1925,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (70 — expanded)
+## LOW findings (67 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2017,18 +2017,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Convert to `sqlx::query_as!`. The `(?N IS NULL OR …)` style parameters are supported by the macro. If a genuinely dynamic codepath is needed in the future, add an inline rationale comment.
 - **Pass-1 source:** 03/F13
-- **Status:** Open
-
-### L-23 — `query_by_property` accepts both `value_text` and `value_date` with silent precedence
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/pagination/properties.rs:18-105` (esp. `:67-70` and `:90-91`)
-- **What:** The function takes `value_text: Option<&str>` and `value_date: Option<&str>` independently. For reserved-key columns (`due_date`, `scheduled_date`) the body picks `value_date.or(value_text)` — silently dropping `value_text` if `value_date` is set. For non-reserved keys the SQL is `(?2 IS NULL OR bp.value_text {sql_op} ?2) AND (?3 IS NULL OR bp.value_date {sql_op} ?3)`, intersecting both filters when both are provided. Two different precedence rules in one function depending on which branch is taken; the doc-comment says nothing about it.
-- **Why it matters:** A caller passing both due to UI confusion gets surprisingly different results for `due_date` (uses date, ignores text) vs. `effort` (intersects). Easy to ship a bug downstream.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Reject conflicting inputs at the boundary (return `AppError::Validation` if both are set), or pick a single precedence rule and apply it uniformly across both branches. Document either way.
-- **Pass-1 source:** 03/F14
 - **Status:** Open
 
 ### L-24 — `cache/block_links.rs` per-target DELETE/INSERT loop — N round-trips per reindex
@@ -2619,18 +2607,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 09/F7
 - **Status:** Open
 
-### L-115 — `list_property_defs` snapshot row count (19) hard-coded; brittle vs. seeded property migrations
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/tools_ro.rs:1078-1099` (test `list_property_defs_happy_path`); `src-tauri/src/mcp/snapshots/agaric_lib__mcp__tools_ro__tests__tool_response_list_property_defs.snap` (19 entries).
-- **What:** The test asserts `arr.len() == 19` against the seeded property definitions, and the insta snapshot pins the exact 19 keys. Every future migration that adds or removes a seeded property def must update both files in lockstep, with no automated guard against accidental drift.
-- **Why it matters:** Maintenance burden: a contributor adding a single property def will get a confusing test failure that points at "MCP" rather than at "seeded property defs". Pass 2 confirmed this is the only snapshot whose row count is asserted.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace the `assert_eq!(arr.len(), 19, ...)` with "expected key set is a subset of the response", and let the insta snapshot remain the wire-shape oracle. Optionally add a meta-test that cross-checks the snapshot's keys against a live query of `property_definitions` to catch drift in either direction.
-- **Pass-1 source:** 09/F8
-- **Status:** Open
-
 ### L-116 — `wrap_tool_result_error` is dead code; FEAT-4h shipped but the helper is unwired
 - **Domain:** MCP
 - **Location:** `src-tauri/src/mcp/server.rs:382-390` (helper, `#[allow(dead_code)]`); only call site is the test at `src-tauri/src/mcp/server.rs:1537-1552`; production dispatch maps every `AppError` via `app_error_to_jsonrpc` (`src-tauri/src/mcp/server.rs:501-512`).
@@ -2677,18 +2653,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Pick one stance: (a) replace `.clamp(...)` with explicit `if !(1..=cap).contains(&l) { return Err(AppError::Validation(...)) }` to surface a `-32602`, or (b) drop the schema bounds and document "limits are silently capped server-side at N". Option (a) is more agent-friendly and matches `deny_unknown_fields`.
 - **Pass-1 source:** 09/F12
-- **Status:** Open
-
-### L-120 — `disconnect_signal` is edge-triggered; doc could be clearer
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/mod.rs:81-86` (`disconnect_all` doc); consumer `src-tauri/src/mcp/server.rs:725-740` (`run_connection`'s `select!`).
-- **What:** `disconnect_all` calls `Notify::notify_waiters`, which only wakes tasks already inside `notified().await`. A connection that arrives milliseconds after `disconnect_all` registers a fresh waiter (no permit) and runs as if nothing happened. The current docstring says "wakes every in-flight connection" but does not call out the "must already be in `notified()`" requirement.
-- **Why it matters:** Subtle Tokio semantics; a future contributor reading "kill switch" will assume this also pre-empts later connections, which it does not. (Combined with the accept-loop fix, the shutdown signal will also prevent new accepts — but the doc should be explicit.)
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Update the doc on `McpLifecycle::disconnect_all` to read: "Wakes only the connections present at the call time; later-arriving connections are unaffected (each registers a fresh `notified()` waiter on entry to `run_connection`). Pair with a `shutdown_signal` on the accept loop to cover both."
-- **Pass-1 source:** 09/F14
 - **Status:** Open
 
 ### L-122 — `set_property` exactly-one-value validation duplicated at MCP boundary

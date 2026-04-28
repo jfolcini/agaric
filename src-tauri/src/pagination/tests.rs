@@ -1671,6 +1671,45 @@ async fn query_by_property_excludes_soft_deleted() {
     );
 }
 
+#[tokio::test]
+async fn query_by_property_rejects_both_value_filters() {
+    // L-23: passing both value_text and value_date is ambiguous because
+    // the reserved-column and non-reserved-row paths historically applied
+    // different precedence rules. Reject at the boundary instead.
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "BLOCK001", "content", "task", None, None).await;
+    insert_property(&pool, "BLOCK001", "todo", "TODO").await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+
+    // Non-reserved key: AND-of-two-bindings shape used to silently empty.
+    let err = query_by_property(&pool, "todo", Some("TODO"), Some("2025-01-01"), "eq", &page)
+        .await
+        .expect_err("both value filters must be rejected");
+    match err {
+        crate::error::AppError::Validation(msg) => {
+            assert!(
+                msg.contains("value_text") && msg.contains("value_date"),
+                "validation message must name both inputs; got {msg:?}"
+            );
+        }
+        other => panic!("expected Validation, got {other:?}"),
+    }
+
+    // Reserved key (date column): historical silent precedence path.
+    let err = query_by_property(
+        &pool,
+        "due_date",
+        Some("anything"),
+        Some("2025-01-01"),
+        "eq",
+        &page,
+    )
+    .await
+    .expect_err("both value filters must be rejected on reserved-key path too");
+    assert!(matches!(err, crate::error::AppError::Validation(_)));
+}
+
 // ====================================================================
 // list_agenda
 // ====================================================================
