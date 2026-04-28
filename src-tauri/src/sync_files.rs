@@ -1556,8 +1556,14 @@ mod tests {
             .await
             .unwrap();
 
-        // File larger than BINARY_FRAME_CHUNK_SIZE (5 MB) → will be chunked
-        let file_size = BINARY_FRAME_CHUNK_SIZE + 1_000_000; // 6 MB
+        // File larger than BINARY_FRAME_CHUNK_SIZE (5 MB) → will be chunked.
+        // 6 MB total guarantees at least one extra chunk.
+        let file_size = BINARY_FRAME_CHUNK_SIZE + 1_000_000;
+        // `i % 256` is always in 0..256 so the `as u8` cast is exact, but
+        // clippy can't prove that through the modulo on `usize`. Allow the
+        // lint narrowly here rather than rewriting the deterministic byte
+        // pattern with `try_from(...).expect(...)` boilerplate.
+        #[allow(clippy::cast_possible_truncation)]
         let file_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
         let expected_hash = blake3::hash(&file_data).to_hex().to_string();
 
