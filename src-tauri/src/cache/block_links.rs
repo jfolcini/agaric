@@ -60,28 +60,34 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
         return Ok(());
     }
 
-    for target in &to_delete {
-        sqlx::query!(
-            "DELETE FROM block_links WHERE source_id = ? AND target_id = ?",
-            block_id,
-            *target,
+    // L-24: batch DELETE/INSERT via `json_each` — one round-trip per side
+    // regardless of the number of changed targets, replacing the previous
+    // 2N round-trip per-target loops.
+    if !to_delete.is_empty() {
+        let delete_json = serde_json::to_string(&to_delete)?;
+        sqlx::query(
+            "DELETE FROM block_links \
+             WHERE source_id = ? \
+               AND target_id IN (SELECT value FROM json_each(?))",
         )
+        .bind(block_id)
+        .bind(&delete_json)
         .execute(&mut *tx)
         .await?;
     }
 
-    for target in &to_insert {
-        // Use INSERT ... SELECT ... WHERE EXISTS to skip targets that don't
-        // exist in the blocks table. INSERT OR IGNORE does NOT suppress FK
-        // violations in SQLite — only PK/UNIQUE/NOT NULL/CHECK conflicts.
-        let t = *target;
-        sqlx::query!(
-            "INSERT OR IGNORE INTO block_links (source_id, target_id)
-             SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
-            block_id,
-            t,
-            t,
+    if !to_insert.is_empty() {
+        // INSERT OR IGNORE skips PK/UNIQUE conflicts but does NOT suppress FK
+        // violations — the `WHERE EXISTS` filter on `blocks` keeps dangling
+        // targets out of the result set instead of relying on the FK.
+        let insert_json = serde_json::to_string(&to_insert)?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO block_links (source_id, target_id) \
+             SELECT ?, value FROM json_each(?) \
+             WHERE EXISTS (SELECT 1 FROM blocks WHERE id = value)",
         )
+        .bind(block_id)
+        .bind(&insert_json)
         .execute(&mut *tx)
         .await?;
     }
@@ -152,25 +158,34 @@ pub async fn reindex_block_links_split(
     // Write phase on write pool
     let mut tx = write_pool.begin().await?;
 
-    for target in &to_delete {
-        sqlx::query!(
-            "DELETE FROM block_links WHERE source_id = ? AND target_id = ?",
-            block_id,
-            *target,
+    // L-24: batch DELETE/INSERT via `json_each` — one round-trip per side
+    // regardless of the number of changed targets, replacing the previous
+    // 2N round-trip per-target loops.
+    if !to_delete.is_empty() {
+        let delete_json = serde_json::to_string(&to_delete)?;
+        sqlx::query(
+            "DELETE FROM block_links \
+             WHERE source_id = ? \
+               AND target_id IN (SELECT value FROM json_each(?))",
         )
+        .bind(block_id)
+        .bind(&delete_json)
         .execute(&mut *tx)
         .await?;
     }
 
-    for target in &to_insert {
-        let t = *target;
-        sqlx::query!(
-            "INSERT OR IGNORE INTO block_links (source_id, target_id)
-             SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
-            block_id,
-            t,
-            t,
+    if !to_insert.is_empty() {
+        // INSERT OR IGNORE skips PK/UNIQUE conflicts but does NOT suppress FK
+        // violations — the `WHERE EXISTS` filter on `blocks` keeps dangling
+        // targets out of the result set instead of relying on the FK.
+        let insert_json = serde_json::to_string(&to_insert)?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO block_links (source_id, target_id) \
+             SELECT ?, value FROM json_each(?) \
+             WHERE EXISTS (SELECT 1 FROM blocks WHERE id = value)",
         )
+        .bind(block_id)
+        .bind(&insert_json)
         .execute(&mut *tx)
         .await?;
     }

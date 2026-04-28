@@ -129,19 +129,42 @@ pub async fn merge_text(
         theirs_len = text_theirs.len(),
         "attempting three-way text merge"
     );
+    // L-112: on a conflict, capture `conflict_text.len()` and a short
+    // blake3 digest of the conflict-marker payload (which embeds
+    // `<<<<<<< / =======/ >>>>>>>` markers with positional info from
+    // diffy) before discarding it. The digest gives downstream
+    // telemetry / regression tests a stable fingerprint for the *kind*
+    // of conflict observed without leaking the underlying text.
     let result = match diffy::merge(&text_ancestor, &text_ours, &text_theirs) {
-        Ok(merged) => MergeResult::Clean(merged),
-        Err(_conflict_text) => MergeResult::Conflict {
-            ours: text_ours,
-            theirs: text_theirs,
-            ancestor: text_ancestor,
-        },
+        Ok(merged) => {
+            tracing::info!(block_id, clean = true, "text merge completed");
+            MergeResult::Clean(merged)
+        }
+        Err(conflict_text) => {
+            let conflict_len = conflict_text.len();
+            // 16-char hex prefix of the blake3 digest is plenty for
+            // telemetry triage without being an exact fingerprint of
+            // the underlying user text.
+            let conflict_digest: String = blake3::hash(conflict_text.as_bytes())
+                .to_hex()
+                .to_string()
+                .chars()
+                .take(16)
+                .collect();
+            tracing::info!(
+                block_id,
+                clean = false,
+                conflict_len,
+                %conflict_digest,
+                "text merge produced conflict (L-112)",
+            );
+            MergeResult::Conflict {
+                ours: text_ours,
+                theirs: text_theirs,
+                ancestor: text_ancestor,
+            }
+        }
     };
-    tracing::info!(
-        block_id,
-        clean = matches!(result, MergeResult::Clean(_)),
-        "text merge completed"
-    );
     Ok(result)
 }
 

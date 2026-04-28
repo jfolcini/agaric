@@ -57,7 +57,7 @@ use sqlx::SqlitePool;
 
 use super::actor::ActorContext;
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
-use super::handler_utils::{parse_args, to_tool_result};
+use super::handler_utils::{normalize_ulid_arg, parse_args, to_tool_result};
 use super::registry::{
     ToolDescription, ToolRegistry, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE,
     TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS,
@@ -553,13 +553,15 @@ async fn handle_list_pages(pool: &SqlitePool, args: Value) -> Result<Value, AppE
 async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetPageArgs = parse_args(TOOL_GET_PAGE, args)?;
     let limit = validate_limit(TOOL_GET_PAGE, args.limit, LIST_RESULT_CAP)?;
+    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
+    let page_id = normalize_ulid_arg(&args.page_id);
     // MAINT-150 (g): the FEAT-3 Phase 7 space-membership lookup lives
     // inside `get_page_unscoped_inner` so this module stays a thin
     // wrapper around `*_inner`. MCP agents are intentionally unscoped
     // — every page they can name belongs to its own space by
     // construction, and the helper preserves the
     // unknown-id / wrong-type / unscoped error categories.
-    let resp = get_page_unscoped_inner(pool, &args.page_id, args.cursor, limit).await?;
+    let resp = get_page_unscoped_inner(pool, &page_id, args.cursor, limit).await?;
     to_tool_result(&resp)
 }
 
@@ -570,13 +572,18 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
     // back to MAX_PAGE_SIZE=200.
     let validated = validate_limit(TOOL_SEARCH, args.limit, SEARCH_RESULT_CAP)?;
     let limit = Some(validated.unwrap_or(SEARCH_RESULT_CAP));
+    // L-121: normalise ULID-shaped IDs (parent + each tag) at the MCP boundary.
+    let parent_id = args.parent_id.as_deref().map(normalize_ulid_arg);
+    let tag_ids = args
+        .tag_ids
+        .map(|v| v.iter().map(|s| normalize_ulid_arg(s)).collect());
     let mut resp = search_blocks_inner(
         pool,
         args.query,
         args.cursor,
         limit,
-        args.parent_id,
-        args.tag_ids,
+        parent_id,
+        tag_ids,
         None, // FEAT-3 Phase 2: MCP agents see every space — unscoped.
     )
     .await?;
@@ -597,15 +604,18 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
 
 async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetBlockArgs = parse_args(TOOL_GET_BLOCK, args)?;
-    let resp = get_block_inner(pool, args.block_id).await?;
+    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
+    let block_id = normalize_ulid_arg(&args.block_id);
+    let resp = get_block_inner(pool, block_id).await?;
     to_tool_result(&resp)
 }
 
 async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListBacklinksArgs = parse_args(TOOL_LIST_BACKLINKS, args)?;
     let limit = validate_limit(TOOL_LIST_BACKLINKS, args.limit, LIST_RESULT_CAP)?;
-    let resp =
-        list_backlinks_grouped_inner(pool, args.block_id, None, None, args.cursor, limit).await?;
+    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
+    let block_id = normalize_ulid_arg(&args.block_id);
+    let resp = list_backlinks_grouped_inner(pool, block_id, None, None, args.cursor, limit).await?;
     to_tool_result(&resp)
 }
 
@@ -1269,6 +1279,44 @@ mod tests {
             .await
             .expect_err("unknown block must error");
         assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    }
+
+    /// L-121: lowercase ULIDs supplied by the agent at the MCP boundary
+    /// must be uppercased by `normalize_ulid_arg` before the lookup hits
+    /// SQLite (whose default `=` is case-sensitive). Without the
+    /// normalisation, this test would surface as `NotFound`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_block_accepts_lowercase_ulid_l121() {
+        let (tools, mat, _dir) = mk_tools().await;
+        let blk = create_block_inner(
+            &tools.pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "hello-lower".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        // Agaric returns uppercase ULIDs; the agent supplies the
+        // *lowercase* form to exercise the L-121 boundary normalisation.
+        let lower = blk.id.to_lowercase();
+        assert_ne!(
+            lower, blk.id,
+            "test setup: block id must not already be all-lowercase"
+        );
+
+        let result = tools
+            .call_tool("get_block", json!({"block_id": lower}), &test_ctx())
+            .await
+            .expect("lowercase ULID must be accepted at the MCP boundary (L-121)");
+        assert_eq!(
+            result["id"], blk.id,
+            "response must contain the canonical uppercase id, not the input"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

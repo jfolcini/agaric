@@ -1,12 +1,28 @@
 use super::*;
 use crate::db::init_pool;
 use crate::draft::save_draft;
+use crate::error::AppError;
 use crate::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
 use crate::op_log::{append_local_op, append_local_op_at};
 use crate::ulid::BlockId;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tempfile::TempDir;
+
+/// L-103 test wrapper. The production `recover_at_boot` enforces a
+/// once-per-process contract via a static `AtomicBool`; tests need to
+/// reset that guard before each invocation so multiple `tokio::test`
+/// fixtures can each run their own recovery against a fresh pool. Use
+/// this wrapper everywhere a test would call `recover_at_boot` directly
+/// — the explicit "second-call returns Err" test calls the production
+/// function directly to exercise the unguarded path.
+async fn recover_at_boot_test(
+    pool: &SqlitePool,
+    device_id: &str,
+) -> Result<RecoveryReport, AppError> {
+    super::boot::reset_recovery_guard();
+    recover_at_boot(pool, device_id).await
+}
 
 // -- Test fixture constants --
 //
@@ -69,7 +85,7 @@ async fn pending_snapshot_gets_deleted() {
     .await
     .unwrap();
 
-    let report = recover_at_boot(&pool, "dev-1").await.unwrap();
+    let report = recover_at_boot_test(&pool, "dev-1").await.unwrap();
 
     assert_eq!(report.pending_snapshots_deleted, 1);
 
@@ -114,7 +130,7 @@ async fn pending_snapshots_deleted_only_counts_pending_not_complete() {
         .unwrap();
     }
 
-    let report = recover_at_boot(&pool, "dev-1").await.unwrap();
+    let report = recover_at_boot_test(&pool, "dev-1").await.unwrap();
 
     // Only the 2 pending rows should be counted as deleted
     assert_eq!(report.pending_snapshots_deleted, 2);
@@ -144,7 +160,7 @@ async fn unflushed_draft_gets_recovered_as_synthetic_edit_block() {
         .await
         .unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     // The draft should have been recovered
     assert_eq!(report.drafts_recovered, vec!["block-A"]);
@@ -203,7 +219,7 @@ async fn already_flushed_draft_just_gets_deleted() {
         .await
         .unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     assert!(report.drafts_recovered.is_empty());
     assert_eq!(report.drafts_already_flushed, 1);
@@ -226,7 +242,7 @@ async fn already_flushed_draft_just_gets_deleted() {
 async fn recovery_with_no_drafts_returns_empty_report() {
     let (pool, _dir) = test_pool().await;
 
-    let report = recover_at_boot(&pool, "dev-1").await.unwrap();
+    let report = recover_at_boot_test(&pool, "dev-1").await.unwrap();
 
     assert_eq!(report.pending_snapshots_deleted, 0);
     assert!(report.drafts_recovered.is_empty());
@@ -245,7 +261,7 @@ async fn recovery_when_op_log_is_empty_draft_for_never_created_block() {
     // F07: recovery now skips drafts for blocks not in the blocks table.
     save_draft(&pool, block_id, "ghost content").await.unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     // Should NOT recover — block doesn't exist (F07).
     // F07 returns Ok(false) which the caller counts as 'already flushed'
@@ -303,7 +319,7 @@ async fn recovered_draft_uses_prev_edit_from_existing_op() {
         .await
         .unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     assert_eq!(report.drafts_recovered, vec![block_id]);
 
@@ -364,7 +380,7 @@ async fn prev_edit_uses_latest_op_when_both_create_and_edit_exist() {
         .await
         .unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     assert_eq!(report.drafts_recovered, vec![block_id]);
 
@@ -403,7 +419,7 @@ async fn recovery_with_multiple_unflushed_drafts() {
             .unwrap();
     }
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     assert_eq!(report.drafts_recovered.len(), 3);
     assert_eq!(report.drafts_already_flushed, 0);
@@ -451,7 +467,7 @@ async fn recovery_with_mixed_flushed_and_unflushed_drafts() {
     });
     append_local_op(&pool, device_id, op).await.unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     assert_eq!(report.drafts_recovered.len(), 1);
     assert!(report
@@ -485,16 +501,55 @@ async fn recovery_idempotency_second_run_is_noop() {
     save_draft(&pool, "block-X", "unflushed").await.unwrap();
 
     // First recovery
-    let r1 = recover_at_boot(&pool, device_id).await.unwrap();
+    let r1 = recover_at_boot_test(&pool, device_id).await.unwrap();
     assert_eq!(r1.pending_snapshots_deleted, 1);
     assert_eq!(r1.drafts_recovered.len(), 1);
 
     // Second recovery — everything was already cleaned up
-    let r2 = recover_at_boot(&pool, device_id).await.unwrap();
+    let r2 = recover_at_boot_test(&pool, device_id).await.unwrap();
     assert_eq!(r2.pending_snapshots_deleted, 0);
     assert!(r2.drafts_recovered.is_empty());
     assert_eq!(r2.drafts_already_flushed, 0);
     assert!(r2.draft_errors.is_empty());
+}
+
+/// L-103: the production `recover_at_boot` enforces a once-per-process
+/// contract via a static `AtomicBool`. Calling it twice without
+/// resetting the guard must return `AppError::InvalidOperation` BEFORE
+/// touching the pool, NOT silently complete with an empty-batch report.
+///
+/// Note: this test calls the production `recover_at_boot` directly
+/// (not the `recover_at_boot_test` wrapper) to exercise the unguarded
+/// path, then resets the guard at the end so neighbouring tests are
+/// not perturbed.
+#[tokio::test]
+async fn recover_at_boot_returns_err_on_second_call_without_reset() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-1";
+
+    // Reset BEFORE — neighbour tests may have left the guard tripped.
+    super::boot::reset_recovery_guard();
+
+    // First call: succeeds.
+    let r1 = recover_at_boot(&pool, device_id).await;
+    assert!(r1.is_ok(), "first call must succeed; got {r1:?}");
+
+    // Second call without reset: must return InvalidOperation.
+    let r2 = recover_at_boot(&pool, device_id).await;
+    match r2 {
+        Err(AppError::InvalidOperation(msg)) => {
+            assert!(
+                msg.contains("L-103") && msg.contains("more than once"),
+                "error must reference L-103 and the once-per-process contract; got {msg:?}",
+            );
+        }
+        other => panic!("expected InvalidOperation, got {other:?}"),
+    }
+
+    // Reset AFTER so this test does not perturb the global state for
+    // any test that runs in the same process (under cargo test, not
+    // nextest).
+    super::boot::reset_recovery_guard();
 }
 
 // === 7. Report accuracy ===
@@ -542,7 +597,7 @@ async fn recovery_report_counts_are_accurate() {
         append_local_op(&pool, device_id, op).await.unwrap();
     }
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     assert_eq!(report.pending_snapshots_deleted, 2);
     assert_eq!(report.drafts_recovered.len(), 3);
@@ -638,7 +693,7 @@ async fn recover_at_boot_records_errors_when_draft_processing_fails() {
     .await
     .unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     // Both the recover and delete steps should have logged errors.
     assert!(
@@ -673,7 +728,7 @@ async fn recovery_updates_blocks_content_for_unflushed_draft() {
         .await
         .unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     assert_eq!(report.drafts_recovered, vec![block_id]);
 
@@ -706,7 +761,7 @@ async fn recovery_updates_blocks_content_for_multiple_drafts() {
             .unwrap();
     }
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
     assert_eq!(report.drafts_recovered.len(), 3);
 
     for i in 1..=3 {
@@ -747,7 +802,7 @@ async fn recovery_leaves_blocks_content_unchanged_for_already_flushed_draft() {
     });
     append_local_op(&pool, device_id, op).await.unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
     assert_eq!(report.drafts_already_flushed, 1);
 
     let row: String = sqlx::query_scalar!("SELECT content FROM blocks WHERE id = ?", block_id)
@@ -784,7 +839,7 @@ async fn draft_for_soft_deleted_block_is_skipped_and_cleaned_up() {
         .await
         .unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     assert!(
         report.drafts_recovered.is_empty(),
@@ -818,7 +873,7 @@ async fn draft_for_nonexistent_block_is_skipped_and_cleaned_up() {
         .await
         .unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     assert!(
         report.drafts_recovered.is_empty(),
@@ -874,7 +929,7 @@ async fn draft_with_deleted_parent_is_skipped() {
         .await
         .unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     assert!(
         report.drafts_recovered.is_empty(),
@@ -904,7 +959,7 @@ async fn draft_with_null_parent_is_recovered() {
         .await
         .unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     assert_eq!(
         report.drafts_recovered.len(),
@@ -944,7 +999,7 @@ async fn draft_with_valid_parent_is_recovered() {
         .await
         .unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     assert_eq!(
         report.drafts_recovered.len(),
@@ -1179,7 +1234,7 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
     // Run recovery — appends synthetic edit_block, updates blocks.content,
     // but (by design, see F04 note in draft_recovery.rs) does NOT update
     // FTS. So at this point the FTS index is stale.
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
     assert_eq!(
         report.drafts_recovered,
         vec![block_id.to_owned()],
@@ -1388,7 +1443,7 @@ async fn perf26_draft_recovery_filters_to_target_block_only() {
         .await
         .unwrap();
 
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     // Correct behavior: target draft is NOT flushed (no recent op for
     // target) → it gets recovered. If block_id filter were missing or
@@ -1490,7 +1545,7 @@ async fn perf26_draft_recovery_at_10k_ops_is_fast() {
     // Run draft recovery. Without the indexed block_id column this would
     // json_extract across 10K rows per draft lookup.
     let recover_start = std::time::Instant::now();
-    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
     let recover_elapsed = recover_start.elapsed();
 
     assert_eq!(
@@ -1549,7 +1604,7 @@ async fn recover_at_boot_handles_more_than_999_drafts() {
         .unwrap();
     assert_eq!(seeded, N as i64);
 
-    let report = recover_at_boot(&pool, "dev-1").await.unwrap();
+    let report = recover_at_boot_test(&pool, "dev-1").await.unwrap();
 
     // No blocks rows exist, so every draft is classified F07 "already
     // flushed". The exact bucketing isn't the point — what matters is that

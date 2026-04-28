@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 667+ items across 494 sessions (per SESSION-LOG.md unique session count; latest is session 527).
+Previously resolved: 674+ items across 495 sessions (per SESSION-LOG.md unique session count; latest is session 528).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1901,18 +1901,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F23
 - **Status:** Open
 
-### L-125 — `InstantBucket::take()` holds the bucket mutex during sleep
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/gcal_push/api.rs:743-787`
-- **What:** Every `GcalApi` method does `self.bucket.lock().await.take().await`; the outer lock guard is held for the entire `take()` call, which itself sleeps. The implementation comment at line 745 claims "`take` drops the lock across its internal sleep" — the comment at line 782 admits "we are already inside the caller's `.lock().await` guard so the next request will queue on it."
-- **Why it matters:** Functionally still rate-limits, but the documented and actual behaviours disagree. Concurrent requests fully serialise even when the bucket has free slots; the next reviewer who reads the optimistic comment will mis-design any concurrency improvement.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Compute `sleep_for` while holding the lock, drop the guard explicitly, sleep, re-acquire, push — or update the docstring to match the actual lock-during-sleep behaviour. Prefer the impl fix (matches the intended ~10 QPS concurrent-callers semantics).
-- **Pass-1 source:** 10/F11
-- **Status:** Open
-
 ### L-133 — `space` ref-property invariant relies on bootstrap migration but never re-runs
 - **Domain:** GCal / Spaces / Drafts
 - **Location:** `src-tauri/src/spaces/bootstrap.rs:39-86, 92-110`
@@ -1925,7 +1913,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (42 — expanded)
+## LOW findings (35 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -1979,32 +1967,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Either (a) move the bg fan-out *into* the fg consumer so it runs only after `apply_op_tx` commits — making the consumer the single scheduler of per-op derived work; or (b) thread a `Notify` keyed on `(device_id, seq)` and have the bg side `notified().await` before running the rebuild it spawned. (a) is cleaner.
 - **Pass-1 source:** 02/F10
-- **Status:** Open
-
-### Cache + Pagination
-
-### L-24 — `cache/block_links.rs` per-target DELETE/INSERT loop — N round-trips per reindex
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/cache/block_links.rs:59-83` (single-pool) and `:147-168` (split)
-- **What:** For each removed target a `DELETE FROM block_links WHERE source_id = ? AND target_id = ?` is executed; for each added target a separate `INSERT OR IGNORE … SELECT … WHERE EXISTS …`. Reindexing a block with N changed links costs 2N round-trips inside the transaction. `block_tag_refs.rs:81-109` follows the same pattern but per-block N is typically small there.
-- **Why it matters:** Bulk imports / paste of large markdown can produce blocks with dozens of links; reindexing sits on the materializer hot path.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Use `DELETE FROM block_links WHERE source_id = ? AND target_id IN (SELECT value FROM json_each(?))` and a chunked multi-row INSERT for additions (matching the snapshot-import path). Same approach as M-18.
-- **Pass-1 source:** 03/F15
-- **Status:** Open
-
-### L-28 — Missing CTE oracle for `rebuild_page_ids` recursive walk
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/cache/page_id.rs:34-60`; tests live in `src-tauri/src/cache/tests.rs` but no oracle for this path
-- **What:** AGENTS.md "Performance Conventions" Pattern #8 prescribes a `#[cfg(test)]` oracle preserving the old implementation when optimizing a query; `pagination/tests.rs:2945-3094` already has a good oracle for `list_children`'s `IFNULL → sentinel` optimisation. `rebuild_page_ids` is a recursive CTE walking ancestors and lacks an equivalent — a future refactor (e.g., to a materialised parent-pointer table) would risk silently changing semantics with no regression net.
-- **Why it matters:** The next maintainer optimising this rebuild lacks a regression net; conflict-aware ancestor walking is exactly the area invariant #9 calls out as fragile.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add a `#[cfg(test)]` oracle that walks ancestors in Rust (HashMap of `id → parent_id`, climb until a `page` ancestor or `is_conflict = 1` boundary) and assert it matches the SQL CTE result on a synthetic vault containing conflict copies, deep nesting, and multiple roots.
-- **Pass-1 source:** 03/F20
 - **Status:** Open
 
 ### Commands CRUD
@@ -2221,18 +2183,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Lifecycle
 
-### L-103 — `recover_at_boot` runs against the live pool with no mutex / lock
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/recovery/boot.rs:43-54, 86-104`; contract docs at `recovery/mod.rs:5-8`
-- **What:** Module docs state recovery "MUST be called exactly once at application start-up, before any user operations are allowed" and "is not safe to run concurrently with normal user operations". The function relies on the caller for that contract; nothing in the code enforces it. There is no boot-state flag, no global mutex, no marker row.
-- **Why it matters:** No present caller breaks the contract (`grep -r recover_at_boot` returns only the boot path and tests), but a future Tauri command "force re-run recovery" or a sloppy refactor could corrupt state by interleaving synthetic edit_block ops with real ops.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add a once-only `RECOVERY_DONE: AtomicBool` (or a typed `RecoveryGuard` constructor token) that panics or returns early on the second call; add a regression test asserting the panic.
-- **Pass-1 source:** 08/F29
-- **Status:** Open
-
 ### L-105 — `apply_snapshot` keeps every restored row in memory at once
 - **Domain:** Lifecycle
 - **Location:** `src-tauri/src/snapshot/create.rs:16-73` (`collect_tables`); `src-tauri/src/snapshot/restore.rs:30-294` (decode + chunked insert)
@@ -2303,18 +2253,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Add a test that injects a malformed row in chunk-2 of `block_properties` and asserts no chunk-1 rows remain after the failure. Mirror the existing `attachments` validation test pattern.
 - **Pass-1 source:** 08/F39
-- **Status:** Open
-
-### L-112 — `merge_text` does not log line/character offset of detected conflicts
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/merge/detect.rs:109-122`
-- **What:** On `Err(_conflict_text)` the diffy error is dropped and a generic `MergeResult::Conflict { ours, theirs, ancestor }` is returned. The conflict text from diffy contains `<<<<<<< / >>>>>>>` markers with positional info that would be useful for telemetry and "why did this conflict?" debugging.
-- **Why it matters:** No visibility into the *kind* of conflict (single-line vs overlapping-line) for future telemetry and bug-report triage.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Include `_conflict_text.len()` and a short blake3 digest of the conflict-marker payload in the `tracing::info!("text merge completed")` line so regression tests can pin the kind of conflict observed.
-- **Pass-1 source:** 08/F40
 - **Status:** Open
 
 ### MCP
@@ -2404,18 +2342,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### GCal / Spaces / Drafts
-
-### L-127 — `gcal_push/mod.rs` re-exports every internal module as fully `pub`
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/gcal_push/mod.rs:9-16`
-- **What:** All eight submodules (`api`, `connector`, `digest`, `dirty_producer`, `keyring_store`, `lease`, `models`, `oauth`) are declared `pub mod`. Only a small subset is needed by `lib.rs` / `commands/gcal.rs` — `lease`, `models`, `dirty_producer`, `digest::digest_for_date`, etc. are crate-internal callers.
-- **Why it matters:** Wide `pub` API surface that future refactors must preserve; specta also generates type bindings for everything `pub`-reachable when `Type` derives bubble up.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Downgrade each submodule to `pub(crate) mod` and re-export only the symbols `lib.rs` and `commands/gcal.rs` need (`spawn_connector`, `GcalApiAdapter`, `GcalClient`, `ConnectorTask`, `GcalConnectorHandle`, `KeyringTokenStore`, `NoopEventEmitter`, `TauriGcalEventEmitter`, `TokenStore`, `GcalEventEmitter`, `oauth::Token`, `digest::Event`, `api::GcalApi`).
-- **Pass-1 source:** 10/F16
-- **Status:** Open
 
 ### L-132 — `claim_lease` does 4 round-trips, could be 2
 - **Domain:** GCal / Spaces / Drafts
@@ -3205,18 +3131,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Add `cargo build --bin agaric-mcp` as a CI step before nextest, and either remove the `#[ignore]` tag or replace it with a `#[cfg(feature = "ci-smoke")]` gate that CI enables. Keep the manual-run path documented for local dev.
 - **Pass-1 source:** 09/F29
-- **Status:** Open
-
-### L-121 — ULID arguments not normalized to uppercase at the MCP boundary
-- **Domain:** MCP
-- **Location:** Typed args at `src-tauri/src/mcp/tools_ro.rs:104, 128, 134, 152, 161` and `src-tauri/src/mcp/tools_rw.rs:60, 69, 76, 91-92, 104`; backing query `src-tauri/src/commands/blocks/queries.rs:115` (`WHERE id = ?`, case-sensitive).
-- **What:** AGENTS.md invariant #8 says ULIDs are uppercase Crockford base32 for blake3-hash determinism. The MCP tools accept `block_id` / `parent_id` / `tag_id` / `value_ref` / `page_id` as plain `String` and forward them verbatim to the `*_inner` helpers; SQLite's default `=` is case-sensitive, so a lowercase ULID returns `NotFound`.
-- **Why it matters:** Today every Agaric tool returns uppercase ULIDs, so a round-trip "from-our-output, into-our-input" never trips this. Latent: an agent that copies a ULID from a third-party log or manipulates case would mysteriously hit `NotFound`.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add a `normalize_ulid_arg` helper in `tools_ro.rs` / `tools_rw.rs` that uppercases ULID-shaped strings (length 26, base32 charset). Apply to every `*_id` field in the typed-arg structs, and document "IDs are case-insensitive at the MCP boundary; the server uppercases" in the tool descriptions.
-- **Pass-1 source:** 09/F15
 - **Status:** Open
 
 ### GCal / Spaces

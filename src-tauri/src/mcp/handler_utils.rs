@@ -55,6 +55,42 @@ pub(crate) fn parse_args<T: serde::de::DeserializeOwned>(
     })
 }
 
+/// L-121: normalise a ULID-shaped argument string to uppercase Crockford
+/// base32 at the MCP boundary.
+///
+/// AGENTS.md invariant #8 says ULIDs are uppercase Crockford base32 for
+/// blake3-hash determinism. The MCP tool argument structs accept
+/// `block_id` / `parent_id` / `tag_id` / `value_ref` / `page_id` as
+/// plain `String` and forward them verbatim to the `*_inner` helpers;
+/// SQLite's default `=` is case-sensitive, so a lowercase ULID returns
+/// `NotFound`. Today every Agaric tool returns uppercase ULIDs so a
+/// round-trip "from-our-output, into-our-input" never trips this — the
+/// hazard is an agent that copies a ULID from a third-party log or
+/// manipulates case.
+///
+/// Behaviour:
+///
+/// - Length-26 ASCII-base32 inputs are uppercased (mirrors
+///   [`crate::ulid::BlockId::from_trusted`]'s `to_ascii_uppercase()`).
+/// - Anything else (wrong length, non-base32 charset, empty) passes
+///   through unchanged so the downstream `*_inner` validation still
+///   produces the right error message.
+///
+/// Apply to every `*_id` field in the typed-arg structs of
+/// [`tools_ro`](super::tools_ro) and [`tools_rw`](super::tools_rw)
+/// AFTER `parse_args` and BEFORE the inner call.
+pub(crate) fn normalize_ulid_arg(s: &str) -> String {
+    // Crockford base32 alphabet (no I/L/O/U) — but accepting all base32
+    // ASCII-alpha+digit here is fine: any stricter check would just
+    // pass non-ULID strings through anyway, and the inner functions
+    // already reject malformed IDs with `AppError::Validation`.
+    if s.len() == 26 && s.chars().all(|c| c.is_ascii_alphanumeric()) {
+        s.to_ascii_uppercase()
+    } else {
+        s.to_owned()
+    }
+}
+
 /// Serialise a typed handler response into the [`serde_json::Value`] that
 /// the JSON-RPC dispatcher expects on the wire.
 ///
@@ -130,5 +166,38 @@ mod tests {
     fn parse_args_happy_path_returns_value() {
         let probe: Probe = parse_args::<Probe>("test_tool", json!({"required": "hello"})).unwrap();
         assert_eq!(probe.required, "hello");
+    }
+
+    // ---------------------------------------------------------------
+    // L-121: normalize_ulid_arg
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn normalize_ulid_arg_uppercases_ulid_shaped() {
+        // 26-char Crockford-base32-alpha ULID (lowercase): must uppercase.
+        let lower = "01htest0000000000000000abc";
+        let upper = "01HTEST0000000000000000ABC";
+        assert_eq!(normalize_ulid_arg(lower), upper);
+        // Already-uppercase round-trip: no change.
+        assert_eq!(normalize_ulid_arg(upper), upper);
+    }
+
+    #[test]
+    fn normalize_ulid_arg_passes_through_non_ulid() {
+        // Wrong length — must pass through unchanged so downstream
+        // inner-validation still fires with the right error.
+        assert_eq!(normalize_ulid_arg("abc"), "abc");
+        assert_eq!(normalize_ulid_arg(""), "");
+        // 26 chars but contains non-alphanumeric (hyphen) — pass through.
+        let with_hyphen = "01htest-0000000000000abc-x";
+        assert_eq!(with_hyphen.len(), 26);
+        assert_eq!(normalize_ulid_arg(with_hyphen), with_hyphen);
+    }
+
+    #[test]
+    fn normalize_ulid_arg_handles_mixed_case() {
+        let mixed = "01HtEsT0000000000000000aBc";
+        let upper = "01HTEST0000000000000000ABC";
+        assert_eq!(normalize_ulid_arg(mixed), upper);
     }
 }
