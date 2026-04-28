@@ -3928,3 +3928,243 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
 
     mat.shutdown();
 }
+
+// =======================================================================
+// L-108: conflict copies survive their source's compaction
+// =======================================================================
+
+/// L-108: A block A and its conflict copy A' must both round-trip through
+/// `compact_op_log` → `apply_snapshot` with `conflict_source` intact, even
+/// after A's original `CreateBlock` op has been purged by compaction.
+///
+/// Pass-1 source: 08/F35. The concern was that after compaction purges the
+/// pre-conflict ops, a subsequent RESET via `apply_snapshot` may not include
+/// the source if it was never re-edited. This test pins the round-trip:
+///
+/// 1. Insert page P + real block A + conflict copy A' (with `conflict_source = A`).
+/// 2. Insert an old `CreateBlock` op for A (pre-retention-cutoff) so compaction
+///    has something to purge.
+/// 3. `compact_op_log` — A's old op is purged, a snapshot capturing both A
+///    and A' is written.
+/// 4. Insert post-compaction noise (block B) that the snapshot does NOT cover.
+/// 5. Read the snapshot blob from `log_snapshots`, call `apply_snapshot`.
+/// 6. Assert: the noise block B is gone (RESET wiped it), A and A' are present,
+///    A' still has `is_conflict = 1` and `conflict_source = A`.
+#[tokio::test]
+async fn compact_then_apply_snapshot_preserves_conflict_copy_l108() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let device_id = "dev-l108";
+
+    // Page P (real, top-level).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+         VALUES ('P_L108', 'page', 'page-l108', NULL, 1, 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Real block A (parent = P).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+         VALUES ('A_L108', 'content', 'real A', 'P_L108', 1, 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Conflict copy A' — `is_conflict = 1`, `conflict_source = A`.
+    // Mirrors the shape produced by `merge::resolve::create_conflict_copy`.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict, conflict_source) \
+         VALUES ('A_PRIME_L108', 'content', 'conflict copy of A', 'P_L108', 999, 1, 'A_L108')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Old op for A so compaction has something to purge (200 days ago vs.
+    // DEFAULT_RETENTION_DAYS = 90).
+    insert_op_at(&pool, device_id, "A_L108", "2024-01-01T00:00:00Z").await;
+
+    // Run compaction. Returns Some((snapshot_id, deleted_count)).
+    let (snapshot_id, _deleted) = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
+        .await
+        .unwrap()
+        .expect("compaction should produce a snapshot");
+
+    // Add post-compaction noise that the snapshot does NOT cover. Apply
+    // must wipe this.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+         VALUES ('B_NOISE_L108', 'content', 'post-compaction noise', 'P_L108', 2, 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Read the snapshot blob and apply it.
+    let snap_data: Vec<u8> = sqlx::query_scalar!(
+        "SELECT data FROM log_snapshots WHERE id = ? AND status = 'complete'",
+        snapshot_id
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    apply_snapshot(&pool, &mat, &snap_data).await.unwrap();
+
+    // Noise block must be gone (RESET wiped pre-snapshot state).
+    let noise_count: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = 'B_NOISE_L108'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        noise_count, 0,
+        "L-108: post-compaction noise block must be wiped by apply_snapshot"
+    );
+
+    // P, A, A' must all be present.
+    #[derive(sqlx::FromRow)]
+    struct BlockRow {
+        id: String,
+        is_conflict: i64,
+        conflict_source: Option<String>,
+    }
+    let mut rows: Vec<BlockRow> =
+        sqlx::query_as("SELECT id, is_conflict, conflict_source FROM blocks ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    rows.sort_by(|a, b| a.id.cmp(&b.id));
+
+    let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["A_L108", "A_PRIME_L108", "P_L108"],
+        "L-108: snapshot must round-trip P, A, A' (conflict copy)"
+    );
+
+    // A' must still be a conflict copy pointing at A.
+    let a_prime = rows.iter().find(|r| r.id == "A_PRIME_L108").unwrap();
+    assert_eq!(
+        a_prime.is_conflict, 1,
+        "L-108: A' must remain is_conflict = 1 after round-trip"
+    );
+    assert_eq!(
+        a_prime.conflict_source.as_deref(),
+        Some("A_L108"),
+        "L-108: A' conflict_source must point at A after round-trip"
+    );
+
+    // A must remain non-conflict.
+    let a = rows.iter().find(|r| r.id == "A_L108").unwrap();
+    assert_eq!(
+        a.is_conflict, 0,
+        "L-108: A must remain is_conflict = 0 after round-trip"
+    );
+    assert!(
+        a.conflict_source.is_none(),
+        "L-108: A must have no conflict_source after round-trip"
+    );
+
+    mat.shutdown();
+}
+
+// =======================================================================
+// L-109: compaction preserves snapshot atomicity on injected DELETE failure
+// =======================================================================
+
+/// L-109: `compact_op_log`'s entire write phase is wrapped in `BEGIN
+/// IMMEDIATE`; on any failure, both the `INSERT INTO log_snapshots` and the
+/// `DELETE FROM op_log` must roll back together.
+///
+/// Pass-1 source: 08/F36. We exercise that invariant by installing a custom
+/// AFTER DELETE trigger on `op_log` that unconditionally `RAISE(ABORT)`s,
+/// then run `compact_op_log` and assert:
+///
+///   - the call returns `Err(...)`,
+///   - no row exists in `log_snapshots` (the `INSERT … 'pending'` was
+///     rolled back; no orphaned 'pending' row leaks),
+///   - every `op_log` row is intact (the `DELETE` was rolled back).
+///
+/// A future refactor that splits compaction's tx — for example, committing
+/// the snapshot insert before the per-device deletes — would silently break
+/// atomicity, leaving either a 'pending' snapshot row stranded or ops
+/// already deleted with no snapshot. This test catches it.
+#[tokio::test]
+async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-l109";
+
+    // Insert a block with an old op so compaction has something to delete.
+    insert_block(&pool, "blk-l109", "content").await;
+    insert_op_at(&pool, device_id, "blk-l109", "2024-01-01T00:00:00Z").await;
+
+    // Snapshot pre-compaction state.
+    let ops_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ops_before, 1, "should start with 1 op");
+    let snaps_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(snaps_before, 0, "should start with 0 snapshots");
+
+    // Install an AFTER DELETE trigger on op_log that unconditionally aborts.
+    // The H-13 BEFORE-DELETE bypass mechanism (sentinel row in
+    // `_op_log_mutation_allowed`) is checked by the production trigger from
+    // migration 0036; this AFTER trigger is independent and will fire even
+    // when the bypass is enabled, which is exactly what we want to inject
+    // a mid-tx failure.
+    sqlx::query(
+        "CREATE TRIGGER l109_inject_delete_failure \
+         AFTER DELETE ON op_log \
+         BEGIN \
+             SELECT RAISE(ABORT, 'L-109 injected: DELETE FROM op_log not allowed'); \
+         END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Run compaction — must fail.
+    let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS).await;
+    assert!(
+        result.is_err(),
+        "L-109: compaction must fail when DELETE FROM op_log aborts; got {result:?}"
+    );
+
+    // Snapshot row must NOT exist — the INSERT into log_snapshots was rolled
+    // back along with the failed DELETE.
+    let snaps_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        snaps_after, 0,
+        "L-109: log_snapshots must be empty after a rolled-back compaction; \
+         a leaked 'pending' or 'complete' row indicates the tx is no longer atomic"
+    );
+
+    // Op log must be intact — DELETE was aborted and the whole tx rolled back.
+    let ops_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        ops_after, ops_before,
+        "L-109: op_log row count must be unchanged after a rolled-back compaction"
+    );
+
+    // Drop the injected trigger so any other tests sharing the pool are
+    // unaffected. (Each test gets a fresh `test_pool` so this is belt-
+    // and-braces, but it documents the cleanup contract for the helper.)
+    sqlx::query("DROP TRIGGER IF EXISTS l109_inject_delete_failure")
+        .execute(&pool)
+        .await
+        .unwrap();
+}

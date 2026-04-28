@@ -304,6 +304,9 @@ pub async fn append_merge_op(
         op_type,
         payload: payload_json,
         created_at,
+        // L-13: cache the typed payload's block_id sidecar — same
+        // sidecar populated on the local-append path.
+        block_id: block_id.map(str::to_owned),
     })
 }
 

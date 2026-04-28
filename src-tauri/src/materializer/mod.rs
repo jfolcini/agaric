@@ -76,8 +76,12 @@ struct CreateBlockHint {
     block_type: String,
 }
 
-#[derive(Deserialize)]
-struct BlockIdHint {
-    #[serde(default)]
-    block_id: String,
-}
+// L-13 (2026-04): the former `BlockIdHint` type was used by
+// `dispatch::enqueue_background_tasks` to deserialise just `block_id`
+// from `record.payload` for the edit/delete/restore/purge arms. Those
+// sites now read from the cached `OpRecord::block_id` sidecar
+// (populated at append-time / sync ingress) so the type became
+// completely unused and was deleted along with the dispatch parse.
+// `CreateBlockHint` survives because the `create_block` arm also needs
+// `block_type` (tag vs. page vs. content); caching that on `OpRecord`
+// would be a larger sidecar than L-13's `block_id`-only scope.

@@ -63,7 +63,10 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
 // used to live here as the input to `process_foreground_segment`'s
 // JoinSet parallelism. The JoinSet path was removed in favour of strict
 // FIFO execution (see `consumer::process_foreground_segment`), so the
-// bucketing helpers were deleted along with their unit tests. The
-// `BlockIdHint` type still lives in `super` for the background queue's
-// per-block task deduplication (`UpdateFtsBlock`, `ReindexBlockLinks`,
-// `ReindexBlockTagRefs`, `ReindexFtsReferences`, `RemoveFtsBlock`).
+// bucketing helpers were deleted along with their unit tests.
+//
+// L-13 (2026-04): the `BlockIdHint` payload-shape type that survived
+// H-5/H-6 has now also been deleted — the four `dispatch.rs` arms
+// (edit/delete/restore/purge) that parsed it now read from the cached
+// `OpRecord::block_id` sidecar populated at append-time / sync ingress.
+// See the comment above `CreateBlockHint` in `super` for context.

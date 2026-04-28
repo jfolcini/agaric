@@ -466,6 +466,7 @@ mod tests {
 
     fn make_record(payload: &OpPayload) -> OpRecord {
         let json = serde_json::to_string(payload).unwrap();
+        let block_id = payload.block_id().map(str::to_owned);
         OpRecord {
             device_id: DEVICE.to_owned(),
             seq: 1,
@@ -474,6 +475,7 @@ mod tests {
             op_type: payload.op_type_str().to_owned(),
             payload: json,
             created_at: "2026-04-22T12:00:00Z".to_owned(),
+            block_id,
         }
     }
 

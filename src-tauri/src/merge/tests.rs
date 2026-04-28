@@ -59,6 +59,9 @@ fn make_remote_record(
     payload: &str,
 ) -> OpRecord {
     let hash = compute_op_hash(device_id, seq, parent_seqs.as_deref(), op_type, payload);
+    // L-13: cache the parsed block_id on the sidecar (mirrors the
+    // production `From<OpTransfer>` path).
+    let block_id = crate::op_log::extract_block_id_from_payload(payload);
     OpRecord {
         device_id: device_id.to_owned(),
         seq,
@@ -67,6 +70,7 @@ fn make_remote_record(
         op_type: op_type.to_owned(),
         payload: payload.to_owned(),
         created_at: FIXED_TS.to_owned(),
+        block_id,
     }
 }
 
@@ -761,6 +765,7 @@ fn make_prop_record(
         op_type: "set_property".to_owned(),
         payload,
         created_at: created_at.to_owned(),
+        block_id: Some(block_id.to_owned()),
     }
 }
 
@@ -851,6 +856,7 @@ fn resolve_property_conflict_rejects_non_set_property_op_a() {
         op_type: "edit_block".into(),
         payload: "{}".into(),
         created_at: FIXED_TS.into(),
+        block_id: None,
     };
     let op_b = make_prop_record(DEV_B, 1, FIXED_TS, "B1", "priority", "high");
 
@@ -874,6 +880,7 @@ fn resolve_property_conflict_rejects_non_set_property_op_b() {
         op_type: "delete_block".into(),
         payload: "{}".into(),
         created_at: FIXED_TS.into(),
+        block_id: None,
     };
 
     let err = resolve_property_conflict(&op_a, &op_b);
@@ -891,6 +898,7 @@ fn resolve_property_conflict_rejects_malformed_payload() {
         op_type: "set_property".into(),
         payload: "{not valid json".into(),
         created_at: FIXED_TS.into(),
+        block_id: None,
     };
 
     let err = resolve_property_conflict(&op_a, &op_b);
@@ -1190,6 +1198,7 @@ fn resolve_property_conflict_with_numeric_values() {
         op_type: "set_property".into(),
         payload: payload_a,
         created_at: FIXED_TS.into(),
+        block_id: Some("B1".into()),
     };
     let op_b = OpRecord {
         device_id: DEV_B.into(),
@@ -1199,6 +1208,7 @@ fn resolve_property_conflict_with_numeric_values() {
         op_type: "set_property".into(),
         payload: payload_b,
         created_at: FIXED_TS_LATER.into(),
+        block_id: Some("B1".into()),
     };
 
     let result = resolve_property_conflict(&op_a, &op_b).unwrap();
@@ -1438,6 +1448,7 @@ fn resolve_property_conflict_all_null_values_commutative() {
         op_type: "set_property".into(),
         payload: p_a,
         created_at: FIXED_TS.into(),
+        block_id: Some("B1".into()),
     };
     let op_b = OpRecord {
         device_id: DEV_B.into(),
@@ -1447,6 +1458,7 @@ fn resolve_property_conflict_all_null_values_commutative() {
         op_type: "set_property".into(),
         payload: p_b,
         created_at: FIXED_TS.into(),
+        block_id: Some("B1".into()),
     };
 
     // Verify winner is selected and all values are None

@@ -248,6 +248,16 @@ pub async fn export_page_markdown_inner(
 /// Creates a page from the filename (or first heading), then creates
 /// blocks following the indentation hierarchy. Properties are set via
 /// SetProperty ops. Returns import statistics.
+///
+/// REVIEW-LATER L-30 — All-or-nothing semantics: any per-block
+/// `create_block_in_tx` or per-property `set_property_in_tx` failure
+/// aborts the import. The enclosing `BEGIN IMMEDIATE` is rolled back on
+/// `Drop` (no commit reached), so partially-imported rows never land in
+/// the DB. `result.warnings` is reserved for non-transactional parse
+/// diagnostics from [`import::parse_logseq_markdown`] (e.g. depth
+/// clamping); per-row write failures surface as `Err(AppError)` rather
+/// than entries in `warnings`. Savepoint-based partial recovery was
+/// considered and rejected as too invasive for the available signal.
 #[instrument(skip(pool, device_id, materializer, content), err)]
 pub async fn import_markdown_inner(
     pool: &SqlitePool,
@@ -266,6 +276,8 @@ pub async fn import_markdown_inner(
     // --- Single IMMEDIATE transaction for entire import ---
     // MAINT-112: CommandTx couples commit + post-commit dispatch; op
     // records enqueue in the loop and drain in FIFO order after commit.
+    // L-30: per-block / per-property failures propagate via `?` so the
+    // transaction rolls back as a whole on first error — never partial.
     let mut tx = CommandTx::begin_immediate(pool, "import_markdown").await?;
 
     // Create the page inside the transaction
@@ -283,7 +295,9 @@ pub async fn import_markdown_inner(
 
     let mut blocks_created: i64 = 0;
     let mut properties_set: i64 = 0;
-    let mut warnings: Vec<String> = parse_output.warnings;
+    // Parse-time diagnostics (e.g. depth clamping). Per-row write
+    // failures are reported via `Err(AppError)` instead — see L-30 note.
+    let warnings: Vec<String> = parse_output.warnings;
 
     // Track parent stack: (depth, block_id)
     let mut parent_stack: Vec<(usize, String)> = vec![(0, page_id.clone())];
@@ -299,8 +313,9 @@ pub async fn import_markdown_inner(
             .map(|(_, id)| id.clone())
             .unwrap_or(page_id.clone());
 
-        // Create the block inside the transaction
-        match create_block_in_tx(
+        // Create the block inside the transaction. L-30: a failure here
+        // aborts the entire import — `?` drops `tx` and rolls back.
+        let (new_block, block_op) = create_block_in_tx(
             &mut tx,
             device_id,
             "content".into(),
@@ -308,38 +323,27 @@ pub async fn import_markdown_inner(
             Some(parent_id.clone()),
             None,
         )
-        .await
-        {
-            Ok((new_block, block_op)) => {
-                blocks_created += 1;
-                tx.enqueue_background(block_op);
-                parent_stack.push((block.depth, new_block.id.clone()));
+        .await?;
+        blocks_created += 1;
+        tx.enqueue_background(block_op);
+        parent_stack.push((block.depth, new_block.id.clone()));
 
-                // Set properties inside the same transaction
-                for (key, value) in &block.properties {
-                    match set_property_in_tx(
-                        &mut tx,
-                        device_id,
-                        new_block.id.clone(),
-                        key,
-                        Some(value.clone()),
-                        None,
-                        None,
-                        None,
-                    )
-                    .await
-                    {
-                        Ok((_block, prop_op)) => {
-                            properties_set += 1;
-                            tx.enqueue_background(prop_op);
-                        }
-                        Err(e) => warnings.push(format!("Property '{key}' on block failed: {e}")),
-                    }
-                }
-            }
-            Err(e) => {
-                warnings.push(format!("Block creation failed: {e}"));
-            }
+        // Set properties inside the same transaction. L-30: same
+        // all-or-nothing contract as the block-create above.
+        for (key, value) in &block.properties {
+            let (_block, prop_op) = set_property_in_tx(
+                &mut tx,
+                device_id,
+                new_block.id.clone(),
+                key,
+                Some(value.clone()),
+                None,
+                None,
+                None,
+            )
+            .await?;
+            properties_set += 1;
+            tx.enqueue_background(prop_op);
         }
     }
 

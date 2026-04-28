@@ -136,8 +136,8 @@ pub async fn apply_remote_ops(
     // a buggy peer build (e.g., a serializer regression for one op type)
     // into our op log, which would silently desynchronise op_log from the
     // materialized state.
-    let records: Vec<OpRecord> = ops.into_iter().map(OpRecord::from).collect();
-    for record in &records {
+    let mut records: Vec<OpRecord> = ops.into_iter().map(OpRecord::from).collect();
+    for record in &mut records {
         verify_op_record(record).map_err(|msg| {
             tracing::warn!(
                 device_id = %record.device_id,
@@ -151,16 +151,35 @@ pub async fn apply_remote_ops(
         // Treated identically to a hash mismatch: the whole batch is
         // rejected so the op log never contains an op with an unparseable
         // payload.
-        if let Err(e) = serde_json::from_str::<serde_json::Value>(&record.payload) {
-            tracing::warn!(
-                device_id = %record.device_id,
-                seq = record.seq,
-                "rejecting batch: op has invalid JSON payload: {e}"
-            );
-            return Err(AppError::InvalidOperation(format!(
-                "invalid JSON payload for op (device_id={}, seq={}): {e}",
-                record.device_id, record.seq
-            )));
+        //
+        // L-13: piggy-back on this existing parse to populate the
+        // cached `OpRecord::block_id` sidecar. `From<OpTransfer> for
+        // OpRecord` leaves the field `None` precisely so we can do
+        // the work here exactly once instead of parsing `payload`
+        // twice per sync'd op (once on the wire conversion, once
+        // here). The materializer hot path
+        // (`dispatch::enqueue_background_tasks`) reads the sidecar
+        // for any sync-induced op that later flows through
+        // `dispatch_op` (the conflict-resolution paths in
+        // `merge_diverged_blocks` are the current consumers).
+        match serde_json::from_str::<serde_json::Value>(&record.payload) {
+            Ok(value) => {
+                record.block_id = value
+                    .get("block_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    device_id = %record.device_id,
+                    seq = record.seq,
+                    "rejecting batch: op has invalid JSON payload: {e}"
+                );
+                return Err(AppError::InvalidOperation(format!(
+                    "invalid JSON payload for op (device_id={}, seq={}): {e}",
+                    record.device_id, record.seq
+                )));
+            }
         }
     }
 
@@ -230,11 +249,21 @@ pub async fn apply_remote_ops(
             // to materialize.
         }
 
-        // INSERT OR IGNORE — duplicate delivery is a no-op
+        // INSERT OR IGNORE — duplicate delivery is a no-op.
+        //
+        // PERF-26 / L-13: persist the `block_id` column too. The
+        // sibling sync entry-point [`crate::dag::insert_remote_op`]
+        // already does this; the bulk-batch path here was missed when
+        // PERF-26 shipped and would leave `op_log.block_id IS NULL`
+        // for every remote-applied row, defeating the index that
+        // FEAT-* draft-recovery and other block-scoped lookups
+        // depend on. We have the value in `record.block_id` from
+        // the validation-parse piggyback above, so binding it costs
+        // nothing extra.
         let r = sqlx::query(
             "INSERT OR IGNORE INTO op_log \
-             (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+             (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.device_id)
         .bind(record.seq)
@@ -243,6 +272,7 @@ pub async fn apply_remote_ops(
         .bind(&record.op_type)
         .bind(&record.payload)
         .bind(&record.created_at)
+        .bind(&record.block_id)
         .execute(&mut *tx)
         .await?;
 
@@ -436,6 +466,10 @@ pub async fn merge_diverged_blocks(
             let bid: String = row.try_get("block_id")?;
             let pk: String = row.try_get("prop_key")?;
             let dev: String = row.try_get("device_id")?;
+            // L-13: this row is the LWW-conflict candidate — its
+            // `block_id` is already the very `bid` we just pulled out
+            // above (the SELECT projects it as a separate column),
+            // so we cache it on the sidecar without a JSON parse.
             let op = OpRecord {
                 device_id: dev.clone(),
                 seq: row.try_get::<i64, _>("seq")?,
@@ -444,6 +478,7 @@ pub async fn merge_diverged_blocks(
                 op_type: row.try_get::<String, _>("op_type")?,
                 payload: row.try_get::<String, _>("payload")?,
                 created_at: row.try_get::<String, _>("created_at")?,
+                block_id: Some(bid.clone()),
             };
             let entry = groups.entry((bid, pk)).or_insert((None, None));
             if dev == device_id {
@@ -595,6 +630,9 @@ pub async fn merge_diverged_blocks(
         for row in &move_op_rows {
             let bid: String = row.try_get("block_id")?;
             let dev: String = row.try_get("device_id")?;
+            // L-13: same shortcut as the property-LWW path above —
+            // the SELECT already projects `block_id`, so we cache it
+            // on the sidecar without a JSON parse.
             let op = OpRecord {
                 device_id: dev.clone(),
                 seq: row.try_get::<i64, _>("seq")?,
@@ -603,6 +641,7 @@ pub async fn merge_diverged_blocks(
                 op_type: row.try_get::<String, _>("op_type")?,
                 payload: row.try_get::<String, _>("payload")?,
                 created_at: row.try_get::<String, _>("created_at")?,
+                block_id: Some(bid.clone()),
             };
             let entry = groups.entry(bid).or_insert((None, None));
             if dev == device_id {

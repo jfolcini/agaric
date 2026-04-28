@@ -1,7 +1,7 @@
 //! Dispatch methods for routing ops to the appropriate materializer queues.
 
 use super::coordinator::Materializer;
-use super::{BlockIdHint, CreateBlockHint, MaterializeTask};
+use super::{CreateBlockHint, MaterializeTask};
 use crate::error::AppError;
 use crate::op_log::OpRecord;
 use std::sync::atomic::Ordering;
@@ -164,14 +164,19 @@ impl Materializer {
                 self.try_enqueue_background(MaterializeTask::RebuildPageIds)?;
             }
             "edit_block" => {
-                let hint: BlockIdHint = serde_json::from_str(&record.payload)?;
+                // L-13: use the cached `OpRecord::block_id` sidecar
+                // populated at append-time (or parsed once on the sync
+                // ingress in `From<OpTransfer> for OpRecord`) so this
+                // dispatch path no longer re-parses `record.payload`
+                // for the same value.
+                let block_id = record.block_id.as_deref().unwrap_or_default();
                 debug_assert!(
-                    !hint.block_id.is_empty(),
+                    !block_id.is_empty(),
                     "edit_block payload has empty block_id"
                 );
-                if !hint.block_id.is_empty() {
+                if !block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::ReindexBlockLinks {
-                        block_id: hint.block_id.clone(),
+                        block_id: block_id.to_owned(),
                     })?;
                     // UX-250: reindex inline tag refs regardless of
                     // `block_type_hint` — every content edit may gain or
@@ -180,23 +185,23 @@ impl Materializer {
                     // of scanning an empty diff is negligible vs. the
                     // correctness risk of skipping.
                     self.try_enqueue_background(MaterializeTask::ReindexBlockTagRefs {
-                        block_id: hint.block_id.clone(),
+                        block_id: block_id.to_owned(),
                     })?;
                 }
                 match block_type_hint {
                     Some("tag") => {
                         self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
-                        if !hint.block_id.is_empty() {
+                        if !block_id.is_empty() {
                             self.try_enqueue_background(MaterializeTask::ReindexFtsReferences {
-                                block_id: hint.block_id.clone(),
+                                block_id: block_id.to_owned(),
                             })?;
                         }
                     }
                     Some("page") => {
                         self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
-                        if !hint.block_id.is_empty() {
+                        if !block_id.is_empty() {
                             self.try_enqueue_background(MaterializeTask::ReindexFtsReferences {
-                                block_id: hint.block_id.clone(),
+                                block_id: block_id.to_owned(),
                             })?;
                         }
                     }
@@ -207,9 +212,9 @@ impl Materializer {
                         self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
                     }
                 }
-                if !hint.block_id.is_empty() {
+                if !block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
-                        block_id: hint.block_id,
+                        block_id: block_id.to_owned(),
                     })?;
                 }
                 let edits = self
@@ -244,29 +249,34 @@ impl Materializer {
                 }
             }
             "delete_block" => {
-                let hint: BlockIdHint = serde_json::from_str(&record.payload)?;
+                // L-13: use the cached sidecar instead of re-parsing
+                // `record.payload`.  Same rationale as the `edit_block`
+                // arm above.
+                let block_id = record.block_id.as_deref().unwrap_or_default();
                 self.enqueue_full_cache_rebuild()?;
-                if !hint.block_id.is_empty() {
+                if !block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::RemoveFtsBlock {
-                        block_id: hint.block_id,
+                        block_id: block_id.to_owned(),
                     })?;
                 }
             }
             "restore_block" => {
-                let hint: BlockIdHint = serde_json::from_str(&record.payload)?;
+                // L-13: cached sidecar — no JSON re-parse.
+                let block_id = record.block_id.as_deref().unwrap_or_default();
                 self.enqueue_full_cache_rebuild()?;
-                if !hint.block_id.is_empty() {
+                if !block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
-                        block_id: hint.block_id,
+                        block_id: block_id.to_owned(),
                     })?;
                 }
             }
             "purge_block" => {
-                let hint: BlockIdHint = serde_json::from_str(&record.payload)?;
+                // L-13: cached sidecar — no JSON re-parse.
+                let block_id = record.block_id.as_deref().unwrap_or_default();
                 self.enqueue_full_cache_rebuild()?;
-                if !hint.block_id.is_empty() {
+                if !block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::RemoveFtsBlock {
-                        block_id: hint.block_id,
+                        block_id: block_id.to_owned(),
                     })?;
                 }
             }

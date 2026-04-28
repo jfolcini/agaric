@@ -383,38 +383,48 @@ pub async fn rebuild_all(pool: &SqlitePool) -> Result<(), AppError> {
 
 /// Read/write split variant of [`rebuild_all`].
 ///
-/// Reads the recursive tag inheritance tree from `read_pool`, writes the
-/// materialized cache to `write_pool`. Used by the materializer when a
-/// separate read pool is available.
+/// Despite the name, the rebuild now runs entirely on `write_pool` inside
+/// a single `BEGIN IMMEDIATE` transaction: DELETE followed by a single
+/// recursive-CTE `INSERT … SELECT` (the same shape used by the unified
+/// [`rebuild_all`]). The `read_pool` argument is retained for API
+/// stability with the [`crate::materializer::handlers`] split/single
+/// dispatch helper but is intentionally unused.
+///
+/// Closes L-93 (no per-row INSERT loop — the recursive CTE writes the
+/// full tuple set in one statement) and L-94 (no read-vs-write race —
+/// `BEGIN IMMEDIATE` serialises the rebuild with concurrent
+/// [`apply_op_tag_inheritance`] writers, so any in-flight incremental
+/// update either lands fully before the rebuild's DELETE or commits
+/// after the rebuild commits, never sandwiched between).
 pub async fn rebuild_all_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<(), AppError> {
-    // Read phase: compute inherited tags from read_pool
-    let rows = sqlx::query_as::<_, (String, String, String)>(concat!(
-        "WITH RECURSIVE ",
-        crate::tag_inh_descendant_tags_full!(),
-        " SELECT block_id, tag_id, inherited_from FROM descendant_tags",
-    ))
-    .fetch_all(read_pool)
-    .await?;
+    // L-94: rebuild runs entirely on write_pool inside BEGIN IMMEDIATE;
+    // read_pool is retained for API stability with `dispatch_split_or_single`.
+    let _ = read_pool;
 
-    // Write phase: DELETE + INSERT on write_pool
-    let mut tx = write_pool.begin().await?;
+    // BEGIN IMMEDIATE eagerly acquires the writer lock so concurrent
+    // `apply_op_tag_inheritance` calls serialise behind us. Combined with
+    // the single-statement recursive-CTE INSERT below, this means the
+    // DELETE + recompute is atomic with respect to incremental updates.
+    let mut tx = write_pool.begin_with("BEGIN IMMEDIATE").await?;
+
     sqlx::query("DELETE FROM block_tag_inherited")
         .execute(&mut *tx)
         .await?;
-    for (block_id, tag_id, inherited_from) in &rows {
-        sqlx::query(
-            "INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
-             VALUES (?, ?, ?)",
-        )
-        .bind(block_id)
-        .bind(tag_id)
-        .bind(inherited_from)
-        .execute(&mut *tx)
-        .await?;
-    }
+
+    // L-93: same recursive-CTE INSERT … SELECT used by `rebuild_all` —
+    // no Rust-side tuple materialisation, no per-row INSERT loop.
+    sqlx::query(concat!(
+        "WITH RECURSIVE ",
+        crate::tag_inh_descendant_tags_full!(),
+        " INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
+         SELECT block_id, tag_id, inherited_from FROM descendant_tags",
+    ))
+    .execute(&mut *tx)
+    .await?;
+
     tx.commit().await?;
     Ok(())
 }
@@ -1234,5 +1244,207 @@ mod tests {
         assert!(rows.contains(&("L3".into(), "TAG".into(), "ROOT".into())));
         assert!(rows.contains(&("L4".into(), "TAG".into(), "ROOT".into())));
         assert!(rows.contains(&("LEAF".into(), "TAG".into(), "ROOT".into())));
+    }
+
+    // ======================================================================
+    // L-93 / L-94 — `rebuild_all_split` is now a single BEGIN IMMEDIATE tx
+    // ======================================================================
+
+    /// Parity oracle: `rebuild_all_split` must produce a byte-identical
+    /// `block_tag_inherited` row set to the unified `rebuild_all`. This
+    /// is the proof that the split variant is functionally equivalent
+    /// after the L-93/L-94 fix collapsed it onto the same recursive-CTE
+    /// `INSERT … SELECT` shape.
+    #[tokio::test]
+    async fn rebuild_all_split_matches_unified_rebuild_all() {
+        let (pool, _dir) = test_pool().await;
+
+        // Mixed fixture: two tag roots, two pages, varying depth, one
+        // soft-deleted descendant (which neither rebuild path should
+        // include in the inherited set — invariant #9).
+        insert_block(&pool, "TAG1", "tag", "tag1", None).await;
+        insert_block(&pool, "TAG2", "tag", "tag2", None).await;
+        insert_block(&pool, "ROOT", "page", "root", None).await;
+        insert_block(&pool, "PAGE_A", "page", "page a", Some("ROOT")).await;
+        insert_block(&pool, "PAGE_B", "page", "page b", Some("ROOT")).await;
+        insert_block(&pool, "CHILD_A", "content", "child a", Some("PAGE_A")).await;
+        insert_block(&pool, "CHILD_B", "content", "child b", Some("PAGE_B")).await;
+        insert_block(&pool, "GRAND_A", "content", "grand a", Some("CHILD_A")).await;
+        insert_block(&pool, "GHOST", "content", "soft-deleted", Some("PAGE_A")).await;
+        soft_delete(&pool, "GHOST").await;
+
+        insert_tag_assoc(&pool, "ROOT", "TAG1").await;
+        insert_tag_assoc(&pool, "PAGE_B", "TAG2").await;
+
+        // Snapshot the unified output.
+        rebuild_all(&pool).await.unwrap();
+        let unified_rows = get_inherited(&pool).await;
+        assert!(
+            !unified_rows.is_empty(),
+            "fixture must produce at least one inherited row to make parity meaningful"
+        );
+
+        // Wipe and run the split variant on the same pool — same as
+        // production wiring when no read pool is configured (and
+        // identical when one is, because the split variant now ignores
+        // the read pool argument).
+        sqlx::query("DELETE FROM block_tag_inherited")
+            .execute(&pool)
+            .await
+            .unwrap();
+        rebuild_all_split(&pool, &pool).await.unwrap();
+        let split_rows = get_inherited(&pool).await;
+
+        assert_eq!(
+            unified_rows, split_rows,
+            "rebuild_all_split must produce byte-identical rows to rebuild_all"
+        );
+    }
+
+    /// L-93: prove correctness on a fixture that crosses the previous
+    /// 500-row chunking threshold. Before the fix the split variant
+    /// issued one `INSERT` per row inside a single tx; after the fix it
+    /// issues one `INSERT … SELECT`. This test exercises the path with
+    /// > 500 expected inherited rows and asserts parity with the
+    /// unified rebuild on the same fixture.
+    #[tokio::test]
+    async fn rebuild_all_split_large_fixture_matches_unified() {
+        let (pool, _dir) = test_pool().await;
+
+        // 1 root + 600 children, all inheriting one tag from the root.
+        // Each child contributes one inherited row → 600 rows total,
+        // comfortably past the old 500-row chunk boundary.
+        const N_CHILDREN: usize = 600;
+        insert_block(&pool, "BIG_TAG", "tag", "big-tag", None).await;
+        insert_block(&pool, "BIG_ROOT", "page", "big-root", None).await;
+        insert_tag_assoc(&pool, "BIG_ROOT", "BIG_TAG").await;
+        for i in 0..N_CHILDREN {
+            let id = format!("BIG_CHILD_{i:04}");
+            insert_block(&pool, &id, "content", "child", Some("BIG_ROOT")).await;
+        }
+
+        rebuild_all(&pool).await.unwrap();
+        let unified_rows = get_inherited(&pool).await;
+        assert_eq!(
+            unified_rows.len(),
+            N_CHILDREN,
+            "unified rebuild should produce one inherited row per child"
+        );
+
+        sqlx::query("DELETE FROM block_tag_inherited")
+            .execute(&pool)
+            .await
+            .unwrap();
+        rebuild_all_split(&pool, &pool).await.unwrap();
+        let split_rows = get_inherited(&pool).await;
+
+        assert_eq!(
+            unified_rows, split_rows,
+            "rebuild_all_split must match rebuild_all on > 500-row fixtures"
+        );
+    }
+
+    /// L-94: when an incremental `apply_op_tag_inheritance(AddTag)`
+    /// runs concurrently with `rebuild_all_split`, the AddTag's effect
+    /// must be observable in `block_tag_inherited` after both
+    /// operations complete — regardless of which one wins the writer
+    /// lock first.
+    ///
+    /// Before the fix, the split variant's read-then-DELETE-then-INSERT
+    /// shape could silently swallow an AddTag whose effect committed
+    /// between the read and the DELETE. The new implementation opens
+    /// `BEGIN IMMEDIATE` on `write_pool`, so the rebuild and the
+    /// concurrent AddTag serialise: either the AddTag commits first
+    /// (and the rebuild's recursive CTE picks it up), or the rebuild
+    /// commits first (and the AddTag propagates onto the freshly-built
+    /// table). Both orderings produce the same correct final state.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn rebuild_all_split_serialises_with_concurrent_add_tag() {
+        let (pool, _dir) = test_pool().await;
+
+        // Tree with a pre-existing tag on ROOT (TAG_OLD). The race
+        // partner will add a *second* tag (TAG_NEW) to ROOT mid-rebuild.
+        insert_block(&pool, "TAG_OLD", "tag", "tag-old", None).await;
+        insert_block(&pool, "TAG_NEW", "tag", "tag-new", None).await;
+        insert_block(&pool, "RACE_ROOT", "page", "race root", None).await;
+        insert_block(&pool, "RACE_CHILD", "content", "child", Some("RACE_ROOT")).await;
+        insert_block(
+            &pool,
+            "RACE_GRAND",
+            "content",
+            "grandchild",
+            Some("RACE_CHILD"),
+        )
+        .await;
+        insert_tag_assoc(&pool, "RACE_ROOT", "TAG_OLD").await;
+
+        // Race partner: simulate the materializer's `AddTag` path —
+        // INSERT into block_tags + propagate inheritance, atomically in
+        // one transaction. This mirrors the production `apply_op` shape
+        // for `OpType::AddTag` (handlers.rs ~line 113 opens a tx, runs
+        // the INSERT, then dispatches `apply_op_tag_inheritance`).
+        let pool_for_add = pool.clone();
+        let add_tag_handle = tokio::spawn(async move {
+            let mut tx = pool_for_add.begin().await.unwrap();
+            sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+                .bind("RACE_ROOT")
+                .bind("TAG_NEW")
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            propagate_tag_to_descendants(&mut tx, "RACE_ROOT", "TAG_NEW")
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+        });
+
+        // Race partner: full rebuild via the split variant.
+        let pool_for_rebuild = pool.clone();
+        let rebuild_handle = tokio::spawn(async move {
+            rebuild_all_split(&pool_for_rebuild, &pool_for_rebuild)
+                .await
+                .unwrap();
+        });
+
+        // Both must complete; if BEGIN IMMEDIATE serialisation is
+        // working, the second writer waits on the first via SQLite's
+        // busy_timeout instead of failing.
+        let (a, b) = tokio::join!(add_tag_handle, rebuild_handle);
+        a.unwrap();
+        b.unwrap();
+
+        let rows = get_inherited(&pool).await;
+
+        // TAG_OLD must be present for both descendants — this is the
+        // pre-existing inheritance that rebuild_all_split rebuilds from
+        // block_tags.
+        assert!(
+            rows.contains(&("RACE_CHILD".into(), "TAG_OLD".into(), "RACE_ROOT".into())),
+            "TAG_OLD must inherit to RACE_CHILD after concurrent rebuild + AddTag, got: {rows:?}",
+        );
+        assert!(
+            rows.contains(&("RACE_GRAND".into(), "TAG_OLD".into(), "RACE_ROOT".into())),
+            "TAG_OLD must inherit to RACE_GRAND after concurrent rebuild + AddTag, got: {rows:?}",
+        );
+
+        // TAG_NEW must also be present for both descendants — this is
+        // the L-94 regression test. With the old read-then-DELETE-then-
+        // INSERT shape, a schedule existed where the AddTag's
+        // propagated rows were wiped by the rebuild's DELETE.
+        assert!(
+            rows.contains(&("RACE_CHILD".into(), "TAG_NEW".into(), "RACE_ROOT".into())),
+            "TAG_NEW must inherit to RACE_CHILD after concurrent rebuild + AddTag (L-94), got: {rows:?}",
+        );
+        assert!(
+            rows.contains(&("RACE_GRAND".into(), "TAG_NEW".into(), "RACE_ROOT".into())),
+            "TAG_NEW must inherit to RACE_GRAND after concurrent rebuild + AddTag (L-94), got: {rows:?}",
+        );
+
+        // No spurious extra rows: 2 descendants × 2 tags = 4 rows.
+        assert_eq!(
+            rows.len(),
+            4,
+            "expected exactly 4 inherited rows (2 descendants × 2 tags), got: {rows:?}",
+        );
     }
 }

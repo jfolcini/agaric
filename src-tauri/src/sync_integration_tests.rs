@@ -1258,6 +1258,7 @@ async fn insert_remote_op_hash_verification_integration() {
         op_type: "create_block".to_string(),
         payload: payload_json.to_string(),
         created_at: FIXED_TS.to_string(),
+        block_id: Some("BLOCK1".to_string()),
     };
 
     insert_remote_op(&pool, &valid_record).await.unwrap();
@@ -1275,6 +1276,7 @@ async fn insert_remote_op_hash_verification_integration() {
         op_type: "create_block".to_string(),
         payload: payload_json.to_string(),
         created_at: FIXED_TS.to_string(),
+        block_id: Some("BLOCK1".to_string()),
     };
 
     let err = insert_remote_op(&pool, &bad_record).await;

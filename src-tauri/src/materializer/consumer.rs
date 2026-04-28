@@ -571,6 +571,7 @@ mod m10_tests {
             op_type: "create_block".into(),
             payload: "{}".into(),
             created_at: "2025-01-15T12:00:00Z".into(),
+            block_id: None,
         }
     }
 

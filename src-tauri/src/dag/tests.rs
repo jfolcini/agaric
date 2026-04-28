@@ -58,6 +58,9 @@ fn make_remote_record(
     payload: &str,
 ) -> OpRecord {
     let hash = compute_op_hash(device_id, seq, parent_seqs.as_deref(), op_type, payload);
+    // L-13: cache the parsed block_id on the sidecar (mirrors the
+    // production `From<OpTransfer>` path).
+    let block_id = crate::op_log::extract_block_id_from_payload(payload);
     OpRecord {
         device_id: device_id.to_owned(),
         seq,
@@ -66,6 +69,7 @@ fn make_remote_record(
         op_type: op_type.to_owned(),
         payload: payload.to_owned(),
         created_at: FIXED_TS.to_owned(),
+        block_id,
     }
 }
 
@@ -1016,6 +1020,7 @@ fn extract_prev_edit_unexpected_op_type_returns_error() {
         op_type: "delete_block".to_owned(),
         payload: payload.to_owned(),
         created_at: FIXED_TS.to_owned(),
+        block_id: Some("B1".to_owned()),
     };
 
     let result = extract_prev_edit(&record);
@@ -1044,6 +1049,7 @@ fn extract_prev_edit_create_block_returns_none() {
         op_type: "create_block".to_owned(),
         payload: payload.to_owned(),
         created_at: FIXED_TS.to_owned(),
+        block_id: Some("B1".to_owned()),
     };
 
     let result = extract_prev_edit(&record).unwrap();
@@ -1063,6 +1069,7 @@ fn extract_prev_edit_edit_block_returns_prev_edit() {
         op_type: "edit_block".to_owned(),
         payload: payload.to_owned(),
         created_at: FIXED_TS.to_owned(),
+        block_id: Some("B1".to_owned()),
     };
 
     let result = extract_prev_edit(&record).unwrap();
