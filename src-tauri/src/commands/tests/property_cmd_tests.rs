@@ -39,6 +39,7 @@ async fn set_property_creates_property() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -116,12 +117,175 @@ async fn set_property_validates_key() {
         None,
         None,
         None,
+        None,
     )
     .await;
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "empty key should return Validation error, got: {result:?}"
+    );
+}
+
+// ----------------------------------------------------------------------
+// L-122: caller_context message wording
+//
+// `set_property_inner`'s last parameter, `caller_context`, augments the
+// exactly-one-value validation error so the MCP boundary can name the
+// tool without duplicating the count check. `None` falls through to
+// `set_property_in_tx`'s `validate_set_property` (existing message);
+// `Some(name)` produces a message that includes the caller name *and*
+// every `value_*` field name.
+// ----------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_inner_with_none_caller_context_uses_legacy_message() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "ctx test".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Two value fields populated → must reject with the legacy
+    // `validate_set_property` wording (no tool name).
+    let err = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "assignee".into(),
+        Some("alice".into()),
+        Some(3.0),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect_err("two value fields must be rejected");
+    let msg = err.to_string();
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "expected Validation, got: {err:?}"
+    );
+    assert!(
+        msg.contains("found 2"),
+        "legacy wording should still mention 'found 2', got: {msg}",
+    );
+    assert!(
+        !msg.contains("tool '"),
+        "None caller_context must NOT name a tool, got: {msg}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_inner_with_some_caller_context_names_caller() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "ctx test".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Two value fields populated, caller names itself → message must
+    // include the caller name AND every value_* field name so the
+    // agent-facing error stays descriptive.
+    let err = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "assignee".into(),
+        Some("alice".into()),
+        Some(3.0),
+        None,
+        None,
+        Some("set_property"),
+    )
+    .await
+    .expect_err("two value fields must be rejected");
+    let msg = err.to_string();
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "expected Validation, got: {err:?}"
+    );
+    for needle in [
+        "set_property",
+        "value_text",
+        "value_num",
+        "value_date",
+        "value_ref",
+        "got 2",
+    ] {
+        assert!(
+            msg.contains(needle),
+            "Some(caller_context) message must contain '{needle}', got: {msg}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_inner_with_some_caller_context_rejects_zero_values() {
+    // The MCP precheck used to reject zero-value calls outright. With
+    // `Some(_)` caller_context that behaviour now lives inside
+    // `set_property_inner`. Verify zero values still error and the
+    // message names the caller.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "ctx test".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let err = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "assignee".into(),
+        None,
+        None,
+        None,
+        None,
+        Some("set_property"),
+    )
+    .await
+    .expect_err("zero value fields must be rejected when caller_context is Some");
+    let msg = err.to_string();
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "expected Validation, got: {err:?}"
+    );
+    assert!(
+        msg.contains("set_property") && msg.contains("got 0"),
+        "Some(caller_context) zero-value message must name the caller and 'got 0', got: {msg}",
     );
 }
 
@@ -157,6 +321,7 @@ async fn set_property_on_deleted_block_fails() {
         block.id.clone(),
         "key".into(),
         Some("val".into()),
+        None,
         None,
         None,
         None,
@@ -196,6 +361,7 @@ async fn delete_property_removes_property() {
         block.id.clone(),
         "status".into(),
         Some("active".into()),
+        None,
         None,
         None,
         None,
@@ -264,6 +430,7 @@ async fn delete_property_allows_builtin_key() {
         None,
         Some("2026-01-01".into()),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -292,6 +459,7 @@ async fn delete_property_allows_builtin_key() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -309,6 +477,7 @@ async fn delete_property_allows_builtin_key() {
         block.id.clone(),
         "my_custom".into(),
         Some("val".into()),
+        None,
         None,
         None,
         None,
@@ -453,6 +622,7 @@ async fn batch_properties_returns_all_for_multiple_blocks() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -465,6 +635,7 @@ async fn batch_properties_returns_all_for_multiple_blocks() {
         b2.id.clone(),
         "status".into(),
         Some("active".into()),
+        None,
         None,
         None,
         None,
@@ -563,6 +734,7 @@ async fn batch_properties_returns_multiple_props_per_block() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -575,6 +747,7 @@ async fn batch_properties_returns_multiple_props_per_block() {
         block.id.clone(),
         "status".into(),
         Some("active".into()),
+        None,
         None,
         None,
         None,
@@ -591,6 +764,7 @@ async fn batch_properties_returns_multiple_props_per_block() {
         "score".into(),
         None,
         Some(42.0),
+        None,
         None,
         None,
     )
@@ -1304,6 +1478,7 @@ async fn set_property_routes_reserved_key_to_blocks_column() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1375,6 +1550,7 @@ async fn set_property_rejects_invalid_date_format() {
         None,
         Some("not-a-date".into()),
         None,
+        None,
     )
     .await;
 
@@ -1415,6 +1591,7 @@ async fn set_property_rejects_out_of_range_date() {
         None,
         Some("2025-13-45".into()),
         None,
+        None,
     )
     .await;
 
@@ -1452,6 +1629,7 @@ async fn set_property_rejects_due_date_with_value_text() {
         block.id.clone(),
         "due_date".into(),
         Some("2025-01-01".into()),
+        None,
         None,
         None,
         None,
@@ -1495,6 +1673,7 @@ async fn set_property_rejects_todo_state_with_value_date() {
         None,
         Some("2025-01-01".into()),
         None,
+        None,
     )
     .await;
 
@@ -1534,6 +1713,7 @@ async fn set_property_accepts_valid_reserved_key_with_correct_field() {
         None,
         None,
         Some("2025-01-15".into()),
+        None,
         None,
     )
     .await;
@@ -1627,6 +1807,7 @@ async fn set_property_ref_type_enforces_value_ref() {
         None,
         None,
         None,
+        None,
     )
     .await;
 
@@ -1660,6 +1841,7 @@ async fn set_property_ref_type_enforces_value_ref() {
         None,
         None,
         Some(target.id.clone()),
+        None,
     )
     .await;
 
@@ -2366,6 +2548,7 @@ async fn set_repeat_property(
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -2864,6 +3047,7 @@ async fn recurrence_stops_when_repeat_until_is_reached() {
         None,
         Some("2025-06-14".to_string()),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -2929,6 +3113,7 @@ async fn recurrence_stops_when_repeat_count_is_exhausted() {
         Some(2.0),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -2943,6 +3128,7 @@ async fn recurrence_stops_when_repeat_count_is_exhausted() {
         "repeat-seq".to_string(),
         None,
         Some(2.0),
+        None,
         None,
         None,
     )
@@ -3010,6 +3196,7 @@ async fn recurrence_continues_when_repeat_count_not_exhausted() {
         Some(3.0),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -3024,6 +3211,7 @@ async fn recurrence_continues_when_repeat_count_not_exhausted() {
         "repeat-seq".to_string(),
         None,
         Some(1.0),
+        None,
         None,
         None,
     )
@@ -3277,6 +3465,7 @@ async fn set_todo_state_done_with_dot_plus_repeat_shifts_from_today() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -3362,6 +3551,7 @@ async fn set_todo_state_done_with_plus_plus_repeat_catches_up() {
         resp.id.clone(),
         "repeat".into(),
         Some("++weekly".into()),
+        None,
         None,
         None,
         None,
@@ -3454,6 +3644,7 @@ async fn set_todo_state_done_with_malformed_repeat_creates_sibling_without_shift
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -3515,6 +3706,7 @@ async fn set_todo_state_done_with_repeat_until_without_dates_still_creates_sibli
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -3530,6 +3722,7 @@ async fn set_todo_state_done_with_repeat_until_without_dates_still_creates_sibli
         None,
         None,
         Some("2026-12-31".into()),
+        None,
         None,
     )
     .await
@@ -3805,6 +3998,7 @@ async fn bug20_set_property_rejects_select_value_not_in_custom_options() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -3817,6 +4011,7 @@ async fn bug20_set_property_rejects_select_value_not_in_custom_options() {
         block.id.clone(),
         "mood".into(),
         Some("angry".into()),
+        None,
         None,
         None,
         None,
@@ -3858,6 +4053,7 @@ async fn bug20_set_property_text_type_has_no_options_restriction() {
         block.id.clone(),
         "assignee".into(),
         Some("anyone-whatsoever".into()),
+        None,
         None,
         None,
         None,
@@ -3918,6 +4114,7 @@ async fn bug20_select_property_with_null_options_is_permissive() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -3963,6 +4160,7 @@ async fn bug20_set_priority_rejects_value_not_in_seeded_options() {
         block.id.clone(),
         "priority".into(),
         Some("99".into()),
+        None,
         None,
         None,
         None,

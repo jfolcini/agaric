@@ -831,6 +831,7 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -931,6 +932,7 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -951,6 +953,7 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
         None,
         None,
         Some(until_date),
+        None,
         None,
     )
     .await
@@ -1024,6 +1027,7 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1040,6 +1044,7 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
         Some(3.0),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1053,6 +1058,7 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
         "repeat-seq".into(),
         None,
         Some(1.0),
+        None,
         None,
         None,
     )
@@ -1109,6 +1115,7 @@ async fn projected_agenda_skips_done_blocks() {
         resp.id.clone(),
         "repeat".into(),
         Some("weekly".into()),
+        None,
         None,
         None,
         None,
@@ -1210,6 +1217,7 @@ async fn projected_agenda_dot_plus_mode_projects_from_today() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1280,6 +1288,7 @@ async fn projected_agenda_plus_plus_mode_catches_up_to_today() {
         resp.id.clone(),
         "repeat".into(),
         Some("++weekly".into()),
+        None,
         None,
         None,
         None,
@@ -1360,6 +1369,7 @@ async fn projected_agenda_both_date_columns_produce_separate_entries() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1423,6 +1433,7 @@ async fn projected_agenda_exhausted_count_returns_zero() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1439,6 +1450,7 @@ async fn projected_agenda_exhausted_count_returns_zero() {
         Some(3.0),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1452,6 +1464,7 @@ async fn projected_agenda_exhausted_count_returns_zero() {
         "repeat-seq".into(),
         None,
         Some(3.0),
+        None,
         None,
         None,
     )
@@ -1508,6 +1521,7 @@ async fn projected_agenda_limit_caps_results() {
         resp.id.clone(),
         "repeat".into(),
         Some("daily".into()),
+        None,
         None,
         None,
         None,
@@ -1575,6 +1589,7 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1603,6 +1618,7 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         task.id.clone(),
         "repeat".into(),
         Some("daily".into()),
+        None,
         None,
         None,
         None,
@@ -1675,6 +1691,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1703,6 +1720,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         task.id.clone(),
         "repeat".into(),
         Some("daily".into()),
+        None,
         None,
         None,
         None,

@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 648+ items across 492 sessions (per SESSION-LOG.md unique session count; latest is session 525).
+Previously resolved: 656+ items across 493 sessions (per SESSION-LOG.md unique session count; latest is session 526).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1925,7 +1925,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (61 — expanded)
+## LOW findings (53 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2005,18 +2005,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Use `DELETE FROM block_links WHERE source_id = ? AND target_id IN (SELECT value FROM json_each(?))` and a chunked multi-row INSERT for additions (matching the snapshot-import path). Same approach as M-18.
 - **Pass-1 source:** 03/F15
-- **Status:** Open
-
-### L-25 — `rebuild_agenda_cache_split_impl` releases the read snapshot before writing
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/cache/agenda.rs:230-340` (esp. `drop(read_tx)` at `:306`)
-- **What:** The function reads desired-state and current-cache rows from `read_pool` inside one read transaction, drops the tx, then begins a write tx on `write_pool` and applies the diff. Between drop and begin another writer can mutate `agenda_cache` or `blocks`, so the diff applied may be stale relative to the live state at write time. The single-pool variant (`rebuild_agenda_cache_impl`) holds one tx across read+write and avoids this. The behaviour is consistent with documented stale-while-revalidate semantics, but no test exercises a write-during-rebuild race.
-- **Why it matters:** In rare contention scenarios the rebuild can churn the cache (insert+delete the same row that another writer just touched). Eventually consistent — not a correctness bug per AGENTS.md, but worth a comment for the next maintainer.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Low
-- **Recommendation:** Either add a code comment in the function explaining the TOCTOU window (and that the next rebuild fixes it), or — heavier — re-read inside the write tx and skip conflicting writes. The comment is cheaper and matches the stated "background, stale-OK" semantics.
-- **Pass-1 source:** 03/F16
 - **Status:** Open
 
 ### L-28 — Missing CTE oracle for `rebuild_page_ids` recursive walk
@@ -2121,18 +2109,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 06/F29
 - **Status:** Open
 
-### L-64 — `RECV_TIMEOUT` 30 s vs `handle_message` 120 s mismatch
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_net/connection.rs:199` (`RECV_TIMEOUT = 30s`); outer budget at `src-tauri/src/sync_daemon/orchestrator.rs:530` and `src-tauri/src/sync_daemon/server.rs:221`
-- **What:** `RECV_TIMEOUT = 30s` wraps a single `ws.next()` future via `recv_message:224-237`. The outer `tokio::time::timeout(Duration::from_secs(120), orch.handle_message(incoming))` has a 120 s budget. A 10 MB op-batch on a 1 Mbps link takes ~80 s of wall-clock — well past the inner 30 s recv timeout, so the outer slack never gets to exercise.
-- **Why it matters:** Large initial sync over slow LAN (congested WiFi) fails spuriously even though the protocol budget is 120 s.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either raise `RECV_TIMEOUT` to align with the 120 s outer budget, or replace it with an idle-timer that resets between WebSocket *frames* rather than between messages.
-- **Pass-1 source:** 06/F32
-- **Status:** Open
-
 ### L-65 — mDNS `enable_addr_auto()` announces on every interface
 - **Domain:** Sync
 - **Location:** `src-tauri/src/sync_net/websocket.rs:43-66` (`announce`)
@@ -2167,30 +2143,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Group `to_materialize` by `block_id` before enqueuing so the materializer's `JoinSet` parallelises independent groups. Be mindful of cross-group ordering invariants for parent-id moves.
 - **Pass-1 source:** 06/F43
-- **Status:** Open
-
-### L-69 — `compute_ops_to_send` does not deterministically order ops across devices
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_protocol/operations.rs:33-56`; head ordering at `:17-23`
-- **What:** Outer loop iterates `local_heads`, which `get_local_heads` returns `ORDER BY device_id` (lexicographic). Within a device, ops are seq-ordered. So device-A's ops always precede device-B's lexicographically — meaning a device-A op that references a block created by device-B may arrive *before* device-B's create-op if A's device_id sorts first.
-- **Why it matters:** The op log has no FK; the materialiser handles `INSERT OR IGNORE` / row-not-found gracefully, and most ops are commutative / idempotent. Still, order-tolerance is implicit, not documented; certain op pairings (move-before-create) leave temporarily inconsistent materialised state until the create arrives.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Low (most ops are order-resilient)
-- **Recommendation:** Either sort the combined op list by `created_at` before sending (caveat: clock-skew between devices), or document explicitly that the op log is order-tolerant and the materialiser must absorb out-of-order arrivals. The latter is closer to current behaviour.
-- **Pass-1 source:** 06/F44
-- **Status:** Open
-
-### L-70 — `pending_ops_to_send` kept alive for the entire session
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_protocol/orchestrator.rs:24-25, 245, 398-402`
-- **What:** Initiator buffers every outgoing `OpRecord` in `pending_ops_to_send` *and* in `pending_op_transfers` (as `OpTransfer`s). Only `pending_ops_to_send.last()` is read at session end for the `last_sent_hash`. With a 5,000-op initial sync this doubles peak memory.
-- **Why it matters:** Memory pressure on bulk first-time sync — same family as M-51 / L-67 but on the op-log side.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace `pending_ops_to_send: Vec<OpRecord>` with `last_sent_hash: Option<String>` (capture the hash from the last batch as it streams). The full `Vec<OpTransfer>` is still needed in `pending_op_transfers` for retry/ack purposes, but the duplicate buffer can go.
-- **Pass-1 source:** 06/F45
 - **Status:** Open
 
 ### L-72 — Test gap: no chaos / partial-transfer recovery test for `sync_files`
@@ -2239,18 +2191,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Add a test that races `confirm_pairing` with an immediate daemon `shutdown()` and asserts the daemon either (a) processed the pair before shutdown, or (b) cleanly exited with the pair preserved in `peer_refs`.
 - **Pass-1 source:** 06/F51
-- **Status:** Open
-
-### L-76 — `peer_tuples` Vec built from `synced_at` strings every 30 s
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_daemon/orchestrator.rs:237-241`
-- **What:** Every 30 s tick of Branch C, the daemon does `let peer_tuples: Vec<(String, Option<String>)> = refs.iter().map(|p| (p.peer_id.clone(), p.synced_at.clone())).collect();` — a full clone of every paired peer's ID and timestamp.
-- **Why it matters:** At realistic single-user 2-10 paired peers this is a no-op. Note for completeness; not a real concern at this scale.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Pass `&[PeerRef]` directly into `peers_due_for_resync` instead of cloning into tuples. Cosmetic; deprioritise unless the 30 s tick is being touched anyway.
-- **Pass-1 source:** 06/F52
 - **Status:** Open
 
 ### Search & Links
@@ -2535,18 +2475,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 09/F7
 - **Status:** Open
 
-### L-116 — `wrap_tool_result_error` is dead code; FEAT-4h shipped but the helper is unwired
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/server.rs:382-390` (helper, `#[allow(dead_code)]`); only call site is the test at `src-tauri/src/mcp/server.rs:1537-1552`; production dispatch maps every `AppError` via `app_error_to_jsonrpc` (`src-tauri/src/mcp/server.rs:501-512`).
-- **What:** `wrap_tool_result_error` exists with a comment promising "FEAT-4h RW tools will use this helper", but FEAT-4h has shipped (REVIEW-LATER.md line 262) and every RW tool still uses JSON-RPC error codes via `app_error_to_jsonrpc`. The helper is reachable only from a `#[cfg(test)]` shape test.
-- **Why it matters:** Documentation and code drift; future contributors will spend time hunting "what is this for?" and conclude (correctly) that it is vestigial. The MCP `isError: true` envelope is real and meaningful in the spec — but Agaric chose JSON-RPC errors instead, deliberately.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Delete the helper and its shape test, and add a one-line comment near `app_error_to_jsonrpc` explaining the deliberate JSON-RPC-only design. Alternatively, wire it in for one specific class of agent-induced domain failures — but no current AppError variants fit, so deletion is cleaner.
-- **Pass-1 source:** 09/F9
-- **Status:** Open
-
 ### L-117 — `task_running` flag is one-shot; never resets while serve loop runs
 - **Domain:** MCP
 - **Location:** `src-tauri/src/mcp/mod.rs:434-450` (RO spawn), `src-tauri/src/mcp/mod.rs:521-537` (RW spawn); consumer `src-tauri/src/commands/mcp.rs:232`.
@@ -2569,30 +2497,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Leave as-is per Pass 2's "leave-as-is" finding; the warn log is sufficient diagnostic. If a clean fix is desired, add a `spawning: AtomicBool` on `McpLifecycle` and gate the spawn with `compare_exchange`.
 - **Pass-1 source:** 09/F11
-- **Status:** Open
-
-### L-119 — Schema `minimum`/`maximum` advisory; server silently `clamp`s out-of-range `limit`
-- **Domain:** MCP
-- **Location:** Schemas at `src-tauri/src/mcp/tools_ro.rs:280-289, 305-310, 328-340, 374-381, 393-400, 428-436`; clamp sites at `src-tauri/src/mcp/tools_ro.rs:468, 475, 484-487, 522, 530`; constants `LIST_RESULT_CAP = 100`, `SEARCH_RESULT_CAP = 50`, `AGENDA_RESULT_CAP = 500`.
-- **What:** Every list-style tool advertises `"limit": { "minimum": 1, "maximum": LIST_RESULT_CAP }` in its JSON-Schema, then the handler does `.clamp(1, LIST_RESULT_CAP)` — so an agent sending `{"limit": 999}` does not get `-32602 invalid params`, it gets a silent truncation to 100. Inconsistent with the strict `serde(deny_unknown_fields)` posture used elsewhere.
-- **Why it matters:** An MCP client with a JSON-Schema validator (Claude Desktop, Cursor) catches this client-side, so the leak is invisible there. Clients without schema validation get silent truncation. No security impact in the local-only model — purely an interop nit.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Pick one stance: (a) replace `.clamp(...)` with explicit `if !(1..=cap).contains(&l) { return Err(AppError::Validation(...)) }` to surface a `-32602`, or (b) drop the schema bounds and document "limits are silently capped server-side at N". Option (a) is more agent-friendly and matches `deny_unknown_fields`.
-- **Pass-1 source:** 09/F12
-- **Status:** Open
-
-### L-122 — `set_property` exactly-one-value validation duplicated at MCP boundary
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/tools_rw.rs:362-402` (handler check); backing `src-tauri/src/commands/properties.rs::set_property_inner` (independently enforces the same rule, per the comment at `tools_rw.rs:369-372`).
-- **What:** `handle_set_property` counts `value_text` / `value_num` / `value_date` / `value_ref` and rejects `!= 1` with `AppError::Validation`, duplicating the inner's validation purely so the error message includes the tool name. Two sources of truth for one rule.
-- **Why it matters:** Maintenance hazard. If the inner's rule ever changes (e.g. a future "clear by passing zero values" path), the MCP layer must update in lockstep or silently diverge.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Drop the MCP-side check; instead, add a `caller_context: &str` (or `tool_name: Option<&str>`) parameter to `set_property_inner` that gets included in the `AppError::Validation` message. Keep one source of truth.
-- **Pass-1 source:** 09/F16
 - **Status:** Open
 
 ### L-124 — No MCP-level concurrent-write stress test

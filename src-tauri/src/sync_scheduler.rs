@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::peer_refs::PeerRef;
+
 use rand::RngExt;
 use tokio::sync::{Mutex, Notify};
 
@@ -280,22 +282,30 @@ impl SyncScheduler {
 
     // -- Periodic resync (#385) -----------------------------------------------
 
-    /// Given a list of `(peer_id, last_synced_at)` pairs where timestamps
-    /// are RFC 3339, return the peer IDs that are overdue for a resync
-    /// (synced_at is None or older than `resync_interval`).
-    pub fn peers_due_for_resync(&self, peers: &[(String, Option<String>)]) -> Vec<String> {
+    /// Given a slice of [`PeerRef`] rows, return the peer IDs that are
+    /// overdue for a resync (`synced_at` is `None` or older than
+    /// `resync_interval`).
+    ///
+    /// L-76: this used to take `&[(String, Option<String>)]`, which
+    /// forced Branch C of the daemon loop to clone every paired peer's
+    /// `peer_id` and `synced_at` on every 30 s tick just to build the
+    /// tuple form. Borrowing the rows directly avoids that round-trip;
+    /// we still allocate one `String` per overdue peer in the result
+    /// (the daemon needs an owned id), but no per-tick clone of
+    /// up-to-date peers.
+    pub fn peers_due_for_resync(&self, peers: &[PeerRef]) -> Vec<String> {
         let now = chrono::Utc::now();
         let interval = chrono::Duration::from_std(self.resync_interval)
             .unwrap_or(chrono::Duration::seconds(60));
 
         peers
             .iter()
-            .filter(|(peer_id, synced_at)| {
+            .filter(|p| {
                 // Skip peers in backoff
-                if !self.may_retry(peer_id) {
+                if !self.may_retry(&p.peer_id) {
                     return false;
                 }
-                match synced_at {
+                match p.synced_at.as_deref() {
                     None => true,
                     Some(ts) => {
                         chrono::DateTime::parse_from_rfc3339(ts)
@@ -304,7 +314,7 @@ impl SyncScheduler {
                     }
                 }
             })
-            .map(|(id, _)| id.clone())
+            .map(|p| p.peer_id.clone())
             .collect()
     }
 }
@@ -546,10 +556,28 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    /// Test helper: build a `PeerRef` with only the two fields
+    /// `peers_due_for_resync` reads (`peer_id`, `synced_at`); the rest
+    /// default to None / 0. Keeps the resync tests as terse as the
+    /// pre-L-76 tuple form they replaced.
+    fn pr(peer_id: &str, synced_at: Option<&str>) -> PeerRef {
+        PeerRef {
+            peer_id: peer_id.to_string(),
+            last_hash: None,
+            last_sent_hash: None,
+            synced_at: synced_at.map(String::from),
+            reset_count: 0,
+            last_reset_at: None,
+            cert_hash: None,
+            device_name: None,
+            last_address: None,
+        }
+    }
+
     #[test]
     fn peers_due_for_resync_none_synced() {
         let sched = SyncScheduler::with_intervals(DEFAULT_DEBOUNCE, Duration::from_secs(60));
-        let peers = vec![("peer-a".to_string(), None), ("peer-b".to_string(), None)];
+        let peers = vec![pr("peer-a", None), pr("peer-b", None)];
         let due = sched.peers_due_for_resync(&peers);
         assert_eq!(due.len(), 2);
     }
@@ -558,10 +586,7 @@ mod tests {
     fn peers_due_for_resync_recent_excluded() {
         let sched = SyncScheduler::with_intervals(DEFAULT_DEBOUNCE, Duration::from_secs(60));
         let recent = chrono::Utc::now().to_rfc3339();
-        let peers = vec![
-            ("peer-a".to_string(), Some(recent)),
-            ("peer-b".to_string(), None),
-        ];
+        let peers = vec![pr("peer-a", Some(&recent)), pr("peer-b", None)];
         let due = sched.peers_due_for_resync(&peers);
         assert_eq!(due, vec!["peer-b".to_string()]);
     }
@@ -570,7 +595,7 @@ mod tests {
     fn peers_due_for_resync_old_included() {
         let sched = SyncScheduler::with_intervals(DEFAULT_DEBOUNCE, Duration::from_secs(60));
         let old = (chrono::Utc::now() - chrono::Duration::seconds(120)).to_rfc3339();
-        let peers = vec![("peer-a".to_string(), Some(old))];
+        let peers = vec![pr("peer-a", Some(&old))];
         let due = sched.peers_due_for_resync(&peers);
         assert_eq!(due, vec!["peer-a".to_string()]);
     }
@@ -579,7 +604,7 @@ mod tests {
     fn peers_due_for_resync_skips_backed_off() {
         let sched = SyncScheduler::with_intervals(DEFAULT_DEBOUNCE, Duration::from_secs(60));
         sched.record_failure("peer-a");
-        let peers = vec![("peer-a".to_string(), None)];
+        let peers = vec![pr("peer-a", None)];
         let due = sched.peers_due_for_resync(&peers);
         assert!(due.is_empty());
     }
@@ -638,7 +663,7 @@ mod tests {
     #[test]
     fn peers_due_for_resync_unparseable_timestamp() {
         let sched = SyncScheduler::with_intervals(Duration::from_secs(3), Duration::from_secs(60));
-        let peers = vec![("PEER_BAD".to_string(), Some("not-a-date".to_string()))];
+        let peers = vec![pr("PEER_BAD", Some("not-a-date"))];
         let due = sched.peers_due_for_resync(&peers);
         assert_eq!(
             due,
@@ -651,7 +676,7 @@ mod tests {
     fn peers_due_for_resync_future_timestamp() {
         let sched = SyncScheduler::with_intervals(Duration::from_secs(3), Duration::from_secs(60));
         let future = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
-        let peers = vec![("PEER_FUTURE".to_string(), Some(future))];
+        let peers = vec![pr("PEER_FUTURE", Some(&future))];
         let due = sched.peers_due_for_resync(&peers);
         assert!(
             due.is_empty(),
@@ -665,7 +690,7 @@ mod tests {
         // Put both peers in backoff
         sched.record_failure("P1");
         sched.record_failure("P2");
-        let peers = vec![("P1".to_string(), None), ("P2".to_string(), None)];
+        let peers = vec![pr("P1", None), pr("P2", None)];
         let due = sched.peers_due_for_resync(&peers);
         assert!(
             due.is_empty(),

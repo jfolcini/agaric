@@ -392,6 +392,7 @@ async fn backlinks_filtered_with_property_text_filter() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -428,6 +429,7 @@ async fn backlinks_filtered_with_property_text_filter() {
         b2.id.clone(),
         "status".into(),
         Some("archived".into()),
+        None,
         None,
         None,
         None,
@@ -608,6 +610,7 @@ async fn backlinks_filtered_with_sort_property() {
         Some(1.0),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -645,6 +648,7 @@ async fn backlinks_filtered_with_sort_property() {
         "importance".into(),
         None,
         Some(10.0),
+        None,
         None,
         None,
     )
@@ -928,6 +932,7 @@ async fn backlinks_filtered_and_filter_intersection() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -968,6 +973,7 @@ async fn backlinks_filtered_and_filter_intersection() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1005,6 +1011,7 @@ async fn backlinks_filtered_and_filter_intersection() {
         b3.id.clone(),
         "status".into(),
         Some("active".into()),
+        None,
         None,
         None,
         None,
@@ -1315,6 +1322,7 @@ async fn backlinks_list_property_keys_returns_distinct_sorted() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1330,6 +1338,7 @@ async fn backlinks_list_property_keys_returns_distinct_sorted() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1342,6 +1351,7 @@ async fn backlinks_list_property_keys_returns_distinct_sorted() {
         b2.id.clone(),
         "alpha".into(),
         Some("a2".into()),
+        None,
         None,
         None,
         None,
@@ -1397,6 +1407,7 @@ async fn backlinks_list_property_keys_includes_all_types() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1411,6 +1422,7 @@ async fn backlinks_list_property_keys_includes_all_types() {
         "count".into(),
         None,
         Some(42.0),
+        None,
         None,
         None,
     )
@@ -1428,6 +1440,7 @@ async fn backlinks_list_property_keys_includes_all_types() {
         None,
         None,
         Some("2025-06-15".into()),
+        None,
         None,
     )
     .await

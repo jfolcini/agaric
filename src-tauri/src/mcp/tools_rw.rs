@@ -367,26 +367,10 @@ async fn handle_set_property(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: SetPropertyArgs = parse_args(TOOL_SET_PROPERTY, args)?;
-    // Enforce the exactly-one-value invariant at the tool boundary so the
-    // agent gets a structured error instead of relying on the backend's
-    // inner validation (which surfaces the same AppError::Validation, but
-    // with a message that does not mention the tool name).
-    let provided = [
-        args.value_text.is_some(),
-        args.value_num.is_some(),
-        args.value_date.is_some(),
-        args.value_ref.is_some(),
-    ]
-    .iter()
-    .filter(|b| **b)
-    .count();
-    if provided != 1 {
-        return Err(AppError::Validation(format!(
-            "tool `{TOOL_SET_PROPERTY}`: exactly one of value_text / value_num / value_date / \
-             value_ref must be provided (got {provided})"
-        )));
-    }
-
+    // L-122: the exactly-one-value invariant is enforced inside
+    // `set_property_inner` when a `caller_context` is supplied — passing
+    // `Some(TOOL_SET_PROPERTY)` keeps the agent-facing error message
+    // naming the tool, without duplicating the precheck at this boundary.
     let resp = set_property_inner(
         pool,
         device_id,
@@ -397,6 +381,7 @@ async fn handle_set_property(
         args.value_num,
         args.value_date,
         args.value_ref,
+        Some(TOOL_SET_PROPERTY),
     )
     .await?;
     to_tool_result(&resp)

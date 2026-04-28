@@ -1250,10 +1250,13 @@ fn sync_message_sync_complete_roundtrip_various() {
 async fn recv_times_out_when_peer_is_silent() {
     let (mut client, server) = test_connection_pair().await;
 
-    // Hold the server connection open but never send anything
+    // Hold the server connection open longer than `RECV_TIMEOUT`
+    // (180 s after L-64) so the client side fires its single-recv
+    // timeout before the holder drops the server. Tokio's
+    // `start_paused = true` auto-advances time, so this is virtual.
     let _hold = tokio::spawn(async move {
         let _keep = server;
-        tokio::time::sleep(Duration::from_secs(120)).await;
+        tokio::time::sleep(Duration::from_secs(300)).await;
     });
 
     let result = client.recv_json::<serde_json::Value>().await;

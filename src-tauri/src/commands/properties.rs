@@ -87,6 +87,15 @@ pub async fn list_property_keys_inner(pool: &SqlitePool) -> Result<Vec<String>, 
 ///
 /// Thin wrapper around [`set_property_in_tx`] that manages the transaction
 /// lifecycle and dispatches background work.
+///
+/// `caller_context` (L-122): when `Some(name)`, the exactly-one-value
+/// invariant is enforced up-front and the resulting `AppError::Validation`
+/// message names the caller (e.g. `"tool 'set_property': ..."`). When
+/// `None`, the message wording is delegated to `set_property_in_tx`'s
+/// inner `validate_set_property` call (i.e. unchanged from prior behaviour).
+/// This collapses the duplicate exactly-one-value precheck that used to
+/// live in the MCP `handle_set_property` boundary purely to carry the
+/// tool name.
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn set_property_inner(
@@ -99,7 +108,33 @@ pub async fn set_property_inner(
     value_num: Option<f64>,
     value_date: Option<String>,
     value_ref: Option<String>,
+    caller_context: Option<&str>,
 ) -> Result<BlockRow, AppError> {
+    // L-122: when a caller_context is supplied, enforce the
+    // exactly-one-value invariant here so the error message can name
+    // the caller. Callers that pass `None` keep the legacy behaviour
+    // (the inner `validate_set_property` in `set_property_in_tx` runs
+    // with its existing wording, which also tolerates count==0 for
+    // reserved-key clears). Callers that pass `Some(_)` (currently
+    // only the MCP `set_property` tool boundary) reject any non-1
+    // count up front, matching what the MCP precheck used to do.
+    if let Some(name) = caller_context {
+        let provided = [
+            value_text.is_some(),
+            value_num.is_some(),
+            value_date.is_some(),
+            value_ref.is_some(),
+        ]
+        .iter()
+        .filter(|b| **b)
+        .count();
+        if provided != 1 {
+            return Err(AppError::Validation(format!(
+                "tool '{name}': exactly one of value_text / value_num / value_date / \
+                 value_ref must be provided (got {provided})"
+            )));
+        }
+    }
     // MAINT-112: CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "set_property").await?;
     // FEAT-5i — snapshot pre-mutation agenda-relevant state so the
@@ -357,6 +392,7 @@ pub async fn set_priority_inner(
         None,
         None,
         None,
+        None,
     )
     .await
 }
@@ -390,6 +426,7 @@ pub async fn set_due_date_inner(
         None,
         date,
         None,
+        None,
     )
     .await
 }
@@ -422,6 +459,7 @@ pub async fn set_scheduled_date_inner(
         None,
         None,
         date,
+        None,
         None,
     )
     .await
@@ -731,6 +769,7 @@ pub async fn set_property(
         value_num,
         value_date,
         value_ref,
+        None,
     )
     .await
     .map_err(sanitize_internal_error)?;

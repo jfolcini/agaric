@@ -2245,6 +2245,95 @@ async fn orchestrator_responder_full_flow() {
 }
 
 // ======================================================================
+// L-70 — SyncComplete records the LAST sent op's hash, not the first
+// ======================================================================
+
+/// Drive the orchestrator through a multi-op send and assert that
+/// `peer_refs.last_sent_hash` ends up equal to the *last* op's hash —
+/// not the first or any middle op. Locks the L-70 invariant: the
+/// orchestrator no longer buffers every outgoing `OpRecord`, only the
+/// hash of the last one. A future maintainer who reverts the read site
+/// to `pending_ops_to_send.first()` (or any non-last index) gets a
+/// targeted failure here naming the invariant.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_complete_records_last_sent_op_hash() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // Three local ops so first/middle/last are all distinguishable.
+    let op1 = append_local_op_at(
+        &pool,
+        "responder-dev",
+        test_create_payload("BLK1"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+    // Middle op exists in the chain but its hash is not asserted on;
+    // the only point of writing it is to make sure op3 isn't also op1's
+    // immediate successor (so a buggy `first()` read can't accidentally
+    // match the last hash).
+    let _op2 = append_local_op_at(
+        &pool,
+        "responder-dev",
+        test_create_payload("BLK2"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+    let op3 = append_local_op_at(
+        &pool,
+        "responder-dev",
+        test_create_payload("BLK3"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+    assert_ne!(op1.hash, op3.hash, "test setup: hashes must differ");
+
+    let mut orch =
+        SyncOrchestrator::new(pool.clone(), "responder-dev".into(), materializer.clone())
+            .with_expected_remote_id("initiator-dev".into());
+
+    // Responder mode: receive an empty HeadExchange so the orchestrator
+    // computes all 3 ops as outgoing and captures the last-sent hash.
+    orch.handle_message(SyncMessage::HeadExchange { heads: vec![] })
+        .await
+        .unwrap();
+    assert_eq!(
+        orch.session().ops_sent,
+        3,
+        "all 3 local ops should be queued as outgoing"
+    );
+
+    // Receive SyncComplete from the (simulated) initiator → orchestrator
+    // writes `last_sent_hash` to peer_refs.
+    orch.handle_message(SyncMessage::SyncComplete {
+        last_hash: String::new(),
+    })
+    .await
+    .unwrap();
+    assert!(orch.is_complete(), "session should be Complete");
+
+    let peer = crate::peer_refs::get_peer_ref(&pool, "initiator-dev")
+        .await
+        .unwrap()
+        .expect("peer_refs row must exist after SyncComplete");
+    assert_eq!(
+        peer.last_sent_hash.as_deref(),
+        Some(op3.hash.as_str()),
+        "L-70: last_sent_hash must be the LAST sent op's hash, not the first or middle"
+    );
+    assert_ne!(
+        peer.last_sent_hash.as_deref(),
+        Some(op1.hash.as_str()),
+        "L-70: last_sent_hash must NOT be the first op's hash"
+    );
+
+    materializer.shutdown();
+}
+
+// ======================================================================
 // #620 — OpBatch streaming for large op logs
 // ======================================================================
 

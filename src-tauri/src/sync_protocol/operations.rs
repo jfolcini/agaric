@@ -30,6 +30,38 @@ pub async fn get_local_heads(pool: &SqlitePool) -> Result<Vec<DeviceHead>, AppEr
 /// For each device we have ops for:
 /// - If remote knows about this device: send ops with `seq > remote_seq`.
 /// - If remote doesn't know: send ALL ops for that device.
+///
+/// # Ordering semantics — order-tolerant op log (L-69)
+///
+/// The outer loop iterates `local_heads`, which [`get_local_heads`]
+/// returns `ORDER BY device_id` (lexicographic). Within a device, ops
+/// are seq-ordered. Concretely, device-A's ops always precede
+/// device-B's lexicographically — so a device-A op that references a
+/// block created by device-B may arrive *before* device-B's create-op
+/// when A's `device_id` sorts first.
+///
+/// This is **deliberate**: the sync protocol relies on the op log
+/// being **order-tolerant**, not strictly ordered:
+///
+/// - The op log has no foreign keys — `apply_remote_ops` uses
+///   `INSERT OR IGNORE` semantics for duplicates and the materializer
+///   handles `row-not-found` gracefully on `EditBlock` /
+///   `SetProperty` / `MoveBlock` etc.
+/// - Most op variants (set_property, add_tag, remove_tag) are
+///   commutative or idempotent against the materialized state.
+/// - The few order-sensitive pairings (e.g. `MoveBlock` arriving
+///   before its target's `CreateBlock`) leave the materializer's
+///   derived tables temporarily inconsistent — the create op then
+///   "fills in" the row when it arrives, and a subsequent rebuild
+///   on the same `block_id` group reconciles the order.
+///
+/// **Sorting the combined list by `created_at` would NOT make this
+/// stricter** because clocks across devices can skew, and the cost of
+/// validating clock consistency is more than the cost of absorbing
+/// out-of-order arrivals at the materializer. If you find yourself
+/// reaching for "let's sort by `created_at` to be safe", read the
+/// rationale above and prefer fixing the materializer's ordering
+/// tolerance instead.
 pub async fn compute_ops_to_send(
     pool: &SqlitePool,
     remote_heads: &[DeviceHead],
