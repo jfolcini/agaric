@@ -1927,15 +1927,19 @@ mod tests {
     /// seq)` pair when a scope is active. Outside a scope (the
     /// frontend-invoked path) the call is a silent no-op — that path is
     /// covered in `task_locals::tests::record_append_outside_scope_is_silent_noop`.
+    ///
+    /// L-114: storage is `RefCell<Vec<OpRef>>` so multiple appends
+    /// inside the same scope all retain. `take_appends()` drains the
+    /// list; for a single-call test this yields a one-element Vec.
     #[tokio::test]
     async fn append_local_op_in_tx_populates_last_append_inside_scope() {
-        use crate::task_locals::LAST_APPEND;
-        use std::cell::Cell;
+        use crate::task_locals::{take_appends, LAST_APPEND};
+        use std::cell::RefCell;
 
         let (pool, _dir) = test_pool().await;
 
         let got = LAST_APPEND
-            .scope(Cell::new(None), async {
+            .scope(RefCell::new(Vec::new()), async {
                 let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
                 let record = append_local_op_in_tx(
                     &mut tx,
@@ -1947,20 +1951,25 @@ mod tests {
                 .unwrap();
                 tx.commit().await.unwrap();
 
-                let captured = LAST_APPEND.with(Cell::take);
+                let captured = take_appends();
                 (record, captured)
             })
             .await;
 
         let (record, captured) = got;
-        let captured = captured.expect("LAST_APPEND must be populated after append_local_op_in_tx");
         assert_eq!(
-            captured.device_id, record.device_id,
-            "LAST_APPEND.device_id must match the inserted row",
+            captured.len(),
+            1,
+            "exactly one append in this scope, got {captured:?}",
+        );
+        let only = &captured[0];
+        assert_eq!(
+            only.device_id, record.device_id,
+            "LAST_APPEND[0].device_id must match the inserted row",
         );
         assert_eq!(
-            captured.seq, record.seq,
-            "LAST_APPEND.seq must match the inserted row",
+            only.seq, record.seq,
+            "LAST_APPEND[0].seq must match the inserted row",
         );
     }
 

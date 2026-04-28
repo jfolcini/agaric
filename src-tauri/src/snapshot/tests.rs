@@ -3782,3 +3782,149 @@ async fn maint133_conflict_type_survives_round_trip() {
 
     mat.shutdown();
 }
+
+// =======================================================================
+// L-111: apply_snapshot must roll back chunk-1 inserts when chunk-2 fails
+// =======================================================================
+//
+// `apply_snapshot` batch-INSERTs each table in chunks of
+// `MAX_SQL_PARAMS / num_columns` rows (see `batch_insert_snapshot_rows!`
+// in `restore.rs`). The traversal-fs_path test above already covers a
+// failure on the very first row of `attachments`. This test covers the
+// adjacent invariant: when chunk N>=2 fails, chunk N-1's rows must NOT
+// remain — i.e. the whole transaction rolls back, not just the failing
+// statement.
+//
+// Today this holds because every chunk runs inside the same
+// `BEGIN IMMEDIATE` transaction and the `?` on `execute(...)` propagates
+// the chunk failure out of `apply_snapshot` without committing. A future
+// refactor that splits the loop into multiple transactions (or commits
+// between chunks) would silently break atomicity — this test pins the
+// behaviour.
+//
+// Construction: `block_properties` has `PRIMARY KEY (block_id, key)`,
+// 6 columns -> `CHUNK = MAX_SQL_PARAMS / 6 = 166`. We build chunk-1
+// (166 rows with unique keys), then chunk-2 starts with one fresh row
+// followed by a row whose `(block_id, key)` duplicates a chunk-1 row.
+// SQLite's chunk-2 INSERT aborts on the UNIQUE/PK violation, the error
+// propagates, and the tx must roll back leaving zero rows behind.
+#[tokio::test]
+async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
+    use crate::db::MAX_SQL_PARAMS;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Chunk size matches the derivation in `restore.rs`'s
+    // `batch_insert_snapshot_rows!` macro: MAX_SQL_PARAMS / num_columns.
+    // `block_properties` has 6 columns, so CHUNK = 999 / 6 = 166.
+    const COLS: usize = 6;
+    const CHUNK: usize = MAX_SQL_PARAMS / COLS;
+
+    // One block to satisfy the FK on block_properties.block_id.
+    let blocks = vec![BlockSnapshot {
+        id: "blk-host".to_string(),
+        block_type: "content".to_string(),
+        content: Some("hosts many properties".to_string()),
+        parent_id: None,
+        position: Some(1),
+        deleted_at: None,
+        is_conflict: 0,
+        conflict_source: None,
+        conflict_type: None,
+        todo_state: None,
+        priority: None,
+        due_date: None,
+        scheduled_date: None,
+    }];
+
+    // Build chunk-1: exactly CHUNK rows with unique keys. All valid.
+    let mut block_properties: Vec<BlockPropertySnapshot> = (0..CHUNK)
+        .map(|i| BlockPropertySnapshot {
+            block_id: "blk-host".to_string(),
+            key: format!("key-c1-{i:05}"),
+            value_text: Some(format!("v{i}")),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        })
+        .collect();
+
+    // Chunk-2, row 0: a fresh, valid row.
+    block_properties.push(BlockPropertySnapshot {
+        block_id: "blk-host".to_string(),
+        key: "key-c2-fresh".to_string(),
+        value_text: Some("ok".to_string()),
+        value_num: None,
+        value_date: None,
+        value_ref: None,
+    });
+    // Chunk-2, row 1: duplicates the (block_id, key) of a chunk-1 row,
+    // violating PRIMARY KEY (block_id, key). This is the row that makes
+    // the chunk-2 INSERT fail — chunk-1 has already been INSERTed in the
+    // same transaction by this point.
+    block_properties.push(BlockPropertySnapshot {
+        block_id: "blk-host".to_string(),
+        key: "key-c1-00050".to_string(),
+        value_text: Some("duplicate".to_string()),
+        value_num: None,
+        value_date: None,
+        value_ref: None,
+    });
+
+    let data = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-l111".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "l111-test".to_string(),
+        tables: SnapshotTables {
+            blocks,
+            block_tags: vec![],
+            block_properties,
+            block_links: vec![],
+            attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    };
+
+    let encoded = encode_snapshot(&data).unwrap();
+    let err = apply_snapshot(&pool, &mat, &encoded)
+        .await
+        .expect_err("apply_snapshot must surface the chunk-2 PK violation");
+
+    // The duplicate (block_id, key) must surface as a database-layer
+    // error from sqlx (UNIQUE/PK violation). Anything else means the
+    // failure path changed.
+    match err {
+        AppError::Database(_) => {}
+        other => panic!("expected Database error from PK violation, got {other:?}"),
+    }
+
+    // Atomicity invariant: chunk-1's 166 rows must NOT be visible.
+    // If a future refactor splits the chunked loop across transactions
+    // (or commits between chunks), these rows would leak through and
+    // this assertion would catch it.
+    let prop_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_properties")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        prop_count, 0,
+        "L-111: chunk-1 block_properties rows must roll back when chunk-2 fails; \
+         got {prop_count} rows still present, expected 0"
+    );
+
+    // Whole-tx rollback: the host block insert (which ran before the
+    // block_properties chunks) must also be gone.
+    let blk_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        blk_count, 0,
+        "L-111: blocks inserted before the failing chunk must also roll back"
+    );
+
+    mat.shutdown();
+}

@@ -151,6 +151,136 @@ fn shift_date_once_custom_intervals() {
 }
 
 #[test]
+fn shift_date_once_dst_transitions_calendar_safe() {
+    // L-110: shift_date_once is calendar-day arithmetic on NaiveDate, so DST
+    // transitions in any timezone must not shift the result by ±1 day.
+    //
+    // We exercise dates that fall on (or one day before) known DST-transition
+    // days across multiple timezones. The pure NaiveDate arithmetic should
+    // produce the same calendar result regardless of timezone — this test
+    // pins that invariant so a future refactor that introduces a DateTime
+    // (and thus a timezone-sensitive add) would be caught.
+    //
+    // Reference DST dates (2024):
+    //   - Europe/London spring-forward:    2024-03-31 (skips 01:00→02:00)
+    //   - Europe/London fall-back:         2024-10-27 (repeats 01:00→02:00)
+    //   - America/New_York spring-forward: 2024-03-10 (skips 02:00→03:00)
+    //   - America/New_York fall-back:      2024-11-03 (repeats 01:00→02:00)
+    //   - Australia/Sydney spring-forward: 2024-10-06 (skips 02:00→03:00)
+    //   - Australia/Sydney fall-back:      2024-04-07 (repeats 02:00→03:00)
+    type Case = (
+        i32,
+        u32,
+        u32,
+        &'static str,
+        Option<(i32, u32, u32)>,
+        &'static str,
+    );
+    let cases: &[Case] = &[
+        // (base_y, base_m, base_d, interval, expected_y_m_d, description)
+        // London spring-forward: daily on 2024-03-30 → 2024-03-31 (transition day).
+        (
+            2024,
+            3,
+            30,
+            "daily",
+            Some((2024, 3, 31)),
+            "London spring-forward eve daily → transition day",
+        ),
+        // London spring-forward: weekly on 2024-03-30 → 2024-04-06 (skips DST day cleanly).
+        (
+            2024,
+            3,
+            30,
+            "weekly",
+            Some((2024, 4, 6)),
+            "London spring-forward eve weekly → 7 calendar days later",
+        ),
+        // London fall-back: daily on 2024-10-26 → 2024-10-27 (transition day).
+        (
+            2024,
+            10,
+            26,
+            "daily",
+            Some((2024, 10, 27)),
+            "London fall-back eve daily → transition day",
+        ),
+        // London fall-back: weekly on 2024-10-26 → 2024-11-02 (spans transition).
+        (
+            2024,
+            10,
+            26,
+            "weekly",
+            Some((2024, 11, 2)),
+            "London fall-back eve weekly → 7 calendar days later",
+        ),
+        // US Eastern spring-forward: +3d on 2024-03-08 → 2024-03-11 (spans DST).
+        (
+            2024,
+            3,
+            8,
+            "+3d",
+            Some((2024, 3, 11)),
+            "US Eastern +3d across spring-forward → 3 calendar days",
+        ),
+        // US Eastern fall-back: +3d on 2024-11-01 → 2024-11-04 (spans DST).
+        (
+            2024,
+            11,
+            1,
+            "+3d",
+            Some((2024, 11, 4)),
+            "US Eastern +3d across fall-back → 3 calendar days",
+        ),
+        // Sydney spring-forward: weekly on 2024-10-05 → 2024-10-12 (spans DST).
+        (
+            2024,
+            10,
+            5,
+            "weekly",
+            Some((2024, 10, 12)),
+            "Sydney spring-forward eve weekly → 7 calendar days later",
+        ),
+        // Sydney fall-back: monthly on 2024-04-07 → 2024-05-07.
+        (
+            2024,
+            4,
+            7,
+            "monthly",
+            Some((2024, 5, 7)),
+            "Sydney fall-back day monthly → same day next month",
+        ),
+        // Stress: +Nd that lands exactly on a DST day across years.
+        (
+            2025,
+            3,
+            8,
+            "+2d",
+            Some((2025, 3, 10)),
+            "US Eastern 2025 spring-forward +2d → 3rd day forward",
+        ),
+        // Lord Howe Island half-hour DST start (2024-10-06): pure calendar day,
+        // half-hour shift is irrelevant for NaiveDate arithmetic.
+        (
+            2024,
+            10,
+            5,
+            "+2d",
+            Some((2024, 10, 7)),
+            "Lord Howe DST +2d across half-hour shift → 2 calendar days",
+        ),
+    ];
+
+    for (y, m, d, rule, expected, desc) in cases {
+        let base = chrono::NaiveDate::from_ymd_opt(*y, *m, *d).unwrap();
+        let actual = shift_date_once(base, rule);
+        let expected_date =
+            expected.map(|(ey, em, ed)| chrono::NaiveDate::from_ymd_opt(ey, em, ed).unwrap());
+        assert_eq!(actual, expected_date, "{desc}");
+    }
+}
+
+#[test]
 fn shift_date_returns_none_for_bad_input() {
     assert_eq!(
         shift_date("not-a-date", "daily"),

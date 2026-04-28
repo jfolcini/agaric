@@ -5,6 +5,14 @@ use sqlx::{Row, SqlitePool};
 use super::strip::{load_ref_maps, strip_for_fts, strip_for_fts_with_maps};
 use crate::error::AppError;
 
+/// L-92: chunk size for [`reindex_fts_references`].
+///
+/// Renaming a popular tag (e.g. `#todo` referenced from 50 000+ blocks) used
+/// to hold a single writer transaction for the entire batch, blocking all
+/// other writers for many seconds. The reindex is now split into chunks of
+/// this many ids per transaction so other writers can interleave.
+pub(crate) const FTS_REINDEX_CHUNK: usize = 1000;
+
 // ---------------------------------------------------------------------------
 // FTS index management
 // ---------------------------------------------------------------------------
@@ -152,10 +160,17 @@ pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
 /// ## Performance
 ///
 /// Pre-loads tag/page name maps once (2 queries), then uses `json_each()` to
-/// batch the SELECT and DELETE into single queries. Only the INSERT remains
-/// per-row (because `strip_for_fts_with_maps` processes each block
-/// differently). This reduces from N×3 queries to N+2 (1 batch SELECT +
-/// 1 batch DELETE + N INSERTs) inside a single transaction.
+/// batch the SELECT and DELETE into single queries per chunk. Only the INSERT
+/// remains per-row (because `strip_for_fts_with_maps` processes each block
+/// differently).
+///
+/// L-92: the work is split into chunks of [`FTS_REINDEX_CHUNK`] ids with a
+/// fresh transaction per chunk so a tag-rename touching tens of thousands of
+/// blocks does not hold a single writer transaction for many seconds. Chunks
+/// commit independently — partial failure of a later chunk leaves earlier
+/// chunks committed, which is acceptable since `fts_blocks` is an
+/// eventually-consistent cache (the next `update_fts_for_block` /
+/// `rebuild_fts_index` reconciles any stale rows).
 pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
     // Find blocks referencing this ID via block_tags (for explicit tags)
     let tag_refs: Vec<String> =
@@ -195,49 +210,55 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
         return Ok(());
     }
 
-    // Pre-load tag/page name maps (2 queries instead of 2*N)
+    // Pre-load tag/page name maps once (2 queries instead of 2*N) — the maps
+    // are reused across every chunk's transaction.
     let (tag_names, page_titles) = load_ref_maps(pool).await?;
 
-    let ids_json = serde_json::to_string(&unique_ids)?;
+    // L-92: chunk the reindex into FTS_REINDEX_CHUNK-sized batches with a
+    // fresh transaction per chunk. See the function-level rustdoc for the
+    // rationale and partial-failure semantics.
+    for chunk in unique_ids.chunks(FTS_REINDEX_CHUNK) {
+        let ids_json = serde_json::to_string(chunk)?;
 
-    // Single transaction for all updates
-    let mut tx = pool.begin().await?;
+        let mut tx = pool.begin().await?;
 
-    // Batch fetch all block metadata (1 query instead of N)
-    let rows = sqlx::query(
-        r#"SELECT id, content, deleted_at, is_conflict FROM blocks
-           WHERE id IN (SELECT value FROM json_each(?))"#,
-    )
-    .bind(&ids_json)
-    .fetch_all(&mut *tx)
-    .await?;
-
-    // Batch delete all old FTS entries (1 query instead of N)
-    sqlx::query("DELETE FROM fts_blocks WHERE block_id IN (SELECT value FROM json_each(?))")
+        // Batch fetch this chunk's block metadata (1 query per chunk)
+        let rows = sqlx::query(
+            r#"SELECT id, content, deleted_at, is_conflict FROM blocks
+               WHERE id IN (SELECT value FROM json_each(?))"#,
+        )
         .bind(&ids_json)
-        .execute(&mut *tx)
+        .fetch_all(&mut *tx)
         .await?;
 
-    // Per-row INSERT (strip_for_fts_with_maps is sync, can't batch)
-    for row in &rows {
-        let id: &str = row.get("id");
-        let deleted_at: Option<&str> = row.get("deleted_at");
-        let is_conflict: bool = row.get("is_conflict");
-        let content: Option<&str> = row.get("content");
+        // Batch delete this chunk's old FTS entries (1 query per chunk)
+        sqlx::query("DELETE FROM fts_blocks WHERE block_id IN (SELECT value FROM json_each(?))")
+            .bind(&ids_json)
+            .execute(&mut *tx)
+            .await?;
 
-        if deleted_at.is_none() && !is_conflict {
-            if let Some(content) = content {
-                let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
-                sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
-                    .bind(id)
-                    .bind(&stripped)
-                    .execute(&mut *tx)
-                    .await?;
+        // Per-row INSERT (strip_for_fts_with_maps is sync, can't batch)
+        for row in &rows {
+            let id: &str = row.get("id");
+            let deleted_at: Option<&str> = row.get("deleted_at");
+            let is_conflict: bool = row.get("is_conflict");
+            let content: Option<&str> = row.get("content");
+
+            if deleted_at.is_none() && !is_conflict {
+                if let Some(content) = content {
+                    let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
+                    sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
+                        .bind(id)
+                        .bind(&stripped)
+                        .execute(&mut *tx)
+                        .await?;
+                }
             }
         }
+
+        tx.commit().await?;
     }
 
-    tx.commit().await?;
     Ok(())
 }
 

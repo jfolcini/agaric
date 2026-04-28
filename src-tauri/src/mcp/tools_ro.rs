@@ -2207,29 +2207,33 @@ mod tests {
     }
 
     /// FEAT-4h slice 3: RO tools must NOT populate `LAST_APPEND` — they
-    /// don't append ops, so the dispatch layer should see `None` and
-    /// emit an `ActivityEntry` with `op_ref = None`. Drive `list_pages`
-    /// inside an explicit scope and assert the cell is still `None` on
-    /// exit.
+    /// don't append ops, so the dispatch layer should drain an empty
+    /// list and emit an `ActivityEntry` with `op_ref = None` and
+    /// `additional_op_refs = []`. Drive `list_pages` inside an
+    /// explicit scope and assert the drained list is empty on exit.
+    ///
+    /// L-114: storage is a `Vec`, so the assertion shifts from
+    /// `is_none()` to `is_empty()`. Multi-op RW tools are covered in
+    /// `mcp::server::tests::handle_tools_call_multi_op_tool_*`.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn list_pages_does_not_populate_last_append() {
-        use crate::task_locals::LAST_APPEND;
-        use std::cell::Cell;
+        use crate::task_locals::{take_appends, LAST_APPEND};
+        use std::cell::RefCell;
 
         let (tools, _mat, _dir) = mk_tools().await;
 
         let captured = LAST_APPEND
-            .scope(Cell::new(None), async {
+            .scope(RefCell::new(Vec::new()), async {
                 tools
                     .call_tool("list_pages", json!({}), &test_ctx())
                     .await
                     .expect("list_pages ok");
-                LAST_APPEND.with(Cell::take)
+                take_appends()
             })
             .await;
 
         assert!(
-            captured.is_none(),
+            captured.is_empty(),
             "RO tool `list_pages` must not populate LAST_APPEND; got {captured:?}",
         );
     }

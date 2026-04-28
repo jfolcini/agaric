@@ -2,7 +2,10 @@
 
 use super::html_parser::{detect_auth_required, parse_description, parse_favicon, parse_title};
 use super::html_parser::{extract_domain, extract_origin, resolve_url, truncate_str};
-use super::{cleanup_stale, clear_auth_flag, get_cached, upsert, LinkMetadata};
+use super::{
+    cleanup_stale, clear_auth_flag, get_cached, read_body_limited, upsert, LinkMetadata,
+    MAX_BODY_SIZE,
+};
 use crate::db::init_pool;
 use crate::now_rfc3339;
 use sqlx::SqlitePool;
@@ -798,5 +801,95 @@ fn resolve_url_handles_all_forms() {
         resolve_url("https://example.com/path/page", "icon.png"),
         "https://example.com/path/icon.png",
         "relative should resolve against base directory"
+    );
+}
+
+// ======================================================================
+// read_body_limited tests (L-90)
+//
+// Pre-L-90, `read_body_limited` materialized the entire response body via
+// `response.bytes().await?` before truncating to `MAX_BODY_SIZE`. A
+// misbehaving server that streamed gigabytes of data would OOM the
+// process. The streaming implementation accumulates chunks until
+// `MAX_BODY_SIZE` is reached, then drops the response (closing the
+// connection and aborting the rest of the download).
+//
+// These tests use `wiremock` (already a dev-dependency for the
+// `gcal_push` OAuth/API tests) and assert the truncation semantics —
+// they do NOT measure peak allocations directly. Asserting the returned
+// body length is at most `MAX_BODY_SIZE` is sufficient evidence that the
+// streaming bound holds for all reasonable inputs.
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_body_limited_truncates_oversized_body() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    // 1 MiB body — almost twice MAX_BODY_SIZE (512 KiB).
+    let big_body = vec![b'a'; 1024 * 1024];
+    Mock::given(method("GET"))
+        .and(path("/big"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(big_body))
+        .mount(&server)
+        .await;
+
+    let url = format!("{}/big", server.uri());
+    let response = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .expect("request must succeed");
+
+    let body = read_body_limited(response, MAX_BODY_SIZE)
+        .await
+        .expect("read_body_limited must not error on oversize input");
+
+    assert!(
+        body.len() <= MAX_BODY_SIZE,
+        "body must not exceed MAX_BODY_SIZE; got {} bytes (cap {})",
+        body.len(),
+        MAX_BODY_SIZE
+    );
+    // The 1 MiB body is pure ASCII 'a' (one byte per char), so byte
+    // length equals char length and the truncation lands exactly at the
+    // cap.
+    assert_eq!(
+        body.len(),
+        MAX_BODY_SIZE,
+        "1 MiB ASCII body should truncate to exactly MAX_BODY_SIZE"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_body_limited_returns_full_small_body() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    // 100 KiB body — well below MAX_BODY_SIZE (512 KiB).
+    let small_body = vec![b'b'; 100 * 1024];
+    Mock::given(method("GET"))
+        .and(path("/small"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(small_body))
+        .mount(&server)
+        .await;
+
+    let url = format!("{}/small", server.uri());
+    let response = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .expect("request must succeed");
+
+    let body = read_body_limited(response, MAX_BODY_SIZE)
+        .await
+        .expect("read_body_limited must succeed on small input");
+
+    assert_eq!(
+        body.len(),
+        100 * 1024,
+        "100 KiB body should round-trip in full"
     );
 }

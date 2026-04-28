@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 681+ items across 496 sessions (per SESSION-LOG.md unique session count; latest is session 529).
+Previously resolved: 686+ items across 497 sessions (per SESSION-LOG.md unique session count; latest is session 530).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1913,7 +1913,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (28 — expanded)
+## LOW findings (23 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2085,30 +2085,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Search & Links
 
-### L-90 — `read_body_limited` reads entire response into memory before truncating
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/link_metadata/mod.rs:115-126`
-- **What:** `response.bytes().await?` materializes the entire body into a `Bytes` buffer regardless of `MAX_BODY_SIZE` (512 KB). The size check only runs after allocation, so a misbehaving server returning a 1 GB body OOMs the process.
-- **Why it matters:** Threat model excludes malicious actors, but accidental misuse (mis-typed URL pointing at a video CDN, server-side bug returning unbounded HTML) is realistic. A single accidental fetch can crash the app.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Use `response.chunk()` in a loop, accumulating until `MAX_BODY_SIZE` is reached, then drop the connection. Optionally inspect `Content-Length` up front to short-circuit obviously oversized responses (the header is untrusted but a useful heuristic).
-- **Pass-1 source:** 07/F21
-- **Status:** Open
-
-### L-92 — Tag-rename FTS reindex: unbounded `unique_ids` inside one big tx
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/fts/index.rs:159-242` (`reindex_fts_references`)
-- **What:** Step 4 builds `unique_ids` as the union of `tag_refs` + `link_refs` + `inline_tag_refs` with no upper bound, then opens a single transaction (lines 204-240) and INSERTs each row inside that one tx. There is no chunking and no fresh-tx-per-batch policy.
-- **Why it matters:** Renaming a popular tag (e.g. `#todo` referenced from 50 000+ blocks) holds a single writer transaction for the entire batch, blocking all other writers for many seconds. Partial failure rolls back the entire batch — awkward for an eventually-consistent cache.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Low/Medium
-- **Recommendation:** Chunk the reindex into batches of ~1 000 ids with a fresh tx per chunk; or enqueue per-block `update_fts_for_block` materializer tasks instead of inlining the work, leveraging the materializer's dedup.
-- **Pass-1 source:** 07/F23
-- **Status:** Open
-
 ### L-93 — `rebuild_all_split` does N inserts in single tx with no chunking
 - **Domain:** Search & Links
 - **Location:** `src-tauri/src/tag_inheritance.rs:464-505`
@@ -2171,30 +2147,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 08/F37
 - **Status:** Open
 
-### L-110 — Test gap: recurrence has no test for DST transitions
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/recurrence/tests.rs` (file-level gap); `src-tauri/src/recurrence/parser.rs:104` (`Local::now`)
-- **What:** `parser::shift_date` consults `chrono::Local::now()` for `.+` and `++` modes (timezone-sensitive). No test exercises a DST-shift day where the local clock skips an hour; tests use fixed UTC-ish dates only.
-- **Why it matters:** A user in a DST timezone could observe a recurrence that lands on the wrong day-of-week on the spring transition, since `date_naive()` at midnight could be the day before/after.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add a table-driven test with known DST dates (e.g., 2024-03-31 in Europe/London) using `chrono_tz` or a mocked `Local::now()`. Better still: switch the parser to `chrono::Utc::now().date_naive()` to remove the timezone dependency entirely (improves cross-device determinism).
-- **Pass-1 source:** 08/F38
-- **Status:** Open
-
-### L-111 — Test gap: no test for `apply_snapshot` rolling back if a chunk fails mid-loop
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/snapshot/restore.rs:103-251`
-- **What:** Six chunked INSERT loops can fail (UNIQUE-violation on a duplicate id, invalid attachment fs_path, etc.). The traversal-fs_path test (line ~2587) confirms whole-tx rollback on a single bad row, but no test asserts the same for a chunk failure halfway through (e.g., a duplicate `(block_id, key)` in `block_properties` chunk 2 of 5).
-- **Why it matters:** The INSERT chunks are sequential statements in the same tx, so SQLite *should* roll back all of them, but a future refactor that splits the loop into multiple transactions would silently break atomicity.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Add a test that injects a malformed row in chunk-2 of `block_properties` and asserts no chunk-1 rows remain after the failure. Mirror the existing `attachments` validation test pattern.
-- **Pass-1 source:** 08/F39
-- **Status:** Open
-
 ### MCP
 
 ### L-113 — In-flight tool calls dropped mid-tool-call on `disconnect_all`
@@ -2207,18 +2159,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** On the shutdown branch, log at `info`, then wrap the in-flight future in `tokio::time::timeout(Duration::from_secs(2), fut)` so the current `tools/call` has a chance to return its reply and emit its activity entry before the stream is dropped. Document the trade-off in `mcp_disconnect_all`.
 - **Pass-1 source:** 09/F6
-- **Status:** Open
-
-### L-114 — `LAST_APPEND` retains only the last op_ref — multi-op tools would lose Undo capture
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/last_append.rs:17` (`Cell<Option<OpRef>>`), `src-tauri/src/mcp/last_append.rs:24-26` (`record_append`), `src-tauri/src/mcp/last_append.rs:67-91` (test pinning "second overwrites first"); consumer `src-tauri/src/mcp/server.rs:454-462`.
-- **What:** `LAST_APPEND` is a `Cell<Option<OpRef>>` set by `record_append`; each call overwrites the previous value. The dispatch layer takes the cell at the end of a tool call. Today every RW tool emits exactly one op, but a future multi-op tool (e.g. `move_subtree`, `bulk_set_property`) would silently capture only the last op_ref, partial-Undo-able.
-- **Why it matters:** Forward-looking maintenance hazard. No bug today, but the contract is implicit and the test pins the wrong invariant for the multi-op future.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low (today); Medium (when RW grows)
-- **Recommendation:** Change the type to `Cell<Vec<OpRef>>` (or `RefCell<Vec<OpRef>>`) and append on each `record_append`. Either widen `ActivityEntry.op_ref` to a `Vec` or keep `op_ref` as the first and add `additional_op_refs: Vec<OpRef>`. Update the test to assert "all appends are retained, in order".
-- **Pass-1 source:** 09/F7
 - **Status:** Open
 
 ### L-117 — `task_running` flag is one-shot; never resets while serve loop runs

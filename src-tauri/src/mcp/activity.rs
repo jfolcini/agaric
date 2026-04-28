@@ -118,12 +118,28 @@ pub struct ActivityEntry {
     /// layer from `ConnectionState.session_id`. Stable across every
     /// request on the same socket connection. Serialised as `sessionId`.
     pub session_id: String,
-    /// `OpRef` of the op this tool call produced, if any. `None` for
-    /// RO tools and for tools that produce no ops. Populated by the
-    /// dispatch layer from the `LAST_APPEND` task-local. Serialised as
-    /// `opRef`; omitted from the wire payload when `None`.
+    /// `OpRef` of the *first* op this tool call produced, if any.
+    /// `None` for RO tools and for tools that produce no ops.
+    /// Populated by the dispatch layer from the `LAST_APPEND`
+    /// task-local. Serialised as `opRef`; omitted from the wire
+    /// payload when `None`.
+    ///
+    /// Multi-op tools surface their additional `OpRef`s on
+    /// [`ActivityEntry::additional_op_refs`] — see L-114 for the
+    /// rationale (forward-compat for `move_subtree` /
+    /// `bulk_set_property` and similar future tools that append more
+    /// than one op per call).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub op_ref: Option<crate::op::OpRef>,
+    /// L-114 forward-compat: any further `OpRef`s produced by the
+    /// same tool call, in append order. Empty for the (current)
+    /// single-op RW tools and for RO / failing tools. Defaults to
+    /// `Vec::new()` for older clients / fixtures that don't set the
+    /// field, and is omitted from the wire payload when empty so the
+    /// `mcp:activity` event stays compact for the common case.
+    /// Serialised as `additionalOpRefs`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub additional_op_refs: Vec<crate::op::OpRef>,
 }
 
 impl fmt::Debug for ActivityEntry {
@@ -148,6 +164,10 @@ impl fmt::Debug for ActivityEntry {
             // to render. `{:?}` on the `Option` keeps the `Some` /
             // `None` shape visible.
             .field("op_ref", &self.op_ref)
+            // `additional_op_refs` is the same `(device_id, seq)`
+            // shape, just a list. Render the full Vec so multi-op
+            // tools are debuggable end-to-end.
+            .field("additional_op_refs", &self.additional_op_refs)
             .finish()
     }
 }
@@ -388,10 +408,17 @@ pub struct ToolCompletionEvent<'a> {
     /// Opaque per-connection ULID stable across every request on the
     /// same socket — see [`ActivityEntry::session_id`].
     pub session_id: &'a str,
-    /// `(device_id, seq)` of the op produced by this call. `None` for
-    /// RO tools and for tools that produced no op. Captured from the
-    /// `LAST_APPEND` task-local inside `handle_tools_call`.
+    /// `(device_id, seq)` of the *first* op produced by this call.
+    /// `None` for RO tools and for tools that produced no op.
+    /// Captured from the `LAST_APPEND` task-local inside
+    /// `handle_tools_call`.
     pub op_ref: Option<crate::op::OpRef>,
+    /// L-114 forward-compat: any further `OpRef`s produced by the
+    /// same call, in append order. Empty for single-op tools (every
+    /// RW tool today). Captured by draining the `LAST_APPEND`
+    /// task-local in `handle_tools_call` and assigning index 0 to
+    /// `op_ref` and the tail here.
+    pub additional_op_refs: Vec<crate::op::OpRef>,
 }
 
 /// Convenience wrapper that builds an [`ActivityEntry`] with `Utc::now()`
@@ -408,6 +435,7 @@ pub fn emit_tool_completion(ctx: &ActivityContext, event: ToolCompletionEvent<'_
         result: event.result,
         session_id: event.session_id.to_string(),
         op_ref: event.op_ref,
+        additional_op_refs: event.additional_op_refs,
     };
     emit_activity(&ctx.ring, ctx.emitter.as_ref(), entry);
 }
@@ -478,6 +506,7 @@ mod tests {
             result: ActivityResult::Ok,
             session_id: "SESSION".to_string(),
             op_ref: None,
+            additional_op_refs: Vec::new(),
         }
     }
 
@@ -617,6 +646,7 @@ mod tests {
                 result: ActivityResult::Ok,
                 session_id: "SESSION-1",
                 op_ref: None,
+                additional_op_refs: Vec::new(),
             },
         );
         let after = Utc::now();
@@ -657,6 +687,7 @@ mod tests {
                 result: ActivityResult::Ok,
                 session_id: "SESSION-2",
                 op_ref: Some(op_ref.clone()),
+                additional_op_refs: Vec::new(),
             },
         );
 
@@ -780,6 +811,7 @@ mod tests {
             result: ActivityResult::Ok,
             session_id: "SESSION".to_string(),
             op_ref: None,
+            additional_op_refs: Vec::new(),
         };
         let rendered = format!("{entry:?}");
         assert!(
@@ -803,6 +835,7 @@ mod tests {
             result: ActivityResult::Ok,
             session_id: "SESSION".to_string(),
             op_ref: None,
+            additional_op_refs: Vec::new(),
         };
         let rendered = format!("{entry:?}");
         assert!(
@@ -834,6 +867,7 @@ mod tests {
             result: ActivityResult::Ok,
             session_id: "SESSION".to_string(),
             op_ref: None,
+            additional_op_refs: Vec::new(),
         };
         let v = serde_json::to_value(&entry).unwrap();
         assert_eq!(v["toolName"], "get_block");
@@ -854,6 +888,7 @@ mod tests {
             result: ActivityResult::Ok,
             session_id: "SESSION".to_string(),
             op_ref: None,
+            additional_op_refs: Vec::new(),
         };
         let v = serde_json::to_value(&entry).unwrap();
         assert!(
@@ -879,6 +914,7 @@ mod tests {
                 device_id: "DEV-A".to_string(),
                 seq: 7,
             }),
+            additional_op_refs: Vec::new(),
         };
         let v = serde_json::to_value(&entry).unwrap();
         assert_eq!(v["sessionId"], "01JABCDEFGHJKMNPQRSTVWXYZ0");
@@ -901,16 +937,65 @@ mod tests {
             result: ActivityResult::Ok,
             session_id: "SESS".to_string(),
             op_ref: None,
+            additional_op_refs: Vec::new(),
         };
         let v = serde_json::to_value(&entry).unwrap();
         assert!(
             v.get("opRef").is_none(),
             "opRef must be omitted from the wire payload when None; got {v}",
         );
+        assert!(
+            v.get("additionalOpRefs").is_none(),
+            "additionalOpRefs must be omitted from the wire payload when empty; got {v}",
+        );
         assert_eq!(
             v["sessionId"], "SESS",
             "sessionId must always be present, even when opRef is omitted",
         );
+    }
+
+    /// L-114 wire-shape contract: a multi-op tool's additional
+    /// `OpRef`s surface as `additionalOpRefs` (camelCase outer key,
+    /// snake_case inner keys — same convention as `opRef`). The
+    /// frontend can ignore the field today; this test pins the
+    /// payload shape so the eventual UI consumer has a stable target.
+    #[test]
+    fn activity_entry_serialises_additional_op_refs_when_present() {
+        let entry = ActivityEntry {
+            tool_name: "move_subtree".to_string(),
+            summary: "moved 3 ops".to_string(),
+            timestamp: Utc::now(),
+            actor_kind: ActorKind::Agent,
+            agent_name: Some("claude".to_string()),
+            result: ActivityResult::Ok,
+            session_id: "SESS".to_string(),
+            op_ref: Some(crate::op::OpRef {
+                device_id: "DEV-A".to_string(),
+                seq: 1,
+            }),
+            additional_op_refs: vec![
+                crate::op::OpRef {
+                    device_id: "DEV-A".to_string(),
+                    seq: 2,
+                },
+                crate::op::OpRef {
+                    device_id: "DEV-A".to_string(),
+                    seq: 3,
+                },
+            ],
+        };
+        let v = serde_json::to_value(&entry).unwrap();
+        let arr = v["additionalOpRefs"]
+            .as_array()
+            .expect("additionalOpRefs must serialise as a JSON array");
+        assert_eq!(arr.len(), 2);
+        // Inner keys mirror `OpRef`'s specta binding (snake_case).
+        assert_eq!(arr[0]["device_id"], "DEV-A");
+        assert_eq!(arr[0]["seq"], 2);
+        assert_eq!(arr[1]["device_id"], "DEV-A");
+        assert_eq!(arr[1]["seq"], 3);
+        // The "first op" still lives on `opRef`, in append order.
+        assert_eq!(v["opRef"]["seq"], 1);
     }
 
     #[test]

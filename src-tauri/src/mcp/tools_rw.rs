@@ -1141,11 +1141,17 @@ mod tests {
     /// `LAST_APPEND` task-local so the dispatch layer can attach an
     /// `OpRef` to the emitted `mcp:activity` entry. This test pins the
     /// invariant by driving `append_block` inside an explicit
-    /// `LAST_APPEND.scope(...)` and checking the cell after the call.
+    /// `LAST_APPEND.scope(...)` and draining the captured list after
+    /// the call.
+    ///
+    /// L-114: today `append_block` is a single-op tool, so the drained
+    /// list contains exactly one entry. The test asserts the `len ==
+    /// 1` shape directly so a future regression that drops appends
+    /// (or doubles them) is caught here, not in the dispatch layer.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn append_block_populates_last_append_inside_scope() {
-        use crate::task_locals::LAST_APPEND;
-        use std::cell::Cell;
+        use crate::task_locals::{take_appends, LAST_APPEND};
+        use std::cell::RefCell;
 
         let (tools, mat, pool, _dir) = mk_tools().await;
         let parent = create_block_inner(
@@ -1162,7 +1168,7 @@ mod tests {
         settle(&mat).await;
 
         let captured = LAST_APPEND
-            .scope(Cell::new(None), async {
+            .scope(RefCell::new(Vec::new()), async {
                 tools
                     .call_tool(
                         "append_block",
@@ -1171,11 +1177,16 @@ mod tests {
                     )
                     .await
                     .expect("happy path");
-                LAST_APPEND.with(Cell::take)
+                take_appends()
             })
             .await;
 
-        let op_ref = captured.expect("append_block must populate LAST_APPEND with its OpRef");
+        assert_eq!(
+            captured.len(),
+            1,
+            "append_block is a single-op tool — expected exactly one OpRef, got {captured:?}",
+        );
+        let op_ref = &captured[0];
         assert_eq!(
             op_ref.device_id, DEV,
             "op_ref.device_id must match the tools' configured device id",
