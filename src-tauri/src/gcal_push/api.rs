@@ -440,7 +440,7 @@ impl GcalApi {
         B: Serialize + ?Sized,
         T: serde::de::DeserializeOwned,
     {
-        self.bucket.lock().await.take().await;
+        InstantBucket::take(&self.bucket).await;
 
         let mut req = self
             .client
@@ -468,7 +468,7 @@ impl GcalApi {
         token: &Token,
         not_found_means: NotFoundMeans,
     ) -> Result<(), AppError> {
-        self.bucket.lock().await.take().await;
+        InstantBucket::take(&self.bucket).await;
 
         let resp = self
             .client
@@ -806,24 +806,33 @@ impl InstantBucket {
     }
 
     /// Sleep until a token is available, then record the current
-    /// instant in the bucket.  Called with the bucket's lock held so
-    /// the critical section is tight — `take` drops the lock across
-    /// its internal sleep.
-    async fn take(&mut self) {
+    /// instant in the bucket.
+    ///
+    /// Takes the bucket's `Mutex` by reference rather than `&mut self`
+    /// so that the lock can be released across the internal sleep.
+    /// Each iteration: acquire the guard, evict expired entries and
+    /// either admit (push the new timestamp and return) or compute
+    /// how long to wait, drop the guard explicitly, then sleep.
+    /// Concurrent callers can therefore overlap whenever the bucket
+    /// is not saturated — the rate-limit semantics still hit ~10 QPS
+    /// because every admission contends for the same shared state,
+    /// but we no longer serialise callers behind one another's sleeps.
+    async fn take(bucket: &Mutex<Self>) {
         loop {
+            let mut guard = bucket.lock().await;
             let now = Instant::now();
             // Drop expired entries from the front.
-            while let Some(oldest) = self.recent.front() {
-                if now.duration_since(*oldest) >= self.window {
-                    self.recent.pop_front();
+            while let Some(oldest) = guard.recent.front() {
+                if now.duration_since(*oldest) >= guard.window {
+                    guard.recent.pop_front();
                 } else {
                     break;
                 }
             }
 
-            if self.recent.len() < self.burst {
+            if guard.recent.len() < guard.burst {
                 // Under the burst ceiling — admit immediately.
-                self.recent.push_back(now);
+                guard.recent.push_back(now);
                 return;
             }
 
@@ -831,22 +840,23 @@ impl InstantBucket {
             // entry expires.  Sleep for at least that long, plus the
             // sustained-QPS inter-request gap, so we do not immediately
             // overshoot.
-            let sleep_for = self.recent.front().map_or(self.window, |&oldest| {
+            let sleep_for = guard.recent.front().map_or(guard.window, |&oldest| {
                 let elapsed = now.saturating_duration_since(oldest);
-                let remaining = self.window.saturating_sub(elapsed);
+                let remaining = guard.window.saturating_sub(elapsed);
                 // Add the sustained gap so successive admissions are
                 // spaced, not clustered.
-                let gap = if self.sustained_qps == 0 {
+                let gap = if guard.sustained_qps == 0 {
                     Duration::ZERO
                 } else {
-                    Duration::from_millis(1000 / self.sustained_qps as u64)
+                    Duration::from_millis(1000 / guard.sustained_qps as u64)
                 };
                 remaining + gap
             });
 
-            // Drop the lock while sleeping — but we are already inside
-            // the caller's `.lock().await` guard so the next request
-            // will queue on it.  Sleep then re-check.
+            // Release the lock before sleeping so concurrent callers
+            // can enter the bucket while we wait.  Re-check on the
+            // next loop iteration after re-acquiring the guard.
+            drop(guard);
             tokio::time::sleep(sleep_for).await;
         }
     }
@@ -1383,7 +1393,7 @@ mod tests {
         let n: usize = 30;
         let counter = Arc::new(AtomicUsize::new(0));
         for _ in 0..n {
-            bucket.lock().await.take().await;
+            InstantBucket::take(&bucket).await;
             counter.fetch_add(1, Ordering::SeqCst);
         }
         let elapsed = start.elapsed();
@@ -1420,7 +1430,7 @@ mod tests {
         )));
         let start = Instant::now();
         for _ in 0..RATE_LIMIT_BURST {
-            bucket.lock().await.take().await;
+            InstantBucket::take(&bucket).await;
         }
         let elapsed = start.elapsed();
         // Allow generous headroom for CI — 250 ms covers a cold async
@@ -1431,6 +1441,61 @@ mod tests {
             "{RATE_LIMIT_BURST} admissions inside the burst must be near-instant, got {}ms",
             elapsed.as_millis()
         );
+    }
+
+    /// Regression for L-125: when the bucket is saturated and a caller
+    /// is sleeping inside `take()`, the bucket's mutex MUST be released
+    /// across the sleep so a concurrent caller can enter the bucket
+    /// rather than queueing on the lock.  Under the pre-fix
+    /// implementation the outer `.lock().await` guard was held for the
+    /// entire `take()` call (including the sleep), so `try_lock()`
+    /// from another task would always fail.  Under the fixed impl the
+    /// guard is dropped before sleeping and `try_lock()` succeeds.
+    ///
+    /// Runs in real time (not `start_paused`) because `InstantBucket`
+    /// stores `std::time::Instant` rather than `tokio::time::Instant`,
+    /// so paused-time auto-advance and the bucket's expiry check
+    /// disagree and produce a busy loop.  A short window keeps the
+    /// total wall-clock cost modest.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn instant_bucket_releases_lock_during_sleep() {
+        // burst = 1 + a short window so the spawned take must sleep
+        // briefly but the test still finishes promptly.
+        let bucket = Arc::new(Mutex::new(InstantBucket::new(
+            1,
+            Duration::from_millis(200),
+            10,
+        )));
+
+        // Saturate the bucket so any further `take` will sleep.
+        InstantBucket::take(&bucket).await;
+
+        // Spawn a take that will be forced to sleep.
+        let bucket_for_task = Arc::clone(&bucket);
+        let handle = tokio::spawn(async move {
+            InstantBucket::take(&bucket_for_task).await;
+        });
+
+        // Yield repeatedly so the spawned task is polled past its
+        // `bucket.lock().await` and parks on `tokio::time::sleep`.
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+
+        // The fix: lock must be released across the sleep.  With the
+        // pre-fix impl this `try_lock` would fail because the spawned
+        // task would still be holding the guard while it awaits sleep.
+        match bucket.try_lock() {
+            Ok(guard) => drop(guard),
+            Err(e) => panic!(
+                "InstantBucket::take must drop its guard before sleeping (L-125), \
+                 try_lock returned: {e:?}"
+            ),
+        }
+
+        // Let the spawned take wake up, re-acquire the guard, and
+        // record its admission so the test exits cleanly.
+        handle.await.expect("spawned take must complete");
     }
 
     // ── Debug redaction ────────────────────────────────────────────

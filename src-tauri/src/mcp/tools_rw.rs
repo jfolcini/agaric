@@ -44,7 +44,7 @@ use sqlx::SqlitePool;
 
 use super::actor::ActorContext;
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
-use super::handler_utils::{parse_args, to_tool_result};
+use super::handler_utils::{normalize_ulid_arg, parse_args, to_tool_result};
 use super::registry::{
     ToolDescription, ToolRegistry, TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_CREATE_PAGE,
     TOOL_DELETE_BLOCK, TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT,
@@ -336,13 +336,15 @@ async fn handle_append_block(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: AppendBlockArgs = parse_args(TOOL_APPEND_BLOCK, args)?;
+    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
+    let parent_id = normalize_ulid_arg(&args.parent_id);
     let resp = create_block_inner(
         pool,
         device_id,
         materializer,
         "content".to_string(),
         args.content,
-        Some(args.parent_id),
+        Some(parent_id),
         args.position,
     )
     .await?;
@@ -356,7 +358,9 @@ async fn handle_update_block_content(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: UpdateBlockContentArgs = parse_args(TOOL_UPDATE_BLOCK_CONTENT, args)?;
-    let resp = edit_block_inner(pool, device_id, materializer, args.block_id, args.content).await?;
+    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
+    let block_id = normalize_ulid_arg(&args.block_id);
+    let resp = edit_block_inner(pool, device_id, materializer, block_id, args.content).await?;
     to_tool_result(&resp)
 }
 
@@ -367,6 +371,11 @@ async fn handle_set_property(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: SetPropertyArgs = parse_args(TOOL_SET_PROPERTY, args)?;
+    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary
+    // (block_id is required, value_ref is optional and only meaningful
+    // when the property is a ref-typed value).
+    let block_id = normalize_ulid_arg(&args.block_id);
+    let value_ref = args.value_ref.as_deref().map(normalize_ulid_arg);
     // L-122: the exactly-one-value invariant is enforced inside
     // `set_property_inner` when a `caller_context` is supplied — passing
     // `Some(TOOL_SET_PROPERTY)` keeps the agent-facing error message
@@ -375,12 +384,12 @@ async fn handle_set_property(
         pool,
         device_id,
         materializer,
-        args.block_id,
+        block_id,
         args.key,
         args.value_text,
         args.value_num,
         args.value_date,
-        args.value_ref,
+        value_ref,
         Some(TOOL_SET_PROPERTY),
     )
     .await?;
@@ -394,7 +403,10 @@ async fn handle_add_tag(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: AddTagArgs = parse_args(TOOL_ADD_TAG, args)?;
-    let resp = add_tag_inner(pool, device_id, materializer, args.block_id, args.tag_id).await?;
+    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
+    let block_id = normalize_ulid_arg(&args.block_id);
+    let tag_id = normalize_ulid_arg(&args.tag_id);
+    let resp = add_tag_inner(pool, device_id, materializer, block_id, tag_id).await?;
     to_tool_result(&resp)
 }
 
@@ -425,7 +437,9 @@ async fn handle_delete_block(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: DeleteBlockArgs = parse_args(TOOL_DELETE_BLOCK, args)?;
-    let resp = delete_block_inner(pool, device_id, materializer, args.block_id).await?;
+    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
+    let block_id = normalize_ulid_arg(&args.block_id);
+    let resp = delete_block_inner(pool, device_id, materializer, block_id).await?;
     to_tool_result(&resp)
 }
 

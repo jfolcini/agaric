@@ -1196,6 +1196,250 @@ async fn block_links_skips_conflict_source_and_does_not_appear_in_backlinks() {
 }
 
 // ====================================================================
+// L-24 — chunked DELETE/INSERT via json_each
+// ====================================================================
+//
+// Replaces the previous per-target DELETE/INSERT loops (2N round-trips
+// per reindex) with one DELETE and one INSERT bound by a JSON-encoded
+// vec via `json_each(?)`. These tests lock down the contract: same
+// end-state regardless of how many targets change in a single reindex.
+
+/// Build a 26-char ULID-shape ID with a 3-digit numeric suffix —
+/// matches `[0-9A-Z]{26}` so the inline-link regex captures it.
+fn link_target_id(i: usize) -> String {
+    let id = format!("01HZ0000000000000000000{i:03}");
+    debug_assert_eq!(id.len(), 26, "link_target_id must produce a 26-char ULID");
+    id
+}
+
+/// Count `block_links` rows for a single source (avoids cross-test
+/// contamination if the table ever holds rows from another source).
+async fn count_block_links_for(pool: &SqlitePool, source_id: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM block_links WHERE source_id = ?")
+        .bind(source_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn reindex_block_links_chunks_removals() {
+    let (pool, _dir) = test_pool().await;
+
+    let source_id = "01HZ0000000000000000000SRC";
+
+    // 50 target blocks
+    let target_ids: Vec<String> = (0..50).map(link_target_id).collect();
+    for tid in &target_ids {
+        insert_block(&pool, tid, "content", "target").await;
+    }
+
+    // Source links to all 50
+    let initial_content = target_ids
+        .iter()
+        .map(|t| format!("[[{t}]]"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    insert_block(&pool, source_id, "content", &initial_content).await;
+
+    reindex_block_links(&pool, source_id).await.unwrap();
+    assert_eq!(
+        count_block_links_for(&pool, source_id).await,
+        50,
+        "baseline: all 50 links indexed before removal"
+    );
+
+    // Update source to have zero links
+    sqlx::query!(
+        "UPDATE blocks SET content = ? WHERE id = ?",
+        "no links",
+        source_id,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Re-reindex: chunked DELETE side runs once via json_each; INSERT
+    // side is empty so no INSERT executes.
+    reindex_block_links(&pool, source_id).await.unwrap();
+
+    assert_eq!(
+        count_block_links_for(&pool, source_id).await,
+        0,
+        "all 50 links must be removed by the single chunked DELETE"
+    );
+}
+
+#[tokio::test]
+async fn reindex_block_links_chunks_additions() {
+    let (pool, _dir) = test_pool().await;
+
+    let source_id = "01HZ0000000000000000000SRC";
+
+    let target_ids: Vec<String> = (0..50).map(link_target_id).collect();
+    for tid in &target_ids {
+        insert_block(&pool, tid, "content", "target").await;
+    }
+
+    // Source starts with no link tokens
+    insert_block(&pool, source_id, "content", "no links yet").await;
+    reindex_block_links(&pool, source_id).await.unwrap();
+    assert_eq!(
+        count_block_links_for(&pool, source_id).await,
+        0,
+        "baseline: no links before additions"
+    );
+
+    // Update source to reference all 50 targets
+    let new_content = target_ids
+        .iter()
+        .map(|t| format!("[[{t}]]"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    sqlx::query!(
+        "UPDATE blocks SET content = ? WHERE id = ?",
+        new_content,
+        source_id,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    reindex_block_links(&pool, source_id).await.unwrap();
+
+    assert_eq!(
+        count_block_links_for(&pool, source_id).await,
+        50,
+        "all 50 links must be inserted by the single chunked INSERT"
+    );
+
+    // Verify each target landed exactly once and matches the requested set.
+    let rows = sqlx::query!(
+        "SELECT target_id FROM block_links WHERE source_id = ? ORDER BY target_id",
+        source_id,
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let mut expected = target_ids.clone();
+    expected.sort();
+    let actual: Vec<String> = rows.into_iter().map(|r| r.target_id).collect();
+    assert_eq!(
+        actual, expected,
+        "every requested target landed exactly once"
+    );
+}
+
+#[tokio::test]
+async fn reindex_block_links_mixed_chunked_diff() {
+    let (pool, _dir) = test_pool().await;
+
+    let source_id = "01HZ0000000000000000000SRC";
+
+    // Indices 0..30 = old set; indices 15..45 = new set.
+    // Overlap = 15..30 (15 ids), removed = 0..15 (15 ids), added = 30..45 (15 ids).
+    let all_ids: Vec<String> = (0..45).map(link_target_id).collect();
+    for tid in &all_ids {
+        insert_block(&pool, tid, "content", "target").await;
+    }
+
+    let initial_content = all_ids[0..30]
+        .iter()
+        .map(|t| format!("[[{t}]]"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    insert_block(&pool, source_id, "content", &initial_content).await;
+
+    reindex_block_links(&pool, source_id).await.unwrap();
+    assert_eq!(
+        count_block_links_for(&pool, source_id).await,
+        30,
+        "baseline: 30 links before diff"
+    );
+
+    let new_content = all_ids[15..45]
+        .iter()
+        .map(|t| format!("[[{t}]]"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    sqlx::query!(
+        "UPDATE blocks SET content = ? WHERE id = ?",
+        new_content,
+        source_id,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    reindex_block_links(&pool, source_id).await.unwrap();
+
+    let rows = sqlx::query!(
+        "SELECT target_id FROM block_links WHERE source_id = ? ORDER BY target_id",
+        source_id,
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        rows.len(),
+        30,
+        "exactly 30 links after mixed diff (15 kept + 15 added, 15 removed)"
+    );
+
+    let actual: Vec<String> = rows.into_iter().map(|r| r.target_id).collect();
+    let mut expected: Vec<String> = all_ids[15..45].to_vec();
+    expected.sort();
+    assert_eq!(
+        actual, expected,
+        "end state must equal exactly the new target set — no stale rows, no duplicates"
+    );
+}
+
+/// Stress test: 600 links far exceeds SQLite's default
+/// `SQLITE_MAX_VARIABLE_NUMBER` (999 in older builds, often lower on
+/// some Linux distros). The `json_each(?)` path passes the full target
+/// list as one TEXT bind, so this should succeed regardless.
+#[tokio::test]
+async fn reindex_block_links_stress_600_via_json_each() {
+    let (pool, _dir) = test_pool().await;
+
+    let source_id = "01HZ0000000000000000000SRC";
+
+    let target_ids: Vec<String> = (0..600).map(link_target_id).collect();
+    for tid in &target_ids {
+        insert_block(&pool, tid, "content", "target").await;
+    }
+
+    let content = target_ids
+        .iter()
+        .map(|t| format!("[[{t}]]"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    insert_block(&pool, source_id, "content", &content).await;
+
+    reindex_block_links(&pool, source_id).await.unwrap();
+    assert_eq!(
+        count_block_links_for(&pool, source_id).await,
+        600,
+        "all 600 links must be inserted via the json_each chunked path"
+    );
+
+    // Round-trip: clear all 600 in a single chunked DELETE.
+    sqlx::query!("UPDATE blocks SET content = ? WHERE id = ?", "", source_id,)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    reindex_block_links(&pool, source_id).await.unwrap();
+    assert_eq!(
+        count_block_links_for(&pool, source_id).await,
+        0,
+        "all 600 links removed by the single chunked DELETE"
+    );
+}
+
+// ====================================================================
 // rebuild_all_caches & empty tables
 // ====================================================================
 
@@ -3418,4 +3662,202 @@ async fn agenda_rebuild_single_and_split_produce_identical_cache() {
     // Sanity: the fixture must produce non-empty output, otherwise the
     // equality check is vacuously true.
     assert!(!single.is_empty(), "fixture must populate agenda_cache");
+}
+
+/// L-28 oracle: `rebuild_page_ids`'s recursive ancestor-walking CTE has
+/// no Rust-side regression net. AGENTS.md "Performance Conventions"
+/// pattern #8 prescribes a `#[cfg(test)]` oracle preserving the old
+/// implementation when optimizing a query — `pagination/tests.rs`
+/// already has a good oracle for `list_children`'s `IFNULL → sentinel`
+/// optimisation. This one closes the equivalent gap for
+/// `rebuild_page_ids` (conflict-aware ancestor walking is exactly the
+/// area invariant #9 calls out as fragile).
+///
+/// Builds a synthetic vault with: deeply-nested non-conflict blocks
+/// under multiple page roots, conflict copies that share `parent_id`
+/// with their original (and must NOT participate in the walk per
+/// invariant #9), and orphan blocks with NULL parents. Computes the
+/// expected `page_id` per block via a Rust HashMap walk of the same
+/// ancestor chain, then runs `rebuild_page_ids` and asserts the SQL
+/// CTE produced byte-identical results.
+///
+/// Failing this test means the recursive CTE drifted from the
+/// documented semantics — a future contributor who refactors the
+/// rebuild (e.g. to a materialised parent-pointer table) gets a clear
+/// regression signal naming exactly which block diverged.
+#[tokio::test]
+async fn rebuild_page_ids_oracle_matches_rust_ancestor_walk() {
+    use std::collections::HashMap;
+
+    let (pool, _dir) = test_pool().await;
+
+    // Helper: insert a block with explicit parent_id (None for top-level).
+    async fn insert_block_with_parent(
+        pool: &SqlitePool,
+        id: &str,
+        block_type: &str,
+        parent_id: Option<&str>,
+    ) {
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, parent_id) VALUES (?, ?, '', ?)",
+            id,
+            block_type,
+            parent_id,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // Helper: mark a block as a conflict copy.
+    async fn mark_conflict(pool: &SqlitePool, id: &str) {
+        sqlx::query!(
+            "UPDATE blocks SET is_conflict = 1, conflict_type = 'edit' WHERE id = ?",
+            id,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // Fixture (3 page roots + nested non-conflict descendants + 2
+    // conflict copies + 1 orphan block):
+    //
+    //   PAGE_A (page)
+    //     └── A1 (content)            -> page_id = PAGE_A
+    //         └── A2 (content)        -> page_id = PAGE_A
+    //             └── A3 (content)    -> page_id = PAGE_A
+    //   PAGE_B (page)
+    //     └── B1 (content)            -> page_id = PAGE_B
+    //         └── B1_CONFLICT (conflict copy of B1, parent = PAGE_B)
+    //             └── B1_C_CHILD (content) — its ancestor chain stops
+    //                 at the conflict, so its page_id stays NULL (the
+    //                 SQL UPDATE skips conflict rows AND descendants
+    //                 reachable only via conflicts)
+    //   PAGE_C (page)
+    //     └── C_CONFLICT (conflict copy, parent = PAGE_C) — page_id NULL
+    //   ORPHAN (content, no parent)   -> page_id NULL
+    //
+    insert_block_with_parent(&pool, "PAGEA", "page", None).await;
+    insert_block_with_parent(&pool, "A1", "content", Some("PAGEA")).await;
+    insert_block_with_parent(&pool, "A2", "content", Some("A1")).await;
+    insert_block_with_parent(&pool, "A3", "content", Some("A2")).await;
+
+    insert_block_with_parent(&pool, "PAGEB", "page", None).await;
+    insert_block_with_parent(&pool, "B1", "content", Some("PAGEB")).await;
+    insert_block_with_parent(&pool, "B1CONFLICT", "content", Some("PAGEB")).await;
+    mark_conflict(&pool, "B1CONFLICT").await;
+    insert_block_with_parent(&pool, "B1CCHILD", "content", Some("B1CONFLICT")).await;
+
+    insert_block_with_parent(&pool, "PAGEC", "page", None).await;
+    insert_block_with_parent(&pool, "CCONFLICT", "content", Some("PAGEC")).await;
+    mark_conflict(&pool, "CCONFLICT").await;
+
+    insert_block_with_parent(&pool, "ORPHAN", "content", None).await;
+
+    // Reference implementation: pure-Rust ancestor walk that mirrors
+    // the SQL CTE's documented semantics — climb `parent_id` until we
+    // hit a `page` ancestor or a conflict (which terminates the walk
+    // because both members of the recursive CTE filter `is_conflict =
+    // 0` and the seed step also filters).
+    #[derive(Clone)]
+    struct Row {
+        block_type: String,
+        parent_id: Option<String>,
+        is_conflict: bool,
+    }
+    let rows: Vec<(String, String, Option<String>, i64)> =
+        sqlx::query_as("SELECT id, block_type, parent_id, is_conflict FROM blocks ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let by_id: HashMap<String, Row> = rows
+        .iter()
+        .map(|(id, bt, pid, c)| {
+            (
+                id.clone(),
+                Row {
+                    block_type: bt.clone(),
+                    parent_id: pid.clone(),
+                    is_conflict: *c != 0,
+                },
+            )
+        })
+        .collect();
+
+    let mut expected: HashMap<String, Option<String>> = HashMap::new();
+    for (id, row) in &by_id {
+        if row.is_conflict {
+            // The SQL `UPDATE blocks ... WHERE is_conflict = 0` skips
+            // conflict rows entirely, leaving their `page_id`
+            // unchanged. Our fixture inserts conflict rows with
+            // `page_id = NULL` (default), so the expected value is
+            // `None`.
+            expected.insert(id.clone(), None);
+            continue;
+        }
+        // Climb ancestors. Bound at 100 to mirror the SQL CTE's
+        // `depth < 100` guard.
+        let mut cur = id.clone();
+        let mut depth = 0;
+        let page_id = loop {
+            let Some(row) = by_id.get(&cur) else {
+                break None;
+            };
+            if row.block_type == "page" {
+                break Some(cur);
+            }
+            if depth >= 100 {
+                break None; // depth bound matches the CTE
+            }
+            let Some(next) = row.parent_id.clone() else {
+                break None;
+            };
+            // Walk through the parent only if both endpoints are
+            // non-conflict (matches the CTE's recursive-member filter).
+            match by_id.get(&next) {
+                Some(r) if !r.is_conflict => {}
+                _ => break None,
+            }
+            cur = next;
+            depth += 1;
+        };
+        expected.insert(id.clone(), page_id);
+    }
+
+    // Run the production rebuild.
+    rebuild_page_ids(&pool).await.unwrap();
+
+    // Read the live `page_id` per block and compare.
+    let actual_rows: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT id, page_id FROM blocks ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let actual: HashMap<String, Option<String>> = actual_rows.into_iter().collect();
+
+    for (id, expected_page) in &expected {
+        let actual_page = actual.get(id).cloned().flatten();
+        assert_eq!(
+            actual_page,
+            expected_page.clone(),
+            "block {id}: rebuild_page_ids and Rust oracle disagree (L-28)",
+        );
+    }
+
+    // Spot-check the most important shapes (catches a vacuously-true
+    // oracle bug where both sides happen to compute None for everything).
+    assert_eq!(
+        actual.get("A3").cloned().flatten(),
+        Some("PAGEA".to_string()),
+        "deeply-nested non-conflict block must reach its page root",
+    );
+    assert!(
+        actual.get("ORPHAN").cloned().flatten().is_none(),
+        "orphan block (no parent) must have page_id NULL",
+    );
+    assert!(
+        actual.get("CCONFLICT").cloned().flatten().is_none(),
+        "conflict copy must have its page_id preserved (NULL in this fixture)",
+    );
 }

@@ -1,5 +1,6 @@
 use sqlx::SqlitePool;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crate::db::MAX_SQL_PARAMS;
@@ -8,6 +9,40 @@ use crate::error::AppError;
 
 use super::draft_recovery::recover_single_draft;
 use super::RecoveryReport;
+
+// ---------------------------------------------------------------------------
+// L-103: once-only guard
+// ---------------------------------------------------------------------------
+
+/// L-103 once-only flag. The module docs (`recovery/mod.rs`) state that
+/// `recover_at_boot` MUST be called exactly once at application start-up,
+/// before any user operations are allowed, and is **not safe** to run
+/// concurrently with normal user operations. Today every caller honours
+/// the contract — but a future Tauri command "force re-run recovery" or
+/// a sloppy refactor could corrupt state by interleaving synthetic
+/// edit_block ops with real ops.
+///
+/// This `AtomicBool` enforces the invariant in code rather than relying
+/// on convention. The first call flips the flag from `false` to `true`
+/// via `compare_exchange`; subsequent calls observe the flag already
+/// set and return [`AppError::InvalidOperation`] BEFORE touching the
+/// pool. Returning rather than panicking lets the caller decide whether
+/// the second call is recoverable (it should not be — but propagating
+/// an error preserves the caller's ability to log + telemetry).
+///
+/// In tests the guard is reset to `false` via [`reset_recovery_guard`]
+/// (also `pub(crate)` and `#[cfg(test)]`-gated) so multiple `tokio::test`
+/// fixtures can each run their own `recover_at_boot` against a fresh
+/// `test_pool()`.
+static RECOVERY_DONE: AtomicBool = AtomicBool::new(false);
+
+/// Reset the L-103 once-only guard. **Test-only.** Production callers
+/// must never reset the flag — the contract is "exactly once per
+/// process".
+#[cfg(test)]
+pub(crate) fn reset_recovery_guard() {
+    RECOVERY_DONE.store(false, Ordering::Release);
+}
 
 // ---------------------------------------------------------------------------
 // Helpers (excluded from coverage)
@@ -45,6 +80,22 @@ pub async fn recover_at_boot(
     pool: &SqlitePool,
     device_id: &str,
 ) -> Result<RecoveryReport, AppError> {
+    // L-103: enforce the once-per-process contract. `compare_exchange`
+    // atomically flips `false -> true` on the first call; subsequent
+    // calls see `true` and return `InvalidOperation` BEFORE touching
+    // the pool. The guard is reset in tests via `reset_recovery_guard`.
+    if RECOVERY_DONE
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err(AppError::InvalidOperation(
+            "recover_at_boot called more than once per process — \
+             must be called exactly once at start-up before any user \
+             operations (L-103)"
+                .to_string(),
+        ));
+    }
+
     let start = Instant::now();
 
     // -----------------------------------------------------------------
