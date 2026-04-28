@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 FROM blocks WHERE id IN (SELECT value FROM json_each(?)) AND block_type IN ('tag', 'page') LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "1",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "95b6c6bf0147acc0e740dda04b34e6dbb6e88f3baf6b2643532d2cda30510b11"
+}

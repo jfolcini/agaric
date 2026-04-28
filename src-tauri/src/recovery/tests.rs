@@ -1254,7 +1254,7 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
     // The fix: create the materializer and refresh caches for the
     // recovered blocks. When this returns, the FTS index must be current.
     let materializer = Materializer::new(pool.clone());
-    refresh_caches_for_recovered_drafts(&materializer, &report.drafts_recovered)
+    refresh_caches_for_recovered_drafts(&pool, &materializer, &report.drafts_recovered)
         .await
         .unwrap();
 
@@ -1283,10 +1283,150 @@ async fn refresh_caches_for_recovered_drafts_is_noop_when_list_empty() {
     use crate::materializer::Materializer;
 
     let (pool, _dir) = test_pool().await;
-    let materializer = Materializer::new(pool);
-    refresh_caches_for_recovered_drafts(&materializer, &[])
+    let materializer = Materializer::new(pool.clone());
+    refresh_caches_for_recovered_drafts(&pool, &materializer, &[])
         .await
         .expect("no-op must not error");
+}
+
+// === I-Lifecycle-5: gate tag/page rebuilds on actual block_type ===
+//
+// `refresh_caches_for_recovered_drafts` previously enqueued
+// `RebuildTagsCache + RebuildPagesCache` on every non-empty recovery batch,
+// even when no recovered draft touched a `tag` or `page` block. That wastes
+// boot-time cycles on a full O(N) scan of `blocks` for the common case
+// where the user was editing content blocks. The fix gates the rebuilds on
+// a single `json_each` SQL query that checks whether any recovered ID is
+// actually a tag/page block.
+//
+// These tests pin the per-batch background-task counts via `bg_processed`
+// (each `flush_background()` adds exactly one barrier task to the count).
+
+/// Helper: insert a block of the given type for use in I-Lifecycle-5
+/// tests. Mirrors `insert_test_block` but takes a `block_type`.
+async fn insert_typed_test_block(
+    pool: &SqlitePool,
+    block_id: &str,
+    block_type: &str,
+    content: &str,
+) {
+    sqlx::query("INSERT INTO blocks (id, block_type, content, position) VALUES (?, ?, ?, 0)")
+        .bind(block_id)
+        .bind(block_type)
+        .bind(content)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cache_refresh_skips_rebuilds_for_content_only_recovery_i_lifecycle_5() {
+    use super::refresh_caches_for_recovered_drafts;
+    use crate::materializer::Materializer;
+    use std::sync::atomic::Ordering as AtomicOrdering;
+
+    let (pool, _dir) = test_pool().await;
+    let block_id = "BLOCK000000000000000000IL5C";
+
+    // A content-only block with an unflushed draft.
+    insert_typed_test_block(&pool, block_id, "content", "old content").await;
+    save_draft(&pool, block_id, "draft content").await.unwrap();
+
+    let report = recover_at_boot_test(&pool, "dev-1").await.unwrap();
+    assert_eq!(report.drafts_recovered, vec![block_id.to_owned()]);
+
+    let materializer = Materializer::new(pool.clone());
+    refresh_caches_for_recovered_drafts(&pool, &materializer, &report.drafts_recovered)
+        .await
+        .unwrap();
+
+    // Per-draft we always enqueue UpdateFtsBlock + ReindexBlockLinks (= 2
+    // tasks). The flush barrier adds 1 more. With the I-Lifecycle-5 gate
+    // tripping, RebuildTagsCache + RebuildPagesCache must NOT have been
+    // enqueued, so the total processed is exactly 3 — not 5.
+    let processed = materializer
+        .metrics()
+        .bg_processed
+        .load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        processed, 3,
+        "content-only recovery must not enqueue RebuildTagsCache or RebuildPagesCache; \
+         expected 2 per-block tasks + 1 barrier = 3, got {processed}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cache_refresh_enqueues_rebuilds_when_tag_block_recovered_i_lifecycle_5() {
+    use super::refresh_caches_for_recovered_drafts;
+    use crate::materializer::Materializer;
+    use std::sync::atomic::Ordering as AtomicOrdering;
+
+    let (pool, _dir) = test_pool().await;
+    let tag_block_id = "BLOCK000000000000000000IL5T";
+
+    // A tag block with an unflushed draft (e.g. user renamed the tag and
+    // the app crashed before the edit_block flushed).
+    insert_typed_test_block(&pool, tag_block_id, "tag", "old-tag-name").await;
+    save_draft(&pool, tag_block_id, "renamed-tag")
+        .await
+        .unwrap();
+
+    let report = recover_at_boot_test(&pool, "dev-1").await.unwrap();
+    assert_eq!(report.drafts_recovered, vec![tag_block_id.to_owned()]);
+
+    let materializer = Materializer::new(pool.clone());
+    refresh_caches_for_recovered_drafts(&pool, &materializer, &report.drafts_recovered)
+        .await
+        .unwrap();
+
+    // Expected: UpdateFtsBlock + ReindexBlockLinks + RebuildTagsCache +
+    // RebuildPagesCache + 1 barrier = 5.
+    let processed = materializer
+        .metrics()
+        .bg_processed
+        .load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        processed, 5,
+        "tag-block recovery must enqueue both RebuildTagsCache and RebuildPagesCache; \
+         expected 2 per-block tasks + 2 rebuilds + 1 barrier = 5, got {processed}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cache_refresh_enqueues_rebuilds_when_page_block_recovered_i_lifecycle_5() {
+    use super::refresh_caches_for_recovered_drafts;
+    use crate::materializer::Materializer;
+    use std::sync::atomic::Ordering as AtomicOrdering;
+
+    let (pool, _dir) = test_pool().await;
+    let page_block_id = "BLOCK000000000000000000IL5P";
+
+    // A page block with an unflushed draft (e.g. user renamed the page
+    // and the app crashed before the edit_block flushed).
+    insert_typed_test_block(&pool, page_block_id, "page", "Old Page Title").await;
+    save_draft(&pool, page_block_id, "Renamed Page Title")
+        .await
+        .unwrap();
+
+    let report = recover_at_boot_test(&pool, "dev-1").await.unwrap();
+    assert_eq!(report.drafts_recovered, vec![page_block_id.to_owned()]);
+
+    let materializer = Materializer::new(pool.clone());
+    refresh_caches_for_recovered_drafts(&pool, &materializer, &report.drafts_recovered)
+        .await
+        .unwrap();
+
+    // Expected: UpdateFtsBlock + ReindexBlockLinks + RebuildTagsCache +
+    // RebuildPagesCache + 1 barrier = 5.
+    let processed = materializer
+        .metrics()
+        .bg_processed
+        .load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        processed, 5,
+        "page-block recovery must enqueue both RebuildTagsCache and RebuildPagesCache; \
+         expected 2 per-block tasks + 2 rebuilds + 1 barrier = 5, got {processed}",
+    );
 }
 
 // ============================================================================

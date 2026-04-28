@@ -709,6 +709,7 @@ pub fn run() {
             if !report.drafts_recovered.is_empty() {
                 if let Err(e) = tauri::async_runtime::block_on(
                     recovery::refresh_caches_for_recovered_drafts(
+                        &pools.read,
                         &materializer,
                         &report.drafts_recovered,
                     ),

@@ -363,6 +363,52 @@ async fn op_transfer_from_op_record_roundtrip() {
     );
 }
 
+/// I-Sync-4: `OpTransfer` and `OpRecord` are intentionally kept as
+/// separate types (a deliberate wire-vs-DB boundary, not duplication
+/// — see the doc-block on `OpTransfer`). This test pins the
+/// "structurally identical" contract: an `OpRecord` with non-trivial
+/// values for every field MUST round-trip through
+/// `OpRecord -> OpTransfer -> OpRecord` losslessly at the serde-JSON
+/// level. If a future field is added to one type but not the other
+/// (or a `From` impl regresses to drop a field), this test fails and
+/// forces the contract to be re-asserted explicitly.
+///
+/// `block_id` is `#[serde(skip, default)]` on `OpRecord` (L-13 sidecar
+/// not part of the wire identity), so JSON serialization elides it on
+/// both sides — this is intentional.
+#[test]
+fn op_transfer_and_op_record_remain_structurally_identical_i_sync_4() {
+    // Fully-populated record: non-trivial parent_seqs, non-empty
+    // payload, non-default created_at, populated block_id sidecar.
+    let original = OpRecord {
+        device_id: "device-A".into(),
+        seq: 42,
+        parent_seqs: Some("[7,8,9]".into()),
+        hash: "f".repeat(64),
+        op_type: "create_block".into(),
+        payload: r#"{"block_id":"BLK_I_SYNC_4","block_type":"content","content":"hello","parent_id":null,"position":3}"#.into(),
+        created_at: "2025-03-14T09:26:53.589Z".into(),
+        block_id: Some("BLK_I_SYNC_4".into()),
+    };
+
+    let transfer: OpTransfer = OpTransfer::from(original.clone());
+    let roundtripped: OpRecord = OpRecord::from(transfer);
+
+    let original_json =
+        serde_json::to_string(&original).expect("OpRecord serialization must succeed");
+    let roundtripped_json = serde_json::to_string(&roundtripped)
+        .expect("round-tripped OpRecord serialization must succeed");
+
+    assert_eq!(
+        original_json, roundtripped_json,
+        "I-Sync-4: OpRecord -> OpTransfer -> OpRecord must be a lossless \
+         identity at the serde-JSON level. If this fails, a field was \
+         added to one struct but not the other, or a `From` impl dropped \
+         a field — re-assert the parity contract explicitly before \
+         landing the divergence."
+    );
+}
+
 /// L-13: the wire-side `From<OpTransfer>` conversion must NOT parse
 /// the payload — `apply_remote_ops` already does a validation parse
 /// and populates the sidecar from that single parse. Doing it here
@@ -951,6 +997,51 @@ async fn orchestrator_rejects_snapshot_offer_as_unreachable_protocol_state() {
         err.contains("snapshot_transfer"),
         "error message must point callers at the daemon sub-flow, got: {err}"
     );
+
+    materializer.shutdown();
+}
+
+/// I-Sync-1: `SnapshotAccept` and `SnapshotReject` belong to the
+/// `snapshot_transfer` sub-flow at the sync-daemon layer, not the
+/// orchestrator state machine. If either ever reaches `handle_message`,
+/// it is the same kind of routing regression as a stray `SnapshotOffer`
+/// — surface it as `AppError::InvalidOperation` instead of silently
+/// returning `Ok(None)`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_snapshot_accept_and_reject_i_sync_1() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+    // Drive to ExchangingHeads so state-validation passes the snapshot
+    // control messages through to the dispatch arm.
+    let _start = orch.start().await.unwrap();
+    assert_eq!(
+        orch.session().state,
+        SyncState::ExchangingHeads,
+        "start() must transition to ExchangingHeads"
+    );
+
+    for variant in [SyncMessage::SnapshotAccept, SyncMessage::SnapshotReject] {
+        let label = match variant {
+            SyncMessage::SnapshotAccept => "SnapshotAccept",
+            SyncMessage::SnapshotReject => "SnapshotReject",
+            _ => unreachable!(),
+        };
+        let result = orch.handle_message(variant).await;
+        let err = match result {
+            Err(crate::error::AppError::InvalidOperation(msg)) => msg,
+            other => panic!(
+                "{label} routed through handle_message must return \
+                 AppError::InvalidOperation — the snapshot_transfer sub-flow \
+                 is the only reachable path. got: {other:?}"
+            ),
+        };
+        assert!(
+            err.contains("snapshot_transfer"),
+            "{label} error must point callers at the daemon sub-flow, got: {err}"
+        );
+    }
 
     materializer.shutdown();
 }
