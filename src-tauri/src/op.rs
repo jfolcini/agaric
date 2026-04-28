@@ -24,11 +24,17 @@ use crate::ulid::{AttachmentId, BlockId};
 /// Operation type tag. Serialized as snake_case strings for storage in the
 /// `op_log.op_type` TEXT column.
 ///
-/// Marked `#[non_exhaustive]` so that new variants can be added in future
-/// versions without breaking downstream match arms outside this crate.
+/// **In-crate exhaustive-match invariant** (per ARCHITECTURE.md §4 — *"12 op
+/// types with exhaustive `match` — no catch-all arms"*): every consumer of
+/// this enum is workspace-internal and matches on every variant explicitly.
+/// I-Core-1: `#[non_exhaustive]` was previously applied as future-proofing
+/// for downstream consumers outside the crate, but no such consumers exist —
+/// the attribute weakened the invariant by silencing the "missing arm"
+/// compiler error when a new variant is added. Without it, adding a 13th op
+/// type (e.g. for compaction tombstones) reliably surfaces every site that
+/// must be updated.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum OpType {
     CreateBlock,
     EditBlock,

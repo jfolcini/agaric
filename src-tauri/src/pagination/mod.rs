@@ -168,7 +168,7 @@ pub struct HistoryEntry {
 /// future cursor-bearing queries should reuse the existing slots in the
 /// same way rather than adding new fields.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Cursor {
+pub(crate) struct Cursor {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<i64>,
@@ -183,7 +183,10 @@ pub struct Cursor {
 /// Pagination request from the client.
 #[derive(Debug, Clone)]
 pub struct PageRequest {
-    pub after: Option<Cursor>,
+    // `after` is `pub(crate)` because `Cursor` is `pub(crate)` (I-Cache-2):
+    // exposing the field as `pub` would leak a private type. External callers
+    // construct `PageRequest` via [`PageRequest::new`].
+    pub(crate) after: Option<Cursor>,
     pub limit: i64,
 }
 
@@ -213,7 +216,7 @@ impl Cursor {
     /// versioning is an encode/decode concern, not part of the cursor's
     /// in-memory shape.
     #[must_use = "encoded cursor string must be returned to the client"]
-    pub fn encode(&self) -> Result<String, AppError> {
+    pub(crate) fn encode(&self) -> Result<String, AppError> {
         let mut value = serde_json::to_value(self)?;
         if let serde_json::Value::Object(ref mut map) = value {
             map.insert(
@@ -237,7 +240,7 @@ impl Cursor {
     /// key in their JSON) are treated as version 1.  This is the desired
     /// behaviour at the seating commit — any FUTURE bump of
     /// [`CURRENT_CURSOR_VERSION`] will reject those legacy cursors.
-    pub fn decode(s: &str) -> Result<Self, AppError> {
+    pub(crate) fn decode(s: &str) -> Result<Self, AppError> {
         let bytes = URL_SAFE_NO_PAD
             .decode(s)
             .map_err(|e| AppError::Validation(format!("invalid cursor: {e}")))?;
