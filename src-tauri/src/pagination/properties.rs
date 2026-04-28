@@ -15,6 +15,37 @@ use crate::op::is_reserved_property_key;
 /// It defaults to `"eq"` for any unrecognised value.
 ///
 /// Ordered by `b.id ASC` (ULID ≈ chronological).
+///
+/// # Routing — reserved vs. non-reserved keys (L-29)
+///
+/// The function has two distinct query paths and the routing decision is
+/// made by [`crate::op::is_reserved_property_key`]:
+///
+/// - **Reserved keys** are stored as columns directly on the `blocks` table
+///   (not in `block_properties`). The reserved set is exactly four keys —
+///   `todo_state`, `priority`, `due_date`, `scheduled_date` — backed by the
+///   matching columns. The first branch below routes the query against
+///   those columns.
+/// - **Non-reserved keys** are stored as rows in `block_properties` with
+///   `(block_id, key)` uniqueness. The second branch joins
+///   `block_properties` to `blocks`.
+///
+/// **Source of truth** for the reserved-key set: `op::is_reserved_property_key`.
+/// If a fifth reserved column is ever added (e.g., `effort`), that helper
+/// must be updated AND the `match col { … }` arm below must gain the new
+/// case. The fall-through arm now returns `AppError::Validation` instead of
+/// panicking via `unreachable!()` so a missed update surfaces as a clean
+/// runtime error rather than crashing the IPC.
+///
+/// # Value precedence (related: L-23)
+///
+/// On the reserved-column path, `value_date` takes precedence over
+/// `value_text` for date-typed columns (`due_date`, `scheduled_date`),
+/// otherwise `value_text` takes precedence. On the non-reserved path,
+/// both `value_text` and `value_date` are bound and the SQL evaluates
+/// both filters with the same operator — silent precedence emerges from
+/// the underlying row's typed value. See L-23 for the unresolved
+/// non-reserved precedence concern.
 pub async fn query_by_property(
     pool: &SqlitePool,
     key: &str,
@@ -42,12 +73,20 @@ pub async fn query_by_property(
 
     let rows = if is_reserved_property_key(key) {
         // Reserved keys live as columns on the blocks table, not in block_properties.
+        // L-29: explicit Validation on a missed-update fall-through instead of
+        // `unreachable!()` so a future reserved-key addition without the matching
+        // column-routing update surfaces as a clean runtime error rather than a panic.
         let col = match key {
             "todo_state" => "todo_state",
             "priority" => "priority",
             "due_date" => "due_date",
             "scheduled_date" => "scheduled_date",
-            _ => unreachable!(),
+            _ => {
+                return Err(AppError::Validation(format!(
+                    "query_by_property: reserved key '{key}' has no column routing — \
+                     update `is_reserved_property_key` and the match arm in lockstep"
+                )));
+            }
         };
         let sql = format!(
             "SELECT id, block_type, content, parent_id, position, \

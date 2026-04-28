@@ -283,10 +283,26 @@ pub async fn get_mcp_socket_path(app: tauri::AppHandle) -> Result<String, AppErr
 
 /// Tauri command: disconnect every in-flight MCP connection.
 ///
-/// Returns the connection count observed immediately after firing the
-/// signal. Reporting a non-zero value is not an error — the signal wakes
-/// each connection's `select!` branch asynchronously, so `get_mcp_status`
-/// may briefly still observe live connections while the tasks unwind.
+/// Fires the `McpLifecycle` disconnect signal — every connection's
+/// `select!` branch wakes asynchronously and drops its stream. The
+/// signal is fire-and-forget; this command returns `Ok(())` as soon
+/// as the signal has been emitted.
+///
+/// L-51: the previous doc-comment promised this command "returns the
+/// connection count observed immediately after firing the signal", but
+/// the signature is `Result<(), AppError>`. The mismatch was a doc
+/// drift — the count was never surfaced. The Settings tab observes the
+/// connection count via `get_mcp_status` (which polls
+/// `lifecycle.connection_count()` directly) rather than via this
+/// command's return value, so adding a count return here would be
+/// pure noise. Aligned the doc to the actual `Ok(())` contract.
+///
+/// Reporting a count adjacent to disconnect-all would also be
+/// misleading: `lifecycle.disconnect_all()` is asynchronous, so any
+/// snapshot taken right after the signal fires is racy — connections
+/// observed at T may already be unwinding by T + ε. The Settings tab's
+/// `get_mcp_status` polling loop is the right place to read the
+/// post-disconnect count, not this command.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]

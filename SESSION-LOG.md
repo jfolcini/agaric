@@ -1,5 +1,53 @@
 # Session Log
 
+## Session 523 — Backend LOW-severity cleanup batch — close 6 items (L-29, L-35, L-51, L-52, L-128, L-134) (2026-04-28)
+
+**6 backend LOW-severity REVIEW-LATER items closed in one PROMPT.md batch.** Mixed orchestrator-direct + subagent flow. Both build subagents (L-35+L-134 in `commands/spaces.rs` and L-52 in `commands/bug_report.rs`) were canceled by the user mid-flight; the orchestrator picked up both directly. **Two items (L-35 + L-134) were discovered to be already resolved** by an earlier session's MAINT-112 `CommandTx` migration — `dispatch_background_for_page_create` no longer exists, op records are now threaded through `tx.enqueue_background(...)` and dispatched via `tx.commit_and_dispatch(materializer)`. They were removed from REVIEW-LATER without code changes. The remaining four items (L-29, L-51, L-52, L-128) were all small enough to apply directly. One pipelined review subagent confirmed PASS for all four and applied one micro-fix (clippy `assertions_on_constants` allow on the new tripwire test).
+
+**REVIEW-LATER impact:**
+
+- **LOW findings:** 76 → 70 (6 items resolved, 4 by code change + 2 already-resolved cleanup).
+- **Top-level open count (FEAT/MAINT/PERF/PUB/UX tracker):** 41 → 41.
+- **Previously-resolved counter:** 633+ → 639+ across 490 sessions (latest session 523).
+
+**Items closed (6):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| L-29 | Cache+Pagination (`pagination/properties.rs`) | Doc-comment block above `query_by_property` covers reserved-vs-non-reserved key routing; names the four reserved keys (`todo_state`, `priority`, `due_date`, `scheduled_date`) and cross-references `op::is_reserved_property_key` as the source of truth. **`unreachable!()` replaced with `Err(AppError::Validation(format!(...)))`** so a future fifth reserved key added to `is_reserved_property_key` without the matching column-routing match arm produces a clean runtime error rather than a panic. The error message includes the offending key and explicitly names the lockstep update requirement. `AppError::Validation` is in `sanitize_internal_error`'s pass-through set so the diagnostic survives to the frontend. |
+| L-35 | Commands/CRUD (`commands/spaces.rs`) | **Already resolved** — MAINT-112's `CommandTx` migration eliminated the entire failure mode. `create_page_in_space_inner` now captures both `OpRecord`s from `create_block_in_tx` and `set_property_in_tx`, calls `tx.enqueue_background(record)` for each, and ends with `tx.commit_and_dispatch(materializer)` which couples commit to post-commit dispatch by construction. No code changes needed; removed from REVIEW-LATER as obsolete. |
+| L-51 | Commands/MCP (`commands/mcp.rs`) | **Doc-only fix.** Replaced the stale `mcp_disconnect_all` doc-comment line `"Returns the connection count observed immediately after firing the signal."` (the function actually returns `Ok(())`) with a 3-paragraph doc-block naming the actual contract, the L-51 attribution, and the rationale for NOT returning a count: any post-disconnect snapshot is racy because `lifecycle.disconnect_all()` is asynchronous, and the Settings tab observes connection counts via `get_mcp_status` polling instead. `bindings.ts` regenerated via `cargo test specta_tests -- --ignored` (the documented signal when types-used-in-Tauri-commands change). |
+| L-52 | Commands/Bug-report (`commands/bug_report.rs`) | Three silent-drop sites in `read_logs_for_report_inner` now emit `tracing::warn!`: (1) invalid UTF-8 filename (anonymised via `to_string_lossy()` truncated at 80 chars to avoid leaking PII on pathologically named files), (2) non-file entry (path identified by name), (3) `read_capped_file` failure (name + io error). The `should_include_log_file` filter remains silent because it's an expected window check, not a silent drop — explanatory comment added. Function still returns `Ok(_)` with whatever survived. Two new tests pin behaviour: `read_logs_warns_on_non_file_entry_and_excludes_it` (creates a directory in the log dir; asserts only the real log file survives), `read_logs_warns_on_unreadable_file_and_excludes_it` (Unix-only with `0o000` mode + root-detection skip path that restores perms for cleanup). |
+| L-128 | GCal/Digest (`gcal_push/digest.rs`) | **Doc + tripwire.** Doc-block above `truncate_with_overflow_suffix` explains the O(N²) cost is acceptable today because `AGENDA_FETCH_LIMIT = 500` bounds N; if the limit is ever raised meaningfully the function should be rewritten with a precomputed cumulative-length table + binary search. New `truncate_complexity_tripwire_for_agenda_fetch_limit` test asserts `AGENDA_FETCH_LIMIT <= 5_000` so a future limit bump fails this test, forcing the optimisation discussion before shipping. Reviewer applied `#[allow(clippy::assertions_on_constants)]` (with justification comment) because both sides of the assert are compile-time constants — keeping the runtime test surface intentional rather than collapsing to a `const { … }` build-time check. |
+| L-134 | Commands/CRUD (`commands/spaces.rs`) | **Already resolved** — same MAINT-112 migration as L-35. `create_page_in_space_inner`'s `tx.commit_and_dispatch(materializer)` line couples commit to dispatch atomically — the "best-effort silent re-fetch failure" mode that L-134 described is structurally impossible in the current code. Removed from REVIEW-LATER as obsolete. |
+
+**Files touched (this session's batch — 5 modified):**
+
+- Backend Cache+Pagination (1): `src-tauri/src/pagination/properties.rs`
+- Backend Commands (2): `src-tauri/src/commands/mcp.rs`, `src-tauri/src/commands/bug_report.rs`
+- Backend GCal (1): `src-tauri/src/gcal_push/digest.rs`
+- Frontend bindings (1): `src/lib/bindings.ts` (regenerated for L-51's doc-comment)
+- Docs (2): `REVIEW-LATER.md` (6 items removed; LOW count 76 → 70; previously-resolved counter bumped), `SESSION-LOG.md` (this entry)
+
+**Verification:** `prek run --all-files` → all hooks PASS. Targeted runs:
+
+- L-29: 31/31 `query_by_property` + reserved-key tests pass; clippy clean.
+- L-51: `ts_bindings_up_to_date` passes after regen; bindings doc-comment updated.
+- L-52: 14/14 `read_logs` + new L-52 tests pass; clippy clean.
+- L-128: 32/32 `digest::tests::*` pass including the new tripwire; clippy clean (after the `#[allow]` micro-fix).
+
+Full-suite post-merge: `cargo nextest run --no-fail-fast` → **3086/3086 passed (1 flaky retry, unrelated)**, 2 skipped.
+
+**Process notes:**
+
+- **Both build subagents canceled mid-flight; orchestrator-direct fallback worked cleanly.** The L-35+L-134 subagent and the L-52 subagent were both canceled by the user. Worktrees were empty (no partial state to merge or revert), so the orchestrator picked up both items directly in the main tree. Pattern is now well-established (session 520's MCP subagent had the same cancel-fallback flow): if a subagent stalls, orchestrator-direct is a sound finish.
+- **Two items already resolved by prior session's refactor.** L-35 and L-134 both pointed at `dispatch_background_for_page_create` — a function that no longer exists. MAINT-112's `CommandTx` migration eliminated the re-fetch helper entirely; `tx.enqueue_background(record)` during the transaction + `tx.commit_and_dispatch(materializer)` after commit makes the dispatch structurally inseparable from the commit. Both items removed from REVIEW-LATER without code changes — the cleanup is part of normal review hygiene.
+- **L-128 tripwire test pattern is reusable.** The pattern (a `#[test]` that asserts a constant ≤ a heuristic ceiling, with a clear failure message naming the optimisation that must precede a higher value) is a clean way to "freeze" performance assumptions. The orchestrator-style note is: if the tripwire ever fires, the contributor MUST either (a) implement the optimisation OR (b) update the heuristic ceiling with explicit rationale — not just bump the constant. The `#[allow(clippy::assertions_on_constants)]` is necessary because clippy correctly observes both sides are compile-time constants; collapsing to `const { assert!(...) }` would convert the tripwire to a build error, which is more aggressive than intended.
+- **L-29's `unreachable!()` → `Err(Validation)` is a small but consequential fix.** Adding a fifth reserved column (e.g., `effort` per AGENTS.md "Architectural Stability — properties system extension point") will now produce a clean error message at the IPC boundary if the contributor forgets to update the routing match. Previously it would have panicked in production. The doc-comment names this trap explicitly.
+- **L-51 bindings.ts regen produces some whitespace noise.** The L-51 doc-comment update is the only semantic change; specta's emitter also added trailing spaces to many unrelated doc-continuation lines + a trailing newline at EOF (the previously-committed file had been manually trimmed at some point). The `ts_bindings_up_to_date` test normalises via `str::trim_end` so this doesn't cause a CI failure, and `bindings.ts` is excluded from biome's check via `"!src/lib/bindings.ts"` in `biome.json`. Benign — accept the wider whitespace diff.
+
+---
+
 ## Session 522 — Backend LOW-severity cleanup batch — close 7 items (L-18, L-26, L-40, L-54, L-57, L-58, L-96) (2026-04-28)
 
 **7 backend LOW-severity REVIEW-LATER items closed in one PROMPT.md batch.** Four parallel build subagents on file-disjoint subsystems (Cache+Pagination / Sync backoff docs / Bug-report hardening / URL credential strip); four pipelined reviewers, all PASS. Three reviewer micro-fixes applied: 4 edge-case tests added to L-96 (port+userinfo, multiple `@`, empty userinfo); a 2-line stale comment fixed in `sync_scheduler.rs::backoff_doubles_on_consecutive_failures` adjacent to the L-58 work; a clippy `cast_possible_truncation` fix in the new L-54 test. The L-18 builder DEVIATED from the spec's struct-field approach for the Cursor versioning (would have cascaded to 11+ struct-literal callsites breaking the strict file-scope) — implemented version logic at the encode/decode boundary via `serde_json::Value` intermediate, functionally equivalent for the future-bump-rejects-old-cursors guarantee. Reviewer accepted the deviation. The L-54 builder discovered and fixed a latent log-file sort bug — dated rolled files were sorted oldest-first via plain alphabetic, contradicting the "today first, then reverse-chrono" comment.
