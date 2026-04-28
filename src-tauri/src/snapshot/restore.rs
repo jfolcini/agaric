@@ -63,8 +63,11 @@ pub async fn apply_snapshot(
     let data = decode_snapshot(compressed_data)?;
 
     // F04: BEGIN IMMEDIATE — acquire write lock upfront (consistent with
-    // every other write path in the codebase).
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // every other write path in the codebase). L-7: route through
+    // `begin_immediate_logged` so a stalled writer surfaces as a `warn`
+    // instead of disappearing into the 5s busy_timeout — restore is a
+    // long-running write that any other writer will visibly stall on.
+    let mut tx = crate::db::begin_immediate_logged(pool, "snapshot_restore").await?;
 
     // F02: Defer FK checks until COMMIT — snapshot block order is arbitrary,
     // so a child block may be inserted before its parent. All FK references

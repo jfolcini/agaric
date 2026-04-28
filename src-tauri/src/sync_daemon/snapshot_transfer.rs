@@ -1059,6 +1059,108 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
+    // L-74: snapshot transfer cancellation / interruption
+    // -----------------------------------------------------------------
+
+    /// L-74: the responder advertises a snapshot, the initiator accepts,
+    /// then the responder disconnects mid-binary-stream after delivering
+    /// only part of the promised payload. The initiator must:
+    ///
+    /// (a) return `Err` from `try_receive_snapshot_catchup`,
+    /// (b) leave the local DB untouched (no half-applied rows),
+    /// (c) NOT advance peer_refs (the catch-up did not complete).
+    ///
+    /// This pins the `apply_snapshot` `BEGIN IMMEDIATE` whole-tx
+    /// rollback contract under the most realistic interruption path —
+    /// peer drop mid-stream. A future refactor that buffers bytes in a
+    /// way that admits partial application would be caught here.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn try_receive_snapshot_catchup_rolls_back_on_mid_stream_disconnect_l74() {
+        let (init_pool, _init_dir) = test_pool().await;
+        let materializer = Materializer::new(init_pool.clone());
+
+        // Pre-condition: DB starts empty.
+        let blocks_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&init_pool)
+            .await
+            .unwrap();
+        assert_eq!(blocks_before, 0, "pre-condition: blocks must start empty");
+        let peer_before = peer_refs::get_peer_ref(&init_pool, REMOTE_DEV)
+            .await
+            .unwrap();
+        assert!(
+            peer_before.is_none(),
+            "pre-condition: peer_refs must be empty"
+        );
+
+        let (mut server_conn, mut client_conn) = test_connection_pair().await;
+        let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+        // Promise more bytes than we'll deliver. The receiver will read
+        // the partial chunk, loop back to `recv_binary`, and observe EOF
+        // when the responder drops the duplex stream.
+        let promised_size: u64 = 64 * 1024;
+        let partial_chunk: Vec<u8> = vec![0u8; 4 * 1024];
+
+        let server_task = tokio::spawn(async move {
+            server_conn
+                .send_json(&SyncMessage::SnapshotOffer {
+                    size_bytes: promised_size,
+                })
+                .await
+                .unwrap();
+            let accept: SyncMessage = server_conn.recv_json().await.unwrap();
+            assert_eq!(accept, SyncMessage::SnapshotAccept);
+            // Send only the partial chunk, then drop the responder side.
+            server_conn.send_binary(&partial_chunk).await.unwrap();
+            // `drop(server_conn)` happens on task exit; the duplex stream
+            // closes and the initiator's next `recv_binary` returns Err.
+        });
+
+        let result = try_receive_snapshot_catchup(
+            &mut client_conn,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            REMOTE_DEV,
+            None,
+        )
+        .await;
+
+        // (a) The interruption surfaces as Err.
+        assert!(
+            result.is_err(),
+            "L-74: mid-stream disconnect must surface as Err; got {result:?}"
+        );
+
+        server_task.await.unwrap();
+
+        // (b) The DB is untouched — `apply_snapshot` was never called
+        // because the byte stream never reached the cap, AND if any
+        // partial decode had been attempted, BEGIN IMMEDIATE would
+        // have rolled it back.
+        let blocks_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&init_pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            blocks_after, 0,
+            "L-74: interrupted snapshot must not leave any blocks"
+        );
+
+        // (c) No peer_refs row — the catch-up did not complete.
+        let peer_after = peer_refs::get_peer_ref(&init_pool, REMOTE_DEV)
+            .await
+            .unwrap();
+        assert!(
+            peer_after.is_none(),
+            "L-74: interrupted snapshot must NOT advance peer_refs"
+        );
+
+        materializer.shutdown();
+    }
+
+    // -----------------------------------------------------------------
     // Initiator side: non-offer first message → InvalidOperation
     // -----------------------------------------------------------------
 

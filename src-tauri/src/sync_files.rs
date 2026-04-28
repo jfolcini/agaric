@@ -1965,6 +1965,114 @@ mod tests {
         assert_eq!(hash, expected_hash);
     }
 
+    /// L-72: chaos / partial-transfer recovery. The sender drops the
+    /// connection mid-binary-frame after delivering an unprocessable
+    /// partial chunk; the receiver must:
+    ///
+    /// (a) return `Err` from `request_and_receive_files`,
+    /// (b) leave NO file on disk at the offered `fs_path`
+    ///     (write happens only after the full payload + hash verify),
+    /// (c) keep the attachment row visible to `find_missing_attachments`
+    ///     so the next sync cycle re-tries.
+    ///
+    /// This pins the M-50 contract that ACK-after-write means a partial
+    /// transfer is fully recoverable on the next cycle, not silently
+    /// committed as a half-baked file.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn inmem_request_receive_partial_transfer_disconnects_mid_frame_l72() {
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        let app_data_dir = dir.path().to_path_buf();
+
+        // Offer an attachment whose declared size is much larger than the
+        // single chunk we'll actually send. The receiver expects more
+        // bytes than the sender will deliver before dropping; the next
+        // `recv_binary` after the partial chunk surfaces EOF as Err.
+        let declared_size: u64 = 64 * 1024; // 64 KiB
+        let partial_chunk: Vec<u8> = vec![0u8; 4 * 1024]; // only 4 KiB delivered
+
+        // Hash is computed from a *plausible* full payload — never
+        // verified in this test because the receiver returns Err before
+        // hashing. We compute the hash of zero bytes as a placeholder.
+        let placeholder_hash = blake3::hash(b"").to_hex().to_string();
+
+        insert_test_attachment(
+            &pool,
+            "ATT_L72",
+            "attachments/partial.bin",
+            i64::try_from(declared_size).expect("invariant: 64 KiB fits in i64"),
+        )
+        .await;
+        let final_path = dir.path().join("attachments/partial.bin");
+        assert!(
+            !final_path.exists(),
+            "pre-condition: file must be missing on disk"
+        );
+
+        let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+
+        let server_task = tokio::spawn(async move {
+            // Receive FileRequest from the receiver.
+            let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+            match msg {
+                SyncMessage::FileRequest { attachment_ids } => {
+                    assert_eq!(attachment_ids, vec!["ATT_L72".to_string()]);
+                }
+                other => panic!("expected FileRequest, got {other:?}"),
+            }
+
+            // Send a FileOffer that promises more bytes than we'll ever
+            // deliver — the receiver will loop on `recv_binary` waiting
+            // for the rest, and observe EOF when we drop below.
+            server_conn
+                .send_json(&SyncMessage::FileOffer {
+                    attachment_id: "ATT_L72".into(),
+                    size_bytes: declared_size,
+                    blake3_hash: placeholder_hash,
+                })
+                .await
+                .unwrap();
+
+            // Send only the partial chunk, then drop the sender side.
+            server_conn.send_binary(&partial_chunk).await.unwrap();
+            // `drop(server_conn)` happens on task exit, closing the
+            // duplex stream and surfacing EOF on the receiver's next
+            // `recv_binary`.
+        });
+
+        let cancel = AtomicBool::new(false);
+        let result =
+            request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel).await;
+        server_task.await.unwrap();
+
+        // (a) Receive surfaces the disconnection as Err.
+        assert!(
+            result.is_err(),
+            "L-72: mid-frame disconnect must surface as Err; got {result:?}"
+        );
+
+        // (b) No half-written file on disk. M-50 guarantees the write
+        // happens only after the full hash-verified payload is in
+        // memory; an interrupted transfer must leave the path empty.
+        assert!(
+            !final_path.exists(),
+            "L-72: no half-written file may appear on disk after a mid-frame \
+             disconnect; found unexpected file at {final_path:?}"
+        );
+
+        // (c) The attachment is still classified as missing so the next
+        // sync retries it. M-48 (`find_missing_attachments` re-detects
+        // truncated files) makes the result deterministic regardless of
+        // whether the OS allocated a 0-byte stub on the way.
+        let still_missing = find_missing_attachments(&pool, dir.path()).await.unwrap();
+        let still_missing_ids: Vec<&str> = still_missing.iter().map(|m| m.id.as_str()).collect();
+        assert!(
+            still_missing_ids.contains(&"ATT_L72"),
+            "L-72: attachment must remain in find_missing_attachments after partial \
+             transfer; got {still_missing_ids:?}"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn inmem_responder_bidirectional_no_files() {
         let dir = TempDir::new().unwrap();

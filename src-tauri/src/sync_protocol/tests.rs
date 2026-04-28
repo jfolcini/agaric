@@ -442,6 +442,235 @@ async fn apply_remote_ops_populates_block_id_sidecar_l13() {
     materializer.shutdown();
 }
 
+// ── L-68: per-block_id BatchApplyOps grouping ───────────────────────
+//
+// `apply_remote_ops` splits the freshly-inserted batch into one
+// `BatchApplyOps` task per `block_id` so the materializer's
+// foreground consumer commits each group as its own transaction.
+// The tests below pin three properties of that split: enqueue count
+// (one task per distinct block_id), within-group seq ordering, and
+// cross-group safety for parent-before-child create cascades.
+
+/// Helper: build an `OpTransfer` by appending an op to a "remote"
+/// pool and converting the resulting `OpRecord`. Mirrors the pattern
+/// used by `apply_remote_ops_inserts_and_counts` above.
+async fn remote_transfer(
+    remote_pool: &SqlitePool,
+    device_id: &str,
+    payload: OpPayload,
+) -> OpTransfer {
+    append_local_op_at(remote_pool, device_id, payload, FIXED_TS.into())
+        .await
+        .unwrap()
+        .into()
+}
+
+/// L-68: with 4 ops spanning 2 distinct block_ids, `apply_remote_ops`
+/// must enqueue exactly **two** `BatchApplyOps` foreground tasks.
+/// We verify via `fg_processed` (one increment per processed task,
+/// including the Barrier emitted by `flush_foreground`) and via
+/// end-state equivalence on the materialized `blocks` table.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_remote_ops_groups_by_block_id_l68() {
+    use crate::op::EditBlockPayload;
+    use std::sync::atomic::Ordering;
+
+    let (remote_pool, _remote_dir) = test_pool().await;
+    let t1 = remote_transfer(&remote_pool, "remote-dev", test_create_payload("BLKA")).await;
+    let t2 = remote_transfer(
+        &remote_pool,
+        "remote-dev",
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("BLKA"),
+            to_text: "edit-A".into(),
+            prev_edit: None,
+        }),
+    )
+    .await;
+    let t3 = remote_transfer(&remote_pool, "remote-dev", test_create_payload("BLKB")).await;
+    let t4 = remote_transfer(
+        &remote_pool,
+        "remote-dev",
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("BLKB"),
+            to_text: "edit-B".into(),
+            prev_edit: None,
+        }),
+    )
+    .await;
+
+    let (local_pool, _local_dir) = test_pool().await;
+    let materializer = Materializer::new(local_pool.clone());
+
+    // Drain any one-shot init work on the foreground queue so the
+    // `fg_processed` snapshot below is not contaminated by it.
+    materializer.flush().await.unwrap();
+    let baseline = materializer.metrics().fg_processed.load(Ordering::Relaxed);
+
+    let result = apply_remote_ops(&local_pool, &materializer, vec![t1, t2, t3, t4])
+        .await
+        .unwrap();
+    assert_eq!(result.inserted, 4, "all four remote ops should insert");
+
+    // Wait for every enqueued BatchApplyOps task plus the
+    // flush_foreground barrier to drain.
+    materializer.flush().await.unwrap();
+    let processed = materializer.metrics().fg_processed.load(Ordering::Relaxed) - baseline;
+
+    // 2 BatchApplyOps tasks (one per distinct block_id) + 1 Barrier
+    // from the flush_foreground call above.  A regression to the
+    // single-task behaviour would land at 1 + 1 = 2.
+    assert_eq!(
+        processed, 3,
+        "L-68: 4 ops over 2 block_ids must enqueue 2 BatchApplyOps + \
+         1 flush Barrier (got {processed} fg-processed)"
+    );
+
+    // End-state equivalence: both blocks materialize with the
+    // post-edit content, identical to the pre-L-68 monolithic batch.
+    let row_a: (String,) = sqlx::query_as("SELECT content FROM blocks WHERE id = ?")
+        .bind(BlockId::test_id("BLKA").as_str())
+        .fetch_one(&local_pool)
+        .await
+        .unwrap();
+    let row_b: (String,) = sqlx::query_as("SELECT content FROM blocks WHERE id = ?")
+        .bind(BlockId::test_id("BLKB").as_str())
+        .fetch_one(&local_pool)
+        .await
+        .unwrap();
+    assert_eq!(row_a.0, "edit-A", "block A should reflect its edit");
+    assert_eq!(row_b.0, "edit-B", "block B should reflect its edit");
+
+    materializer.shutdown();
+}
+
+/// L-68: ops within a single `block_id` group must execute in
+/// per-device seq order.  Three edits on the same block, all from
+/// the same device, must commit in input order so the final
+/// materialized content equals the LAST edit's `to_text`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_remote_ops_preserves_seq_order_within_group_l68() {
+    use crate::op::EditBlockPayload;
+
+    let (remote_pool, _remote_dir) = test_pool().await;
+    let t1 = remote_transfer(&remote_pool, "remote-dev", test_create_payload("BLKZ")).await;
+    let t2 = remote_transfer(
+        &remote_pool,
+        "remote-dev",
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("BLKZ"),
+            to_text: "first".into(),
+            prev_edit: None,
+        }),
+    )
+    .await;
+    let t3 = remote_transfer(
+        &remote_pool,
+        "remote-dev",
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("BLKZ"),
+            to_text: "second".into(),
+            prev_edit: None,
+        }),
+    )
+    .await;
+
+    let (local_pool, _local_dir) = test_pool().await;
+    let materializer = Materializer::new(local_pool.clone());
+
+    let result = apply_remote_ops(&local_pool, &materializer, vec![t1, t2, t3])
+        .await
+        .unwrap();
+    assert_eq!(result.inserted, 3, "all three ops should insert");
+
+    materializer.flush().await.unwrap();
+
+    let row: (String,) = sqlx::query_as("SELECT content FROM blocks WHERE id = ?")
+        .bind(BlockId::test_id("BLKZ").as_str())
+        .fetch_one(&local_pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        row.0, "second",
+        "L-68: within a single block_id group, ops must apply in \
+         input (seq) order — `second` is the last EditBlock so it \
+         must win"
+    );
+
+    materializer.shutdown();
+}
+
+/// L-68: cross-group ordering for a parent-before-child create
+/// cascade.  Splitting `BatchApplyOps` per `block_id` puts parent
+/// and child into separate transactions; the side-vec
+/// (`group_order`) preserves first-encounter order, so the parent's
+/// group enqueues — and therefore commits — before the child's
+/// group, satisfying the `blocks.parent_id` foreign key without
+/// needing `defer_foreign_keys = ON` per task.  A regression that
+/// switched to BTreeMap-by-key would re-order the groups by ULID
+/// lex and trigger an FK violation here on roughly half of all ID
+/// permutations.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_remote_ops_cross_group_parent_before_child_l68() {
+    let (remote_pool, _remote_dir) = test_pool().await;
+    // Parent ULID lex-greater than child so a sort-by-key grouping
+    // (BTreeMap) would put the child first and trigger the FK
+    // violation.  `BLK_PARENT` > `BLK_CHILD` under lex compare.
+    let parent_id = BlockId::test_id("BLK_PARENT");
+    let child_id = BlockId::test_id("BLK_CHILD");
+
+    let parent_create = OpPayload::CreateBlock(crate::op::CreateBlockPayload {
+        block_id: parent_id.clone(),
+        block_type: "content".into(),
+        parent_id: None,
+        position: Some(0),
+        content: "parent".into(),
+    });
+    let child_create = OpPayload::CreateBlock(crate::op::CreateBlockPayload {
+        block_id: child_id.clone(),
+        block_type: "content".into(),
+        parent_id: Some(parent_id.clone()),
+        position: Some(0),
+        content: "child".into(),
+    });
+
+    let t_parent = remote_transfer(&remote_pool, "remote-dev", parent_create).await;
+    let t_child = remote_transfer(&remote_pool, "remote-dev", child_create).await;
+
+    let (local_pool, _local_dir) = test_pool().await;
+    let materializer = Materializer::new(local_pool.clone());
+
+    let result = apply_remote_ops(&local_pool, &materializer, vec![t_parent, t_child])
+        .await
+        .unwrap();
+    assert_eq!(result.inserted, 2, "parent and child ops should insert");
+
+    materializer.flush().await.unwrap();
+
+    let parent_row: (String, Option<String>) =
+        sqlx::query_as("SELECT id, parent_id FROM blocks WHERE id = ?")
+            .bind(parent_id.as_str())
+            .fetch_one(&local_pool)
+            .await
+            .unwrap();
+    let child_row: (String, Option<String>) =
+        sqlx::query_as("SELECT id, parent_id FROM blocks WHERE id = ?")
+            .bind(child_id.as_str())
+            .fetch_one(&local_pool)
+            .await
+            .unwrap();
+
+    assert_eq!(parent_row.1, None, "parent has no parent_id");
+    assert_eq!(
+        child_row.1.as_deref(),
+        Some(parent_id.as_str()),
+        "L-68: child's group must commit AFTER parent's group so \
+         the blocks.parent_id FK resolves"
+    );
+
+    materializer.shutdown();
+}
+
 // ── SyncOrchestrator ────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
