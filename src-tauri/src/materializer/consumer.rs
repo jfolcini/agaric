@@ -37,15 +37,51 @@ use crate::gcal_push::connector::GcalConnectorHandle;
 pub(super) fn log_consumer_result(
     label: &str,
     result: &Result<Result<(), crate::error::AppError>, tokio::task::JoinError>,
+    level: tracing::Level,
 ) {
+    // L-16: callers parameterise the failure level so transient
+    // (about-to-be-retried) failures emit at `debug` and only
+    // operator-actionable failures (panics, retry exhaustion) emit
+    // at `error`. Without this, every transient WAL-lock contention
+    // produced an `error processing materializer task` line that
+    // was swept up by `recent_errors_from_log_dir` /
+    // bug-report log captures even when the retry succeeded.
     match result {
         Ok(Ok(())) => {}
-        Ok(Err(e)) => {
-            tracing::error!(label, error = %e, "error processing materializer task");
-        }
-        Err(e) => {
-            tracing::error!(label, error = %e, "materializer task panicked");
-        }
+        Ok(Err(e)) => match level {
+            tracing::Level::ERROR => {
+                tracing::error!(label, error = %e, "error processing materializer task");
+            }
+            tracing::Level::WARN => {
+                tracing::warn!(label, error = %e, "error processing materializer task");
+            }
+            tracing::Level::INFO => {
+                tracing::info!(label, error = %e, "error processing materializer task");
+            }
+            tracing::Level::DEBUG => {
+                tracing::debug!(label, error = %e, "error processing materializer task");
+            }
+            tracing::Level::TRACE => {
+                tracing::trace!(label, error = %e, "error processing materializer task");
+            }
+        },
+        Err(e) => match level {
+            tracing::Level::ERROR => {
+                tracing::error!(label, error = %e, "materializer task panicked");
+            }
+            tracing::Level::WARN => {
+                tracing::warn!(label, error = %e, "materializer task panicked");
+            }
+            tracing::Level::INFO => {
+                tracing::info!(label, error = %e, "materializer task panicked");
+            }
+            tracing::Level::DEBUG => {
+                tracing::debug!(label, error = %e, "materializer task panicked");
+            }
+            tracing::Level::TRACE => {
+                tracing::trace!(label, error = %e, "materializer task panicked");
+            }
+        },
     }
 }
 
@@ -105,11 +141,18 @@ where
         }
         Ok(Err(e)) => {
             outcome.last_error_msg = Some(format!("{e:?}"));
-            log_consumer_result(label, &first);
+            // L-16: demote first-attempt non-panic failure to `debug` —
+            // the loop below already emits a `tracing::warn!("retrying
+            // failed materializer task …")` line announcing the retry,
+            // and if the retry succeeds the operator should NOT see an
+            // `error` line. Final error escalation lives below the
+            // retry loop. Panics keep their `error` level — they are
+            // always interesting (and break the consumer's invariants).
+            log_consumer_result(label, &first, tracing::Level::DEBUG);
         }
         Err(e) => {
             outcome.last_error_msg = Some(format!("panic: {e:?}"));
-            log_consumer_result(label, &first);
+            log_consumer_result(label, &first, tracing::Level::ERROR);
             outcome.panicked = true;
             return outcome;
         }
@@ -129,20 +172,44 @@ where
         let retry_label = format!("{label}-retry-{attempt}");
         match &retry {
             Ok(Ok(())) => {
+                // L-16: optional positive correlation line — pairs with
+                // the demoted `debug` first-attempt failure so an
+                // operator chasing a transient WAL-lock can confirm the
+                // task eventually completed. `fg_errors` / `bg_errors`
+                // are NOT bumped on this path.
+                tracing::info!(
+                    label,
+                    retry = attempt,
+                    "materializer task succeeded after retry"
+                );
                 outcome.succeeded = true;
                 outcome.last_error_msg = None;
                 return outcome;
             }
             Ok(Err(e)) => {
                 outcome.last_error_msg = Some(format!("{e:?}"));
-                log_consumer_result(&retry_label, &retry);
+                // L-16: same rationale as the first-attempt arm — these
+                // intermediate retry failures are about to be retried
+                // again (or escalated below). Demote to `debug`.
+                log_consumer_result(&retry_label, &retry, tracing::Level::DEBUG);
             }
             Err(e) => {
                 outcome.last_error_msg = Some(format!("panic: {e:?}"));
-                log_consumer_result(&retry_label, &retry);
+                log_consumer_result(&retry_label, &retry, tracing::Level::ERROR);
                 outcome.panicked = true;
                 return outcome;
             }
+        }
+    }
+
+    // L-16: retries exhausted without panic — surface a single
+    // operator-facing `error` line so the demoted-to-debug
+    // intermediate failures don't leave the operator-facing logs
+    // silent. Panic-exhausted paths are NOT logged here; they were
+    // already emitted at `error` level in their respective arms.
+    if !outcome.succeeded && !outcome.panicked {
+        if let Some(msg) = outcome.last_error_msg.as_deref() {
+            tracing::error!(label, error = msg, "error processing materializer task");
         }
     }
 

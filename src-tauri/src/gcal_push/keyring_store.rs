@@ -448,7 +448,14 @@ impl TokenStore for KeyringTokenStore {
         let Some(json) = raw else {
             return Ok(None);
         };
-        let blob: TokenBlob = serde_json::from_str(&json)?;
+        // REVIEW-LATER L-130: drop the underlying `serde_json::Error`
+        // before it can reach tracing or bug-report bundles.  Its
+        // `Display` includes a position + short context window of the
+        // input — and since `json` is the keyring blob holding both
+        // access and refresh tokens, partial token bytes could surface
+        // at error level if parsing fails partway through the payload.
+        let blob: TokenBlob = serde_json::from_str(&json)
+            .map_err(|_| AppError::Validation("keyring.malformed_blob".into()))?;
         let token = blob.into_token()?;
         Ok(Some(token))
     }
@@ -901,6 +908,13 @@ mod tests {
 
     #[tokio::test]
     async fn keyring_store_load_returns_error_for_malformed_json() {
+        // REVIEW-LATER L-130: malformed JSON in the keyring blob now
+        // collapses to `AppError::Validation("keyring.malformed_blob")`
+        // — see the L-130 fix in `KeyringTokenStore::load`.  The
+        // previous behaviour propagated the underlying
+        // `serde_json::Error`, whose `Display` includes a context
+        // window of the input that could surface partial access /
+        // refresh token bytes in tracing.
         let backend = Arc::new(MemBackend::new());
         backend.set("not-json").unwrap();
         let backend_dyn: Arc<dyn KeyringBackend> = backend;
@@ -908,8 +922,40 @@ mod tests {
 
         let result = store.load().await;
         assert!(
-            matches!(result, Err(AppError::Json(_))),
-            "malformed JSON in keyring must surface AppError::Json, got {result:?}"
+            matches!(result, Err(AppError::Validation(ref m)) if m == "keyring.malformed_blob"),
+            "malformed JSON in keyring must surface Validation(keyring.malformed_blob), got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn keyring_load_with_malformed_json_returns_validation_without_token_chars() {
+        // REVIEW-LATER L-130: explicit anti-leakage test.  Construct a
+        // backend that returns a malformed JSON payload spliced with a
+        // sentinel string that resembles a token fragment, then assert
+        // that the resulting validation error is exactly the literal
+        // `keyring.malformed_blob` key — never the underlying
+        // `serde_json::Error::Display`, which would echo back a
+        // position + context window of the input (and therefore
+        // partial token bytes) at error level.
+        const TOKEN_SENTINEL: &str = "TOKEN_SENTINEL_ya29.A0AfH6SMC_secret_chars";
+        let payload = format!(r#"{{"access": "{TOKEN_SENTINEL}", malformed"#);
+
+        let backend = Arc::new(MemBackend::new());
+        backend.set(&payload).unwrap();
+        let backend_dyn: Arc<dyn KeyringBackend> = backend;
+        let (store, _emitter) = store_with(backend_dyn);
+
+        let result = store.load().await;
+        let Err(AppError::Validation(msg)) = result else {
+            panic!("expected Err(AppError::Validation(_)), got {result:?}");
+        };
+        assert_eq!(
+            msg, "keyring.malformed_blob",
+            "validation message must be exactly the literal closed-set key, got {msg:?}"
+        );
+        assert!(
+            !msg.contains("TOKEN_SENTINEL"),
+            "validation message must not echo any portion of the malformed payload, got {msg:?}"
         );
     }
 

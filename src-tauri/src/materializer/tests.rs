@@ -2632,6 +2632,202 @@ async fn fg_apply_dropped_stays_zero_for_non_apply_task() {
     mat.shutdown();
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// REVIEW-LATER L-16 — Foreground retry: ordering of error log vs.
+// retry attempt.
+//
+// The shared `retry_with_backoff` helper used to emit the first-attempt
+// failure at `error` level via `log_consumer_result`, sleep, then retry.
+// If the retry succeeded, the operator-facing logs were left with a
+// stray `error processing materializer task` line for an op that
+// actually completed — polluting `recent_errors_from_log_dir` and
+// bug-report log captures.
+//
+// The fix: demote first-attempt (and intermediate retry-attempt)
+// non-panic failures to `debug`. Panics keep their `error` level. On
+// final retry exhaustion the helper emits a single `error` line. On
+// retry success the helper emits an `info` "succeeded after retry"
+// correlation line. `fg_errors` / `bg_errors` semantics are unchanged
+// — they still bump on final failure via the caller.
+//
+// These tests pin the new log-level shape via in-process log capture
+// (mirrors the `WarnBufWriter` pattern at
+// `dispatch_background_or_warn_logs_seq_and_device_id_on_serde_error`).
+// The `RetryOutcome` shape is also asserted directly so a test failure
+// localises to either the log-level wiring or the outcome wiring.
+// ──────────────────────────────────────────────────────────────────────
+
+/// Thread-safe buffered writer for in-process log capture (mirrors the
+/// helper used by `dispatch_background_or_warn_logs_seq_and_device_id_on_serde_error`).
+/// Per-test `#[derive(Clone, Default)]` shadow definitions are used
+/// because `tests.rs` deliberately keeps each helper local to the
+/// test that owns it (see AGENTS.md § "Test helper duplication is
+/// intentional"). We re-define instead of factoring to avoid coupling
+/// unrelated tests.
+#[derive(Clone, Default)]
+struct LogBufWriter(StdArc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBufWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBufWriter {
+    type Writer = LogBufWriter;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn retry_with_backoff_first_failure_does_not_emit_error_log_when_retry_succeeds() {
+    use std::sync::atomic::AtomicU32;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let writer = LogBufWriter::default();
+    // Capture every level so a stray ERROR shows up; the assertion
+    // checks for the ERROR substring in the formatter output.
+    let subscriber = tracing_subscriber::registry().with(
+        tracing_subscriber::fmt::layer()
+            .with_writer(writer.clone())
+            .with_ansi(false)
+            .with_level(true)
+            .with_target(false),
+    );
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    // Closure: first invocation returns Err, second returns Ok. The
+    // shared `Arc<AtomicU32>` is the only state that survives across
+    // closure invocations because the future returned must be
+    // `'static + Send`.
+    let attempts = StdArc::new(AtomicU32::new(0));
+    let attempts_for_closure = StdArc::clone(&attempts);
+    let outcome = super::consumer::retry_with_backoff(
+        "fg",
+        1,
+        |_| Duration::from_millis(0),
+        move || {
+            let attempts = StdArc::clone(&attempts_for_closure);
+            async move {
+                let n = attempts.fetch_add(1, AtomicOrdering::Relaxed);
+                if n == 0 {
+                    Err(AppError::Validation("transient WAL contention".into()))
+                } else {
+                    Ok(())
+                }
+            }
+        },
+    )
+    .await;
+
+    // Behavioural assertions on RetryOutcome — independent of any log
+    // capture, so the test still pins the contract even if the
+    // formatter changes.
+    assert!(
+        outcome.succeeded,
+        "retry-success path must set succeeded = true"
+    );
+    assert!(
+        !outcome.panicked,
+        "retry-success path must leave panicked = false"
+    );
+    assert!(
+        outcome.last_error_msg.is_none(),
+        "retry-success path must clear last_error_msg, got {:?}",
+        outcome.last_error_msg
+    );
+    assert_eq!(
+        attempts.load(AtomicOrdering::Relaxed),
+        2,
+        "closure must run exactly twice (one fail, one retry success)"
+    );
+
+    let contents = String::from_utf8_lossy(&writer.0.lock().unwrap()).into_owned();
+    // The first-attempt failure must NOT escalate to ERROR. The
+    // tracing-subscriber `fmt` layer renders levels in upper-case
+    // ASCII, so a substring match is reliable.
+    assert!(
+        !contents.contains("ERROR"),
+        "no ERROR-level log should be emitted when retry succeeds, captured: {contents:?}"
+    );
+    // The optional positive-correlation `info!` line must fire.
+    assert!(
+        contents.contains("materializer task succeeded after retry"),
+        "info-level success-after-retry line must be emitted, captured: {contents:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn retry_with_backoff_emits_error_log_when_all_retries_fail() {
+    use std::sync::atomic::AtomicU32;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let writer = LogBufWriter::default();
+    let subscriber = tracing_subscriber::registry().with(
+        tracing_subscriber::fmt::layer()
+            .with_writer(writer.clone())
+            .with_ansi(false)
+            .with_level(true)
+            .with_target(false),
+    );
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let attempts = StdArc::new(AtomicU32::new(0));
+    let attempts_for_closure = StdArc::clone(&attempts);
+    let outcome = super::consumer::retry_with_backoff(
+        "fg",
+        1,
+        |_| Duration::from_millis(0),
+        move || {
+            let attempts = StdArc::clone(&attempts_for_closure);
+            async move {
+                attempts.fetch_add(1, AtomicOrdering::Relaxed);
+                Err(AppError::Validation("permanent failure".into()))
+            }
+        },
+    )
+    .await;
+
+    assert!(
+        !outcome.succeeded,
+        "all-retries-fail path must leave succeeded = false"
+    );
+    assert!(
+        !outcome.panicked,
+        "non-panic failure must leave panicked = false"
+    );
+    assert!(
+        outcome.last_error_msg.is_some(),
+        "all-retries-fail path must capture last_error_msg"
+    );
+    let last_msg = outcome.last_error_msg.as_deref().unwrap_or_default();
+    assert!(
+        last_msg.contains("permanent failure"),
+        "last_error_msg should embed the closure's error, got: {last_msg:?}"
+    );
+    assert_eq!(
+        attempts.load(AtomicOrdering::Relaxed),
+        2,
+        "closure must run exactly twice (initial + 1 retry)"
+    );
+
+    let contents = String::from_utf8_lossy(&writer.0.lock().unwrap()).into_owned();
+    // The retry-exhausted final escalation must surface at ERROR level.
+    assert!(
+        contents.contains("ERROR"),
+        "retry-exhausted path must emit at least one ERROR-level log, captured: {contents:?}"
+    );
+    assert!(
+        contents.contains("error processing materializer task"),
+        "retry-exhausted path must emit the canonical error message, captured: {contents:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn with_read_pool() {
     let (pool, _dir) = test_pool().await;

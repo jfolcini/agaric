@@ -98,7 +98,7 @@ pub use mcp::{
     get_mcp_rw_status_inner, get_mcp_socket_path, get_mcp_socket_path_inner, get_mcp_status,
     get_mcp_status_inner, mcp_disconnect_all, mcp_disconnect_all_inner, mcp_rw_disconnect_all,
     mcp_rw_disconnect_all_inner, mcp_rw_set_enabled, mcp_rw_set_enabled_inner, mcp_set_enabled,
-    mcp_set_enabled_inner, McpRwStatus, McpStatus,
+    mcp_set_enabled_inner, McpRwStatus, McpRwToggleGate, McpStatus, McpToggleGate,
 };
 pub use pages::{
     export_page_markdown, export_page_markdown_inner, get_page_aliases, get_page_aliases_inner,

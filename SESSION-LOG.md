@@ -1,5 +1,56 @@
 # Session Log
 
+## Session 520 — Backend LOW-severity cleanup batch — close 6 items (L-16, L-46, L-47, L-95, L-129, L-130) (2026-04-28)
+
+**6 backend LOW-severity REVIEW-LATER items closed in one PROMPT.md batch.** Four parallel build subagents on file-disjoint subsystems — three completed cleanly; the fourth (MCP) was canceled mid-flight and the orchestrator implemented L-46/L-47 directly. Four pipelined reviewers, all PASS. One reviewer (L-95 build subagent) flagged a stale integration test (`backlinks_filtered_self_referencing` asserted the BUG's behavior) and was authorized to update it; one reviewer (L-46/L-47) added a clippy `#[allow(too_many_arguments)]` to match codebase convention.
+
+**REVIEW-LATER impact:**
+
+- **LOW findings:** 95 → 89 (6 items resolved).
+- **Top-level open count (FEAT/MAINT/PERF/PUB/UX tracker):** 41 → 41 (LOW items live in the appended Backend Code Review block, not the top tracker).
+- **Previously-resolved counter:** 614+ → 620+ across 487 sessions (latest session 520).
+
+**Items closed (6):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| L-16 | Materializer (`materializer/consumer.rs`) | `retry_with_backoff` no longer emits an `error`-level log on first-attempt failure. `log_consumer_result` gained a `level: tracing::Level` parameter; first-attempt and intermediate retry-attempt non-panic failures now log at `debug`. Panics still log at `error`. After the loop, a single `tracing::error!(label, error = msg, "error processing materializer task")` fires only when `!succeeded && !panicked`. Successful retries emit `tracing::info!(label, retry, "materializer task succeeded after retry")`. **`fg_errors` / `bg_errors` semantics unchanged** — still bumped by callers. Bg-side `run_background` is symmetric (uses the same helper). Two new tests use `LogBufWriter` (mirrors existing `WarnBufWriter` pattern, AGENTS.md "test helper duplication is intentional") to assert no `ERROR` substring on retry-success path and that `ERROR` appears on retry-exhaustion path. |
+| L-46 | Commands/MCP (`commands/mcp.rs` + `commands/mod.rs` + `lib.rs`) | New `pub struct McpToggleGate(pub Arc<tokio::sync::Mutex<()>>)` and parallel `McpRwToggleGate`, registered as Tauri managed state alongside `McpLifecycle` / `McpRwLifecycle`. Both `mcp_set_enabled` and `mcp_rw_set_enabled` Tauri commands acquire their respective gate via `let _guard = gate.0.lock().await` for the full command body so rapid UI toggles cannot interleave the marker write + `is_running()` check + `spawn_mcp_*_task` sequence. RO and RW use separate gates so they don't block each other. Three new tests pin: `set_marker_enabled_works_for_both_ro_and_rw` (helper parity), `mcp_toggle_gate_serializes_concurrent_callers` (3 concurrent callers, asserts `max_concurrent == 1`), `mcp_rw_toggle_gate_is_independent_of_ro_gate` (RO held + RW lock acquires immediately within 100 ms timeout). `mcp_set_enabled` reached 8 args after the new state param — `#[allow(clippy::too_many_arguments)]` added per the existing 19-site codebase convention. |
+| L-47 | Commands/MCP (`commands/mcp.rs`) | Extracted `set_marker_enabled(app_data_dir, lifecycle, marker_filename, log_label, enabled)` private helper; both `mcp_set_enabled_inner` and `mcp_rw_set_enabled_inner` collapsed to thin wrappers passing `MCP_RO_ENABLED_MARKER`/`"RO"` or `MCP_RW_ENABLED_MARKER`/`"RW"`. Log strings consolidated to `"MCP marker created/removed"` with the RO/RW distinction now a structured `label = "RO"|"RW"` field (easier to filter in tracing output). `lifecycle.shutdown()` still fires on disable in both paths. Status / disconnect-all / socket-path pairs left as-is (already trivial 1-line forwarders). |
+| L-95 | Backlink (`backlink/query.rs` + `command_integration_tests/backlink_integration.rs`) | `eval_backlink_query` now adds `AND bl.source_id != ?1` to the base-set query, aligning with the existing convention in `eval_unlinked_references` and `eval_backlink_query_grouped`. `total_count` no longer inflates on self-links. The query is the runtime form (`query_scalar::<_, String>(...)`) — no `.sqlx/` regen needed. **Discovered**: the integration test `backlinks_filtered_self_referencing` was pinning the BUG's behavior (asserted `items.len() == 1` for a self-link); renamed to `backlinks_filtered_self_reference_excluded` and flipped to `items.len() == 0` + `total_count == 0` + `filtered_count == 0`, matching the three sibling grouped-path tests in `backlink/tests.rs`. Two new unit tests in `backlink/query.rs` cover the direct-INSERT path; the integration test exercises the materializer-driven path. |
+| L-129 | GCal (`gcal_push/oauth.rs`) | `classify_refresh_error` rewritten as exhaustive closed-set categorization across all 7 `BasicErrorResponseType` variants and all 4 `RequestTokenError` variants. Zero `format!("...{err}")` interpolation — variant payloads (`Extension(_)`, `Other(_)`, `Request(_)`, `Parse(_, _)`) are matched with `_` and discarded. `B::InvalidGrant`/`B::UnauthorizedClient` still maps to `AppError::Gcal(GcalErrorKind::Unauthorized)`; everything else maps to `AppError::Validation("oauth.refresh_failed: <category>")` with the variant name only. Five new tests: two unauthorized happy-path pins + three anti-leak tests (sentinel string in `Other`, `Extension`, and named-variant payloads — assert sentinel is NOT in the resulting `AppError` message). |
+| L-130 | GCal (`gcal_push/keyring_store.rs`) | `KeyringTokenStore::load` no longer propagates `serde_json::Error` via `?` (which would surface a position + context window of the input bytes — potentially partial token chars). Replaced with `.map_err(\|_\| AppError::Validation("keyring.malformed_blob".into()))?`. Existing test `keyring_store_load_returns_error_for_malformed_json` updated (it previously pinned the leaky `AppError::Json` shape). New test `keyring_load_with_malformed_json_returns_validation_without_token_chars` asserts the message is **exactly** `"keyring.malformed_blob"` and does NOT contain a `TOKEN_SENTINEL_ya29...` Google-access-token-shaped sentinel. |
+
+**Files touched (this session's batch — 10 modified):**
+
+- Backend Materializer (2): `src-tauri/src/materializer/{consumer,tests}.rs`
+- Backend Commands/MCP (3): `src-tauri/src/commands/mcp.rs`, `src-tauri/src/commands/mod.rs`, `src-tauri/src/lib.rs`
+- Backend Backlink (2): `src-tauri/src/backlink/query.rs`, `src-tauri/src/command_integration_tests/backlink_integration.rs`
+- Backend GCal (2): `src-tauri/src/gcal_push/{oauth,keyring_store}.rs`
+- Frontend bindings (1): `src/lib/bindings.ts` (regenerated via `cargo test specta_tests -- --ignored` because L-46 added a new managed-state parameter to `mcp_set_enabled` / `mcp_rw_set_enabled`)
+- Docs (2): `REVIEW-LATER.md` (6 items removed; LOW count 95 → 89; previously-resolved counter bumped), `SESSION-LOG.md` (this entry)
+
+**Verification:** `prek run --all-files` → all hooks PASS (3045 Rust tests, vitest 8500+, biome / tsc / clippy / fmt / lychee / sqruff / cargo deny / cargo machete / sqlx prepare check / tauri-command-sanitize / ts_bindings_up_to_date). Targeted runs during build/review:
+
+- L-16: 30/30 retry/fg/bg/apply tests passed; full materializer slice 161/161 passed.
+- L-46 / L-47: 244/244 mcp/marker/toggle tests passed; clippy clean after `#[allow(too_many_arguments)]`.
+- L-95: 209/209 backlink-scoped tests; new integration test `backlinks_filtered_self_reference_excluded` green.
+- L-129 / L-130: 28/28 refresh_error/keyring_load/malformed tests; closed-set match exhaustiveness compiler-enforced (no `_ =>` catch-alls on either enum).
+
+Full-suite post-merge: `cargo nextest run --no-fail-fast` → **3045/3045 passed, 2 skipped**.
+
+**Process notes:**
+
+- **One subagent canceled mid-flight.** The MCP build subagent (L-46 + L-47) was canceled by the user after running long; orchestrator-direct implementation took ~12 minutes of focused editing. Both items closed with the same scope as the brief had specified. The pattern of "if a subagent stalls, the orchestrator finishes the work directly" remains a sound fallback — the worktree was empty (no partial state to merge or revert).
+- **Stale integration test caught L-95's depth.** The L-95 builder discovered `command_integration_tests/backlink_integration.rs` asserted `assert_eq!(resp.items.len(), 1)` on a self-referencing block — pinning the BUG. The introducing commit (`6a07da9`) was a refactor that split monolithic test files; the assertion characterizes the bug rather than justifies it. Three sibling tests in `backlink/tests.rs` already enforce the corrected (self-ref-excluded) convention in the grouped path. The orchestrator authorized the test rename + assertion flip (`backlinks_filtered_self_referencing` → `backlinks_filtered_self_reference_excluded`).
+- **Bindings regen is expected for L-46.** Adding a `tauri::State<'_, McpToggleGate>` parameter to `mcp_set_enabled` triggered `ts_bindings_up_to_date` failure, which is the documented signal to run `cargo test specta_tests -- --ignored`. The regenerated diff includes some unrelated trailing-whitespace flicker across docstrings (a tauri-specta serialization quirk) — the test normalises trailing whitespace via `str::trim_end` so this is invisible to CI.
+- **`debug_assert!` deliberately omitted in L-16.** Same rationale as session 519's L-14: tests intentionally exercise these paths to assert the contract, and `debug_assert!(false, ...)` would force every such test into `#[should_panic]`. The plain `Err(AppError::Validation(_))` return + `error!` log is sufficient signal via the `fg_errors` / `bg_errors` counters (untouched by L-16).
+- **Closed-set exhaustiveness compiler-pinned in L-129.** The new `match err` arms cover all `BasicErrorResponseType` and `RequestTokenError` variants without a `_ =>` catch-all, so a future `oauth2` upgrade that adds a variant fails to compile rather than silently leaking through a fallthrough.
+- **No git stash usage.** All four subagents worked in independent worktrees per session 519's pattern; the previous "stash chaos" anti-pattern stayed avoided.
+- **Worktree cleanup.** All four `/tmp/agaric-wt-*` worktrees removed via `git worktree remove --force` after merge.
+
+---
+
 ## Session 519 — Backend LOW-severity cleanup batch — close 6 items (L-2, L-8, L-12, L-14, L-91, L-131) (2026-04-28)
 
 **6 backend LOW-severity items closed in one PROMPT.md batch.** Four parallel build subagents on file-disjoint subsystems (Core / Materializer / Search-Links / GCal), four pipelined reviewers. All four reviewers returned PASS-on-correctness. One reviewer (L-91) added a 6-line clarifying comment inside `truncate_str` explaining the `nth(max_chars)` mechanic; one reviewer (L-131) added two regression-guard tests (`join_calendar_path_extends_existing_base_path`, `join_calendar_path_rejects_cannot_be_a_base_url`). Each subagent ran in its own `git worktree` so concurrent `cargo build` did not contend on the target dir — the previous session's "stash chaos" pattern was avoided cleanly.
