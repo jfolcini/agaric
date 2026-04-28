@@ -2138,6 +2138,118 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
     );
 }
 
+// ── L-92: reindex_fts_references must chunk large rename targets ──
+//
+// Before L-92, `reindex_fts_references` opened one transaction for the
+// entire union of `block_tags` ∪ `block_links` ∪ `block_tag_refs` and
+// streamed every INSERT through it. Renaming a popular tag with tens
+// of thousands of references would hold the SQLite writer for many
+// seconds, blocking every other writer. The reindex now runs in
+// chunks of `FTS_REINDEX_CHUNK` ids per transaction.
+//
+// This test inserts `FTS_REINDEX_CHUNK + 50` referencing blocks so the
+// chunked reindex path runs at least twice (one full chunk + one
+// trailing partial chunk) and asserts the end state is identical to
+// the single-tx version: every referencing block ends up reindexed
+// with the new tag name.
+#[tokio::test]
+async fn reindex_fts_references_chunks_more_than_one_batch() {
+    use super::index::FTS_REINDEX_CHUNK;
+
+    let (pool, _dir) = test_pool().await;
+
+    let tag_id = "01HQTAGCHNKCHNKCHNKCHNK001";
+    insert_block(&pool, tag_id, "tag", "project", None, Some(0)).await;
+
+    // FTS_REINDEX_CHUNK + 50 referencing blocks → 2 chunked transactions
+    // (one of FTS_REINDEX_CHUNK, one of 50).
+    let n: usize = FTS_REINDEX_CHUNK + 50;
+    let mut block_ids: Vec<String> = Vec::with_capacity(n);
+
+    // Bulk-insert inside a single sqlx tx to keep the test fast — the
+    // chunked path under test only kicks in for `reindex_fts_references`,
+    // not for the test setup.
+    let mut setup_tx = pool.begin().await.unwrap();
+    for i in 0..n {
+        // 11-char prefix + 11 zeros + 4-digit `i` = 26-char ULID-shaped id.
+        let blk = format!("01HQBLKCHNK00000000000{i:04}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', ?, NULL, ?)",
+        )
+        .bind(&blk)
+        .bind(format!("task {i} for #[{tag_id}]"))
+        .bind(i64::try_from(i).unwrap() + 1)
+        .execute(&mut *setup_tx)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(&blk)
+            .bind(tag_id)
+            .execute(&mut *setup_tx)
+            .await
+            .unwrap();
+        block_ids.push(blk);
+    }
+    setup_tx.commit().await.unwrap();
+
+    // Initial FTS index — every block resolves "project" today.
+    rebuild_fts_index(&pool).await.unwrap();
+
+    // Rename the tag → every block's FTS entry is now stale.
+    sqlx::query("UPDATE blocks SET content = 'initiative' WHERE id = ?")
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Chunked reindex (FTS_REINDEX_CHUNK + 50 → 2 transactions).
+    reindex_fts_references(&pool, tag_id).await.unwrap();
+
+    // Verify the end state by querying `fts_blocks` directly — pagination
+    // caps `search_fts` at MAX_PAGE_SIZE (200), well below our N=1050.
+    // Every referencing block must have exactly one fts row, and every
+    // row's `stripped` must contain the new name (and none the old).
+    let ids_json = serde_json::to_string(&block_ids).unwrap();
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM fts_blocks \
+         WHERE block_id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(&ids_json)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        usize::try_from(total).unwrap(),
+        n,
+        "all {n} content blocks must have an fts_blocks row after the chunked reindex"
+    );
+
+    // Probe the chunk boundaries: indices 0, FTS_REINDEX_CHUNK-1 (last
+    // row of the first chunk), FTS_REINDEX_CHUNK (first row of the second
+    // chunk), and n-1 (last row overall). Verifying these four covers the
+    // hand-off between chunks specifically — a regression that drops one
+    // chunk's INSERTs would surface here.
+    let sample = [0_usize, FTS_REINDEX_CHUNK - 1, FTS_REINDEX_CHUNK, n - 1];
+    for &i in &sample {
+        let blk = &block_ids[i];
+        let stripped: String =
+            sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+                .bind(blk)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            stripped.contains("initiative"),
+            "block {blk} (idx {i}) must contain renamed tag 'initiative' in its FTS entry, got: {stripped:?}"
+        );
+        assert!(
+            !stripped.contains("project"),
+            "block {blk} (idx {i}) must not retain old tag 'project' in its FTS entry, got: {stripped:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn rebuild_fts_index_populates_empty_table() {
     let (pool, _dir) = test_pool().await;

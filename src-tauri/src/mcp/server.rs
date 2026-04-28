@@ -427,20 +427,26 @@ async fn handle_tools_call<R: ToolRegistry>(
 
     // FEAT-4h slice 3: wrap the registry call in TWO task-local scopes
     // (ACTOR outer, LAST_APPEND inner). `append_local_op_in_tx` pokes
-    // its freshly-inserted `OpRef` into LAST_APPEND; we harvest it here
-    // so the emitted activity entry can carry it for per-entry Undo.
-    // Capturing happens INSIDE the scope so the task-local is still
-    // alive when we read it.
+    // every freshly-inserted `OpRef` into LAST_APPEND; we harvest the
+    // full list here so the emitted activity entry can carry it for
+    // per-entry Undo. Capturing happens INSIDE the scope so the
+    // task-local is still alive when we read it.
     //
     // MAINT-150 (j): `LAST_APPEND` lives in `crate::task_locals` so
     // `op_log` (core) does not depend on `mcp` (integration) just to
     // populate the cell.
-    let (result, op_ref) = ACTOR
+    //
+    // L-114: the storage is `RefCell<Vec<OpRef>>` so multi-op tools
+    // (e.g. a future `move_subtree`) retain *every* `OpRef` they
+    // produced, not just the last. We split the captured list below:
+    // first → `op_ref` (preserves the existing wire shape so the
+    // frontend keeps working), tail → `additional_op_refs`.
+    let (result, op_refs) = ACTOR
         .scope(scoped_ctx, async {
             crate::task_locals::LAST_APPEND
-                .scope(std::cell::Cell::new(None), async {
+                .scope(std::cell::RefCell::new(Vec::new()), async {
                     let r = registry.call_tool(&name, args, &call_ctx).await;
-                    let captured = crate::task_locals::LAST_APPEND.with(std::cell::Cell::take);
+                    let captured = crate::task_locals::take_appends();
                     (r, captured)
                 })
                 .await
@@ -485,6 +491,14 @@ async fn handle_tools_call<R: ToolRegistry>(
                 (name.clone(), ActRes::Err(short))
             }
         };
+        // L-114: split the captured op_refs into the legacy single
+        // `op_ref` (first append) plus a `additional_op_refs` tail
+        // for future multi-op tools. `into_iter` + `next` consumes
+        // the head without an intermediate clone; `collect()` on the
+        // remaining iterator yields the tail in append order.
+        let mut op_refs_iter = op_refs.into_iter();
+        let op_ref = op_refs_iter.next();
+        let additional_op_refs: Vec<crate::op::OpRef> = op_refs_iter.collect();
         // `ActorKind::Agent` is correct for every MCP dispatch today —
         // the `User` branch is reserved for future non-MCP usage of
         // the same seam. The agent name is the handshake's
@@ -499,6 +513,7 @@ async fn handle_tools_call<R: ToolRegistry>(
                 result: result_variant,
                 session_id: &state.session_id,
                 op_ref,
+                additional_op_refs,
             },
         );
     }
@@ -2166,6 +2181,7 @@ mod tests {
                 result: ActivityResult::Ok,
                 session_id: &state.session_id,
                 op_ref: None,
+                additional_op_refs: Vec::new(),
             },
         );
 
@@ -2366,6 +2382,84 @@ mod tests {
             entry.op_ref.as_ref(),
             Some(&expected),
             "op_ref must be captured from LAST_APPEND and surfaced on the entry",
+        );
+        assert!(
+            entry.additional_op_refs.is_empty(),
+            "single-op tool must leave additional_op_refs empty; got {:?}",
+            entry.additional_op_refs,
+        );
+    }
+
+    /// L-114: a tool that records *multiple* `OpRef`s into
+    /// `LAST_APPEND` (simulating a future `move_subtree` /
+    /// `bulk_set_property`) must surface the first one on `op_ref`
+    /// and the remainder on `additional_op_refs` — in append order.
+    /// Pinning this here forward-compats the dispatch layer for
+    /// multi-op RW tools that don't exist yet.
+    #[tokio::test]
+    async fn handle_tools_call_multi_op_tool_splits_op_refs_head_and_tail() {
+        struct MultiAppendingRegistry {
+            op_refs: Vec<crate::op::OpRef>,
+        }
+        impl ToolRegistry for MultiAppendingRegistry {
+            fn list_tools(&self) -> Vec<ToolDescription> {
+                Vec::new()
+            }
+            async fn call_tool(
+                &self,
+                _name: &str,
+                _args: Value,
+                _ctx: &ActorContext,
+            ) -> Result<Value, AppError> {
+                for r in &self.op_refs {
+                    crate::task_locals::record_append(r.clone());
+                }
+                Ok(Value::Null)
+            }
+        }
+
+        let (ctx, recorder) = recording_ctx();
+        let state = ConnectionState {
+            client_info: Some(ClientInfo {
+                name: "claude".to_string(),
+                version: None,
+            }),
+            activity_ctx: Some(ctx),
+            ..ConnectionState::default()
+        };
+        let first = crate::op::OpRef {
+            device_id: "DEV".to_string(),
+            seq: 1,
+        };
+        let second = crate::op::OpRef {
+            device_id: "DEV".to_string(),
+            seq: 2,
+        };
+        let third = crate::op::OpRef {
+            device_id: "DEV".to_string(),
+            seq: 3,
+        };
+        let registry = MultiAppendingRegistry {
+            op_refs: vec![first.clone(), second.clone(), third.clone()],
+        };
+        let params = json!({ "name": "move_subtree", "arguments": {} });
+
+        let _ = handle_tools_call(&state, &params, &registry)
+            .await
+            .expect("tools/call succeeds");
+
+        let entries = recorder.entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(
+            entry.op_ref.as_ref(),
+            Some(&first),
+            "first append must surface on the legacy `op_ref` field",
+        );
+        assert_eq!(
+            entry.additional_op_refs,
+            vec![second, third],
+            "remaining appends must surface on `additional_op_refs` in append order",
         );
     }
 

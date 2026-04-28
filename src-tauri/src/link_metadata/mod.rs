@@ -112,17 +112,47 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
 }
 
 /// Read a response body up to `max_bytes`, discarding excess.
+///
+/// L-90: streams chunks via [`reqwest::Response::chunk`] and stops as soon as
+/// the accumulator hits `max_bytes` (then drops the response, which closes
+/// the connection and aborts the rest of the download). Pre-2025 this used
+/// `response.bytes().await?`, which materialized the entire body into memory
+/// before the size check — a misbehaving server returning gigabytes of data
+/// would OOM the process. The contract is unchanged: the function never
+/// errors on oversize input, it just returns the first `max_bytes` bytes
+/// (lossy-decoded as UTF-8).
 async fn read_body_limited(
-    response: reqwest::Response,
+    mut response: reqwest::Response,
     max_bytes: usize,
 ) -> Result<String, reqwest::Error> {
-    let bytes = response.bytes().await?;
-    let truncated = if bytes.len() > max_bytes {
-        &bytes[..max_bytes]
-    } else {
-        &bytes
-    };
-    Ok(String::from_utf8_lossy(truncated).into_owned())
+    // Pre-size the accumulator from `Content-Length` when the server is
+    // honest, capped at `max_bytes`. The header is untrusted — the per-chunk
+    // bound below is the real safety net — but a useful heuristic to avoid
+    // repeated reallocs on the common case.
+    let cap = response
+        .content_length()
+        .and_then(|n| usize::try_from(n).ok())
+        .map_or(0, |n| n.min(max_bytes));
+    let mut buf: Vec<u8> = Vec::with_capacity(cap);
+
+    while let Some(chunk) = response.chunk().await? {
+        let remaining = max_bytes.saturating_sub(buf.len());
+        if remaining == 0 {
+            break;
+        }
+        if chunk.len() <= remaining {
+            buf.extend_from_slice(&chunk);
+        } else {
+            buf.extend_from_slice(&chunk[..remaining]);
+            break;
+        }
+    }
+
+    // Explicitly drop the response so the underlying connection is closed
+    // and any remaining body bytes are not pulled across the wire.
+    drop(response);
+
+    Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
 // ---------------------------------------------------------------------------
