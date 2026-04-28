@@ -27,6 +27,30 @@ struct CacheRepeatingRow {
 /// 2. For each block, projects dates for the next 365 days from today.
 /// 3. Respects end conditions (repeat-until, repeat-count).
 /// 4. Writes projected entries via DELETE + INSERT in a single transaction.
+///
+/// # Time-zone semantics (L-26)
+///
+/// `today` and the 365-day projection horizon are anchored to the **device's
+/// local timezone** via [`chrono::Local::now`].  This means a multi-device
+/// user whose devices are configured to different timezones will see slight
+/// per-device divergence in `projected_agenda_cache` contents around midnight
+/// — a block whose next occurrence falls on a date that is "today" in
+/// timezone A but already "tomorrow" in timezone B may be projected one row
+/// earlier on device A than on device B until the next rebuild.
+///
+/// The divergence is **acceptable under the single-user threat model**
+/// described in `AGENTS.md` — agenda projections are an eventually-consistent
+/// read-side cache rebuilt locally per device, so the skew self-corrects on
+/// the next rebuild past the time boundary.  Users in practice think in
+/// local time, so anchoring to local time matches user expectations.
+///
+/// Switching to UTC would eliminate the per-device divergence but at the cost
+/// of producing projections whose date column does not match the user's
+/// calendar day on either side of midnight, which is a more visible
+/// behaviour change.  See `REVIEW-LATER.md` L-26 for the conditional fix:
+/// either document (this comment) or normalise to UTC consistently.  The
+/// documentation path was chosen per the AGENTS.md "Architectural Stability"
+/// guidance.
 pub async fn rebuild_projected_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
     super::rebuild_with_timing("projected_agenda", || {
         rebuild_projected_agenda_cache_impl(pool)
@@ -235,4 +259,66 @@ pub async fn rebuild_projected_agenda_cache_split(
     _read_pool: &SqlitePool,
 ) -> Result<(), AppError> {
     rebuild_projected_agenda_cache(write_pool).await
+}
+
+// ---------------------------------------------------------------------------
+// L-26 — local-timezone documentation pin
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod l26_tests {
+    use super::*;
+    use crate::db::init_pool;
+    use tempfile::TempDir;
+
+    /// Sanity regression for L-26.
+    ///
+    /// Asserts that `rebuild_projected_agenda_cache` returns `Ok(())` on a
+    /// freshly-migrated empty pool regardless of the device clock.  This
+    /// pins the local-timezone semantics documented on
+    /// [`rebuild_projected_agenda_cache`] without attempting clock injection
+    /// — a fake clock would be a much larger refactor and is explicitly
+    /// out of scope for the seating commit.  If a future change moves the
+    /// projection horizon away from `chrono::Local::now()`, this test still
+    /// passes; the doc-comment block remains the source of truth for
+    /// timezone semantics.
+    #[tokio::test]
+    async fn projected_agenda_doc_pin_runs_cleanly_on_empty_pool() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        // Empty pool → no repeating blocks → cache rebuilds to zero rows
+        // without error, irrespective of the wall-clock time of day.
+        rebuild_projected_agenda_cache(&pool)
+            .await
+            .expect("empty-pool rebuild must succeed at any time-of-day");
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projected_agenda_cache")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "empty pool must produce zero projected entries");
+    }
+
+    /// Asserts the L-26 documentation block remains in place.
+    ///
+    /// The doc comment is the load-bearing artefact for L-26 (the code
+    /// behaviour is unchanged).  This test reads the source file at
+    /// compile time and fails loudly if a future refactor strips the
+    /// timezone-semantics doc block, so the documentation cannot
+    /// silently disappear.
+    #[test]
+    fn projected_agenda_local_timezone_doc_present() {
+        let src = include_str!("projected_agenda.rs");
+        assert!(
+            src.contains("# Time-zone semantics (L-26)"),
+            "L-26 timezone-semantics doc block must remain on \
+             rebuild_projected_agenda_cache"
+        );
+        assert!(
+            src.contains("device's\n/// local timezone"),
+            "L-26 doc must call out device-local timezone explicitly"
+        );
+    }
 }

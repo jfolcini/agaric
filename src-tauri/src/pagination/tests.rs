@@ -176,6 +176,68 @@ fn cursor_encode_decode_preserves_special_characters() {
     assert_eq!(cursor, decoded, "special characters must survive roundtrip");
 }
 
+// ── L-18: cursor version tag ────────────────────────────────────────
+
+#[test]
+fn cursor_decode_rejects_unknown_version() {
+    // A well-formed cursor JSON tagged with a future schema version must
+    // be rejected by [`Cursor::decode`] with `AppError::Validation` so
+    // clients fall back to page-1 pagination instead of silently
+    // consuming a cursor that may have a different field layout.
+    let bad_json = r#"{"id":"01HZ0000000000000000000001","position":3,"version":99}"#;
+    let encoded = URL_SAFE_NO_PAD.encode(bad_json.as_bytes());
+    let result = Cursor::decode(&encoded);
+    assert!(
+        result.is_err(),
+        "cursor with unknown version must be rejected"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("version"),
+        "validation error must mention 'version', got: {err_msg}"
+    );
+    assert!(
+        matches!(Cursor::decode(&encoded), Err(AppError::Validation(_))),
+        "must be an AppError::Validation"
+    );
+}
+
+#[test]
+fn cursor_encode_sets_version_1() {
+    // Round-trip a cursor through encode and verify the raw JSON inside
+    // the base64 payload contains `"version":1`.  This pins the seating
+    // commit's wire format so any future bump becomes explicit.
+    let cursor = Cursor {
+        id: "01HZ0000000000000000000001".into(),
+        position: Some(7),
+        deleted_at: None,
+        seq: None,
+        rank: None,
+    };
+    let encoded = cursor.encode().unwrap();
+    let raw_bytes = URL_SAFE_NO_PAD.decode(&encoded).unwrap();
+    let raw_json = String::from_utf8(raw_bytes).unwrap();
+    assert!(
+        raw_json.contains("\"version\":1"),
+        "encoded cursor JSON must contain \"version\":1, got: {raw_json}"
+    );
+    // And the decode round-trip still works.
+    let decoded = Cursor::decode(&encoded).unwrap();
+    assert_eq!(decoded, cursor, "round-trip must preserve cursor fields");
+}
+
+#[test]
+fn cursor_decode_old_format_assumes_version_1() {
+    // Pre-versioning cursors emitted before L-18 do not carry a
+    // `version` key.  They must continue to decode cleanly under the
+    // current schema (treated as version 1).
+    let old_json = r#"{"id":"01HZ0000000000000000000001","position":3}"#;
+    let encoded = URL_SAFE_NO_PAD.encode(old_json.as_bytes());
+    let decoded = Cursor::decode(&encoded).expect("pre-versioning cursor must decode as version 1");
+    assert_eq!(decoded.id, "01HZ0000000000000000000001");
+    assert_eq!(decoded.position, Some(3));
+}
+
 // ====================================================================
 // PageRequest
 // ====================================================================

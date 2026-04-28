@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 626+ items across 488 sessions (per SESSION-LOG.md unique session count; latest is session 521).
+Previously resolved: 633+ items across 489 sessions (per SESSION-LOG.md unique session count; latest is session 522).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1925,7 +1925,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (83 — expanded)
+## LOW findings (76 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -1995,18 +1995,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Cache + Pagination
 
-### L-18 — `Cursor` is opaque base64 JSON with no version field
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/pagination/mod.rs:151-162` (Cursor struct) and `:185-202` (codec)
-- **What:** The `Cursor` struct uses `#[serde(default)]` on every optional field but has no `version: u8` tag. Any future change to ordering keys or stored cursor fields (e.g., `list_trash` switching sort key, `list_block_history` reversing direction, a new key added to a query) will silently decode old cursors as if they were valid for the new schema and produce wrong/duplicate/missing pages — there is no way to detect that a cursor predates the schema change.
-- **Why it matters:** Today's behaviour is fine, but the absence of a version tag is a footgun for the next maintainer changing any list-query ordering. Single-user threat model: this is a maintainability/correctness landmine, not a security issue.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add `version: u8` (default `1`) to `Cursor`. On decode, reject unknown versions with `AppError::Validation` so clients re-paginate from page 1. Alternatively prefix the base64 payload with a one-byte version tag before encoding.
-- **Pass-1 source:** 03/F8
-- **Status:** Open
-
 ### L-21 — `list_block_history` cursor uses `c.seq.unwrap_or(0)` — relies on op_log seq ≥ 1
 - **Domain:** Cache + Pagination
 - **Location:** `src-tauri/src/pagination/history.rs:28-32` (cursor unpack) and `:40-43` (keyset predicate)
@@ -2065,18 +2053,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Either add a code comment in the function explaining the TOCTOU window (and that the next rebuild fixes it), or — heavier — re-read inside the write tx and skip conflicting writes. The comment is cheaper and matches the stated "background, stale-OK" semantics.
 - **Pass-1 source:** 03/F16
-- **Status:** Open
-
-### L-26 — `cache/projected_agenda.rs` uses `chrono::Local::now()` (machine-timezone dependent)
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/cache/projected_agenda.rs:51` (`today = chrono::Local::now().date_naive()`); also referenced at `:152` (`current >= today`) and `:167-168` (`current >= today && current <= horizon`)
-- **What:** `today` is derived from the device's local timezone. The 365-day horizon and `current >= today` comparisons use that local-time anchor. `agenda_cache` and `projected_agenda_cache` store `YYYY-MM-DD` strings without timezone. On a multi-device user with devices in different timezones, the same vault rebuilt on each device produces slightly different `projected_agenda_cache` contents around the day boundary. Sync replays op_log ops, but `projected_agenda_cache` is rebuilt locally per device, so the divergence is per-device and self-correcting on the next rebuild past the time skew.
-- **Why it matters:** Around midnight the projected agenda flickers depending on which device the user is viewing. Probably acceptable for the single-user threat model, but undocumented and tests using `Local::now()` are flaky around midnight.
-- **Cost:** S
-- **Risk:** Medium (changing semantics)
-- **Impact:** Low
-- **Recommendation:** Either document the per-device local-time semantics in the function header, or normalize to UTC consistently. Add a unit test that pins `now()` via clock injection or a fake clock so day-boundary tests are deterministic.
-- **Pass-1 source:** 03/F17
 - **Status:** Open
 
 ### L-27 — Agenda desired-state SQL duplicated between single-pool and split rebuilds
@@ -2179,18 +2155,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Commands System
 
-### L-40 — `extract_recent_errors` substring match `" ERROR " || " WARN "` is fragile
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/bug_report.rs:70-82` (function), `src-tauri/src/commands/bug_report.rs:72-76` (substring check)
-- **What:** Level detection is `line.contains(" ERROR ") || line.contains(" WARN ")`. This produces false positives on INFO/DEBUG lines whose body happens to contain those substrings (e.g. an info log printing a serialized error message, or block content with the word "WARN"). It also becomes brittle if the tracing-appender format ever stops emitting exactly `" LEVEL "` (e.g. a switch to a JSON layer).
-- **Why it matters:** The bug-report dialog's "recent errors" preview is either noisy with false positives today or, if the format changes, silently empty.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Pin level detection to the actual tracing format used in `lib.rs:347-349`. Either parse the prefix (`YYYY-MM-DD ... LEVEL [target]`) or install a custom `tracing_subscriber::fmt::format::Layer` that emits a fixed field (`level=ERROR`, `level=WARN`) the bug-report path can match unambiguously.
-- **Pass-1 source:** 05/F7
-- **Status:** Open
-
 ### L-48 — Sanitization drift: ARCHITECTURE.md §15 mandates it; five command files skip it
 - **Domain:** Commands (System)
 - **Location:** ARCHITECTURE.md:1259-1263 (invariant) vs `src-tauri/src/commands/{bug_report,gcal,link_metadata,logging,mcp}.rs`. Helper at `src-tauri/src/commands/mod.rs:756-769`.
@@ -2239,18 +2203,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 05/F32
 - **Status:** Open
 
-### L-54 — `redact_log` preserves cap on bytes but does not bound total file output
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/bug_report.rs:229-242` (per-line cap), `src-tauri/src/commands/bug_report.rs:292-309` (no bundle cap)
-- **What:** Per-line redaction is bounded by `MAX_LINE_BYTES = 8 KB` and per-file read is capped at `MAX_FILE_BYTES = 2 MB`, so net per-file output is ~2 MB plus markers. But the total ZIP size is `len(included files) * 2 MB`, i.e. up to ~16 MB for an 8-day window. There is no global cap on the exported bundle.
-- **Why it matters:** A user with weeks of high-volume logs gets a ZIP they may not be able to attach to a GitHub issue (10 MB default upload limit). The fail-mode is graceful (FE writes the ZIP locally), but worth bounding on the export path.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add `MAX_BUNDLE_BYTES` (~10 MB) enforced inside the `for (path, contents) in entries` loop in `read_logs_for_report_inner`; when exceeded, drop the oldest files first and synthesize a `[skipped older logs]` entry.
-- **Pass-1 source:** 05/F34
-- **Status:** Open
-
 ### L-55 — `redact_log` newline split-and-rejoin is O(n²) in the worst case
 - **Domain:** Commands (System)
 - **Location:** `src-tauri/src/commands/bug_report.rs:229-242` (`redact_log`), `src-tauri/src/commands/bug_report.rs:202-226` (`redact_line`)
@@ -2264,30 +2216,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### Sync
-
-### L-57 — `record_failure`'s deterministic doubling vs jittered `next_retry_at`
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_scheduler.rs:122-139`
-- **What:** `state.backoff = base` stores the deterministic doubled base; `next_retry_at = now + base * jitter` where `jitter ∈ [0.9, 1.1]`. Behaviour is correct in spirit and the inline comment names the intent, but the doc string ("Doubles backoff: 1s → 2s → ... → 60s max") describes the wall-clock view, not the state view.
-- **Why it matters:** Documentation drift only. Pass-2 explicitly downgraded this from a behaviour bug to a docstring tightening.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Tighten the doc string to "approximately doubles, with ±10% jitter applied to the wall-clock retry time; the underlying base is doubled deterministically". Accept current behaviour.
-- **Pass-1 source:** 06/F24
-- **Status:** Open
-
-### L-58 — First `record_failure` jumps directly to ~2 s (sequence 2,4,8,…)
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_scheduler.rs:127-138`
-- **What:** Fresh `BackoffState` is inserted with `backoff: MIN_BACKOFF /* = 1s */`, then immediately doubled to 2 s before `next_retry_at` is set. The internal test `backoff_doubles_on_consecutive_failures` (line 309-319) asserts `state.backoff == 8s` after 3 failures, confirming the 2,4,8 sequence — not the 1,2,4 sequence the constants imply.
-- **Why it matters:** Documentation drift — readers of `MIN_BACKOFF = 1s` and `record_failure_blocks_immediate_retry` reasonably infer a 1 s first retry.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either (a) initialise `backoff: MIN_BACKOFF / 2` so the first doubling yields 1 s, or (b) update `MIN_BACKOFF` and the doc/comments to declare the actual sequence (2,4,8,16,32,60). Either is fine; pick the one that aligns with telemetry expectations.
-- **Pass-1 source:** 06/F25
-- **Status:** Open
 
 ### L-61 — `daemon_loop` Branch B processes peers sequentially
 - **Domain:** Sync
@@ -2553,18 +2481,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** (a) Run the rebuild on a single pool inside a `BEGIN IMMEDIATE` so concurrent writers serialize behind it; or (b) read inside `BEGIN DEFERRED` on `write_pool` to obtain a snapshot consistent with the eventual DELETE; or (c) compute the new tuple set into a temp table first and DELETE+`INSERT INTO … SELECT` in the same write tx.
 - **Pass-1 source:** 07/F25
-- **Status:** Open
-
-### L-96 — `extract_origin` / `extract_domain` strip neither URL credentials nor fragments
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/link_metadata/html_parser.rs:286-322`
-- **What:** Neither helper strips `user:pwd@` from URL authority. `extract_origin("https://user:pwd@host/page")` returns `https://user:pwd@host`, and the favicon-URL fallback at `parse_favicon` (line 39) becomes `https://user:pwd@host/favicon.ico` — stored in `link_metadata.favicon_url` and rendered to the user. Likewise `detect_auth_required`'s `original_domain != final_domain` comparison can run on `user:pwd@host.com` strings.
-- **Why it matters:** Threat model is single-user (credentials are the user's own), but surfacing them in cached favicon URLs ages those credentials across the local DB and any logs that include the URL.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Strip the userinfo segment in both helpers — after `://`, split on the rightmost `@` if present and discard the prefix. Add a quick unit test for `https://user:pwd@host/`.
-- **Pass-1 source:** 07/F30
 - **Status:** Open
 
 ### Lifecycle

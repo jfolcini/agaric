@@ -50,7 +50,28 @@ struct BackoffState {
     consecutive_failures: u32,
 }
 
+/// Initial seed for the per-peer backoff state.
+///
+/// L-58: this is **not** the user-observed first-failure wait. The seed
+/// is `1s`, but [`SyncScheduler::record_failure`] doubles the stored
+/// backoff *before* it computes `next_retry_at`, so the first call after
+/// a clean state advances `state.backoff` from `1s` to `2s`. The
+/// observable wait sequence on consecutive failures is therefore:
+///
+/// ```text
+/// failure #: 1   2   3   4    5    6+
+/// backoff:   2s  4s  8s  16s  32s  60s  (capped at MAX_BACKOFF)
+/// ```
+///
+/// `1s` exists only as the internal seed that produces `2s` on the first
+/// doubling — it is never itself written to `next_retry_at`. The floor on
+/// the jittered wall-clock retry is also `MIN_BACKOFF` (1s), which keeps
+/// the very first jittered retry from dipping below the seed under
+/// adverse jitter.
 const MIN_BACKOFF: Duration = Duration::from_secs(1);
+/// Cap on the per-peer backoff. Once `state.backoff` reaches `60s` it
+/// stays there — every further failure schedules another retry roughly
+/// 60s out (±10% jitter).
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 const DEFAULT_DEBOUNCE: Duration = Duration::from_secs(3);
 const DEFAULT_RESYNC: Duration = Duration::from_secs(60);
@@ -149,10 +170,28 @@ impl SyncScheduler {
         }
     }
 
-    /// Record a sync failure for `peer_id`, doubling the backoff.
+    /// Record a sync failure for `peer_id`, advancing the backoff one step.
     ///
-    /// Applies ±10 % random jitter to the computed backoff so that multiple
-    /// devices failing simultaneously do not all retry at the same instant.
+    /// L-57: the stored state and the wall-clock retry deadline are *two
+    /// different views* of the backoff and they intentionally diverge:
+    ///
+    /// - **Internal `state.backoff` (deterministic).** Doubled on every
+    ///   call and capped at [`MAX_BACKOFF`]: `1s → 2s → 4s → 8s → 16s →
+    ///   32s → 60s → 60s …`. The leading `1s` is the [`MIN_BACKOFF`]
+    ///   seed planted by the `or_insert`; it is overwritten by `2s`
+    ///   *inside this very call*, so callers never observe `1s` after
+    ///   `record_failure` returns. See L-58 on [`MIN_BACKOFF`] for the
+    ///   user-visible sequence.
+    /// - **Wall-clock `state.next_retry_at` (jittered).** Computed as
+    ///   `now + state.backoff * jitter` where `jitter ∈ [0.9, 1.1]`,
+    ///   floored at [`MIN_BACKOFF`]. The ±10 % spread prevents multiple
+    ///   peers that fail in the same instant from all retrying together.
+    ///
+    /// Telemetry / logs that read `state.backoff` (e.g. `failure_count`
+    /// adjacent to the stored duration) see the deterministic ladder —
+    /// the actual retry instant floats by ±10 % around that value, so a
+    /// peer with `state.backoff = 8s` may retry anywhere in
+    /// `[now + 7.2s, now + 8.8s]`.
     pub fn record_failure(&self, peer_id: &str) {
         let mut backoff = self
             .backoff
@@ -164,6 +203,10 @@ impl SyncScheduler {
             consecutive_failures: 0,
         });
         state.consecutive_failures += 1;
+        // L-58: doubling happens *before* we write `next_retry_at`, so the
+        // first call doubles the `MIN_BACKOFF` seed `1s → 2s`. The sequence
+        // an external observer sees is therefore 2, 4, 8, 16, 32, 60s — the
+        // raw `1s` seed is never the value of a scheduled retry.
         let base = (state.backoff * 2).min(MAX_BACKOFF);
         // ±10 % jitter to spread out simultaneous retries across devices.
         let jitter = rand::rng().random_range(0.9..=1.1);
@@ -392,6 +435,28 @@ mod tests {
         assert_eq!(sched.failure_count("peer-a"), 0);
     }
 
+    /// L-58: pin the documented intent — the first `record_failure` call
+    /// doubles the `MIN_BACKOFF` seed `1s → 2s`, so the user-observable
+    /// first wait is `2s`, not `1s`. The doc-comments on `MIN_BACKOFF` and
+    /// `record_failure` describe the `2,4,8,16,32,60` sequence; this test
+    /// guards the very first step of that sequence so a future refactor
+    /// that "fixes" the apparent off-by-one (e.g. inserting `MIN_BACKOFF`
+    /// directly into `next_retry_at` on the first call) would have to
+    /// also update the docs.
+    #[test]
+    fn min_backoff_seed_doubles_to_two_seconds_on_first_failure() {
+        let sched = SyncScheduler::new();
+        sched.record_failure("peer-a");
+        let backoff = sched.backoff.lock().unwrap();
+        let state = backoff.get("peer-a").unwrap();
+        assert_eq!(
+            state.backoff,
+            Duration::from_secs(2),
+            "first record_failure must double the 1s MIN_BACKOFF seed to 2s"
+        );
+        assert_eq!(state.consecutive_failures, 1);
+    }
+
     #[test]
     fn backoff_doubles_on_consecutive_failures() {
         let sched = SyncScheduler::new();
@@ -399,7 +464,8 @@ mod tests {
         sched.record_failure("peer-a");
         sched.record_failure("peer-a");
         assert_eq!(sched.failure_count("peer-a"), 3);
-        // 1s -> 2s -> 4s (backoff after 3 failures)
+        // L-58: seed 1s -> 2s -> 4s -> 8s after 3 failures (the 1s seed
+        // is never observable; observers see the 2,4,8,... ladder).
         let backoff = sched.backoff.lock().unwrap();
         let state = backoff.get("peer-a").unwrap();
         assert_eq!(state.backoff, Duration::from_secs(8)); // 1*2=2, 2*2=4, 4*2=8
