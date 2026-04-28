@@ -765,16 +765,42 @@ fn classify_refresh_error(
         StandardErrorResponse<BasicErrorResponseType>,
     >,
 ) -> AppError {
+    // REVIEW-LATER L-129: do NOT interpolate `err` (or any of its
+    // inner fields) into the validation message.  The upstream
+    // `Display` impls for `RequestTokenError` and
+    // `StandardErrorResponse` include the parsed `error_description`
+    // text — and a future `oauth2` upgrade could broaden them to
+    // include the request body — which would surface refresh-token
+    // bytes in tracing spans and bug-report bundles.  Instead we
+    // categorise into a closed set and emit only the variant name.
     use BasicErrorResponseType as B;
-    if let oauth2::RequestTokenError::ServerResponse(resp) = err {
-        match resp.error() {
-            B::InvalidGrant | B::UnauthorizedClient => {
-                return AppError::Gcal(GcalErrorKind::Unauthorized);
+    match err {
+        oauth2::RequestTokenError::ServerResponse(resp) => match resp.error() {
+            B::InvalidGrant | B::UnauthorizedClient => AppError::Gcal(GcalErrorKind::Unauthorized),
+            B::InvalidClient => AppError::Validation("oauth.refresh_failed: invalid_client".into()),
+            B::InvalidRequest => {
+                AppError::Validation("oauth.refresh_failed: invalid_request".into())
             }
-            _ => {}
+            B::InvalidScope => AppError::Validation("oauth.refresh_failed: invalid_scope".into()),
+            B::UnsupportedGrantType => {
+                AppError::Validation("oauth.refresh_failed: unsupported_grant_type".into())
+            }
+            // `BasicErrorResponseType::Extension(_)` and any other
+            // future variants collapse to a generic category — never
+            // include the extension string itself, which is
+            // server-controlled text.
+            B::Extension(_) => AppError::Validation("oauth.refresh_failed: server_response".into()),
+        },
+        oauth2::RequestTokenError::Request(_) => {
+            AppError::Validation("oauth.refresh_failed: request".into())
+        }
+        oauth2::RequestTokenError::Parse(_, _) => {
+            AppError::Validation("oauth.refresh_failed: parse".into())
+        }
+        oauth2::RequestTokenError::Other(_) => {
+            AppError::Validation("oauth.refresh_failed: other".into())
         }
     }
-    AppError::Validation(format!("oauth.refresh_failed: {err}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -1298,6 +1324,124 @@ mod tests {
             matches!(result, Err(AppError::Validation(ref m)) if m.contains("oauth.refresh_failed")),
             "5xx must map to oauth.refresh_failed, got {result:?}"
         );
+    }
+
+    // ── classify_refresh_error: closed-set categorisation ──────────
+
+    #[test]
+    fn classify_refresh_error_invalid_grant_maps_to_unauthorized() {
+        // REVIEW-LATER L-129: pin that the unauthorized mapping
+        // remains intact after the closed-set refactor — this
+        // codepath is what trips the connector's `gcal:reauth_required`
+        // event and must not regress.
+        let resp: StandardErrorResponse<BasicErrorResponseType> =
+            StandardErrorResponse::new(BasicErrorResponseType::InvalidGrant, None, None);
+        let err: oauth2::RequestTokenError<
+            oauth2::HttpClientError<oauth2::reqwest::Error>,
+            StandardErrorResponse<BasicErrorResponseType>,
+        > = oauth2::RequestTokenError::ServerResponse(resp);
+
+        let mapped = classify_refresh_error(&err);
+        assert!(
+            matches!(mapped, AppError::Gcal(GcalErrorKind::Unauthorized)),
+            "invalid_grant must map to AppError::Gcal(Unauthorized), got {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn classify_refresh_error_unauthorized_client_maps_to_unauthorized() {
+        let resp: StandardErrorResponse<BasicErrorResponseType> =
+            StandardErrorResponse::new(BasicErrorResponseType::UnauthorizedClient, None, None);
+        let err: oauth2::RequestTokenError<
+            oauth2::HttpClientError<oauth2::reqwest::Error>,
+            StandardErrorResponse<BasicErrorResponseType>,
+        > = oauth2::RequestTokenError::ServerResponse(resp);
+
+        let mapped = classify_refresh_error(&err);
+        assert!(
+            matches!(mapped, AppError::Gcal(GcalErrorKind::Unauthorized)),
+            "unauthorized_client must map to AppError::Gcal(Unauthorized), got {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn classify_refresh_error_does_not_leak_raw_err_display() {
+        // REVIEW-LATER L-129: the previous implementation interpolated
+        // the upstream `RequestTokenError::Display` directly into the
+        // validation message.  Google's documented refresh-error
+        // responses include an `error_description` field, and a future
+        // `oauth2` upgrade could broaden the formatter to include the
+        // outgoing request body — either path would surface refresh
+        // token bytes in tracing spans and bug-report bundles.
+        //
+        // This test pins the closed-set categorisation: the resulting
+        // `AppError::Validation` message must be exactly one of the
+        // pre-defined `oauth.refresh_failed: <category>` strings, and
+        // must NOT contain a sentinel substring smuggled via the
+        // underlying error's `Display`.
+        const SENTINEL: &str = "REFRESH_TOKEN_BYTES_LEAKED_HERE";
+
+        let err: oauth2::RequestTokenError<
+            oauth2::HttpClientError<oauth2::reqwest::Error>,
+            StandardErrorResponse<BasicErrorResponseType>,
+        > = oauth2::RequestTokenError::Other(SENTINEL.to_owned());
+
+        let mapped = classify_refresh_error(&err);
+        let AppError::Validation(msg) = mapped else {
+            panic!("expected AppError::Validation, got {mapped:?}");
+        };
+
+        assert_eq!(
+            msg, "oauth.refresh_failed: other",
+            "Other(...) variant must produce literal closed-set category, got {msg:?}"
+        );
+        assert!(
+            !msg.contains(SENTINEL),
+            "validation message must not interpolate underlying err Display, got {msg:?}"
+        );
+    }
+
+    #[test]
+    fn classify_refresh_error_server_response_extension_uses_generic_category() {
+        // Extension(...) variants (any non-RFC-6749 string returned by
+        // the server) collapse to the generic `server_response`
+        // category — never include the extension string itself, which
+        // is server-controlled text.
+        const EXT_SENTINEL: &str = "evil_extension_string_with_secret";
+        let resp: StandardErrorResponse<BasicErrorResponseType> = StandardErrorResponse::new(
+            BasicErrorResponseType::Extension(EXT_SENTINEL.to_owned()),
+            None,
+            None,
+        );
+        let err: oauth2::RequestTokenError<
+            oauth2::HttpClientError<oauth2::reqwest::Error>,
+            StandardErrorResponse<BasicErrorResponseType>,
+        > = oauth2::RequestTokenError::ServerResponse(resp);
+
+        let mapped = classify_refresh_error(&err);
+        let AppError::Validation(msg) = mapped else {
+            panic!("expected AppError::Validation, got {mapped:?}");
+        };
+        assert_eq!(msg, "oauth.refresh_failed: server_response");
+        assert!(
+            !msg.contains(EXT_SENTINEL),
+            "extension string must not surface in validation message, got {msg:?}"
+        );
+    }
+
+    #[test]
+    fn classify_refresh_error_invalid_client_maps_to_named_category() {
+        let resp: StandardErrorResponse<BasicErrorResponseType> =
+            StandardErrorResponse::new(BasicErrorResponseType::InvalidClient, None, None);
+        let err: oauth2::RequestTokenError<
+            oauth2::HttpClientError<oauth2::reqwest::Error>,
+            StandardErrorResponse<BasicErrorResponseType>,
+        > = oauth2::RequestTokenError::ServerResponse(resp);
+
+        let AppError::Validation(msg) = classify_refresh_error(&err) else {
+            panic!("expected AppError::Validation");
+        };
+        assert_eq!(msg, "oauth.refresh_failed: invalid_client");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

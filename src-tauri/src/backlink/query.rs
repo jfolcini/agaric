@@ -32,9 +32,15 @@ use crate::pagination::{BlockRow, Cursor, PageRequest};
 
 /// Evaluate a filtered backlink query and return a paginated set of blocks.
 ///
+/// Self-references are excluded from the base set (a block linking to
+/// itself does not surface as its own backlink), matching the
+/// convention used by `eval_unlinked_references` and
+/// `eval_backlink_query_grouped`. (L-95)
+///
 /// ## Algorithm
 ///
-/// 1. Get base backlink set (source_ids linking to `block_id`).
+/// 1. Get base backlink set (source_ids linking to `block_id`,
+///    excluding self-references).
 /// 2. If filters provided, resolve each to a set, AND them all together,
 ///    then intersect with the base set.
 /// 3. Sort the result set.
@@ -49,10 +55,16 @@ pub async fn eval_backlink_query(
     page: &PageRequest,
 ) -> Result<BacklinkQueryResponse, AppError> {
     // 1. Get base backlink set
+    //    `bl.source_id != ?1` excludes self-references so a block linking
+    //    to itself does not inflate `total_count` or surface as its own
+    //    backlink. The `?1` parameter is reused (no extra bind needed).
+    //    Mirrors `eval_unlinked_references` / `eval_backlink_query_grouped`.
+    //    (L-95)
     let base_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
         "SELECT bl.source_id FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
-         WHERE bl.target_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
+         WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
+           AND b.deleted_at IS NULL AND b.is_conflict = 0",
     )
     .bind(block_id)
     .fetch_all(pool)
@@ -334,4 +346,113 @@ pub async fn list_property_keys(pool: &SqlitePool) -> Result<Vec<String>, AppErr
             .fetch_all(pool)
             .await?;
     Ok(rows)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    //! Localized regression tests that need not depend on the broader
+    //! `super::tests` fixture surface. Specifically guards the L-95 fix
+    //! that excludes self-referencing links from `eval_backlink_query`'s
+    //! base set, aligning the path with `eval_unlinked_references` /
+    //! `eval_backlink_query_grouped`.
+    use super::*;
+    use crate::db::init_pool;
+    use crate::pagination::PageRequest;
+    use sqlx::SqlitePool;
+    use tempfile::TempDir;
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    async fn insert_block(pool: &SqlitePool, id: &str, block_type: &str, content: &str) {
+        let page_id: Option<&str> = if block_type == "page" { Some(id) } else { None };
+        sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, ?, ?, ?)")
+            .bind(id)
+            .bind(block_type)
+            .bind(content)
+            .bind(page_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn insert_block_link(pool: &SqlitePool, source_id: &str, target_id: &str) {
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(source_id)
+            .bind(target_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    fn default_page() -> PageRequest {
+        PageRequest::new(None, Some(50)).unwrap()
+    }
+
+    /// L-95: a block linking to itself must NOT appear as its own
+    /// backlink and must NOT inflate `total_count`.
+    #[tokio::test]
+    async fn eval_backlink_query_excludes_self_references() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BLK", "page", "Self-linking block").await;
+        // Direct insert of a self-link row — keeps the test self-contained
+        // (no materializer dispatch) so it precisely exercises the SQL
+        // base-set query.
+        insert_block_link(&pool, "BLK", "BLK").await;
+
+        let resp = eval_backlink_query(&pool, "BLK", None, None, &default_page())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.total_count, 0,
+            "self-link must not inflate total_count"
+        );
+        assert_eq!(
+            resp.filtered_count, 0,
+            "self-link must not appear in filtered set"
+        );
+        assert!(
+            resp.items.is_empty(),
+            "self-link must not surface as a backlink item"
+        );
+        assert!(!resp.has_more);
+        assert!(resp.next_cursor.is_none());
+    }
+
+    /// L-95 negative-side guard: ensure the new self-reference filter
+    /// does not accidentally drop legitimate backlinks from OTHER
+    /// blocks. With BLK_A → BLK_B and BLK_B → BLK_B (self), only BLK_A
+    /// should surface in the response.
+    #[tokio::test]
+    async fn eval_backlink_query_returns_backlinks_from_other_blocks() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BLK_A", "content", "Source A").await;
+        insert_block(&pool, "BLK_B", "page", "Target B").await;
+        insert_block_link(&pool, "BLK_A", "BLK_B").await;
+        insert_block_link(&pool, "BLK_B", "BLK_B").await;
+
+        let resp = eval_backlink_query(&pool, "BLK_B", None, None, &default_page())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.total_count, 1,
+            "only BLK_A counts; BLK_B self-link excluded"
+        );
+        assert_eq!(resp.filtered_count, 1);
+        assert_eq!(resp.items.len(), 1);
+        assert_eq!(
+            resp.items[0].id, "BLK_A",
+            "the surviving backlink must be BLK_A"
+        );
+    }
 }

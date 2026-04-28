@@ -1089,8 +1089,12 @@ async fn backlinks_filtered_unicode_content() {
     );
 }
 
+// L-95: aligns eval_backlink_query with eval_unlinked_references /
+// eval_backlink_query_grouped self-ref exclusion convention. A block
+// linking to itself must not surface as its own backlink and must not
+// inflate `total_count` / `filtered_count`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn backlinks_filtered_self_referencing() {
+async fn backlinks_filtered_self_reference_excluded() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
@@ -1125,10 +1129,17 @@ async fn backlinks_filtered_self_referencing() {
 
     assert_eq!(
         resp.items.len(),
-        1,
-        "self-referencing block returned as backlink"
+        0,
+        "self-referencing block excluded from backlinks (L-95)"
     );
-    assert_eq!(resp.items[0].id, b1.id);
+    assert_eq!(
+        resp.total_count, 0,
+        "self-link must not inflate total_count (L-95)"
+    );
+    assert_eq!(
+        resp.filtered_count, 0,
+        "self-link must not inflate filtered_count (L-95)"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

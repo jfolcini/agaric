@@ -862,6 +862,9 @@ pub fn run() {
             // fire the disconnect signal.
             let mcp_lifecycle = std::sync::Arc::new(mcp::McpLifecycle::new());
             app.manage(mcp_lifecycle.clone());
+            // L-46: gate that serialises rapid `mcp_set_enabled` toggles
+            // so the marker write + spawn cannot interleave.
+            app.manage(commands::McpToggleGate::new());
             let mcp_pool = pools_read_for_mcp;
             let mcp_write_pool = pools_write_for_mcp_ro;
             let mcp_materializer = materializer_for_mcp;
@@ -885,6 +888,9 @@ pub fn run() {
             let mcp_rw_lifecycle_inner = std::sync::Arc::new(mcp::McpLifecycle::new());
             let mcp_rw_lifecycle = mcp::McpRwLifecycle(mcp_rw_lifecycle_inner.clone());
             app.manage(mcp_rw_lifecycle.clone());
+            // L-46: RW counterpart to McpToggleGate. RO and RW each hold
+            // their own gate so they do not block each other.
+            app.manage(commands::McpRwToggleGate::new());
             mcp::spawn_mcp_rw_task(
                 &app_data_dir,
                 app.handle().clone(),

@@ -89,31 +89,27 @@ pub fn mcp_disconnect_all_inner(lifecycle: &McpLifecycle) {
     lifecycle.disconnect_all();
 }
 
-/// Toggle the `mcp-ro-enabled` marker file under `app_data_dir`.
+/// Shared body for [`mcp_set_enabled_inner`] and
+/// [`mcp_rw_set_enabled_inner`].
 ///
-/// - `enabled=true`: creates the marker (if missing). The caller is
-///   responsible for re-spawning the MCP task if `lifecycle.is_running()`
-///   is `false` — this helper only owns the on-disk state so it is
-///   trivially testable without a Tauri runtime.
-/// - `enabled=false`: removes the marker (if present) and fires
-///   [`McpLifecycle::shutdown`]. Shutdown stores `enabled = false` into
-///   the lifecycle gate so the accept loop's next iteration drops its
-///   listener and returns (releasing the OS socket file / named pipe),
-///   then notifies every in-flight per-connection task so each observes
-///   the disconnect signal via its `select!` and drops its stream.
-///   Subsequent `bind_socket` calls (e.g. at next app startup with the
-///   marker absent, or via a follow-up `mcp_set_enabled(true)`) get a
-///   fresh listener.
+/// L-47: the RO and RW markers used to live in two byte-identical
+/// helpers that differed only in the marker filename and the log
+/// strings. Any future change (e.g. closing the listener for the H-2
+/// fix) had to be applied twice. Parameterising on `marker_filename`
+/// and `log_label` (`"RO"` / `"RW"`) reduces the surface to one
+/// implementation; the public RO/RW wrappers below are the only places
+/// that pick the per-surface constants.
 ///
-/// Returns `Ok(true)` when the marker file state actually changed and
-/// `Ok(false)` when the requested state was already in effect (so the
-/// frontend can surface "already on / already off" without an error).
-pub fn mcp_set_enabled_inner(
+/// See [`mcp_set_enabled_inner`] for the per-state semantics
+/// (idempotent, fires `lifecycle.shutdown()` on disable, etc.).
+fn set_marker_enabled(
     app_data_dir: &Path,
     lifecycle: &McpLifecycle,
+    marker_filename: &str,
+    log_label: &'static str,
     enabled: bool,
 ) -> Result<bool, AppError> {
-    let marker_path = app_data_dir.join(MCP_RO_ENABLED_MARKER);
+    let marker_path = app_data_dir.join(marker_filename);
     let currently_enabled = marker_path.is_file();
 
     if enabled == currently_enabled {
@@ -133,16 +129,18 @@ pub fn mcp_set_enabled_inner(
         std::fs::write(&marker_path, b"")?;
         tracing::info!(
             target: "mcp",
+            label = log_label,
             path = %marker_path.display(),
-            "MCP RO marker created (enabled)",
+            "MCP marker created (enabled)",
         );
     } else {
         match std::fs::remove_file(&marker_path) {
             Ok(_) => {
                 tracing::info!(
                     target: "mcp",
+                    label = log_label,
                     path = %marker_path.display(),
-                    "MCP RO marker removed (disabled)",
+                    "MCP marker removed (disabled)",
                 );
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -166,6 +164,41 @@ pub fn mcp_set_enabled_inner(
     Ok(true)
 }
 
+/// Toggle the `mcp-ro-enabled` marker file under `app_data_dir`.
+///
+/// - `enabled=true`: creates the marker (if missing). The caller is
+///   responsible for re-spawning the MCP task if `lifecycle.is_running()`
+///   is `false` — this helper only owns the on-disk state so it is
+///   trivially testable without a Tauri runtime.
+/// - `enabled=false`: removes the marker (if present) and fires
+///   [`McpLifecycle::shutdown`]. Shutdown stores `enabled = false` into
+///   the lifecycle gate so the accept loop's next iteration drops its
+///   listener and returns (releasing the OS socket file / named pipe),
+///   then notifies every in-flight per-connection task so each observes
+///   the disconnect signal via its `select!` and drops its stream.
+///   Subsequent `bind_socket` calls (e.g. at next app startup with the
+///   marker absent, or via a follow-up `mcp_set_enabled(true)`) get a
+///   fresh listener.
+///
+/// Returns `Ok(true)` when the marker file state actually changed and
+/// `Ok(false)` when the requested state was already in effect (so the
+/// frontend can surface "already on / already off" without an error).
+///
+/// L-47: thin wrapper around [`set_marker_enabled`].
+pub fn mcp_set_enabled_inner(
+    app_data_dir: &Path,
+    lifecycle: &McpLifecycle,
+    enabled: bool,
+) -> Result<bool, AppError> {
+    set_marker_enabled(
+        app_data_dir,
+        lifecycle,
+        MCP_RO_ENABLED_MARKER,
+        "RO",
+        enabled,
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
@@ -177,6 +210,54 @@ fn app_data_dir_from_handle<R: tauri::Runtime>(
     app.path()
         .app_data_dir()
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))
+}
+
+/// Serialise rapid `mcp_set_enabled` calls so the marker write +
+/// `is_running()` check + spawn cannot interleave with a concurrent
+/// disable.
+///
+/// L-46: under fast UI toggling (double-click, power-user flicking the
+/// Settings switch) the read-modify-spawn sequence inside
+/// [`mcp_set_enabled`] could race with itself — a previous serve loop's
+/// `task_running` flag could already be `false` while the listener was
+/// still bound, and the next spawn would hit "already bound" and silently
+/// no-op, leaving the user in an "enabled but not bound" stall that
+/// survived until restart.
+///
+/// Holding this gate for the *full* command body (inner toggle +
+/// re-spawn) forces sequential execution; the underlying lifecycle
+/// shutdown / restart can then complete in order. The RW surface gets
+/// its own gate ([`McpRwToggleGate`]) so RO and RW toggles do not block
+/// each other — they manage independent listeners and lifecycles.
+pub struct McpToggleGate(pub Arc<tokio::sync::Mutex<()>>);
+
+impl McpToggleGate {
+    /// Construct a fresh gate for managed state in `lib.rs`.
+    pub fn new() -> Self {
+        Self(Arc::new(tokio::sync::Mutex::new(())))
+    }
+}
+
+impl Default for McpToggleGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// L-46: RW counterpart to [`McpToggleGate`]. Independent gate so RO
+/// and RW toggles do not contend.
+pub struct McpRwToggleGate(pub Arc<tokio::sync::Mutex<()>>);
+
+impl McpRwToggleGate {
+    pub fn new() -> Self {
+        Self(Arc::new(tokio::sync::Mutex::new(())))
+    }
+}
+
+impl Default for McpRwToggleGate {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Tauri command: return the current MCP RO status for the Settings tab.
@@ -218,18 +299,31 @@ pub async fn mcp_disconnect_all(
 
 /// Tauri command: toggle the MCP RO enabled marker file and start / stop
 /// the serve task accordingly.
+///
+/// L-46: the inner toggle + spawn sequence is serialised through the
+/// shared [`McpToggleGate`] (`tokio::sync::Mutex`) so rapid UI toggles
+/// cannot interleave and leave the server in an "enabled but not
+/// bound" stall. The lock is held for the full command body so a
+/// concurrent disable cannot race ahead of the spawn.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn mcp_set_enabled(
     app: tauri::AppHandle,
     lifecycle: tauri::State<'_, Arc<McpLifecycle>>,
+    toggle_gate: tauri::State<'_, McpToggleGate>,
     read_pool: tauri::State<'_, crate::db::ReadPool>,
     write_pool: tauri::State<'_, crate::db::WritePool>,
     materializer: tauri::State<'_, crate::materializer::Materializer>,
     device_id: tauri::State<'_, crate::device::DeviceId>,
     enabled: bool,
 ) -> Result<bool, AppError> {
+    // L-46: serialise rapid toggles. Cloning the `Arc` lets us hold the
+    // gate across `await` without borrowing the `tauri::State`.
+    let gate = toggle_gate.inner().0.clone();
+    let _guard = gate.lock().await;
+
     let app_data_dir = app_data_dir_from_handle(&app)?;
     let lc = lifecycle.inner().clone();
     let changed = mcp_set_enabled_inner(&app_data_dir, &lc, enabled)?;
@@ -311,50 +405,20 @@ pub fn mcp_rw_disconnect_all_inner(lifecycle: &McpLifecycle) {
 /// `lifecycle.is_running()` is `false` after a fresh enable. The disable
 /// path also fires [`McpLifecycle::shutdown`] (H-2) so the RW accept
 /// loop drops its listener instead of staying open until app restart.
+///
+/// L-47: thin wrapper around [`set_marker_enabled`].
 pub fn mcp_rw_set_enabled_inner(
     app_data_dir: &Path,
     lifecycle: &McpLifecycle,
     enabled: bool,
 ) -> Result<bool, AppError> {
-    let marker_path = app_data_dir.join(MCP_RW_ENABLED_MARKER);
-    let currently_enabled = marker_path.is_file();
-
-    if enabled == currently_enabled {
-        return Ok(false);
-    }
-
-    if enabled {
-        if !app_data_dir.exists() {
-            std::fs::create_dir_all(app_data_dir)?;
-        }
-        std::fs::write(&marker_path, b"")?;
-        tracing::info!(
-            target: "mcp",
-            path = %marker_path.display(),
-            "MCP RW marker created (enabled)",
-        );
-    } else {
-        match std::fs::remove_file(&marker_path) {
-            Ok(_) => {
-                tracing::info!(
-                    target: "mcp",
-                    path = %marker_path.display(),
-                    "MCP RW marker removed (disabled)",
-                );
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // Race with another toggle — idempotent.
-            }
-            Err(e) => return Err(AppError::Io(e)),
-        }
-        // H-2: see `mcp_set_enabled_inner` for the rationale — the RW
-        // path needs the same treatment so disabling the RW toggle
-        // actually closes the listener instead of just kicking
-        // in-flight connections.
-        lifecycle.shutdown();
-    }
-
-    Ok(true)
+    set_marker_enabled(
+        app_data_dir,
+        lifecycle,
+        MCP_RW_ENABLED_MARKER,
+        "RW",
+        enabled,
+    )
 }
 
 /// Tauri command: return the current MCP RW status for the Settings tab.
@@ -393,17 +457,26 @@ pub async fn mcp_rw_disconnect_all(
 /// Tauri command: toggle the MCP RW enabled marker file and start / stop
 /// the RW serve task accordingly. Mirrors [`mcp_set_enabled`] but binds
 /// the **writer** pool into the `ReadWriteTools` registry.
+///
+/// L-46: serialised through [`McpRwToggleGate`] — see `mcp_set_enabled`
+/// for the rationale. RO and RW each hold their own gate so they do
+/// not block each other.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn mcp_rw_set_enabled(
     app: tauri::AppHandle,
     lifecycle: tauri::State<'_, McpRwLifecycle>,
+    toggle_gate: tauri::State<'_, McpRwToggleGate>,
     write_pool: tauri::State<'_, crate::db::WritePool>,
     materializer: tauri::State<'_, crate::materializer::Materializer>,
     device_id: tauri::State<'_, crate::device::DeviceId>,
     enabled: bool,
 ) -> Result<bool, AppError> {
+    // L-46: serialise rapid toggles.
+    let gate = toggle_gate.inner().0.clone();
+    let _guard = gate.lock().await;
+
     let app_data_dir = app_data_dir_from_handle(&app)?;
     let lc = lifecycle.inner().0.clone();
     let changed = mcp_rw_set_enabled_inner(&app_data_dir, &lc, enabled)?;
@@ -781,5 +854,99 @@ mod tests {
         let rw = McpRwLifecycle(std::sync::Arc::new(make_lifecycle()));
         assert_eq!(rw.connection_count(), 0, "deref lookup resolves");
         assert!(!rw.is_running(), "deref reaches is_running()");
+    }
+
+    // ── L-47: parameterised set_marker_enabled ──────────────────────────
+
+    #[test]
+    fn set_marker_enabled_works_for_both_ro_and_rw() {
+        // Direct exercise of the shared helper proves the RO/RW
+        // wrappers genuinely thin-delegate. Using the same lifecycle
+        // for both is intentional — the marker file is the only
+        // surface that differs.
+        let dir = TempDir::new().unwrap();
+        let lc = make_lifecycle();
+
+        // Enable both via the helper directly, verify markers exist
+        // under their respective filenames.
+        let changed_ro =
+            set_marker_enabled(dir.path(), &lc, MCP_RO_ENABLED_MARKER, "RO", true).unwrap();
+        let changed_rw =
+            set_marker_enabled(dir.path(), &lc, MCP_RW_ENABLED_MARKER, "RW", true).unwrap();
+        assert!(changed_ro && changed_rw);
+        assert!(dir.path().join(MCP_RO_ENABLED_MARKER).is_file());
+        assert!(dir.path().join(MCP_RW_ENABLED_MARKER).is_file());
+
+        // Re-enable is idempotent (returns Ok(false), no marker churn).
+        let again = set_marker_enabled(dir.path(), &lc, MCP_RO_ENABLED_MARKER, "RO", true).unwrap();
+        assert!(!again, "re-enable must report no change");
+    }
+
+    // ── L-46: rapid-toggle gate serialises concurrent callers ───────────
+
+    /// Verify the `tokio::sync::Mutex` inside `McpToggleGate` actually
+    /// blocks a second async caller while the first holds the guard.
+    /// This pins the wiring (gate + Arc + lock) without exercising the
+    /// full Tauri command — the toggle-gate shape itself is the
+    /// load-bearing piece for L-46.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mcp_toggle_gate_serializes_concurrent_callers() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let gate = std::sync::Arc::new(McpToggleGate::new());
+        let entered = std::sync::Arc::new(AtomicU32::new(0));
+        let max_concurrent = std::sync::Arc::new(AtomicU32::new(0));
+
+        let make_task = || {
+            let gate = gate.clone();
+            let entered = entered.clone();
+            let max_concurrent = max_concurrent.clone();
+            async move {
+                let _g = gate.0.lock().await;
+                let n = entered.fetch_add(1, Ordering::AcqRel) + 1;
+                let prev_max = max_concurrent.load(Ordering::Acquire);
+                if n > prev_max {
+                    max_concurrent.store(n, Ordering::Release);
+                }
+                // Simulate the real spawn / inner-toggle window the
+                // gate is protecting.
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                entered.fetch_sub(1, Ordering::AcqRel);
+            }
+        };
+
+        let t1 = tokio::spawn(make_task());
+        let t2 = tokio::spawn(make_task());
+        let t3 = tokio::spawn(make_task());
+        t1.await.unwrap();
+        t2.await.unwrap();
+        t3.await.unwrap();
+
+        assert_eq!(
+            max_concurrent.load(Ordering::Acquire),
+            1,
+            "gate must serialise: at most one task inside the critical \
+             section at any time",
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mcp_rw_toggle_gate_is_independent_of_ro_gate() {
+        // RO and RW gates are independent — holding one must NOT block
+        // the other (the production wiring uses two separate managed
+        // states for exactly this reason).
+        let ro_gate = std::sync::Arc::new(McpToggleGate::new());
+        let rw_gate = std::sync::Arc::new(McpRwToggleGate::new());
+
+        let ro_lock = ro_gate.0.clone();
+        let _ro_guard = ro_lock.lock_owned().await;
+
+        // RW lock must succeed immediately even with RO held.
+        let rw_lock = rw_gate.0.clone();
+        let try_acquire =
+            tokio::time::timeout(std::time::Duration::from_millis(100), rw_lock.lock_owned())
+                .await
+                .expect("RW lock must not block on RO gate");
+        drop(try_acquire);
     }
 }

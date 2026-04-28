@@ -307,6 +307,12 @@ export const commands = {
 	/**
 	 *  Tauri command: toggle the MCP RO enabled marker file and start / stop
 	 *  the serve task accordingly.
+	 *
+	 *  L-46: the inner toggle + spawn sequence is serialised through the
+	 *  shared [`McpToggleGate`] (`tokio::sync::Mutex`) so rapid UI toggles
+	 *  cannot interleave and leave the server in an "enabled but not
+	 *  bound" stall. The lock is held for the full command body so a
+	 *  concurrent disable cannot race ahead of the spawn.
 	 */
 	mcpSetEnabled: (enabled: boolean) => typedError<boolean, AppErrorSchema>(__TAURI_INVOKE("mcp_set_enabled", { enabled })),
 	/**
@@ -329,6 +335,10 @@ export const commands = {
 	 *  Tauri command: toggle the MCP RW enabled marker file and start / stop
 	 *  the RW serve task accordingly. Mirrors [`mcp_set_enabled`] but binds
 	 *  the **writer** pool into the `ReadWriteTools` registry.
+	 *
+	 *  L-46: serialised through [`McpRwToggleGate`] — see `mcp_set_enabled`
+	 *  for the rationale. RO and RW each hold their own gate so they do
+	 *  not block each other.
 	 */
 	mcpRwSetEnabled: (enabled: boolean) => typedError<boolean, AppErrorSchema>(__TAURI_INVOKE("mcp_rw_set_enabled", { enabled })),
 	// Tauri command: disconnect every in-flight RW MCP connection.

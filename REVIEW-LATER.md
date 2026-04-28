@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 614+ items across 486 sessions (per SESSION-LOG.md unique session count; latest is session 519).
+Previously resolved: 620+ items across 487 sessions (per SESSION-LOG.md unique session count; latest is session 520).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1925,7 +1925,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (95 — expanded)
+## LOW findings (89 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -1979,18 +1979,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Add (a) a permanent-failure test that asserts a doubly-failed `ApplyOp` leaves `op_log` populated and core tables empty (documenting current behaviour and providing a regression seat for the eventual fix); (b) a `flavor = "multi_thread"` test for `CreateBlock(parent)` and `CreateBlock(child)` arriving in the same batch; (c) a Full-queue test that fills past `BACKGROUND_CAPACITY` and asserts `bg_dropped` (or the new backpressure counter from M-8) increments; (d) a release-mode test for the empty-block_id dispatch branch.
 - **Pass-1 source:** 02/F20
-- **Status:** Open
-
-### L-16 — Foreground retry: ordering of error log vs. retry attempt
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/consumer.rs:162-180`
-- **What:** On the first failure of a foreground task, the consumer calls `log_consumer_result("fg", &result)` (logging at `error` level) and *then* sleeps 100 ms and retries. If the retry succeeds, the original error log line is never followed by a "retry succeeded" message, leaving the operator-facing log saying only "error processing materializer task." From the user's view the op succeeded.
-- **Why it matters:** Log-noise hygiene; spurious error counts in operator dashboards or in `recent_errors_from_log_dir` (commands/system.rs) built on log-line matching. For a single-user device this also pollutes the bug-report log capture with non-actionable errors.
-- **Cost:** S (<2h)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Demote the first-attempt failure log to `debug` level and only emit at `error` if the retry also fails. Alternatively keep the first log but follow a successful retry with `tracing::info!("fg-retry succeeded")` so log scrapers can correlate the pair.
-- **Pass-1 source:** 02/F21
 - **Status:** Open
 
 ### L-17 — `dispatch_op` enqueues fg+bg out of order
@@ -2213,30 +2201,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Pin level detection to the actual tracing format used in `lib.rs:347-349`. Either parse the prefix (`YYYY-MM-DD ... LEVEL [target]`) or install a custom `tracing_subscriber::fmt::format::Layer` that emits a fixed field (`level=ERROR`, `level=WARN`) the bug-report path can match unambiguously.
 - **Pass-1 source:** 05/F7
-- **Status:** Open
-
-### L-46 — MCP toggle is racy: marker write + `is_running()` + `spawn` are non-atomic
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/mcp.rs:212-244` (`mcp_set_enabled` wrapper), `src-tauri/src/commands/mcp.rs:336-399` (RW twin), `src-tauri/src/commands/mcp.rs:106-155` (inner)
-- **What:** The wrapper sequence is: (1) `mcp_set_enabled_inner` writes/removes the marker, (2) reads `lc.is_running()`, (3) `spawn_mcp_ro_task`. Between (2) and (3) a concurrent disable can remove the marker; the spawn proceeds anyway (the inner re-checks the marker, so this is benign). More problematic: if the previous serve loop is mid-shutdown, its `task_running.store(false)` happens *after* `serve()` returns but the listener may still hold the socket file. A new spawn in the gap hits "already bound" and logs a warn, leaving `task_running` accurate but the intended re-spawn never happens.
-- **Why it matters:** Under rapid toggling (UI bug, double-click, power-user flicking the switch), the user can land in an "enabled but not bound" stall that survives until restart. The MCP surface is the user's own data exposed to local agents — within the threat model this is correctness, not security.
-- **Cost:** S
-- **Risk:** Low — needs a real lifecycle state machine or a `tokio::sync::Mutex` held by the command for its duration.
-- **Impact:** Low (rare path; symptom is "Settings says on, server isn't bound" until restart)
-- **Recommendation:** Track `LifecycleState` as an enum (`Stopped | Starting | Running | Stopping`) in `McpLifecycle`, set by the spawn function. `mcp_set_enabled(true)` waits for `Stopped` before calling `spawn`. Alternatively, serialize all enable/disable calls through a `tokio::sync::Mutex` held by the command for its full duration. Lower priority pending H-2 fix; the residual race window is benign once the listener actually drops on disable.
-- **Pass-1 source:** 05/F22 (downgraded Medium→Low)
-- **Status:** Open
-
-### L-47 — MCP RO and RW marker logic is duplicated; helpers exist to consolidate
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/mcp.rs:106-155` (RO `mcp_set_enabled_inner`) vs `src-tauri/src/commands/mcp.rs:294-334` (RW twin); also `get_mcp_status_inner` / `get_mcp_rw_status_inner`, `mcp_disconnect_all_inner` / `mcp_rw_disconnect_all_inner`, and the path-resolver pair
-- **What:** The two `*_set_enabled_inner` functions are byte-identical except for the marker constant (`MCP_RO_ENABLED_MARKER` vs `MCP_RW_ENABLED_MARKER`) and log strings. The same is true for the status, disconnect, and path-resolver pairs. Any future change (e.g. closing the listener for the F21 fix) must remember to apply both.
-- **Why it matters:** The RW surface is the more dangerous one (write tools); any RO/RW divergence carries asymmetric blast radius.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Parameterize once: `mcp_set_enabled_inner(path, lifecycle, marker_const, log_target, enabled)`, with thin RO/RW wrappers passing the marker; same for `get_*_status_inner` and `*_disconnect_all_inner`. Existing `rw_and_ro_markers_are_independent` test already proves parity.
-- **Pass-1 source:** 05/F23
 - **Status:** Open
 
 ### L-48 — Sanitization drift: ARCHITECTURE.md §15 mandates it; five command files skip it
@@ -2627,18 +2591,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 07/F25
 - **Status:** Open
 
-### L-95 — `eval_backlink_query` doesn't filter self-references; `total_count` includes self-link
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/query.rs:52-58`
-- **What:** The base set query is `SELECT bl.source_id FROM block_links bl … WHERE bl.target_id = ?1` with no `bl.source_id != ?1` filter. A block linking to itself surfaces as its own backlink and inflates `total_count`. Sister helper `eval_unlinked_references` at `grouped.rs:418-421` explicitly excludes self-references with comment "Exclude self-references". The two paths diverge silently.
-- **Why it matters:** Inconsistent semantics across two backlink entry points. Whatever the policy is (include self-links or not), it should be stated and applied uniformly so UIs render consistent counts.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either add `bl.source_id != ?1` to `eval_backlink_query` and adjust tests, or document the asymmetry explicitly in the function-level doc comments and contrast with `eval_unlinked_references`.
-- **Pass-1 source:** 07/F34
-- **Status:** Open
-
 ### L-96 — `extract_origin` / `extract_domain` strip neither URL credentials nor fragments
 - **Domain:** Search & Links
 - **Location:** `src-tauri/src/link_metadata/html_parser.rs:286-322`
@@ -3015,30 +2967,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Keep linear *iff* the upper bound stays ~500. If `AGENDA_FETCH_LIMIT` ever rises, switch to a precomputed cumulative-length table (O(N)) + binary search (O(log N)). Add a micro-benchmark when/if that lands.
 - **Pass-1 source:** 10/F17
-- **Status:** Open
-
-### L-129 — `classify_refresh_error` formats upstream `Display` directly into validation message
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/gcal_push/oauth.rs:667-683`
-- **What:** `AppError::Validation(format!("oauth.refresh_failed: {err}"))` interpolates the full `oauth2::RequestTokenError` `Display`. `reqwest::Error`'s `Display` does not include request bodies today; Google's documented refresh error responses (`invalid_grant`, etc.) carry only an `error_description` text. But the formatted string ends up in tracing spans and bug-report bundles.
-- **Why it matters:** Defence-in-depth around OAuth refresh tokens, called out as in-scope per the user's gcal threat-model carve-out. If a future `oauth2` upgrade ever changes the error formatter to include the request, the refresh token would leak into logs.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Downcast `err` against the closed set of `BasicErrorResponseType` and stringify only the variant name (or the documented Google `error` field), or wrap the formatted message with an assertion that no substring of the SecretString refresh token appears. Prefer the closed-set approach.
-- **Pass-1 source:** 10/F20
-- **Status:** Open
-
-### L-130 — `serde_json::from_str` error in `KeyringTokenStore::load` may include token chars
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/gcal_push/keyring_store.rs:444-454`
-- **What:** `let blob: TokenBlob = serde_json::from_str(&json)?;` propagates `serde_json::Error`, whose `Display` shows position + a short context window of the input — depending on where parsing fails, a partial chunk of the access or refresh token bytes could surface. The `?` becomes `AppError::Json` which tracing renders.
-- **Why it matters:** Same defence-in-depth motivation as L-129. The keyring round-trip is the only realistic mismatch path (a corrupt keyring entry that mis-parses), but logging that error at `error!` would expose secret bytes.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace `?` with an explicit map: `serde_json::from_str(&json).map_err(|_| AppError::Validation("keyring.malformed_blob".into()))?`. Drop the original error so secret bytes never reach tracing. Add a regression test that injects a malformed JSON blob containing token-shaped data and asserts the error message is the literal `keyring.malformed_blob`.
-- **Pass-1 source:** 10/F21
 - **Status:** Open
 
 ### L-132 — `claim_lease` does 4 round-trips, could be 2
