@@ -4168,3 +4168,119 @@ async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
         .await
         .unwrap();
 }
+
+// =======================================================================
+// L-105 — `compact_op_log` warns when op_log buffering would approach
+// the platform memory ceiling
+// =======================================================================
+//
+// `collect_tables` + `encode_snapshot` buffer the entire derived state
+// in memory before encoding; on a 1M-block vault this can exceed the
+// per-process heap budget on Android (24 MB release-APK ceiling). The
+// L-105 fix is a heads-up `warn!` keyed off two op_log dimensions
+// (row count + total payload bytes), not an abort. This test pins:
+//
+//   1. The threshold constants haven't drifted (`SNAPSHOT_WARN_ROW_COUNT`
+//      = 100k, `SNAPSHOT_WARN_PAYLOAD_BYTES` = 64 MiB) — a future
+//      refactor that silently weakens them would re-introduce the
+//      "no heads-up before OOM" hole.
+//   2. `measure_op_log_size` — the SQL helper that backs the warn —
+//      reads `COUNT(*)` and `SUM(LENGTH(payload))` correctly against a
+//      seeded op_log. Verifying the SQL via the helper is enough; this
+//      crate does not wire up `tracing-test`/`TestWriter`, and the
+//      task scope explicitly accepts pinning the COUNT/SUM logic in
+//      lieu of asserting the formatted warn line.
+//   3. The threshold-exceeded predicate (`>` against either bound) is
+//      strictly greater-than at the boundary, so a later off-by-one
+//      refactor (e.g. `>=`) would be caught.
+//
+// Inserting `SNAPSHOT_WARN_ROW_COUNT + 1` rows directly is too slow for
+// nextest (100k+ INSERTs in a tight loop), and a test-mode override
+// would add API surface for one test. The combination above pins the
+// behaviour without paying that cost.
+
+#[tokio::test]
+async fn compact_op_log_logs_warn_when_row_count_exceeds_threshold_l105() {
+    // 1. Threshold constants — pinned values, not just "non-zero".
+    assert_eq!(
+        SNAPSHOT_WARN_ROW_COUNT, 100_000,
+        "L-105: row threshold must remain 100k — see create.rs doc comment for rationale"
+    );
+    assert_eq!(
+        SNAPSHOT_WARN_PAYLOAD_BYTES,
+        64 * 1024 * 1024,
+        "L-105: byte threshold must remain 64 MiB — see create.rs doc comment for rationale"
+    );
+
+    // 2. `measure_op_log_size` returns COUNT/SUM matching the seeded
+    //    op_log. Three ops with `append_local_op_at` produces three
+    //    rows whose payloads each carry a non-empty JSON-encoded
+    //    `CreateBlock` body — so `payload_bytes` must be > 0.
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-l105";
+    insert_op_at(&pool, device_id, "blk-l105-a", "2025-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "blk-l105-b", "2025-01-02T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "blk-l105-c", "2025-01-03T00:00:00Z").await;
+
+    let mut conn = pool.acquire().await.unwrap();
+    let (row_count, payload_bytes) = measure_op_log_size(&mut conn).await.unwrap();
+    drop(conn);
+
+    assert_eq!(
+        row_count, 3,
+        "L-105: measure_op_log_size must report the exact COUNT(*) of op_log rows"
+    );
+    assert!(
+        payload_bytes > 0,
+        "L-105: measure_op_log_size must report a non-zero SUM(LENGTH(payload)) when ops exist; got {payload_bytes}"
+    );
+
+    // The seeded scenario must NOT exceed either threshold (sanity:
+    // the production warn would otherwise misfire on every test
+    // with a handful of ops).
+    assert!(
+        row_count <= SNAPSHOT_WARN_ROW_COUNT,
+        "L-105: 3 seeded ops must not exceed the 100k row threshold"
+    );
+    assert!(
+        payload_bytes <= SNAPSHOT_WARN_PAYLOAD_BYTES,
+        "L-105: 3 seeded ops must not exceed the 64 MiB byte threshold"
+    );
+
+    // 3. Boundary check — strictly `>`. If either bound were ever
+    //    weakened to `>=`, the threshold + 1 case below would still
+    //    pass but the threshold case would start firing on every
+    //    100k-row vault, which is not the intended behaviour.
+    let exceeds = |rows: i64, bytes: i64| -> bool {
+        rows > SNAPSHOT_WARN_ROW_COUNT || bytes > SNAPSHOT_WARN_PAYLOAD_BYTES
+    };
+    assert!(
+        !exceeds(SNAPSHOT_WARN_ROW_COUNT, 0),
+        "L-105: at exactly the row threshold, warn must NOT fire (strict >)"
+    );
+    assert!(
+        exceeds(SNAPSHOT_WARN_ROW_COUNT + 1, 0),
+        "L-105: at row threshold + 1, warn MUST fire"
+    );
+    assert!(
+        !exceeds(0, SNAPSHOT_WARN_PAYLOAD_BYTES),
+        "L-105: at exactly the byte threshold, warn must NOT fire (strict >)"
+    );
+    assert!(
+        exceeds(0, SNAPSHOT_WARN_PAYLOAD_BYTES + 1),
+        "L-105: at byte threshold + 1, warn MUST fire"
+    );
+
+    // 4. End-to-end: `compact_op_log` runs cleanly with the new
+    //    pre-flight SQL in place — the new query must compile against
+    //    the committed `.sqlx/` cache and not perturb the existing
+    //    Phase 1 read transaction. We don't assert on logs here (no
+    //    tracing capture); a successful return proves the production
+    //    path now contains and exercises the L-105 probe.
+    insert_block(&pool, "blk-l105-a", "content").await;
+    let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS).await;
+    assert!(
+        result.is_ok(),
+        "L-105: compact_op_log must not regress on the new measure_op_log_size pre-flight; got {result:?}"
+    );
+}

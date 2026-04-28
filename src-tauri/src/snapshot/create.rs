@@ -6,6 +6,63 @@ use super::types::*;
 use crate::error::AppError;
 
 // ---------------------------------------------------------------------------
+// L-105: snapshot-creation memory-pressure thresholds
+// ---------------------------------------------------------------------------
+//
+// `collect_tables` + `encode_snapshot` buffer the entire derived state
+// (blocks, block_tags, block_properties, …) into `SnapshotData.tables`
+// before the CBOR/zstd encode step runs. On a 1M-block vault that
+// structure can exceed the per-process heap budget on constrained
+// platforms — Android release APKs cap at ~24 MB, which is the tightest
+// known target for this app. There is no streaming snapshot format
+// today (deferred per L-105's recommendation), so the actionable guard
+// is a heads-up `warn!` at compaction time, well before the wall.
+//
+// The op_log row count and total payload byte size are the cheapest
+// proxies we have for the size of the snapshot we are about to build:
+// every derived row exists because some op materialised it. They are
+// not exact (the snapshot also includes derived attachments rows etc.,
+// and zstd compresses well), so the thresholds are deliberately
+// conservative — chosen to fire long before the platform OOM ceiling
+// rather than as a tight bound.
+
+/// L-105: emit a `warn!` when an op_log compaction would buffer this
+/// many rows in memory at once. 100k rows is roughly the size at which
+/// the encoded snapshot starts to approach single-digit-MB territory
+/// in compressed form (and considerably larger pre-compression), giving
+/// the user a clear heads-up before the 24 MB Android heap is at risk.
+pub(crate) const SNAPSHOT_WARN_ROW_COUNT: i64 = 100_000;
+
+/// L-105: emit a `warn!` when the sum of `LENGTH(payload)` across the
+/// op_log exceeds 64 MiB. This is a payload-only ceiling — it does not
+/// include the derived rows in `SnapshotData.tables` or the encoded
+/// CBOR overhead — so the actual memory peak during snapshot creation
+/// will be larger. 64 MiB sits well below the per-process budget on
+/// desktop targets but is already 2.6× the Android release heap, which
+/// is exactly the regime where the user should be warned.
+pub(crate) const SNAPSHOT_WARN_PAYLOAD_BYTES: i64 = 64 * 1024 * 1024;
+
+/// L-105: probe the op_log for the row count and total payload-byte
+/// size that the upcoming snapshot creation will buffer in memory.
+///
+/// Returns `(row_count, payload_bytes)`. The caller decides whether to
+/// emit a `warn!`; extracted as a separate helper so tests can pin the
+/// COUNT/SUM SQL behaviour deterministically without depending on a
+/// `tracing` subscriber capture (this crate does not wire one up).
+pub(crate) async fn measure_op_log_size(
+    conn: &mut SqliteConnection,
+) -> Result<(i64, i64), AppError> {
+    let row = sqlx::query!(
+        r#"SELECT COUNT(*) AS "row_count!: i64",
+                  COALESCE(SUM(LENGTH(payload)), 0) AS "payload_bytes!: i64"
+           FROM op_log"#
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok((row.row_count, row.payload_bytes))
+}
+
+// ---------------------------------------------------------------------------
 // DB collection helpers
 // ---------------------------------------------------------------------------
 
@@ -263,6 +320,25 @@ pub async fn compact_op_log(
         read_tx.commit().await?;
         tracing::info!(retention_days, "compaction: no eligible ops, nothing to do");
         return Ok(None);
+    }
+
+    // L-105: heads-up warning when the op_log is large enough that
+    // `collect_tables` + `encode_snapshot` will buffer a snapshot
+    // approaching the platform heap ceiling (Android release APK is
+    // capped at ~24 MB). This is a non-blocking warn — the actual OOM
+    // ceiling is platform-dependent and the snapshot includes more than
+    // just op_log payloads, so the thresholds are conservative. A
+    // streaming snapshot format is the eventual fix and is deliberately
+    // deferred per L-105's recommendation.
+    let (op_log_rows, op_log_bytes) = measure_op_log_size(&mut read_tx).await?;
+    if op_log_rows > SNAPSHOT_WARN_ROW_COUNT || op_log_bytes > SNAPSHOT_WARN_PAYLOAD_BYTES {
+        tracing::warn!(
+            row_count = op_log_rows,
+            payload_bytes = op_log_bytes,
+            row_threshold = SNAPSHOT_WARN_ROW_COUNT,
+            byte_threshold = SNAPSHOT_WARN_PAYLOAD_BYTES,
+            "op_log size approaches snapshot memory ceiling (L-105); snapshot creation buffers all derived rows in memory and may OOM on constrained platforms (e.g., Android 24 MB heap)"
+        );
     }
 
     let snapshot_id = crate::ulid::SnapshotId::new().into_string();

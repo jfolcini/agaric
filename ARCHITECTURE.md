@@ -337,8 +337,10 @@ composite `(device_id, seq)` PK rather than chain re-computation.
 | `delete_attachment` | Remove attachment  | attachment_id                                                     |
 
 **`edit_block.prev_edit`:** Pointer to the `(device_id, seq)` of the prior edit this one is based
-on. Forms a per-block edit chain (DAG) embedded in the global op log, used for LCA computation
-during three-way merge.
+on. Forms a per-block linear edit chain (a tree, with at most one parent per node — technically a
+forest across the whole op log) embedded in the global op log, used for LCA computation during
+three-way merge. Multi-parent merges live on the merge-op path via `parent_seqs`, which is a
+different (global) DAG structure — do not conflate the two.
 
 **`from_text` — rejected:** Storing previous content alongside `to_text` was rejected because:
 (1) cross-flush Ctrl+Z is intentionally not supported; (2) the previous state is always

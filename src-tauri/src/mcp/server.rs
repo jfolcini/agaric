@@ -76,6 +76,17 @@ pub const JSONRPC_RESOURCE_NOT_FOUND: i64 = -32001;
 /// underlying error message contains multi-byte codepoints.
 pub(crate) const ERROR_CLIP_CAP: usize = 200;
 
+/// L-113 grace period: when [`super::McpLifecycle::disconnect_all`]
+/// fires while a `tools/call` is mid-dispatch, the per-connection task
+/// waits up to this long for the in-flight future to finish before
+/// dropping it. Without the grace period the agent received no
+/// JSON-RPC reply and no `mcp:activity` event was emitted for the
+/// dropped call. The DB-layer cancellation safety story (commits
+/// happen before any further `.await`) is preserved either way — this
+/// is purely about giving the reply + activity entry a chance to land.
+pub(crate) const MCP_DISCONNECT_GRACE_PERIOD: std::time::Duration =
+    std::time::Duration::from_secs(2);
+
 // ---------------------------------------------------------------------------
 // Handshake payload types
 // ---------------------------------------------------------------------------
@@ -884,14 +895,37 @@ async fn run_connection<S, R>(
     let result = match lifecycle.as_ref() {
         Some(lc) => {
             let notify = lc.disconnect_signal.clone();
+            // Pin the connection future so it can be polled in the
+            // initial `select!` and then re-polled inside the disconnect
+            // arm's bounded grace-period `timeout`.
+            tokio::pin!(fut);
             tokio::select! {
-                r = fut => r,
+                r = &mut fut => r,
                 () = async move { notify.notified().await } => {
+                    // L-113: do not drop the in-flight future
+                    // immediately. Give the current `tools/call` a
+                    // bounded chance to return its JSON-RPC reply and
+                    // emit its `mcp:activity` entry before the stream
+                    // is torn down. The DB layer commits before any
+                    // further `.await`, so cancellation safety is
+                    // preserved either way — this only affects whether
+                    // the agent sees the reply.
                     tracing::info!(
                         target: "mcp",
-                        "MCP connection dropped: disconnect signal fired",
+                        grace_secs = MCP_DISCONNECT_GRACE_PERIOD.as_secs(),
+                        "MCP disconnect signal fired; granting grace period for in-flight tool call to complete",
                     );
-                    Ok(())
+                    match tokio::time::timeout(MCP_DISCONNECT_GRACE_PERIOD, fut).await {
+                        Ok(res) => res,
+                        Err(_elapsed) => {
+                            tracing::warn!(
+                                target: "mcp",
+                                grace_secs = MCP_DISCONNECT_GRACE_PERIOD.as_secs(),
+                                "MCP in-flight tool call did not complete within grace period; dropping",
+                            );
+                            Ok(())
+                        }
+                    }
                 }
             }
         }
@@ -2958,6 +2992,255 @@ mod tests {
                     "shutdown must clear lifecycle.enabled so the accept loop's gate fires",
                 );
             });
+    }
+
+    // ── L-113 — disconnect grace period for in-flight tools/call ──────
+
+    /// Mock registry whose `call_tool` sleeps for a configurable
+    /// duration before returning a canned success. Used by the L-113
+    /// tests to simulate a tool dispatch that is mid-flight when the
+    /// disconnect signal fires.
+    struct SlowRegistry {
+        sleep: std::time::Duration,
+    }
+
+    impl ToolRegistry for SlowRegistry {
+        fn list_tools(&self) -> Vec<ToolDescription> {
+            vec![ToolDescription {
+                name: "slow".to_string(),
+                description: "sleeps and returns".to_string(),
+                input_schema: json!({"type": "object"}),
+            }]
+        }
+
+        async fn call_tool(
+            &self,
+            _name: &str,
+            _args: Value,
+            _ctx: &ActorContext,
+        ) -> Result<Value, AppError> {
+            tokio::time::sleep(self.sleep).await;
+            Ok(json!({"slept": true}))
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn disconnect_signal_grants_grace_period_for_in_flight_tool_call_l113() {
+        // L-113: when `disconnect_all` fires while a `tools/call` is
+        // mid-dispatch, `run_connection` must wrap the in-flight future
+        // in a 2 s timeout so the call gets a chance to return its
+        // JSON-RPC reply (and emit its activity entry) before the
+        // stream is dropped. This test exercises the happy path: the
+        // tool finishes well within the grace period, so the agent
+        // does see the reply.
+        use tokio::net::{UnixListener, UnixStream};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("l113-grace.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+
+        let lifecycle = super::super::McpLifecycle::new();
+        let registry = Arc::new(SlowRegistry {
+            sleep: std::time::Duration::from_millis(500),
+        });
+
+        let task_lc = lifecycle.clone();
+        let task_registry = registry.clone();
+        let accept_task = tokio::spawn(async move {
+            let (server_side, _) = listener.accept().await.unwrap();
+            run_connection(server_side, task_registry.as_ref(), None, Some(task_lc)).await;
+        });
+
+        let client = UnixStream::connect(&path).await.unwrap();
+        let (r, mut w) = tokio::io::split(client);
+        let mut reader = BufReader::new(r);
+
+        // Initialize handshake — captures clientInfo so the dispatch
+        // wraps `call_tool` in `ACTOR.scope(...)` properly.
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "clientInfo": {"name": "l113-grace-test"},
+                    "capabilities": {},
+                },
+            }),
+        )
+        .await;
+        let _ = read_line(&mut reader).await;
+
+        // Issue the slow tools/call. The handler dispatches into
+        // `SlowRegistry::call_tool`, which parks on `sleep(500ms)`.
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "slow", "arguments": {}},
+            }),
+        )
+        .await;
+
+        // Give the accept-task time to dispatch into call_tool so the
+        // disconnect arm of `run_connection`'s `select!` is parked on
+        // `notify.notified().await` before we fire `notify_waiters`
+        // (which is edge-triggered — late waiters miss the wake).
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        lifecycle.disconnect_all();
+
+        // The slow tool finishes in ~500 ms, well under the 2 s grace
+        // period, so the JSON-RPC reply must arrive at the client.
+        let response = tokio::time::timeout(
+            MCP_DISCONNECT_GRACE_PERIOD + std::time::Duration::from_millis(500),
+            read_line(&mut reader),
+        )
+        .await
+        .expect("tools/call reply must arrive within the L-113 grace period");
+
+        assert_eq!(response["id"], 2, "tools/call reply id must echo");
+        assert_eq!(
+            response["result"]["isError"], false,
+            "tools/call must succeed; got: {response:?}",
+        );
+        assert_eq!(
+            response["result"]["structuredContent"],
+            json!({"slept": true}),
+            "structuredContent must surface the slow tool's payload",
+        );
+
+        drop(w);
+        drop(reader);
+        let _ = accept_task.await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn disconnect_signal_drops_after_grace_period_when_call_hangs_l113() {
+        // L-113: if the in-flight `tools/call` does not complete within
+        // the bounded grace period, `run_connection` must drop the
+        // future, log a `warn`, and exit cleanly. The agent will not
+        // see a reply on the socket — this is the explicit failure
+        // mode for tools that hang past the grace budget.
+        use tokio::net::{UnixListener, UnixStream};
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let writer = MockBufWriter::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("warn"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(writer.clone())
+                    .with_ansi(false)
+                    .with_target(true),
+            );
+        // Thread-local subscriber is sufficient because `#[tokio::test]`
+        // defaults to the `current_thread` flavour: every spawned task
+        // runs on the same OS thread as the test.
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("l113-drop.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+
+        let lifecycle = super::super::McpLifecycle::new();
+        let registry = Arc::new(SlowRegistry {
+            // Longer than the 2 s grace period so the timeout fires.
+            sleep: std::time::Duration::from_secs(5),
+        });
+
+        let task_lc = lifecycle.clone();
+        let task_registry = registry.clone();
+        let accept_task = tokio::spawn(async move {
+            let (server_side, _) = listener.accept().await.unwrap();
+            run_connection(server_side, task_registry.as_ref(), None, Some(task_lc)).await;
+        });
+
+        let client = UnixStream::connect(&path).await.unwrap();
+        let (r, mut w) = tokio::io::split(client);
+        let mut reader = BufReader::new(r);
+
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "clientInfo": {"name": "l113-drop-test"},
+                    "capabilities": {},
+                },
+            }),
+        )
+        .await;
+        let _ = read_line(&mut reader).await;
+
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "slow", "arguments": {}},
+            }),
+        )
+        .await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        lifecycle.disconnect_all();
+
+        // Wait the full grace period plus a buffer for the timeout
+        // future to resolve and the per-connection task to drop the
+        // stream. After this, the client side must observe EOF — no
+        // JSON-RPC reply for id=2.
+        let mut buf = String::new();
+        let read_outcome = tokio::time::timeout(
+            MCP_DISCONNECT_GRACE_PERIOD + std::time::Duration::from_millis(700),
+            reader.read_line(&mut buf),
+        )
+        .await;
+
+        match read_outcome {
+            Ok(Ok(0)) => {
+                // EOF — the per-connection task dropped the stream
+                // after the grace period elapsed. Expected.
+            }
+            Ok(Err(_)) => {
+                // I/O error on read — the OS observed the closed
+                // socket. Also expected.
+            }
+            Ok(Ok(n)) => panic!(
+                "L-113: expected EOF / drop after grace period; \
+                 instead read {n} bytes: {buf:?}",
+            ),
+            Err(_) => panic!(
+                "L-113: connection did not drop within \
+                 MCP_DISCONNECT_GRACE_PERIOD + buffer; the grace \
+                 period timeout must elapse and force a drop",
+            ),
+        }
+
+        let logs = writer.contents();
+        assert!(
+            logs.contains("WARN"),
+            "L-113: expected WARN log when grace period elapses; got: {logs:?}",
+        );
+        assert!(
+            logs.contains("did not complete within grace period"),
+            "L-113: warn line must mention the grace-period elapse; got: {logs:?}",
+        );
+
+        drop(w);
+        drop(reader);
+        let _ = accept_task.await;
     }
 }
 

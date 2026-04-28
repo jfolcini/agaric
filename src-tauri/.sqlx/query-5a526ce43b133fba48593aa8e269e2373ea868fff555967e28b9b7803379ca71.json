@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) AS \"row_count!: i64\",\n                  COALESCE(SUM(LENGTH(payload)), 0) AS \"payload_bytes!: i64\"\n           FROM op_log",
+  "describe": {
+    "columns": [
+      {
+        "name": "row_count!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "payload_bytes!: i64",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "5a526ce43b133fba48593aa8e269e2373ea868fff555967e28b9b7803379ca71"
+}
