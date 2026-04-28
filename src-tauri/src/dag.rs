@@ -431,12 +431,36 @@ pub async fn get_block_edit_heads(
 /// merge op's `parent_seqs` JSON array.  Subsequent syncs can detect
 /// that the remote head has already been integrated by searching for
 /// that entry.
+///
+/// **I-Core-9 — Substring-match invariants.** The `instr(parent_seqs, ?)`
+/// search is correct only because:
+///
+/// 1. `parent_seqs` is serialised by `serde_json::to_string` over a
+///    `Vec<(String, i64)>`, which always emits each entry as a 2-tuple
+///    closed by `]` (e.g. `["device-A",1]`). The closing `]` prevents
+///    `["device-A",1]` from matching the prefix of `["device-A",10]`.
+/// 2. `device_id` is a UUID v4 (`/^[0-9a-f-]+$/`), so it contains no
+///    JSON-special characters that could perturb the encoded bytes.
+/// 3. The integer `seq` has a single canonical decimal representation,
+///    so a needle for `1` will not match the `seq=10` substring inside
+///    `["device-A",10]` because the closing `]` follows immediately.
+///
+/// A future migration that stores a different identifier shape in
+/// `parent_seqs` (peer-id rename, alphabetic device names, structured
+/// hashes) would break invariant (2) and silently introduce false
+/// positives. Defence-in-depth alternative: replace the substring scan
+/// with `EXISTS (SELECT 1 FROM json_each(parent_seqs) WHERE value = ?)`,
+/// which removes the substring assumption entirely. Optimisation,
+/// not correctness — the current scan is fast on the existing UUID
+/// alphabet.
 pub async fn has_merge_for_heads(
     pool: &SqlitePool,
     block_id: &str,
     their_head: &(String, i64),
 ) -> Result<bool, AppError> {
-    // Serialise their_head as a JSON tuple, e.g. `["device-B",1]`.
+    // Serialise their_head as a JSON tuple, e.g. `["device-B",1]`.  The
+    // closing `]` is what makes the `instr` substring match safe — see
+    // the function-level doc for the full invariant.
     let needle = serde_json::to_string(their_head)?;
 
     let count: i64 = sqlx::query_scalar(

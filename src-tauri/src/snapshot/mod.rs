@@ -31,7 +31,10 @@ pub use create::{
     DEFAULT_RETENTION_DAYS,
 };
 #[allow(unused_imports)]
-pub(crate) use create::{collect_frontier, collect_tables};
+pub(crate) use create::{
+    collect_frontier, collect_tables, measure_op_log_size, SNAPSHOT_WARN_PAYLOAD_BYTES,
+    SNAPSHOT_WARN_ROW_COUNT,
+};
 pub use restore::apply_snapshot;
 pub use types::{
     AttachmentSnapshot, BlockLinkSnapshot, BlockPropertySnapshot, BlockSnapshot, BlockTagSnapshot,

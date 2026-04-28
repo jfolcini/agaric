@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 698+ items across 499 sessions (per SESSION-LOG.md unique session count; latest is session 532).
+Previously resolved: 704+ items across 500 sessions (per SESSION-LOG.md unique session count; latest is session 533).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1913,23 +1913,11 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (10 — expanded)
+## LOW findings (7 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
 ### Materializer
-
-### L-15 — Tests cover happy paths well; several risk areas are uncovered
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/tests.rs` (4025 LOC)
-- **What:** The suite is broad on dispatch routing, dedup behaviour, batch atomicity, and the FEAT-5h GCal hook, but several risk areas are thin or missing: (1) no test for permanent failure of an `ApplyOp` (related to the C-2 / F1 retry-exhaustion concern); (2) no test for FK-ordering hazards under parallel groups with `CreateBlock(parent)` racing `CreateBlock(child)`; (3) `try_enqueue_background_drops_when_full` enqueues only 2000 tasks, less than the combined `FOREGROUND_CAPACITY (256) + BACKGROUND_CAPACITY (1024)` cap, so it does not actually exercise the Full-arm; (4) no test for the 5-minute `*_high_water` reset (M-13); (5) `dispatch_bg_empty_block_id` uses `#[should_panic]` against a `debug_assert!`, so release-mode behaviour of the empty-block_id branch is untested.
-- **Why it matters:** The most common bug categories in async queue code (drop-on-full, retry exhaustion, ordering hazards) are exactly the ones with the thinnest test coverage; M-7 / M-8 in particular would have been caught by a Full-arm test.
-- **Cost:** M (2-8h)
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Add (a) a permanent-failure test that asserts a doubly-failed `ApplyOp` leaves `op_log` populated and core tables empty (documenting current behaviour and providing a regression seat for the eventual fix); (b) a `flavor = "multi_thread"` test for `CreateBlock(parent)` and `CreateBlock(child)` arriving in the same batch; (c) a Full-queue test that fills past `BACKGROUND_CAPACITY` and asserts `bg_dropped` (or the new backpressure counter from M-8) increments; (d) a release-mode test for the empty-block_id dispatch branch.
-- **Pass-1 source:** 02/F20
-- **Status:** Open
 
 ### L-17 — `dispatch_op` enqueues fg+bg out of order
 - **Domain:** Materializer
@@ -1997,33 +1985,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Search & Links
 
-### Lifecycle
-
-### L-105 — `apply_snapshot` keeps every restored row in memory at once
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/snapshot/create.rs:16-73` (`collect_tables`); `src-tauri/src/snapshot/restore.rs:30-294` (decode + chunked insert)
-- **What:** `collect_tables` does `fetch_all` per table, accumulating every row of every core table into `SnapshotData.tables`; encode/decode keeps the whole structure in memory. For a 1M-block vault on Android (24 MB release APK heap budget), OOM during apply is a real failure mode.
-- **Why it matters:** RESET is one-shot, so impact is bounded — but Android heap pressure is a known failure mode and there is no creation-time warning or guard.
-- **Cost:** L
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** Document the memory ceiling now: warn at `create_snapshot` time when op_log byte size or row count exceeds a configurable threshold. Plan a streaming snapshot format (length-prefixed table chunks) only if/when the user hits the wall — that change is non-trivial and reshapes `SnapshotData`.
-- **Pass-1 source:** 08/F31
-- **Status:** Open
-
 ### MCP
-
-### L-113 — In-flight tool calls dropped mid-tool-call on `disconnect_all`
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/server.rs:725-740` (`run_connection`'s `tokio::select!`); `src-tauri/src/commands/blocks/crud.rs:184-189` (RW inner pattern); `src-tauri/src/materializer/dispatch.rs:62-70` (`dispatch_background_or_warn`).
-- **What:** When `disconnect_signal.notified()` fires inside `run_connection`, the in-flight `handle_connection` future is dropped at the next `.await`. Pass 2 confirmed the original Pass-1 worry ("commit succeeds but materializer never sees the op") is not reachable — `dispatch_background_or_warn` is synchronous and runs before the next suspension point — but the agent still receives no JSON-RPC reply and no activity-feed entry is emitted for that call.
-- **Why it matters:** Local-only: a user hitting the kill switch mid-write sees the agent disconnect cleanly, but loses the per-call audit entry and any in-flight tool's response. Cancellation safety is preserved at the DB layer; UX is mildly degraded.
-- **Cost:** M
-- **Risk:** Medium (must not regress the "immediate disconnect" UX promised by the Settings toggle)
-- **Impact:** Low
-- **Recommendation:** On the shutdown branch, log at `info`, then wrap the in-flight future in `tokio::time::timeout(Duration::from_secs(2), fut)` so the current `tools/call` has a chance to return its reply and emit its activity entry before the stream is dropped. Document the trade-off in `mcp_disconnect_all`.
-- **Pass-1 source:** 09/F6
-- **Status:** Open
 
 ### L-118 — TOCTOU race on rapid `mcp_set_enabled` toggling
 - **Domain:** MCP
@@ -2075,7 +2037,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F25
 - **Status:** Open
 
-## INFO / nits (68 — expanded)
+## INFO / nits (64 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2129,18 +2091,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 01/F19
 - **Status:** Open
 
-### I-Core-5 — ARCHITECTURE.md §4 calls the per-block edit chain a "DAG"; structurally it's a tree
-- **Domain:** Core
-- **Location:** `ARCHITECTURE.md:331-333` vs `src-tauri/src/op.rs:120-126` (the `EditBlockPayload.prev_edit: Option<(String, i64)>` definition)
-- **What:** ARCHITECTURE.md §4 says: *"`edit_block.prev_edit`: … Forms a per-block edit chain (DAG) embedded in the global op log, used for LCA computation during three-way merge."* `prev_edit` is `Option<(String, i64)>` — a single optional parent. With one parent per node, the per-block edit graph is a tree (technically a forest), not a DAG. Multi-parent merges live on the merge-op path via `parent_seqs`, which is a different (global) structure.
-- **Why it matters:** Documentation/cosmetic only. "DAG" implies multi-parent merges that the per-block code does not implement; readers looking for them will be confused. Two doc lines.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Documentation-only fix. Edit `ARCHITECTURE.md:331-333` to say "linear chain" or "per-block edit tree" for the per-block structure, and reserve "DAG" for the global op log multi-parent merges.
-- **Pass-1 source:** 01/F20
-- **Status:** Open
-
 ### I-Core-6 — `build_log_directives` test gap on namespace-prefix collisions
 - **Domain:** Core
 - **Location:** `src-tauri/src/lib.rs:84-105` (impl) and tests at `lib.rs:1271-1276` (`unrelated_user_directive_preserves_all_defaults`) / `lib.rs:1346-1352` (`has_directive_for_target_negative_cases`)
@@ -2175,30 +2125,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Either change the helper signatures to `pool: &ReadPool` (and update non-read callers explicitly) or add `_reading` variants that accept `&ReadPool`. At minimum, change `dag::find_lca` to thread a `&ReadPool` through to `get_op_by_seq`.
 - **Pass-1 source:** 01/F23
-- **Status:** Open
-
-### I-Core-9 — `has_merge_for_heads` substring match on `parent_seqs` is correct only by coincidence
-- **Domain:** Core
-- **Location:** `src-tauri/src/dag.rs:350-371`
-- **What:** The function searches for `their_head` JSON-encoded as a 2-tuple inside the `parent_seqs` column via SQL `instr(parent_seqs, ?)`. This works because the JSON serialisation always closes the tuple with `]` (so `["device-A",1]` does not match the prefix of `["device-A",10]`) and because `device_id` is a UUID with no JSON-special chars. The doc-comment does not articulate either invariant.
-- **Why it matters:** A future migration that stores a different identifier shape in `parent_seqs` (peer-id rename, alphabetic device names) would silently introduce false positives. Documentation/cosmetic, defence in depth.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Documentation/cosmetic only — extend the function-level doc to spell out the invariants ("seq is integer; device_id is UUID with no JSON-special chars"). Optional hardening: replace the `instr(parent_seqs, ?)` with `EXISTS (SELECT 1 FROM json_each(parent_seqs) WHERE value = ?)`, eliminating the substring assumption.
-- **Pass-1 source:** 01/F24
-- **Status:** Open
-
-### I-Core-10 — `import.rs` `:: ` property delimiter matches mid-line `key:: value`
-- **Domain:** Core
-- **Location:** `src-tauri/src/import.rs:86-105`
-- **What:** The parser checks `trimmed.starts_with("- ")` first (good), but the `else` branch tests `trimmed.contains(":: ")`. A non-list line containing the literal `:: ` substring (e.g. a trailing free-form line) is misclassified as a property and fed into `split_once(":: ")`, producing arbitrary key/value pairs. The current `parse_properties` test only exercises the canonical case.
-- **Why it matters:** Imports from arbitrary user notes (especially URL-laden Logseq pages) can produce silently corrupted property assignments on the imported blocks.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Tighten the discriminator: only treat the line as a property if `trimmed.split_once(":: ")` returns `(key, _)` AND `key` matches the same alphabet that `validate_set_property` uses (`^[A-Za-z0-9_-]+$`, 1–64 chars). Otherwise fall through to the content-block branch. Add a regression test fixture with a URL-bearing line.
-- **Pass-1 source:** 01/F25
 - **Status:** Open
 
 ### I-Core-11 — `parent_seqs` JSON built via hand-written `format!` instead of `serde_json::to_string`

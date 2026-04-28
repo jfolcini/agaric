@@ -101,15 +101,22 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
                 depth,
                 properties: Vec::new(),
             });
-        } else if trimmed.contains(":: ") {
-            // Property line: `key:: value`
-            if let Some((key, value)) = trimmed.split_once(":: ") {
-                let key = key.trim().to_string();
-                let value = value.trim().to_string();
-                // Attach to the last block at or above this depth
-                if let Some(last) = blocks.last_mut() {
-                    last.properties.push((key, value));
-                }
+        } else if let Some((key_candidate, value)) = trimmed
+            .split_once(":: ")
+            .filter(|(k, _)| is_property_key(k.trim()))
+        {
+            // Property line: `key:: value` — but only if the LHS matches the
+            // same alphabet that `op::validate_set_property` enforces
+            // (`^[A-Za-z0-9_-]{1,64}$`). I-Core-10: a free-form line
+            // containing `:: ` mid-sentence (e.g. URL-bearing notes from
+            // Logseq) would otherwise be misclassified and produce arbitrary
+            // key/value pairs. The stricter discriminator falls through to
+            // the content-block branch when the LHS is not a valid key.
+            let key = key_candidate.trim().to_string();
+            let value = value.trim().to_string();
+            // Attach to the last block at or above this depth
+            if let Some(last) = blocks.last_mut() {
+                last.properties.push((key, value));
             }
         } else {
             // Non-list, non-property line -- treat as a content block
@@ -156,6 +163,17 @@ static MULTI_SPACE_RE: LazyLock<Regex> =
 fn strip_block_refs(text: &str) -> String {
     let result = BLOCK_REF_RE.replace_all(text, "");
     MULTI_SPACE_RE.replace_all(result.trim(), " ").to_string()
+}
+
+/// I-Core-10: matches the same alphabet that `op::validate_set_property`
+/// enforces — `^[A-Za-z0-9_-]{1,64}$`. Used by the Logseq markdown property
+/// parser to discriminate true `key:: value` lines from free-form content
+/// that happens to contain `:: ` (URLs, narrative prose, etc.).
+fn is_property_key(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 #[cfg(test)]
@@ -234,6 +252,100 @@ mod tests {
         // No closing ---, so the --- line is skipped (empty after trim)
         // and "- This is content" is parsed normally
         assert!(!output.blocks.is_empty());
+    }
+
+    /// I-Core-10: a non-list line containing `:: ` mid-sentence (e.g. a URL or
+    /// narrative prose) must NOT be misclassified as a property line.  Pre-fix
+    /// behaviour fed `https://example.com/foo :: bar` into `split_once(":: ")`
+    /// and produced an arbitrary key/value pair attached to the previous
+    /// block.  Post-fix the LHS must match `validate_set_property`'s alphabet
+    /// (`^[A-Za-z0-9_-]{1,64}$`); otherwise the line falls through to the
+    /// content-block branch.
+    #[test]
+    fn parse_url_bearing_line_is_content_not_property_i_core_10() {
+        let output =
+            parse_logseq_markdown("- Block 1\n  See https://example.com/foo :: bar for context");
+        // Block 1 plus the free-form follow-up — TWO blocks total, ZERO
+        // properties on Block 1.
+        assert_eq!(
+            output.blocks.len(),
+            2,
+            "URL-bearing line must become its own content block, not a \
+             property of Block 1; got {:?}",
+            output.blocks
+        );
+        assert_eq!(output.blocks[0].content, "Block 1");
+        assert!(
+            output.blocks[0].properties.is_empty(),
+            "Block 1 must have no properties; got {:?}",
+            output.blocks[0].properties
+        );
+        assert!(
+            output.blocks[1].content.contains("https://example.com/foo"),
+            "URL-bearing line must round-trip as content; got {:?}",
+            output.blocks[1].content
+        );
+    }
+
+    /// I-Core-10: prose-style `Some text :: notes` lines (no list prefix, no
+    /// valid key alphabet) must also fall through to the content-block branch.
+    #[test]
+    fn parse_prose_with_double_colon_is_content_i_core_10() {
+        let output = parse_logseq_markdown("- Parent\n  Some text :: notes :: more");
+        assert_eq!(
+            output.blocks.len(),
+            2,
+            "free-form line must become its own content block; got {:?}",
+            output.blocks
+        );
+        assert_eq!(output.blocks[0].content, "Parent");
+        assert!(
+            output.blocks[0].properties.is_empty(),
+            "Parent must have no properties; got {:?}",
+            output.blocks[0].properties
+        );
+        assert_eq!(output.blocks[1].content, "Some text :: notes :: more");
+    }
+
+    /// I-Core-10: keys longer than 64 chars are rejected by
+    /// `validate_set_property` and must therefore also be rejected by the
+    /// import discriminator (otherwise the import succeeds but the resulting
+    /// `set_property` op fails downstream).
+    #[test]
+    fn parse_oversized_key_is_content_i_core_10() {
+        let long_key = "a".repeat(65);
+        let line = format!("- Parent\n  {long_key}:: value");
+        let output = parse_logseq_markdown(&line);
+        assert_eq!(output.blocks.len(), 2, "oversized key must become content");
+        assert!(
+            output.blocks[0].properties.is_empty(),
+            "Parent must have no property when key is >64 chars"
+        );
+    }
+
+    /// I-Core-10: regression coverage that the canonical `key:: value` shape
+    /// (the one `parse_properties` already exercises) still works after the
+    /// stricter discriminator.  All three keys here match the post-fix
+    /// alphabet.
+    #[test]
+    fn parse_property_canonical_shape_still_works_i_core_10() {
+        let output = parse_logseq_markdown(
+            "- Task\n  priority:: high\n  due:: 2025-01-01\n  my_key-1:: anything",
+        );
+        assert_eq!(output.blocks.len(), 1);
+        assert_eq!(output.blocks[0].properties.len(), 3);
+        assert_eq!(
+            output.blocks[0].properties[0],
+            ("priority".into(), "high".into())
+        );
+        assert_eq!(
+            output.blocks[0].properties[1],
+            ("due".into(), "2025-01-01".into())
+        );
+        assert_eq!(
+            output.blocks[0].properties[2],
+            ("my_key-1".into(), "anything".into())
+        );
     }
 
     #[test]
