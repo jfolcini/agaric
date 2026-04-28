@@ -132,6 +132,26 @@ pub(crate) async fn handle_recurrence_in_tx(
 
     if let Some(ref until_str) = repeat_until {
         if let Some(ref_date) = reference_date {
+            // L-100: validate ISO-8601 date shape before the lex compare.
+            // The lex comparison `ref_date > until_str` is only meaningful
+            // when both sides are exactly `YYYY-MM-DD` (10 chars). The query
+            // above reads `value_date`, but `set_property` allows type-loose
+            // writes — a `repeat-until` planted as `"2025-12-31T23:59:59Z"`
+            // would compare wrong (`T` > `-`) and the recurrence would
+            // never stop. We re-use `crate::commands::is_valid_iso_date`
+            // (already imported) which enforces the same strict shape used
+            // when the value was originally written via `set_property_in_tx`.
+            // On malformed input we warn loudly and stop the recurrence
+            // (`Ok(false)`) rather than silently letting it continue past
+            // the deadline.
+            if !is_valid_iso_date(until_str) {
+                tracing::warn!(
+                    block_id,
+                    until_str = %until_str,
+                    "repeat-until is not a valid YYYY-MM-DD date; stopping recurrence"
+                );
+                return Ok(false);
+            }
             // Simple lexicographic comparison works for YYYY-MM-DD strings
             if ref_date > until_str.as_str() {
                 // Shifted date is past the repeat-until deadline — stop recurring
@@ -315,7 +335,42 @@ pub(crate) async fn handle_recurrence_in_tx(
         op_records.push(op);
     }
 
-    // Copy repeat-count and increment repeat-seq on new block
+    // Copy repeat-count and increment repeat-seq on new block.
+    //
+    // L-99: `repeat-seq` only carries forward (and only gets bumped)
+    // when `repeat-count` is also set on the origin. This gating is
+    // intentional, not a bug:
+    //
+    //   * `repeat-seq` is a system-managed *output* — the engine
+    //     stamps it on each sibling so the UI/MCP can show "3 of 5"
+    //     style progress alongside `repeat-count`.
+    //   * Without `repeat-count` there is no *bound* against which
+    //     `repeat-seq` is meaningful, so the engine deliberately
+    //     leaves `repeat-seq` off the sibling.
+    //   * A user who manually sets `repeat-seq` on a block without
+    //     `repeat-count` will therefore see the counter "freeze" at
+    //     whatever value they wrote — the engine treats their seed
+    //     as a one-shot annotation, not a counter to advance. This
+    //     is the behaviour pinned by
+    //     `tests_l99_l100::repeat_seq_not_incremented_without_repeat_count`.
+    //
+    // Cross-references:
+    //   - The property-definition seed migration that registers
+    //     `repeat`, `repeat-until`, `repeat-count`, `repeat-seq`,
+    //     and `repeat-origin` is `migrations/0016_seed_repeat_properties.sql`.
+    //   - ISO-date validation for the *value* written to
+    //     `repeat-until` (and other date columns) is enforced by
+    //     `crate::commands::is_valid_iso_date` inside
+    //     `set_property_in_tx`. The L-100 fix above this block
+    //     re-uses the same validator to gate the `repeat-until`
+    //     end-condition compare so a malformed value cannot slip
+    //     through a lexicographic compare.
+    //
+    // If a future change wants `repeat-seq` to advance on every
+    // recurrence regardless of `repeat-count`, that is a *behavioural*
+    // shift (it changes the contract `repeat-seq` carries) and must
+    // be discussed with the user first — not introduced silently by
+    // dropping this gate.
     if let Some(count) = repeat_count {
         // f64 → i64 has no `TryFrom` in std; the cast is safe because
         // repeat_seq is a non-negative whole number stored as f64.
@@ -436,13 +491,29 @@ mod tests_h17_m77 {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn handle_recurrence_propagates_set_property_error() {
-        // M-77: an invalid `repeat-until` value (planted directly in
-        // block_properties so it bypasses the validation in
-        // set_property_inner) causes the copy-to-sibling write inside
-        // handle_recurrence to fail. Pre-fix this was warn-logged and
-        // swallowed, leaving a half-formed sibling committed. Post-fix
-        // the error propagates via `?`, the IMMEDIATE tx rolls back,
-        // and the caller sees the Err.
+        // M-77: a corrupt value that bypasses the early end-condition
+        // checks but trips `set_property_in_tx`'s validation in the
+        // copy step must propagate via `?`. Pre-fix this was
+        // warn-logged and swallowed, leaving a half-formed sibling
+        // committed. Post-fix the error propagates via `?`, the
+        // IMMEDIATE tx rolls back, and the caller sees the Err.
+        //
+        // Vehicle (post-L-100): a whitespace-only `repeat` value
+        // planted directly into `block_properties`, bypassing the L-6
+        // empty/whitespace guard in `set_property_inner`. The
+        // recurrence flow reads `repeat = " "`, `shift_date(due, " ")`
+        // returns `None` (no interval matches), so `reference_date`
+        // stays `None` and the L-100 ISO-shape check on `repeat-until`
+        // never fires. The copy step then calls
+        // `set_property_in_tx(..., "repeat", Some(" "))`, which the L-6
+        // empty/whitespace guard in `validate_set_property` rejects.
+        //
+        // Note: the previous vehicle (a corrupt `repeat-until` value
+        // like `"not-a-date"`) no longer reaches the copy step because
+        // L-100 stops the recurrence early on a malformed
+        // `repeat-until` (covered in `tests_l99_l100`). We pick a
+        // different corrupt vehicle here so this test continues to
+        // exercise the M-77 propagation path independently.
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
@@ -451,7 +522,7 @@ mod tests_h17_m77 {
             DEV,
             &mat,
             "content".into(),
-            "task with corrupt repeat-until".into(),
+            "task with corrupt repeat".into(),
             None,
             None,
         )
@@ -477,33 +548,17 @@ mod tests_h17_m77 {
         mat.flush_background().await.unwrap();
         settle().await;
 
-        // Set a valid repeat rule via the normal path.
-        set_property_inner(
-            &pool,
-            DEV,
-            &mat,
-            block.id.clone(),
-            "repeat".into(),
-            Some("daily".into()),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        mat.flush_background().await.unwrap();
-        settle().await;
-
-        // Plant a corrupt `repeat-until` directly into block_properties,
-        // bypassing the ISO-date validation in set_property_inner.
-        // The lexicographic end-condition compare ("2025-06-16" > "not-a-date"
-        // is false because '2' < 'n') lets the recurrence flow proceed past
-        // the end-condition guard and into the copy step where
-        // set_property_in_tx's `is_valid_iso_date` rejects the value.
-        sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)")
+        // Plant a whitespace `repeat` directly, bypassing the L-6
+        // empty/whitespace guard in `set_property_inner`. The
+        // recurrence flow proceeds past the end-condition gates (no
+        // `repeat-until`, no `repeat-count`, and `reference_date` is
+        // `None` because `shift_date(due, " ")` returns `None`), then
+        // the copy step's `set_property_in_tx` call rejects the
+        // whitespace value_text.
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
             .bind(&block.id)
-            .bind("repeat-until")
-            .bind("not-a-date")
+            .bind("repeat")
+            .bind(" ")
             .execute(&pool)
             .await
             .unwrap();
@@ -528,8 +583,8 @@ mod tests_h17_m77 {
         let err = result.unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("Invalid date format") || msg.contains("not-a-date"),
-            "error should be the date-format validation rejection, got: {msg}"
+            msg.contains("set_property.value_text.empty") || msg.contains("empty"),
+            "error should be the empty/whitespace value_text rejection, got: {msg}"
         );
 
         // No new TODO sibling: the IMMEDIATE tx rolled back the
@@ -733,6 +788,341 @@ mod tests_h17_m77 {
             sibling_ids.len(),
             siblings.len(),
             "siblings have duplicate ids — concurrent ops collided"
+        );
+
+        mat.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests_l99_l100 {
+    //! Tests for REVIEW-LATER items L-99 (`repeat-seq` is gated on
+    //! `repeat-count`) and L-100 (`repeat-until` lex-compare must
+    //! validate ISO date shape) in [`handle_recurrence`].
+    //!
+    //! - L-99 is documentation-only; no behavioural change. The single
+    //!   test here pins the existing gated behaviour so the doc
+    //!   comment in `handle_recurrence_in_tx` cannot drift away from
+    //!   the code: a `repeat-seq` value set on the origin without a
+    //!   `repeat-count` does NOT carry forward to the recurrence
+    //!   sibling — the engine intentionally treats the lone seq as a
+    //!   one-shot annotation and freezes the counter.
+    //! - L-100 fixes a bug where the lex compare on `repeat-until`
+    //!   silently let recurrence continue past the deadline when the
+    //!   stored value carried a timestamp suffix (e.g.
+    //!   `"2025-12-31T23:59:59Z"`). The four L-100 tests exercise the
+    //!   four code paths: valid past, valid future, malformed
+    //!   timestamp suffix, and empty string.
+    use super::*;
+    use crate::commands::{
+        create_block_inner, get_properties_inner, set_due_date_inner, set_property_inner,
+        set_todo_state_inner,
+    };
+    use crate::db::init_pool;
+    use crate::materializer::Materializer;
+    use crate::pagination::BlockRow;
+    use sqlx::SqlitePool;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    const DEV: &str = "test-device-l99-l100";
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path: PathBuf = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    async fn settle() {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    /// Find TODO siblings (the recurrence-created sibling has todo_state=TODO,
+    /// distinct from the original's DONE state). Mirrors the helper in
+    /// `tests_h17_m77` so each test module is self-contained.
+    async fn find_todo_siblings(pool: &SqlitePool, original_id: &str) -> Vec<BlockRow> {
+        sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at,
+                      is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
+                      due_date, scheduled_date, page_id
+               FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
+            original_id
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    /// Helper: create a TODO block with the given due_date and a
+    /// `repeat=daily` rule. Returns the new block's id. Used by every
+    /// L-99 / L-100 test to keep the setup boilerplate compact.
+    async fn make_recurring_block(pool: &SqlitePool, mat: &Materializer, due: &str) -> String {
+        let block = create_block_inner(pool, DEV, mat, "content".into(), "task".into(), None, None)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(pool, DEV, mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+        settle().await;
+
+        set_due_date_inner(pool, DEV, mat, block.id.clone(), Some(due.into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+        settle().await;
+
+        set_property_inner(
+            pool,
+            DEV,
+            mat,
+            block.id.clone(),
+            "repeat".into(),
+            Some("daily".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+        settle().await;
+
+        block.id
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn repeat_seq_not_incremented_without_repeat_count() {
+        // L-99: pins the gated behaviour described in the doc comment
+        // above the `if let Some(count) = repeat_count` block in
+        // `handle_recurrence_in_tx`. A `repeat-seq` set on the origin
+        // without `repeat-count` is intentionally NOT propagated to
+        // the recurrence sibling — the engine treats the seed as a
+        // one-shot annotation and freezes the counter. If a future
+        // change "fixes" this by always bumping `repeat-seq`, this
+        // test will fail and the author will be forced to revisit the
+        // doc comment + REVIEW-LATER L-99.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Origin: due=2025-06-15 + daily → shifted ref 2025-06-16.
+        // No `repeat-until` so the L-100 check is a no-op here.
+        let id = make_recurring_block(&pool, &mat, "2025-06-15").await;
+
+        // Set `repeat-seq` on the origin WITHOUT setting
+        // `repeat-count`. Use the normal API path so we exercise the
+        // same code that a user/MCP tool would.
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            id.clone(),
+            "repeat-seq".into(),
+            None,
+            Some(3.0),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+        settle().await;
+
+        let created = handle_recurrence(&pool, DEV, &mat, &id).await.unwrap();
+        assert!(
+            created,
+            "recurrence should create a sibling when no end condition fires (no repeat-count, no repeat-until past deadline)"
+        );
+        mat.flush_background().await.unwrap();
+        settle().await;
+
+        let siblings = find_todo_siblings(&pool, &id).await;
+        assert_eq!(siblings.len(), 1, "expected exactly one TODO sibling");
+        let sibling = &siblings[0];
+        let props = get_properties_inner(&pool, sibling.id.clone())
+            .await
+            .unwrap();
+
+        let has_seq = props.iter().any(|p| p.key == "repeat-seq");
+        let has_count = props.iter().any(|p| p.key == "repeat-count");
+        assert!(
+            !has_seq,
+            "L-99: sibling must NOT carry `repeat-seq` when origin has no `repeat-count`. \
+             props = {:?}",
+            props.iter().map(|p| p.key.clone()).collect::<Vec<_>>()
+        );
+        assert!(
+            !has_count,
+            "sanity: sibling must not carry `repeat-count` either. \
+             props = {:?}",
+            props.iter().map(|p| p.key.clone()).collect::<Vec<_>>()
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn repeat_until_valid_iso_date_stops_recurrence_when_past() {
+        // L-100: with a valid ISO `repeat-until` strictly less than the
+        // shifted reference date, recurrence must stop (Ok(false)) and
+        // not create a sibling. This is the unmodified pre-L-100
+        // behaviour for valid input — the new validator must not
+        // regress it.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Origin: due=2025-12-31 + daily → shifted ref 2026-01-01.
+        let id = make_recurring_block(&pool, &mat, "2025-12-31").await;
+
+        // Plant a valid ISO `repeat-until` that's strictly in the
+        // past of the shifted ref. We use a direct INSERT to keep the
+        // setup symmetric with the malformed-input tests below.
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)")
+            .bind(&id)
+            .bind("repeat-until")
+            .bind("2024-01-01")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let created = handle_recurrence(&pool, DEV, &mat, &id).await.unwrap();
+        assert!(
+            !created,
+            "valid past `repeat-until` must stop recurrence (shifted ref 2026-01-01 > 2024-01-01)"
+        );
+
+        let siblings = find_todo_siblings(&pool, &id).await;
+        assert_eq!(
+            siblings.len(),
+            0,
+            "no sibling expected when `repeat-until` end condition fires"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn repeat_until_valid_iso_date_continues_recurrence_when_within() {
+        // L-100: with a valid ISO `repeat-until` strictly greater than
+        // the shifted reference date, recurrence must continue
+        // (Ok(true)) and create a sibling. Pinning this protects
+        // against an over-eager validator that might reject the lex
+        // path entirely.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Origin: due=2023-12-31 + daily → shifted ref 2024-01-01.
+        let id = make_recurring_block(&pool, &mat, "2023-12-31").await;
+
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)")
+            .bind(&id)
+            .bind("repeat-until")
+            .bind("2025-12-31")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let created = handle_recurrence(&pool, DEV, &mat, &id).await.unwrap();
+        assert!(
+            created,
+            "valid future `repeat-until` must allow recurrence (shifted ref 2024-01-01 < 2025-12-31)"
+        );
+
+        let siblings = find_todo_siblings(&pool, &id).await;
+        assert_eq!(
+            siblings.len(),
+            1,
+            "exactly one sibling expected when end condition does not fire"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn repeat_until_with_timestamp_suffix_stops_recurrence() {
+        // L-100: a malformed `repeat-until` like "2025-12-31T23:59:59Z"
+        // would slip past the pre-fix lex compare — `T` (0x54) is
+        // greater than `-` (0x2D), so any YYYY-MM-DD `ref_date` lex-
+        // compares *less than* the timestamp-suffixed value, and
+        // recurrence would incorrectly continue past the intended
+        // deadline indefinitely.
+        //
+        // Post-fix, `is_valid_iso_date` rejects the value (length 20
+        // != 10) and the recurrence stops loudly with a tracing warn
+        // and Ok(false). We do not assert on the warn line itself
+        // (no log capture infrastructure here); the Ok(false) +
+        // no-sibling pair is sufficient regression protection.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Origin: due=2023-12-31 + daily → shifted ref 2024-01-01.
+        // Pre-fix: "2024-01-01" < "2025-12-31T23:59:59Z" lex, so
+        // recurrence would have proceeded and created a sibling.
+        let id = make_recurring_block(&pool, &mat, "2023-12-31").await;
+
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)")
+            .bind(&id)
+            .bind("repeat-until")
+            .bind("2025-12-31T23:59:59Z")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let created = handle_recurrence(&pool, DEV, &mat, &id).await.unwrap();
+        assert!(
+            !created,
+            "malformed `repeat-until` (timestamp suffix) must stop recurrence post-L-100"
+        );
+
+        let siblings = find_todo_siblings(&pool, &id).await;
+        assert_eq!(
+            siblings.len(),
+            0,
+            "no sibling expected when `repeat-until` is malformed"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn repeat_until_empty_string_stops_recurrence() {
+        // L-100 (defensive): an empty `repeat-until` is rejected by
+        // the ISO-shape validator (length != 10). Recurrence stops
+        // loudly rather than treating "" as a non-date that lex-
+        // compares wrong against any real shifted date. This is
+        // belt-and-suspenders coverage — the L-6 empty-text guard in
+        // `set_property_inner` would normally prevent an empty value
+        // from being written via the public API, but planting
+        // directly into block_properties bypasses that and the
+        // recurrence path needs its own defense.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let id = make_recurring_block(&pool, &mat, "2023-12-31").await;
+
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)")
+            .bind(&id)
+            .bind("repeat-until")
+            .bind("")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let created = handle_recurrence(&pool, DEV, &mat, &id).await.unwrap();
+        assert!(
+            !created,
+            "empty `repeat-until` must stop recurrence (defensive)"
+        );
+
+        let siblings = find_todo_siblings(&pool, &id).await;
+        assert_eq!(
+            siblings.len(),
+            0,
+            "no sibling expected for empty `repeat-until`"
         );
 
         mat.shutdown();

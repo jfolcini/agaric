@@ -101,6 +101,40 @@ impl SyncScheduler {
         }
     }
 
+    /// L-56: Garbage-collect entries from `peer_locks` whose `Arc::strong_count`
+    /// is exactly 1, meaning no `PeerSyncGuard` currently holds the lock.
+    ///
+    /// `peer_locks` grows monotonically in `try_lock_peer` — each new peer
+    /// adds one entry, never removed. At realistic single-user single-digit
+    /// paired-peer counts this is dust, but bounded growth is the right
+    /// invariant for a long-lived background service.
+    ///
+    /// **Caller responsibility:** invoke this periodically (hourly is more
+    /// than sufficient) from the sync daemon's tick loop, or before
+    /// allocating a fresh peer lock if the HashMap has crossed a heuristic
+    /// size. The scheduler itself does not spawn a background task — it
+    /// stays a passive state machine per its existing convention.
+    ///
+    /// Returns the number of entries removed (0 if everything is in use).
+    pub fn gc_unused_peer_locks(&self) -> usize {
+        let mut locks = self
+            .peer_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let before = locks.len();
+        locks.retain(|_, arc| Arc::strong_count(arc) > 1);
+        before - locks.len()
+    }
+
+    /// Test-only accessor: number of entries currently in `peer_locks`.
+    #[cfg(test)]
+    pub(crate) fn peer_locks_len(&self) -> usize {
+        self.peer_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+
     // -- Exponential backoff (#387) ------------------------------------------
 
     /// Check whether `peer_id` is allowed to retry now.
@@ -277,6 +311,59 @@ mod tests {
         }
         // Should be available again after drop
         assert!(sched.try_lock_peer("peer-a").is_some());
+    }
+
+    // -- L-56: gc_unused_peer_locks --------------------------------------
+
+    #[test]
+    fn gc_unused_peer_locks_removes_idle_entries() {
+        let sched = SyncScheduler::new();
+        // Acquire then immediately drop the guard so the HashMap holds the
+        // sole strong reference to the Arc.
+        {
+            let _g = sched.try_lock_peer("p1").unwrap();
+        }
+        assert_eq!(
+            sched.peer_locks_len(),
+            1,
+            "peer_locks should have 1 entry after try_lock_peer"
+        );
+        let removed = sched.gc_unused_peer_locks();
+        assert_eq!(removed, 1, "GC should remove the idle entry");
+        assert_eq!(
+            sched.peer_locks_len(),
+            0,
+            "peer_locks should be empty after GC"
+        );
+    }
+
+    #[test]
+    fn gc_unused_peer_locks_keeps_held_entries() {
+        let sched = SyncScheduler::new();
+        let guard = sched.try_lock_peer("p1").unwrap();
+        // The guard holds a clone of the Arc → strong_count == 2 → keep.
+        let removed = sched.gc_unused_peer_locks();
+        assert_eq!(
+            removed, 0,
+            "GC should not remove an entry with a live guard"
+        );
+        assert_eq!(sched.peer_locks_len(), 1, "entry must still be present");
+        // Drop the guard and GC again — now it's idle.
+        drop(guard);
+        let removed = sched.gc_unused_peer_locks();
+        assert_eq!(
+            removed, 1,
+            "GC should remove the entry once the guard is dropped"
+        );
+        assert_eq!(sched.peer_locks_len(), 0);
+    }
+
+    #[test]
+    fn gc_unused_peer_locks_handles_empty_map() {
+        let sched = SyncScheduler::new();
+        let removed = sched.gc_unused_peer_locks();
+        assert_eq!(removed, 0, "empty map GC should return 0");
+        assert_eq!(sched.peer_locks_len(), 0);
     }
 
     #[test]
