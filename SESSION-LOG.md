@@ -1,5 +1,54 @@
 # Session Log
 
+## Session 519 — Backend LOW-severity cleanup batch — close 6 items (L-2, L-8, L-12, L-14, L-91, L-131) (2026-04-28)
+
+**6 backend LOW-severity items closed in one PROMPT.md batch.** Four parallel build subagents on file-disjoint subsystems (Core / Materializer / Search-Links / GCal), four pipelined reviewers. All four reviewers returned PASS-on-correctness. One reviewer (L-91) added a 6-line clarifying comment inside `truncate_str` explaining the `nth(max_chars)` mechanic; one reviewer (L-131) added two regression-guard tests (`join_calendar_path_extends_existing_base_path`, `join_calendar_path_rejects_cannot_be_a_base_url`). Each subagent ran in its own `git worktree` so concurrent `cargo build` did not contend on the target dir — the previous session's "stash chaos" pattern was avoided cleanly.
+
+**REVIEW-LATER impact:**
+
+- **LOW findings:** 101 → 95 (6 items resolved).
+- **Top-level open count (FEAT/MAINT/PERF/PUB/UX tracker):** 41 → 41 (LOW items live in the appended Backend Code Review block, not the top tracker).
+- **Previously-resolved counter:** 608+ → 614+ across 486 sessions (latest session 519).
+
+**Items closed (6):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| L-2 | Core (`src-tauri/src/lib.rs`) | New module-level `fn log_or_zero(r: Result<i64, sqlx::Error>, ctx: &str) -> i64` near the top of `lib.rs`; emits `tracing::warn!(error = %e, ctx, "boot count query failed; treating as 0")` and returns `0`. Replaced four `.unwrap_or(0)` boot-count call sites with `log_or_zero(...)` using stable ctx tags `"fts_blocks_count"`, `"fts_indexable_block_count"`, `"block_tag_refs_count"`, `"btr_indexable_block_count"`. Unrelated `lines.iter().position(...).unwrap_or(0)` (markdown-template trim helper) preserved. New `#[cfg(test)] mod log_or_zero_tests` covers Ok-passthrough + `Err(sqlx::Error::PoolTimedOut) → 0`. |
+| L-8 | Core (`src-tauri/src/db.rs`) | Added `sqlx::query("PRAGMA optimize").execute(&pool).await?;` inside the legacy `init_pool` fixture, immediately after `sqlx::migrate!("./migrations").run(&pool).await?;` — byte-similar to the production `init_pools` invocation that already runs the same statement. New `init_pool_runs_pragma_optimize` test seats the regression. |
+| L-12 | Materializer (`src-tauri/src/materializer/coordinator.rs`) | `enqueue_foreground` no longer reads `tx.capacity()` *before* `send().await` (TOCTOU on the mpsc snapshot). New flow: `tx.try_send(task)` first; on `TrySendError::Full(task)` increment `fg_full_waits` exactly once and fall back to `tx.send(task).await`; `TrySendError::Closed` propagates as `AppError::Channel`. The `fg_full_waits` metric now correlates 1:1 with real wait events. Public signature unchanged. New test `enqueue_foreground_does_not_bump_fg_full_waits_when_capacity_available` covers the happy path; the optional "fill-channel-and-demonstrate-real-wait" test was skipped (inherently racy with a live consumer). |
+| L-14 | Materializer (`src-tauri/src/materializer/handlers.rs`) | Promoted three misroute log lines from `warn` to `error` and changed three return values from `Ok(())` to `Err(AppError::Validation(_))` so the consumer's existing `fg_errors` / `bg_errors` counters fire on misroute: (i) fg catch-all `_ =>` arm in `handle_foreground_task`; (ii) `MaterializeTask::ApplyOp` arm in `handle_background_task`; (iii) both branches of the `MaterializeTask::BatchApplyOps` arm (populated + empty-batch). Original tracing fields (`?task`, `op_type`/`device_id`/`seq`, `batch_size`) preserved. **`debug_assert!` removed** in favor of plain `Err` + `error!` log — avoids the `#[should_panic]` ceremony in tests asserting the `Err` contract directly. Three existing tests updated (`handle_fg_unexpected`, `handle_fg_unexpected_reindex`, `handle_bg_unexpected_apply`); two new tests added (`handle_fg_rebuild_fts_index_returns_validation_err`, `handle_bg_unexpected_batch_apply_returns_validation_err`). |
+| L-91 | Search & Links (`src-tauri/src/link_metadata/html_parser.rs`) | `truncate_str` body replaced with `s.char_indices().nth(max_chars).map(|(i,_)| &s[..i]).unwrap_or(s)`. The function now matches its name — char count, not byte count — so CJK / emoji input is no longer over-truncated by the 3:1 (or 4:1) byte-to-char ratio. Visibility bumped from `fn` to `pub(super)` to match the existing sibling-test convention (`extract_origin`, `extract_domain`, `resolve_url`). Reviewer added a 6-line inline comment inside the body explaining the `nth(max_chars)` mechanic (returns the byte index of the (max_chars+1)th char). Eight new `assert_eq!`-based tests cover ASCII shorter/equal/longer, CJK satisfied/exceeded, mixed ASCII + 4-byte SMP emoji, empty string, and `max_chars=0`. Pre-existing `parse_title_truncates_to_500_chars` / `parse_description_truncates_to_300_chars` continued to pass unchanged (their data was ASCII-only — bytes == chars). The unrelated `parse_title_chained_entity_known_limitation` test was untouched. |
+| L-131 | GCal (`src-tauri/src/gcal_push/api.rs`) | New private `fn join_calendar_path(base_url: &str, calendar_id: &str, suffix: &[&str]) -> Result<String, AppError>` builds calendar / event URLs via `url::Url::parse` + `path_segments_mut().push(...)`, percent-encoding `calendar_id` and `event_id` against the path-segment encode set (`/`, `?`, `#` → `%2F`/`%3F`/`%23`). Five raw `format!(...)` URL constructions in `delete_calendar`, `insert_event`, `patch_event`, `delete_event`, `get_event` collapsed to helper calls; `create_dedicated_calendar` (the `/calendars` POST without an id) intentionally untouched. **No new dependencies** — `url = "2"` is already a direct dep. Existing wiremock tests continued to pass unchanged (`TEST_CAL_ID = "cal_ABCDEF"` is ASCII-safe, encoded path is byte-identical). Five new tests added (3 helper unit tests + 2 wiremock e2e); reviewer added two more (`join_calendar_path_extends_existing_base_path` pinning that the production `/calendar/v3` base path is preserved, `join_calendar_path_rejects_cannot_be_a_base_url` exercising the `mailto:`-style error branch). |
+
+**Files touched (this session's batch — 8 modified):**
+
+- Backend Core (2): `src-tauri/src/lib.rs`, `src-tauri/src/db.rs`
+- Backend Materializer (3): `src-tauri/src/materializer/{coordinator,handlers,tests}.rs`
+- Backend Search & Links (2): `src-tauri/src/link_metadata/{html_parser,tests}.rs`
+- Backend GCal (1): `src-tauri/src/gcal_push/api.rs`
+- Docs (2): `REVIEW-LATER.md` (6 items removed; LOW count 101 → 95; previously-resolved counter bumped), `SESSION-LOG.md` (this entry)
+
+**Verification:** `prek run --all-files` → all hooks PASS (vitest 8500+, cargo nextest 3032 tests, biome / tsc / clippy / fmt / lychee / sqruff / cargo deny / cargo machete / sqlx prepare check / tauri-command-sanitize). Targeted runs during build/review:
+
+- L-2 / L-8: `cargo nextest run -E 'package(agaric) and (test(/log_or_zero/) or test(/init_pool/))'` → 24 passed.
+- L-12 / L-14: `cargo nextest run -E 'package(agaric) and (test(/handle_fg/) or test(/handle_bg/) or test(/enqueue_foreground/) or test(/fg_full/))'` → 12 passed; full materializer slice 161/161 passed.
+- L-91: `cargo nextest run -E 'package(agaric) and test(/truncate/)'` → 31 passed.
+- L-131: `cargo nextest run -E 'package(agaric) and (test(/calendar/) or test(/event/))'` → 103 passed.
+
+Full-suite: `cargo nextest run --no-fail-fast` post-merge → **3032/3032 passed, 2 skipped** (the 2 skipped are pre-existing `#[ignore]` tests).
+
+**Process notes:**
+
+- **Worktree-per-subagent paid off.** Four `git worktree add --detach` checkouts under `/tmp/agaric-wt-{core,mat,search,gcal}` gave each parallel build subagent its own `target/` directory; no cross-batch stash chaos like session 518's "five subagents stashing each other's work" scenario. Cold-compile cost was ~5 min per worktree but ran in parallel; total wall-clock build time ≈ slowest subagent (5m32s) rather than 4× sequential.
+- **Reviewer-applied micro-fixes preserved by file-copy merge.** Both reviewer additions (L-91 inline comment, L-131 two extra tests) landed in their respective worktrees during review. The orchestrator merged via `cp $WORKTREE/<file> $MAIN/<file>` after verifying clean git status in each worktree — simpler and more auditable than `git apply` / cherry-pick across worktrees with a clean main tree, especially when changes are file-disjoint.
+- **`debug_assert!` removed in L-14.** The original recommendation in REVIEW-LATER suggested either `Err` + `error!` log OR `debug_assert!(false, ...)`. The builder went with the simpler `Err`+`error!` path because adding `debug_assert!(false, ...)` to a code path that tests *intentionally* exercise (to assert the misroute Err contract) would have forced every such test to use `#[should_panic]`. The rationale comment is in place at `handlers.rs:93-96` / `:925-926`. The misroute is still observable through the `error!` log and the consumer's `fg_errors` / `bg_errors` counters.
+- **Pre-existing `cargo clippy --all-targets` failure noted but out-of-scope.** Two reviewers flagged `src-tauri/src/sync_files.rs:1561` (`(i % 256) as u8` — `clippy::cast_possible_truncation`) when running clippy with `--all-targets`. The prek hook at `prek.toml:327` runs `cargo clippy -- -D warnings` *without* `--all-targets`, so test-code lints don't block the commit and this pre-existing warning has shipped through several sessions. Filing as informational; not part of this batch.
+- **Stash management — no new stashes.** The 4 stale stashes from session 518 are still present; not touched in this commit (per session 518's recommendation, they should be reviewed and dropped together rather than piecemeal).
+- **Worktree cleanup.** All four `/tmp/agaric-wt-*` worktrees removed via `git worktree remove` after the merge; the main repo returned to a single-worktree state.
+
+---
+
 ## Session 518 — All 5 LOW backend cleanup batches closed (MAINT-148..152) (2026-04-27)
 
 **Five backend LOW-cleanup batches closed in one PROMPT.md run.** Five parallel build subagents on file-disjoint subsystems (materializer/cache/pagination/backlink, sync stack, MCP, GCal, misc features), five pipelined reviewers, two reviewer-applied inline fixes (cache/tags.rs migration missed by builder; MAINT-151(g) `_emitter` removal lost during stash chaos). The session was significantly more chaotic than session 517: subagents repeatedly stashed each other's work for build isolation, leading to multiple overlapping stashes and one nearly-lost file (mcp/dispatch.rs was deleted mid-session by MAINT-151's stash dance, recreated by MAINT-150's reapply). The orchestrator verified the final on-disk state matches each builder's intent before committing.

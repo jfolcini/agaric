@@ -391,15 +391,23 @@ fn decode_html_entities(s: &str) -> String {
         .replace("&nbsp;", " ")
 }
 
-/// Truncate a string to at most `max_chars` characters.
-fn truncate_str(s: &str, max_chars: usize) -> &str {
-    if s.len() <= max_chars {
-        return s;
+/// Truncate a string to at most `max_chars` Unicode scalar values
+/// (`char`s), not bytes. Multibyte input (CJK, emoji) is preserved
+/// at the documented character count.
+///
+/// Made `pub(super)` so the sibling `tests` module (`link_metadata/tests.rs`)
+/// can reach it directly without going through `parse_title` /
+/// `parse_description` (those wrap it but also do trimming + entity
+/// decoding, which would obscure char-counting bugs).
+pub(super) fn truncate_str(s: &str, max_chars: usize) -> &str {
+    // `char_indices().nth(max_chars)` yields the byte index of the
+    // (`max_chars` + 1)th `char` — i.e. the byte position immediately
+    // after exactly `max_chars` chars. If the input has fewer chars
+    // than `max_chars`, `nth` returns `None` and the input is returned
+    // unchanged. Slicing on that byte index always lands on a UTF-8
+    // boundary, so this never panics on multibyte input.
+    match s.char_indices().nth(max_chars) {
+        Some((byte_idx, _)) => &s[..byte_idx],
+        None => s,
     }
-    // Find a char boundary at or before max_chars
-    let mut end = max_chars;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
 }

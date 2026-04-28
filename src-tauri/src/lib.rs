@@ -116,6 +116,21 @@ mod integration_tests;
 #[cfg(test)]
 mod sync_integration_tests;
 
+/// L-2: Wrap a boot-time `SELECT COUNT(*)` result so DB errors get a tracing
+/// breadcrumb instead of being silently coerced to `0`. The fall-through
+/// behaviour is unchanged — callers still see `0` on error — but operators
+/// now have a chance of noticing when boot scheduling is being skipped
+/// because a count query failed.
+fn log_or_zero(r: Result<i64, sqlx::Error>, ctx: &str) -> i64 {
+    match r {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(error = %e, ctx, "boot count query failed; treating as 0");
+            0
+        }
+    }
+}
+
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -558,20 +573,24 @@ pub fn run() {
             materializer.set_app_data_dir(app_data_dir.clone());
 
             // M-3: Rebuild FTS index at boot if the table is empty (post-migration 0006).
-            let fts_count: i64 = tauri::async_runtime::block_on(
-                sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks")
-                    .fetch_one(&pools.write),
-            )
-            .unwrap_or(0);
+            let fts_count: i64 = log_or_zero(
+                tauri::async_runtime::block_on(
+                    sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks")
+                        .fetch_one(&pools.write),
+                ),
+                "fts_blocks_count",
+            );
             if fts_count == 0 {
                 // Check if there are any blocks that should be indexed
-                let block_count: i64 = tauri::async_runtime::block_on(
-                    sqlx::query_scalar(
-                        "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
-                    )
-                    .fetch_one(&pools.write),
-                )
-                .unwrap_or(0);
+                let block_count: i64 = log_or_zero(
+                    tauri::async_runtime::block_on(
+                        sqlx::query_scalar(
+                            "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
+                        )
+                        .fetch_one(&pools.write),
+                    ),
+                    "fts_indexable_block_count",
+                );
                 if block_count > 0 {
                     tracing::info!(blocks = block_count, "FTS index empty — scheduling rebuild");
                     if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildFtsIndex) {
@@ -586,19 +605,23 @@ pub fn run() {
             // regex support we need). This handles both the first boot after
             // the migration ships and any future wipe-plus-restart path that
             // leaves content blocks in place with no ref rows.
-            let btr_count: i64 = tauri::async_runtime::block_on(
-                sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_refs")
-                    .fetch_one(&pools.write),
-            )
-            .unwrap_or(0);
+            let btr_count: i64 = log_or_zero(
+                tauri::async_runtime::block_on(
+                    sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_refs")
+                        .fetch_one(&pools.write),
+                ),
+                "block_tag_refs_count",
+            );
             if btr_count == 0 {
-                let block_count: i64 = tauri::async_runtime::block_on(
-                    sqlx::query_scalar(
-                        "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
-                    )
-                    .fetch_one(&pools.write),
-                )
-                .unwrap_or(0);
+                let block_count: i64 = log_or_zero(
+                    tauri::async_runtime::block_on(
+                        sqlx::query_scalar(
+                            "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
+                        )
+                        .fetch_one(&pools.write),
+                    ),
+                    "btr_indexable_block_count",
+                );
                 if block_count > 0 {
                     tracing::info!(
                         blocks = block_count,
@@ -1569,5 +1592,23 @@ mod log_dir_tests {
             log_dir, expected,
             "tracing-appender log dir must equal <app_data_dir>/logs (what get_log_dir returns)"
         );
+    }
+}
+
+// L-2: unit test for the boot-count error-logging helper.
+#[cfg(test)]
+mod log_or_zero_tests {
+    use super::log_or_zero;
+
+    #[test]
+    fn log_or_zero_returns_inner_value_on_ok() {
+        assert_eq!(log_or_zero(Ok(42), "test_ctx"), 42);
+        assert_eq!(log_or_zero(Ok(0), "test_ctx"), 0);
+    }
+
+    #[test]
+    fn log_or_zero_returns_zero_on_err() {
+        let err = sqlx::Error::PoolTimedOut;
+        assert_eq!(log_or_zero(Err(err), "test_ctx"), 0);
     }
 }

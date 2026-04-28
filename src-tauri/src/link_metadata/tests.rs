@@ -1,7 +1,7 @@
 //! Unit tests for `link_metadata`: HTML parsing, URL helpers, and DB ops.
 
 use super::html_parser::{detect_auth_required, parse_description, parse_favicon, parse_title};
-use super::html_parser::{extract_domain, extract_origin, resolve_url};
+use super::html_parser::{extract_domain, extract_origin, resolve_url, truncate_str};
 use super::{cleanup_stale, clear_auth_flag, get_cached, upsert, LinkMetadata};
 use crate::db::init_pool;
 use crate::now_rfc3339;
@@ -250,6 +250,94 @@ fn parse_description_truncates_to_300_chars() {
         300,
         "should truncate description to 300 chars"
     );
+}
+
+// ======================================================================
+// truncate_str tests (L-91)
+//
+// `truncate_str` must truncate by `char` count, not byte count. The old
+// implementation used `s.len() <= max_chars` (a byte comparison) and a
+// byte-indexed `is_char_boundary` walk-back, which over-truncated CJK
+// (3 bytes/char) and emoji (4 bytes/char) input by ~3x and ~4x
+// respectively. These tests pin the new char-based contract.
+// ======================================================================
+
+#[test]
+fn truncate_str_ascii_shorter_than_max() {
+    // Input shorter than the limit is returned unchanged.
+    assert_eq!(truncate_str("hello", 10), "hello");
+}
+
+#[test]
+fn truncate_str_ascii_exact_max() {
+    // Input exactly at the limit is returned unchanged (the (max+1)th
+    // char does not exist, so `char_indices().nth(max_chars)` is None).
+    assert_eq!(truncate_str("hello", 5), "hello");
+}
+
+#[test]
+fn truncate_str_ascii_longer_than_max() {
+    // ASCII: bytes == chars, so the result is exactly `max_chars` bytes.
+    let out = truncate_str("hello world", 5);
+    assert_eq!(out, "hello");
+    assert_eq!(out.len(), 5);
+    assert_eq!(out.chars().count(), 5);
+}
+
+#[test]
+fn truncate_str_cjk_within_max_chars_returns_full() {
+    // 5 CJK characters = 15 bytes in UTF-8. With max_chars=10, the new
+    // (char-based) contract returns the full string. The old byte-based
+    // implementation incorrectly trimmed it (15 > 10).
+    let s = "你好世界！"; // 5 chars, 15 bytes
+    assert_eq!(s.chars().count(), 5);
+    assert_eq!(s.len(), 15);
+    let out = truncate_str(s, 10);
+    assert_eq!(out, s, "5-char CJK input must survive max_chars=10");
+    assert_eq!(out.chars().count(), 5);
+}
+
+#[test]
+fn truncate_str_cjk_exceeds_max_chars() {
+    // 5 CJK chars truncated to 3 chars: result is 3 chars / 9 bytes,
+    // and remains a valid UTF-8 slice (truncation lands on a char
+    // boundary because `char_indices()` only yields boundaries).
+    let s = "你好世界！"; // 5 chars
+    let out = truncate_str(s, 3);
+    assert_eq!(out.chars().count(), 3);
+    assert_eq!(out.len(), 9, "3 CJK chars = 9 bytes");
+    assert_eq!(out, "你好世");
+}
+
+#[test]
+fn truncate_str_mixed_ascii_and_emoji() {
+    // "Hi 👋👋👋" = 'H', 'i', ' ', '👋', '👋', '👋' (6 chars).
+    // Each 👋 is U+1F44B → 4 bytes in UTF-8.
+    // max_chars=4 must yield "Hi 👋" (4 chars, 3 ASCII bytes + 4 emoji
+    // bytes = 7 bytes), not a mid-codepoint slice.
+    let s = "Hi 👋👋👋";
+    assert_eq!(s.chars().count(), 6);
+    let out = truncate_str(s, 4);
+    assert_eq!(out.chars().count(), 4);
+    assert_eq!(out, "Hi 👋");
+    // Sanity: confirm the slice is on a UTF-8 boundary (str::is_char_boundary
+    // is implicit in any successful &str slice — but we check end-of-slice
+    // here to make the contract explicit).
+    assert!(s.is_char_boundary(out.len()));
+}
+
+#[test]
+fn truncate_str_empty_string() {
+    // Empty input returns empty regardless of max_chars.
+    assert_eq!(truncate_str("", 10), "");
+}
+
+#[test]
+fn truncate_str_zero_max_chars() {
+    // max_chars=0: `char_indices().nth(0)` is the byte index of the
+    // first character (0), so we slice `&s[..0]` = "".
+    assert_eq!(truncate_str("hello", 0), "");
+    assert_eq!(truncate_str("你好", 0), "");
 }
 
 // ======================================================================

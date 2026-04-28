@@ -83,8 +83,24 @@ pub(super) async fn handle_foreground_task(
             Ok(())
         }
         _ => {
-            tracing::warn!(?task, "unexpected task in foreground queue");
-            Ok(())
+            // L-14: a non-Apply / non-Batch / non-Barrier variant landed in
+            // the foreground queue — that is a dispatch bug, not a runtime
+            // condition. Return `Err(Validation)` so the consumer's
+            // outcome inspection bumps `fg_errors` (see
+            // `consumer::process_single_foreground_task`) and reviewers /
+            // operators see a real signal instead of a silently-dropped op.
+            //
+            // L-14: Err return + error! log is sufficient — debug_assert
+            // removed because tests assert the Err contract directly, and a
+            // `debug_assert!(false, …)` would force every test exercising
+            // this path to dance around `#[should_panic]`.
+            tracing::error!(
+                ?task,
+                "unexpected task in foreground queue — misrouted dispatch"
+            );
+            Err(AppError::Validation(format!(
+                "unexpected task in foreground queue: {task:?}"
+            )))
         }
     }
 }
@@ -901,26 +917,47 @@ pub(super) async fn handle_background_task(
             .await
         }
         MaterializeTask::ApplyOp(ref record) => {
-            tracing::warn!(
+            // L-14 (bg mirror): mirror the foreground catch-all — an
+            // `ApplyOp` in the background queue is a dispatch bug. Promote
+            // to error level and return `Err(Validation)` so the bg
+            // consumer's outcome inspection bumps `bg_errors`.
+            //
+            // L-14: Err return + error! log is sufficient — debug_assert
+            // removed because tests assert the Err contract directly.
+            tracing::error!(
                 op_type = %record.op_type,
                 device_id = %record.device_id,
                 seq = record.seq,
-                "unexpected ApplyOp in background queue"
+                "unexpected ApplyOp in background queue — misrouted dispatch"
             );
-            Ok(())
+            Err(AppError::Validation(format!(
+                "unexpected ApplyOp in background queue: device_id={}, seq={}, op_type={}",
+                record.device_id, record.seq, record.op_type
+            )))
         }
         MaterializeTask::BatchApplyOps(records) => {
+            // L-14 (bg mirror): same rationale as the `ApplyOp` arm above.
             if let Some(first) = records.first() {
-                tracing::warn!(
+                tracing::error!(
                     device_id = %first.device_id,
                     seq = first.seq,
                     batch_size = records.len(),
-                    "unexpected BatchApplyOps in background queue"
+                    "unexpected BatchApplyOps in background queue — misrouted dispatch"
                 );
+                Err(AppError::Validation(format!(
+                    "unexpected BatchApplyOps in background queue: device_id={}, seq={}, batch_size={}",
+                    first.device_id,
+                    first.seq,
+                    records.len()
+                )))
             } else {
-                tracing::warn!("unexpected empty BatchApplyOps in background queue");
+                tracing::error!(
+                    "unexpected empty BatchApplyOps in background queue — misrouted dispatch"
+                );
+                Err(AppError::Validation(
+                    "unexpected empty BatchApplyOps in background queue".into(),
+                ))
             }
-            Ok(())
         }
         MaterializeTask::Barrier(ref notify) => {
             notify.notify_one();
