@@ -278,12 +278,42 @@ fn format_description_full(
 }
 
 /// Shrink the joined line set until prefix + overflow-suffix fits.
+///
+/// # Complexity (L-128)
+///
+/// Greedy linear truncation: O(N²) in the worst case, where N is the
+/// number of agenda lines for a single date. Each iteration rebuilds
+/// the prefix via `lines[..kept].join("\n")` followed by
+/// `chars().count()`, both O(kept). Acceptable today because:
+///
+/// - **N is bounded by `AGENDA_FETCH_LIMIT = 500`** (see
+///   `gcal_push::connector::AGENDA_FETCH_LIMIT`). The fetch upstream
+///   caps at 500 entries per date; this function never sees more.
+/// - **Connector dispatches one digest per dirty date per cycle**;
+///   even a 30-day full window is 30 digests, each independently
+///   below the cap.
+/// - **The body of the loop is tiny in practice** — a single date
+///   rarely has more than a handful of entries, so `kept` rolls
+///   through small values and the loop exits early.
+///
+/// **Tripwire**: if `AGENDA_FETCH_LIMIT` is ever raised meaningfully
+/// (say above 5_000), this function should be rewritten to use a
+/// precomputed cumulative-length table (O(N) build) + binary search
+/// (O(log N) lookup). The current implementation is intentionally
+/// kept linear because "obviously correct" is the more valuable
+/// property at the current scale. The
+/// `truncate_complexity_tripwire_for_agenda_fetch_limit` test in
+/// this file's `tests` module pins the ~500 upper bound — a future
+/// bump will fail that test and force the optimisation.
+///
+/// See `REVIEW-LATER.md` L-128 for the full discussion.
 fn truncate_with_overflow_suffix(lines: &[String]) -> String {
     // Greedy from the tail: keep `kept` lines, drop the rest.  Recompute
     // the suffix length each time `dropped` rolls over to another digit.
     let total = lines.len();
-    // Binary search would be marginally faster but N is at most a few
-    // hundred in practice; linear keeps the logic obviously correct.
+    // L-128: linear is O(N²) but N ≤ AGENDA_FETCH_LIMIT (500); see
+    // function-level doc comment for the binary-search alternative
+    // and tripwire test.
     for kept in (0..total).rev() {
         let dropped = total - kept;
         let suffix = overflow_suffix(dropped);
@@ -388,6 +418,47 @@ fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use crate::pagination::BlockRow;
+
+    // ── L-128 tripwire ───────────────────────────────────────────────
+
+    /// L-128: pin the assumption that backs the "linear truncation is
+    /// fine" decision in `truncate_with_overflow_suffix`. The function
+    /// is O(N²) where N is the agenda-line count for a single date.
+    /// `AGENDA_FETCH_LIMIT` is currently 500, well within the linear
+    /// budget. If a future change raises it above ~5_000 (the
+    /// approximate threshold above which the O(N²) cost becomes
+    /// user-visible at 50ms+ per digest), this test fails — forcing
+    /// the optimisation discussed in the function's doc comment
+    /// (cumulative-length table + binary search) before shipping.
+    ///
+    /// Bumping `AGENDA_FETCH_LIMIT` upward through the cap requires
+    /// either (a) updating the optimisation in
+    /// `truncate_with_overflow_suffix` AND raising this cap, or (b)
+    /// declaring with explicit comment that the higher per-cycle cost
+    /// is acceptable. Either way, a deliberate decision — not a
+    /// silent regression.
+    #[test]
+    // L-128: both sides are known compile-time constants today, which is
+    // exactly the tripwire's contract — when the constant on the LHS is
+    // bumped the assertion flips and forces a deliberate decision. The
+    // clippy lint that fires here (`assertions_on_constants`) recommends
+    // a `const { … }` block, but a const block evaluates at compile time
+    // and the test surface (named test, clear failure message) is
+    // intentionally a runtime tripwire rather than a build failure so
+    // CI surfaces it as a failing test alongside the rest of the suite.
+    #[allow(clippy::assertions_on_constants)]
+    fn truncate_complexity_tripwire_for_agenda_fetch_limit() {
+        const LINEAR_BUDGET_CAP: i64 = 5_000;
+        assert!(
+            crate::gcal_push::connector::AGENDA_FETCH_LIMIT <= LINEAR_BUDGET_CAP,
+            "AGENDA_FETCH_LIMIT = {} exceeds the linear-budget cap ({}); \
+             see L-128 — `truncate_with_overflow_suffix` must be \
+             rewritten with a binary-search cumulative-length table \
+             before this limit can rise further.",
+            crate::gcal_push::connector::AGENDA_FETCH_LIMIT,
+            LINEAR_BUDGET_CAP,
+        );
+    }
 
     // ── Fixtures ─────────────────────────────────────────────────────
 

@@ -426,21 +426,49 @@ pub fn read_logs_for_report_inner(
     let today = chrono::Utc::now().date_naive();
     let mut entries: Vec<(PathBuf, String)> = Vec::new();
 
+    // L-52: per-file silent-drop sites are now traced at warn level so a
+    // bug report missing log files for unexpected reasons (permission
+    // denied, invalid UTF-8 in name, non-file entry under a corrupted
+    // log dir) leaves a breadcrumb in the daily log itself rather than
+    // failing silently. The function still returns `Ok(_)` with whatever
+    // survived — partial coverage beats no coverage when the user is
+    // already submitting a bug report.
     for entry in fs::read_dir(log_dir)? {
         let entry = entry?;
         let name_os = entry.file_name();
         let Some(name) = name_os.to_str() else {
+            // Anonymise the lossy form to avoid leaking PII on
+            // pathologically named files; truncate at 80 chars.
+            let lossy = name_os.to_string_lossy().into_owned();
+            let truncated: String = lossy.chars().take(80).collect();
+            tracing::warn!(
+                path = %truncated,
+                "L-52: skipping log file with invalid UTF-8 in name",
+            );
             continue;
         };
         if !should_include_log_file(name, today) {
+            // Out-of-window or unrecognised filename — common, not noteworthy.
             continue;
         }
         let path = entry.path();
         if !path.is_file() {
+            tracing::warn!(
+                name = %name,
+                "L-52: skipping log entry — not a regular file (symlink/dir/socket?)",
+            );
             continue;
         }
-        let Ok(contents) = read_capped_file(&path) else {
-            continue;
+        let contents = match read_capped_file(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    name = %name,
+                    error = %e,
+                    "L-52: skipping log file — read_capped_file failed (permission denied or io error?)",
+                );
+                continue;
+            }
         };
         entries.push((path, contents));
     }
@@ -1002,6 +1030,89 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].contents.contains(DEV));
         assert!(out[0].contents.contains(HOME));
+    }
+
+    // -- L-52: silent-drop sites now warn -------------------------------
+
+    /// L-52 — a non-file entry under the log dir (e.g., a directory)
+    /// must NOT be silently dropped: the function continues to skip it
+    /// (file-only contract preserved), but a `tracing::warn!` is now
+    /// emitted naming the entry. The test verifies the function still
+    /// returns `Ok(_)` with the directory excluded; the warn line is
+    /// load-bearing for operator triage but cumbersome to capture
+    /// inline, so we only assert the structural behaviour here.
+    #[test]
+    fn read_logs_warns_on_non_file_entry_and_excludes_it() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path();
+        // Today's log file (real, included).
+        fs::write(log_dir.join("agaric.log"), "ok\n").unwrap();
+        // A subdirectory with a name that matches the include filter
+        // but is not a regular file. Use today's date to ensure it
+        // passes `should_include_log_file`.
+        let today = chrono::Utc::now().date_naive();
+        let dated = format!("agaric.log.{}", today.format("%Y-%m-%d"));
+        fs::create_dir(log_dir.join(&dated)).unwrap();
+
+        let out = read_logs_for_report_inner(log_dir, false, None, None, None, &[]).unwrap();
+
+        assert_eq!(
+            out.len(),
+            1,
+            "directory entry must be excluded; only agaric.log survives",
+        );
+        assert_eq!(out[0].name, "agaric.log");
+    }
+
+    /// L-52 — a file whose `read_capped_file` fails (e.g., permission
+    /// denied) is excluded from the result and a warn is emitted. We
+    /// simulate "fails to read" by creating a file with `0o000` mode
+    /// on Unix; on Windows the file-permission model differs and the
+    /// test is skipped. The function must still return `Ok(_)` with
+    /// the unreadable file excluded.
+    #[cfg(unix)]
+    #[test]
+    fn read_logs_warns_on_unreadable_file_and_excludes_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path();
+        // Today's log file (real, readable, included).
+        fs::write(log_dir.join("agaric.log"), "ok\n").unwrap();
+        // Older dated file that we make unreadable. Use a day in the
+        // window so `should_include_log_file` doesn't pre-filter it.
+        let yesterday = chrono::Utc::now().date_naive() - chrono::Duration::days(1);
+        let dated = format!("agaric.log.{}", yesterday.format("%Y-%m-%d"));
+        let unreadable = log_dir.join(&dated);
+        fs::write(&unreadable, "should be unreadable\n").unwrap();
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+
+        // If running as root the chmod 0o000 doesn't actually deny —
+        // skip the assertion in that case (the test is informational
+        // only when the kernel honours the mode).
+        let read_check = fs::read_to_string(&unreadable);
+        let running_as_root = read_check.is_ok();
+
+        let out = read_logs_for_report_inner(log_dir, false, None, None, None, &[]).unwrap();
+
+        if running_as_root {
+            // Restore so TempDir cleanup works.
+            fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o600)).ok();
+            assert!(
+                out.iter().any(|e| e.name == "agaric.log"),
+                "running as root: kernel ignores 0o000 mode, can't trigger the L-52 warn path",
+            );
+            return;
+        }
+
+        assert_eq!(
+            out.len(),
+            1,
+            "unreadable file must be excluded; only agaric.log survives",
+        );
+        assert_eq!(out[0].name, "agaric.log");
+
+        // Restore permissions so TempDir Drop can clean up.
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o600)).ok();
     }
 
     // -- apply_bundle_cap (L-54) -----------------------------------------

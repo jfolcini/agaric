@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 633+ items across 489 sessions (per SESSION-LOG.md unique session count; latest is session 522).
+Previously resolved: 639+ items across 490 sessions (per SESSION-LOG.md unique session count; latest is session 523).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1925,7 +1925,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (76 — expanded)
+## LOW findings (70 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2079,18 +2079,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 03/F20
 - **Status:** Open
 
-### L-29 — `query_by_property` reserved-vs-non-reserved-key precedence is undocumented
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/pagination/properties.rs:43-105` (the two branches at `:43-77` and `:78-105`); doc-comment at `:7-17`
-- **What:** Beyond the silent value_text/value_date precedence (L-23), the function's reserved-key branch routes to a column read on `blocks` (4 columns: `todo_state`, `priority`, `due_date`, `scheduled_date`) while the non-reserved branch routes to `block_properties`. Callers cannot tell from the signature which keys are routed where; the column list is hardcoded (`unreachable!` at `:50` for any other reserved key) and tied to `op::is_reserved_property_key`. The doc-comment does not mention the routing or the reserved-key column set.
-- **Why it matters:** A future reviewer trying to add a fifth reserved column (e.g., `effort`) has to discover the routing by reading `is_reserved_property_key`. Adding a key without updating the `match col { … _ => unreachable!() }` arm is a runtime panic.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Document the routing in the function header (which keys are columns, which use `block_properties`, where the source of truth is). Replace `unreachable!()` with an explicit `AppError::Validation` so a missed update is a clean error rather than a panic. Cross-reference `op::is_reserved_property_key` from the doc-comment.
-- **Pass-1 source:** 03/F14 (synthesised in pass-2 summary)
-- **Status:** Open
-
 ### Commands CRUD
 
 ### L-30 — `import_markdown_inner` swallows per-block errors inside one transaction without savepoints
@@ -2129,18 +2117,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 04/F13
 - **Status:** Open
 
-### L-35 — `dispatch_background_for_page_create` re-reads ops from the op_log instead of threading them through
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/spaces.rs:215-249` (and `create_page_in_space_inner` upstream)
-- **What:** `create_page_in_space_inner` discards the `OpRecord`s returned by `create_block_in_tx` and `set_property_in_tx` (`let (block, _page_op_record) = ...`); the wrapper then re-reads the freshly-committed ops to dispatch them to the materializer. The records were already in hand and were thrown away.
-- **Why it matters:** Performance is fine; the extra round-trip is small. But the pattern is inconsistent with `import_markdown_inner` (`pages.rs:259-271`) which collects records into a `Vec` and dispatches after commit.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Change `create_page_in_space_inner`'s return type to `Result<(BlockId, Vec<OpRecord>), AppError>`, drop `dispatch_background_for_page_create`, and dispatch records directly from the wrapper.
-- **Pass-1 source:** 04/F25
-- **Status:** Open
-
 ### L-36 — `purge_all_deleted_inner` synchronously deletes attachment files on the command thread
 - **Domain:** Commands (CRUD)
 - **Location:** `src-tauri/src/commands/blocks/crud.rs:976-1063`
@@ -2165,30 +2141,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low (UX consistency)
 - **Recommendation:** Add `.map_err(sanitize_internal_error)` to every Tauri command wrapper in the five files. Optionally add a CI golden-test (e.g. `cargo expand` + regex) asserting every `__cmd__*` calls the sanitizer.
 - **Pass-1 source:** 05/F26 (downgraded High→Low — UX consistency, not security)
-- **Status:** Open
-
-### L-51 — `mcp_disconnect_all` doc says it returns "the connection count" but signature returns `()`
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/mcp.rs:191-205`
-- **What:** Lines 192-196 of the doc-comment promise *"Returns the connection count observed immediately after firing the signal."* The signature is `Result<(), AppError>` and the body is `Ok(())`. There is no count surfaced.
-- **Why it matters:** Doc drift; maintainers reading the comment will believe the count is exposed and may try to wire UI to it.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either (a) actually return `lifecycle.connection_count() as u32`, regenerate bindings, and let the Settings tab show "kicked N agents", or (b) update the doc to match `Ok(())`. Option (a) is more useful but requires a binding regen.
-- **Pass-1 source:** 05/F30
-- **Status:** Open
-
-### L-52 — `read_logs_for_report_inner` skips silently on per-file errors
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/bug_report.rs:268-287`
-- **What:** Three `let Some(...) else { continue; }` / `let Ok(...) else { continue; }` patterns silently drop entries: invalid UTF-8 names (line 273-275), entries that are not files (line 280-282), and files whose `read_capped_file` fails (line 283-285). The function returns `Ok(out)` with whatever survived; no signal that anything was filtered.
-- **Why it matters:** A bug report missing relevant log files is worse than a noisy one. A permission-denied read is exactly the situation the bug report should *include*.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add `tracing::warn!` at each silent-drop site (with anonymized name), and optionally synthesize a `LogFileEntry` named `[skipped] <reason>` so the user sees in the preview that something was excluded.
-- **Pass-1 source:** 05/F31
 - **Status:** Open
 
 ### L-53 — `cancel_pairing` clears pairing slot whether or not a session exists
@@ -2801,18 +2753,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F16
 - **Status:** Open
 
-### L-128 — `digest::truncate_with_overflow_suffix` is O(N²) on the linear scan path
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/gcal_push/digest.rs:281-305`
-- **What:** Greedy truncation loops `kept` from `total-1` down to 0; each iteration `lines[..kept].join("\n").chars().count()` rebuilds the prefix. `n = AGENDA_FETCH_LIMIT = 500`; the doc explicitly waves this off as "binary search would be marginally faster but N is at most a few hundred in practice; linear keeps the logic obviously correct."
-- **Why it matters:** Connector dispatches one digest per dirty date per cycle; even a 30-day full window is 30 digests. Currently not a real performance hazard.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Keep linear *iff* the upper bound stays ~500. If `AGENDA_FETCH_LIMIT` ever rises, switch to a precomputed cumulative-length table (O(N)) + binary search (O(log N)). Add a micro-benchmark when/if that lands.
-- **Pass-1 source:** 10/F17
-- **Status:** Open
-
 ### L-132 — `claim_lease` does 4 round-trips, could be 2
 - **Domain:** GCal / Spaces / Drafts
 - **Location:** `src-tauri/src/gcal_push/lease.rs:140-218`
@@ -2823,18 +2763,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Defer until profiling shows it matters. If the connector ever drops to a sub-second cycle, batch the reads and writes.
 - **Pass-1 source:** 10/F25
-- **Status:** Open
-
-### L-134 — `dispatch_background_for_page_create` is best-effort and silent on failure
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/commands/spaces.rs:215-249`
-- **What:** After `create_page_in_space_inner` commits, the wrapper re-fetches both ops to dispatch them to the materializer. If the re-fetch fails it logs `tracing::warn!` and returns; the wrapper itself returns `Ok(id)` regardless — the IPC succeeds but background caches (tag-inheritance, FTS, pages_cache, projected agenda) are not refreshed for that create. The other create paths (e.g. `create_block_inner` line 188) directly dispatch from the in-tx-returned op record without a re-fetch.
-- **Why it matters:** Stable race window — the user-facing IPC says "page created" but the new page doesn't appear in search / isn't queryable by tag until the next op flows. Eventually consistent, but the whole point of `create_page_in_space` is atomicity.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Refactor `create_page_in_space_inner` to return both `OpRecord`s (mirroring `create_block_in_tx`'s shape) so the wrapper can dispatch directly without the re-fetch step. Removes the silent fallback and aligns with the other create paths.
-- **Pass-1 source:** 10/F27
 - **Status:** Open
 
 ### L-135 — Drafts module has no garbage-collection path beyond crash recovery
