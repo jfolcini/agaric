@@ -53,7 +53,6 @@ export function AttachmentRenderer({
           const url = getAssetUrl(att.fs_path)
           if (!url) return null
           return (
-            // biome-ignore lint/a11y/noStaticElementInteractions: focusable image container reveals an inner toolbar with its own buttons; using role="button" here would create a nested-interactive a11y violation
             // biome-ignore lint/a11y/useSemanticElements: <fieldset>/<legend> are form-control semantics, not appropriate for an image wrapper; role="group" is the correct ARIA primitive here
             <div
               key={att.id}

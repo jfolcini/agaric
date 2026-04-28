@@ -124,7 +124,6 @@ export function SearchablePopover<T>({
           <p className="text-xs text-muted-foreground p-2">{emptyMessage}</p>
         )}
         <ScrollArea className="max-h-48">
-          {/* biome-ignore lint/a11y/useKeyWithClickEvents: keyboard handling lives on the inner buttons — ul is a passive container. */}
           <ul
             className="space-y-1 list-none m-0 p-0"
             onKeyDown={(e) => {

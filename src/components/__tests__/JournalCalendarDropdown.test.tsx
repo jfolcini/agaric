@@ -233,7 +233,6 @@ describe('JournalCalendarDropdown', () => {
       expect(dropdown.className).toContain('bottom-full')
     } finally {
       Element.prototype.getBoundingClientRect = originalGBCR
-      // biome-ignore lint/performance/noDelete: restoring jsdom default (undefined)
       delete (window as { visualViewport?: unknown }).visualViewport
     }
   })
@@ -264,7 +263,6 @@ describe('JournalCalendarDropdown', () => {
       expect(dropdown.style.transform).toBe('translateX(28px)')
     } finally {
       Element.prototype.getBoundingClientRect = originalGBCR
-      // biome-ignore lint/performance/noDelete: restoring jsdom default (undefined)
       delete (window as { visualViewport?: unknown }).visualViewport
     }
   })

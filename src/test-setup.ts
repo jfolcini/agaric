@@ -31,7 +31,6 @@ afterEach(() => {
     try {
       // Reset to the jsdom default (the property does not exist by default,
       // so deleting is the correct restoration).
-      // biome-ignore lint/performance/noDelete: restoring jsdom default
       delete (window as { visualViewport?: unknown }).visualViewport
     } catch {
       // If the property was defined as non-configurable by a test, fall back

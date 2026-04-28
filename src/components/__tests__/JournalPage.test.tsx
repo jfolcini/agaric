@@ -1101,7 +1101,6 @@ describe('JournalPage', () => {
       } finally {
         // Cleanup — restore prototypes and remove the visualViewport mock.
         Element.prototype.getBoundingClientRect = originalGBCR
-        // biome-ignore lint/performance/noDelete: restoring jsdom default (undefined)
         delete (window as { visualViewport?: unknown }).visualViewport
       }
     })
@@ -1151,7 +1150,6 @@ describe('JournalPage', () => {
         })
       } finally {
         Element.prototype.getBoundingClientRect = originalGBCR
-        // biome-ignore lint/performance/noDelete: restoring jsdom default (undefined)
         delete (window as { visualViewport?: unknown }).visualViewport
       }
     })
@@ -2440,6 +2438,7 @@ describe('JournalPage', () => {
       perSpaceTemplate: string | null
       legacyTemplatePage: boolean
     }) {
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: per-space template test mock fans out across 7 distinct Tauri commands (list_blocks / get_properties / get_block_property_def / list_blocks_lite / list_pages / create_block / create_page_in_space) to pin the FEAT-3p5b template-seeding flow; flattening into one switch keeps the cause-effect chain in one place. Score 32 vs default 25.
       return async (cmd: string, args?: unknown): Promise<unknown> => {
         if (cmd === 'list_blocks') return templateListBlocksResponse(args)
         if (cmd === 'get_properties') {

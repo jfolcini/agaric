@@ -168,6 +168,7 @@ export function JournalPage({
 
   /** Add a new block under a specific day's page, creating the page if needed. */
   const handleAddBlock = useCallback(
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: orchestrates atomic create-page-then-block flow with optimistic state, error rollback, retry, and per-space template seeding; splitting it would scatter the rollback paths across helpers and obscure ordering. Tracked under MAINT-119 (decompose `JournalPage.tsx` into `useJournalBlockCreation` + `GlobalDateControls` + `JournalControls`) — score 46 vs default 25.
     async (dateStr: string) => {
       try {
         let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null
