@@ -37,15 +37,25 @@ use crate::op::is_reserved_property_key;
 /// panicking via `unreachable!()` so a missed update surfaces as a clean
 /// runtime error rather than crashing the IPC.
 ///
-/// # Value precedence (related: L-23)
+/// # Value filter (L-23)
 ///
-/// On the reserved-column path, `value_date` takes precedence over
-/// `value_text` for date-typed columns (`due_date`, `scheduled_date`),
-/// otherwise `value_text` takes precedence. On the non-reserved path,
-/// both `value_text` and `value_date` are bound and the SQL evaluates
-/// both filters with the same operator — silent precedence emerges from
-/// the underlying row's typed value. See L-23 for the unresolved
-/// non-reserved precedence concern.
+/// At most one of `value_text` / `value_date` may be supplied. Passing
+/// both simultaneously is rejected with [`AppError::Validation`] at the
+/// boundary because the two query branches would otherwise apply
+/// different precedence rules:
+///
+/// - **Reserved-column path:** routed to a single column, so the SQL
+///   could only bind one of the two values; historically `value_date`
+///   silently won for date-typed columns and `value_text` for the
+///   others, dropping the other input without warning.
+/// - **Non-reserved path:** SQL ANDs both `bp.value_text {op} ?` and
+///   `bp.value_date {op} ?`, intersecting the filters — which almost
+///   always returns an empty set because a `block_properties` row
+///   stores its value in exactly one of the two columns.
+///
+/// Two precedence rules in one function depending on the routing
+/// branch is a downstream-bug shape; rejecting the conflict at the
+/// boundary keeps the contract uniform.
 pub async fn query_by_property(
     pool: &SqlitePool,
     key: &str,
@@ -54,6 +64,14 @@ pub async fn query_by_property(
     operator: &str,
     page: &PageRequest,
 ) -> Result<PageResponse<BlockRow>, AppError> {
+    // L-23: reject conflicting value filters at the boundary so both
+    // routing branches behave identically wrt the value-filter contract.
+    if value_text.is_some() && value_date.is_some() {
+        return Err(AppError::Validation(
+            "query_by_property: at most one of value_text / value_date may be supplied".to_string(),
+        ));
+    }
+
     let fetch_limit = page.limit + 1;
 
     let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {

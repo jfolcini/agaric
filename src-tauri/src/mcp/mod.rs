@@ -110,6 +110,18 @@ impl McpLifecycle {
     /// Wake every in-flight connection task so each observes the signal
     /// via `select!` and drops its stream. Safe to call with no active
     /// connections (no-op).
+    ///
+    /// **Edge-triggered semantics (L-120).** Internally this calls
+    /// [`tokio::sync::Notify::notify_waiters`], which only wakes tasks
+    /// already parked inside `Notify::notified().await`. Connections
+    /// that arrive *after* this call register a fresh waiter on entry
+    /// to `run_connection` and observe no permit — they run to
+    /// completion as if `disconnect_all` had never fired. This is the
+    /// intended one-shot kill-switch shape ("kick everything currently
+    /// in flight") and is distinct from a steady-state listener
+    /// shutdown — pair with [`shutdown`](McpLifecycle::shutdown) to
+    /// also stop the accept loop, otherwise new connections continue
+    /// to be accepted on the existing listener.
     pub fn disconnect_all(&self) {
         self.disconnect_signal.notify_waiters();
     }
