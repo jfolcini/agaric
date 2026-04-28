@@ -286,6 +286,28 @@ fn extract_meta_refresh_url(html: &str) -> Option<String> {
     })
 }
 
+/// Strip the userinfo (`user:pwd@`) prefix from a URL authority slice.
+///
+/// L-96: `extract_origin` / `extract_domain` previously preserved
+/// userinfo, surfacing the user's own credentials in cached
+/// `link_metadata.favicon_url` rows and tracing output. This helper
+/// removes them at the parse step before any caller can persist them.
+///
+/// The authority proper ends at the first `/`, `?`, or `#`. Userinfo,
+/// if present, is everything before the rightmost `@` in that
+/// authority slice — splitting on the path/query/fragment delimiters
+/// first ensures an `@` that lives in the path (e.g.
+/// `https://host/path@frag`) is **not** treated as userinfo.
+fn strip_userinfo(authority: &str) -> &str {
+    let authority_end = authority.find(['/', '?', '#']).unwrap_or(authority.len());
+    let auth_part = &authority[..authority_end];
+    if let Some(at_pos) = auth_part.rfind('@') {
+        &authority[at_pos + 1..]
+    } else {
+        authority
+    }
+}
+
 /// Extract origin (scheme + host + port) from a URL.
 pub(super) fn extract_origin(url: &str) -> Option<String> {
     // Find scheme
@@ -294,6 +316,9 @@ pub(super) fn extract_origin(url: &str) -> Option<String> {
     // Find end of host (first / or end of string)
     let host_end = rest.find('/').unwrap_or(rest.len());
     let host = &rest[..host_end];
+    // L-96: drop any `user:pwd@` so cached favicon URLs and traces
+    // never carry the user's credentials.
+    let host = strip_userinfo(host);
     if host.is_empty() {
         return None;
     }
@@ -306,6 +331,10 @@ pub(super) fn extract_domain(url: &str) -> Option<String> {
     let rest = &url[scheme_end + 3..];
     let host_end = rest.find('/').unwrap_or(rest.len());
     let host = &rest[..host_end];
+    // L-96: drop any `user:pwd@` before port-stripping so the rfind(':')
+    // lookup below cannot land inside the userinfo and so the returned
+    // domain never carries credentials.
+    let host = strip_userinfo(host);
     // Strip port if present
     let domain = if let Some(colon) = host.rfind(':') {
         // Check if everything after colon is digits (port)

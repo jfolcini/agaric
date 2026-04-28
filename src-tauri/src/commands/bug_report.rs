@@ -79,17 +79,56 @@ const MAX_ROLLED_AGE_DAYS: i64 = 7;
 /// dropping content.
 const MAX_LINE_BYTES: usize = 8 * 1024;
 
+/// L-54: cap on the total bug-report bundle size (sum of all redacted
+/// file outputs returned from [`read_logs_for_report_inner`]). 10 MiB
+/// matches GitHub's default issue-attachment limit and bounds the worst
+/// case `MAX_FILE_BYTES * (1 + MAX_ROLLED_AGE_DAYS)` (= 16 MiB if every
+/// daily log packs the per-file cap) to a value the user can actually
+/// upload. Files exceeding the cap are dropped oldest-first; a synthetic
+/// `[skipped … older logs — bundle exceeded N MB cap]` entry tells the
+/// user something was omitted instead of silently truncating.
+const MAX_BUNDLE_BYTES: usize = 10 * 1024 * 1024;
+
 /// Cap on the number of recent error/warn lines surfaced in
 /// [`collect_bug_report_metadata`]. Short enough to render cleanly in the
 /// dialog preview; long enough to capture a crash + a few surrounding hints.
 const RECENT_ERRORS_CAP: usize = 20;
+
+/// L-40: pin level detection to the tracing-subscriber default format
+/// configured in `lib.rs::run` (`fmt::layer().with_writer(non_blocking)
+/// .with_ansi(false)`). The disk format is:
+///
+/// ```text
+/// 2026-04-28T10:23:45.123456Z  ERROR agaric::module: failed to apply op
+/// 2026-04-28T10:23:46.234567Z  WARN  agaric::sync_files: ...
+/// ```
+///
+/// The level always appears within the first ~35 bytes (27-byte ISO-Z
+/// timestamp + a couple of separator spaces + the 4–5-char level).
+/// Bounding the substring search to the first 40 bytes prevents body
+/// content of the form `... contains ERROR somewhere in the message ...`
+/// on an INFO line from being misclassified. The previous unbounded
+/// `line.contains(" ERROR ") || line.contains(" WARN ")` produced false
+/// positives any time an INFO/DEBUG line's payload mentioned those words.
+///
+/// `regex` is a workspace dep (used by [`EMAIL_REGEX`] above), so a fully
+/// anchored ISO-Z regex would also work — but the prefix-bound check is
+/// cheaper, has no per-call regex overhead in this hot path (the helper
+/// is invoked per-line on the live `agaric.log` tail), and is permissive
+/// enough to also accept the `YYYY-MM-DD LEVEL ...` shape used by the
+/// in-file unit-test fixtures, avoiding churn in test data that exists
+/// purely to exercise this filter.
+fn is_error_or_warn_line(line: &str) -> bool {
+    let prefix = line.get(..40.min(line.len())).unwrap_or("");
+    prefix.contains(" ERROR ") || prefix.contains(" WARN ")
+}
 
 /// Pure helper: extract up to [`RECENT_ERRORS_CAP`] most-recent `ERROR` or
 /// `WARN` lines from an iterator of log lines. Preserves order.
 fn extract_recent_errors<'a, I: Iterator<Item = &'a str>>(lines: I) -> Vec<String> {
     let mut matches: Vec<String> = Vec::new();
     for line in lines {
-        if line.contains(" ERROR ") || line.contains(" WARN ") {
+        if is_error_or_warn_line(line) {
             matches.push(line.to_string());
         }
     }
@@ -406,8 +445,29 @@ pub fn read_logs_for_report_inner(
         entries.push((path, contents));
     }
 
-    // Sort so output is deterministic (today first, then reverse-chrono).
-    entries.sort_by(|a, b| a.0.file_name().cmp(&b.0.file_name()));
+    // L-54: sort newest-first so the bundle-size cap walk in
+    // [`apply_bundle_cap`] drops the OLDEST files when the running total
+    // exceeds [`MAX_BUNDLE_BYTES`]. `agaric.log` (today, no date suffix)
+    // is unconditionally newest; rolled `agaric.log.YYYY-MM-DD` files
+    // sort by descending date (newer date before older). This also
+    // matches the existing comment's "today first, then reverse-chrono"
+    // intent — the previous plain alphabetic sort accidentally produced
+    // chronological-ascending order on the dated suffixes (oldest dated
+    // first).
+    entries.sort_by(|a, b| {
+        let an = a.0.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        let bn = b.0.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        let a_today = an == "agaric.log";
+        let b_today = bn == "agaric.log";
+        match (a_today, b_today) {
+            (true, true) => std::cmp::Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            // Reverse-alphabetic on dated suffixes ≡ newer date first
+            // because the `YYYY-MM-DD` shape sorts naturally.
+            (false, false) => bn.cmp(an),
+        }
+    });
 
     let mut out = Vec::with_capacity(entries.len());
     for (path, contents) in entries {
@@ -436,7 +496,44 @@ pub fn read_logs_for_report_inner(
         });
     }
 
-    Ok(out)
+    Ok(apply_bundle_cap(out))
+}
+
+/// L-54: enforce the cumulative [`MAX_BUNDLE_BYTES`] cap on a list of
+/// already-built log entries. `entries` MUST be passed in newest-first
+/// order so that skipping when the running byte total would exceed the
+/// cap drops the OLDEST files first (preserving the most recent —
+/// usually most diagnostically valuable — content).
+///
+/// Returns the kept entries in the same order they were given, with a
+/// synthetic
+/// `[skipped N older logs — bundle exceeded M MB cap]` entry appended
+/// at the end when one or more files were dropped. The synthetic entry
+/// has empty `contents` so it occupies a single line in the bundle ZIP
+/// listing without contributing to its byte total.
+fn apply_bundle_cap(entries: Vec<LogFileEntry>) -> Vec<LogFileEntry> {
+    let mut kept: Vec<LogFileEntry> = Vec::with_capacity(entries.len());
+    let mut total_bytes: usize = 0;
+    let mut skipped_count: usize = 0;
+    for entry in entries {
+        let len = entry.contents.len();
+        if total_bytes.saturating_add(len) > MAX_BUNDLE_BYTES {
+            // We're newest-first, so this entry is older than every kept
+            // entry above; dropping it preserves the "newest stays" rule.
+            skipped_count += 1;
+            continue;
+        }
+        total_bytes += len;
+        kept.push(entry);
+    }
+    if skipped_count > 0 {
+        let cap_mb = MAX_BUNDLE_BYTES / (1024 * 1024);
+        kept.push(LogFileEntry {
+            name: format!("[skipped {skipped_count} older logs — bundle exceeded {cap_mb} MB cap]"),
+            contents: String::new(),
+        });
+    }
+    kept
 }
 
 /// H-9a — fetch the redaction allow-list inputs that live in SQLite.
@@ -571,6 +668,55 @@ mod tests {
         assert!(out[19].contains("error #29"));
         // Oldest kept is #10 (dropped the first 10).
         assert!(out[0].contains("error #10"));
+    }
+
+    // -- is_error_or_warn_line (L-40) ------------------------------------
+
+    /// L-40 — the helper must accept the on-disk format produced by
+    /// `tracing_subscriber::fmt::layer().with_writer(...).with_ansi(false)`
+    /// (the production sink configured in `lib.rs::run`). The format puts
+    /// an ISO-8601-Z timestamp followed by whitespace, then the level
+    /// (right-padded to 5 chars), then whitespace + target.
+    #[test]
+    fn is_error_or_warn_line_matches_actual_tracing_format() {
+        // ERROR: 5 chars, single separator space after.
+        assert!(is_error_or_warn_line(
+            "2026-04-28T10:23:45.123456Z  ERROR agaric::commands::blocks::crud: failed to apply op"
+        ));
+        // WARN: 4 chars, padded to 5 (one leading + one trailing space).
+        assert!(is_error_or_warn_line(
+            "2026-04-28T10:23:46.234567Z  WARN  agaric::sync_files: stale snapshot, retrying"
+        ));
+    }
+
+    /// L-40 — the previous unbounded `line.contains(" ERROR ")` produced
+    /// false positives whenever an INFO/DEBUG payload happened to mention
+    /// the word " ERROR " in the message body. Bounding the substring
+    /// search to the first 40 bytes (where the level always lives) means
+    /// such body matches no longer trigger.
+    #[test]
+    fn is_error_or_warn_line_rejects_body_match() {
+        let info_with_error_in_body =
+            "2026-04-28T10:23:45.123456Z  INFO  agaric::module: this contains ERROR somewhere in the message body but level is INFO";
+        assert!(
+            !is_error_or_warn_line(info_with_error_in_body),
+            "INFO line whose body mentions ERROR must NOT be classified as an error/warn line"
+        );
+
+        // Also guard against " WARN " appearing in a DEBUG body.
+        let debug_with_warn_in_body =
+            "2026-04-28T10:23:45.123456Z  DEBUG agaric::module: emitting WARN about future deprecation";
+        assert!(
+            !is_error_or_warn_line(debug_with_warn_in_body),
+            "DEBUG line whose body mentions WARN must NOT be classified as an error/warn line"
+        );
+    }
+
+    /// L-40 — defensive: the helper must not panic on an empty input and
+    /// must classify it as not-an-error.
+    #[test]
+    fn is_error_or_warn_line_handles_empty_input() {
+        assert!(!is_error_or_warn_line(""));
     }
 
     // -- collect_bug_report_metadata_inner --------------------------------
@@ -856,6 +1002,110 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].contents.contains(DEV));
         assert!(out[0].contents.contains(HOME));
+    }
+
+    // -- apply_bundle_cap (L-54) -----------------------------------------
+
+    /// L-54 — when the running total stays under [`MAX_BUNDLE_BYTES`],
+    /// every input entry must be preserved verbatim (same count, same
+    /// order) and NO synthetic `[skipped …]` marker is appended.
+    #[test]
+    fn bundle_within_cap_includes_all_files() {
+        // Four 1 KiB entries → 4 KiB total, well under the 10 MiB cap.
+        let entries: Vec<LogFileEntry> = (0..4)
+            .map(|i| LogFileEntry {
+                name: format!("agaric.log.2025-01-{:02}", 14 - i),
+                contents: "x".repeat(1024),
+            })
+            .collect();
+        let input_names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
+
+        let kept = apply_bundle_cap(entries);
+
+        assert_eq!(
+            kept.len(),
+            input_names.len(),
+            "all entries must be kept when total stays under MAX_BUNDLE_BYTES",
+        );
+        for (got, want) in kept.iter().zip(input_names.iter()) {
+            assert_eq!(&got.name, want, "kept entries must preserve input order");
+        }
+        assert!(
+            !kept.iter().any(|e| e.name.starts_with("[skipped")),
+            "no synthetic skip marker must be appended when nothing was dropped",
+        );
+    }
+
+    /// L-54 — when the running total exceeds [`MAX_BUNDLE_BYTES`] the
+    /// helper must drop the OLDEST entries (which, given the
+    /// newest-first iteration order documented on `apply_bundle_cap`,
+    /// means the entries APPENDED at the end of the input list) and
+    /// synthesize a `[skipped … older logs — bundle exceeded N MB cap]`
+    /// marker so the user knows something was omitted.
+    #[test]
+    fn bundle_over_cap_drops_oldest_and_synthesizes_marker() {
+        // Six 2-MiB entries → 12 MiB total, exceeding the 10 MiB cap.
+        // With strict `>` cap-check, exactly five entries (10 MiB)
+        // pass; the sixth is dropped.
+        let big = "x".repeat(usize::try_from(MAX_FILE_BYTES).unwrap_or(usize::MAX));
+        let entries: Vec<LogFileEntry> = (0..6)
+            .map(|i| LogFileEntry {
+                name: format!("entry-{i}"),
+                contents: big.clone(),
+            })
+            .collect();
+        let input_count = entries.len();
+
+        let kept = apply_bundle_cap(entries);
+
+        // At least one REAL entry was dropped — the marker entry does
+        // not count as a kept real entry.
+        let real_kept = kept
+            .iter()
+            .filter(|e| !e.name.starts_with("[skipped"))
+            .count();
+        assert!(
+            real_kept < input_count,
+            "real-entry count {real_kept} must be < input count {input_count} (some real entries dropped)",
+        );
+        // The synthetic marker must be present.
+        let marker_count = kept
+            .iter()
+            .filter(|e| e.name.starts_with("[skipped"))
+            .count();
+        assert_eq!(
+            marker_count,
+            1,
+            "exactly one [skipped …] marker must be appended, got: {:?}",
+            kept.iter().map(|e| &e.name).collect::<Vec<_>>(),
+        );
+        // The marker entry must reference the cap (in MiB units) so the
+        // user can interpret what "exceeded" means.
+        let marker = kept
+            .iter()
+            .find(|e| e.name.starts_with("[skipped"))
+            .unwrap();
+        let cap_mb = MAX_BUNDLE_BYTES / (1024 * 1024);
+        assert!(
+            marker.name.contains(&format!("{cap_mb} MB")),
+            "marker must reference the cap in MB units, got: {}",
+            marker.name,
+        );
+        // The marker contributes nothing to the bundle byte total — its
+        // contents are intentionally empty.
+        assert!(
+            marker.contents.is_empty(),
+            "marker contents must be empty; got {} bytes",
+            marker.contents.len(),
+        );
+        // The kept REAL entries must preserve newest-first order: the
+        // first entry of the input (newest) is still the first entry of
+        // the kept list, the last entry of the kept REAL block is the
+        // last entry that fit.
+        assert_eq!(
+            kept[0].name, "entry-0",
+            "newest entry must be preserved as the first kept entry"
+        );
     }
 
     // -- redact_line corner cases ----------------------------------------

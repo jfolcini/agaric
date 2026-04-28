@@ -51,6 +51,17 @@ const DEFAULT_PAGE_SIZE: i64 = 50;
 /// Maximum page size the client may request.
 const MAX_PAGE_SIZE: i64 = 200;
 
+/// Current cursor schema version (L-18).
+///
+/// The encoded JSON cursor carries a `version` field so that any future
+/// reordering or semantic change of the [`Cursor`] fields can reject stale
+/// cursors instead of silently decoding them under the new schema.
+///
+/// Bump this constant in the same commit that changes [`Cursor`]'s field
+/// layout / semantics.  Pre-versioning cursors (no `version` key in their
+/// JSON) decode as version 1 — see [`Cursor::decode`].
+const CURRENT_CURSOR_VERSION: u8 = 1;
+
 // ---------------------------------------------------------------------------
 // FEAT-3 Phase 2 — shared space-filter SQL fragment.
 // ---------------------------------------------------------------------------
@@ -192,20 +203,73 @@ pub struct PageResponse<T: specta::Type> {
 
 impl Cursor {
     /// Encode to opaque base64 representation.
+    ///
+    /// The encoded JSON includes a `version` key set to
+    /// [`CURRENT_CURSOR_VERSION`] so that future schema bumps can reject
+    /// stale cursors on decode (L-18).  The version is injected via a
+    /// `serde_json::Value` intermediate rather than a struct field so
+    /// that the many `Cursor { … }` literal call sites across the crate
+    /// (`tag_query`, `fts`, `commands`, `backlink`) remain unchanged —
+    /// versioning is an encode/decode concern, not part of the cursor's
+    /// in-memory shape.
     #[must_use = "encoded cursor string must be returned to the client"]
     pub fn encode(&self) -> Result<String, AppError> {
-        let json = serde_json::to_string(self)?;
+        let mut value = serde_json::to_value(self)?;
+        if let serde_json::Value::Object(ref mut map) = value {
+            map.insert(
+                "version".to_string(),
+                serde_json::Value::from(CURRENT_CURSOR_VERSION),
+            );
+        }
+        let json = serde_json::to_string(&value)?;
         Ok(URL_SAFE_NO_PAD.encode(json.as_bytes()))
     }
 
     /// Decode an opaque cursor string.
+    ///
+    /// Cursors emitted by [`Cursor::encode`] carry a `version` key.  This
+    /// function rejects any cursor whose version is not
+    /// [`CURRENT_CURSOR_VERSION`] with [`AppError::Validation`] so clients
+    /// re-paginate from page 1 instead of silently consuming a cursor that
+    /// was encoded against a different field layout (L-18).
+    ///
+    /// **Backwards compatibility:** pre-versioning cursors (no `version`
+    /// key in their JSON) are treated as version 1.  This is the desired
+    /// behaviour at the seating commit — any FUTURE bump of
+    /// [`CURRENT_CURSOR_VERSION`] will reject those legacy cursors.
     pub fn decode(s: &str) -> Result<Self, AppError> {
         let bytes = URL_SAFE_NO_PAD
             .decode(s)
             .map_err(|e| AppError::Validation(format!("invalid cursor: {e}")))?;
         let json = String::from_utf8(bytes)
             .map_err(|e| AppError::Validation(format!("invalid cursor UTF-8: {e}")))?;
-        serde_json::from_str(&json)
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|e| AppError::Validation(format!("invalid cursor JSON: {e}")))?;
+
+        // Read the version slot.  Missing → assume 1 (pre-versioning
+        // cursor).  Present-but-malformed → reject as invalid version.
+        let version = match value.get("version") {
+            None => CURRENT_CURSOR_VERSION,
+            Some(serde_json::Value::Number(n)) => n
+                .as_u64()
+                .and_then(|v| u8::try_from(v).ok())
+                .ok_or_else(|| AppError::Validation("cursor: invalid version field".to_string()))?,
+            Some(_) => {
+                return Err(AppError::Validation(
+                    "cursor: invalid version field".to_string(),
+                ));
+            }
+        };
+        if version != CURRENT_CURSOR_VERSION {
+            return Err(AppError::Validation(format!(
+                "cursor: unsupported version {version} (expected {CURRENT_CURSOR_VERSION})"
+            )));
+        }
+
+        // The `Cursor` struct does not declare a `version` field; serde
+        // silently ignores unknown keys (no `deny_unknown_fields`), so the
+        // value can be deserialised in place without stripping `version`.
+        serde_json::from_value(value)
             .map_err(|e| AppError::Validation(format!("invalid cursor JSON: {e}")))
     }
 

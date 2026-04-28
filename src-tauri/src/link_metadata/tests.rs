@@ -675,6 +675,108 @@ fn extract_domain_strips_port() {
     );
 }
 
+// L-96: `extract_origin` / `extract_domain` must drop `user:pwd@` so
+// cached favicon URLs and tracing output never carry credentials.
+
+#[test]
+fn extract_origin_strips_userinfo() {
+    assert_eq!(
+        extract_origin("https://user:pwd@host.com/page"),
+        Some("https://host.com".to_string()),
+        "userinfo must not appear in the returned origin"
+    );
+}
+
+#[test]
+fn extract_domain_strips_userinfo() {
+    assert_eq!(
+        extract_domain("https://user:pwd@host.com/page"),
+        Some("host.com".to_string()),
+        "userinfo must not appear in the returned domain"
+    );
+}
+
+#[test]
+fn extract_origin_handles_no_userinfo() {
+    assert_eq!(
+        extract_origin("https://host.com/page"),
+        Some("https://host.com".to_string()),
+        "regression: URLs without userinfo must round-trip unchanged"
+    );
+}
+
+#[test]
+fn extract_domain_handles_no_userinfo() {
+    assert_eq!(
+        extract_domain("https://host.com/page"),
+        Some("host.com".to_string()),
+        "regression: URLs without userinfo must round-trip unchanged"
+    );
+}
+
+#[test]
+fn extract_origin_handles_at_in_path() {
+    // The `@` is in the path component, not the authority — it must
+    // NOT be misread as a userinfo separator.
+    assert_eq!(
+        extract_origin("https://host.com/path@frag"),
+        Some("https://host.com".to_string()),
+        "an `@` after the first `/` belongs to the path, not the userinfo"
+    );
+}
+
+#[test]
+fn extract_origin_handles_user_only_no_password() {
+    assert_eq!(
+        extract_origin("https://user@host.com/"),
+        Some("https://host.com".to_string()),
+        "username-only userinfo must also be stripped"
+    );
+}
+
+#[test]
+fn extract_origin_preserves_port_when_stripping_userinfo() {
+    // Port must survive userinfo stripping, and the rfind(':') used
+    // to locate the port colon must not land inside the userinfo.
+    assert_eq!(
+        extract_origin("https://user:pwd@host.com:8443/page"),
+        Some("https://host.com:8443".to_string()),
+        "port must be preserved when userinfo is stripped"
+    );
+}
+
+#[test]
+fn extract_domain_preserves_no_port_when_stripping_userinfo() {
+    // After userinfo strip, the port-strip block must still see
+    // a clean `host:port` and produce a port-free domain.
+    assert_eq!(
+        extract_domain("https://user:pwd@host.com:8443/page"),
+        Some("host.com".to_string()),
+        "userinfo + port must both be stripped from the domain"
+    );
+}
+
+#[test]
+fn extract_origin_handles_multiple_at_in_userinfo() {
+    // RFC 3986 disallows unencoded `@` in userinfo, but some lenient
+    // parsers / pasted URLs include them. `rfind('@')` must select the
+    // rightmost `@` so the host is not truncated.
+    assert_eq!(
+        extract_origin("https://us@er:pwd@host.com/"),
+        Some("https://host.com".to_string()),
+        "rightmost `@` in the authority delimits userinfo from host"
+    );
+}
+
+#[test]
+fn extract_origin_handles_empty_userinfo() {
+    assert_eq!(
+        extract_origin("https://@host.com/"),
+        Some("https://host.com".to_string()),
+        "an empty userinfo (leading `@`) must still strip cleanly"
+    );
+}
+
 #[test]
 fn resolve_url_handles_all_forms() {
     assert_eq!(
