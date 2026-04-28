@@ -118,9 +118,9 @@ pub async fn upsert_peer_ref_with_cert(
 /// nothing this session" sentinel. Two call sites use it:
 ///
 /// 1. The per-session [`crate::sync_protocol::orchestrator`] propagates
-///    the empty-string default when its `pending_ops_to_send` was empty
+///    the empty-string default when no ops were sent this session
 ///    (typical for an initiator that has no new ops since the previous
-///    sync) — see the `pending_ops_to_send.last().…unwrap_or_default()`
+///    sync) — see the `last_sent_hash.clone().unwrap_or_default()`
 ///    expression in `handle_message(SyncComplete)`.
 /// 2. [`crate::sync_daemon::snapshot_transfer::try_receive_snapshot_catchup`]
 ///    explicitly passes `""` after applying a snapshot, because the

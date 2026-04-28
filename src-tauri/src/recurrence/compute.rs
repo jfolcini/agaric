@@ -678,6 +678,7 @@ mod tests_h17_m77 {
             None,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -886,6 +887,7 @@ mod tests_l99_l100 {
             None,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -924,6 +926,7 @@ mod tests_l99_l100 {
             "repeat-seq".into(),
             None,
             Some(3.0),
+            None,
             None,
             None,
         )

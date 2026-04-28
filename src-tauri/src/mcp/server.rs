@@ -291,23 +291,17 @@ fn handle_tools_list<R: ToolRegistry>(registry: &R) -> Result<Value, (i64, Strin
 ///   [`JSONRPC_INVALID_PARAMS`] (−32602).
 /// - Everything else → [`JSONRPC_INTERNAL_ERROR`] (−32603).
 ///
-/// **FEAT-4j note.** All `AppError` variants map onto JSON-RPC error
-/// codes at the envelope level — **not** onto the `CallToolResult
-/// { isError: true }` shape. The rationale:
-///
-/// - `NotFound` / `Validation` / `InvalidOperation` are "the tool never
-///   ran" semantics: the arg parse failed, the referenced block did
-///   not exist, etc. JSON-RPC errors model this well.
-/// - `Database` / `Io` / `Channel` / etc. are infrastructure failures
-///   above the tool layer. `-32603 internal` keeps FEAT-4c's wire
-///   contract stable and preserves the existing error-code routing
-///   that clients already rely on.
-/// - The v1 read-only tools never produce a "tool ran and reported a
-///   domain-level failure" (they're all reads). FEAT-4h RW tools will
-///   need to wrap their domain-level failures in a `CallToolResult`
-///   envelope with `isError: true` directly at the call site — this
-///   function keeps the JSON-RPC-error path for the "tool never ran"
-///   cases.
+/// **Design choice (L-116, closed).** JSON-RPC errors are the single
+/// source of truth for tool failures: every `AppError` variant
+/// surfaces via this function, and we deliberately do **not** emit the
+/// MCP `CallToolResult { isError: true }` envelope. No current
+/// `AppError` variant fits the "tool ran and reported a domain-level
+/// failure" semantics that `isError: true` is meant for — `NotFound`
+/// / `Validation` / `InvalidOperation` are "the tool never ran" cases,
+/// and `Database` / `Io` / `Channel` / etc. are infrastructure
+/// failures above the tool layer. Mapping everything to JSON-RPC
+/// codes keeps FEAT-4c's wire contract stable and preserves the
+/// error-code routing that clients already rely on.
 fn app_error_to_jsonrpc(err: &AppError) -> (i64, String) {
     let code = match err {
         AppError::NotFound(_) => JSONRPC_RESOURCE_NOT_FOUND,

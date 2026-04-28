@@ -56,7 +56,6 @@ use super::types::*;
 use super::OP_BATCH_SIZE;
 use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::op_log::OpRecord;
 use crate::peer_refs;
 
 // ---------------------------------------------------------------------------
@@ -118,7 +117,19 @@ pub struct SyncOrchestrator {
     materializer: Materializer,
     pub(crate) state: SyncState,
     session: SyncSession,
-    pending_ops_to_send: Vec<OpRecord>,
+    /// Hash of the last [`crate::op_log::OpRecord`] handed to the
+    /// remote in this session, used at `SyncComplete` to update
+    /// `peer_refs.last_sent_hash`. `None` when we sent nothing
+    /// (typical for an initiator that already shipped all its ops on a
+    /// previous sync); the read site treats `None` as the empty-string
+    /// sentinel documented on [`peer_refs::update_on_sync`].
+    ///
+    /// L-70: previously we kept the full `Vec<OpRecord>` of outgoing
+    /// ops (`pending_ops_to_send`) just so `SyncComplete` could read
+    /// the last entry's hash — doubling peak memory on bulk sync
+    /// alongside `pending_op_transfers`. Storing only the last hash
+    /// preserves the post-condition without the buffer.
+    last_sent_hash: Option<String>,
     /// Pending [`OpTransfer`]s queued for chunked streaming.
     ///
     /// Populated when entering [`SyncState::StreamingOps`]; drained in
@@ -146,7 +157,7 @@ impl SyncOrchestrator {
             device_id,
             materializer,
             state: SyncState::Idle,
-            pending_ops_to_send: Vec::new(),
+            last_sent_hash: None,
             pending_op_transfers: VecDeque::new(),
             received_ops: Vec::new(),
             remote_device_id: None,
@@ -334,10 +345,14 @@ impl SyncOrchestrator {
 
                 // Compute and send ops the remote is missing
                 let ops = compute_ops_to_send(&self.pool, &heads).await?;
+                // L-70: capture only the last op's hash for the
+                // `SyncComplete` bookkeeping; the full
+                // `Vec<OpTransfer>` lives in `pending_op_transfers`
+                // for retry/ack and is drained by `next_message`.
+                self.last_sent_hash = ops.last().map(|r| r.hash.clone());
                 let all_transfers: VecDeque<OpTransfer> =
-                    ops.iter().cloned().map(OpTransfer::from).collect();
+                    ops.into_iter().map(OpTransfer::from).collect();
                 self.session.ops_sent = all_transfers.len();
-                self.pending_ops_to_send = ops;
 
                 // Chunk into batches of OP_BATCH_SIZE.  The first batch is
                 // returned directly; remaining ops are stored in
@@ -500,11 +515,13 @@ impl SyncOrchestrator {
                         }
                     },
                 };
-                let last_sent_hash = self
-                    .pending_ops_to_send
-                    .last()
-                    .map(|r| r.hash.clone())
-                    .unwrap_or_default();
+                // L-70: `last_sent_hash` was captured from the last
+                // `OpRecord` handed to the remote when entering
+                // `StreamingOps`; `unwrap_or_default()` reproduces the
+                // empty-string sentinel that
+                // `peer_refs::update_on_sync` expects when no ops were
+                // sent this session.
+                let last_sent_hash = self.last_sent_hash.clone().unwrap_or_default();
 
                 // Ensure the peer row exists, then record the sync
                 peer_refs::upsert_peer_ref(&self.pool, &peer_id).await?;

@@ -33,6 +33,7 @@ async fn set_property_writes_op_log_entry() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -81,6 +82,7 @@ async fn delete_property_writes_op_log_entry() {
         block.id.clone(),
         "status".into(),
         Some("active".into()),
+        None,
         None,
         None,
         None,
@@ -139,6 +141,7 @@ async fn delete_property_on_deleted_block_returns_not_found() {
         block.id.clone(),
         "status".into(),
         Some("active".into()),
+        None,
         None,
         None,
         None,
@@ -228,6 +231,7 @@ async fn get_batch_properties_happy_path() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -240,6 +244,7 @@ async fn get_batch_properties_happy_path() {
         b2.id.clone(),
         "status".into(),
         Some("done".into()),
+        None,
         None,
         None,
         None,
@@ -297,6 +302,7 @@ async fn get_batch_properties_does_not_affect_op_log() {
         block.id.clone(),
         "key1".into(),
         Some("val".into()),
+        None,
         None,
         None,
         None,
@@ -511,6 +517,7 @@ async fn query_by_property_happy_path() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -526,6 +533,7 @@ async fn query_by_property_happy_path() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -538,6 +546,7 @@ async fn query_by_property_happy_path() {
         b3.id.clone(),
         "priority".into(),
         Some("1".into()),
+        None,
         None,
         None,
         None,

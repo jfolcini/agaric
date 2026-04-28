@@ -294,11 +294,11 @@ pub(crate) async fn daemon_loop(
                 discovered.retain(|_, (_, last_seen)| *last_seen > stale_threshold);
 
                 let refs = list_peer_refs_or_empty(&pool, "periodic_resync").await;
-                let peer_tuples: Vec<(String, Option<String>)> = refs
-                    .iter()
-                    .map(|p| (p.peer_id.clone(), p.synced_at.clone()))
-                    .collect();
-                let due = scheduler.peers_due_for_resync(&peer_tuples);
+                // L-76: pass `&refs` directly; the scheduler projects
+                // `peer_id` / `synced_at` itself, so we no longer
+                // clone every paired peer's id+timestamp on every
+                // 30 s tick.
+                let due = scheduler.peers_due_for_resync(&refs);
                 let refs_by_id: std::collections::HashMap<&str, &peer_refs::PeerRef> =
                     refs.iter().map(|r| (r.peer_id.as_str(), r)).collect();
                 for pid in due {

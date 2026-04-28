@@ -278,10 +278,23 @@ impl SyncConnection {
 
     // -- private helpers --------------------------------------------------
 
-    /// Timeout for waiting on the next WebSocket message.  If the peer goes
-    /// silent (e.g. WiFi drop without TCP RST, peer crash), the sync session
+    /// Timeout for a single WebSocket recv. If the peer goes silent
+    /// (e.g. WiFi drop without TCP RST, peer crash), the sync session
     /// will fail rather than hang indefinitely.
-    const RECV_TIMEOUT: Duration = Duration::from_secs(30);
+    ///
+    /// Relationship to the per-message budget: the orchestrator and
+    /// server message loops wrap each `handle_message` call in a
+    /// `HANDSHAKE_TIMEOUT` (120 s) outer guard (see `sync_constants`).
+    /// This per-recv timeout is kept strictly larger than the outer
+    /// budget so the outer guard always fires first and produces a more
+    /// informative error (naming the message that timed out), while
+    /// still bounding the recv against a totally hung peer. Lowering
+    /// this below `HANDSHAKE_TIMEOUT` would cause the inner recv to
+    /// fire on slow-but-progressing transfers (e.g. a 10 MB op-batch
+    /// over a 1 Mbps link is ~80 s of wall-clock) before the outer
+    /// guard ever has a chance to engage. The tripwire test
+    /// `recv_timeout_exceeds_handshake_timeout` locks this invariant.
+    const RECV_TIMEOUT: Duration = Duration::from_secs(180);
 
     /// Maximum allowed WebSocket message size (10 MB).  Only paired devices
     /// on the user's own LAN can connect (TLS cert pinning + passphrase),
@@ -382,6 +395,38 @@ pub async fn test_connection_pair() -> (SyncConnection, SyncConnection) {
             peer_cert_cn_val: None,
         },
     )
+}
+
+#[cfg(test)]
+mod recv_timeout_invariant {
+    use super::SyncConnection;
+    use crate::sync_constants::HANDSHAKE_TIMEOUT;
+    use std::time::Duration;
+
+    /// Tripwire (L-64): the per-recv timeout must stay strictly larger
+    /// than the per-message `HANDSHAKE_TIMEOUT` outer budget so the
+    /// outer guard fires first and produces a more informative error.
+    /// Lowering `RECV_TIMEOUT` below `HANDSHAKE_TIMEOUT` would cause
+    /// the inner recv to fire on slow-but-progressing transfers
+    /// (e.g. a 10 MB op-batch over a 1 Mbps link is ~80 s of
+    /// wall-clock) before the outer guard ever engages. See the
+    /// doc-comment on `SyncConnection::RECV_TIMEOUT`.
+    #[test]
+    fn recv_timeout_exceeds_handshake_timeout() {
+        assert!(
+            SyncConnection::RECV_TIMEOUT > Duration::from_secs(120),
+            "RECV_TIMEOUT ({:?}) must be strictly greater than 120s so the outer \
+             HANDSHAKE_TIMEOUT guard ({:?}) fires first on slow-but-progressing transfers",
+            SyncConnection::RECV_TIMEOUT,
+            HANDSHAKE_TIMEOUT,
+        );
+        assert!(
+            SyncConnection::RECV_TIMEOUT > HANDSHAKE_TIMEOUT,
+            "RECV_TIMEOUT ({:?}) must exceed HANDSHAKE_TIMEOUT ({:?})",
+            SyncConnection::RECV_TIMEOUT,
+            HANDSHAKE_TIMEOUT,
+        );
+    }
 }
 
 #[cfg(test)]

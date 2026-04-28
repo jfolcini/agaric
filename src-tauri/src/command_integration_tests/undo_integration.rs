@@ -192,6 +192,7 @@ async fn undo_property_change_restores_prior_value() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -205,6 +206,7 @@ async fn undo_property_change_restores_prior_value() {
         child.id.clone(),
         "importance".into(),
         Some("high".into()),
+        None,
         None,
         None,
         None,

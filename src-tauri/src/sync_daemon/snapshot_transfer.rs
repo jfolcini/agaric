@@ -240,8 +240,8 @@ pub(crate) async fn try_offer_snapshot_catchup(
 
     // Await the initiator's decision. Reuse the orchestrator's 120 s
     // timeout-by-receive-cycle semantics: the underlying recv has its
-    // own 30 s guard (SyncConnection::RECV_TIMEOUT), which is enough
-    // for a peer to surface an accept/reject decision.
+    // own guard (SyncConnection::RECV_TIMEOUT), kept strictly larger
+    // than the 120 s outer budget so the outer guard fires first.
     let reply: SyncMessage = conn.recv_json().await?;
     match reply {
         SyncMessage::SnapshotAccept => {

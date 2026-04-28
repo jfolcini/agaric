@@ -223,6 +223,23 @@ async fn rebuild_agenda_cache_split_impl(
 ) -> Result<u64, AppError> {
     // Read phase: snapshot-isolated transaction on the read pool so both
     // queries (desired state + current cache) see a consistent view.
+    //
+    // **TOCTOU window (L-25).** Unlike `rebuild_agenda_cache_impl` —
+    // which holds a single tx across read+write on one pool — the split
+    // variant intentionally drops `read_tx` (line ~250) before opening
+    // the write tx on `write_pool`. Between drop and begin, another
+    // writer may mutate `agenda_cache` or `blocks`, so the diff applied
+    // below may be stale relative to the live state at write time.
+    //
+    // This is the documented stale-while-revalidate semantics of the
+    // background "rebuild" path (see AGENTS.md "Performance Conventions
+    // / Split read/write pool pattern"): rebuilds are eventually
+    // consistent. The next rebuild fixes any churn from this window —
+    // worst-case the cache flickers an insert+delete on a row another
+    // writer just touched, never a correctness violation. Do not
+    // "tighten" this without also reading the architectural rationale
+    // for the split-pool pattern; lifting the read into the write tx
+    // would defeat the writer-lock-hold-time win the split exists for.
     let mut read_tx = read_pool.begin().await?;
 
     // Step 1: Compute desired state from the same 4 UNION ALL sources.

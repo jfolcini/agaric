@@ -32,12 +32,16 @@
 //!
 //! # Cap enforcement
 //!
-//! Two soft caps are enforced at the tool boundary:
+//! Two caps are enforced at the tool boundary:
 //!
 //! - **Result count:** `search` is capped at [`SEARCH_RESULT_CAP`] (50),
-//!   list-style tools at [`LIST_RESULT_CAP`] (100). `search` passes the cap
-//!   through [`PageRequest::new`]'s clamp while list tools pre-clamp the
-//!   caller's `limit`.
+//!   list-style tools at [`LIST_RESULT_CAP`] (100), `get_agenda` at
+//!   [`AGENDA_RESULT_CAP`] (500). L-119: a `limit` outside `[1, cap]`
+//!   is **rejected** as [`AppError::Validation`] (→ JSON-RPC `-32602
+//!   invalid params`) rather than silently clamped — matching the
+//!   strict `serde(deny_unknown_fields)` posture used elsewhere on
+//!   the MCP boundary. Omitting `limit` keeps the per-tool default
+//!   (e.g. `search` falls back to [`SEARCH_RESULT_CAP`]).
 //! - **Snippet length:** `search` truncates each `BlockRow.content` to
 //!   [`SEARCH_SNIPPET_CAP`] Unicode scalars (chars) before returning it —
 //!   agents that want the full content call `get_block` on the returned
@@ -91,8 +95,11 @@ pub use crate::commands::MCP_PAGE_LIMIT_CAP as LIST_RESULT_CAP;
 /// (every codepoint a four-byte emoji).
 pub const SEARCH_SNIPPET_CAP: usize = 512;
 
-/// Cap for `get_agenda`'s `limit` — matches the ceiling baked into
-/// [`list_projected_agenda_inner`] so we do not need a tool-layer clamp.
+/// Cap for `get_agenda`'s `limit` — advertised in the tool schema and
+/// enforced strictly at the tool boundary (L-119): out-of-range values
+/// surface as [`AppError::Validation`]. The matching ceiling baked
+/// into [`list_projected_agenda_inner`] remains as a defense-in-depth
+/// backstop for any non-MCP caller.
 pub const AGENDA_RESULT_CAP: i64 = 500;
 
 // ---------------------------------------------------------------------------
@@ -509,23 +516,43 @@ fn tool_desc_journal_for_date() -> ToolDescription {
 // ---------------------------------------------------------------------------
 // Handler implementations
 //
-// Each handler: (1) parse args, (2) clamp limits, (3) delegate to `*_inner`,
+// Each handler: (1) parse args, (2) validate `limit` against the schema's
+// `[1, cap]` advertised range (L-119), (3) delegate to `*_inner`,
 // (4) serialise result to `serde_json::Value`. Errors from `*_inner`
 // propagate as `AppError` — the server translates them to JSON-RPC codes
 // (`-32001` for `NotFound`, `-32602` for `Validation`/`InvalidOperation`,
 // `-32603` otherwise).
 // ---------------------------------------------------------------------------
 
+/// Reject `limit` values outside the documented `[1, cap]` range with
+/// an [`AppError::Validation`] (L-119). The dispatcher then surfaces
+/// it as JSON-RPC `-32602 invalid params` via `app_error_to_jsonrpc`,
+/// matching the strict `serde(deny_unknown_fields)` posture used
+/// elsewhere on the MCP boundary. Silent clamping previously hid
+/// out-of-range typos and let agents request pages that quietly
+/// exceeded the documented cap. Returns the value unchanged so the
+/// caller can pass it straight through to `*_inner`.
+fn validate_limit(tool: &str, limit: Option<i64>, cap: i64) -> Result<Option<i64>, AppError> {
+    if let Some(l) = limit {
+        if !(1..=cap).contains(&l) {
+            return Err(AppError::Validation(format!(
+                "{tool}: limit must be in [1, {cap}], got {l}"
+            )));
+        }
+    }
+    Ok(limit)
+}
+
 async fn handle_list_pages(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListPagesArgs = parse_args(TOOL_LIST_PAGES, args)?;
-    let limit = args.limit.map(|l| l.clamp(1, LIST_RESULT_CAP));
+    let limit = validate_limit(TOOL_LIST_PAGES, args.limit, LIST_RESULT_CAP)?;
     let resp = list_pages_inner(pool, args.cursor, limit).await?;
     to_tool_result(&resp)
 }
 
 async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetPageArgs = parse_args(TOOL_GET_PAGE, args)?;
-    let limit = args.limit.map(|l| l.clamp(1, LIST_RESULT_CAP));
+    let limit = validate_limit(TOOL_GET_PAGE, args.limit, LIST_RESULT_CAP)?;
     // MAINT-150 (g): the FEAT-3 Phase 7 space-membership lookup lives
     // inside `get_page_unscoped_inner` so this module stays a thin
     // wrapper around `*_inner`. MCP agents are intentionally unscoped
@@ -538,13 +565,11 @@ async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppErr
 
 async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: SearchArgs = parse_args(TOOL_SEARCH, args)?;
-    // Hard-cap at SEARCH_RESULT_CAP regardless of what the caller asked
-    // for. PageRequest::new would otherwise clamp to MAX_PAGE_SIZE=200.
-    let limit = Some(
-        args.limit
-            .unwrap_or(SEARCH_RESULT_CAP)
-            .clamp(1, SEARCH_RESULT_CAP),
-    );
+    // L-119: reject out-of-range explicitly; default to SEARCH_RESULT_CAP
+    // when the caller omits `limit` so PageRequest::new does not fall
+    // back to MAX_PAGE_SIZE=200.
+    let validated = validate_limit(TOOL_SEARCH, args.limit, SEARCH_RESULT_CAP)?;
+    let limit = Some(validated.unwrap_or(SEARCH_RESULT_CAP));
     let mut resp = search_blocks_inner(
         pool,
         args.query,
@@ -578,7 +603,7 @@ async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppEr
 
 async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListBacklinksArgs = parse_args(TOOL_LIST_BACKLINKS, args)?;
-    let limit = args.limit.map(|l| l.clamp(1, LIST_RESULT_CAP));
+    let limit = validate_limit(TOOL_LIST_BACKLINKS, args.limit, LIST_RESULT_CAP)?;
     let resp =
         list_backlinks_grouped_inner(pool, args.block_id, None, None, args.cursor, limit).await?;
     to_tool_result(&resp)
@@ -586,7 +611,7 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
 
 async fn handle_list_tags(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListTagsArgs = parse_args(TOOL_LIST_TAGS, args)?;
-    let limit = args.limit.map(|l| l.clamp(1, LIST_RESULT_CAP));
+    let limit = validate_limit(TOOL_LIST_TAGS, args.limit, LIST_RESULT_CAP)?;
     let resp = list_tags_inner(pool, limit).await?;
     to_tool_result(&resp)
 }
@@ -601,8 +626,8 @@ async fn handle_list_property_defs(pool: &SqlitePool, args: Value) -> Result<Val
 
 async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetAgendaArgs = parse_args(TOOL_GET_AGENDA, args)?;
-    let resp =
-        list_projected_agenda_inner(pool, args.start_date, args.end_date, args.limit).await?;
+    let limit = validate_limit(TOOL_GET_AGENDA, args.limit, AGENDA_RESULT_CAP)?;
+    let resp = list_projected_agenda_inner(pool, args.start_date, args.end_date, limit).await?;
     to_tool_result(&resp)
 }
 
@@ -1084,41 +1109,93 @@ mod tests {
         assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn search_enforces_result_cap() {
-        // Insert 55 matching blocks; request 100 — cap trims to 50.
-        let (tools, mat, _dir) = mk_tools().await;
-        for i in 0..55 {
-            create_block_inner(
-                &tools.pool,
-                DEV,
-                &mat,
-                "content".into(),
-                format!("unique{i:03}"),
-                None,
-                Some(i as i64 + 1),
-            )
-            .await
-            .unwrap();
-        }
-        settle(&mat).await;
+    // -------------------------------------------------------------------
+    // L-119: explicit `limit` validation (rejects out-of-range values
+    // instead of silently clamping). Six tools advertise a min/max in
+    // their input schema; cover them parametrically.
+    // -------------------------------------------------------------------
 
-        let result = tools
-            .call_tool(
-                "search",
-                json!({"query": "unique", "limit": 100}),
-                &test_ctx(),
-            )
-            .await
-            .expect("happy path");
-        let items = result["items"].as_array().expect("items");
-        let cap = usize::try_from(SEARCH_RESULT_CAP).unwrap_or(usize::MAX);
-        assert!(
-            items.len() <= cap,
-            "server must clamp even when caller requests limit > {}: got {}",
-            SEARCH_RESULT_CAP,
-            items.len(),
-        );
+    /// Parametric expectations for every tool that gates `limit`
+    /// against an advertised `[1, cap]` range. `base_args` carries the
+    /// rest of each tool's required fields; the test merges a
+    /// `"limit"` field in.
+    fn limit_validation_cases() -> Vec<(&'static str, i64, Value)> {
+        vec![
+            (TOOL_LIST_PAGES, LIST_RESULT_CAP, json!({})),
+            // page_id need not exist — `validate_limit` runs before
+            // the inner lookup, so out-of-range cases fire before any
+            // NotFound is possible.
+            (TOOL_GET_PAGE, LIST_RESULT_CAP, json!({"page_id": "ANY"})),
+            (TOOL_SEARCH, SEARCH_RESULT_CAP, json!({"query": "needle"})),
+            (
+                TOOL_LIST_BACKLINKS,
+                LIST_RESULT_CAP,
+                json!({"block_id": "ANY"}),
+            ),
+            (TOOL_LIST_TAGS, LIST_RESULT_CAP, json!({})),
+            (
+                TOOL_GET_AGENDA,
+                AGENDA_RESULT_CAP,
+                json!({"start_date": "2025-01-01", "end_date": "2025-01-02"}),
+            ),
+        ]
+    }
+
+    fn args_with_limit(base: &Value, limit: i64) -> Value {
+        let mut obj = base.as_object().expect("base_args is an object").clone();
+        obj.insert("limit".into(), json!(limit));
+        Value::Object(obj)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn limit_validation_rejects_zero_and_above_cap() {
+        let (tools, _mat, _dir) = mk_tools().await;
+        for (tool, cap, base_args) in limit_validation_cases() {
+            for bad in [0i64, cap + 1] {
+                let args = args_with_limit(&base_args, bad);
+                let result = tools.call_tool(tool, args, &test_ctx()).await;
+                match result {
+                    Err(AppError::Validation(msg)) => {
+                        assert!(
+                            msg.contains(tool),
+                            "{tool}: error message must name the tool — got {msg:?}",
+                        );
+                        assert!(
+                            msg.contains(&cap.to_string()),
+                            "{tool}: error message must name the cap {cap} — got {msg:?}",
+                        );
+                        assert!(
+                            msg.contains(&bad.to_string()),
+                            "{tool}: error message must echo the offending value {bad} — got {msg:?}",
+                        );
+                    }
+                    other => panic!(
+                        "{tool}: limit={bad} (cap={cap}) must return AppError::Validation, got {other:?}",
+                    ),
+                }
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn limit_validation_accepts_boundary() {
+        let (tools, _mat, _dir) = mk_tools().await;
+        for (tool, cap, base_args) in limit_validation_cases() {
+            let args = args_with_limit(&base_args, cap);
+            let result = tools.call_tool(tool, args, &test_ctx()).await;
+            // Boundary value must NOT trip the L-119 validation. The
+            // inner handler may still legitimately surface another
+            // error (e.g. NotFound when `page_id`/`block_id` is a
+            // placeholder, or a different Validation for an invalid
+            // ULID) — only the L-119 message pattern is the regression
+            // signal here.
+            if let Err(AppError::Validation(msg)) = &result {
+                assert!(
+                    !msg.contains("limit must be in"),
+                    "{tool}: limit={cap} (boundary) tripped L-119 validation: {msg}",
+                );
+            }
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
