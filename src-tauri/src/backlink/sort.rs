@@ -7,6 +7,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use super::types::{BacklinkSort, SortDir};
+use super::SMALL_IN_LIMIT;
 use crate::error::AppError;
 
 /// Sort a set of block IDs according to the given sort mode.
@@ -109,13 +110,13 @@ where
 // ---------------------------------------------------------------------------
 
 /// Fetch text property values for a set of block IDs.
-/// Uses bind-parameter IN clause for ≤500 IDs, `json_each` for larger sets.
+/// Uses bind-parameter IN clause for ≤`SMALL_IN_LIMIT` IDs, `json_each` for larger sets.
 async fn fetch_text_props_for_ids(
     pool: &SqlitePool,
     key: &str,
     ids: &[&str],
 ) -> Result<HashMap<String, Option<String>>, AppError> {
-    if ids.len() <= 500 {
+    if ids.len() <= SMALL_IN_LIMIT {
         let placeholders: String = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()
             .join(",");
@@ -145,13 +146,13 @@ async fn fetch_text_props_for_ids(
 }
 
 /// Fetch numeric property values for a set of block IDs.
-/// Uses bind-parameter IN clause for ≤500 IDs, `json_each` for larger sets.
+/// Uses bind-parameter IN clause for ≤`SMALL_IN_LIMIT` IDs, `json_each` for larger sets.
 async fn fetch_num_props_for_ids(
     pool: &SqlitePool,
     key: &str,
     ids: &[&str],
 ) -> Result<HashMap<String, Option<f64>>, AppError> {
-    if ids.len() <= 500 {
+    if ids.len() <= SMALL_IN_LIMIT {
         let placeholders: String = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()
             .join(",");
@@ -181,13 +182,13 @@ async fn fetch_num_props_for_ids(
 }
 
 /// Fetch date property values for a set of block IDs.
-/// Uses bind-parameter IN clause for ≤500 IDs, `json_each` for larger sets.
+/// Uses bind-parameter IN clause for ≤`SMALL_IN_LIMIT` IDs, `json_each` for larger sets.
 async fn fetch_date_props_for_ids(
     pool: &SqlitePool,
     key: &str,
     ids: &[&str],
 ) -> Result<HashMap<String, Option<String>>, AppError> {
-    if ids.len() <= 500 {
+    if ids.len() <= SMALL_IN_LIMIT {
         let placeholders: String = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()
             .join(",");

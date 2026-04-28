@@ -51,6 +51,30 @@ pub mod word_diff;
 /// Every timestamp stored in the database should go through this helper so
 /// that lexicographic comparisons (e.g. op-log compaction cutoff) are
 /// consistent.  See REVIEW-LATER item #48 for context.
+///
+/// # Lex-monotonic `Z`-suffix invariant (L-98)
+///
+/// The `Z` suffix is **load-bearing**, not cosmetic. Several reverse-op
+/// "find prior op" queries
+/// (`reverse::block_ops::find_prior_text` / `find_prior_position`,
+/// `reverse::property_ops::find_prior_property`,
+/// `reverse::attachment_ops::reverse_delete_attachment`) compare
+/// `op_log.created_at` lexicographically:
+///
+/// ```sql
+/// WHERE created_at < ?2 OR (created_at = ?2 AND seq < ?3)
+/// ORDER BY created_at DESC, seq DESC
+/// ```
+///
+/// This is correct **only** because every timestamp produced by this
+/// helper has the same `YYYY-MM-DDTHH:MM:SS.sssZ` shape — fixed-width
+/// UTC with a literal `Z`. A future ingest path that wrote
+/// `+00:00`-suffixed timestamps would break the lex-monotonic
+/// assumption (mixing `Z` and `+00:00` sorts incorrectly even though
+/// they encode the same instant). All op-log write paths must therefore
+/// route timestamps through `now_rfc3339()`; `op_log::append_local_op_in_tx`
+/// and `op_log::append_local_op_at` carry a `debug_assert!` enforcing
+/// the `Z` suffix at write time.
 pub fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
@@ -1616,5 +1640,61 @@ mod log_or_zero_tests {
     fn log_or_zero_returns_zero_on_err() {
         let err = sqlx::Error::PoolTimedOut;
         assert_eq!(log_or_zero(Err(err), "test_ctx"), 0);
+    }
+}
+
+// L-98: pin down the lex-monotonic `Z`-suffix invariant that several
+// reverse-op queries on `op_log.created_at` rely on. See the
+// doc-comment on `now_rfc3339` for the full invariant; see the
+// `debug_assert!`s in `op_log::append_local_op_in_tx` /
+// `append_local_op_at` for the runtime enforcement.
+#[cfg(test)]
+mod now_rfc3339_tests {
+    use super::now_rfc3339;
+
+    /// Two consecutive `now_rfc3339()` calls must:
+    ///   1. Both end with `Z` — the suffix is what makes
+    ///      `op_log.created_at` lex-monotonic. Production code paths
+    ///      under `reverse::block_ops`, `reverse::property_ops`, and
+    ///      `reverse::attachment_ops` compare timestamps with
+    ///      `created_at < ?` and `ORDER BY created_at DESC`. That is
+    ///      only correct when every value shares the same fixed-width
+    ///      `…Z` shape — a future ingest path that introduced
+    ///      `+00:00`-suffixed timestamps would silently break "find
+    ///      prior op" lookups even though both encode the same instant.
+    ///   2. Sort lex-monotonically as time advances — `t1 <= t2`
+    ///      lexicographically when `t1` was sampled before `t2`. This
+    ///      only holds because chrono produces a fixed-width
+    ///      `YYYY-MM-DDTHH:MM:SS.sssZ` representation; the assertions
+    ///      below catch any future change to `now_rfc3339`'s output
+    ///      shape that would silently break that ordering.
+    #[test]
+    fn now_rfc3339_produces_lex_monotonic_z_suffix() {
+        let t1 = now_rfc3339();
+        let t2 = now_rfc3339();
+
+        assert!(
+            t1.ends_with('Z'),
+            "now_rfc3339() output `{t1}` must end with `Z` — the L-98 \
+             lex-monotonic invariant on op_log.created_at depends on every \
+             stored timestamp sharing the same `…Z` shape (see the \
+             doc-comment on `now_rfc3339` and on `op_log::OpRecord`)"
+        );
+        assert!(
+            t2.ends_with('Z'),
+            "now_rfc3339() output `{t2}` must end with `Z` — see above"
+        );
+
+        assert!(
+            t1 <= t2,
+            "now_rfc3339() must be lexicographically monotonic between \
+             consecutive calls: `{t1}` was sampled before `{t2}` and so \
+             must satisfy `t1 <= t2` as strings. If this fires, either the \
+             system clock went backwards or `now_rfc3339()`'s output shape \
+             changed to one where lex order no longer matches time order \
+             (e.g. variable-width fractional seconds, mixed `Z`/`+00:00` \
+             suffixes) — both break op_log compaction and reverse-op \
+             prior-lookup queries"
+        );
     }
 }

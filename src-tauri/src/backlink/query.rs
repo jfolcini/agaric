@@ -23,6 +23,7 @@ use sqlx::SqlitePool;
 use super::filters::resolve_filter;
 use super::sort::sort_ids;
 use super::types::*;
+use super::SMALL_IN_LIMIT;
 use crate::error::AppError;
 use crate::pagination::{BlockRow, Cursor, PageRequest};
 
@@ -182,19 +183,7 @@ pub async fn eval_backlink_query(
     }
 
     // 6. Fetch full BlockRows
-    let placeholders = actual_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let query_str = format!(
-        "SELECT id, block_type, content, parent_id, position, \
-         deleted_at, is_conflict, conflict_type, \
-         todo_state, priority, due_date, scheduled_date, page_id \
-         FROM blocks WHERE id IN ({placeholders})"
-    );
-
-    let mut query = sqlx::query_as::<_, BlockRow>(&query_str);
-    for id in &actual_ids {
-        query = query.bind(*id);
-    }
-    let fetched: Vec<BlockRow> = query.fetch_all(pool).await?;
+    let fetched: Vec<BlockRow> = fetch_block_rows_by_ids(pool, &actual_ids).await?;
 
     // Reorder fetched rows to match the sorted order
     let id_order: std::collections::HashMap<&str, usize> = actual_ids
@@ -276,6 +265,54 @@ pub(super) async fn resolve_root_pages(
         map.insert(row.block_id, (row.root_id, row.root_title));
     }
     Ok(map)
+}
+
+// ---------------------------------------------------------------------------
+// fetch_block_rows_by_ids (shared batch fetch helper)
+// ---------------------------------------------------------------------------
+
+/// Batch-fetch full `BlockRow`s for a list of block IDs.
+///
+/// Uses a positional `IN (?,?,…)` clause when `ids.len() <= SMALL_IN_LIMIT`,
+/// and falls back to `IN (SELECT value FROM json_each(?))` for larger sets to
+/// avoid SQLite's variable-binding ceiling. Both branches return identical
+/// row sets — the row order is unspecified, so callers must reorder
+/// themselves if a specific order is required. (L-82, L-83)
+pub(super) async fn fetch_block_rows_by_ids(
+    pool: &SqlitePool,
+    ids: &[&str],
+) -> Result<Vec<BlockRow>, AppError> {
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    if ids.len() <= SMALL_IN_LIMIT {
+        let placeholders: String = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT id, block_type, content, parent_id, position, \
+             deleted_at, is_conflict, conflict_type, \
+             todo_state, priority, due_date, scheduled_date, page_id \
+             FROM blocks WHERE id IN ({placeholders})"
+        );
+        let mut query = sqlx::query_as::<_, BlockRow>(&sql);
+        for id in ids {
+            query = query.bind(*id);
+        }
+        Ok(query.fetch_all(pool).await?)
+    } else {
+        let json_ids = serde_json::to_string(&ids)?;
+        let rows = sqlx::query_as::<_, BlockRow>(
+            "SELECT id, block_type, content, parent_id, position, \
+             deleted_at, is_conflict, conflict_type, \
+             todo_state, priority, due_date, scheduled_date, page_id \
+             FROM blocks WHERE id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(&json_ids)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,31 @@ use crate::hash::compute_op_hash;
 use crate::op::OpPayload;
 
 /// A fully-materialised op log row, returned after a successful append.
+///
+/// # Schema doc — `op_log.created_at` lex-monotonic invariant (L-98)
+///
+/// `created_at` mirrors the `op_log.created_at` column declared in
+/// `migrations/0001_initial.sql` (`TEXT NOT NULL -- ISO 8601`). Beyond
+/// the migration's `-- ISO 8601` shape comment, the column carries a
+/// stricter, schema-level invariant that several reverse-op "find prior
+/// op" queries rely on but that cannot be expressed in SQL DDL:
+///
+/// **Every value stored in `op_log.created_at` MUST be the output of
+/// [`crate::now_rfc3339`] — i.e. a fixed-width
+/// `YYYY-MM-DDTHH:MM:SS.sssZ` UTC string with a literal `Z` suffix.**
+///
+/// Reverse-op lookups in `reverse::block_ops`, `reverse::property_ops`,
+/// and `reverse::attachment_ops` use lexicographic comparisons
+/// (`created_at < ?` and `ORDER BY created_at DESC`) to find the
+/// immediately-prior op for a given block/property/attachment. That is
+/// only correct because every row's `created_at` shares the same
+/// `Z`-suffixed shape; a `+00:00`-suffixed timestamp would sort wrong
+/// against `Z`-suffixed siblings even though both encode the same
+/// instant. See [`crate::now_rfc3339`] for the full invariant
+/// description; [`append_local_op_in_tx`] and [`append_local_op_at`]
+/// (the only two write paths into this column) carry `debug_assert!`s
+/// enforcing the `Z` suffix at write time so any future drift is
+/// caught in debug builds.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct OpRecord {
     pub device_id: String,
@@ -56,12 +81,48 @@ pub async fn append_local_op(
 /// The caller is responsible for committing the transaction.
 /// This is used by command handlers to wrap both the op_log append
 /// and the blocks-table write in a single atomic transaction.
+///
+/// # Transaction mode requirement (L-5)
+///
+/// **The caller MUST open the transaction with `BEGIN IMMEDIATE`** (e.g.
+/// via [`sqlx::SqlitePool::begin_with`]`("BEGIN IMMEDIATE")` or
+/// [`crate::db::begin_immediate_logged`]), not the sqlx default
+/// `pool.begin()` (which uses `BEGIN DEFERRED`).
+///
+/// The reason: the function reads `MAX(seq)` from `op_log` and then
+/// `INSERT`s a row keyed on `seq + 1`. Under a deferred transaction, a
+/// concurrent writer can commit a higher `seq` for the same `device_id`
+/// between the read and the write, producing `SQLITE_BUSY_SNAPSHOT`.
+/// `BEGIN IMMEDIATE` eagerly acquires the write lock at the start of
+/// the transaction so the read+write pair sees a consistent
+/// `MAX(seq)`. The sibling [`append_local_op_at`] follows this rule
+/// (see its `pool.begin_with("BEGIN IMMEDIATE")` line below); every
+/// other production caller does too.
+///
+/// There is no compile-time guard on this contract today — a future
+/// caller that forgets `BEGIN IMMEDIATE` only hits
+/// `SQLITE_BUSY_SNAPSHOT` under contention, which is hard to reproduce
+/// in single-`TempDir` unit tests. If you find yourself adding a new
+/// caller, follow the pattern in [`append_local_op_at`] verbatim.
 pub async fn append_local_op_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
     mut op_payload: OpPayload,
     created_at: String,
 ) -> Result<OpRecord, AppError> {
+    // L-98: enforce the lex-monotonic `Z`-suffix invariant on
+    // `op_log.created_at`. Several reverse-op "find prior op" queries
+    // compare `created_at` lexicographically and only round-trip
+    // correctly when every row uses the same `…Z` shape produced by
+    // `crate::now_rfc3339`. Release builds skip this check; debug
+    // builds catch any future ingest path that forgets the rule. See
+    // the doc-comment on `OpRecord` and on `crate::now_rfc3339` for
+    // the full invariant.
+    debug_assert!(
+        created_at.ends_with('Z'),
+        "op_log.created_at must be UTC-Z (lex-monotonic invariant)"
+    );
+
     // Validate SetProperty invariant: exactly one value field must be set.
     if let OpPayload::SetProperty(ref p) = op_payload {
         crate::op::validate_set_property(p)?;
@@ -187,6 +248,17 @@ pub async fn append_local_op_at(
     op_payload: OpPayload,
     created_at: String,
 ) -> Result<OpRecord, AppError> {
+    // L-98: enforce the lex-monotonic `Z`-suffix invariant on
+    // `op_log.created_at` at every direct write entry-point. Mirrors the
+    // assertion in `append_local_op_in_tx` so external callers that
+    // construct timestamps without going through `crate::now_rfc3339`
+    // are caught in debug builds before the row hits the DB. See the
+    // doc-comment on `OpRecord` for the full invariant.
+    debug_assert!(
+        created_at.ends_with('Z'),
+        "op_log.created_at must be UTC-Z (lex-monotonic invariant)"
+    );
+
     // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     // SQLITE_BUSY_SNAPSHOT when a concurrent background cache rebuild
     // commits between our first read and first write inside the tx.
@@ -404,7 +476,7 @@ mod tests {
 
     // ── Test fixture constants ──────────────────────────────────────────
 
-    const FIXED_TS: &str = "2025-01-15T12:00:00+00:00";
+    const FIXED_TS: &str = "2025-01-15T12:00:00Z";
     const TEST_DEVICE: &str = "test-device";
 
     // ── Helpers ─────────────────────────────────────────────────────────
@@ -712,6 +784,54 @@ mod tests {
         );
     }
 
+    /// L-5 tripwire: documents the contract that `append_local_op_in_tx`
+    /// requires its caller to open the transaction with `BEGIN IMMEDIATE`,
+    /// and exercises the happy path end-to-end with two serial appends
+    /// inside one IMMEDIATE tx.
+    ///
+    /// Under `BEGIN DEFERRED` (the sqlx default for `pool.begin()`), the
+    /// read-`MAX(seq)` + INSERT pair can race against a concurrent
+    /// committer for the same `device_id`, producing
+    /// `SQLITE_BUSY_SNAPSHOT`. The IMMEDIATE wrap eagerly acquires the
+    /// write lock so this race window is closed at the tx boundary.
+    ///
+    /// The real contention-regression net is
+    /// [`concurrent_appends_same_device_serialize_correctly`] below — if
+    /// a future change accidentally drops the IMMEDIATE wrap from
+    /// [`append_local_op_at`], that test starts producing duplicate or
+    /// non-contiguous seqs under load. This test is the "static" contract
+    /// witness: the documented sequence works exactly as the doc-block
+    /// claims.
+    #[tokio::test]
+    async fn l5_immediate_tx_contract_serial_appends() {
+        let (pool, _dir) = test_pool().await;
+
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let r1 = append_local_op_in_tx(
+            &mut tx,
+            TEST_DEVICE,
+            make_create_payload("BLK-L5A"),
+            FIXED_TS.into(),
+        )
+        .await
+        .expect("append #1 must succeed inside a BEGIN IMMEDIATE tx");
+        let r2 = append_local_op_in_tx(
+            &mut tx,
+            TEST_DEVICE,
+            make_create_payload("BLK-L5B"),
+            FIXED_TS.into(),
+        )
+        .await
+        .expect("append #2 must succeed inside a BEGIN IMMEDIATE tx");
+        tx.commit().await.expect("IMMEDIATE tx must commit cleanly");
+
+        assert_eq!(
+            (r1.seq, r2.seq),
+            (1, 2),
+            "serial appends inside one IMMEDIATE tx must produce contiguous seqs"
+        );
+    }
+
     /// Fire 10 concurrent appends from the same device; all should succeed and
     /// produce a contiguous, duplicate-free seq range 1..=10.
     ///
@@ -903,7 +1023,7 @@ mod tests {
     async fn append_local_op_at_stores_exact_timestamp() {
         let (pool, _dir) = test_pool().await;
 
-        let fixed_ts = "2025-06-01T12:00:00+00:00".to_string();
+        let fixed_ts = "2025-06-01T12:00:00Z".to_string();
         let record = append_local_op_at(
             &pool,
             "dev-ts",
@@ -1721,7 +1841,7 @@ mod tests {
         // the hash preimage.
         let payload_a = make_create_payload("BLKHASH");
         let payload_b = make_create_payload("BLKHASH");
-        let ts = "2025-06-01T00:00:00+00:00".to_string();
+        let ts = "2025-06-01T00:00:00Z".to_string();
 
         let rec_a = append_local_op_at(&pool_a, TEST_DEVICE, payload_a, ts.clone())
             .await

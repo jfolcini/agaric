@@ -1,5 +1,6 @@
 //! Expression resolution: `TagExpr` -> set of `block_id`s.
 
+use futures_util::future::try_join_all;
 use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
@@ -161,22 +162,35 @@ pub fn resolve_expr<'a>(
                 if exprs.is_empty() {
                     return Ok(FxHashSet::default());
                 }
-                let mut iter = exprs.iter();
-                let mut result: FxHashSet<String> =
-                    resolve_expr(pool, iter.next().unwrap(), include_inherited).await?;
-                for e in iter {
-                    let set: FxHashSet<String> = resolve_expr(pool, e, include_inherited).await?;
+                // Resolve all sub-expressions concurrently (mirrors
+                // `BacklinkFilter::And` in `backlink::filters`), turning N
+                // serial DB round-trips into N concurrent ones. The final
+                // intersection is order-independent, so a different completion
+                // order from the join still yields the same set. (L-85)
+                let futures = exprs
+                    .iter()
+                    .map(|e| resolve_expr(pool, e, include_inherited));
+                let results = try_join_all(futures).await?;
+                let mut iter = results.into_iter();
+                let mut result = iter.next().unwrap();
+                for set in iter {
                     result.retain(|id| set.contains(id));
                 }
                 Ok(result)
             }
             TagExpr::Or(exprs) => {
-                let mut result: FxHashSet<String> = FxHashSet::default();
-                for e in exprs {
-                    let set: FxHashSet<String> = resolve_expr(pool, e, include_inherited).await?;
-                    result.extend(set);
+                // Resolve all sub-expressions concurrently (mirrors
+                // `BacklinkFilter::Or` in `backlink::filters`). Union is
+                // commutative, so completion order is irrelevant. (L-85)
+                let futures = exprs
+                    .iter()
+                    .map(|e| resolve_expr(pool, e, include_inherited));
+                let results = try_join_all(futures).await?;
+                let mut combined: FxHashSet<String> = FxHashSet::default();
+                for set in results {
+                    combined.extend(set);
                 }
-                Ok(result)
+                Ok(combined)
             }
             TagExpr::Not(inner) => {
                 let inner_set: FxHashSet<String> =

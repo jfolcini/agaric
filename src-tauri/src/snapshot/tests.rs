@@ -1515,17 +1515,23 @@ async fn double_compaction() {
 // =======================================================================
 
 /// Verify that the cutoff timestamp uses a consistent format for comparison
-/// with op_log.created_at. This tests the edge case where timestamps use
-/// the `+00:00` suffix (from to_rfc3339) vs `.000Z` suffix.
+/// with op_log.created_at. This tests the edge case where the inserted
+/// timestamp has zero sub-second precision (`...:00Z`) vs the cutoff's
+/// millisecond-precision form (`...:00.000Z`) — both share the
+/// L-98 `Z`-suffix invariant, so lexicographic comparison must still
+/// classify the older op as old.
 #[tokio::test]
 async fn compact_op_log_timestamp_format_consistency() {
     let (pool, _dir) = test_pool().await;
     let device_id = "dev-1";
 
-    // Insert an old op using a zero-subsecond timestamp (the edge case
-    // that was previously problematic with format() vs to_rfc3339()).
+    // Insert an old op using a zero-subsecond `Z` timestamp — the edge
+    // case is that `now_rfc3339()` always emits 3-digit milliseconds
+    // (e.g. `...:00.000Z`) whereas this fixture omits them
+    // (`...:00Z`). Lex comparison must still treat the older instant
+    // as older despite the precision mismatch.
     insert_block(&pool, "block-old", "old").await;
-    insert_op_at(&pool, device_id, "block-old", "2024-01-15T12:00:00+00:00").await;
+    insert_op_at(&pool, device_id, "block-old", "2024-01-15T12:00:00Z").await;
 
     // Compact with 90-day retention — the old op should be purged
     let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
@@ -1533,7 +1539,7 @@ async fn compact_op_log_timestamp_format_consistency() {
         .unwrap();
     assert!(
         result.is_some(),
-        "old op with +00:00 suffix should still be detected as old"
+        "old op with zero-subsecond Z-suffix timestamp should still be detected as old"
     );
 
     let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")

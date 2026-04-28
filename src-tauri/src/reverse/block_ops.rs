@@ -214,7 +214,7 @@ mod tests_m63 {
                 position: Some(1),
                 content: "A original".into(),
             }),
-            "2025-01-15T12:00:00+00:00".into(),
+            "2025-01-15T12:00:00Z".into(),
         )
         .await
         .unwrap();
@@ -226,7 +226,7 @@ mod tests_m63 {
                 to_text: "A first edit".into(),
                 prev_edit: None,
             }),
-            "2025-01-15T12:01:00+00:00".into(),
+            "2025-01-15T12:01:00Z".into(),
         )
         .await
         .unwrap();
@@ -242,7 +242,7 @@ mod tests_m63 {
                 position: Some(2),
                 content: "B original".into(),
             }),
-            "2025-01-15T12:02:00+00:00".into(),
+            "2025-01-15T12:02:00Z".into(),
         )
         .await
         .unwrap();
@@ -254,7 +254,7 @@ mod tests_m63 {
                 to_text: "B first edit".into(),
                 prev_edit: None,
             }),
-            "2025-01-15T12:03:00+00:00".into(),
+            "2025-01-15T12:03:00Z".into(),
         )
         .await
         .unwrap();
@@ -269,7 +269,7 @@ mod tests_m63 {
                 to_text: "A second edit".into(),
                 prev_edit: None,
             }),
-            "2025-01-15T12:04:00+00:00".into(),
+            "2025-01-15T12:04:00Z".into(),
         )
         .await
         .unwrap();
@@ -298,7 +298,7 @@ mod tests_m63 {
                 position: Some(1),
                 content: "A".into(),
             }),
-            "2025-01-15T12:00:00+00:00".into(),
+            "2025-01-15T12:00:00Z".into(),
         )
         .await
         .unwrap();
@@ -310,7 +310,7 @@ mod tests_m63 {
                 new_parent_id: Some(BlockId::test_id("P2")),
                 new_position: 3,
             }),
-            "2025-01-15T12:01:00+00:00".into(),
+            "2025-01-15T12:01:00Z".into(),
         )
         .await
         .unwrap();
@@ -326,7 +326,7 @@ mod tests_m63 {
                 position: Some(9),
                 content: "B".into(),
             }),
-            "2025-01-15T12:02:00+00:00".into(),
+            "2025-01-15T12:02:00Z".into(),
         )
         .await
         .unwrap();
@@ -338,7 +338,7 @@ mod tests_m63 {
                 new_parent_id: Some(BlockId::test_id("P9X")),
                 new_position: 99,
             }),
-            "2025-01-15T12:03:00+00:00".into(),
+            "2025-01-15T12:03:00Z".into(),
         )
         .await
         .unwrap();
@@ -352,7 +352,7 @@ mod tests_m63 {
                 new_parent_id: Some(BlockId::test_id("P3")),
                 new_position: 5,
             }),
-            "2025-01-15T12:04:00+00:00".into(),
+            "2025-01-15T12:04:00Z".into(),
         )
         .await
         .unwrap();
@@ -381,7 +381,7 @@ mod tests_m63 {
                 position: Some(1),
                 content: "seed".into(),
             }),
-            "2025-01-15T12:00:00+00:00".into(),
+            "2025-01-15T12:00:00Z".into(),
         )
         .await
         .unwrap();
@@ -393,7 +393,7 @@ mod tests_m63 {
                 to_text: "edited".into(),
                 prev_edit: None,
             }),
-            "2025-01-15T12:01:00+00:00".into(),
+            "2025-01-15T12:01:00Z".into(),
         )
         .await
         .unwrap();

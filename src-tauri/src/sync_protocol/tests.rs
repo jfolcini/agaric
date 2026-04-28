@@ -13,7 +13,7 @@ use tempfile::TempDir;
 
 // ── Fixture constants ───────────────────────────────────────────────
 
-const FIXED_TS: &str = "2025-01-15T12:00:00+00:00";
+const FIXED_TS: &str = "2025-01-15T12:00:00Z";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -778,8 +778,8 @@ async fn merge_resolves_move_conflict_lww() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
 
-    let ts_a = "2025-01-15T12:00:00+00:00";
-    let ts_b = "2025-01-15T12:01:00+00:00";
+    let ts_a = "2025-01-15T12:00:00Z";
+    let ts_b = "2025-01-15T12:01:00Z";
 
     // Create the block and parent blocks
     append_local_op_at(&pool, "device-A", test_create_payload("BLK1"), ts_a.into())
@@ -849,8 +849,8 @@ async fn merge_resurrects_deleted_edited_block() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
 
-    let ts_a = "2025-01-15T12:00:00+00:00";
-    let ts_b = "2025-01-15T12:01:00+00:00";
+    let ts_a = "2025-01-15T12:00:00Z";
+    let ts_b = "2025-01-15T12:01:00Z";
 
     // Create the block
     append_local_op_at(&pool, "device-A", test_create_payload("BLK1"), ts_a.into())
@@ -1001,8 +1001,8 @@ async fn merge_move_idempotent_on_repeated_sync() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
 
-    let ts_a = "2025-01-15T12:00:00+00:00";
-    let ts_b = "2025-01-15T12:01:00+00:00";
+    let ts_a = "2025-01-15T12:00:00Z";
+    let ts_b = "2025-01-15T12:01:00Z";
 
     append_local_op_at(&pool, "device-A", test_create_payload("BLK1"), ts_a.into())
         .await
@@ -1332,8 +1332,8 @@ async fn merge_delete_edit_skips_when_not_deleted() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
 
-    let ts_a = "2025-01-15T12:00:00+00:00";
-    let ts_b = "2025-01-15T12:01:00+00:00";
+    let ts_a = "2025-01-15T12:00:00Z";
+    let ts_b = "2025-01-15T12:01:00Z";
 
     append_local_op_at(&pool, "device-A", test_create_payload("BLK1"), ts_a.into())
         .await
@@ -2842,7 +2842,7 @@ fn serde_roundtrip_op_transfer() {
         hash: "fedcba987654".into(),
         op_type: "edit_block".into(),
         payload: r#"{"block_id":"BLK1","to_text":"hello"}"#.into(),
-        created_at: "2025-01-15T12:00:00+00:00".into(),
+        created_at: "2025-01-15T12:00:00Z".into(),
     };
     let json = serde_json::to_string(&transfer).expect("OpTransfer serialization must succeed");
     let deser: OpTransfer =

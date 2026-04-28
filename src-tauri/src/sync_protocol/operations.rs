@@ -975,8 +975,8 @@ mod tests_m43_m44 {
         let (pool, _dir) = test_pool().await;
         let materializer = Materializer::new(pool.clone());
 
-        let ts_a = "2025-01-15T12:00:00+00:00";
-        let ts_b = "2025-01-15T12:01:00+00:00"; // B wins LWW
+        let ts_a = "2025-01-15T12:00:00Z";
+        let ts_b = "2025-01-15T12:01:00Z"; // B wins LWW
 
         // Create the block and the two candidate parents.
         append_local_op_at(&pool, "device-A", create_payload("BLK1"), ts_a.into())

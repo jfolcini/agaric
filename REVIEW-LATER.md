@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 656+ items across 493 sessions (per SESSION-LOG.md unique session count; latest is session 526).
+Previously resolved: 667+ items across 494 sessions (per SESSION-LOG.md unique session count; latest is session 527).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1925,23 +1925,11 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F26
 - **Status:** Open
 
-## LOW findings (53 — expanded)
+## LOW findings (42 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
 ### Core
-
-### L-5 — `append_local_op_in_tx` requires `BEGIN IMMEDIATE` but enforces nothing
-- **Domain:** Core
-- **Location:** `src-tauri/src/op_log.rs:76-191` (function), `op_log.rs:209-216` (the only place that gets the lock right)
-- **What:** `append_local_op_in_tx` reads `MAX(seq)` then `INSERT`s. Its function-level doc says callers commit the tx, but does not say the tx must be opened with `BEGIN IMMEDIATE`. Every direct caller currently does pair it with `pool.begin_with("BEGIN IMMEDIATE")`, but there is no compile-time or runtime guard. The neighbouring `append_local_op_at` shows the right pattern with an explicit comment about avoiding `SQLITE_BUSY_SNAPSHOT`.
-- **Why it matters:** A future caller that forgets `BEGIN IMMEDIATE` (the sqlx default `pool.begin()` is `BEGIN DEFERRED`) only hits `SQLITE_BUSY_SNAPSHOT` under contention with a concurrent writer — exactly the class of bug that doesn't reliably show up in tests on a single TempDir, and exactly the class the existing comment says the eager lock prevents.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Document the requirement at the top of `append_local_op_in_tx` and add a debug-only sanity check, e.g. by introducing a `pub struct ImmediateTx<'a>` newtype that the helper accepts and that is only constructed by `db::begin_immediate_logged`. Cheaper: a doc-comment + targeted test that opens a `BEGIN DEFERRED` tx and asserts the function returns the expected sqlite-busy classification under contention.
-- **Pass-1 source:** 01/F10
-- **Status:** Open
 
 ### L-7 — Slow-acquire helpers are wired up in only 2 modules
 - **Domain:** Core
@@ -2031,18 +2019,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Either (a) wrap each per-block / per-property attempt in `tx.savepoint("blk_N")` with `release` on success and `rollback_to` on error, or (b) abort the whole import on the first error and surface warnings as a partial-failure diagnostic. Add a test that injects a validation error mid-file and asserts an all-or-nothing outcome.
 - **Pass-1 source:** 04/F7
-- **Status:** Open
-
-### L-32 — `update_property_def_options_inner` does not validate existing rows against the new options set
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/properties.rs:474-515`
-- **What:** Narrowing a select-type definition's options leaves dangling `block_properties.value_text` values that are no longer in the allowed list. Subsequent `set_property_in_tx` writes will reject those values, but reads through `get_properties` continue to surface them.
-- **Why it matters:** Local UX inconsistency — the user can read a value they can no longer write — though sync replay behaves identically on both ends so it is not a corruption vector.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either reject the narrowing call when dependent rows fall outside the new set, or emit a count of orphans for the caller to act on. Strict rejection matches typical schema-evolution systems.
-- **Pass-1 source:** 04/F13
 - **Status:** Open
 
 ### L-36 — `purge_all_deleted_inner` synchronously deletes attachment files on the command thread
@@ -2195,54 +2171,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Search & Links
 
-### L-82 — `eval_backlink_query_grouped` IN-clause unbounded — SQLite variable-limit risk
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/grouped.rs:170-189`
-- **What:** After paginating to `actual_groups`, the function flattens all blocks across those groups into `all_ids_vec` and binds them as positional placeholders in `id IN ({placeholders})`. There is no cap on blocks-per-group and no `json_each()` fallback. Modern SQLite (3.32+, sqlx-bundled) raised `SQLITE_MAX_VARIABLE_NUMBER` to 32 766, so the failure threshold is high but reachable on a mega-source page.
-- **Why it matters:** Sister helpers in `sort.rs:81-107` and `:154-180` already implement the `≤500 → IN / >500 → json_each` pattern. The grouped fetch silently diverges, so a query that succeeds via the sort path can fail via the grouped path on the same dataset.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Mirror the `fetch_text_props_for_ids` pattern: switch to `json_each(?)` binding once `all_ids_vec.len() > 500`. Apply the same change to the `eval_unlinked_references` batch fetch.
-- **Pass-1 source:** 07/F11
-- **Status:** Open
-
-### L-83 — `eval_backlink_query` IN-clause unbounded — same risk on a smaller scale
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/query.rs:155-168`
-- **What:** Same placeholders pattern as L-82, but `actual_ids` is bounded by the user's page limit (typically 50). Realistic page sizes don't hit the SQLite variable limit; the code path is structurally identical and should converge on the same fallback policy used elsewhere in the same crate.
-- **Why it matters:** Maintainability — every IN-list build site in the backlink module should look the same so future contributors can't accidentally remove the cap on the wrong helper.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Adopt the shared `≤500 → IN / >500 → json_each` helper from `sort.rs`.
-- **Pass-1 source:** 07/F12
-- **Status:** Open
-
-### L-84 — `BacklinkFilter::SourcePage` IN-clauses unbounded for `included` / `excluded`
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/filters.rs:425-490`
-- **What:** Both `included` (line 427) and `excluded` (lines 443, 465) placeholder lists are built directly from caller-supplied vectors, with no length cap and no `json_each()` fallback. UI typically supplies a handful of selections, but a saved-query payload could push past SQLite's variable limit.
-- **Why it matters:** A request that round-trips through saved-query state can fail at filter evaluation while smaller live queries succeed — confusing failure mode.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either cap the size at request-deserialization time, or fall back to `json_each(?)` for `> 500` ids — same policy as L-82/L-83.
-- **Pass-1 source:** 07/F13
-- **Status:** Open
-
-### L-85 — `tag_query::resolve_expr` And/Or sequential while `BacklinkFilter::And/Or` are concurrent
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/tag_query/resolve.rs:118-138`
-- **What:** Tag-query boolean evaluation walks each child sequentially (`for e in iter { let set = resolve_expr(...).await?; … }`). Sister code in `backlink/filters.rs:495-523` resolves siblings concurrently via `try_join_all`, with the explicit comment "turning N serial DB round-trips into N concurrent ones". Two equivalent abstractions diverge on the same optimization.
-- **Why it matters:** Tag-query commands sit on the user's input-latency path (saved-query expansion, agent search). For composite queries with 5–10 OR-ed prefixes the difference is 5–10× wall-clock RTT.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace the for-await loops in `And`/`Or` with `try_join_all(exprs.iter().map(|e| resolve_expr(pool, e, include_inherited)))`, mirroring `BacklinkFilter`. Verify the existing intersection/union semantics still hold once results return out of order.
-- **Pass-1 source:** 07/F14
-- **Status:** Open
-
 ### L-90 — `read_body_limited` reads entire response into memory before truncating
 - **Domain:** Search & Links
 - **Location:** `src-tauri/src/link_metadata/mod.rs:115-126`
@@ -2293,42 +2221,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Lifecycle
 
-### L-97 — `reverse_delete_attachment` uses `json_extract` on `attachment_id` with no covering index
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/reverse/attachment_ops.rs:22-32`
-- **What:** The lookup walks every `add_attachment` op via `json_extract(payload, '$.attachment_id') = ?1` with no supporting index. `AddAttachmentPayload` does carry a `block_id` (and the indexed column IS populated for it), but the query keys on attachment_id, not block_id.
-- **Why it matters:** Less common than text/property undo, but every undo of an attachment delete becomes O(n_ops). No regression test covers the at-scale path.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Short-term: keep the `op_type = 'add_attachment'` filter (already present). Long-term: extract `attachment_id` into its own indexed column on `op_log` via a new migration — requires user approval per Architectural Stability (new column).
-- **Pass-1 source:** 08/F3
-- **Status:** Open
-
-### L-98 — Reverse ops compare timestamps lexicographically
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/reverse/block_ops.rs:95, 128`; `property_ops.rs:85`; `attachment_ops.rs:26`
-- **What:** All "find prior op" queries order by `created_at DESC, seq DESC` and select with `created_at < ?2 OR (created_at = ?2 AND seq < ?3)`. Production timestamps come from `crate::now_rfc3339()` (`lib.rs:49-51`, always `Z`-suffix milliseconds), so the lex compare is monotonic in practice; Pass-2 marked the original High-severity claim OVERSTATED.
-- **Why it matters:** The lex-monotonic invariant on `op_log.created_at` is undocumented. A future ingest path that introduced `+00:00` suffixes would silently break ordering with the wrong "prior text" replayed into the block.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Document the lex-monotonic invariant on `op_log.created_at` (in `migrations/0001_initial.sql` schema comment AND in `now_rfc3339()`'s docstring), and add a debug assertion at op-log write paths that the timestamp ends in `Z`.
-- **Pass-1 source:** 08/F4
-- **Status:** Open
-
-### L-102 — `restore_block` does not bound `deleted_at_ref` — wrong-token call is a silent no-op
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/soft_delete/restore.rs:17-43`
-- **What:** When called with a `deleted_at_ref` that doesn't match any row, the function returns `Ok(0)` (test `restore_block_with_wrong_deleted_at_ref` line ~386 pins this). No log line, no `Err(NotFound)`, no diagnostic.
-- **Why it matters:** Undo of a delete becomes a no-op without diagnostic. If compaction has trimmed the original delete op, the stored `deleted_at` may have come from a different cascade and the undo silently fails.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** When `result.rows_affected() == 0`, emit `tracing::warn!` with block_id and ref. Optionally promote to `Err(AppError::NotFound)` so the undo engine can report failure.
-- **Pass-1 source:** 08/F28
-- **Status:** Open
-
 ### L-103 — `recover_at_boot` runs against the live pool with no mutex / lock
 - **Domain:** Lifecycle
 - **Location:** `src-tauri/src/recovery/boot.rs:43-54, 86-104`; contract docs at `recovery/mod.rs:5-8`
@@ -2339,18 +2231,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Add a once-only `RECOVERY_DONE: AtomicBool` (or a typed `RecoveryGuard` constructor token) that panics or returns early on the second call; add a regression test asserting the panic.
 - **Pass-1 source:** 08/F29
-- **Status:** Open
-
-### L-104 — Boot recovery batch query has no upper bound on draft count
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/recovery/boot.rs:73-84`
-- **What:** Builds `IN (?, ?, ?, …)` placeholders one per draft. The codebase's chosen ceiling is `MAX_SQL_PARAMS = 999` (`snapshot/restore.rs:10`); if a device crashed during a multi-thousand-block paste, `block_drafts` could exceed 999 rows and this query fails with "too many SQL variables", surfaced as a generic SQLx error at boot.
-- **Why it matters:** Boot fails on the unhappy day with no log breadcrumb specific to the cause.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Chunk the IN clause into batches of `MAX_SQL_PARAMS - 1` (mirroring `apply_snapshot`'s pattern), accumulating the `existing_block_ids` HashSet across chunks.
-- **Pass-1 source:** 08/F30
 - **Status:** Open
 
 ### L-105 — `apply_snapshot` keeps every restored row in memory at once
@@ -2375,18 +2255,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Either (a) make `up_to_hash` a deterministic hash of the snapshot bytes themselves (anchor identifies *this* snapshot, not "the latest op"); (b) document explicitly that `up_to_hash` is opaque and the real causal anchor is `up_to_seqs`. Discuss with user before changing the wire shape.
 - **Pass-1 source:** 08/F33
-- **Status:** Open
-
-### L-107 — Soft-delete `restore_block` IMMEDIATE tx is overkill for a single UPDATE
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/soft_delete/restore.rs:17-43`
-- **What:** A single recursive-CTE UPDATE wrapped in `BEGIN IMMEDIATE` … `tx.commit()`. Pass-2 noted the recursive CTE traverses live `blocks` so the IMMEDIATE serializes against concurrent `cascade_soft_delete` writers — that is the documented intent, not overkill.
-- **Why it matters:** Mostly a docs nit: the wrap looks heavyweight to a casual reader who might "simplify" it to an auto-tx update and break the serialization guarantee.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add a short comment on the `pool.begin_with("BEGIN IMMEDIATE")` call explaining the IMMEDIATE is intentional to serialize against concurrent cascade-soft-delete writers, citing the recursive-CTE traversal.
-- **Pass-1 source:** 08/F34
 - **Status:** Open
 
 ### L-108 — Test gap: no oracle test that conflict copies survive their source's compaction

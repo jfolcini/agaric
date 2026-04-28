@@ -178,7 +178,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
             }),
-            "2025-01-15T12:00:00+00:00",
+            "2025-01-15T12:00:00Z",
         )
         .await;
 
@@ -196,7 +196,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
             }),
-            "2025-01-15T12:00:30+00:00",
+            "2025-01-15T12:00:30Z",
         )
         .await;
 
@@ -211,7 +211,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
             }),
-            "2025-01-15T12:01:00+00:00",
+            "2025-01-15T12:01:00Z",
         )
         .await;
 
@@ -246,7 +246,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
             }),
-            "2025-01-15T12:00:00+00:00",
+            "2025-01-15T12:00:00Z",
         )
         .await;
 
@@ -262,7 +262,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
             }),
-            "2025-01-15T12:00:30+00:00",
+            "2025-01-15T12:00:30Z",
         )
         .await;
 
@@ -273,7 +273,7 @@ mod tests_m64 {
                 block_id: BlockId::test_id("BLK_M64C"),
                 key: "color".into(),
             }),
-            "2025-01-15T12:01:00+00:00",
+            "2025-01-15T12:01:00Z",
         )
         .await;
 
@@ -314,7 +314,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
             }),
-            "2025-01-15T12:00:00+00:00",
+            "2025-01-15T12:00:00Z",
         )
         .await;
 
@@ -323,7 +323,7 @@ mod tests_m64 {
             &pool,
             "BLK_M64E_NORM",
             "status",
-            "2025-01-15T12:01:00+00:00",
+            "2025-01-15T12:01:00Z",
             i64::MAX,
         )
         .await
@@ -336,7 +336,7 @@ mod tests_m64 {
             &pool,
             "blk_m64e_norm",
             "status",
-            "2025-01-15T12:01:00+00:00",
+            "2025-01-15T12:01:00Z",
             i64::MAX,
         )
         .await
