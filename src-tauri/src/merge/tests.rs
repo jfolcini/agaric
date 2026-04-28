@@ -1056,14 +1056,7 @@ async fn merge_block_conflict_creates_copy() {
     .unwrap();
 
     match result {
-        MergeOutcome::ConflictCopy {
-            original_kept_ours,
-            conflict_block_op,
-        } => {
-            assert!(
-                original_kept_ours,
-                "original should now retain ours content (F01+F02)"
-            );
+        MergeOutcome::ConflictCopy { conflict_block_op } => {
             assert_eq!(
                 conflict_block_op.op_type, "create_block",
                 "conflict copy op should be create_block"
@@ -2028,7 +2021,6 @@ async fn chain_walk_detects_cycle() {
 /// Verify the complete conflict resolution behavior:
 /// - The original block's merge op has `to_text` == ours (local content)
 /// - The conflict copy block has theirs (remote content)
-/// - `original_kept_ours` is `true`
 #[tokio::test]
 async fn conflict_merge_keeps_ours_not_ancestor() {
     let (pool, _dir) = test_pool().await;
@@ -2068,14 +2060,8 @@ async fn conflict_merge_keeps_ours_not_ancestor() {
     .unwrap();
 
     match result {
-        MergeOutcome::ConflictCopy {
-            original_kept_ours,
-            conflict_block_op,
-        } => {
-            // (a) original_kept_ours must be true
-            assert!(original_kept_ours, "original_kept_ours must be true");
-
-            // (b) conflict copy has theirs (remote) content
+        MergeOutcome::ConflictCopy { conflict_block_op } => {
+            // (a) conflict copy has theirs (remote) content
             let copy_payload: CreateBlockPayload =
                 serde_json::from_str(&conflict_block_op.payload).unwrap();
             assert_eq!(
@@ -2083,7 +2069,7 @@ async fn conflict_merge_keeps_ours_not_ancestor() {
                 "conflict copy should contain theirs (remote) content"
             );
 
-            // (c) the merge op on the original block has ours (local) content
+            // (b) the merge op on the original block has ours (local) content
             // Walk the latest edit head for DEV_A on block B1
             let heads = crate::dag::get_block_edit_heads(&pool, "B1").await.unwrap();
             let a_head = heads.iter().find(|(d, _)| d == DEV_A).unwrap();

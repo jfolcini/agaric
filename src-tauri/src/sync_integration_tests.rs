@@ -982,7 +982,7 @@ async fn orchestrator_full_flow_initiator_side() {
         "SyncComplete should not produce a response"
     );
     assert!(
-        orchestrator_a.is_complete(),
+        orchestrator_a.is_succeeded(),
         "orchestrator should be complete after SyncComplete"
     );
 
@@ -1049,7 +1049,7 @@ async fn orchestrator_full_flow_receiver_side() {
     }
 
     assert!(
-        orchestrator_b.is_complete(),
+        orchestrator_b.is_succeeded(),
         "orchestrator should be complete after receiving OpBatch"
     );
 
@@ -1310,7 +1310,7 @@ async fn orchestrator_handles_error_message() {
         "Error message should not produce a response"
     );
     assert!(
-        !orchestrator.is_complete(),
+        !orchestrator.is_succeeded(),
         "orchestrator should not be complete after error"
     );
 
@@ -1391,7 +1391,7 @@ async fn orchestrator_emits_events_in_order() {
         matches!(response, Some(SyncMessage::SyncComplete { .. })),
         "should produce SyncComplete"
     );
-    assert!(orch.is_complete(), "orchestrator should be complete");
+    assert!(orch.is_succeeded(), "orchestrator should be complete");
 
     let events = sink.events();
     // Expected: Progress(exchanging_heads), Progress(applying_ops),
@@ -1567,7 +1567,7 @@ async fn orchestrator_emits_events_initiator_side() {
         .await
         .unwrap();
 
-    assert!(orch.is_complete(), "orchestrator should be complete");
+    assert!(orch.is_succeeded(), "orchestrator should be complete");
 
     let events = sink.events();
     // Expected: Progress(exchanging_heads), Progress(streaming_ops), Complete

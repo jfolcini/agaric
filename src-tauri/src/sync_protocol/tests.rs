@@ -819,7 +819,7 @@ async fn orchestrator_full_flow_empty_databases() {
         "state should be Complete after sync"
     );
     assert!(
-        orch.is_complete(),
+        orch.is_succeeded(),
         "orchestrator should report complete after full flow"
     );
 
@@ -847,7 +847,7 @@ async fn orchestrator_handles_error_message() {
         "state should be Failed with the error message"
     );
     assert!(
-        !orch.is_complete(),
+        !orch.is_succeeded(),
         "failed orchestrator should not report complete"
     );
 
@@ -1939,21 +1939,24 @@ async fn is_terminal_includes_all_terminal_states() {
     let mut orch = SyncOrchestrator::new(pool.clone(), "dev".into(), materializer.clone());
     orch.state = SyncState::Complete;
     assert!(orch.is_terminal(), "Complete should be terminal");
-    assert!(orch.is_complete(), "Complete should also pass is_complete");
+    assert!(
+        orch.is_succeeded(),
+        "Complete should also pass is_succeeded"
+    );
 
     // Failed → terminal
     let mut orch = SyncOrchestrator::new(pool.clone(), "dev".into(), materializer.clone());
     orch.state = SyncState::Failed("err".into());
     assert!(orch.is_terminal(), "Failed should be terminal");
-    assert!(!orch.is_complete(), "Failed should not pass is_complete");
+    assert!(!orch.is_succeeded(), "Failed should not pass is_succeeded");
 
     // ResetRequired → terminal
     let mut orch = SyncOrchestrator::new(pool.clone(), "dev".into(), materializer.clone());
     orch.state = SyncState::ResetRequired;
     assert!(orch.is_terminal(), "ResetRequired should be terminal");
     assert!(
-        !orch.is_complete(),
-        "ResetRequired should not pass is_complete"
+        !orch.is_succeeded(),
+        "ResetRequired should not pass is_succeeded"
     );
 
     // Non-terminal states
@@ -1968,6 +1971,74 @@ async fn is_terminal_includes_all_terminal_states() {
         orch.state = state.clone();
         assert!(!orch.is_terminal(), "{state:?} should NOT be terminal");
     }
+
+    materializer.shutdown();
+}
+
+// ======================================================================
+// I-Sync-3 — `is_succeeded` (formerly `is_complete`) is the file-transfer
+// gate: a session ending in `Failed(_)` must NOT trigger file transfer,
+// even though it IS terminal. This pins the contract that the rename
+// clarifies — `is_terminal` and `is_succeeded` are DISTINCT predicates,
+// and the `run_sync_session` file-transfer gate uses the strict subset
+// (`is_succeeded`) so failures and reset-required hand off to retry /
+// snapshot-transfer instead of running file transfer over a broken
+// session.
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_state_skips_file_transfer_i_sync_3() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // Drive the orchestrator into Failed via a peer-reported Error,
+    // mirroring `orchestrator_handles_error_message` but asserting the
+    // file-transfer-gate contract specifically.
+    let mut orch = SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone());
+    let _start = orch.start().await.unwrap();
+    let _ = orch
+        .handle_message(SyncMessage::Error {
+            message: "peer reported failure".into(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(orch.session().state, SyncState::Failed(_)),
+        "precondition: session state should be Failed"
+    );
+
+    // The contract the rename pins down:
+    //   * Failed IS terminal (the message loop must exit).
+    //   * Failed is NOT succeeded (the file-transfer gate must skip).
+    assert!(
+        orch.is_terminal(),
+        "Failed must be terminal so the run_sync_session loop exits"
+    );
+    assert!(
+        !orch.is_succeeded(),
+        "Failed must NOT pass is_succeeded — the file-transfer gate \
+         (`if orch.is_succeeded()`) must skip file transfer when the \
+         op-batch exchange ended in failure"
+    );
+
+    // ResetRequired: same contract — terminal, not succeeded.
+    let mut orch = SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone());
+    orch.state = SyncState::ResetRequired;
+    assert!(orch.is_terminal(), "ResetRequired must be terminal");
+    assert!(
+        !orch.is_succeeded(),
+        "ResetRequired must NOT pass is_succeeded — file transfer must \
+         defer to snapshot catch-up instead"
+    );
+
+    // Complete: the only state that gates file transfer ON.
+    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    orch.state = SyncState::Complete;
+    assert!(orch.is_terminal(), "Complete is terminal");
+    assert!(
+        orch.is_succeeded(),
+        "Complete is the strict subset of terminal that gates file transfer ON"
+    );
 
     materializer.shutdown();
 }
@@ -2541,7 +2612,7 @@ async fn orchestrator_responder_full_flow() {
     );
 
     assert!(
-        orch.is_complete(),
+        orch.is_succeeded(),
         "responder should be complete after receiving SyncComplete"
     );
     assert!(
@@ -2621,7 +2692,7 @@ async fn sync_complete_records_last_sent_op_hash() {
     })
     .await
     .unwrap();
-    assert!(orch.is_complete(), "session should be Complete");
+    assert!(orch.is_succeeded(), "session should be Complete");
 
     let peer = crate::peer_refs::get_peer_ref(&pool, "initiator-dev")
         .await
@@ -2819,7 +2890,7 @@ async fn receiver_accumulates_multi_batch_ops() {
         "all 5 ops should be counted as received"
     );
     assert!(
-        orch.is_complete(),
+        orch.is_succeeded(),
         "orchestrator should be complete after receiving all batches"
     );
 

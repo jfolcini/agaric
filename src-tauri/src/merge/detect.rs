@@ -11,6 +11,18 @@ use super::types::MergeResult;
 
 /// Maximum number of iterations when walking prev_edit chains.
 /// Prevents infinite loops on corrupted cyclic data.           (F07)
+///
+/// **I-Lifecycle-1 — belt-and-suspenders rationale.** The chain-walk in
+/// `walk_to_create_block_root` (and similar callers) tracks BOTH this
+/// iteration counter AND a `HashSet<(device_id, seq)>` of visited keys.
+/// The visited set is the primary cycle-detection mechanism — it catches
+/// any structural loop in O(N) regardless of length. The iteration cap is
+/// a defensive backstop that fires only if the visited set somehow
+/// misbehaves (memory corruption, allocator OOM panic, hash collision —
+/// all theoretical) on a chain that is also linearly-long-but-acyclic
+/// beyond the cap. Either guard alone would be sufficient for the
+/// expected failure modes; both together protect against the unexpected
+/// ones at near-zero runtime cost. **Do not remove either.**
 pub(crate) const MAX_CHAIN_WALK_ITERATIONS: usize = 1_000;
 
 /// Three-way text merge for a block's content.

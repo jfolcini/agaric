@@ -32,10 +32,11 @@ pub enum MergeOutcome {
     /// Clean merge -- new edit op created with merged content.
     Merged(OpRecord),
     /// Conflict -- original block keeps our text, conflict copy created.
-    ConflictCopy {
-        original_kept_ours: bool,
-        conflict_block_op: OpRecord,
-    },
+    // I-Lifecycle-4: `original_kept_ours: bool` field removed -- was hardcoded
+    // to `true` at the only construction site in `apply.rs`. The "kept theirs"
+    // branch was never wired up; if symmetric outcomes ever become real, the
+    // field can be reintroduced as part of that change.
+    ConflictCopy { conflict_block_op: OpRecord },
     /// No merge needed -- heads are the same.
     AlreadyUpToDate,
 }

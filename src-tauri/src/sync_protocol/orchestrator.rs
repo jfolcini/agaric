@@ -103,7 +103,7 @@ use crate::peer_refs;
 /// * **`state`** is the source of truth for the state machine.
 ///   `session.state` is a mirror kept in sync at every transition for
 ///   external observers (the daemon reads it via `session()` after
-///   each step). [`SyncOrchestrator::is_complete`] returns `true`
+///   each step). [`SyncOrchestrator::is_succeeded`] returns `true`
 ///   only for [`SyncState::Complete`]; [`SyncOrchestrator::is_terminal`]
 ///   returns `true` for any of `Complete`, `Failed(_)`, or
 ///   `ResetRequired` — the three states from which no further
@@ -598,8 +598,21 @@ impl SyncOrchestrator {
         }
     }
 
-    /// Returns `true` when the session has reached a terminal state.
-    pub fn is_complete(&self) -> bool {
+    /// Returns true iff the session ended in `SyncState::Complete` — i.e. the
+    /// op-batch exchange finished cleanly, no peer-reported failure, no
+    /// snapshot-reset required.
+    ///
+    /// **Contrast with [`is_terminal`](Self::is_terminal):** `is_terminal`
+    /// returns true for `Complete | Failed(_) | ResetRequired` — any state
+    /// from which the session cannot make further progress. `is_succeeded`
+    /// is the strict subset of `is_terminal` where the work was successful.
+    ///
+    /// I-Sync-3: previously named `is_complete`, but the name was easily
+    /// mistaken for `is_terminal` (which it is NOT). The file-transfer gate
+    /// in `run_sync_session` correctly uses this predicate so that
+    /// `Failed(_)` and `ResetRequired` skip file transfer in favour of
+    /// retry / snapshot-transfer respectively.
+    pub fn is_succeeded(&self) -> bool {
         self.state == SyncState::Complete
     }
 

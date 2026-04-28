@@ -1,7 +1,9 @@
 //! Unit tests for `link_metadata`: HTML parsing, URL helpers, and DB ops.
 
 use super::html_parser::{detect_auth_required, parse_description, parse_favicon, parse_title};
-use super::html_parser::{extract_domain, extract_origin, resolve_url, truncate_str};
+use super::html_parser::{
+    extract_domain, extract_meta_refresh_url, extract_origin, resolve_url, truncate_str,
+};
 use super::{
     cleanup_stale, clear_auth_flag, get_cached, read_body_limited, upsert, LinkMetadata,
     MAX_BODY_SIZE,
@@ -252,6 +254,62 @@ fn parse_description_truncates_to_300_chars() {
         result.len(),
         300,
         "should truncate description to 300 chars"
+    );
+}
+
+// ======================================================================
+// extract_meta_refresh_url tests (I-Search-8)
+//
+// Some servers wrap the redirect URL inside quotes within the `content`
+// attribute (e.g. `content="0;url='https://example.com'"`). Before the
+// I-Search-8 fix, the outer `trim()` left the inner quotes intact,
+// which then poisoned `extract_domain` / `detect_auth_required` —
+// silent false negative for auth detection. These tests pin the
+// quote-stripping behaviour and the unquoted regression baseline.
+// ======================================================================
+
+/// I-Search-8: single-quoted URL inside a `content` attribute is
+/// unwrapped so downstream URL parsing sees a clean URL.
+#[test]
+fn extract_meta_refresh_url_strips_single_quoted_url_i_search_8() {
+    let html = r#"<html><head>
+        <meta http-equiv="refresh" content="0;url='https://example.com'">
+    </head></html>"#;
+    assert_eq!(
+        extract_meta_refresh_url(html),
+        Some("https://example.com".to_string()),
+        "single quotes around the URL must be stripped (I-Search-8)"
+    );
+}
+
+/// I-Search-8: double-quoted URL inside a `content` attribute is
+/// unwrapped (the outer `extract_attribute_value` already accepts the
+/// single-quoted `content='...'` form, so the inner `"..."` survives
+/// to the trim/strip pipeline).
+#[test]
+fn extract_meta_refresh_url_strips_double_quoted_url_i_search_8() {
+    let html = r#"<html><head>
+        <meta http-equiv='refresh' content='0;url="https://example.com"'>
+    </head></html>"#;
+    assert_eq!(
+        extract_meta_refresh_url(html),
+        Some("https://example.com".to_string()),
+        "double quotes around the URL must be stripped (I-Search-8)"
+    );
+}
+
+/// I-Search-8 regression: the common unquoted form must keep
+/// returning the URL unchanged after the quote-stripping pass is
+/// added.
+#[test]
+fn extract_meta_refresh_url_unchanged_for_unquoted_url_i_search_8() {
+    let html = r#"<html><head>
+        <meta http-equiv="refresh" content="0;url=https://example.com">
+    </head></html>"#;
+    assert_eq!(
+        extract_meta_refresh_url(html),
+        Some("https://example.com".to_string()),
+        "unquoted URL must round-trip unchanged (I-Search-8 regression guard)"
     );
 }
 
