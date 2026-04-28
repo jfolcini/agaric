@@ -184,7 +184,16 @@ pub async fn append_local_op_in_tx(
         let prev_seq = seq - 1;
         // Phase 1 has exactly one parent; Phase 4 multi-parent DAG will
         // extend this to multiple entries with proper sorting.
-        Some(serde_json::to_string(&vec![(device_id, prev_seq)])?)
+        //
+        // I-Core-11: previously hand-built as `format!(r#"[["{}",{}]]"#, ...)`
+        // to avoid the Vec + sort overhead. Switching to `serde_json::to_string`
+        // keeps the JSON shape byte-identical for UUID device_ids (verified by a
+        // regression test) AND removes the silent dependency on "device_id is
+        // JSON-safe", which a future migration to non-UUID identifiers would
+        // break. The Vec + heap String are negligible against the surrounding
+        // SQL transaction cost. The element type is `(String, i64)` to match
+        // what `dag::append_merge_op` produces.
+        Some(serde_json::to_string(&[(device_id.to_string(), prev_seq)])?)
     } else {
         None
     };
@@ -1436,6 +1445,41 @@ mod tests {
         assert!(
             op.parsed_parent_seqs().is_err(),
             "malformed JSON should return error"
+        );
+    }
+
+    /// I-Core-11: pin `serde_json::to_string` over a single-entry
+    /// `[(device_id, prev_seq)]` slice as byte-identical to the legacy
+    /// `format!(r#"[["{}",{}]]"#, ...)` shape for UUID device_ids.
+    ///
+    /// The single-parent path in `append_local_op_in_tx` was migrated from
+    /// the hand-rolled `format!` (which silently assumed a JSON-safe
+    /// `device_id`) to `serde_json::to_string`. The migration must NOT
+    /// change the on-disk `parent_seqs` byte content for UUID device_ids,
+    /// because the hash preimage embeds `parent_seqs` verbatim and any
+    /// drift would invalidate every previously-stored hash. This test
+    /// also pins the lack of whitespace in serde_json's array output so a
+    /// future serde_json release can't silently insert spaces.
+    #[test]
+    fn parent_seqs_serialisation_byte_identical_to_format_macro_i_core_11() {
+        let device_id = "00000000-0000-0000-0000-000000000001";
+        let prev_seq: i64 = 42;
+
+        let legacy = format!(r#"[["{}",{}]]"#, device_id, prev_seq);
+        let migrated = serde_json::to_string(&[(device_id.to_string(), prev_seq)]).unwrap();
+
+        assert_eq!(
+            legacy, migrated,
+            "serde_json::to_string output must be byte-identical to the legacy \
+             format! shape for UUID device_ids — any drift invalidates every \
+             previously-stored op hash"
+        );
+        // Belt-and-braces: pin the exact literal so a future serde_json
+        // release that adds whitespace or reorders tuple elements is
+        // caught immediately.
+        assert_eq!(
+            migrated, r#"[["00000000-0000-0000-0000-000000000001",42]]"#,
+            "parent_seqs JSON shape must be `[[\"<uuid>\",<seq>]]` with no whitespace"
         );
     }
 

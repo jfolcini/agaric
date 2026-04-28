@@ -1107,9 +1107,19 @@ pub fn run() {
         });
 }
 
-/// Remove log files in `dir` matching `agaric.log.YYYY-MM-DD` that are older
+/// Remove log files in `dir` matching `agaric.log.YYYY-MM-DD` (optionally
+/// followed by a rolling-appender suffix like `.<unique-id>`) that are older
 /// than `max_age_days`. Best-effort: any I/O or parse errors are silently
 /// ignored so a cleanup failure never blocks application startup.
+///
+/// I-Core-4: the matcher accepts both `agaric.log.YYYY-MM-DD` (the canonical
+/// daily-rolled form) and `agaric.log.YYYY-MM-DD.<suffix>` (which
+/// `tracing-appender`'s daily rolling can produce on some platforms / when
+/// a process restarts inside the same day). The previous matcher pinned the
+/// post-prefix portion to exactly 10 chars, so the suffixed variants would
+/// have accumulated forever. The currently-live log `agaric.log` (no date)
+/// is excluded by `strip_prefix("agaric.log.")` itself — no trailing `.`,
+/// no match — and so is preserved across cleanup runs.
 pub fn cleanup_old_log_files(dir: &std::path::Path, max_age_days: u32) {
     let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(max_age_days as i64);
 
@@ -1121,11 +1131,26 @@ pub fn cleanup_old_log_files(dir: &std::path::Path, max_age_days: u32) {
         let file_name = entry.file_name();
         let name = file_name.to_string_lossy();
 
-        // Match files like "agaric.log.2025-01-15"
-        let date_str = match name.strip_prefix("agaric.log.") {
-            Some(d) if d.len() == 10 => d,
-            _ => continue,
+        // Strip the "agaric.log." prefix; this also keeps the bare live log
+        // `agaric.log` out of consideration (no trailing `.` → no match).
+        let Some(after_prefix) = name.strip_prefix("agaric.log.") else {
+            continue;
         };
+
+        // The next 10 characters must look like `YYYY-MM-DD`; anything
+        // shorter cannot be a date, so skip.
+        if after_prefix.len() < 10 {
+            continue;
+        }
+        let (date_str, rest) = after_prefix.split_at(10);
+
+        // Either an exact match (`agaric.log.2025-01-15`) or a rolling
+        // suffix introduced by `.` (`agaric.log.2025-01-15.unique-id`).
+        // Anything else (e.g. `agaric.log.2025-01-15extra`) is left alone
+        // so we never delete unrelated files that happen to share a prefix.
+        if !rest.is_empty() && !rest.starts_with('.') {
+            continue;
+        }
 
         let Ok(file_date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
             continue;
@@ -1425,6 +1450,63 @@ mod log_retention_tests {
         // Should not panic — silently returns
         cleanup_old_log_files(path, 30);
     }
+
+    /// I-Core-4: tracing-appender's daily rolling can produce filenames of
+    /// the shape `agaric.log.YYYY-MM-DD.<unique-suffix>` (e.g. when the
+    /// process restarts within the same day, or on platforms where the
+    /// appender appends a uniquifier). The previous matcher only accepted
+    /// the bare 10-char date variant, so suffixed files would accumulate
+    /// indefinitely. After the I-Core-4 refactor the same retention rules
+    /// apply: an old suffixed file is deleted, a recent one is kept.
+    #[test]
+    fn cleanup_keeps_dated_with_rolling_suffix_i_core_4() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let old_date = (chrono::Utc::now().date_naive() - chrono::Duration::days(60))
+            .format("%Y-%m-%d")
+            .to_string();
+        let recent_date = (chrono::Utc::now().date_naive() - chrono::Duration::days(5))
+            .format("%Y-%m-%d")
+            .to_string();
+
+        // Two suffixed variants — one well past the cutoff, one inside it.
+        let old_suffixed = format!("agaric.log.{old_date}.unique-suffix");
+        let recent_suffixed = format!("agaric.log.{recent_date}.abc123");
+        touch(tmp.path(), &old_suffixed);
+        touch(tmp.path(), &recent_suffixed);
+
+        cleanup_old_log_files(tmp.path(), 30);
+
+        assert!(
+            !tmp.path().join(&old_suffixed).exists(),
+            "I-Core-4: old `agaric.log.<date>.<suffix>` must be deleted just like \
+             the bare-date form"
+        );
+        assert!(
+            tmp.path().join(&recent_suffixed).exists(),
+            "I-Core-4: recent `agaric.log.<date>.<suffix>` must be kept just like \
+             the bare-date form"
+        );
+    }
+
+    /// I-Core-4 (defense-in-depth): the live, currently-being-written
+    /// `agaric.log` file (no date suffix) must never be touched by the
+    /// retention sweep. The matcher excludes it because `strip_prefix` of
+    /// `"agaric.log."` requires a trailing `.`, but pin that behaviour
+    /// down explicitly so a future refactor can't quietly regress it.
+    #[test]
+    fn cleanup_still_ignores_undated_log_i_core_4() {
+        let tmp = tempfile::tempdir().unwrap();
+        touch(tmp.path(), "agaric.log");
+
+        cleanup_old_log_files(tmp.path(), 30);
+
+        assert!(
+            tmp.path().join("agaric.log").exists(),
+            "I-Core-4: bare `agaric.log` (no date) is the live log file and \
+             must always survive cleanup"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1556,6 +1638,75 @@ mod log_directives_tests {
         assert!(!has_directive_for_target("debug", "agaric"));
         // Different target that happens to share a prefix substring.
         assert!(!has_directive_for_target("agaric_extras=trace", "agaric"));
+    }
+
+    /// I-Core-6: a directive like `agaric_extras=trace` must NOT be treated
+    /// as targeting the `agaric` crate. The prefix check in
+    /// `has_directive_for_target` uses `"agaric::"` (with `::`) as the
+    /// submodule boundary, so `agaric_extras` correctly fails the match.
+    /// The existing `unrelated_user_directive_preserves_all_defaults` test
+    /// only exercises `sqlx=trace`; this test pins the namespace-prefix
+    /// collision case specifically — both at the predicate level and end
+    /// to end through `build_log_directives`, so the `agaric=info` default
+    /// is still appended even when the user filter contains a name that
+    /// merely starts with `agaric`.
+    #[test]
+    fn build_log_directives_preserves_default_under_namespace_prefix_collision_i_core_6() {
+        // Predicate-level: `agaric_extras` is a different crate from `agaric`.
+        assert!(
+            !has_directive_for_target("agaric_extras=trace", "agaric"),
+            "I-Core-6: `agaric_extras=trace` is a different crate and must \
+             not satisfy `has_directive_for_target(_, \"agaric\")`"
+        );
+
+        // End-to-end: the `agaric=info` default must still be appended.
+        let out = build_log_directives("agaric_extras=trace", DEFAULTS);
+        assert!(
+            out.contains("agaric_extras=trace"),
+            "I-Core-6: user directive `agaric_extras=trace` must be preserved, got: {out}"
+        );
+        assert!(
+            out.contains("agaric=info"),
+            "I-Core-6: `agaric=info` default must still be appended when the \
+             only user directive is `agaric_extras=trace` (prefix-only collision), got: {out}"
+        );
+        assert!(
+            out.contains("frontend=info"),
+            "I-Core-6: unrelated `frontend=info` default must also still be appended, got: {out}"
+        );
+    }
+
+    /// I-Core-6: positive coverage that an exact-target directive
+    /// (`agaric=trace`) IS recognised by `has_directive_for_target` and
+    /// causes `build_log_directives` to drop the matching default — the
+    /// user override wins, no duplicate `agaric=info` is appended. This
+    /// pairs with the prefix-collision negative test above to pin both
+    /// halves of the `has_directive_for_target` contract.
+    #[test]
+    fn build_log_directives_recognises_exact_target_match_i_core_6() {
+        // Predicate-level: an exact target match must be recognised.
+        assert!(
+            has_directive_for_target("agaric=trace", "agaric"),
+            "I-Core-6: exact target `agaric=trace` must satisfy \
+             `has_directive_for_target(_, \"agaric\")`"
+        );
+
+        // End-to-end: the user override wins; no duplicate default is added.
+        let out = build_log_directives("agaric=trace", DEFAULTS);
+        assert!(
+            out.contains("agaric=trace"),
+            "I-Core-6: user override `agaric=trace` must be preserved, got: {out}"
+        );
+        assert!(
+            !out.contains("agaric=info"),
+            "I-Core-6: `agaric=info` default must NOT be appended when the \
+             user has already set `agaric=trace`, got: {out}"
+        );
+        // Sanity: unrelated default still applies.
+        assert!(
+            out.contains("frontend=info"),
+            "I-Core-6: unrelated `frontend=info` default must still be appended, got: {out}"
+        );
     }
 }
 

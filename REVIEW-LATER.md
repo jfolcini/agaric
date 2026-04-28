@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 704+ items across 500 sessions (per SESSION-LOG.md unique session count; latest is session 533).
+Previously resolved: 710+ items across 501 sessions (per SESSION-LOG.md unique session count; latest is session 534).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -2037,23 +2037,11 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F25
 - **Status:** Open
 
-## INFO / nits (64 — expanded)
+## INFO / nits (58 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
 ### Core
-
-### I-Core-1 — `OpType` is `#[non_exhaustive]` but every match in-crate is exhaustive
-- **Domain:** Core
-- **Location:** `src-tauri/src/op.rs:24-45`
-- **What:** `OpType` is annotated `#[non_exhaustive]` so "downstream match arms outside this crate" don't break when a variant is added. The crate is workspace-internal; every consuming `match` (in `op.rs`, `dag.rs`, `op_log.rs`, `reverse.rs`, etc.) is intra-crate and exhaustive. The attribute prevents the compiler from flagging missed arms when the next variant lands. ARCHITECTURE.md §4 cites *"12 op types with exhaustive `match` — no catch-all arms"* as a deliberate invariant — `#[non_exhaustive]` weakens that to social enforcement.
-- **Why it matters:** When a 13th op type is added (e.g. for compaction tombstones) the compiler will not flag every site that needs a new arm. Pure maintainability.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Drop `#[non_exhaustive]` from `OpType`. Update the doc-comment at `op.rs:24-28` to state the in-crate exhaustive-match invariant explicitly.
-- **Pass-1 source:** 01/F16
-- **Status:** Open
 
 ### I-Core-2 — `find_lca` issues N+1 SELECTs — one round-trip per chain step
 - **Domain:** Core
@@ -2065,42 +2053,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Optimisation, not correctness. Express the chain walk as a recursive CTE keyed on `parent_seqs` and `block_id` returning the visited set in DB order. Keep the existing Rust walk as a `#[cfg(test)]` oracle (per the AGENTS.md CTE-oracle pattern).
 - **Pass-1 source:** 01/F17
-- **Status:** Open
-
-### I-Core-3 — `get_or_create_device_id` writes are non-atomic
-- **Domain:** Core
-- **Location:** `src-tauri/src/device.rs:69-90`
-- **What:** The new-file branch opens with `create_new(true)` (TOCTOU-safe), then `write_all` and `sync_all`. If the process is killed between successful `create_new` and successful `write_all`, the file exists but contains fewer than 36 bytes — and on the next boot `Uuid::parse_str` rejects it with `AppError::InvalidOperation: Corrupt device ID file`. There is no automatic recovery.
-- **Why it matters:** Tiny window, tiny audience, but the consequence is "app cannot boot until the user manually deletes the device-id file". Pure startup hardening.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Write to a tempfile in the same directory via `tempfile::NamedTempFile::new_in(parent)` (or `OpenOptions::create_new(true)` on a `.tmp` sibling), `sync_all`, then `persist`/`rename`. POSIX guarantees atomic rename within a filesystem; the final file is either whole or absent. Maintain TOCTOU safety on the temp file.
-- **Pass-1 source:** 01/F18
-- **Status:** Open
-
-### I-Core-4 — `cleanup_old_log_files` only matches `agaric.log.YYYY-MM-DD` exactly
-- **Domain:** Core
-- **Location:** `src-tauri/src/lib.rs:909-937` (matcher at 924-927) and tests at `lib.rs:1196-1209` (`ignores_non_matching_filenames`)
-- **What:** tracing-appender's daily rolling can produce `agaric.log.YYYY-MM-DD.<unique-suffix>` under some configurations, and the live file before any rollover is `agaric.log` (no date). The cleanup function only matches names of the form `agaric.log.` + exactly 10 chars + valid date. Any other variant accumulates forever; the test `ignores_non_matching_filenames` explicitly preserves `agaric.log` and other shapes.
-- **Why it matters:** Not a correctness bug today (the appender configured at `lib.rs:347` produces canonical date format), but the test pins the lenient behaviour, so any future change to the appender silently disables retention. AGENTS.md doesn't specify retention policy — info-level note.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either widen the matcher to include the optional rolling suffix (`agaric.log.YYYY-MM-DD(\.\w+)?`) or add a test that exercises the actual appender output and asserts cleanup picks it up. Today's `agaric.log` (the live file) should remain excluded.
-- **Pass-1 source:** 01/F19
-- **Status:** Open
-
-### I-Core-6 — `build_log_directives` test gap on namespace-prefix collisions
-- **Domain:** Core
-- **Location:** `src-tauri/src/lib.rs:84-105` (impl) and tests at `lib.rs:1271-1276` (`unrelated_user_directive_preserves_all_defaults`) / `lib.rs:1346-1352` (`has_directive_for_target_negative_cases`)
-- **What:** `has_directive_for_target("agaric_extras=trace", "agaric")` correctly returns false because the prefix check uses `"agaric::"`, but the only positive-coverage test (`unrelated_user_directive_preserves_all_defaults`) exercises `sqlx=trace`. There is no test asserting that `build_log_directives("agaric_extras=trace", DEFAULTS)` keeps the `agaric=info` default.
-- **Why it matters:** The fallback `EnvFilter::new("agaric=info,frontend=info")` on parse error is a safety net; the test gap is the kind that lets a regression silently land. Pure test coverage.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Documentation/test-only. Add a positive test asserting both `!has_directive_for_target("agaric_extras=trace", "agaric")` and that `build_log_directives("agaric_extras=trace", DEFAULTS)` still contains `agaric=info`.
-- **Pass-1 source:** 01/F21
 - **Status:** Open
 
 ### I-Core-7 — Command list duplicated between `run()` and `specta_tests::specta_builder`
@@ -2125,18 +2077,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Either change the helper signatures to `pool: &ReadPool` (and update non-read callers explicitly) or add `_reading` variants that accept `&ReadPool`. At minimum, change `dag::find_lca` to thread a `&ReadPool` through to `get_op_by_seq`.
 - **Pass-1 source:** 01/F23
-- **Status:** Open
-
-### I-Core-11 — `parent_seqs` JSON built via hand-written `format!` instead of `serde_json::to_string`
-- **Domain:** Core
-- **Location:** `src-tauri/src/op_log.rs:121-131` (Phase-1 single-parent path) vs `src-tauri/src/dag.rs:108-112` (merge-op path that uses `serde_json::to_string(&sorted_parents)`)
-- **What:** Instead of `serde_json::to_string(&vec![(device_id.to_string(), prev_seq)])`, the code does `Some(format!(r#"[["{}",{}]]"#, device_id, prev_seq))`. This skips JSON escaping and assumes `device_id` contains no JSON-special characters. Today device_ids are UUIDs (`/^[0-9a-f-]+$/`) so no escaping is needed; the comment justifies it as "to avoid Vec allocation + sort overhead". Two diverging serialisation paths exist for the same column.
-- **Why it matters:** Defence in depth and consistency. The hash-input contract is silently coupled to "device_id is JSON-safe" — a property that holds today but is not enforced anywhere in the type system.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace the `format!` with `serde_json::to_string(&[(device_id.to_string(), prev_seq)])?` so both single- and multi-parent paths share the exact same serialisation. The cost is one Vec + one heap String — negligible against the surrounding SQL. Add a regression test asserting byte equality with a frozen device_id fixture.
-- **Pass-1 source:** 01/F26
 - **Status:** Open
 
 ### Materializer
@@ -2166,18 +2106,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### Cache
-
-### I-Cache-2 — `pagination/mod.rs` doc claims cursor opacity but `Cursor` is `pub`
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/pagination/mod.rs:14-16` (doc) and `:151-162` (`pub struct Cursor`)
-- **What:** The module-level doc says "the API surface remains small and the cursor remains opaque to callers anyway". But `Cursor` is `pub` and re-exported, used in tests and indirectly by `commands/blocks/queries.rs` via `PageRequest::new`. Anyone with the type can construct a `Cursor` with arbitrary field combinations, encode it, and pass it to any list query — defeating the opacity claim. The intended boundary is "callers exchange opaque base64 strings" but the type is more permissive.
-- **Why it matters:** A caller could construct a malformed cursor in Rust (e.g., `deleted_at = Some(...)` for a `list_children` cursor) and call `list_trash` with it; the type system doesn't prevent that.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Make `Cursor` `pub(crate)` (or `pub(super)`) and only expose the encoded `String` form via `PageRequest`. Replace test usages of `Cursor::encode()` with helpers that build a cursor for a specific list query.
-- **Pass-1 source:** 03/F18
-- **Status:** Open
 
 ### I-Cache-4 — `total_count` deliberately omitted; documented and consistent
 - **Domain:** Cache + Pagination

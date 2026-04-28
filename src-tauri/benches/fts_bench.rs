@@ -77,10 +77,7 @@ fn bench_search_fts(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("search_fts");
 
-    let page = PageRequest {
-        after: None,
-        limit: 20,
-    };
+    let page = PageRequest::new(None, Some(20)).unwrap();
 
     for count in [1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
