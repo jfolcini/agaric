@@ -202,7 +202,7 @@ async fn drain_pending_batches_after_handle_message() {
                 position: Some(0),
                 content: "test".into(),
             }),
-            "2025-01-15T12:00:00+00:00".into(),
+            "2025-01-15T12:00:00Z".into(),
         )
         .await
         .unwrap();
@@ -1964,7 +1964,7 @@ async fn inmem_handle_incoming_sync_tofu_stores_cert_hash() {
             position: Some(0),
             content: "tofu test".into(),
         }),
-        "2025-01-15T12:00:00+00:00".into(),
+        "2025-01-15T12:00:00Z".into(),
     )
     .await
     .unwrap();
@@ -2081,7 +2081,7 @@ async fn inmem_handle_incoming_sync_happy_path_empty_sync() {
             position: Some(0),
             content: "happy path".into(),
         }),
-        "2025-01-15T12:00:00+00:00".into(),
+        "2025-01-15T12:00:00Z".into(),
     )
     .await
     .unwrap();
@@ -3395,7 +3395,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             position: Some(1),
             content: "compacted-state content".into(),
         }),
-        "2025-01-15T12:00:00+00:00".into(),
+        "2025-01-15T12:00:00Z".into(),
     )
     .await
     .unwrap();
@@ -3420,7 +3420,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             position: Some(2),
             content: "initiator-origin op already mirrored on responder".into(),
         }),
-        "2025-01-15T12:00:01+00:00".into(),
+        "2025-01-15T12:00:01Z".into(),
     )
     .await
     .unwrap();

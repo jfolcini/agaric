@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) FROM block_properties bp JOIN blocks b ON b.id = bp.block_id WHERE bp.key = ?1 AND bp.value_text IS NOT NULL AND b.deleted_at IS NULL AND bp.value_text NOT IN (SELECT value FROM json_each(?2))",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cfc39450744e9c5f82bd19ee736cdb598e3f514403e8986b2fa085faec95e910"
+}

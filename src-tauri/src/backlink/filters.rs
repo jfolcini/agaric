@@ -6,6 +6,7 @@ use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
 use super::types::{BacklinkFilter, CompareOp};
+use super::SMALL_IN_LIMIT;
 use crate::error::AppError;
 use crate::fts::sanitize_fts_query;
 use crate::tag_query::{resolve_tag_leaves, resolve_tag_prefix_leaves};
@@ -410,61 +411,59 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                 let result: FxHashSet<String>;
 
                 if !included.is_empty() {
-                    // Get all descendants of included pages
-                    let placeholders = included.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                    let sql = format!(
-                        "WITH RECURSIVE desc(id, depth) AS ( \
-                            SELECT id, 0 FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
-                            UNION ALL \
-                            SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
-                        ) SELECT id FROM desc"
-                    );
-                    let mut q = sqlx::query_scalar::<_, String>(&sql);
-                    for id in included {
-                        q = q.bind(id);
-                    }
-                    result = q.fetch_all(pool).await?.into_iter().collect();
+                    // Get all descendants of included pages.
+                    // Positional IN-bind for ≤SMALL_IN_LIMIT, json_each fallback
+                    // above the threshold (L-84).
+                    result = fetch_descendants_of(pool, included).await?;
 
                     // Apply exclusion on top of included set if needed
                     if !excluded.is_empty() {
-                        let excl_placeholders =
-                            excluded.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                        let excl_sql = format!(
-                            "WITH RECURSIVE desc(id, depth) AS ( \
-                                SELECT id, 0 FROM blocks WHERE id IN ({excl_placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
-                                UNION ALL \
-                                SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
-                            ) SELECT id FROM desc"
-                        );
-                        let mut eq = sqlx::query_scalar::<_, String>(&excl_sql);
-                        for id in excluded {
-                            eq = eq.bind(id);
-                        }
-                        let excluded_set: FxHashSet<String> =
-                            eq.fetch_all(pool).await?.into_iter().collect();
+                        let excluded_set = fetch_descendants_of(pool, excluded).await?;
                         // Shadow with filtered result (result is not mut)
                         let mut result = result;
                         result.retain(|id| !excluded_set.contains(id));
                         return Ok(result);
                     }
                 } else if !excluded.is_empty() {
-                    // Exclusion-only: push exclusion into SQL to avoid loading full table
-                    let placeholders = excluded.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                    let sql = format!(
-                        "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 \
-                         AND id NOT IN ( \
-                           WITH RECURSIVE desc(id, depth) AS ( \
-                             SELECT id, 0 FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
-                             UNION ALL \
-                             SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
-                           ) SELECT id FROM desc \
-                         )"
-                    );
-                    let mut q = sqlx::query_scalar::<_, String>(&sql);
-                    for id in excluded {
-                        q = q.bind(id);
+                    // Exclusion-only: push exclusion into SQL to avoid loading full table.
+                    // Positional IN-bind for ≤SMALL_IN_LIMIT, json_each fallback
+                    // above the threshold (L-84).
+                    if excluded.len() <= SMALL_IN_LIMIT {
+                        let placeholders = std::iter::repeat_n("?", excluded.len())
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        let sql = format!(
+                            "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 \
+                             AND id NOT IN ( \
+                               WITH RECURSIVE desc(id, depth) AS ( \
+                                 SELECT id, 0 FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
+                                 UNION ALL \
+                                 SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
+                               ) SELECT id FROM desc \
+                             )"
+                        );
+                        let mut q = sqlx::query_scalar::<_, String>(&sql);
+                        for id in excluded {
+                            q = q.bind(id);
+                        }
+                        result = q.fetch_all(pool).await?.into_iter().collect();
+                    } else {
+                        let json_ids = serde_json::to_string(&excluded)?;
+                        let rows = sqlx::query_scalar::<_, String>(
+                            "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 \
+                             AND id NOT IN ( \
+                               WITH RECURSIVE desc(id, depth) AS ( \
+                                 SELECT value AS id, 0 AS depth FROM json_each(?1) \
+                                 UNION ALL \
+                                 SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
+                               ) SELECT id FROM desc \
+                             )",
+                        )
+                        .bind(&json_ids)
+                        .fetch_all(pool)
+                        .await?;
+                        result = rows.into_iter().collect();
                     }
-                    result = q.fetch_all(pool).await?.into_iter().collect();
                 } else {
                     // No inclusion AND no exclusion — all blocks
                     result = sqlx::query_scalar::<_, String>(
@@ -524,8 +523,8 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
 
                 // For small exclusion sets, push NOT IN into SQL to avoid loading
                 // all block IDs into memory.  SQLite variable limit is 999 in older
-                // builds, so cap at 500 to be safe.
-                if inner_set.len() <= 500 {
+                // builds, so cap at SMALL_IN_LIMIT to be safe.
+                if inner_set.len() <= SMALL_IN_LIMIT {
                     let placeholders: String = std::iter::repeat_n("?", inner_set.len())
                         .collect::<Vec<_>>()
                         .join(",");
@@ -555,6 +554,55 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
             }
         }
     })
+}
+
+/// Recursive-CTE walk that returns every descendant (including the seed
+/// roots themselves) of a list of `page_id`s, filtering out deleted /
+/// conflict rows and bounding recursion depth at 100 (AGENTS.md
+/// invariant #9).
+///
+/// Uses a positional `IN (?,?,…)` clause when `roots.len() <=
+/// SMALL_IN_LIMIT`, falling back to `IN (SELECT value FROM json_each(?))`
+/// for larger inputs to dodge SQLite's variable-binding ceiling. (L-84)
+async fn fetch_descendants_of(
+    pool: &SqlitePool,
+    roots: &[String],
+) -> Result<FxHashSet<String>, AppError> {
+    if roots.is_empty() {
+        return Ok(FxHashSet::default());
+    }
+    if roots.len() <= SMALL_IN_LIMIT {
+        let placeholders = std::iter::repeat_n("?", roots.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "WITH RECURSIVE desc(id, depth) AS ( \
+                SELECT id, 0 FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
+                UNION ALL \
+                SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
+            ) SELECT id FROM desc"
+        );
+        let mut q = sqlx::query_scalar::<_, String>(&sql);
+        for id in roots {
+            q = q.bind(id);
+        }
+        Ok(q.fetch_all(pool).await?.into_iter().collect())
+    } else {
+        let json_ids = serde_json::to_string(&roots)?;
+        let rows = sqlx::query_scalar::<_, String>(
+            "WITH RECURSIVE desc(id, depth) AS ( \
+                SELECT b.id, 0 FROM blocks b \
+                JOIN json_each(?1) j ON j.value = b.id \
+                WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                UNION ALL \
+                SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
+            ) SELECT id FROM desc",
+        )
+        .bind(&json_ids)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
 }
 
 /// Parse an ISO 8601 date string (YYYY-MM-DD or full datetime) to Unix

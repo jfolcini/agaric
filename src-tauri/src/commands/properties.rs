@@ -617,6 +617,25 @@ pub async fn list_property_defs_inner(
 
 /// Update the options array for a select-type definition.
 /// Returns error if the key doesn't exist or isn't select-type.
+///
+/// # Orphan rows on narrowing (L-32)
+///
+/// Narrowing the option set (e.g. removing `"in_review"` from
+/// `["todo", "in_review", "done"]`) leaves any existing
+/// `block_properties.value_text` rows whose value is no longer in the
+/// allowed list as **orphans**. Subsequent `set_property_in_tx` writes
+/// will reject those values, but reads through `get_properties`
+/// continue to surface them — a UX inconsistency where the user can
+/// read a value they can no longer write.
+///
+/// We do not reject the narrowing call here (that would be a
+/// behaviour change for callers that knowingly want to retire an
+/// option without first migrating dependent rows). Instead, we count
+/// the orphans up front and emit a `tracing::warn!` breadcrumb naming
+/// the key, the count, and the dropped values, so the log surfaces
+/// the inconsistency rather than the user discovering it later via a
+/// failed write. Sync replay behaves identically on both ends, so
+/// this is not a corruption vector.
 #[instrument(skip(pool, options), err)]
 pub async fn update_property_def_options_inner(
     pool: &SqlitePool,
@@ -645,6 +664,36 @@ pub async fn update_property_def_options_inner(
             "cannot update options on '{}'-type definition '{key}'",
             existing.value_type
         )));
+    }
+
+    // L-32: count orphan rows before applying the narrowing. The new
+    // options are encoded as a JSON array; bind via `json_each(?)` so
+    // SQLite expands the membership test without a placeholder
+    // explosion. Live blocks only — `b.deleted_at IS NULL` matches the
+    // semantics of `get_properties` so the warn count reflects what
+    // the user will actually see.
+    let orphan_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM block_properties bp \
+         JOIN blocks b ON b.id = bp.block_id \
+         WHERE bp.key = ?1 \
+           AND bp.value_text IS NOT NULL \
+           AND b.deleted_at IS NULL \
+           AND bp.value_text NOT IN (SELECT value FROM json_each(?2))",
+        key,
+        options,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if orphan_count > 0 {
+        tracing::warn!(
+            key = %key,
+            orphan_count = orphan_count,
+            new_options = %options,
+            "narrowing select-type property options leaves rows whose value is no longer in the \
+             allowed list (L-32); subsequent writes for those values will be rejected but reads \
+             continue to surface them",
+        );
     }
 
     sqlx::query("UPDATE property_definitions SET options = ? WHERE key = ?")

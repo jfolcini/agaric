@@ -1523,3 +1523,52 @@ async fn perf26_block_id_index_exists() {
         "migration 0030 must create idx_op_log_block_id exactly once"
     );
 }
+
+/// L-104: SQLite caps bind parameters at `MAX_SQL_PARAMS` (999). A multi-
+/// thousand-block paste crash can leave > 999 rows in `block_drafts`; the
+/// boot-recovery batch query must chunk the IN clause or it fails with
+/// "too many SQL variables". This test seeds ~1100 drafts (no corresponding
+/// `blocks` rows, so they all land in the F07 "already flushed" bucket) and
+/// asserts `recover_at_boot` returns Ok and processes every draft.
+#[tokio::test]
+async fn recover_at_boot_handles_more_than_999_drafts() {
+    let (pool, _dir) = test_pool().await;
+
+    const N: usize = 1100;
+    for i in 0..N {
+        // Use a wide block_id namespace so chunk boundaries (999, 998 per
+        // chunk depending on MAX_SQL_PARAMS - 1) don't collide.
+        let bid = format!("blk-{i:05}");
+        save_draft(&pool, &bid, "x").await.unwrap();
+    }
+
+    // Sanity: all rows landed.
+    let seeded: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_drafts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(seeded, N as i64);
+
+    let report = recover_at_boot(&pool, "dev-1").await.unwrap();
+
+    // No blocks rows exist, so every draft is classified F07 "already
+    // flushed". The exact bucketing isn't the point — what matters is that
+    // the batch IN-clause query did not blow up with SQLITE_TOOBIG.
+    assert!(
+        report.draft_errors.is_empty(),
+        "no per-draft errors expected, got: {:?}",
+        report.draft_errors,
+    );
+    assert_eq!(
+        report.drafts_recovered.len() as u64 + report.drafts_already_flushed,
+        N as u64,
+        "every seeded draft must be accounted for",
+    );
+
+    // Drafts are deleted regardless of bucket — confirm cleanup.
+    let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_drafts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(remaining, 0, "all drafts must be cleaned up");
+}

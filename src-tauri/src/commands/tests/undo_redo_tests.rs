@@ -1812,7 +1812,7 @@ async fn revert_delete_block_restores_with_descendants() {
     // Use a controlled timestamp so blocks.deleted_at matches the op's created_at.
     // delete_block_inner uses two separate now_rfc3339() calls (one for op_log,
     // one for blocks), causing a mismatch. We do it manually with one timestamp.
-    let delete_ts = "2025-06-15T12:00:00+00:00";
+    let delete_ts = "2025-06-15T12:00:00Z";
 
     // Manually soft-delete both blocks with the controlled timestamp
     sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ? OR id = ?")
@@ -2940,7 +2940,7 @@ async fn revert_ops_from_different_devices() {
         &pool,
         "device-B",
         edit_payload,
-        "2099-01-01T00:00:00+00:00".to_string(),
+        "2099-01-01T00:00:00Z".to_string(),
     )
     .await
     .unwrap();
@@ -3802,14 +3802,9 @@ async fn undo_page_op_ignores_ops_on_conflict_copy_descendants() {
         to_text: "conflict-edited".into(),
         prev_edit: None,
     });
-    op_log::append_local_op_at(
-        &pool,
-        DEV,
-        cf_payload,
-        "2099-01-01T00:00:00+00:00".to_string(),
-    )
-    .await
-    .unwrap();
+    op_log::append_local_op_at(&pool, DEV, cf_payload, "2099-01-01T00:00:00Z".to_string())
+        .await
+        .unwrap();
 
     // Undo depth = 0 should pick the real_child edit, *not* the conflict-copy
     // op (even though the conflict-copy op has the later created_at).
@@ -3890,14 +3885,9 @@ async fn restore_page_to_op_ignores_ops_on_conflict_copy_descendants() {
         to_text: "conflict-edited".into(),
         prev_edit: None,
     });
-    op_log::append_local_op_at(
-        &pool,
-        DEV,
-        cf_payload,
-        "2099-01-01T00:00:00+00:00".to_string(),
-    )
-    .await
-    .unwrap();
+    op_log::append_local_op_at(&pool, DEV, cf_payload, "2099-01-01T00:00:00Z".to_string())
+        .await
+        .unwrap();
 
     // Restore to the point after create ops. Only the single real edit is
     // reversible; the conflict copy's edit must be ignored entirely.

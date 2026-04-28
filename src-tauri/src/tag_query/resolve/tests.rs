@@ -1332,3 +1332,142 @@ async fn resolve_tag_inherited_explicit_still_propagates() {
     assert!(result.contains("PAGE_IH_EX"));
     assert!(result.contains("CHILD_IH_EX"));
 }
+
+// ======================================================================
+// L-85 — `resolve_expr` And/Or arms now resolve sub-expressions
+// concurrently via `try_join_all`, mirroring `BacklinkFilter::And/Or`.
+// The set algebra (intersection / union) is order-independent, so the
+// concurrent and sequential implementations must produce identical
+// row sets even when the underlying futures complete out of order.
+// ======================================================================
+
+/// Sequential reference: hand-rolled equivalent of the pre-L-85
+/// `resolve_expr` And/Or arms. Mirrors the original for-await loop so
+/// we can compare it against the new concurrent implementation.
+fn resolve_expr_sequential<'a>(
+    pool: &'a SqlitePool,
+    expr: &'a TagExpr,
+    include_inherited: bool,
+) -> std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = Result<FxHashSet<String>, crate::error::AppError>>
+            + Send
+            + 'a,
+    >,
+> {
+    Box::pin(async move {
+        match expr {
+            TagExpr::And(exprs) => {
+                if exprs.is_empty() {
+                    return Ok(FxHashSet::default());
+                }
+                let mut iter = exprs.iter();
+                let mut result: FxHashSet<String> =
+                    resolve_expr_sequential(pool, iter.next().unwrap(), include_inherited).await?;
+                for e in iter {
+                    let set: FxHashSet<String> =
+                        resolve_expr_sequential(pool, e, include_inherited).await?;
+                    result.retain(|id| set.contains(id));
+                }
+                Ok(result)
+            }
+            TagExpr::Or(exprs) => {
+                let mut result: FxHashSet<String> = FxHashSet::default();
+                for e in exprs {
+                    let set: FxHashSet<String> =
+                        resolve_expr_sequential(pool, e, include_inherited).await?;
+                    result.extend(set);
+                }
+                Ok(result)
+            }
+            // Leaf / Not / Prefix arms delegate to the production resolver —
+            // L-85 only changed the And/Or arms.
+            _ => resolve_expr(pool, expr, include_inherited).await,
+        }
+    })
+}
+
+/// Build a fixture with 6 tags and a controlled overlap pattern: every
+/// block carries a unique subset of {TAG_1..TAG_6} so the And/Or
+/// queries below have non-trivial result sets.
+async fn setup_six_tag_fixture(pool: &SqlitePool) {
+    for i in 1..=6 {
+        insert_block(pool, &format!("TAG_{i}"), "tag", &format!("tag{i}")).await;
+    }
+    // BLK_ALL: every tag → survives And of all 6 and contributes to Or.
+    insert_block(pool, "BLK_ALL", "content", "all").await;
+    for i in 1..=6 {
+        insert_tag_assoc(pool, "BLK_ALL", &format!("TAG_{i}")).await;
+    }
+    // BLK_ODD: only odd tags (1, 3, 5) → fails the full-And, contributes to Or.
+    insert_block(pool, "BLK_ODD", "content", "odd").await;
+    insert_tag_assoc(pool, "BLK_ODD", "TAG_1").await;
+    insert_tag_assoc(pool, "BLK_ODD", "TAG_3").await;
+    insert_tag_assoc(pool, "BLK_ODD", "TAG_5").await;
+    // BLK_EVEN: only even tags (2, 4, 6) → fails the full-And, contributes to Or.
+    insert_block(pool, "BLK_EVEN", "content", "even").await;
+    insert_tag_assoc(pool, "BLK_EVEN", "TAG_2").await;
+    insert_tag_assoc(pool, "BLK_EVEN", "TAG_4").await;
+    insert_tag_assoc(pool, "BLK_EVEN", "TAG_6").await;
+    // BLK_NONE: untagged → never contributes.
+    insert_block(pool, "BLK_NONE", "content", "none").await;
+}
+
+/// L-85: And of 6 child expressions. Concurrent resolution must return
+/// the same intersection set as the sequential reference. Only BLK_ALL
+/// carries every TAG_1..TAG_6, so it is the sole survivor.
+#[tokio::test]
+async fn resolve_expr_and_concurrent_matches_sequential_oracle() {
+    let (pool, _dir) = test_pool().await;
+    setup_six_tag_fixture(&pool).await;
+
+    let expr = TagExpr::And(vec![
+        TagExpr::Tag("TAG_1".into()),
+        TagExpr::Tag("TAG_2".into()),
+        TagExpr::Tag("TAG_3".into()),
+        TagExpr::Tag("TAG_4".into()),
+        TagExpr::Tag("TAG_5".into()),
+        TagExpr::Tag("TAG_6".into()),
+    ]);
+
+    let concurrent = resolve_expr(&pool, &expr, false).await.unwrap();
+    let sequential = resolve_expr_sequential(&pool, &expr, false).await.unwrap();
+
+    assert_eq!(
+        concurrent, sequential,
+        "concurrent And must return the same intersection as the sequential reference"
+    );
+    assert_eq!(concurrent.len(), 1, "only BLK_ALL carries every tag");
+    assert!(concurrent.contains("BLK_ALL"));
+}
+
+/// L-85: Or of 6 child expressions. Concurrent resolution must return
+/// the same union set as the sequential reference. BLK_ALL, BLK_ODD,
+/// and BLK_EVEN all carry at least one of TAG_1..TAG_6.
+#[tokio::test]
+async fn resolve_expr_or_concurrent_matches_sequential_oracle() {
+    let (pool, _dir) = test_pool().await;
+    setup_six_tag_fixture(&pool).await;
+
+    let expr = TagExpr::Or(vec![
+        TagExpr::Tag("TAG_1".into()),
+        TagExpr::Tag("TAG_2".into()),
+        TagExpr::Tag("TAG_3".into()),
+        TagExpr::Tag("TAG_4".into()),
+        TagExpr::Tag("TAG_5".into()),
+        TagExpr::Tag("TAG_6".into()),
+    ]);
+
+    let concurrent = resolve_expr(&pool, &expr, false).await.unwrap();
+    let sequential = resolve_expr_sequential(&pool, &expr, false).await.unwrap();
+
+    assert_eq!(
+        concurrent, sequential,
+        "concurrent Or must return the same union as the sequential reference"
+    );
+    let expected: FxHashSet<String> = ["BLK_ALL", "BLK_ODD", "BLK_EVEN"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    assert_eq!(concurrent, expected);
+}

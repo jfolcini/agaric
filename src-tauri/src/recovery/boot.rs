@@ -2,6 +2,7 @@ use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::time::Instant;
 
+use crate::db::MAX_SQL_PARAMS;
 use crate::draft::{delete_draft, get_all_drafts};
 use crate::error::AppError;
 
@@ -70,17 +71,30 @@ pub async fn recover_at_boot(
     // NOTE: sqlx compile-time macros (query!, query_scalar!) don't support
     // dynamic IN clauses, so we use runtime sqlx::query() here. This is
     // acceptable — the query is straightforward and only runs once at boot.
+    //
+    // L-104: SQLite caps bind parameters at `MAX_SQL_PARAMS` (999) per query.
+    // A multi-thousand-block paste crash can leave > 999 rows in
+    // `block_drafts`; building one giant IN clause would fail with "too many
+    // SQL variables". Chunk the IN clause and accumulate the result set
+    // across chunks. `MAX_SQL_PARAMS - 1` leaves headroom for any future
+    // non-IN bind on this query.
     let existing_block_ids: HashSet<String> = if drafts.is_empty() {
         HashSet::new()
     } else {
-        let placeholders = vec!["?"; drafts.len()].join(",");
-        let sql =
-            format!("SELECT id FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL");
-        let mut q = sqlx::query_scalar::<_, String>(&sql);
-        for draft in &drafts {
-            q = q.bind(&draft.block_id);
+        const CHUNK: usize = MAX_SQL_PARAMS - 1;
+        let mut acc: HashSet<String> = HashSet::new();
+        for chunk in drafts.chunks(CHUNK) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                "SELECT id FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL"
+            );
+            let mut q = sqlx::query_scalar::<_, String>(&sql);
+            for draft in chunk {
+                q = q.bind(&draft.block_id);
+            }
+            acc.extend(q.fetch_all(pool).await?);
         }
-        q.fetch_all(pool).await?.into_iter().collect()
+        acc
     };
 
     for draft in &drafts {

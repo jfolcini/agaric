@@ -4,7 +4,8 @@ use super::filters::{
 };
 use super::grouped::{eval_backlink_query_grouped, eval_unlinked_references};
 use super::query::{
-    eval_backlink_query, list_property_keys, resolve_root_pages, resolve_root_pages_cte,
+    eval_backlink_query, fetch_block_rows_by_ids, list_property_keys, resolve_root_pages,
+    resolve_root_pages_cte,
 };
 use super::types::*;
 use crate::db::init_pool;
@@ -5110,5 +5111,377 @@ async fn eval_unlinked_references_does_not_truncate_at_exactly_fts_row_cap() {
         resp.groups[0].blocks.len(),
         10_000,
         "the single group must carry every match below the cap"
+    );
+}
+
+// ======================================================================
+// L-82 / L-83 / L-84 — IN-clause `≤SMALL_IN_LIMIT → IN, >SMALL_IN_LIMIT → json_each(?)`
+// chunking. Each pair below exercises the IN-bind path and the
+// `json_each` fallback against the same logical scenario, asserting
+// both branches return the expected row set.
+// ======================================================================
+
+/// Bulk-insert `n` content blocks under `parent_page_id`, each with a
+/// `block_links` row pointing at `target_id`. Uses three
+/// `INSERT … WITH RECURSIVE` statements so the fixture lands in
+/// milliseconds even at n = 600.
+async fn bulk_insert_n_backlink_sources(
+    pool: &SqlitePool,
+    parent_page_id: &str,
+    target_id: &str,
+    n: i64,
+) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         WITH RECURSIVE seq(k) AS ( \
+             SELECT 1 UNION ALL SELECT k + 1 FROM seq WHERE k < ?1 \
+         ) \
+         SELECT \
+             'BL_' || printf('%06d', k), \
+             'content', \
+             'src ' || k, \
+             ?2, \
+             k, \
+             ?2 \
+         FROM seq",
+    )
+    .bind(n)
+    .bind(parent_page_id)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO block_links (source_id, target_id) \
+         WITH RECURSIVE seq(k) AS ( \
+             SELECT 1 UNION ALL SELECT k + 1 FROM seq WHERE k < ?1 \
+         ) \
+         SELECT \
+             'BL_' || printf('%06d', k), \
+             ?2 \
+         FROM seq",
+    )
+    .bind(n)
+    .bind(target_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Bulk-insert `n` distinct pages, each with a single content block,
+/// and link every content block to `target_id`. Used for L-84 large
+/// `SourcePage` tests that need a >SMALL_IN_LIMIT-sized `included` /
+/// `excluded` page list.
+async fn bulk_insert_n_pages_with_one_link(
+    pool: &SqlitePool,
+    target_id: &str,
+    n: i64,
+    page_prefix: &str,
+    block_prefix: &str,
+) {
+    // Pages
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         WITH RECURSIVE seq(k) AS ( \
+             SELECT 1 UNION ALL SELECT k + 1 FROM seq WHERE k < ?1 \
+         ) \
+         SELECT \
+             ?2 || printf('%06d', k), \
+             'page', \
+             'page ' || k, \
+             NULL, \
+             NULL, \
+             ?2 || printf('%06d', k) \
+         FROM seq",
+    )
+    .bind(n)
+    .bind(page_prefix)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    // Content children, one per page
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         WITH RECURSIVE seq(k) AS ( \
+             SELECT 1 UNION ALL SELECT k + 1 FROM seq WHERE k < ?1 \
+         ) \
+         SELECT \
+             ?3 || printf('%06d', k), \
+             'content', \
+             'block ' || k, \
+             ?2 || printf('%06d', k), \
+             1, \
+             ?2 || printf('%06d', k) \
+         FROM seq",
+    )
+    .bind(n)
+    .bind(page_prefix)
+    .bind(block_prefix)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    // Links: each block -> target
+    sqlx::query(
+        "INSERT INTO block_links (source_id, target_id) \
+         WITH RECURSIVE seq(k) AS ( \
+             SELECT 1 UNION ALL SELECT k + 1 FROM seq WHERE k < ?1 \
+         ) \
+         SELECT \
+             ?2 || printf('%06d', k), \
+             ?3 \
+         FROM seq",
+    )
+    .bind(n)
+    .bind(block_prefix)
+    .bind(target_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+// ----------------------------------------------------------------------
+// L-83 — fetch_block_rows_by_ids helper (shared by query.rs & grouped.rs)
+// ----------------------------------------------------------------------
+
+/// L-83 (a): IN-bind path — `ids.len() <= SMALL_IN_LIMIT` returns the
+/// expected row set in correct quantity. Reuses `setup_backlinks` (3
+/// content sources) so the small path is exercised against the same
+/// shape as every other backlink test.
+#[tokio::test]
+async fn fetch_block_rows_by_ids_small_in_bind() {
+    let (pool, _dir) = test_pool().await;
+    setup_backlinks(&pool).await;
+
+    let ids = ["SRC_A", "SRC_B", "SRC_C"];
+    let rows = fetch_block_rows_by_ids(&pool, &ids).await.unwrap();
+
+    let fetched: FxHashSet<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let expected: FxHashSet<String> = ids.iter().map(|s| (*s).to_string()).collect();
+    assert_eq!(
+        fetched, expected,
+        "small IN-bind path must return exactly the requested ids"
+    );
+}
+
+/// L-83 (b): json_each fallback path — `ids.len() > SMALL_IN_LIMIT`
+/// returns a row set that is element-wise identical to what an
+/// equivalent IN-bind sub-batch would yield. We assert by:
+///   1. Fetching all 600 ids in one call (fallback branch),
+///   2. Fetching the same ids in two ≤500-id sub-batches via the
+///      IN-bind branch and unioning,
+///   3. Asserting the two row sets are identical.
+#[tokio::test]
+async fn fetch_block_rows_by_ids_large_json_each_matches_in_bind() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "PARENT", "page", "Parent", None, None).await;
+    bulk_insert_n_backlink_sources(&pool, "PARENT", "PARENT", 600).await;
+
+    let all_ids: Vec<String> = (1..=600).map(|k| format!("BL_{k:06}")).collect();
+    let all_refs: Vec<&str> = all_ids.iter().map(String::as_str).collect();
+
+    // Fallback path (json_each).
+    let large_rows = fetch_block_rows_by_ids(&pool, &all_refs).await.unwrap();
+    let large_set: FxHashSet<String> = large_rows.iter().map(|r| r.id.clone()).collect();
+
+    // IN-bind path applied twice to the same id space, unioned.
+    let chunk_a: Vec<&str> = all_refs[..300].to_vec();
+    let chunk_b: Vec<&str> = all_refs[300..].to_vec();
+    let small_a = fetch_block_rows_by_ids(&pool, &chunk_a).await.unwrap();
+    let small_b = fetch_block_rows_by_ids(&pool, &chunk_b).await.unwrap();
+    let small_set: FxHashSet<String> = small_a
+        .iter()
+        .chain(small_b.iter())
+        .map(|r| r.id.clone())
+        .collect();
+
+    assert_eq!(
+        large_set.len(),
+        600,
+        "json_each fallback must surface every requested id"
+    );
+    assert_eq!(
+        large_set, small_set,
+        "json_each branch and IN-bind branch must return the same id set"
+    );
+}
+
+// ----------------------------------------------------------------------
+// L-82 — eval_backlink_query_grouped: BlockRow batch fetch
+// ----------------------------------------------------------------------
+
+/// L-82 (a): IN-bind path — small fixture with 5 source blocks under a
+/// single page exercises the `<= SMALL_IN_LIMIT` branch of
+/// `fetch_block_rows_by_ids` via the grouped backlink path.
+#[tokio::test]
+async fn eval_grouped_blockrow_fetch_small_in_bind() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    insert_block_with_parent(&pool, "SRC_PAGE", "page", "Source Page", None, None).await;
+    bulk_insert_n_backlink_sources(&pool, "SRC_PAGE", "TARGET", 5).await;
+
+    let page = default_page();
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.groups.len(), 1, "all sources share one root page");
+    assert_eq!(resp.groups[0].blocks.len(), 5, "5 blocks fetched");
+    assert_eq!(resp.total_count, 5);
+    assert_eq!(resp.filtered_count, 5);
+
+    let ids: FxHashSet<String> = resp.groups[0].blocks.iter().map(|b| b.id.clone()).collect();
+    let expected: FxHashSet<String> = (1..=5).map(|k| format!("BL_{k:06}")).collect();
+    assert_eq!(ids, expected, "IN-bind path must return the 5 source ids");
+}
+
+/// L-82 (b): json_each fallback path — 600 source blocks under a
+/// single source page produces 600 backlinks in one group, exercising
+/// the `> SMALL_IN_LIMIT` branch of `fetch_block_rows_by_ids` via
+/// `eval_backlink_query_grouped`.
+#[tokio::test]
+async fn eval_grouped_blockrow_fetch_large_json_each() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    insert_block_with_parent(&pool, "SRC_PAGE", "page", "Source Page", None, None).await;
+    bulk_insert_n_backlink_sources(&pool, "SRC_PAGE", "TARGET", 600).await;
+
+    let page = default_page();
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.groups.len(), 1, "all 600 sources share one root page");
+    assert_eq!(
+        resp.groups[0].blocks.len(),
+        600,
+        "json_each fallback must materialise every source"
+    );
+    assert_eq!(resp.total_count, 600);
+    assert_eq!(resp.filtered_count, 600);
+
+    let ids: FxHashSet<String> = resp.groups[0].blocks.iter().map(|b| b.id.clone()).collect();
+    let expected: FxHashSet<String> = (1..=600).map(|k| format!("BL_{k:06}")).collect();
+    assert_eq!(
+        ids, expected,
+        "json_each branch must return the same id set as the small IN-bind branch would"
+    );
+}
+
+// ----------------------------------------------------------------------
+// L-84 — SourcePage filter: included / excluded IN-clauses
+// ----------------------------------------------------------------------
+
+/// L-84: `included` json_each fallback — 600 included pages, each
+/// owning one content block that links to TARGET. The recursive
+/// descendant CTE switches to `IN (SELECT value FROM json_each(?))`
+/// because `included.len() > SMALL_IN_LIMIT`.
+#[tokio::test]
+async fn filter_source_page_included_large_json_each() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    bulk_insert_n_pages_with_one_link(&pool, "TARGET", 600, "PG_", "BK_").await;
+
+    // Include the first 400 pages — the IN-bind branch (≤500) would still
+    // succeed at this size, so we go all the way to 600 to force the
+    // fallback path.
+    let included: Vec<String> = (1..=600).map(|k| format!("PG_{k:06}")).collect();
+    let filters = vec![BacklinkFilter::SourcePage {
+        included: included.clone(),
+        excluded: vec![],
+    }];
+    let page = PageRequest::new(None, Some(200)).unwrap();
+
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.total_count, 600,
+        "every page contributes one backlink to the base set"
+    );
+    assert_eq!(
+        resp.filtered_count, 600,
+        "json_each-included branch must keep every block under the included pages"
+    );
+}
+
+/// L-84: exclusion-only json_each fallback — 600 excluded pages
+/// triggers the `> SMALL_IN_LIMIT` branch of the exclusion-only SQL
+/// path (line ~452 pre-fix). Setup: 600 pages each contribute a
+/// backlink, plus one extra "ALLOWED" page whose backlink should
+/// survive the exclusion.
+#[tokio::test]
+async fn filter_source_page_excluded_only_large_json_each() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    bulk_insert_n_pages_with_one_link(&pool, "TARGET", 600, "EX_", "EBK_").await;
+
+    // Plus one allowed source that must not be excluded.
+    insert_block_with_parent(&pool, "ALLOWED", "page", "Allowed", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "ALLOWED_BK",
+        "content",
+        "allowed",
+        Some("ALLOWED"),
+        Some(1),
+    )
+    .await;
+    insert_block_link(&pool, "ALLOWED_BK", "TARGET").await;
+
+    let excluded: Vec<String> = (1..=600).map(|k| format!("EX_{k:06}")).collect();
+    let filters = vec![BacklinkFilter::SourcePage {
+        included: vec![],
+        excluded,
+    }];
+    let page = default_page();
+
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.total_count, 601,
+        "601 backlinks before exclusion (600 EX_* + 1 ALLOWED_BK)"
+    );
+    assert_eq!(
+        resp.filtered_count, 1,
+        "only ALLOWED_BK remains after the json_each exclusion"
+    );
+    assert_eq!(resp.items.len(), 1);
+    assert_eq!(resp.items[0].id, "ALLOWED_BK");
+}
+
+/// L-84: combined `included` + `excluded` both json_each — exercises
+/// the within-included `excluded` placeholder site (line ~431 pre-fix)
+/// alongside the `included` site. With 600 included PG_* and 300
+/// excluded PG_* (the second half), exactly the first 300 pages
+/// survive.
+#[tokio::test]
+async fn filter_source_page_include_exclude_large_json_each() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    bulk_insert_n_pages_with_one_link(&pool, "TARGET", 600, "PG_", "BK_").await;
+
+    let included: Vec<String> = (1..=600).map(|k| format!("PG_{k:06}")).collect();
+    // Excluded list also exceeds SMALL_IN_LIMIT to force the json_each
+    // branch on both placeholder sites.
+    let excluded: Vec<String> = (301..=901).map(|k| format!("PG_{k:06}")).collect();
+    let filters = vec![BacklinkFilter::SourcePage { included, excluded }];
+    let page = PageRequest::new(None, Some(200)).unwrap();
+
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.total_count, 600,
+        "every page in the fixture contributes a backlink"
+    );
+    assert_eq!(
+        resp.filtered_count, 300,
+        "300 surviving sources after include+exclude via json_each on both branches"
     );
 }

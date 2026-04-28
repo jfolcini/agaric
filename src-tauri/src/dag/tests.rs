@@ -8,7 +8,7 @@ use tempfile::TempDir;
 
 // ── Test fixture constants ──────────────────────────────────────────
 
-const FIXED_TS: &str = "2025-01-15T12:00:00+00:00";
+const FIXED_TS: &str = "2025-01-15T12:00:00Z";
 const DEV_A: &str = "device-A";
 const DEV_B: &str = "device-B";
 

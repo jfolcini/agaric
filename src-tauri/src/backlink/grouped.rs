@@ -5,7 +5,7 @@ use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
 use super::filters::resolve_filter;
-use super::query::resolve_root_pages;
+use super::query::{fetch_block_rows_by_ids, resolve_root_pages};
 use super::sort::sort_ids;
 use super::types::*;
 use crate::error::AppError;
@@ -221,26 +221,7 @@ pub async fn eval_backlink_query_grouped(
 
     // 8. Fetch full BlockRow data for all blocks in one batch
     let all_ids_vec: Vec<&str> = sorted_all.iter().map(String::as_str).collect();
-    let fetched_rows = if all_ids_vec.is_empty() {
-        vec![]
-    } else {
-        let placeholders = all_ids_vec
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(",");
-        let query_str = format!(
-            "SELECT id, block_type, content, parent_id, position, \
-             deleted_at, is_conflict, conflict_type, \
-             todo_state, priority, due_date, scheduled_date, page_id \
-             FROM blocks WHERE id IN ({placeholders})"
-        );
-        let mut query = sqlx::query_as::<_, BlockRow>(&query_str);
-        for id in &all_ids_vec {
-            query = query.bind(*id);
-        }
-        query.fetch_all(pool).await?
-    };
+    let fetched_rows = fetch_block_rows_by_ids(pool, &all_ids_vec).await?;
 
     // Build a lookup map from id -> BlockRow
     let row_map: std::collections::HashMap<&str, &BlockRow> =
@@ -563,26 +544,7 @@ pub async fn eval_unlinked_references(
 
     // 10. Fetch full BlockRow data for all blocks in one batch
     let all_ids_vec: Vec<&str> = sorted_all.iter().map(String::as_str).collect();
-    let fetched_rows = if all_ids_vec.is_empty() {
-        vec![]
-    } else {
-        let placeholders = all_ids_vec
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(",");
-        let query_str = format!(
-            "SELECT id, block_type, content, parent_id, position, \
-             deleted_at, is_conflict, conflict_type, \
-             todo_state, priority, due_date, scheduled_date, page_id \
-             FROM blocks WHERE id IN ({placeholders})"
-        );
-        let mut query = sqlx::query_as::<_, BlockRow>(&query_str);
-        for id in &all_ids_vec {
-            query = query.bind(*id);
-        }
-        query.fetch_all(pool).await?
-    };
+    let fetched_rows = fetch_block_rows_by_ids(pool, &all_ids_vec).await?;
 
     // Build a lookup map from id -> BlockRow
     let row_map: std::collections::HashMap<&str, &BlockRow> =

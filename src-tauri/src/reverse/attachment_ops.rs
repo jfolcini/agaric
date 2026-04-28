@@ -17,6 +17,25 @@ pub fn reverse_add_attachment(record: &OpRecord) -> Result<OpPayload, AppError> 
     ))
 }
 
+/// Reverse a `delete_attachment` op by reconstructing the `add_attachment`
+/// payload that originally created the row.
+///
+/// # Performance characteristic (L-97)
+///
+/// The lookup predicate is
+/// `op_type = 'add_attachment' AND json_extract(payload, '$.attachment_id') = ?1`,
+/// which walks every `add_attachment` op in `op_log` — there is **no
+/// covering index** on `attachment_id` (unlike `block_id`, which has
+/// `idx_op_log_block_id` from migration 0030). The `op_type =
+/// 'add_attachment'` filter already narrows the scan substantially in
+/// practice, and reverse-op replay rates are very low (manual undo /
+/// sync-replay back-out only), so the unindexed scan is acceptable today.
+///
+/// If profiling ever shows this query dominates, the canonical fix is a
+/// new indexed `attachment_id` column on `op_log` via a new migration.
+/// **That requires explicit user approval** per AGENTS.md "Architectural
+/// Stability" (a new column is a schema change). Do **not** add the column
+/// without that approval.
 pub async fn reverse_delete_attachment(
     pool: &SqlitePool,
     record: &OpRecord,

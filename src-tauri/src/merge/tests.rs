@@ -2248,7 +2248,7 @@ fn resolve_property_conflict_z_timestamps_parsed_correctly() {
 fn resolve_property_conflict_mixed_utc_suffixes_treated_as_equal() {
     // Both represent the exact same instant: 2025-06-01T10:00:00 UTC
     let op_a = make_prop_record(DEV_A, 1, "2025-06-01T10:00:00Z", "B1", "key", "val_a");
-    let op_b = make_prop_record(DEV_B, 1, "2025-06-01T10:00:00+00:00", "B1", "key", "val_b");
+    let op_b = make_prop_record(DEV_B, 1, "2025-06-01T10:00:00Z", "B1", "key", "val_b");
 
     // Same instant → timestamps equal → tiebreaker: DEV_B > DEV_A lexicographically
     let result = resolve_property_conflict(&op_a, &op_b).unwrap();
@@ -2268,8 +2268,8 @@ fn resolve_property_conflict_mixed_utc_suffixes_treated_as_equal() {
 /// Timestamps with `+00:00` suffix where one is strictly later than the other.
 #[test]
 fn resolve_property_conflict_plus_zero_offset_later_wins() {
-    let op_a = make_prop_record(DEV_A, 1, "2025-06-01T10:00:00+00:00", "B1", "key", "val_a");
-    let op_b = make_prop_record(DEV_B, 1, "2025-06-01T11:00:00+00:00", "B1", "key", "val_b");
+    let op_a = make_prop_record(DEV_A, 1, "2025-06-01T10:00:00Z", "B1", "key", "val_a");
+    let op_b = make_prop_record(DEV_B, 1, "2025-06-01T11:00:00Z", "B1", "key", "val_b");
 
     let result = resolve_property_conflict(&op_a, &op_b).unwrap();
     assert_eq!(
@@ -2757,7 +2757,7 @@ mod proptest_tests {
             0u32..60,
         )
             .prop_map(|(y, m, d, h, min, s)| {
-                format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}+00:00")
+                format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}Z")
             })
     }
 

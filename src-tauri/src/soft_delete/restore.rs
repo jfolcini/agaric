@@ -19,6 +19,11 @@ pub async fn restore_block(
     block_id: &str,
     deleted_at_ref: &str,
 ) -> Result<u64, AppError> {
+    // L-107: IMMEDIATE is intentional. The recursive-CTE traversal walks the
+    // same `blocks` rows that `cascade_soft_delete` may be writing concurrently
+    // (it also uses BEGIN IMMEDIATE). Acquiring the reserved lock up-front
+    // serializes restore against cascade-soft-delete writers and prevents the
+    // CTE from reading a half-cascaded subtree.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     let result = sqlx::query!(
@@ -39,5 +44,19 @@ pub async fn restore_block(
     .await?;
 
     tx.commit().await?;
-    Ok(result.rows_affected())
+
+    // L-102: a wrong-token call (stale `deleted_at_ref` from a UI undo retry,
+    // a typo in an MCP call, or a bug in the caller) is a silent no-op
+    // otherwise. Emit a warn breadcrumb with both identifiers so triage has
+    // something to grep for. Intentionally NOT promoted to `Err` — callers
+    // (e.g. undo-redo) rely on `Ok(0)` for idempotent retries.
+    let rows = result.rows_affected();
+    if rows == 0 {
+        tracing::warn!(
+            block_id = %block_id,
+            deleted_at_ref = %deleted_at_ref,
+            "restore_block matched no rows",
+        );
+    }
+    Ok(rows)
 }

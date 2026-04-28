@@ -9,18 +9,18 @@ expression: ops
   hash: "[HASH]"
   op_type: create_block
   payload: "{\"block_id\":\"BLK-MS01\",\"block_type\":\"content\",\"content\":\"test\",\"parent_id\":null,\"position\":1}"
-  created_at: "2025-01-15T12:00:00+00:00"
+  created_at: "2025-01-15T12:00:00Z"
 - device_id: test-device
   seq: 2
   parent_seqs: "[[\"test-device\",1]]"
   hash: "[HASH]"
   op_type: create_block
   payload: "{\"block_id\":\"BLK-MS02\",\"block_type\":\"content\",\"content\":\"test\",\"parent_id\":null,\"position\":1}"
-  created_at: "2025-01-15T12:00:00+00:00"
+  created_at: "2025-01-15T12:00:00Z"
 - device_id: test-device
   seq: 3
   parent_seqs: "[[\"test-device\",2]]"
   hash: "[HASH]"
   op_type: create_block
   payload: "{\"block_id\":\"BLK-MS03\",\"block_type\":\"content\",\"content\":\"test\",\"parent_id\":null,\"position\":1}"
-  created_at: "2025-01-15T12:00:00+00:00"
+  created_at: "2025-01-15T12:00:00Z"
