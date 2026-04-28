@@ -1,5 +1,53 @@
 # Session Log
 
+## Session 525 — Backend LOW-severity opportunistic batch — close 6 items (L-21, L-22, L-27, L-31, L-66, L-71) (2026-04-28)
+
+**6 backend LOW-severity REVIEW-LATER items closed in one orchestrator-direct batch.** Continuing the "main agent is free" opportunistic flow from session 524 — the user asked the orchestrator to keep picking up easy wins between subagent batches. All six items are file-disjoint and individually under ~100 LOC of code change; orchestrator-direct was the right shape (no subagents). Mix of doc-only, mechanical conversion, refactor + parity test, and two real defence-in-depth fixes in the sync stack. End-of-batch review subagent ran across all six and confirmed PASS with no fix-ups.
+
+**REVIEW-LATER impact:**
+
+- **LOW findings:** 67 → 61 (6 items resolved by code change).
+- **Top-level open count (FEAT/MAINT/PERF/PUB/UX tracker):** 41 → 41.
+- **Previously-resolved counter:** 642+ → 648+ across 492 sessions (latest session 525).
+
+**Items closed (6):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| L-21 | Cache+Pagination (`pagination/history.rs`) | **Doc-only.** New `# Cursor seq invariant (L-21)` doc-block on `list_block_history` names the `op_log.seq ≥ 1` assumption explicitly, points at the `COALESCE(MAX(seq), 0) + 1` computation in `op_log::append_local_op_in_tx` as the source of truth, and tells the next maintainer what to do if a future change introduces a per-device seq-0 sentinel (switch `cursor_seq` to `Option<i64>` and bind directly). Inline comment at the cursor unpack also cross-references the doc-block so the `unwrap_or(0)` sentinel reads as deliberate, not accidental. |
+| L-22 | Cache+Pagination (`pagination/history.rs`) | **Compile-time SQL check.** The `list_page_history` `__all__` branch was using `sqlx::query_as::<_, HistoryEntry>(…)` + `.bind()` — bypassing AGENTS.md invariant #6 (compile-time SQL validation). Converted to `sqlx::query_as!`; the `?N IS NULL` short-circuits and `IN (SELECT …)` subquery work fine inside the macro. New `.sqlx/query-32f35073…9d9092.json` cache entry committed. The page-scoped branch already used `query_as!`, so both branches now have the same compile-time guarantee. |
+| L-27 | Cache+Pagination (`cache/agenda.rs`, `cache/tests.rs`) | **De-dup.** The 51-line UNION ALL desired-state SQL was duplicated verbatim in `rebuild_agenda_cache_impl` (single-pool) and `rebuild_agenda_cache_split_impl` (read/write-split). Extracted to `const DESIRED_AGENDA_SQL: &str` at the top of `agenda.rs` with a doc-block enumerating the four sources, the template-page `NOT EXISTS` filter, the conflict-aware invariant, and the deduplication semantics. Both impls now bind the const. New parity oracle test `agenda_rebuild_single_and_split_produce_identical_cache` runs both impls against a 4-source fixture (date-property, date-tag, due_date column, scheduled_date column, plus an excluded soft-deleted row) and asserts `agenda_cache` row sets are byte-identical via `BTreeSet` comparison. The test fails loudly if a future contributor accidentally edits one branch without the other. |
+| L-31 | Commands/CRUD (`commands/history.rs`) | **Doc-only.** `restore_page_to_op_inner` reads `ops_after` against the bare pool; the downstream `revert_ops_inner` opens its own `BEGIN IMMEDIATE`. New ops landing between read and write are not reverted — the function's contract is "snapshot-at-read-time", not "everything ever". New `# Snapshot semantics (L-31)` doc-block names the behaviour explicitly, anchors it in the single-user threat model (the practical window is one DB round-trip), and tells the next maintainer that lifting the read into the write tx would close the window but is not motivated today. |
+| L-66 | Sync (`sync_daemon/snapshot_transfer.rs`, `sync_daemon/orchestrator.rs`, `sync_protocol/orchestrator.rs`) | **Defence-in-depth + new tests.** `try_receive_snapshot_catchup` previously gated the `peer_refs` upsert on `if !remote_device_id.is_empty()` — when HeadExchange carried only our own heads, the snapshot was applied but the peer was forgotten and the next sync started from scratch. New parameter `expected_remote_id: Option<&str>` mirrors the SyncComplete fallback in `SyncOrchestrator`: prefer session-level `remote_device_id`, fall back to `expected_remote_id` (mTLS / mDNS peer identity, exposed via a new `SyncOrchestrator::expected_remote_id()` accessor), or return `AppError::InvalidOperation` so the scheduler records the failure. The error message embeds "L-66" for traceability. Three new tests: fallback path resolves to expected_remote_id (with `peer_refs::get_peer_ref(&pool, "")` asserted to return `None`), both-empty path errors out and the message contains "L-66", and session-id-wins-over-expected when both are present. Updated 7 callsites (1 production caller in `sync_daemon/orchestrator.rs` + 5 existing tests in `snapshot_transfer.rs` + 1 in `sync_daemon/tests.rs`) to pass the new parameter — `None` for tests since they don't simulate the empty-HeadExchange edge case. |
+| L-71 | Sync (`sync_daemon/server.rs`, `sync_protocol/orchestrator.rs`) | **Defence-in-depth wiring.** Responder's `SyncOrchestrator` was constructed without `with_expected_remote_id(...)`, so the orchestrator's HeadExchange-vs-expected mismatch path (covered by `orchestrator_rejects_unexpected_peer_device_id` at the unit level) never fired on the responder side. Restructured `handle_incoming_sync` to defer orchestrator construction until *after* the cert verification block, then wire the verified TLS certificate CN (`conn.peer_cert_cn()`) as `expected_remote_id`. The cert CN is already verified against the HeadExchange `device_id` by `verify_peer_cert`, so this is genuinely redundant defence-in-depth — but it activates the orchestrator's parallel mismatch check at zero risk. In-memory test connections (no peer cert) skip the wiring; existing 10 `handle_incoming_sync` tests continue to pass unchanged. |
+
+**Files touched (this session's batch — 9 modified, 1 new sqlx cache):**
+
+- Backend Cache+Pagination (3): `src-tauri/src/pagination/history.rs`, `src-tauri/src/cache/agenda.rs`, `src-tauri/src/cache/tests.rs`
+- Backend Commands (1): `src-tauri/src/commands/history.rs`
+- Backend Sync (5): `src-tauri/src/sync_daemon/snapshot_transfer.rs`, `src-tauri/src/sync_daemon/orchestrator.rs`, `src-tauri/src/sync_daemon/server.rs`, `src-tauri/src/sync_daemon/tests.rs`, `src-tauri/src/sync_protocol/orchestrator.rs`
+- Backend sqlx cache (1 new): `src-tauri/.sqlx/query-32f35073…9d9092.json` (the L-22 `query_as!` conversion)
+- Docs (2): `REVIEW-LATER.md` (6 items removed; LOW count 67 → 61; previously-resolved counter bumped), `SESSION-LOG.md` (this entry)
+
+**Verification:** `prek run --all-files` → all hooks PASS (35 hooks). Targeted runs:
+
+- L-21 / L-22: `cargo nextest run` for `list_block_history` / `list_page_history` paths PASS; sqlx compile-time check now covers the `__all__` branch.
+- L-27: 6/6 agenda-cache tests pass including the new parity oracle.
+- L-31: doc-only, no test surface.
+- L-66: 8/8 `try_receive_snapshot_catchup` tests pass including 3 new (fallback / both-empty / session-wins).
+- L-71: 10/10 `handle_incoming_sync` tests pass unchanged; orchestrator's existing `orchestrator_rejects_unexpected_peer_device_id` covers the new wiring's logical surface.
+
+Full-suite post-merge: `cargo nextest run --no-fail-fast` → **3091/3091 passed**, 2 skipped. Frontend tests not exercised (zero frontend changes in this batch).
+
+**Process notes:**
+
+- **6-item orchestrator-direct batch is the right size for this opportunistic mode.** Session 524 ran 3 items; this one ran 6. The cap is "items that are individually understandable and can be reviewed in one pass at the end." Any larger and the end-of-batch review subagent starts losing context; any smaller and the per-item overhead (REVIEW-LATER edits, SESSION-LOG entry, prek run) dominates the actual fix work. Pattern: pick a batch where the orchestrator can hold all items in working memory, do them sequentially, and run a single review subagent at the end.
+- **Sync stack defence-in-depth pairs well as a unit.** L-66 (peer_refs fallback) and L-71 (cert CN → expected_remote_id) are independent fixes but exercise adjacent abstractions in the same file family. Pairing them in one batch made it natural to reason about the SyncOrchestrator's `expected_remote_id` field as the unifying mechanism — the new `SyncOrchestrator::expected_remote_id()` accessor introduced for L-66 is exactly the same one L-71 would have needed had it landed independently. Co-located fixes in the same subsystem amortise the cognitive load.
+- **The L-27 parity-oracle pattern is broadly reusable.** When two implementations bind the same logical query against different pool wirings (single-pool vs read/write-split), an oracle test that runs both against the same fixture and asserts `BTreeSet` equality is far cheaper than maintaining two parallel test suites. Same shape would work for any future read/write-split additions to the cache layer.
+- **Deferring orchestrator construction in server.rs (L-71) was the cleanest fix.** The original code constructed `orch` on line ~84, then read the cert CN inside the if-let block ~80 lines later. Moving construction below the cert check let us conditionally wire `with_expected_remote_id(cert_cn)` without a setter. Existing tests cover both the cert-present and no-cert (in-memory) paths, so the restructuring is verified by the unchanged test surface.
+
+---
+
 ## Session 524 — Backend LOW-severity opportunistic batch — close 3 items (L-23, L-115, L-120) (2026-04-28)
 
 **3 backend LOW-severity REVIEW-LATER items closed as an opportunistic between-batch fill.** Single-orchestrator flow; no subagents. The user flagged "main agent is free, pick a new small fix and do it, don't wait idly", so the batch deliberately stayed tight: one validation tightening, one test brittleness fix, one doc-only clarification. All three are MCP / pagination boundary items in spirit even though they live in different files.

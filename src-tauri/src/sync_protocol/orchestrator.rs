@@ -623,4 +623,13 @@ impl SyncOrchestrator {
     pub fn session(&self) -> &SyncSession {
         &self.session
     }
+
+    /// L-66: read the daemon-provided `expected_remote_id` so callers
+    /// (snapshot catch-up) can mirror the [`SyncMessage::SyncComplete`]
+    /// fallback when `session.remote_device_id` is empty. Returns
+    /// `None` if no expected id was set (e.g., an in-process test
+    /// harness without `with_expected_remote_id`).
+    pub fn expected_remote_id(&self) -> Option<&str> {
+        self.expected_remote_id.as_deref()
+    }
 }

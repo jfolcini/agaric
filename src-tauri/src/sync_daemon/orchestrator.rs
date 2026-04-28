@@ -736,12 +736,18 @@ pub(crate) async fn run_sync_session(
     // post-snapshot deltas via a normal `HeadExchange`.
     if matches!(orch.session().state, SyncState::ResetRequired) {
         let peer_id = orch.session().remote_device_id.clone();
+        // L-66: pass the orchestrator's daemon-provided
+        // `expected_remote_id` so the catch-up can mirror the
+        // SyncComplete fallback when `peer_id` is empty (HeadExchange
+        // carried only our own heads).
+        let expected_remote_id = orch.expected_remote_id().map(str::to_owned);
         match snapshot_transfer::try_receive_snapshot_catchup(
             conn,
             pool,
             materializer,
             event_sink,
             &peer_id,
+            expected_remote_id.as_deref(),
         )
         .await
         {

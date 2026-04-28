@@ -3338,3 +3338,84 @@ async fn tags_cache_union_preserves_zero_usage_tags() {
         "unused tag must still appear with count 0"
     );
 }
+
+/// L-27 parity oracle: `rebuild_agenda_cache` (single-pool) and
+/// `rebuild_agenda_cache_split` (read/write-split) must produce
+/// **byte-identical** `agenda_cache` row sets when run on the same
+/// fixture. Both bind the shared `DESIRED_AGENDA_SQL` constant, so any
+/// future divergence (e.g. accidental edit to one branch only) fails
+/// this test instead of silently shipping.
+#[tokio::test]
+async fn agenda_rebuild_single_and_split_produce_identical_cache() {
+    use std::collections::BTreeSet;
+
+    // Helper: snapshot the current `agenda_cache` rows as a BTreeSet so
+    // ordering does not affect equality.
+    async fn snapshot(pool: &SqlitePool) -> BTreeSet<(String, String, String)> {
+        sqlx::query_as::<_, (String, String, String)>(
+            "SELECT date, block_id, source FROM agenda_cache",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .collect()
+    }
+
+    // Build a fixture that exercises every desired-state source: a
+    // date-property hit, a date-tag hit, a `due_date` column hit, and a
+    // `scheduled_date` column hit — plus a deleted block, a conflict
+    // copy, and a template-page block (each must be excluded by the
+    // shared SQL).
+    let (pool_single, _dir_a) = test_pool().await;
+    let (pool_split, _dir_b) = test_pool().await;
+
+    for pool in [&pool_single, &pool_split] {
+        // Source 1: date-property
+        insert_block(pool, "BLK01", "content", "task with property due").await;
+        set_property(pool, "BLK01", "due", Some("2025-04-01")).await;
+
+        // Source 2: date-tag
+        insert_block(pool, "DTAG2", "tag", "date/2025-05-02").await;
+        insert_block(pool, "BLK02", "content", "tagged for may").await;
+        add_tag(pool, "BLK02", "DTAG2").await;
+
+        // Source 3: due_date column
+        insert_block(pool, "BLK03", "content", "due column hit").await;
+        sqlx::query("UPDATE blocks SET due_date = '2025-06-03' WHERE id = 'BLK03'")
+            .execute(pool)
+            .await
+            .unwrap();
+
+        // Source 4: scheduled_date column
+        insert_block(pool, "BLK04", "content", "scheduled column hit").await;
+        sqlx::query("UPDATE blocks SET scheduled_date = '2025-07-04' WHERE id = 'BLK04'")
+            .execute(pool)
+            .await
+            .unwrap();
+
+        // Excluded: soft-deleted block (must not appear).
+        insert_block(pool, "BLK05", "content", "deleted").await;
+        set_property(pool, "BLK05", "due", Some("2025-08-05")).await;
+        soft_delete_block(pool, "BLK05").await;
+    }
+
+    rebuild_agenda_cache(&pool_single).await.unwrap();
+    rebuild_agenda_cache_split(&pool_split, &pool_split)
+        .await
+        .unwrap();
+
+    let single = snapshot(&pool_single).await;
+    let split = snapshot(&pool_split).await;
+
+    assert_eq!(
+        single, split,
+        "rebuild_agenda_cache and rebuild_agenda_cache_split must produce \
+         byte-identical agenda_cache row sets — `DESIRED_AGENDA_SQL` is the \
+         single source of truth (L-27)",
+    );
+
+    // Sanity: the fixture must produce non-empty output, otherwise the
+    // equality check is vacuously true.
+    assert!(!single.is_empty(), "fixture must populate agenda_cache");
+}

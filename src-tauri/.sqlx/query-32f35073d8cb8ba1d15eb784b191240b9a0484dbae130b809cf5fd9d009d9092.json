@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at FROM op_log ol WHERE (?1 IS NULL OR ol.op_type = ?1) AND (?2 IS NULL OR ( ol.created_at < ?3 OR (ol.created_at = ?3 AND ol.seq < ?4) OR (ol.created_at = ?3 AND ol.seq = ?4 AND ol.device_id < ?6))) AND (?7 IS NULL OR json_extract(ol.payload, '$.block_id') IN ( SELECT bp.block_id FROM block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?7)) ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC LIMIT ?5",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "seq",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "op_type",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "payload",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 4,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "32f35073d8cb8ba1d15eb784b191240b9a0484dbae130b809cf5fd9d009d9092"
+}

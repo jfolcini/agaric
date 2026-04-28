@@ -328,6 +328,23 @@ pub async fn revert_ops_inner(
 /// Finds all ops that occurred AFTER the target op on blocks belonging to the
 /// given page (or all blocks if `page_id == "__all__"`), filters out non-reversible
 /// ops, and calls `revert_ops_inner()` with the remainder.
+///
+/// # Snapshot semantics (L-31)
+///
+/// The list of ops to revert is computed against the bare pool **before**
+/// `revert_ops_inner` opens its `BEGIN IMMEDIATE` transaction. New ops
+/// landing between the read here and the write inside `revert_ops_inner`
+/// (for example, a sync replay or a concurrent local edit) are **not**
+/// included in the revert: they keep their forward-direction effects.
+///
+/// In a single-user threat model the practical window between the two
+/// steps is bounded by one DB round-trip — concurrent ops in that window
+/// are vanishingly rare and survive the restore intentionally rather than
+/// being silently rolled back. Lifting the read into the same write
+/// transaction would close the window but is not motivated today; this
+/// doc-block names the snapshot-at-read-time behaviour explicitly so a
+/// future contributor reasoning about "what gets restored" does not
+/// have to re-derive it from the call graph.
 pub async fn restore_page_to_op_inner(
     pool: &SqlitePool,
     device_id: &str,
