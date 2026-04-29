@@ -258,16 +258,7 @@ pub async fn eval_backlink_query_grouped(
     // 10. Build cursor from last group's page_id if has_more
     let next_cursor = if has_more {
         let last = actual_groups.last().expect("has_more implies non-empty");
-        Some(
-            Cursor {
-                id: last.0.clone(),
-                position: None,
-                deleted_at: None,
-                seq: None,
-                rank: None,
-            }
-            .encode()?,
-        )
+        Some(Cursor::for_id(last.0.clone()).encode()?)
     } else {
         None
     };
@@ -581,16 +572,7 @@ pub async fn eval_unlinked_references(
     // 12. Build cursor from last group's page_id if has_more
     let next_cursor = if has_more {
         let last = actual_groups.last().expect("has_more implies non-empty");
-        Some(
-            Cursor {
-                id: last.0.clone(),
-                position: None,
-                deleted_at: None,
-                seq: None,
-                rank: None,
-            }
-            .encode()?,
-        )
+        Some(Cursor::for_id(last.0.clone()).encode()?)
     } else {
         None
     };

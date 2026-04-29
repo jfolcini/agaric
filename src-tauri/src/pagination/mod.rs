@@ -358,6 +358,21 @@ impl Cursor {
             rank: None,
         }
     }
+
+    /// Cursor keyed on `(rank, id)` — used by `fts::search`, whose
+    /// keyset is `(rank ASC, id ASC)` with epsilon comparison
+    /// `ABS(rank - cursor_rank) < 1e-9` to avoid exact float equality.
+    /// `id` stores the `block_id` deterministic tiebreaker.
+    #[must_use]
+    pub(super) fn for_id_and_rank(id: String, rank: f64) -> Self {
+        Self {
+            id,
+            position: None,
+            deleted_at: None,
+            seq: None,
+            rank: Some(rank),
+        }
+    }
 }
 
 impl PageRequest {

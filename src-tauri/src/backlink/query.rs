@@ -197,16 +197,7 @@ pub async fn eval_backlink_query(
     // 7. Build cursor
     let next_cursor = if has_more {
         let last = items.last().expect("has_more implies non-empty");
-        Some(
-            Cursor {
-                id: last.id.clone(),
-                position: None,
-                deleted_at: None,
-                seq: None,
-                rank: None,
-            }
-            .encode()?,
-        )
+        Some(Cursor::for_id(last.id.clone()).encode()?)
     } else {
         None
     };

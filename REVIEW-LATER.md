@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 740+ items across 506 sessions (per SESSION-LOG.md unique session count; latest is session 539).
+Previously resolved: 746+ items across 507 sessions (per SESSION-LOG.md unique session count; latest is session 540).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -2025,7 +2025,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F25
 - **Status:** Open
 
-## INFO / nits (28 — expanded)
+## INFO / nits (22 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2094,30 +2094,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### Cache
-
-### I-Cache-4 — `total_count` deliberately omitted; documented and consistent
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/pagination/mod.rs:8-11` (doc) and `:171-179` (`PageResponse`)
-- **What:** AGENTS.md Backend Pattern #4 ("`total_count` uses post-filter count") only applies when a query post-filters; the pagination module deliberately omits `total_count` — clients detect end-of-results via `has_more = false`. Verified: none of the eight paginated functions return a count. ARCHITECTURE.md confirms the convention.
-- **Why it matters:** Confirms invariant #4 has nothing to enforce within this module — flagged for completeness so a future reviewer can see scope adherence at a glance.
-- **Cost:** —
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** No action — informational only.
-- **Pass-1 source:** 03/F22
-- **Status:** Open
-
-### I-Cache-5 — `extract_date_for_cursor` is a nested fn inside `list_agenda_range`
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/pagination/agenda.rs:109-119` (definition) and `:124` (callsite)
-- **What:** `extract_date_for_cursor` is defined as a nested function (not a closure) inside `list_agenda_range` and called once. The surrounding file uses inline closures for cursor builders, so this is stylistically odd. Worth noting only because the nested fn obscured the underlying H-1 bug ("cursor encodes wrong date for property/tag-source rows") during initial reading.
-- **Why it matters:** Style nit; flagged because the indirection contributed to the H-1 misread.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** After fixing H-1 (select `ac.date` directly into the row type), this nested fn becomes unnecessary and can be removed.
-- **Pass-1 source:** 03/F23
-- **Status:** Open
 
 ### I-Cache-6 — `space_filter_clause!` SQL inlined at four sites without an oracle
 - **Domain:** Cache + Pagination
@@ -2231,18 +2207,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Search & Links
 
-### I-Search-7 — `eval_unlinked_references` short-token "dead arm" in OR query
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/grouped.rs:296-340`
-- **What:** When the page title sanitizes to a non-empty but trigram-unindexable token (e.g., 2-char `"AB"` → quoted `"AB"`) and an alias is valid, the combined OR-arm builder emits `("AB") OR ("Project" "Alpha")`. The `"AB"` arm contributes nothing under trigram FTS5 (no positions for ≤2 chars) and the OR collapses to the alias arm — net result is correct but the intermediate query has a dead arm. Tied to I-Search-2.
-- **Why it matters:** Symptom of the broader documented-vs-actual sub-trigram filter gap (I-Search-2). Net result is correct today, but the dead arm is a smell that disappears once short-token filtering is added.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Resolved by I-Search-2 — once short-token filtering lands in `sanitize_fts_query`, this branch is correct by construction.
-- **Pass-1 source:** 07/F29
-- **Status:** Open
-
 ### I-Search-9 — `BacklinkFilter::BlockType` loads all blocks of type into memory
 - **Domain:** Search & Links
 - **Location:** `src-tauri/src/backlink/filters.rs:399-420`
@@ -2255,18 +2219,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 07/F32
 - **Status:** Open
 
-### I-Search-11 — `Cursor` constructor verbosity at every encode site
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/query.rs:182-191`; `src-tauri/src/backlink/grouped.rs:226-236`, `:553-563`; `src-tauri/src/tag_query/query.rs:65-75`; `src-tauri/src/fts/search.rs:392-403`
-- **What:** Five call sites construct the full `Cursor` struct inline with most fields set to `None` (`position`, `deleted_at`, `seq`, `rank`). Adding a new variant cursor field requires touching every site. (Verified via `rg "^\s*Cursor \{$" src-tauri/src` returning exactly five matches; aligned with the I-Search-19 enumeration.)
-- **Why it matters:** Pure maintainability — error-prone fan-out. A `Cursor::for_id(id)` (and similar `for_id_rank`, `for_id_position`) constructor centralizes the boilerplate.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add `Cursor::for_id(id: String) -> Self` (and complementary builders) and replace the five inline constructions.
-- **Pass-1 source:** 07/F35
-- **Status:** Open
-
 ### I-Search-12 — `eval_backlink_query_grouped` group ordering ignores user `BacklinkSort`
 - **Domain:** Search & Links
 - **Location:** `src-tauri/src/backlink/grouped.rs:114-123, 162-167, 435-449`
@@ -2277,18 +2229,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low/Medium
 - **Recommendation:** Either (a) sort groups by the same criterion (using the latest member block's value as the group's sort key), or (b) document this asymmetry explicitly in the function docstring and in the UI's group view.
 - **Pass-1 source:** 07/F36
-- **Status:** Open
-
-### I-Search-13 — `eval_unlinked_references` cursor uses `last.0` (page_id) — non-deterministic per M-62
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/grouped.rs:551-562` (encode), `:451-462` (skip_while)
-- **What:** Cross-reference for M-62. The cursor encodes `last.0` (page_id of the last group on this page); the next request uses `skip_while(|(pid, _, _)| pid.as_str() != after_id)` on a freshly-built `group_list`. If the truncation set differs (M-62), the cursor's page_id may be missing in the new list and `skip_while` consumes everything → empty page.
-- **Why it matters:** Resolves automatically once M-62 stabilizes the truncation boundary.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Addressed by M-62. No standalone fix needed; track here so reviewers don't apply two parallel fixes.
-- **Pass-1 source:** 07/F37
 - **Status:** Open
 
 ### I-Search-19 — `Cursor` rank/position/deleted_at/seq fields are part of encoded payload — schema-leak in cursor format
@@ -2356,18 +2296,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### GCal / Spaces
-
-### I-GCalSpaces-2 — `clock.today()` UTC bug compounds with `clamp_to_window` filter (second site)
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/gcal_push/dirty_producer.rs:423-429` (`clamp_to_window`)
-- **What:** `clamp_to_window(dates, today)` is called from each `compute_for_*` helper with the caller-supplied `today`. Per the Clock-UTC-vs-Local High-severity finding (Pass-1 F3), production callers will get `today` from `Clock::today()` which currently returns UTC date. East-of-UTC users at 03:00 local have a UTC date one day behind their local date; events for "tomorrow local" become `today + 1` UTC; the clamp window still includes them but the connector pushes for the UTC window — agenda for "today local" is one day off until midnight UTC.
-- **Why it matters:** Same root cause as the F3 High finding; pinning here so the next reviewer sees both sites and the materializer hook gets the right local date.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Once the F3 fix lands (`Clock::today` switches to `chrono::Local::now().date_naive()`), confirm the materializer hook calls `compute_dirty_event(record, prior, chrono::Local::now().date_naive())` (or whatever the unified source-of-truth helper becomes) and not `Utc::now().date_naive()` directly.
-- **Pass-1 source:** 10/F22
-- **Status:** Open
 
 ### I-GCalSpaces-3 — `bootstrap_spaces` does not validate `device_id` shape
 - **Domain:** GCal / Spaces / Drafts
