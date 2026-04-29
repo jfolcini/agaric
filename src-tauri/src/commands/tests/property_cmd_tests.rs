@@ -4479,3 +4479,86 @@ async fn set_todo_state_atomic_when_recurrence_fails() {
 
     mat.shutdown();
 }
+
+// ======================================================================
+// I-CommandsCRUD-6 / I-CommandsCRUD-8 — boundary date validation
+//
+// These tests pin the post-fix contract for the two ISO-date validators
+// that previously diverged:
+//   * `validate_date_format` is the canonical entry point and now rejects
+//     calendar-impossible combinations (Feb 30, Apr 31) — previously it
+//     accepted them and relied on downstream re-parses to catch them
+//     with a different error shape (I-CommandsCRUD-6).
+//   * `is_valid_iso_date` is now a thin delegation to
+//     `validate_date_format` so the two cannot drift again
+//     (I-CommandsCRUD-8).
+// ======================================================================
+
+#[test]
+fn validate_date_format_rejects_feb_30_i_commandscrud_6() {
+    assert!(
+        validate_date_format("2025-02-30").is_err(),
+        "Feb 30 is not a real calendar date and must be rejected at the boundary"
+    );
+}
+
+#[test]
+fn validate_date_format_rejects_apr_31_i_commandscrud_6() {
+    assert!(
+        validate_date_format("2025-04-31").is_err(),
+        "Apr 31 is not a real calendar date and must be rejected at the boundary"
+    );
+}
+
+#[test]
+fn validate_date_format_accepts_feb_29_in_leap_year_i_commandscrud_6() {
+    assert!(
+        validate_date_format("2024-02-29").is_ok(),
+        "Feb 29 in a leap year (2024) must be accepted"
+    );
+    assert!(
+        validate_date_format("2025-02-29").is_err(),
+        "Feb 29 in a non-leap year (2025) must be rejected"
+    );
+}
+
+#[test]
+fn validate_date_format_still_rejects_structural_garbage_i_commandscrud_6() {
+    for input in ["2025-13-01", "2025/02/01", "abc", ""] {
+        assert!(
+            validate_date_format(input).is_err(),
+            "structural garbage '{input}' must still be rejected after the chrono switch"
+        );
+    }
+}
+
+#[test]
+fn validate_date_format_accepts_canonical_form_i_commandscrud_6() {
+    for input in ["2025-01-15", "1999-12-31", "2099-06-30"] {
+        assert!(
+            validate_date_format(input).is_ok(),
+            "canonical YYYY-MM-DD '{input}' must continue to be accepted"
+        );
+    }
+}
+
+#[test]
+fn is_valid_iso_date_delegates_to_validate_date_format_i_commandscrud_8() {
+    // Pin the delegation contract: whatever inputs we throw at the two
+    // validators, they must agree. Mixes valid, structurally-garbage,
+    // and calendar-impossible inputs so the agreement is non-trivial.
+    for input in [
+        "2025-01-15",
+        "2025-02-30",
+        "2024-02-29",
+        "2025-02-29",
+        "abc",
+        "",
+    ] {
+        assert_eq!(
+            is_valid_iso_date(input),
+            validate_date_format(input).is_ok(),
+            "delegation invariant: is_valid_iso_date and validate_date_format must agree on '{input}'"
+        );
+    }
+}

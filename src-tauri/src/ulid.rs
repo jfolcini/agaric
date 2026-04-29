@@ -76,9 +76,13 @@ impl BlockId {
     /// Test-only constructor that bypasses ULID validation but still
     /// uppercases the input.  Keeps test fixtures readable (e.g.
     /// `BlockId::test_id("BLK1")` instead of a 26-char ULID literal).
+    ///
+    /// Uses `to_ascii_uppercase()` to match `from_trusted` and the
+    /// `Deserialize` impl — keeps every normalisation path byte-stable
+    /// for non-ASCII inputs (AGENTS.md invariant #8).
     #[cfg(test)]
     pub fn test_id(s: &str) -> Self {
-        Self(s.to_uppercase())
+        Self(s.to_ascii_uppercase())
     }
 }
 

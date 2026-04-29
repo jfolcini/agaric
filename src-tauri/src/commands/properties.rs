@@ -465,24 +465,11 @@ pub async fn set_scheduled_date_inner(
     .await
 }
 
-/// Simple validation for ISO date format `YYYY-MM-DD`.
+/// I-CommandsCRUD-8: previously a separate structural validator that
+/// drifted from `validate_date_format`. Now delegates so there is one
+/// source of truth for ISO-date validation across the commands surface.
 pub(crate) fn is_valid_iso_date(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    if bytes.len() != 10 {
-        return false;
-    }
-    if bytes[4] != b'-' || bytes[7] != b'-' {
-        return false;
-    }
-    let all_digits = bytes[0..4].iter().all(u8::is_ascii_digit)
-        && bytes[5..7].iter().all(u8::is_ascii_digit)
-        && bytes[8..10].iter().all(u8::is_ascii_digit);
-    if !all_digits {
-        return false;
-    }
-    let month: u32 = s[5..7].parse().unwrap_or(0);
-    let day: u32 = s[8..10].parse().unwrap_or(0);
-    (1..=12).contains(&month) && (1..=31).contains(&day)
+    crate::commands::validate_date_format(s).is_ok()
 }
 
 /// Delete a property from a block.
