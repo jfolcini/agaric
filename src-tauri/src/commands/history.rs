@@ -467,6 +467,17 @@ pub async fn undo_page_op_inner(
     // conflict copies inherit `parent_id` from the original block and would
     // otherwise leak into page-scoped results. `depth < 100` bounds the walk
     // against runaway recursion on corrupted data (invariant #9).
+    //
+    // `LIMIT 1 OFFSET ?2` is a deliberate carve-out of invariant #3 ("no
+    // offset pagination"): we are not paginating a list, we are fetching the
+    // single Nth-most-recent op in the page's history. `undo_depth` is
+    // validated to `[0, 1000]` upstream (see the bounds check at the top of
+    // this function), so the OFFSET is bounded by a small constant; combined
+    // with the indexed `(created_at DESC, seq DESC)` order, scan cost is
+    // fixed. Invariant #3 protects unbounded list-query latency, which does
+    // not apply to this "fetch Nth row" semantics.
+    // REVIEW-LATER: I-CommandsCRUD-1 — the AGENTS.md "Backend Patterns"
+    // carve-out for this pattern is deferred (locked AGENTS.md self-rule).
     let target = sqlx::query_as!(
         HistoryEntry,
         "WITH RECURSIVE page_blocks(id, depth) AS ( \

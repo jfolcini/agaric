@@ -825,12 +825,13 @@ mod tests {
     }
 
     // End-to-end smoke test of the `agaric-mcp` stub binary against a
-    // locally-bound UDS. Ignored by default because it requires the bin to
-    // have been built (`cargo build --bin agaric-mcp`) before running.
-    // Run with:  cargo nextest run stub_binary --run-ignored=all
-    #[cfg(unix)]
+    // locally-bound UDS. Gated by the `ci-smoke` feature. CI enables this
+    // with `cargo nextest run --features ci-smoke ...` after a
+    // `cargo build --bin agaric-mcp` step. Local devs can run it the same
+    // way; the test never runs by default.
+    // Run with:  cargo nextest run stub_binary --features ci-smoke
+    #[cfg(all(unix, feature = "ci-smoke"))]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore = "spawns the agaric-mcp binary; run after `cargo build --bin agaric-mcp`"]
     async fn stub_binary_roundtrips_initialize_over_uds() {
         use std::io::BufRead;
         use std::io::Write as _;

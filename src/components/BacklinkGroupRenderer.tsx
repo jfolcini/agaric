@@ -3,6 +3,19 @@
  *
  * Each group shows a page title header with expand/collapse toggle and a list of
  * block items with badges, rich content, and truncated IDs.
+ *
+ * ## Sort asymmetry (deliberate)
+ *
+ * The `groups` prop arrives pre-ordered by the backend
+ * (`eval_backlink_query_grouped`): groups are **always** sorted
+ * alphabetically by `page_title`, regardless of the user-supplied
+ * `BacklinkSort`. The user's sort applies only to block ordering
+ * **within** each group. This mirrors the backend contract — see
+ * `src-tauri/src/backlink/grouped.rs` and REVIEW-LATER `I-Search-12`
+ * (option (a), reshuffling groups by the user's sort key, was rejected
+ * for UX reasons: stable alphabetical group order preserves muscle
+ * memory). This component therefore renders groups in the order it
+ * receives them and must not re-sort them client-side.
  */
 
 import type React from 'react'
