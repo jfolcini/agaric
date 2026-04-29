@@ -28,6 +28,16 @@ pub const MCP_PAGE_LIMIT_CAP: i64 = 100;
 /// Replace the full set of aliases for a page. Returns the aliases that were
 /// actually inserted (empty/whitespace-only entries are skipped; duplicates
 /// across different pages are silently ignored via INSERT OR IGNORE).
+///
+/// **Sync semantics (I-CommandsCRUD-4):** the `page_aliases` table is
+/// intentionally maintained outside the op log. There is no
+/// `SetPageAliases` `OpPayload` variant, so day-to-day op-log replay does
+/// **not** propagate alias edits to peers; aliases reach other devices only
+/// when a snapshot is exchanged. Aliases are treated as local-display
+/// metadata for case-insensitive page lookup, and promoting them to a
+/// fully sync-replicated entity would require a new op type, which is
+/// gated by AGENTS.md "Architectural Stability". See `ARCHITECTURE.md §4`
+/// (op-log invariant) and `§20` page-aliases bullet.
 #[instrument(skip(pool, aliases), err)]
 pub async fn set_page_aliases_inner(
     pool: &SqlitePool,

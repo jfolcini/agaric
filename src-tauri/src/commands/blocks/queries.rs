@@ -15,12 +15,14 @@ use super::super::*;
 /// whose owning page carries `space = ?space_id`. Passing `None` keeps
 /// the pre-FEAT-3 behaviour (no filter) so existing callsites stay green.
 /// The filter is applied inside the child / by-type / trash paths; the
-/// agenda and tag paths remain unscoped in Phase 2 and gain scoping in
-/// Phase 4 (see REVIEW-LATER FEAT-3).
+/// agenda and tag paths reject `space_id` at validation in Phase 2 and
+/// gain scoping in Phase 4 (see REVIEW-LATER FEAT-3).
 ///
 /// # Errors
 ///
 /// - [`AppError::Validation`] — multiple conflicting filters, or invalid date format
+/// - [`AppError::Validation`] — `space_id` combined with an agenda or tag filter
+///   (not yet supported; deferred to FEAT-3 Phase 4)
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(pool), err)]
 pub async fn list_blocks_inner(
@@ -65,6 +67,16 @@ pub async fn list_blocks_inner(
     if agenda_date_start.is_some() != agenda_date_end.is_some() {
         return Err(AppError::Validation(
             "agenda_date_start and agenda_date_end must both be provided together".to_string(),
+        ));
+    }
+
+    // FEAT-3 Phase 2: agenda and tag dispatch paths do not yet honour
+    // space_id (deferred to Phase 4). Reject the combination explicitly
+    // instead of silently dropping the filter — the caller is almost
+    // certainly expecting their results to be space-scoped.
+    if space_id.is_some() && (agenda_date.is_some() || has_agenda_range || tag_id.is_some()) {
+        return Err(AppError::Validation(
+            "space_id is not supported on agenda or tag filters yet (FEAT-3 Phase 4)".to_string(),
         ));
     }
 

@@ -34,12 +34,24 @@ pub async fn apply_reverse_in_tx(
     reverse_payload: &OpPayload,
 ) -> Result<(), AppError> {
     match reverse_payload {
-        // NOTE: DeleteBlock and RestoreBlock are cascade operations that are
-        // idempotent — deleting an already-deleted block or restoring an
-        // already-restored block is a harmless no-op (rows_affected == 0 is
-        // fine).  EditBlock and MoveBlock check rows_affected because they
-        // modify data the user expects to see on a live block; silently
-        // succeeding on a soft-deleted block would mask a real problem.
+        // Idempotency policy:
+        //
+        // Reverses are idempotent except for EditBlock and MoveBlock, which
+        // represent user-visible live-block edits. A zero-rows result on those
+        // two indicates the target block was soft-deleted (or otherwise vanished)
+        // between the original op and the undo — silently succeeding would mask
+        // a real bug, so we surface it as `NotFound`.
+        //
+        // Everything else is intentionally idempotent so a batch undo
+        // (`revert_ops_inner`) never aborts mid-transaction because one row was
+        // already restored / removed by an earlier replay or a manual edit:
+        //   - cascade ops (DeleteBlock, RestoreBlock) - already idempotent; the
+        //     UPDATE simply finds 0 rows when the target is in the desired state
+        //   - tag ops (AddTag uses INSERT OR IGNORE, RemoveTag DELETEs)
+        //   - property ops (SetProperty uses INSERT OR REPLACE, DeleteProperty
+        //     DELETEs without a rows_affected check)
+        //   - attachment ops (AddAttachment uses INSERT OR REPLACE, DeleteAttachment
+        //     UPDATEs without a rows_affected check)
         OpPayload::DeleteBlock(p) => {
             // Cascade soft-delete (same as delete_block_inner).
             //
@@ -149,30 +161,18 @@ pub async fn apply_reverse_in_tx(
             .await?;
         }
         OpPayload::DeleteProperty(p) => {
-            let result = sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
+            sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
                 .bind(p.block_id.as_str())
                 .bind(&p.key)
                 .execute(&mut **tx)
                 .await?;
-            if result.rows_affected() == 0 {
-                return Err(AppError::NotFound(format!(
-                    "property '{}.{}' not found during undo",
-                    p.block_id, p.key
-                )));
-            }
         }
         OpPayload::DeleteAttachment(p) => {
-            let result = sqlx::query("UPDATE attachments SET deleted_at = ? WHERE id = ?")
+            sqlx::query("UPDATE attachments SET deleted_at = ? WHERE id = ?")
                 .bind(now_rfc3339())
                 .bind(p.attachment_id.as_str())
                 .execute(&mut **tx)
                 .await?;
-            if result.rows_affected() == 0 {
-                return Err(AppError::NotFound(format!(
-                    "attachment '{}' not found during undo",
-                    p.attachment_id
-                )));
-            }
         }
         OpPayload::AddAttachment(p) => {
             // Preserve original created_at from the existing (soft-deleted) attachment record

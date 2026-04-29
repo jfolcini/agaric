@@ -1823,7 +1823,12 @@ Planned items are tracked in the [issue tracker](https://github.com/jfolcini/aga
 - Namespaced page tree — breadcrumb navigation in PageHeader for `a/b/c` page titles
 - Custom task keywords — `set_todo_state` accepts arbitrary strings beyond TODO/DOING/DONE
 - All 5 agenda filter dimensions — status, priority, due date, scheduled date, tag
-- Page aliases — `page_aliases` table, case-insensitive lookup, PageHeader UI
+- Page aliases — `page_aliases` table, case-insensitive lookup, PageHeader UI.
+  Aliases are intentionally maintained outside the op log: there is no
+  `SetPageAliases` op type, so alias edits do **not** propagate via op-log
+  replay — they reach peer devices only through snapshot sync. Treated as
+  local-display metadata; promoting to a sync-replicated entity would require
+  a new op type, gated by AGENTS.md "Architectural Stability".
 - Point-in-time restore — `restore_page_to_op` command, recursive CTE for nested blocks
 - Drag-and-drop file attachments — `EditableBlock` drop/paste handlers, MIME guesser
 - Graph view — `list_page_links` + d3-force visualization, click-to-navigate
