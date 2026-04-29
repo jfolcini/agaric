@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 757+ items across 510 sessions (per SESSION-LOG.md unique session count; latest is session 543).
+Previously resolved: 760+ items across 511 sessions (per SESSION-LOG.md unique session count; latest is session 544).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -2095,18 +2095,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Commands CRUD
 
-### I-CommandsCRUD-1 — `undo_page_op_inner` uses `LIMIT 1 OFFSET ?2` to fetch the Nth recent op
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/history.rs:410-465`
-- **What:** AGENTS.md invariant #3 says no offset pagination; this query uses `OFFSET ?2` where `?2 = undo_depth`, validated to `[0, 1000]`. It is not a list endpoint — it fetches a single row N steps back — but the literal SQL is offset-based.
-- **Why it matters:** Performance is fine (cap of 1000, indexed `(created_at DESC, seq DESC)` order). It is mainly a documentation gap: the codebase's pattern matrix has no carve-out for "fetch Nth row" semantics.
-- **Cost:** S
-- **Risk:** Medium
-- **Impact:** Low
-- **Recommendation:** Document the rationale inline and add a one-line carve-out in AGENTS.md "Backend Patterns" so reviewers don't flag this. No code change unless the 1000 cap is later raised.
-- **Pass-1 source:** 04/F10
-- **Status:** Open
-
 ### I-CommandsCRUD-3 — Doc/code drift between `AGENTS.md` (CQRS invariant) and `commands/mod.rs` module-doc
 - **Domain:** Commands (CRUD)
 - **Location:** `src-tauri/src/commands/mod.rs:1-9` vs `AGENTS.md:35-46` (key invariant #2)
@@ -2141,34 +2129,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Track roots explicitly via the cascade path — either record the originating block-id in op_log payloads or add a side table — so bulk operations replay exactly the ops performed. Alternatively, accept the heuristic and document the collision-window as a known limitation.
 - **Pass-1 source:** 04/F24
-- **Status:** Open
-
-### Search & Links
-
-### I-Search-12 — `eval_backlink_query_grouped` group ordering ignores user `BacklinkSort`
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/grouped.rs:114-123, 162-167, 435-449`
-- **What:** Groups are sorted alphabetically by `page_title` regardless of the user-supplied `BacklinkSort`. The user's sort applies only to within-group block ordering (lines 162-167). With `BacklinkSort::Created { Desc }` the user expects "newest source page first" across groups, but groups stay alphabetical.
-- **Why it matters:** UX inconsistency — the flat backlink view honours the user's choice; the grouped view honours it only within groups. Users can't tell why their preference is partially ignored.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Low/Medium
-- **Recommendation:** Either (a) sort groups by the same criterion (using the latest member block's value as the group's sort key), or (b) document this asymmetry explicitly in the function docstring and in the UI's group view.
-- **Pass-1 source:** 07/F36
-- **Status:** Open
-
-### MCP
-
-### I-MCP-9 — `agaric-mcp` stub-binary integration test is `#[ignore]` and not exercised in CI
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/mod.rs:719-786` (the test, including the `#[ignore]` gate at line 723 and the manual `cargo build --bin agaric-mcp` requirement).
-- **What:** The end-to-end smoke test that drives the `agaric-mcp` stub binary against a local UDS is `#[ignore]`, requires a manual `cargo build --bin agaric-mcp`, and is not part of the default CI matrix. In-process dispatch is well-covered, but the actual binary path users invoke (stdio↔UDS bridge, `$AGARIC_MCP_SOCKET` env var, argv handling) is not regression-protected.
-- **Why it matters:** Every agent config (Claude Desktop, Cursor) launches the stub binary, not the in-process server. A regression in argv parsing or env-var lookup slips past CI silently.
-- **Cost:** M (add a `cargo build --bin agaric-mcp` step + run the ignored test in CI)
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Add `cargo build --bin agaric-mcp` as a CI step before nextest, and either remove the `#[ignore]` tag or replace it with a `#[cfg(feature = "ci-smoke")]` gate that CI enables. Keep the manual-run path documented for local dev.
-- **Pass-1 source:** 09/F29
 - **Status:** Open
 
 ---

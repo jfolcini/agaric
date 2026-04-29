@@ -44,6 +44,13 @@ default_trait_access = "warn"
 cloned_instead_of_copied = "warn"
 flat_map_option = "warn"
 
+[features]
+# Opt-in feature for end-to-end smoke tests that require the
+# `agaric-mcp` binary to be built first. CI enables this; local
+# `cargo nextest run` does not. Local devs can still run the test
+# manually: `cargo build --bin agaric-mcp && cargo nextest run --features ci-smoke -E 'test(stub_binary)'`.
+ci-smoke = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

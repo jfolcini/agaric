@@ -28,6 +28,20 @@ use crate::pagination::{BlockRow, Cursor, PageRequest};
 /// 6. Apply cursor pagination on groups.
 /// 7. Sort blocks within each group, fetch full BlockRow data.
 /// 8. Return `GroupedBacklinkResponse`.
+///
+/// ## Sort asymmetry (deliberate)
+///
+/// Groups are **always** sorted alphabetically by `page_title` regardless
+/// of the user-supplied `BacklinkSort`. The user's sort applies only
+/// **within** each group (block ordering inside the group). This is a
+/// deliberate design choice — alphabetical group ordering keeps the
+/// source-page list stable and predictable for navigation, so users can
+/// scan for a known page by name regardless of which sort they picked
+/// for blocks. See REVIEW-LATER `I-Search-12`: option (a) (sort groups
+/// by the latest member's sort key) was considered and rejected because
+/// it makes the group list reshuffle on every edit and defeats muscle
+/// memory. The frontend mirrors this contract in
+/// `BacklinkGroupRenderer.tsx`.
 pub async fn eval_backlink_query_grouped(
     pool: &SqlitePool,
     block_id: &str,

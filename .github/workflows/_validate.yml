@@ -98,6 +98,14 @@ jobs:
         working-directory: src-tauri
         run: cargo nextest run --profile ci
 
+      - name: Build agaric-mcp binary (I-MCP-9)
+        working-directory: src-tauri
+        run: cargo build --bin agaric-mcp
+
+      - name: MCP stub-binary smoke test (I-MCP-9)
+        working-directory: src-tauri
+        run: cargo nextest run --features ci-smoke --profile ci -E 'test(stub_binary_roundtrips_initialize_over_uds)'
+
       - name: Vitest (full suite)
         run: npm test
 
