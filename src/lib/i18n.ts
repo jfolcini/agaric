@@ -298,7 +298,6 @@ const resources = {
       'contextMenu.collapse': 'Collapse',
       'contextMenu.expand': 'Expand',
       'contextMenu.history': 'History',
-      'contextMenu.noActions': 'No actions available',
       'contextMenu.blockActions': 'Block actions',
       'contextMenu.todoToDoing': 'TODO → DOING',
       'contextMenu.doingToDone': 'DOING → DONE',
@@ -370,6 +369,9 @@ const resources = {
       'error.createBlockFailed': 'Failed to create block',
       'error.sectionCrashed': '{{section}} encountered an error',
       'error.unexpected': 'An unexpected error occurred',
+      // UX-12: reassurance shown alongside the raw error message in
+      // FeatureErrorBoundary's fallback UI so users know retrying is safe.
+      'errorBoundary.dataSafe': 'Your data is safe — Retry reloads this panel.',
 
       // Repeat-rule labels (used by formatRepeatLabel in src/lib/repeat-utils.ts)
       'repeat.daily': 'daily',
@@ -599,6 +601,8 @@ const resources = {
       'templates.navigateLabel': 'Open template {{name}}',
       'templates.removeTemplateLabel': 'Remove template status from {{name}}',
       'templates.noSearchResults': 'No templates match your search.',
+      'templates.noSearchResultsWithTotal':
+        'No templates match your search ({{total}} templates total).',
       'templates.create': 'Create template',
       'templates.newTemplatePlaceholder': 'New template name...',
       'templates.newTemplateInputLabel': 'New template name',
@@ -1125,6 +1129,10 @@ const resources = {
       'status.editAddress': 'Edit',
       'status.addressUpdated': 'Address updated',
       'status.addressInvalid': 'Invalid address format (expected host:port)',
+      // UX-12: format-aware variant — toast includes the expected example
+      // so users don't have to reopen the popover to see the hint.
+      'status.addressInvalidWithFormat':
+        'Invalid address format. Expected host:port (e.g., {{format}}).',
       'status.manualIpHint':
         'If mDNS discovery is unavailable, share this device\u2019s IP and sync port with the remote peer, then set it via the address edit button below.',
 
@@ -1276,6 +1284,10 @@ const resources = {
       'pairing.confirmCloseKeep': 'Keep pairing',
       // UX-263: Countdown pause indicator while user is typing the passphrase
       'pairing.countdownPaused': 'Paused while typing\u2026',
+      // UX-12: copy-to-clipboard affordance for the displayed passphrase.
+      'pairing.copyPassphraseAriaLabel': 'Copy passphrase',
+      'pairing.passphraseCopied': 'Passphrase copied',
+      'pairing.passphraseCopyFailed': 'Failed to copy passphrase',
 
       // Tag filter
       'tagFilter.title': 'Tag Filter',
@@ -1406,6 +1418,7 @@ const resources = {
       'duePanel.scheduledShowAllButton': 'Scheduled: show all',
       'duePanel.overdueTitle': 'Overdue',
       'duePanel.projectedListLabel': 'Projected entries',
+      'duePanel.projectedBadge': 'Projected',
       'duePanel.upcomingTitle': 'Upcoming',
 
       // QR scanner
@@ -1865,6 +1878,9 @@ const resources = {
       'device.addressInputLabel': 'Address (host:port)',
       'device.addressHint': 'Format: host:port (e.g., 192.168.1.100:5000)',
       'device.saveAddressButton': 'Save',
+      // UX-12: explicit Cancel affordance in the address-edit popover for
+      // keyboard users who can't rely on outside-click dismiss.
+      'device.cancelAddressButton': 'Cancel',
 
       // UX-61: Page metadata bar
       'metadata.label': 'Info',
@@ -2202,6 +2218,10 @@ const resources = {
       'bugReport.logsListEmpty': 'No log files to include.',
       'bugReport.logsSize': '{{size}} bytes',
       'bugReport.confirmCheckbox': "I've reviewed what will be shared",
+      // UX-12: toggle for the per-log preview to show all bytes instead
+      // of the 500-char excerpt.
+      'bugReport.viewFullLog': 'View full log',
+      'bugReport.collapseLog': 'Show less',
       'bugReport.cancel': 'Cancel',
       'bugReport.copy': 'Copy report',
       'bugReport.copied': 'Report copied to clipboard',

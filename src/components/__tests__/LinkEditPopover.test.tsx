@@ -719,6 +719,36 @@ describe('LinkEditPopover', () => {
       fireEvent.change(input, { target: { value: 'https://safe.com' } })
       expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     })
+
+    // UX-12 — when the URL is rejected, the input itself must visually
+    // signal the error (border-destructive) in addition to the inline
+    // error text below it.
+    it('adds border-destructive class to URL input when error is shown', () => {
+      render(
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
+      )
+
+      const input = screen.getByTestId('link-url-input')
+      expect(input).not.toHaveClass('border-destructive')
+      expect(input).not.toHaveAttribute('aria-invalid')
+
+      fireEvent.change(input, { target: { value: 'javascript:alert(1)' } })
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
+
+      expect(input).toHaveClass('border-destructive')
+      expect(input).toHaveAttribute('aria-invalid', 'true')
+
+      // After typing the error clears and the destructive border goes away.
+      fireEvent.change(input, { target: { value: 'https://example.com' } })
+      expect(input).not.toHaveClass('border-destructive')
+      expect(input).not.toHaveAttribute('aria-invalid')
+    })
   })
 
   // ── Selection restoration (B-70) ──────────────────────────────────────

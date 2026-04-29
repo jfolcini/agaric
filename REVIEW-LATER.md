@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547).**
+38 open items — 38 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548).**
 
-Previously resolved: 769+ items across 514 sessions (per SESSION-LOG.md unique session count; latest is session 547).
+Previously resolved: 772+ items across 515 sessions (per SESSION-LOG.md unique session count; latest is session 548).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -63,9 +63,6 @@ Previously resolved: 769+ items across 514 sessions (per SESSION-LOG.md unique s
 | PUB-3 | PUB | Employer IP clearance before public release | S |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S |
-| UX-10 | UX | DuePanel projected (future-recurrence) entries indistinguishable from real tasks — only a dashed border and muted colour; no "Projected" pill per entry; long content is `truncate`d without a `title=` tooltip | S |
-| UX-11 | UX | Focus management edge cases — BlockContextMenu `handleCloseWithFocus` has no fallback when the trigger element was removed (focus lands on `<body>`); context menu animates in from off-screen before `computePosition` resolves; `use-block-keyboard` suppresses arrow keys when a `.suggestion-popup` is found even if the node is `!isConnected`; PageBrowser double focus ring (outer div + inner button) | S |
-| UX-12 | UX | Low-severity polish batch — PropertyRowEditor save disables whole ref-picker list instead of the saving row; PropertyRowEditor pencil button missing aria-label; LinkEditPopover error state omits `border-destructive` on the Input; BlockInlineControls due-date chip uses dynamic colour but scheduled-date chip is static; BlockContextMenu "No actions available" should close instead of render a dead menu; FeatureErrorBoundary shows raw `error.message` with no data-safety copy; BugReportDialog required checkbox has no required marker; PairingQrDisplay passphrase has no copy button + pause indicator is visually subtle; PeerListItem address-edit popover has no close/Cancel button + address error has no format hint + help text is `text-[10px]`; DataSettingsTab import progress is text-only; JournalCalendarDropdown legend dots are 8 px; AgendaResults group headers use `text-xs text-muted-foreground`; AgendaFilterBuilder pills lack `title=` on truncated values; `useDateInput` 300 ms NL-parse debounce has no visible "parsing…" hint; TemplatesView no-search-results message doesn't show total count; BugReportDialog log preview truncated at 500 chars with no "view full" option; ConflictListItem conflict-type badge has no `cursor-help` / visual tooltip affordance | M |
 
 > **`PUB-*` statuses are heterogeneous now that the publish target is concrete (`github.com/jfolcini/agaric`).**
 > PUB-5 / PUB-8 are ACTIONABLE; PUB-2 / PUB-3 remain DEFERRED on the identity / employer-IP decisions. macOS + Windows code signing are explicitly out of scope: the maintainer opted out of paid Apple Developer Program enrollment ($99/year) and Windows OV/EV certs ($200–400/year) for this OSS project. Bundles ship unsigned with Gatekeeper / SmartScreen first-launch warnings; see `BUILD.md` → "Desktop code signing in CI" for the user-facing install instructions.
@@ -1351,72 +1348,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 **Cost:** S (~15 min once you've decided what to use as DN).
 **Status:** ACTIONABLE — pure operations, no design decision pending.
-
----
-
-## UX — Frontend UX findings — Appended 2026-04-26
-
-> Output of a two-pass review of all ~260 productive frontend files (components, hooks, libs, editor extensions, primitives, stores, workers, CSS).
->
-> Pass 1: 6 parallel domain reviewers produced ~135 candidate findings. Pass 2: 6 parallel verification subagents re-read the source and refuted / downgraded / merged candidates. ~50 were false positives and dropped — most notably the entire `prefers-reduced-motion` cluster against `ui/dialog.tsx` / `ui/sheet.tsx` / `ui/popover.tsx` / `ui/select.tsx` / `ui/alert-dialog.tsx` / `ui/tooltip.tsx` (the global rule at `src/index.css:1209-1226` already zeroes animation and transition durations for every element — the six "high severity" findings were redundant). Sonner's internal `aria-live="polite"`, `ConfirmDialog`'s intentional dual-`autoFocus` per UX-259, `GutterButton`'s tooltip + aria-label, `ui/close-button.tsx`'s 44 px coarse-pointer sizing, every "missing focus-visible" claim on components that use the `Button` primitive, `ConflictList`'s already-rendered `batchProgress`, and `SettingsView`'s live font-size preview were all refuted on source.
->
-> The remaining UX-* items below bundle the confirmed findings; grouped where the fix is one batch of mechanically similar edits, kept separate where the risk profile or user-visible behaviour differs. Each item lists every concrete site so the batch can be fixed in one pass without re-discovery.
->
-> Scope note: UX perception (discoverability, affordance, feedback, a11y, touch, keyboard, consistency with the design system). Architectural / behavioural defects in the frontend are filed as FEAT-* / MAINT-* elsewhere. Aspirational rewrites, speculative claims without code evidence, and findings forbidden by AGENTS.md "Architectural Stability" were dropped in pass 2.
-
-### UX-10 — Projected entries in DuePanel are visually indistinguishable from real tasks
-
-**What:** `src/components/DuePanel.tsx:344-397` renders "projected" entries (future occurrences computed from repeat rules) with only a `border-dashed border-muted-foreground/20 bg-muted/30 text-muted-foreground` treatment. There is no per-entry "Projected" badge or icon, so users misread them as real tasks due today. Separately, the content is rendered with `truncate` at `:376-388` with no `title=` / Tooltip, so long names are cut off with no way to preview the full content.
-
-**Fix:** Per projected entry, render a small badge or icon next to the content: `<Badge variant="outline" className="text-xs font-normal"><Repeat className="h-3 w-3 mr-1" /> {t('duePanel.projectedBadge')}</Badge>`. Add `title={entry.block.content ?? ''}` on the truncated `<span>` (or wrap it in `<Tooltip>` if a richer preview is wanted). Consider making the section header "Projected" (line ~346) larger / semibold so the category boundary is visible.
-
-**Cost:** S (<1h).
-**Risk:** Low.
-**Impact:** L — the dashed border does communicate *something*; adding an explicit label just makes it unambiguous.
-
-### UX-11 — Focus management edge cases
-
-**What:** Four subtle focus bugs:
-
-- `src/components/BlockContextMenu.tsx:135-138` — `handleCloseWithFocus` does `triggerRef?.current?.focus()` with no fallback. If the trigger block was deleted during the menu's lifecycle, `focus()` is called on `null` and focus silently lands on `<body>`. Add a sensible fallback target (the parent block, the block-tree container).
-- `src/components/BlockContextMenu.tsx:170-200` — the menu is positioned via `computePosition` after mount, starting at an off-screen `{ x: -9999, y: -9999 }`. On slow devices the `animate-in fade-in-0 zoom-in-95` animation can begin *before* the first position tick resolves, producing a brief visual zoom-in from off-screen. Defer animation by one frame, or start with `opacity-0` until positioning completes.
-- `src/editor/use-block-keyboard.ts:18-23,210-229` — `isSuggestionPopupVisible()` suppresses arrow-key block navigation whenever a `.suggestion-popup` exists in the DOM. It checks `checkVisibility()` / `offsetParent !== null` but not `isConnected`. If a suggestion teardown leaks a detached node, the arrow keys are swallowed and the user feels like navigation is stuck. Add `if (!popup.isConnected) return false` before the visibility check.
-- `src/components/PageBrowser.tsx:749-789` — the outer row div paints a ring when `focusedIndex === pageIndex` **and** the inner button also paints its own `focus-visible` ring, producing a confusing double-ring / ambiguous-focus appearance when the row has keyboard focus. Pick one owner for the ring (prefer removing the outer ring and relying on the button's `focus-visible`).
-
-**Fix:** BlockContextMenu close: `triggerRef?.current?.focus() ?? document.querySelector<HTMLElement>('[data-block-id="' + blockId + '"] [role="button"]')?.focus() ?? null`. BlockContextMenu position: set the menu to `opacity-0` in initial render, flip to `opacity-100` after `computePosition`. `use-block-keyboard`: add `isConnected` guard. PageBrowser: drop the outer `ring-2 ring-inset ring-ring/50 bg-accent/30` conditional and keep the inner button's `focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50`.
-
-**Cost:** S (<1h each).
-**Risk:** Low.
-**Impact:** L–M — each is a "sometimes feels weird" bug rather than a hard failure, but they together degrade the sense that focus is never lost.
-
-### UX-12 — Low-severity polish batch
-
-**What:** Individually small, collectively worth a sweep:
-
-- `src/components/PropertyRowEditor.tsx:355-367` — ref-picker: while one row is saving, **all** buttons get `disabled={savingRefPageId !== null}` but only the saving row gets `aria-busy={saving}`. Change to `disabled={saving}` per row (or add `aria-busy={saving}` at the list container).
-- `src/components/PropertyRowEditor.tsx:431-439` — pencil (edit-options) Button has no `aria-label`; the correctly-labelled twin a few lines below shows the pattern.
-- `src/components/LinkEditPopover.tsx:185-204` — URL error shows red text but the Input itself doesn't gain `border-destructive`. Add `className={cn('h-8 [@media(pointer:coarse)]:h-11 text-sm', urlError && 'border-destructive')}`.
-- `src/components/BlockInlineControls.tsx:260-280` — due-date chip uses dynamic colour (`dueDateColor(dueDate)`) but the scheduled-date chip is static (`bg-date-scheduled`). Either both dynamic or document why scheduled doesn't care about past / today / future.
-- `src/components/BlockContextMenu.tsx:414-418` — "No actions available" renders as plain text. Prefer not opening the menu at all when `visibleItems.length === 0`.
-- `src/components/FeatureErrorBoundary.tsx:56-89` — dumps raw `error.message`; add "Your data is safe — Retry reloads this panel" copy so users don't panic.
-- `src/components/BugReportDialog.tsx:385-396` — required checkbox has no visual required marker (asterisk / "(required)") even though the submit button is gated on it.
-- `src/components/PairingQrDisplay.tsx:59-74` — passphrase has no copy button; the "Paused while typing…" indicator is a muted italic span that's easy to miss.
-- `src/components/PeerListItem.tsx:94-138` — address-edit popover has no close / Cancel button (outside-click dismiss is the only path).
-- `src/components/PeerListItem.tsx:49-62,120-130` — "Address invalid" toast has no format hint, and the inline help text is `text-[10px]`. Bump to `text-xs` and include the expected format (e.g., `192.168.1.100:5000`).
-- `src/components/DataSettingsTab.tsx:134-146` — multi-file import progress is text-only; a `<progress value={currentFileIndex} max={totalFiles} className="w-full h-1 mt-2" />` is two lines of code.
-- `src/components/journal/JournalCalendarDropdown.tsx:213-234` — legend dots are 8 px (`h-2 w-2`). Bump to `h-3 w-3`.
-- `src/components/AgendaResults.tsx:315-343` — group headers are `text-xs text-muted-foreground`; bump to `text-sm font-semibold` to match other panel headers in the app.
-- `src/components/AgendaFilterBuilder.tsx:295-350` — filter pills have no `title=` on the button, so long property values truncate without a way to reveal the full value.
-- `src/hooks/useDateInput.ts:72-98` — 300 ms NL-parse debounce with no "parsing…" hint; users think typing went nowhere. Add a small transient indicator when `now - lastTypedAt < 300ms`.
-- `src/components/TemplatesView.tsx:235-238` — "No search results" message doesn't show total count; add `(${templates.length} templates total)` to give context.
-- `src/components/BugReportDialog.tsx:468-478` — log preview truncates at 500 chars with a "Showing N of M" message but no "View full" affordance. A toggle `Button variant="link" size="sm"` is adequate.
-- `src/components/ConflictListItem.tsx:126-144` — conflict-type badge has a `<Tooltip>` but no visual affordance (`cursor-help` / dashed border) to indicate interactivity.
-
-**Fix:** One polish sweep — each item is 1–5 lines of change. Schedule as a single "UX polish" PR so the diff is reviewable but the ticket count stays manageable.
-
-**Cost:** M (3–6h for the full sweep).
-**Risk:** Low — no behaviour changes, all additive.
-**Impact:** L individually; M collectively (this is the kind of change a user notices as "the app feels more polished" without pointing at any single item).
 
 ---
 

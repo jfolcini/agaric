@@ -602,6 +602,18 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
+  // 24f. UX-12 — non-property filter chips also get a `title=` attribute so
+  // long values that truncate in the pill are still discoverable.
+  // -----------------------------------------------------------------------
+  it('non-property filter chip has title attribute with full label', () => {
+    const filters: AgendaFilter[] = [{ dimension: 'status', values: ['TODO'] }]
+    renderBuilder({ filters })
+
+    const editButton = screen.getByText('TODO').closest('button')
+    expect(editButton).toHaveAttribute('title', `${t('agendaFilter.status')}: TODO`)
+  })
+
+  // -----------------------------------------------------------------------
   // Error paths
   // -----------------------------------------------------------------------
 

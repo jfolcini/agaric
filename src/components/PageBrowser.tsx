@@ -757,7 +757,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         tabIndex={-1}
         className={cn(
           'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50',
-          focusedIndex === pageIndex && 'ring-2 ring-inset ring-ring/50 bg-accent/30',
+          // Row-highlight (background) only — the inner button paints its own
+          // `focus-visible:ring-[3px]` ring for the actual focus affordance.
+          // Painting a ring here as well stacked two rings on the focused row.
+          focusedIndex === pageIndex && 'bg-accent/30',
         )}
         style={rowStyle(virtualRow.start)}
       >

@@ -586,7 +586,7 @@ describe('PageBrowser', () => {
     expect(pageBtn).toHaveClass('focus-visible:ring-inset')
   })
 
-  it('UX-237: focused row highlight uses ring-inset to avoid ScrollArea clipping', async () => {
+  it('UX-11: focused page row highlights with bg only — focus ring lives on the inner button', async () => {
     mockedInvoke.mockResolvedValueOnce({
       items: [makePage({ id: 'P1', content: 'Inset Page' })],
       next_cursor: null,
@@ -598,17 +598,27 @@ describe('PageBrowser', () => {
     await screen.findByText('Inset Page')
 
     // focusedIndex defaults to 0, so the first (and only) virtualized row
-    // renders selected with the keyboard-navigation highlight classes.
+    // renders selected with the keyboard-navigation highlight class.
     // `data-page-item` scopes away the native <option> elements in the
     // sort <select> which share role="option".
     const focusedRow = document.querySelector(
       '[data-page-item][aria-selected="true"]',
     ) as HTMLElement | null
     expect(focusedRow).not.toBeNull()
-    expect(focusedRow).toHaveClass('ring-2')
-    expect(focusedRow).toHaveClass('ring-inset')
-    expect(focusedRow).toHaveClass('ring-ring/50')
+    // Row paints only the highlight background; the focus ring lives on the
+    // inner <button>'s `focus-visible:ring-[3px]` to avoid double-stacking.
     expect(focusedRow).toHaveClass('bg-accent/30')
+    expect(focusedRow).not.toHaveClass('ring-2')
+    expect(focusedRow).not.toHaveClass('ring-ring/50')
+
+    // The inner button still carries the focus-visible ring so keyboard
+    // users see exactly one ring when the row is focused.
+    const innerBtn = focusedRow
+      ? within(focusedRow).getByRole('button', { name: /Inset Page/i })
+      : null
+    expect(innerBtn).not.toBeNull()
+    expect(innerBtn?.className).toContain('focus-visible:ring-[3px]')
+    expect(innerBtn?.className).toContain('focus-visible:ring-inset')
   })
 
   it('UX-237: star-toggle and delete buttons have ring-inset focus rings', async () => {

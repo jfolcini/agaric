@@ -10,6 +10,7 @@
  * components (OverdueSection, UpcomingSection, DuePanelFilters).
  */
 
+import { Repeat } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -30,6 +31,7 @@ import { LoadMoreButton } from './LoadMoreButton'
 import { OverdueSection } from './OverdueSection'
 import { renderRichContent } from './StaticBlock'
 import { UpcomingSection } from './UpcomingSection'
+import { Badge } from './ui/badge'
 import { PriorityBadge } from './ui/priority-badge'
 
 export interface DuePanelProps {
@@ -377,7 +379,14 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                             <span className="text-xs font-mono opacity-60">
                               {entry.source === 'due_date' ? '\u23F0' : '\uD83D\uDCC5'}
                             </span>
-                            <span className="min-w-0 flex-1 truncate">
+                            <Badge variant="outline" className="text-xs font-normal">
+                              <Repeat className="h-3 w-3 mr-1" />
+                              {t('duePanel.projectedBadge')}
+                            </Badge>
+                            <span
+                              className="min-w-0 flex-1 truncate"
+                              title={entry.block.content ?? ''}
+                            >
                               {entry.block.content
                                 ? renderRichContent(entry.block.content, {
                                     interactive: true,

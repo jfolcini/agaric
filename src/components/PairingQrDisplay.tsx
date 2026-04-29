@@ -7,9 +7,13 @@
  * Extracted from PairingDialog (#R-9).
  */
 
+import { Copy, Pause } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { writeText } from '@/lib/clipboard'
+import { logger } from '@/lib/logger'
 
 export interface PairingQrDisplayProps {
   qrSvg: string
@@ -56,19 +60,43 @@ export function PairingQrDisplay({
         <span className="text-sm font-medium text-muted-foreground">
           {t('pairing.passphraseLabel')}
         </span>
-        <p className="pairing-passphrase text-lg font-mono font-semibold break-words">
-          {passphrase}
-        </p>
+        {/* UX-12: passphrase + inline copy button. Wrapping in a flex row
+            keeps the copy affordance discoverable next to the value. */}
+        <div className="flex items-center gap-2">
+          <p className="pairing-passphrase text-lg font-mono font-semibold break-words">
+            {passphrase}
+          </p>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="pairing-passphrase-copy shrink-0"
+            aria-label={t('pairing.copyPassphraseAriaLabel')}
+            onClick={() => {
+              writeText(passphrase)
+                .then(() => {
+                  toast.success(t('pairing.passphraseCopied'))
+                })
+                .catch((err: unknown) => {
+                  logger.warn('PairingQrDisplay', 'failed to copy passphrase', undefined, err)
+                  toast.error(t('pairing.passphraseCopyFailed'))
+                })
+            }}
+          >
+            <Copy />
+          </Button>
+        </div>
         <p className="text-xs text-muted-foreground mt-1">{t('pairing.scanOrEnterInstruction')}</p>
         {/* #294: Countdown timer.
             UX-263: When pausedByTyping is true, append an inline indicator so
-            the user understands why the timer isn't ticking. The span sits
-            inside the same paragraph to avoid a row-level layout shift. */}
+            the user understands why the timer isn't ticking.
+            UX-12: bump the indicator from muted italic to foreground +
+            Pause icon so it actually catches the eye while typing. */}
         {countdownDisplay && (
           <p className="pairing-countdown text-xs text-muted-foreground mt-1" aria-hidden="true">
             {t('pairing.sessionExpiresIn')} {countdownDisplay}
             {pausedByTyping && (
-              <span className="pairing-countdown-paused ml-2 italic">
+              <span className="pairing-countdown-paused ml-2 inline-flex items-center gap-1 text-foreground font-medium">
+                <Pause className="h-3 w-3" />
                 {t('pairing.countdownPaused')}
               </span>
             )}

@@ -323,7 +323,6 @@ export function AgendaFilterBuilder({
               const pillLabel = isProperty
                 ? formatPropertyPill(filter.values)
                 : `${dimensionLabel(filter.dimension)}: ${filter.values.join(', ')}`
-              const pillTooltip = isProperty ? pillLabel : undefined
 
               return (
                 <li key={filter.dimension} className="contents">
@@ -336,7 +335,7 @@ export function AgendaFilterBuilder({
                       <button
                         type="button"
                         className="flex items-center gap-1 rounded-l-full px-2 py-1 hover:bg-accent cursor-pointer"
-                        title={pillTooltip}
+                        title={pillLabel}
                         aria-label={t('agendaFilter.editFilter', {
                           label: pillLabel,
                         })}

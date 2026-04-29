@@ -516,6 +516,89 @@ describe('BugReportDialog', () => {
     })
   })
 
+  // ── UX-12: required-marker on confirmation checkbox ─────────────────
+  describe('confirmation checkbox required marker (UX-12)', () => {
+    it('renders aria-required="true" on the confirmation checkbox', async () => {
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      const checkbox = await screen.findByRole('checkbox', {
+        name: t('bugReport.confirmCheckbox'),
+      })
+      expect(checkbox).toHaveAttribute('aria-required', 'true')
+    })
+
+    it('renders the aria-hidden asterisk visual marker in the label', async () => {
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      // Wait for the dialog body to render.
+      await screen.findByRole('checkbox', { name: t('bugReport.confirmCheckbox') })
+
+      // Visual marker: asterisk in destructive color, hidden from AT so
+      // the accessible name stays unchanged. aria-required on the
+      // checkbox itself communicates the required state.
+      const marker = screen.getByTestId('bug-report-confirm-required-marker')
+      expect(marker).toBeInTheDocument()
+      expect(marker.textContent).toBe('*')
+      expect(marker).toHaveAttribute('aria-hidden', 'true')
+      expect(marker.className).toContain('text-destructive')
+      // Ensure it is inside the confirmation label.
+      const label = document.querySelector('label[for="bug-report-confirm"]')
+      expect(label?.contains(marker)).toBe(true)
+    })
+  })
+
+  // ── UX-12: View full log toggle in the per-log preview sub-dialog ───
+  describe('preview "View full log" toggle (UX-12)', () => {
+    const longContent = `${'a'.repeat(600)}END`
+
+    function setupOneLongLog() {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'collect_bug_report_metadata') return sampleMetadata
+        if (cmd === 'read_logs_for_report') {
+          return [{ name: 'agaric.log', contents: longContent }]
+        }
+        return null
+      })
+    }
+
+    it('toggles between truncated and full content when clicked', async () => {
+      const user = userEvent.setup()
+      setupOneLongLog()
+
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+      await screen.findByText('agaric.log')
+      await user.click(
+        screen.getByRole('button', {
+          name: t('bugReport.previewLabel', { filename: 'agaric.log' }),
+        }),
+      )
+
+      const pre = await screen.findByTestId('bug-report-log-preview-content')
+      // Initially truncated.
+      expect(pre.textContent ?? '').toHaveLength(500)
+      expect(pre.textContent).not.toContain('END')
+
+      // Toggle button visible only when content exceeds the threshold.
+      const toggle = screen.getByTestId('bug-report-log-preview-toggle')
+      expect(toggle).toHaveTextContent(t('bugReport.viewFullLog'))
+
+      await user.click(toggle)
+
+      // Full content now rendered.
+      const expanded = await screen.findByTestId('bug-report-log-preview-content')
+      expect(expanded.textContent).toBe(longContent)
+      expect(expanded.textContent).toContain('END')
+      expect(toggle).toHaveTextContent(t('bugReport.collapseLog'))
+
+      // Collapse again returns to the truncated view.
+      await user.click(toggle)
+      const collapsed = await screen.findByTestId('bug-report-log-preview-content')
+      expect(collapsed.textContent ?? '').toHaveLength(500)
+    })
+  })
+
   it('prefills title and description from props', async () => {
     render(
       <BugReportDialog

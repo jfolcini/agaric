@@ -14,6 +14,7 @@ import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { logger } from '@/lib/logger'
 import { fetchLinkMetadata } from '@/lib/tauri'
+import { cn } from '@/lib/utils'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
@@ -193,7 +194,11 @@ export function LinkEditPopover({
           }}
           onKeyDown={handleKeyDown}
           autoFocus
-          className="h-8 [@media(pointer:coarse)]:h-11 text-sm"
+          className={cn(
+            'h-8 [@media(pointer:coarse)]:h-11 text-sm',
+            urlError && 'border-destructive',
+          )}
+          aria-invalid={urlError ? true : undefined}
           data-testid="link-url-input"
         />
       </div>

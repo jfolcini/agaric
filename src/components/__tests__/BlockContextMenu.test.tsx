@@ -382,6 +382,31 @@ describe('BlockContextMenu', () => {
     document.body.removeChild(triggerEl)
   })
 
+  it('UX-11: falls back to the block gutter button when the trigger has been removed', () => {
+    // Simulate a block whose trigger element was removed during the menu's
+    // lifetime (e.g. block deleted by a remote sync). The menu should focus
+    // the matching `[data-block-id]` gutter button rather than letting focus
+    // drop to <body>.
+    const blockEl = document.createElement('div')
+    blockEl.setAttribute('data-block-id', 'BLOCK_01')
+    const fallbackBtn = document.createElement('button')
+    fallbackBtn.setAttribute('role', 'button')
+    blockEl.appendChild(fallbackBtn)
+    document.body.appendChild(blockEl)
+
+    const fallbackFocusSpy = vi.spyOn(fallbackBtn, 'focus')
+
+    // triggerRef.current === null simulates the trigger having been
+    // unmounted (React clears the ref to null on unmount).
+    const triggerRef = { current: null as HTMLElement | null }
+    renderMenu({ triggerRef })
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(fallbackFocusSpy).toHaveBeenCalled()
+    document.body.removeChild(blockEl)
+  })
+
   it('menu is rendered via portal into document.body', () => {
     renderMenu()
 
@@ -417,7 +442,7 @@ describe('BlockContextMenu', () => {
     })
   })
 
-  it('hides items when their callbacks are not provided', () => {
+  it('renders nothing when all callbacks are absent (UX-12: no empty menu)', () => {
     renderMenu({
       onDelete: undefined,
       onIndent: undefined,
@@ -430,10 +455,11 @@ describe('BlockContextMenu', () => {
       hasChildren: false,
     })
 
-    // No action items should be shown; "No actions available" fallback
+    // No menu should render at all when there are zero actionable items —
+    // an empty menu / "No actions available" placeholder is a dead end.
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     expect(screen.queryByText(t('contextMenu.delete'))).not.toBeInTheDocument()
     expect(screen.queryByText(t('contextMenu.indent'))).not.toBeInTheDocument()
-    expect(screen.getByText(t('contextMenu.noActions'))).toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {

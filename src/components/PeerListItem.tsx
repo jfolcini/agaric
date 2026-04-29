@@ -57,9 +57,18 @@ export function PeerListItem({
       })
       .catch((err) => {
         logger.warn('PeerListItem', 'set_peer_address failed', { peer_id: peer.peer_id }, err)
-        toast.error(t('status.addressInvalid'))
+        // UX-12: include the expected format in the toast so the user
+        // doesn't have to reopen the popover hint to recover.
+        toast.error(t('status.addressInvalidWithFormat', { format: '192.168.1.100:5000' }))
       })
   }, [addrInput, peer.peer_id, t, onAddressUpdated])
+
+  // UX-12: explicit Cancel button for the address-edit popover. Outside-
+  // click already dismisses the popover, but Cancel makes the affordance
+  // observable for keyboard / screen-reader users.
+  const handleCancelAddress = useCallback(() => {
+    setAddrOpen(false)
+  }, [])
 
   return (
     <div
@@ -125,15 +134,27 @@ export function PeerListItem({
                   }}
                   aria-label={t('device.addressInputLabel')}
                 />
-                <p className="text-[10px] text-muted-foreground">{t('device.addressHint')}</p>
-                <Button
-                  size="sm"
-                  className="w-full"
-                  onClick={handleSaveAddress}
-                  disabled={!addrInput.trim()}
-                >
-                  {t('device.saveAddressButton')}
-                </Button>
+                {/* UX-12: bumped from text-[10px] to text-xs (12px) so
+                    the format example is legible at default zoom. */}
+                <p className="text-xs text-muted-foreground">{t('device.addressHint')}</p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="peer-address-cancel flex-1"
+                    onClick={handleCancelAddress}
+                  >
+                    {t('device.cancelAddressButton')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="flex-1"
+                    onClick={handleSaveAddress}
+                    disabled={!addrInput.trim()}
+                  >
+                    {t('device.saveAddressButton')}
+                  </Button>
+                </div>
               </PopoverContent>
             </Popover>
           </div>

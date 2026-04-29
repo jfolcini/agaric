@@ -269,6 +269,12 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
       )}
 
       {scheduledDate && (
+        // The due-date chip uses `dueDateColor(dueDate)` to colour-code
+        // overdue / today / future tasks because a due date is meaningful
+        // in all three temporal states. The scheduled date is intentionally
+        // static (`bg-date-scheduled`) — Org-mode's SCHEDULED semantics are
+        // future-only ("don't start before this date"), so there is no
+        // past/today/future distinction to surface visually.
         <DateChip
           date={scheduledDate}
           icon={Calendar}

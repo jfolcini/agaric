@@ -333,7 +333,7 @@ export function AgendaResults({
             <div key={group.label} className="agenda-group mb-3">
               <h3
                 className={cn(
-                  'agenda-group-header text-xs [@media(pointer:coarse)]:text-sm font-semibold uppercase tracking-wide px-3 py-1',
+                  'agenda-group-header text-sm font-semibold uppercase tracking-wide px-3 py-1',
                   group.className ?? 'text-muted-foreground',
                 )}
                 data-testid="agenda-group-header"

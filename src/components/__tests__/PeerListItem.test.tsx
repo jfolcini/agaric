@@ -145,8 +145,10 @@ describe('PeerListItem', () => {
       await user.click(screen.getByRole('button', { name: /Save/i }))
 
       await waitFor(() => {
+        // UX-12: toast now embeds the format example so the user
+        // doesn't have to reopen the popover hint to recover.
         expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-          'Invalid address format (expected host:port)',
+          'Invalid address format. Expected host:port (e.g., 192.168.1.100:5000).',
         )
       })
       expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
@@ -230,6 +232,55 @@ describe('PeerListItem', () => {
           address: '10.0.0.1:9090',
         })
       })
+    })
+  })
+
+  // ── UX-12: address popover Cancel button + format hint typography ───
+  describe('address popover Cancel button + format hint (UX-12)', () => {
+    it('renders a Cancel button that closes the popover without invoking IPC', async () => {
+      const user = userEvent.setup()
+      const peer = makePeer({ device_name: 'Work Laptop' })
+
+      render(<PeerListItem peer={peer} {...defaultProps} />)
+
+      const editBtn = screen.getByRole('button', { name: /Edit address for Work Laptop/i })
+      await user.click(editBtn)
+
+      // Type something so the popover has unsaved state.
+      const input = screen.getByLabelText('Address (host:port)')
+      await user.clear(input)
+      await user.type(input, '10.0.0.5:5000')
+
+      const cancelBtn = screen.getByRole('button', { name: /Cancel/i })
+      expect(cancelBtn).toBeInTheDocument()
+      await user.click(cancelBtn)
+
+      // Popover content unmounts after Cancel: input is gone.
+      await waitFor(() => {
+        expect(screen.queryByLabelText('Address (host:port)')).not.toBeInTheDocument()
+      })
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('renders the format hint at text-xs (12px) — bumped from text-[10px]', async () => {
+      const user = userEvent.setup()
+      const peer = makePeer({ device_name: 'Work Laptop' })
+
+      const { container } = render(<PeerListItem peer={peer} {...defaultProps} />)
+      await user.click(screen.getByRole('button', { name: /Edit address for Work Laptop/i }))
+
+      // Hint copy embeds the format example so the user doesn't have to guess.
+      const hint = await screen.findByText(/Format: host:port/)
+      expect(hint).toBeInTheDocument()
+      expect(hint.textContent).toContain('192.168.1.100:5000')
+
+      // Hint must use text-xs, not the old text-[10px].
+      expect(hint.className).toContain('text-xs')
+      expect(hint.className).not.toContain('text-[10px]')
+
+      // axe audit with popover open.
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
   })
 
