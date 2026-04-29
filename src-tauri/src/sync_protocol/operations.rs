@@ -1,4 +1,5 @@
 use sqlx::SqlitePool;
+use std::sync::Arc;
 
 use super::types::*;
 use crate::error::AppError;
@@ -470,7 +471,7 @@ pub async fn merge_diverged_blocks(
             match outcome {
                 merge::MergeOutcome::Merged(ref record) => {
                     materializer
-                        .enqueue_foreground(MaterializeTask::ApplyOp(record.clone()))
+                        .enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(record.clone())))
                         .await?;
                     results.clean_merges += 1;
                 }
@@ -479,7 +480,9 @@ pub async fn merge_diverged_blocks(
                     ..
                 } => {
                     materializer
-                        .enqueue_foreground(MaterializeTask::ApplyOp(conflict_block_op.clone()))
+                        .enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(
+                            conflict_block_op.clone(),
+                        )))
                         .await?;
                     results.conflicts += 1;
                 }
@@ -655,7 +658,7 @@ pub async fn merge_diverged_blocks(
                 );
 
                 materializer
-                    .enqueue_foreground(MaterializeTask::ApplyOp(new_record))
+                    .enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(new_record)))
                     .await?;
                 results.property_lww += 1;
             }
@@ -780,7 +783,7 @@ pub async fn merge_diverged_blocks(
                 tracing::debug!("LWW auto-resolved move conflict for block {}", bid);
 
                 materializer
-                    .enqueue_foreground(MaterializeTask::ApplyOp(new_record))
+                    .enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(new_record)))
                     .await?;
                 results.move_lww += 1;
             }
@@ -837,7 +840,7 @@ pub async fn merge_diverged_blocks(
                 .await?;
 
         materializer
-            .enqueue_foreground(MaterializeTask::ApplyOp(new_record))
+            .enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(new_record)))
             .await?;
         results.delete_edit_resurrect += 1;
     }

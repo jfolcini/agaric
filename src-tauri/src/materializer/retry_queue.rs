@@ -39,6 +39,7 @@
 use crate::error::AppError;
 use crate::materializer::MaterializeTask;
 use sqlx::SqlitePool;
+use std::sync::Arc;
 
 /// Task kinds that may be persisted to the retry queue. Only idempotent
 /// per-block operations belong here — global rebuilds do not.
@@ -69,6 +70,7 @@ impl RetryKind {
     }
 
     pub(crate) fn to_task(self, block_id: String) -> MaterializeTask {
+        let block_id: Arc<str> = Arc::from(block_id);
         match self {
             Self::UpdateFtsBlock => MaterializeTask::UpdateFtsBlock { block_id },
             Self::ReindexBlockLinks => MaterializeTask::ReindexBlockLinks { block_id },
@@ -79,16 +81,21 @@ impl RetryKind {
     /// Extract retry kind + block_id from a [`MaterializeTask`] if it is
     /// an idempotent per-block task. Returns `None` for non-retryable
     /// tasks (global rebuilds, barriers, ApplyOp, etc.).
+    ///
+    /// Returns the block_id as a `String` for direct binding to the
+    /// retry-queue SQL writes; the inbound `Arc<str>` is materialised
+    /// once on the failure path (cold), keeping the hot in-memory
+    /// task-clone path Arc-only.
     pub(crate) fn from_task(task: &MaterializeTask) -> Option<(Self, String)> {
         match task {
             MaterializeTask::UpdateFtsBlock { block_id } => {
-                Some((Self::UpdateFtsBlock, block_id.clone()))
+                Some((Self::UpdateFtsBlock, block_id.to_string()))
             }
             MaterializeTask::ReindexBlockLinks { block_id } => {
-                Some((Self::ReindexBlockLinks, block_id.clone()))
+                Some((Self::ReindexBlockLinks, block_id.to_string()))
             }
             MaterializeTask::ReindexBlockTagRefs { block_id } => {
-                Some((Self::ReindexBlockTagRefs, block_id.clone()))
+                Some((Self::ReindexBlockTagRefs, block_id.to_string()))
             }
             _ => None,
         }
@@ -412,7 +419,7 @@ mod tests {
         let task = kind.to_task("BLK_RTR".into());
         assert!(matches!(
             task,
-            MaterializeTask::ReindexBlockTagRefs { ref block_id } if block_id == "BLK_RTR"
+            MaterializeTask::ReindexBlockTagRefs { ref block_id } if block_id.as_ref() == "BLK_RTR"
         ));
     }
 
@@ -542,7 +549,7 @@ mod tests {
         };
         let t = task_from_row(&row).unwrap();
         assert!(
-            matches!(t, MaterializeTask::UpdateFtsBlock { ref block_id } if block_id == "BLK_TR")
+            matches!(t, MaterializeTask::UpdateFtsBlock { ref block_id } if block_id.as_ref() == "BLK_TR")
         );
 
         let unknown = DueRow {

@@ -5,6 +5,7 @@ use super::{CreateBlockHint, MaterializeTask};
 use crate::error::AppError;
 use crate::op_log::OpRecord;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// Fixed set of rebuild tasks enqueued after any `delete_block` /
@@ -125,7 +126,7 @@ impl Materializer {
     }
 
     pub async fn dispatch_op(&self, record: &OpRecord) -> Result<(), AppError> {
-        self.enqueue_foreground(MaterializeTask::ApplyOp(record.clone()))
+        self.enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(record.clone())))
             .await?;
         self.enqueue_background_tasks(record, None)
     }
@@ -148,16 +149,15 @@ impl Materializer {
                     _ => {}
                 }
                 if !hint.block_id.is_empty() {
+                    let block_id: Arc<str> = Arc::from(hint.block_id.as_str());
                     self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
-                        block_id: hint.block_id.clone(),
+                        block_id: Arc::clone(&block_id),
                     })?;
                     // UX-250: a freshly created block can already contain
                     // inline `#[ULID]` tag refs if the creator passed
                     // non-empty content (imports, paste, programmatic
                     // creates). Scan for them.
-                    self.try_enqueue_background(MaterializeTask::ReindexBlockTagRefs {
-                        block_id: hint.block_id,
-                    })?;
+                    self.try_enqueue_background(MaterializeTask::ReindexBlockTagRefs { block_id })?;
                 }
                 self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
@@ -176,7 +176,7 @@ impl Materializer {
                 );
                 if !block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::ReindexBlockLinks {
-                        block_id: block_id.to_owned(),
+                        block_id: Arc::from(block_id),
                     })?;
                     // UX-250: reindex inline tag refs regardless of
                     // `block_type_hint` — every content edit may gain or
@@ -185,7 +185,7 @@ impl Materializer {
                     // of scanning an empty diff is negligible vs. the
                     // correctness risk of skipping.
                     self.try_enqueue_background(MaterializeTask::ReindexBlockTagRefs {
-                        block_id: block_id.to_owned(),
+                        block_id: Arc::from(block_id),
                     })?;
                 }
                 match block_type_hint {
@@ -193,7 +193,7 @@ impl Materializer {
                         self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
                         if !block_id.is_empty() {
                             self.try_enqueue_background(MaterializeTask::ReindexFtsReferences {
-                                block_id: block_id.to_owned(),
+                                block_id: Arc::from(block_id),
                             })?;
                         }
                     }
@@ -201,7 +201,7 @@ impl Materializer {
                         self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
                         if !block_id.is_empty() {
                             self.try_enqueue_background(MaterializeTask::ReindexFtsReferences {
-                                block_id: block_id.to_owned(),
+                                block_id: Arc::from(block_id),
                             })?;
                         }
                     }
@@ -214,7 +214,7 @@ impl Materializer {
                 }
                 if !block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
-                        block_id: block_id.to_owned(),
+                        block_id: Arc::from(block_id),
                     })?;
                 }
                 let edits = self
@@ -256,7 +256,7 @@ impl Materializer {
                 self.enqueue_full_cache_rebuild()?;
                 if !block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::RemoveFtsBlock {
-                        block_id: block_id.to_owned(),
+                        block_id: Arc::from(block_id),
                     })?;
                 }
             }
@@ -266,7 +266,7 @@ impl Materializer {
                 self.enqueue_full_cache_rebuild()?;
                 if !block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
-                        block_id: block_id.to_owned(),
+                        block_id: Arc::from(block_id),
                     })?;
                 }
             }
@@ -276,7 +276,7 @@ impl Materializer {
                 self.enqueue_full_cache_rebuild()?;
                 if !block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::RemoveFtsBlock {
-                        block_id: block_id.to_owned(),
+                        block_id: Arc::from(block_id),
                     })?;
                 }
             }
