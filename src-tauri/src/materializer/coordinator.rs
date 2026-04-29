@@ -373,15 +373,21 @@ impl Materializer {
         }
     }
 
-    /// M-12: spawn `future` on the current tokio runtime and register
-    /// its handle on `tasks` so [`Self::shutdown`] can abort it.
+    /// M-12: spawn `future` on a tokio runtime and register its handle
+    /// on `tasks` so [`Self::shutdown`] can abort it.
     ///
-    /// The previous fire-and-forget version (a `cfg(test)` switch
-    /// between `tokio::spawn` and `tauri::async_runtime::spawn`) is no
-    /// longer needed: Tauri 2's `async_runtime::spawn` already
-    /// delegates to `tokio::spawn`, so [`JoinSet::spawn`] (which uses
-    /// `tokio::Handle::current()`) produces an equivalent task in both
-    /// modes while also yielding a tracked abort handle.
+    /// `JoinSet::spawn` calls `tokio::runtime::Handle::current()` and
+    /// panics outside a Tokio runtime context. Tauri 2's `setup`
+    /// callback runs synchronously on the main thread, *outside* any
+    /// runtime — `tauri::async_runtime::spawn` works there only because
+    /// it dispatches through Tauri's stored handle, not via
+    /// `Handle::current()`. To keep the M-12 abort-on-shutdown
+    /// semantics while not panicking in `setup`, we bind the task
+    /// explicitly via `JoinSet::spawn_on` to either:
+    ///   - the current Tokio runtime when one exists (tests under
+    ///     `#[tokio::test]`, async command handlers, async tasks); or
+    ///   - Tauri's stored `async_runtime` handle as a fallback (the
+    ///     non-async `setup` callback path).
     ///
     /// `pub(super)` so sibling modules — in particular the M-12
     /// regression test in `materializer::tests` — can spawn directly
@@ -390,13 +396,20 @@ impl Materializer {
     where
         F: std::future::Future<Output = ()> + Send + 'static,
     {
-        // Lock is held only for the duration of `JoinSet::spawn`, which
-        // is sync — we never cross an `.await` while holding it, so
-        // `std::sync::Mutex` is safe here.
+        // Lock is held only for the duration of `JoinSet::spawn_on`,
+        // which is sync — we never cross an `.await` while holding it,
+        // so `std::sync::Mutex` is safe here.
         let mut guard = tasks
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        guard.spawn(future);
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                guard.spawn_on(future, &handle);
+            }
+            Err(_) => {
+                guard.spawn_on(future, tauri::async_runtime::handle().inner());
+            }
+        }
     }
 
     /// Spawn a lightweight task to refresh the cached block count used for
