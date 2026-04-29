@@ -870,7 +870,20 @@ where
         let connected = server;
         // Prepare the next server instance before handing off the current
         // connection. Without this, the second client would fail to connect.
-        server = ServerOptions::new().create(pipe_path)?;
+        //
+        // I-MCP-2: explicitly pass `first_pipe_instance(false)` even though
+        // it is the `ServerOptions::default` value. The initial bind in
+        // `bind_pipe` (`mcp/mod.rs`) uses `first_pipe_instance(true)` as
+        // the per-process lock that detects double-launches; subsequent
+        // `.create` calls here inherit that namespace ownership and must
+        // NOT re-claim it (re-claiming would either fail spuriously or,
+        // worse, race another instance into accepting a connection meant
+        // for us). Being explicit makes the namespace-ownership contract
+        // visible at the call site so a future maintainer doesn't flip
+        // the flag without understanding it.
+        server = ServerOptions::new()
+            .first_pipe_instance(false)
+            .create(pipe_path)?;
 
         let registry = registry.clone();
         let activity_ctx = activity_ctx.clone();

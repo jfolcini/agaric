@@ -52,8 +52,14 @@ pub async fn count_agenda_batch_inner(
     .await?;
     Ok(rows
         .into_iter()
-        // cnt is a non-negative count from SQL; safe to convert
-        .map(|r| (r.date, usize::try_from(r.cnt).unwrap_or(0)))
+        // cnt is a non-negative count from SQL; safe to convert (I-CommandsCRUD-11)
+        .map(|r| {
+            (
+                r.date,
+                usize::try_from(r.cnt)
+                    .expect("COUNT(*) is non-negative and fits in usize on 64-bit targets"),
+            )
+        })
         .collect())
 }
 
@@ -89,11 +95,12 @@ pub async fn count_agenda_batch_by_source_inner(
         .await?;
     let mut result: HashMap<String, HashMap<String, usize>> = HashMap::new();
     for (date, source, cnt) in rows {
-        // cnt is a non-negative count from SQL; safe to convert
-        result
-            .entry(date)
-            .or_default()
-            .insert(source, usize::try_from(cnt).unwrap_or(0));
+        // cnt is a non-negative count from SQL; safe to convert (I-CommandsCRUD-11)
+        result.entry(date).or_default().insert(
+            source,
+            usize::try_from(cnt)
+                .expect("COUNT(*) is non-negative and fits in usize on 64-bit targets"),
+        );
     }
     Ok(result)
 }

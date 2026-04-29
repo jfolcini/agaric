@@ -1235,6 +1235,58 @@ async fn pagination_cursor_works() {
     );
 }
 
+/// I-Search-18: pagination cursor works for `Created { Desc }`.
+///
+/// Mirrors `pagination_cursor_works` but with descending creation-order
+/// sort. Guards against the upstream H-10 regression where
+/// `binary_search_by` on a descending slice silently emptied every page
+/// past page 1 (now fixed via `partition_point` in `query.rs`).
+#[tokio::test]
+async fn pagination_cursor_works_for_created_desc_i_search_18() {
+    let (pool, _dir) = test_pool().await;
+    setup_backlinks(&pool).await;
+
+    // Desc order over SRC_A < SRC_B < SRC_C (ULID-lexicographic) is
+    // SRC_C, SRC_B, SRC_A.
+    let sort = Some(BacklinkSort::Created { dir: SortDir::Desc });
+
+    // First page
+    let page1 = PageRequest::new(None, Some(2)).unwrap();
+    let resp1 = eval_backlink_query(&pool, "TARGET", None, sort.clone(), &page1)
+        .await
+        .unwrap();
+    assert_eq!(resp1.items.len(), 2, "first page should have 2 items");
+    assert_eq!(resp1.items[0].id, "SRC_C", "first item in desc order");
+    assert_eq!(resp1.items[1].id, "SRC_B", "second item in desc order");
+    assert!(resp1.has_more, "first page should indicate more");
+    assert!(
+        resp1.next_cursor.is_some(),
+        "first page should produce a cursor"
+    );
+
+    // Second page
+    let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
+    let resp2 = eval_backlink_query(&pool, "TARGET", None, sort, &page2)
+        .await
+        .unwrap();
+    assert_eq!(
+        resp2.items.len(),
+        1,
+        "second page should have 1 remaining item"
+    );
+    assert_eq!(
+        resp2.items[0].id, "SRC_A",
+        "remaining item is SRC_A (last in desc order)"
+    );
+    assert!(!resp2.has_more, "second page should have no more");
+    assert!(resp2.next_cursor.is_none(), "no cursor when no more pages");
+    assert_eq!(resp2.total_count, 3, "total count unchanged across pages");
+    assert_eq!(
+        resp2.filtered_count, 3,
+        "filtered count unchanged across pages"
+    );
+}
+
 /// Binary-search pagination: cursor ID exists in result set.
 /// Verifies that after seeking to an existing cursor, items after
 /// that cursor are returned correctly.

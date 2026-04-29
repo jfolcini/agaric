@@ -227,8 +227,14 @@ pub async fn count_backlinks_batch_inner(
         .await?;
     Ok(rows
         .into_iter()
-        // cnt is a non-negative count from SQL; safe to convert
-        .map(|(id, cnt)| (id, usize::try_from(cnt).unwrap_or(0)))
+        // cnt is a non-negative count from SQL; safe to convert (I-CommandsCRUD-11)
+        .map(|(id, cnt)| {
+            (
+                id,
+                usize::try_from(cnt)
+                    .expect("COUNT(*) is non-negative and fits in usize on 64-bit targets"),
+            )
+        })
         .collect())
 }
 

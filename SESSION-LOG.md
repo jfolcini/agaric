@@ -1,5 +1,55 @@
 # Session Log
 
+## Session 539 — Backend INFO CRUD/Search/MCP/GCal cleanup batch — close 7 items (I-CommandsCRUD-11, I-Search-10, I-Search-15, I-Search-18, I-MCP-2, I-GCalSpaces-4, I-GCalSpaces-DocNits) (2026-04-28)
+
+**7 backend INFO/nits REVIEW-LATER items closed in one PROMPT.md batch with 1 parallel build subagent + 5 orchestrator-direct edits/removals.** Theme: small Commands-CRUD error-path tightening + Search documentation/test gaps + MCP namespace ownership clarification + GCal docclarity gap + 2 cleanup removals. The I-Search-18 test surfaced no new bugs (the upstream H-10 binary_search_by-on-desc was already fixed in production).
+
+**REVIEW-LATER impact:**
+
+- **INFO / nits:** 35 → 28 (7 items resolved).
+- **Top-level open count (FEAT/MAINT/PERF/PUB/UX tracker):** 41 → 41.
+- **Previously-resolved counter:** 733+ → 740+ across 506 sessions (latest session 539).
+
+**Items closed (7):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| I-CommandsCRUD-11 | Commands (`commands/queries.rs:228-232` + `commands/agenda.rs:56-60,93-99`) — Subagent 6976e1ca | **Replace 3 sites of `usize::try_from(cnt).unwrap_or(0)` with `.expect("COUNT(*) is non-negative and fits in usize on 64-bit targets")`.** A non-negative `i64` from SQL `COUNT(*)` cannot fail to convert to `usize` on 64-bit targets, so `unwrap_or(0)` was a silent fallback for an unreachable case. The `.expect` makes the impossible-failure invariant explicit and matches the codebase's "no silent failures" stance. Each site now carries an inline `(I-CommandsCRUD-11)` reference comment. No new tests (pure error-path-of-an-unreachable-case change; existing success-path tests are byte-equivalent). |
+| I-Search-10 | Search & Links (`tag_query/resolve.rs:84-96` doc) — orchestrator-direct | **Document the `tags_cache` conflict-tag invariant.** The query in `resolve_tag_prefix_leaves` joins `tags_cache → block_tags → blocks` and filters `b.deleted_at IS NULL AND b.is_conflict = 0` on the *associating* block, NOT on the *tag* block. Conflict-copy tag blocks would surface here if `tags_cache` ever included them, but `crate::cache::rebuild_tags_cache` explicitly excludes `is_conflict = 1` tag rows — making the result correct in practice without the SQL contract being explicit. New doc-block on `resolve_tag_prefix_leaves` records the invariant + the defensive `JOIN blocks t ON t.id = tc.tag_id WHERE t.is_conflict = 0` fallback that should be added if the cache-rebuild rules ever change. Pure documentation; no code change. |
+| I-Search-15 | Search & Links — orchestrator-direct (removal) | **Remove from REVIEW-LATER as scoping reference with no standalone action.** The recommendation explicitly said *"No standalone action. Reference when scoping the fix for the upstream High finding so the change set stays minimal."* The upstream H-10 fix (`binary_search_by`-on-desc bug in `eval_backlink_query`) has since landed in production via `partition_point` (verified by I-Search-18's test passing without `#[ignore]`). The scoping note is no longer relevant. Pattern matches prior batches' "no-op closure" removals (sessions 538's I-Sync-5 / I-CommandsSystem-1). |
+| I-Search-18 | Search & Links (`backlink/tests.rs` — 1 new test) — Subagent 6976e1ca (combined with I-CommandsCRUD-11) | **Add `pagination_cursor_works_for_created_desc_i_search_18` test.** Pre-state: `pagination_cursor_works` (Asc default) and `sort_created_desc` (single-page) covered the orthogonal axes but no test combined `Created { Desc }` with cursor pagination past page 1 — gap that historically hid the H-10 binary_search_by-on-desc bug from CI. New test PASSES against current production code (the H-10 fix in `query.rs:143-148` via `partition_point` was applied in a prior session, and the production code's comment even documents the H-10 issue). Verifies page-1 returns `[SRC_C, SRC_B]` and page-2 cursor returns `[SRC_A]`. Skipped the optional `pagination_cursor_works_for_property_text_desc_i_search_18` for `sort.rs` per scope discipline (would have required new property fixture setup). |
+| I-MCP-2 | MCP (`mcp/server.rs:870-886`) — orchestrator-direct | **Make second-instance pipe namespace ownership explicit.** Pre-state: after handing off the current pipe connection in `serve_pipe`, the next server instance was created with bare `ServerOptions::new().create(pipe_path)?` — relying on the default `first_pipe_instance(false)` implicitly. Post-fix: explicit `.first_pipe_instance(false)` chained on the `ServerOptions::new()` builder, with a 9-line doc-comment block explaining the namespace-ownership contract. The initial bind in `bind_pipe` uses `first_pipe_instance(true)` as the per-process lock; subsequent re-creates inherit that namespace ownership and must NOT re-claim it (re-claiming would either fail spuriously or worse). Being explicit makes the contract visible at the call site so a future maintainer doesn't flip the flag without understanding it. |
+| I-GCalSpaces-4 | GCal (`gcal_push/connector.rs:872-900`) — orchestrator-direct | **Document `fill_full_window`'s caller-side window-days invariant + add `debug_assert!`.** Pre-state: `for i in 0..window_days.max(0)` defensively no-ops on zero-or-negative `window_days`, but the docstring didn't surface the caller-side `MIN_WINDOW_DAYS = 7` invariant — a future caller constructing `window_days` through a different path could pass 0 and silently disable push without any log breadcrumb. Post-fix: 14-line doc-block explicitly states the caller invariant, names `parse_window_days` as the canonical sanitizer, and adds `debug_assert!(window_days >= MIN_WINDOW_DAYS, ...)` so dev/test builds trip on caller drift. Release builds preserve the silent-empty-set fallback so the connector never crashes. All existing call sites pass values >= MIN_WINDOW_DAYS (production via `parse_window_days`, tests via 30/MAX_WINDOW_DAYS), so the assert never fires today. |
+| I-GCalSpaces-DocNits | GCal — orchestrator-direct (removal) | **Remove placeholder for un-enumerated nits.** The entry was an aggregate placeholder noting that REVIEW-LATER.md's old GCal/Spaces section header read "(9)" but only F9, F28, F29 were explicitly named. The current section count is 4 explicit entries (I-GCalSpaces-1..4, with -1 / -3 / -4 closed in this and prior batches), all with concrete file:line citations. The placeholder served no purpose post-cleanup — the un-enumerated tail never materialized into discrete findings. Removed; the count is now honest. |
+
+**Files touched (this session's batch — 6 modified):**
+
+- Backend Commands (3): `src-tauri/src/commands/queries.rs`, `src-tauri/src/commands/agenda.rs` (I-CommandsCRUD-11), `src-tauri/src/backlink/tests.rs` (I-Search-18)
+- Backend Search (1): `src-tauri/src/tag_query/resolve.rs` (I-Search-10 — doc-only)
+- Backend MCP (1): `src-tauri/src/mcp/server.rs` (I-MCP-2)
+- Backend GCal (1): `src-tauri/src/gcal_push/connector.rs` (I-GCalSpaces-4)
+- Docs (2): `REVIEW-LATER.md` (7 items removed; INFO count 35 → 28; previously-resolved counter bumped), `SESSION-LOG.md` (this entry)
+
+**Verification:** `prek run --all-files` → all hooks PASS. Targeted runs:
+
+- I-CommandsCRUD-11: 3/3 sites converted; 4 commands tests PASS.
+- I-Search-10: doc-only, no test (covered by existing tag_query::resolve tests).
+- I-Search-15 + I-GCalSpaces-DocNits: doc-only removals, no test.
+- I-Search-18: 1/1 new `_i_search_18` test PASS (upstream H-10 already fixed).
+- I-MCP-2: existing MCP tests PASS (no behavioural change — explicit-flag is byte-equivalent to default).
+- I-GCalSpaces-4: existing gcal_push tests PASS (debug_assert never fires under current callers).
+
+Combined cross-domain run: `cargo nextest run -E '(test(/commands::queries::/) or test(/commands::agenda::/) or test(/backlink::tests::pagination_cursor/) or test(/mcp::server::tests::/) or test(/tag_query::resolve::/) or test(/gcal_push::connector::tests::/))'` → **130/130 PASS**, 3064 skipped.
+
+**Process notes:**
+
+- **I-Search-18's test passed unexpectedly.** The expected outcome was either (a) test PASSES because H-10 was already fixed, or (b) test FAILS and is `#[ignore]`d as a regression seat for the H-10 fix. Outcome was (a) — the production code's `partition_point`-based cursor lookup at `query.rs:143-148` correctly handles Desc ordering. The test now serves as ongoing regression coverage. Good news: the H-10 bug is no longer a CI blind spot.
+- **The "no standalone action" / "scoping reference" closure pattern is a recurring shape.** I-Search-15 explicitly said "No standalone action" — its purpose was to inform a future fix, which has since landed. Sessions 538's I-Sync-5 / I-CommandsSystem-1 + this session's I-Search-15 / I-GCalSpaces-DocNits all share this pattern: a finding documents an observation that, once the underlying issue resolves, no longer needs tracking. Removing them keeps REVIEW-LATER.md focused on actionable work.
+- **The `debug_assert!` + caller-invariant doc-block is a useful pattern.** I-GCalSpaces-4 added both: a doc-comment that explicitly names the canonical sanitizer (`parse_window_days`) AND the lower bound (`MIN_WINDOW_DAYS = 7`), plus a `debug_assert!` that fires in dev/test builds if a future caller drifts. Release builds preserve the silent-empty-set fallback so the connector never crashes. Worth using for any "function with caller-side preconditions that are not enforced by the type system" pattern.
+- **The "explicit-default-flag" pattern in I-MCP-2 is a documentation-as-code technique.** Writing `.first_pipe_instance(false)` even though it's the default makes the contract visible at the call site — a future maintainer who sees only the default would have to grep the docs to learn that the explicit flag is intentional. Pairs with the doc-comment to make namespace ownership undeniable. Same shape as the existing `test_id` Send-Sync explicit assertion (session 535's I-MCP-7).
+
+---
+
 ## Session 538 — Backend INFO Lifecycle/Search/CRUD test-gap batch — close 6 items (I-Lifecycle-2, I-Search-5, I-Search-6, I-CommandsCRUD-13, I-Sync-5, I-CommandsSystem-1) (2026-04-28)
 
 **6 backend INFO/nits REVIEW-LATER items closed in one PROMPT.md batch with 4 parallel build subagents + 2 orchestrator-direct removals.** Theme: snapshot empty-op_log UX fix + 3 test-gap closures (oracle parity, FTS race, conflict-aware cycle detection) + 2 cleanup removals (wontfix accept-as-is, duplicate-of-PERF-23). The I-Lifecycle-2 retry succeeded after the previous session's hang. The I-Search-5 depth-boundary test surfaced a real M-59-class off-by-one bug between the materialised helper and the CTE oracle — the test is `#[ignore]`d with a detailed doc-comment as a regression seat for the next session that fixes M-59.
