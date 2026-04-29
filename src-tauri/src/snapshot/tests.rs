@@ -4486,3 +4486,173 @@ async fn compact_op_log_logs_warn_when_row_count_exceeds_threshold_l105() {
         "L-105: compact_op_log must not regress on the new measure_op_log_size pre-flight; got {result:?}"
     );
 }
+
+// =======================================================================
+// M-70 — apply_snapshot followed by anchor yields consistent prev_hash
+// =======================================================================
+//
+// `apply_snapshot` performs `DELETE FROM op_log` and commits without
+// persisting the snapshot's `up_to_hash` anywhere as the post-restore
+// anchor. The FEAT-6 sync orchestrator at
+// `sync_daemon::snapshot_transfer::try_receive_snapshot_catchup` calls
+// `peer_refs::update_on_sync` immediately after, so the happy path is
+// covered — but the contract is caller-enforced.
+//
+// This regression test pins the orchestrator's pattern: after applying a
+// snapshot, the caller MUST anchor the post-restore hash chain via
+// `peer_refs::upsert_peer_ref` + `peer_refs::update_on_sync`. The
+// assertion shape mirrors what `try_receive_snapshot_catchup` does — a
+// future caller that forgets the anchor would silently break later
+// cross-device hash-chain validation because peer-side validation
+// consults `peer_refs.last_hash` to know where the source peer's chain
+// stands.
+//
+// `up_to_hash` is opaque (see `collect_frontier` doc comment for the
+// "real causal anchor is `up_to_seqs`" rationale) — peers never compare
+// it for equality between devices. What matters is that the *anchor we
+// stored* matches the *hash the snapshot was tagged with*, so the next
+// local op's chain (which restarts at `seq=1, parent_seqs=NULL` after
+// the op_log wipe) is reconcilable against the source peer's frontier
+// via the `peer_refs` row.
+
+#[tokio::test]
+async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
+    // ── Source pool: build a snapshot tagged at `up_to_hash`. ────────
+    let (src_pool, _src_dir) = test_pool().await;
+    let src_device = "dev-src";
+    insert_block(&src_pool, "block-src-1", "snapshot content").await;
+    insert_op_at(&src_pool, src_device, "block-src-1", "2025-01-01T00:00:00Z").await;
+    let snapshot_id = create_snapshot(&src_pool, src_device).await.unwrap();
+
+    // Read back the snapshot blob + its `up_to_hash` (the chain anchor
+    // the orchestrator persists into peer_refs after a successful
+    // apply).
+    let snap_row = sqlx::query!(
+        "SELECT data, up_to_hash FROM log_snapshots WHERE id = ?",
+        snapshot_id
+    )
+    .fetch_one(&src_pool)
+    .await
+    .unwrap();
+    let snap_data = snap_row.data;
+    let snap_up_to_hash = snap_row.up_to_hash;
+    assert!(
+        !snap_up_to_hash.is_empty(),
+        "M-70: `up_to_hash` must be non-empty for a snapshot built over a non-empty op_log — \
+         the test premise depends on having a real anchor to compare against"
+    );
+
+    // ── Destination pool: fresh, then apply the snapshot. ────────────
+    let (dst_pool, _dst_dir) = test_pool().await;
+    let dst_mat = test_materializer(&dst_pool);
+    let restored = apply_snapshot(&dst_pool, &dst_mat, &snap_data)
+        .await
+        .expect("apply_snapshot must succeed on a fresh dst pool");
+
+    // Sanity: `apply_snapshot` itself wiped op_log (RESET semantics).
+    let op_log_count_after_apply: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&dst_pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        op_log_count_after_apply, 0,
+        "M-70 premise: apply_snapshot must wipe op_log (the absence of a stored prev_hash \
+         is exactly what makes the peer_refs anchor load-bearing)"
+    );
+    assert_eq!(
+        restored.up_to_hash, snap_up_to_hash,
+        "M-70 sanity: the decoded SnapshotData's up_to_hash must match the log_snapshots \
+         row's up_to_hash"
+    );
+
+    // ── Anchor the post-restore hash chain — copy the orchestrator's
+    //    exact pattern from `sync_daemon::snapshot_transfer::
+    //    try_receive_snapshot_catchup` (lines 460-461): upsert the peer
+    //    ref, then `update_on_sync(.., up_to_hash, "")` with the empty
+    //    string as the documented "we sent nothing" sentinel.
+    crate::peer_refs::upsert_peer_ref(&dst_pool, src_device)
+        .await
+        .unwrap();
+    crate::peer_refs::update_on_sync(&dst_pool, src_device, &snap_up_to_hash, "")
+        .await
+        .expect("M-70: peer_refs::update_on_sync must succeed against a freshly upserted peer");
+
+    // ── Now write a local op on the post-restore pool. After the wipe
+    //    the destination's own chain restarts at seq=1 with no parent
+    //    (genesis). What anchors this restart to the snapshot's tip is
+    //    the peer_refs row above — that is the contract M-70 guards.
+    let dst_local_device = "dev-local";
+    let new_op = append_local_op_at(
+        &dst_pool,
+        dst_local_device,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("01HZ0000000000000000DSTNEW1"),
+            block_type: "content".to_owned(),
+            content: "post-restore op".to_owned(),
+            parent_id: None,
+            position: Some(0),
+        }),
+        "2025-06-01T00:00:00Z".to_owned(),
+    )
+    .await
+    .expect("append_local_op_at must succeed on the post-restore pool");
+
+    // ── Assertions: the new local op is a clean genesis (seq=1,
+    //    parent_seqs=None) and the chain anchor recorded for the
+    //    snapshot's source peer matches `up_to_hash`. Together these
+    //    pin the orchestrator's contract: a future caller that omits
+    //    the `update_on_sync` call would leave `peer_refs.last_hash`
+    //    NULL, breaking the equality check below.
+    assert_eq!(
+        new_op.seq, 1,
+        "M-70: post-restore local chain must restart at seq=1 (op_log was wiped)"
+    );
+    assert!(
+        new_op.parent_seqs.is_none(),
+        "M-70: the first local op after apply_snapshot has no parent in op_log — the chain \
+         anchor lives in peer_refs, not in op_log.parent_seqs (which is why the contract \
+         is caller-enforced and why this regression test exists)"
+    );
+
+    // The load-bearing assertion: the persisted anchor for the source
+    // peer matches the snapshot's `up_to_hash`. Phrased the way M-70
+    // describes it, this is "the resulting chain's `prev_hash` for the
+    // snapshot's source device equals `snapshot.up_to_hash`".
+    let anchored_peer_ref = crate::peer_refs::get_peer_ref(&dst_pool, src_device)
+        .await
+        .unwrap()
+        .expect("M-70: peer_refs row for the snapshot source device must exist after anchor");
+    assert_eq!(
+        anchored_peer_ref.last_hash.as_deref(),
+        Some(snap_up_to_hash.as_str()),
+        "M-70: peer_refs[{src_device}].last_hash must equal snapshot.up_to_hash after the \
+         orchestrator-style anchor — this is the chain `prev_hash` future cross-device \
+         hash-chain validation will consult. A regression where apply_snapshot's caller \
+         forgets the update_on_sync would leave this NULL and silently break sync."
+    );
+
+    // The new local op's hash must also be deterministic and consistent
+    // with `compute_op_hash` over the same inputs — re-derive it
+    // independently to prove the post-restore chain is well-formed.
+    let payload_json: String = sqlx::query_scalar!(
+        "SELECT payload FROM op_log WHERE device_id = ? AND seq = ?",
+        dst_local_device,
+        new_op.seq,
+    )
+    .fetch_one(&dst_pool)
+    .await
+    .unwrap();
+    let expected_hash = crate::hash::compute_op_hash(
+        dst_local_device,
+        new_op.seq,
+        new_op.parent_seqs.as_deref(),
+        &new_op.op_type,
+        &payload_json,
+    );
+    assert_eq!(
+        new_op.hash, expected_hash,
+        "M-70: the post-restore local op's hash must reproduce via compute_op_hash over \
+         (device_id, seq, parent_seqs=None, op_type, payload) — proves the chain is \
+         well-formed and reconcilable with the peer_refs anchor"
+    );
+}

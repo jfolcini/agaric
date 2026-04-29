@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM gcal_settings WHERE key = 'oauth_account_email'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "2a6f8dd085bf6821f8a9d52075d13a538b00069a7e04154cadd59f676adfefcd"
+}

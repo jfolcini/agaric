@@ -1061,6 +1061,69 @@ async fn shutdown_when_full() {
         "foreground enqueue should fail after shutdown when full"
     );
 }
+
+/// M-12 regression test: a long-running future spawned via the
+/// materializer's tracked spawn helper must be aborted when
+/// `shutdown()` is called, not allowed to outlive the shutdown
+/// signal.
+///
+/// Pre-fix, fire-and-forget `tokio::spawn` calls produced no abort
+/// handle — an in-progress FTS rebuild (or any other multi-second
+/// future) kept running while the surrounding tear-down sequence
+/// closed the writer pool, producing writer-pool errors and a slow /
+/// hung exit.
+///
+/// We assert via a `Drop` guard inside the task body: when the task
+/// is aborted, its frame is dropped, which sets the flag. We poll
+/// the flag with a 1s budget, well under the 60s sleep it would
+/// otherwise have to wait out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_aborts_in_flight_tasks_m12() {
+    use std::sync::atomic::AtomicBool;
+
+    struct DropFlag(StdArc<AtomicBool>);
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, AtomicOrdering::Release);
+        }
+    }
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+
+    let dropped = StdArc::new(AtomicBool::new(false));
+    let flag = dropped.clone();
+    Materializer::spawn_task(&mat.tasks, async move {
+        let _guard = DropFlag(flag);
+        // Far longer than the test's bounded wait — if the future
+        // were not aborted, the test would hang and fail.
+        tokio::time::sleep(Duration::from_secs(60)).await;
+    });
+
+    // Yield once so the spawned task gets onto a worker and reaches
+    // its first `.await`. Without this the abort below would race
+    // with task scheduling and the Drop assertion below could observe
+    // the guard before the task ever runs (still a pass, but for the
+    // wrong reason).
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !dropped.load(AtomicOrdering::Acquire),
+        "task should still be running before shutdown",
+    );
+
+    let start = std::time::Instant::now();
+    mat.shutdown();
+
+    // Poll the drop flag until the abort propagates. 1s budget is
+    // generous on a multi-thread runtime; in practice this resolves
+    // in <10 ms.
+    while !dropped.load(AtomicOrdering::Acquire) {
+        if start.elapsed() > Duration::from_secs(1) {
+            panic!("M-12: shutdown() must abort in-flight tasks within 1s");
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
 #[tokio::test]
 async fn metrics_bg() {
     let (pool, _dir) = test_pool().await;

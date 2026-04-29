@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-38 open items — 38 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 4 backend Medium findings (M-16, M-18, M-67, M-91) closed in session 549.**
+38 open items — 38 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 9 backend Medium findings closed across sessions 549-550 (M-16, M-18, M-67, M-91 in 549; M-12, M-27, M-37, M-70, M-92 in 550).**
 
-Previously resolved: 776+ items across 516 sessions (per SESSION-LOG.md unique session count; latest is session 549).
+Previously resolved: 781+ items across 517 sessions (per SESSION-LOG.md unique session count; latest is session 550).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1381,10 +1381,10 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Dropped (hallucinated / out-of-scope / duplicate / wontfix-intentional) | 12 |
 | Severity-downgraded by Pass 2 | 49 |
 | Already-tracked in REVIEW-LATER (PERF-19, PERF-20, PERF-23) | 3 |
-| Net findings in this report | 329 |
+| Net findings in this report | 324 |
 | **Critical** | **1** |
 | **High** | **4** |
-| **Medium** | **24** |
+| **Medium** | **19** |
 | **Low** | **124** |
 | **Info / nits** | **125** |
 
@@ -1398,15 +1398,15 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Domain | Crit | High | Med | Low | Info |
 |---|---|---|---|---|---|
 | Core data layer | 0 | 1 | 4 | 9 | 11 |
-| Materializer | 1 | 2 | 5 | 8 | 4 |
+| Materializer | 1 | 2 | 4 | 8 | 4 |
 | Cache + Pagination | 0 | 0 | 4 | 12 | 6 |
-| Commands (CRUD) | 0 | 1 | 6 | 9 | 13 |
-| Commands (System) | 0 | 2 | 10 | 13 | 6 |
+| Commands (CRUD) | 0 | 1 | 5 | 9 | 13 |
+| Commands (System) | 0 | 2 | 9 | 13 | 6 |
 | Sync stack | 0 | 3 | 10 | 25 | 5 |
 | Search & Links | 0 | 2 | 4 | 16 | 19 |
-| Lifecycle / Snapshots | 0 | 0 | 16 | 16 | 8 |
+| Lifecycle / Snapshots | 0 | 0 | 15 | 16 | 8 |
 | MCP | 0 | 0 | 6 | 12 | 8 |
-| GCal / Spaces / Drafts | 0 | 0 | 8 | 11 | 9 |
+| GCal / Spaces / Drafts | 0 | 0 | 7 | 11 | 9 |
 
 (Numbers approximate; some findings span domains and are listed under the primary one.)
 
@@ -1518,18 +1518,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 ### Materializer
 
 
-### M-12 — In-flight tokio tasks not cancelled at shutdown
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/coordinator.rs:319-327`, `src-tauri/src/materializer/coordinator.rs:525-537`
-- **What:** `Materializer::shutdown` flips `shutdown_flag` and drops the channel senders, breaking the consumer `recv` loops on next iteration. But `Self::spawn_task` (used for the metrics-snapshot task, the block-count refresh, and per-task spawned futures) returns no `JoinHandle`. Long-running per-task futures inside `process_single_foreground_task` / `run_background` (e.g. an FTS rebuild taking many seconds) keep running with no `select!` against the shutdown flag and no `JoinHandle::abort()`.
-- **Why it matters:** During a sequenced shutdown (sync stop → materializer flush → DB close), the writer pool can be torn down while a background rebuild is still mid-transaction, producing a writer-pool error in the logs and a slow / hung app exit. The risk surfaces on app-close after heavy editing.
-- **Cost:** M (2-8h)
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** Track a `tokio::task::JoinSet` (or hold the `JoinHandle`s) on the `Materializer` struct, and in `shutdown()` call `abort_all()` after a short grace period; alternatively pass a `tokio::sync::Notify` shutdown signal into the long-running handlers and `select!` against it. The retry-queue sweeper (`retry_queue.rs:261`) already has the same fire-and-forget pattern and would benefit from the same treatment.
-- **Pass-1 source:** 02/F9
-- **Status:** Open
-
 ### Cache + Pagination
 
 ### M-17 — Four `*_split` cache rebuilds ignore the `read_pool` and run reads on the writer
@@ -1582,18 +1570,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 04/F12
 - **Status:** Open
 
-### M-27 — `export_page_markdown_inner` full-table-scans every tag and page on each export
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/pages.rs:181-200` (resolver), context `pages.rs:161-340`
-- **What:** To resolve `#[ULID]` and `[[ULID]]` tokens, the function loads `(id, content)` for every non-deleted `tag` and `page` block in the vault, builds two `HashMap`s, then exports only direct children (`list_children` with `limit=1000`, no pagination — descendants beyond the cap are silently truncated).
-- **Why it matters:** AGENTS.md "Backend Patterns" #3 says batch by `json_each`, not full scans; with the documented 100K-block target this loads tens of thousands of rows per export. The undocumented direct-children-only truncation is a separate correctness issue.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** (1) Cursor-paginate `list_children` until exhausted into a buffer; (2) regex-extract ULIDs from the buffer; (3) issue one `SELECT id, content FROM blocks WHERE id IN (SELECT value FROM json_each(?))` for the union of tag+page references; (4) decide and document whether the export covers descendants and flag the truncation if it does not.
-- **Pass-1 source:** 04/F14
-- **Status:** Open
-
 ### Commands (System)
 
 ### M-28 — `attachments.deleted_at` is dead code; soft-delete schema vs hard-delete handler
@@ -1633,17 +1609,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 05/F19 (cross-ref 06/F2)
 - **Status:** Open
 
-### M-37 — `disconnect_gcal_inner` is not transactional across its three writes
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/gcal.rs:200-217`
-- **What:** The function performs four side effects that should succeed-or-fail together: (1) clear `CalendarId` setting (line 202), (2) `DELETE FROM gcal_agenda_event_map` (line 203), (3) `token_store.clear()` (line 210), (4) clear `OauthAccountEmail` setting (line 217). None share a transaction; a failure between any two leaves a half-disconnected state (e.g. tokens gone but `account_email` still populated).
-- **Why it matters:** The Settings tab can show "Connected as alice@example.com — keyring missing tokens", which is confusing. Recovery requires the user to click disconnect again and hope the second attempt succeeds atomically.
-- **Cost:** M
-- **Risk:** Medium — the three DB writes can be wrapped in a single `BEGIN IMMEDIATE`, but the keyring `clear()` cannot live inside a SQLite tx; ordering matters (do keyring clear first, so a DB failure leaves "tokens gone, settings still populated" — recoverable on next disconnect).
-- **Impact:** Medium
-- **Recommendation:** Reorder to (a) keyring clear (soft-fail per M-36), (b) one `BEGIN IMMEDIATE` wrapping the two `set_setting` calls + the `DELETE FROM gcal_agenda_event_map`, (c) emit `PushDisabled` after commit.
-- **Pass-1 source:** 05/F13
-- **Status:** Open
 
 
 ### Sync stack
@@ -1671,18 +1636,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Lifecycle / Snapshots / Merge / Recurrence
 
-
-### M-70 — `apply_snapshot` does not anchor the post-snapshot hash chain
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/snapshot/restore.rs:89, 254`
-- **What:** RESET does `DELETE FROM op_log` and commits without persisting the snapshot's `up_to_hash` anywhere as the post-restore anchor. The FEAT-6 sync orchestrator at `sync_daemon/snapshot_transfer.rs:326-352` does call `peer_refs::update_on_sync` immediately after, so the happy path is covered — but the contract is caller-enforced and there is no test asserting the next local op's `prev_hash` matches the snapshot's `up_to_hash`.
-- **Why it matters:** A future caller of `apply_snapshot` outside the FEAT-6 orchestrator that forgets to anchor would silently break later cross-device hash-chain validation.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** High
-- **Recommendation:** Audit every caller of `apply_snapshot` and add a regression test that asserts the next `append_local_op` after `apply_snapshot` produces a hash consistent with `up_to_hash`. Consider reshaping the return type (e.g., a `RestoreAnchor` newtype the caller must consume) so the anchor cannot be silently dropped.
-- **Pass-1 source:** 08/F11
-- **Status:** Open
 
 ### M-71 — `compute_reverse(restore_block)` translates back to bare delete_block
 - **Domain:** Lifecycle
@@ -1736,17 +1689,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F12
 - **Status:** Open
 
-### M-92 — `bootstrap_spaces`'s `pages_without_space` migration does N round-trips for N pages
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/spaces/bootstrap.rs:59-73`
-- **What:** First-boot migration loops over every legacy unscoped page and calls `set_property_in_tx` once per page. Each call does ~4 SQL round-trips (property-defs lookup, block existence probe, op_log append, `INSERT OR REPLACE INTO block_properties`). For a 5000-page vault this is ~20k queries inside one transaction held for the whole bootstrap.
-- **Why it matters:** `bootstrap_spaces` is awaited synchronously from `lib.rs` setup and is documented as boot-fatal; a long single transaction risks WAL pressure, lock contention with the materializer, and a noticeable startup stall before the UI renders. It also blows up the partial-crash-resumability surface that bootstrap.rs's docstring promises.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Cache the `property_definitions` row once outside the loop, batch the `block_properties` upsert (chunked `INSERT OR REPLACE … VALUES (?), (?), …` per ~500 ids), and stream op_log appends in chunks of ~1000 with intermediate commits so a partial crash leaves a partial migration that the fast-path probe re-detects. No new tables / op types — stays inside Architectural Stability bounds.
-- **Pass-1 source:** 10/F14
-- **Status:** Open
 
 ### M-93 — `block_drafts` table has no FK to `blocks`
 - **Domain:** GCal / Spaces / Drafts

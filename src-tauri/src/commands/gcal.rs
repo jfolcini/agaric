@@ -236,15 +236,21 @@ pub async fn disconnect_gcal_inner<C: GcalClient + ?Sized>(
                 );
             }
         }
-        // Always clear the calendar_id + wipe map rows locally.
-        models::set_setting(pool, GcalSettingKey::CalendarId, "").await?;
-        sqlx::query!("DELETE FROM gcal_agenda_event_map")
-            .execute(pool)
-            .await?;
     }
 
-    // Clear OAuth tokens and the displayed email.  A keyring failure
-    // is logged but swallowed — the UI has already toggled off.
+    // M-37: clear the OAuth tokens BEFORE the SQL transaction below.
+    // Keyring `clear()` cannot live inside a SQLite tx, so the two
+    // sides cannot be made atomic — ordering picks which half-failure
+    // is recoverable.  Doing the keyring clear first means a SQL-tx
+    // failure leaves "tokens gone, settings still populated", which a
+    // retry of disconnect cleanly resolves (the second attempt's
+    // empty-keyring skips the remote delete but the SQL tx still
+    // runs).  The reverse ordering would leave tokens stranded in the
+    // keyring with the user-visible email blank — the surface bug
+    // M-37 fixes.
+    //
+    // M-36: a keyring failure here is demoted to a warn-log so the
+    // SQL-side cleanup proceeds regardless.
     if let Err(e) = token_store.clear().await {
         tracing::warn!(
             target: "gcal",
@@ -252,9 +258,26 @@ pub async fn disconnect_gcal_inner<C: GcalClient + ?Sized>(
             "token_store.clear failed during disconnect",
         );
     }
-    models::set_setting(pool, GcalSettingKey::OauthAccountEmail, "").await?;
 
-    // Signal the frontend.
+    // M-37: wrap the three settings/event-map writes in a single
+    // BEGIN IMMEDIATE transaction so they succeed-or-fail together.
+    // A failure mid-flight cannot leave a half-disconnected state
+    // (e.g. calendar_id reset but oauth_account_email still populated
+    // → "Connected as alice@example.com — keyring missing tokens" in
+    // Settings).  `oauth_account_email` is always cleared, even when
+    // `delete_calendar = false`, matching the prior behaviour.
+    let mut tx = crate::db::begin_immediate_logged(pool, "gcal_disconnect").await?;
+    if delete_calendar {
+        models::set_setting_in_tx(&mut *tx, GcalSettingKey::CalendarId.as_str(), "").await?;
+        sqlx::query!("DELETE FROM gcal_agenda_event_map")
+            .execute(&mut *tx)
+            .await?;
+    }
+    models::set_setting_in_tx(&mut *tx, GcalSettingKey::OauthAccountEmail.as_str(), "").await?;
+    tx.commit().await?;
+
+    // Signal the frontend.  MUST happen after the commit so subscribers
+    // observing PushDisabled can trust the DB-side state has landed.
     emitter.emit(GcalEvent::PushDisabled);
     Ok(())
 }
@@ -868,6 +891,171 @@ mod tests {
         assert!(
             recorder.events().contains(&GcalEvent::PushDisabled),
             "push_disabled must be emitted even when keyring load fails, got {:?}",
+            recorder.events()
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnect_with_delete_calendar_clears_all_state_atomically() {
+        // M-37 regression guard: with delete_calendar=true, all four
+        // side effects (token cleared, calendar_id reset, event-map
+        // wiped, oauth_account_email reset) MUST be observed after a
+        // successful disconnect.  The prior implementation issued the
+        // four writes as independent calls so a mid-flight failure
+        // could leave a half-disconnected state; the fix wraps the
+        // three SQL writes in one BEGIN IMMEDIATE tx, with the keyring
+        // clear sequenced in front of it.
+        let (pool, _dir) = test_pool().await;
+        let store = store_with(Some(dummy_token())).await;
+        let client = Arc::new(MockGcalClient::new());
+        let client_trait: Arc<dyn GcalClient> = client.clone();
+        let recorder = Arc::new(RecordingEventEmitter::new());
+        let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
+
+        // Populate every piece of state cleared by disconnect.
+        models::set_setting(&pool, GcalSettingKey::CalendarId, "cal_XYZ")
+            .await
+            .unwrap();
+        models::set_setting(&pool, GcalSettingKey::OauthAccountEmail, "me@example.com")
+            .await
+            .unwrap();
+        let entry = crate::gcal_push::models::GcalAgendaEventMap {
+            date: "2026-04-22".to_owned(),
+            gcal_event_id: "evt_1".to_owned(),
+            last_pushed_hash: "deadbeef".to_owned(),
+            last_pushed_at: crate::now_rfc3339(),
+        };
+        crate::gcal_push::models::upsert_event_map(&pool, &entry)
+            .await
+            .unwrap();
+
+        disconnect_gcal_inner(&pool, client_trait.as_ref(), &store, &emitter, true)
+            .await
+            .unwrap();
+
+        // Token cleared.
+        assert!(
+            store.load().await.unwrap().is_none(),
+            "token must be cleared",
+        );
+        // calendar_id is empty.
+        assert_eq!(
+            models::get_setting(&pool, GcalSettingKey::CalendarId)
+                .await
+                .unwrap()
+                .unwrap_or_default(),
+            "",
+            "calendar_id must be cleared",
+        );
+        // oauth_account_email is empty.
+        assert_eq!(
+            models::get_setting(&pool, GcalSettingKey::OauthAccountEmail)
+                .await
+                .unwrap()
+                .unwrap_or_default(),
+            "",
+            "oauth_account_email must be cleared",
+        );
+        // event-map is empty.
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM gcal_agenda_event_map")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0, "event-map must be wiped");
+        // PushDisabled emitted after the tx committed.
+        assert!(
+            recorder.events().contains(&GcalEvent::PushDisabled),
+            "push_disabled must be emitted, got {:?}",
+            recorder.events()
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnect_rolls_back_db_writes_when_in_tx_write_fails() {
+        // M-37 regression guard: the three DB writes (calendar_id
+        // reset, event-map wipe, oauth_account_email reset) MUST run
+        // in a single BEGIN IMMEDIATE tx so a mid-flight failure
+        // cannot leave a half-disconnected state.  We engineer a
+        // failure on the LAST in-tx write by deleting the seeded
+        // `oauth_account_email` row up front — `set_setting_in_tx`
+        // returns NotFound when rows_affected == 0, which propagates
+        // out via `?` and drops the tx unrolled.  The earlier writes
+        // (calendar_id reset, event-map wipe) must therefore be
+        // rolled back.
+        //
+        // Note on what is *not* rolled back: the keyring clear is
+        // sequenced before the tx (it cannot live inside one), so the
+        // token IS cleared even on tx failure — this is the M-37
+        // ordering rationale.  The next disconnect retry observes
+        // empty keyring (skips remote delete) and re-runs the tx.
+        let (pool, _dir) = test_pool().await;
+        let store = store_with(Some(dummy_token())).await;
+        let client = Arc::new(MockGcalClient::new());
+        let client_trait: Arc<dyn GcalClient> = client.clone();
+        let recorder = Arc::new(RecordingEventEmitter::new());
+        let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
+
+        // Seed pre-disconnect state we expect to survive the rollback.
+        models::set_setting(&pool, GcalSettingKey::CalendarId, "cal_KEEP")
+            .await
+            .unwrap();
+        let entry = crate::gcal_push::models::GcalAgendaEventMap {
+            date: "2026-04-22".to_owned(),
+            gcal_event_id: "evt_1".to_owned(),
+            last_pushed_hash: "deadbeef".to_owned(),
+            last_pushed_at: crate::now_rfc3339(),
+        };
+        crate::gcal_push::models::upsert_event_map(&pool, &entry)
+            .await
+            .unwrap();
+
+        // Sabotage: drop the seeded oauth_account_email row so the
+        // in-tx UPDATE on it returns NotFound and aborts the tx.
+        sqlx::query!("DELETE FROM gcal_settings WHERE key = 'oauth_account_email'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let err = disconnect_gcal_inner(&pool, client_trait.as_ref(), &store, &emitter, true)
+            .await
+            .expect_err(
+                "disconnect must surface NotFound from the in-tx oauth_account_email update",
+            );
+        assert!(
+            matches!(err, AppError::NotFound(_)),
+            "expected NotFound, got {err:?}",
+        );
+
+        // Rollback: calendar_id was NOT committed.
+        let cal_id = models::get_setting(&pool, GcalSettingKey::CalendarId)
+            .await
+            .unwrap()
+            .unwrap_or_default();
+        assert_eq!(
+            cal_id, "cal_KEEP",
+            "calendar_id reset must be rolled back when the tx aborts",
+        );
+
+        // Rollback: event-map row still present.
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM gcal_agenda_event_map")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count.0, 1,
+            "event-map wipe must be rolled back when the tx aborts",
+        );
+
+        // Keyring clear happens before the tx and is NOT rolled back.
+        assert!(
+            store.load().await.unwrap().is_none(),
+            "keyring clear runs before the tx — token must be gone even on tx abort",
+        );
+
+        // PushDisabled is NOT emitted because disconnect returned Err.
+        assert!(
+            !recorder.events().contains(&GcalEvent::PushDisabled),
+            "push_disabled must only fire after the tx commits, got {:?}",
             recorder.events()
         );
     }

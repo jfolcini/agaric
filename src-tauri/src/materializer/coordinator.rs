@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::{mpsc, Notify};
+use tokio::task::JoinSet;
 
 #[derive(Clone)]
 pub struct Materializer {
@@ -73,6 +74,26 @@ pub struct Materializer {
     /// `cleanup_orphaned_attachments` short-circuits with a debug log
     /// when the dir is not set.
     pub(super) app_data_dir: Arc<OnceLock<PathBuf>>,
+    /// M-12: tracks every tokio task spawned via [`Self::spawn_task`] so
+    /// [`Self::shutdown`] can call `abort_all()` on them. Without this,
+    /// long-running futures (e.g. an FTS rebuild taking many seconds)
+    /// kept running after the `shutdown_flag` flip and channel-sender
+    /// drops, holding the writer pool open while the surrounding
+    /// shutdown sequence (sync stop → materializer flush → DB close)
+    /// tore down state from underneath them. That produced
+    /// writer-pool-closed errors in logs and a slow / hung exit.
+    ///
+    /// Abort-on-shutdown contract: after `shutdown()` returns, every
+    /// previously-spawned future has had cancellation signalled. The
+    /// task may still take one more poll to terminate (cancellation is
+    /// observed at the next `.await` point); we deliberately do **not**
+    /// block `shutdown()` waiting for that drain — `shutdown()` is sync
+    /// and the caller's tear-down sequence already provides ordering.
+    ///
+    /// `std::sync::Mutex` is fine here: every lock acquisition is brief
+    /// (a single `JoinSet::spawn` or `JoinSet::abort_all` call, both
+    /// sync) and never crosses an `.await` point.
+    pub(super) tasks: Arc<Mutex<JoinSet<()>>>,
 }
 
 /// RAII guard that decrements
@@ -161,32 +182,31 @@ impl Materializer {
         let pending_block_count_refreshes_notify = Arc::new(Notify::new());
         let gcal_handle: Arc<OnceLock<GcalConnectorHandle>> = Arc::new(OnceLock::new());
         let app_data_dir: Arc<OnceLock<PathBuf>> = Arc::new(OnceLock::new());
+        // M-12: JoinSet must exist before the four `spawn_task` calls
+        // below so every task we spawn is registered for abort-on-shutdown.
+        let tasks: Arc<Mutex<JoinSet<()>>> = Arc::new(Mutex::new(JoinSet::new()));
         {
             let p = write_pool.clone();
             let s = shutdown_flag.clone();
             let m = metrics.clone();
             let g = gcal_handle.clone();
-            Self::spawn_task(consumer::run_foreground(p, fg_rx, s, m, g));
+            Self::spawn_task(&tasks, consumer::run_foreground(p, fg_rx, s, m, g));
         }
         {
             let s = shutdown_flag.clone();
             let m = metrics.clone();
             let d = app_data_dir.clone();
-            Self::spawn_task(consumer::run_background(
-                write_pool,
-                bg_rx,
-                s,
-                m,
-                read_pool_for_consumer,
-                d,
-            ));
+            Self::spawn_task(
+                &tasks,
+                consumer::run_background(write_pool, bg_rx, s, m, read_pool_for_consumer, d),
+            );
         }
         {
             let p = reader_pool.clone();
             let m = metrics.clone();
             let flag = block_count_cache_ready_flag.clone();
             let notify = block_count_cache_ready_notify.clone();
-            Self::spawn_task(async move {
+            Self::spawn_task(&tasks, async move {
                 if let Ok(count) = sqlx::query_scalar::<_, i64>(
                     "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL",
                 )
@@ -211,7 +231,7 @@ impl Materializer {
         {
             let m = metrics.clone();
             let s = shutdown_flag.clone();
-            Self::spawn_task(Self::metrics_snapshot_task(m, s, lifecycle));
+            Self::spawn_task(&tasks, Self::metrics_snapshot_task(m, s, lifecycle));
         }
         Self {
             fg_tx: Arc::new(Mutex::new(Some(fg_tx))),
@@ -225,6 +245,7 @@ impl Materializer {
             pending_block_count_refreshes_notify,
             gcal_handle,
             app_data_dir,
+            tasks,
         }
     }
 
@@ -352,14 +373,30 @@ impl Materializer {
         }
     }
 
-    fn spawn_task<F>(future: F)
+    /// M-12: spawn `future` on the current tokio runtime and register
+    /// its handle on `tasks` so [`Self::shutdown`] can abort it.
+    ///
+    /// The previous fire-and-forget version (a `cfg(test)` switch
+    /// between `tokio::spawn` and `tauri::async_runtime::spawn`) is no
+    /// longer needed: Tauri 2's `async_runtime::spawn` already
+    /// delegates to `tokio::spawn`, so [`JoinSet::spawn`] (which uses
+    /// `tokio::Handle::current()`) produces an equivalent task in both
+    /// modes while also yielding a tracked abort handle.
+    ///
+    /// `pub(super)` so sibling modules — in particular the M-12
+    /// regression test in `materializer::tests` — can spawn directly
+    /// onto the same `JoinSet` and observe abort-on-shutdown semantics.
+    pub(super) fn spawn_task<F>(tasks: &Arc<Mutex<JoinSet<()>>>, future: F)
     where
         F: std::future::Future<Output = ()> + Send + 'static,
     {
-        #[cfg(test)]
-        tokio::spawn(future);
-        #[cfg(not(test))]
-        tauri::async_runtime::spawn(future);
+        // Lock is held only for the duration of `JoinSet::spawn`, which
+        // is sync — we never cross an `.await` while holding it, so
+        // `std::sync::Mutex` is safe here.
+        let mut guard = tasks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.spawn(future);
     }
 
     /// Spawn a lightweight task to refresh the cached block count used for
@@ -385,7 +422,7 @@ impl Materializer {
             counter: self.pending_block_count_refreshes.clone(),
             notify: self.pending_block_count_refreshes_notify.clone(),
         };
-        Self::spawn_task(async move {
+        Self::spawn_task(&self.tasks, async move {
             let _g = guard;
             if let Ok(count) =
                 sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL")
@@ -577,6 +614,31 @@ impl Materializer {
         }
     }
 
+    /// Stop the materializer.
+    ///
+    /// Steps, in order:
+    ///   1. Flip [`Self::shutdown_flag`] (Release) so cooperative
+    ///      consumers exit their loops on the next iteration.
+    ///   2. Drop the foreground / background mpsc senders so any
+    ///      future `enqueue_*` call returns `AppError::Channel` and the
+    ///      consumer-side `recv()` resolves to `None`.
+    ///   3. M-12: `abort_all()` every task tracked on [`Self::tasks`].
+    ///      This covers long-running futures (e.g. an in-progress FTS
+    ///      rebuild) that would otherwise outlive the shutdown signal
+    ///      and try to use the writer pool after the surrounding
+    ///      tear-down sequence (sync stop → materializer flush → DB
+    ///      close) had torn it down — the symptom on the user's
+    ///      machine being writer-pool-closed errors in logs and a
+    ///      slow / hung exit.
+    ///
+    /// `shutdown()` is intentionally **sync and non-blocking**: it
+    /// signals cancellation but does not wait for tasks to drain.
+    /// `JoinSet::abort_all` is itself synchronous; the abort signal is
+    /// observed by each task at its next `.await` point. The caller's
+    /// tear-down sequence (which already orders sync stop → flush →
+    /// DB close) is responsible for any further bounded wait — we
+    /// deliberately do not introduce a `tokio::time::timeout`-bounded
+    /// drain here so a stuck task can never block process exit.
     pub fn shutdown(&self) {
         self.shutdown_flag.store(true, Ordering::Release);
         let _ = self
@@ -589,6 +651,12 @@ impl Materializer {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
+        // M-12: abort tracked tasks. Brief lock — `abort_all` is sync
+        // and just signals; tasks finalize asynchronously.
+        self.tasks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .abort_all();
     }
 
     pub async fn flush_foreground(&self) -> Result<(), AppError> {

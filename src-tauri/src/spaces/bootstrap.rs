@@ -9,11 +9,21 @@
 use sqlx::SqlitePool;
 
 use crate::commands::set_property_in_tx;
+use crate::db::MAX_SQL_PARAMS;
 use crate::error::AppError;
 use crate::now_rfc3339;
-use crate::op::{CreateBlockPayload, OpPayload};
+use crate::op::{CreateBlockPayload, OpPayload, SetPropertyPayload};
 use crate::op_log;
 use crate::ulid::BlockId;
+
+/// M-92 — chunk size for the batched `block_properties` UPSERT in
+/// [`migrate_pages_to_personal_space_batched`].
+///
+/// `block_properties` is `(block_id, key, value_text, value_num, value_date,
+/// value_ref)` — six bound params per row. SQLite caps bind parameters at
+/// [`MAX_SQL_PARAMS`] (999) per statement, giving 166 rows per chunk. Mirrors
+/// the chunked-INSERT convention from `cache/block_tag_refs.rs` (M-18).
+const PROPERTIES_INSERT_CHUNK: usize = MAX_SQL_PARAMS / 6;
 
 /// Reserved ULID for the seeded "Personal" space.
 ///
@@ -144,19 +154,12 @@ pub async fn bootstrap_spaces(pool: &SqlitePool, device_id: &str) -> Result<(), 
     // keeps the cost bounded.
     let pages_to_migrate = pages_without_space(&mut tx).await?;
     let migrated = pages_to_migrate.len();
-    for page_id in pages_to_migrate {
-        set_property_in_tx(
-            &mut tx,
-            device_id,
-            page_id,
-            "space",
-            None,
-            None,
-            None,
-            Some(SPACE_PERSONAL_ULID.to_owned()),
-        )
-        .await?;
-    }
+    // M-92 — batched migrator (chunked INSERT OR REPLACE + cached
+    // property_definitions lookup) replacing the previous per-page
+    // `set_property_in_tx` loop. For a 5000-page first-boot vault this
+    // collapses ~20k SQL round-trips down to ~5k op_log appends + ~30
+    // chunked block_properties UPSERTs.
+    migrate_pages_to_personal_space_batched(&mut tx, device_id, &pages_to_migrate).await?;
 
     tx.commit().await?;
 
@@ -331,6 +334,117 @@ async fn ensure_accent_color_property(
     )
     .await?;
     Ok(true)
+}
+
+/// M-92 — batched migrator that assigns `space = SPACE_PERSONAL_ULID` to
+/// every page in `page_ids`.
+///
+/// This is the perf path for the BUG-1 / L-133 every-boot backfill: a
+/// 5000-page first-boot vault used to round-trip ~20k SQL statements
+/// inside one bootstrap transaction (the per-page `set_property_in_tx`
+/// loop did 4 round-trips per page — definitions lookup, block existence
+/// probe, op_log append, property UPSERT). The batched form collapses
+/// the property-definitions read to one call and the per-row UPSERTs to
+/// chunked multi-row INSERTs of [`PROPERTIES_INSERT_CHUNK`] rows each.
+///
+/// # Inherited invariants
+///
+/// - **M-1 (op log append-only).** Each page still gets its own
+///   `SetProperty` op via [`op_log::append_local_op_in_tx`] because the
+///   per-row hash chain (`prev_hash` advance, `parent_seqs`) is part of
+///   the op_log contract. Batching the op_log writes is a separate,
+///   larger refactor and is out of scope for M-92.
+/// - **`is_conflict = 0` predicate.** [`pages_without_space`] already
+///   filters to live, non-conflict pages with `block_type = 'page'`, so
+///   the per-page block-existence probe in `set_property_in_tx` is
+///   redundant and is intentionally skipped here.
+/// - **UPSERT semantics.** The chunked write uses `INSERT OR REPLACE`
+///   to mirror `set_property_in_tx`'s row materialisation contract.
+///   Steady-state runs see zero candidate pages (the
+///   `pages_without_space` `NOT EXISTS` filter short-circuits) so this
+///   is exercised only on the first migration boot.
+/// - **Seeded property definitions.** Validates that the
+///   `property_definitions` row for `'space'` is present (seeded by
+///   migration `0035_spaces.sql`). A missing row indicates a
+///   fundamentally broken DB and we surface it instead of silently
+///   skipping validation.
+async fn migrate_pages_to_personal_space_batched(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: &str,
+    page_ids: &[String],
+) -> Result<(), AppError> {
+    if page_ids.is_empty() {
+        return Ok(());
+    }
+
+    // Step A — cache property_definitions for `space` once. The seeded
+    // row from migration 0035_spaces.sql is `('space', 'ref', NULL, …)`.
+    // Per-page `set_property_in_tx` reads this row inside the loop; the
+    // values are constant per migration call so a single read suffices.
+    // The lookup also doubles as a "is the seed migration in place"
+    // sanity check — a missing row indicates a broken DB and surfaces
+    // here instead of silently skipping the type validation.
+    let def = sqlx::query!("SELECT value_type FROM property_definitions WHERE key = 'space'")
+        .fetch_optional(&mut **tx)
+        .await?;
+    if def.is_none() {
+        return Err(AppError::InvalidOperation(
+            "property_definitions row for 'space' is missing — \
+             migration 0035_spaces.sql did not land"
+                .into(),
+        ));
+    }
+
+    // Step B — append one `SetProperty` op per page. AGENTS.md
+    // invariant #1 (op log is append-only) plus the hash-chain
+    // semantics in `append_local_op_in_tx` (each op reads the previous
+    // op's `seq` and computes a blake3 over `parent_seqs`) make these
+    // serial calls non-batchable today. A future
+    // `append_local_ops_in_tx_batch` helper would be a separate
+    // op_log-API change.
+    for page_id in page_ids {
+        let payload = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::from_trusted(page_id),
+            key: "space".to_owned(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: Some(SPACE_PERSONAL_ULID.to_owned()),
+        });
+        op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
+    }
+
+    // Step C — chunked `INSERT OR REPLACE INTO block_properties`. The
+    // multi-row VALUES form binds 6 params per row; SQLite caps bind
+    // parameters at MAX_SQL_PARAMS (999) per statement so we chunk to
+    // PROPERTIES_INSERT_CHUNK (= 166) rows.
+    //
+    // `INSERT OR REPLACE` (NOT `INSERT OR IGNORE`) matches the
+    // upstream `set_property_in_tx` UPSERT semantics — if a stale
+    // property row somehow exists for one of these page_ids it will be
+    // overwritten with the Personal-space ref.
+    for chunk in page_ids.chunks(PROPERTIES_INSERT_CHUNK) {
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?, ?, ?)").collect();
+        let sql = format!(
+            "INSERT OR REPLACE INTO block_properties \
+             (block_id, key, value_text, value_num, value_date, value_ref) \
+             VALUES {}",
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query(&sql);
+        for page_id in chunk {
+            q = q
+                .bind(page_id)
+                .bind("space")
+                .bind(None::<String>)
+                .bind(None::<f64>)
+                .bind(None::<String>)
+                .bind(SPACE_PERSONAL_ULID);
+        }
+        q.execute(&mut **tx).await?;
+    }
+
+    Ok(())
 }
 
 /// Return every live, non-conflict page that does not yet carry a
