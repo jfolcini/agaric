@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 733+ items across 505 sessions (per SESSION-LOG.md unique session count; latest is session 538).
+Previously resolved: 740+ items across 506 sessions (per SESSION-LOG.md unique session count; latest is session 539).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -2025,7 +2025,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F25
 - **Status:** Open
 
-## INFO / nits (35 — expanded)
+## INFO / nits (28 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2229,18 +2229,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 04/F26
 - **Status:** Open
 
-### I-CommandsCRUD-11 — `usize::try_from(cnt).unwrap_or(0)` for SQL `COUNT(*)` is the wrong fallback
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/queries.rs:228-232`, `src-tauri/src/commands/agenda.rs:56-60,93-99`
-- **What:** A non-negative `i64` from `COUNT(*)` cannot fail to convert to `usize` on 64-bit targets, but the code uses `unwrap_or(0)` as a fallback. If the conversion ever did fail (impossible today), silently returning 0 would hide the defect.
-- **Why it matters:** Minor, but inconsistent with the codebase's "no silent failures" stance and the materializer's anti-swallow rule.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace with `.expect("COUNT(*) is non-negative")` (the panic case is unreachable) or propagate `AppError::InvalidOperation` with the offending value. Pick whichever matches the per-file convention.
-- **Pass-1 source:** 04/F29
-- **Status:** Open
-
 ### Search & Links
 
 ### I-Search-7 — `eval_unlinked_references` short-token "dead arm" in OR query
@@ -2265,18 +2253,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low/Medium
 - **Recommendation:** Add a candidates-scoped path: `WHERE block_type = ?1 AND id IN (SELECT value FROM json_each(?2))` mirroring `PropertyIsEmpty`. Wire it from the top-level intersection point in `eval_backlink_query` / `eval_backlink_query_grouped` so the base-set ids serve as candidates.
 - **Pass-1 source:** 07/F32
-- **Status:** Open
-
-### I-Search-10 — `tags_cache` JOIN in `BacklinkFilter::HasTagPrefix` doesn't filter conflict tag rows on the tag side
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/filters.rs:324-338`
-- **What:** The query joins `tags_cache → block_tags → blocks` and filters `b.deleted_at IS NULL AND b.is_conflict = 0` on the *associating* block, not on the *tag* block. Conflict-copy tag blocks could surface via `tags_cache` if cache rebuild rules ever included them. Sister filter `HasTag` is unaffected because the tag id is fully specified by the caller.
-- **Why it matters:** Defense-in-depth. Today `cache::rebuild_tags_cache` excludes conflict tag blocks, so the result is correct in practice; the SQL contract just doesn't make that dependency explicit.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either add a defensive `JOIN blocks t ON t.id = tc.tag_id WHERE t.is_conflict = 0`, or leave a comment pointing at the cache rebuild that guarantees this invariant.
-- **Pass-1 source:** 07/F33
 - **Status:** Open
 
 ### I-Search-11 — `Cursor` constructor verbosity at every encode site
@@ -2313,30 +2289,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Addressed by M-62. No standalone fix needed; track here so reviewers don't apply two parallel fixes.
 - **Pass-1 source:** 07/F37
-- **Status:** Open
-
-### I-Search-15 — `BacklinkSort::Created { Desc }` non-paginated path correct; bug isolated to `eval_backlink_query` cursor
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/sort.rs:18-26` (correct) vs `src-tauri/src/backlink/query.rs:111-119` (broken cursor)
-- **What:** Cross-reference confirming that `sort_ids` handles `Desc` correctly via `b.cmp(a)`. The binary-search-on-desc bug (tracked separately as a High finding upstream of this expansion) is isolated to the cursor lookup in `eval_backlink_query`. `eval_backlink_query_grouped` and `eval_unlinked_references` use `skip_while` on group `pid`, not binary search on block id, so they don't share the bug.
-- **Why it matters:** Scoping note for the upstream High finding — fixing the binary-search bug does not require touching the grouped helpers.
-- **Cost:** S (confirmation only)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** No standalone action. Reference when scoping the fix for the upstream High finding so the change set stays minimal.
-- **Pass-1 source:** 07/F39
-- **Status:** Open
-
-### I-Search-18 — Tests for `eval_backlink_query` with `Created { Desc }` + cursor are missing
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/tests.rs` — gap; closest tests at `:1003-1022` (`sort_created_desc`, single page) and `:1133-1162` (`pagination_cursor_works`, default Asc sort)
-- **What:** No test combines `Created { Desc }` with cursor pagination past page 1. The two existing Desc tests assert single-page full-result correctness; `pagination_cursor_works` doesn't pass a sort and falls back to `Created { Asc }`. This is the gap that hides the upstream High `binary_search_by`-on-desc bug from CI.
-- **Why it matters:** A single test would catch the entire bug class. Adding it both validates a future fix and prevents regression.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium (prevents regression of the High-severity fix)
-- **Recommendation:** Add `pagination_cursor_works_for_created_desc` mirroring `pagination_cursor_works` but with `Some(BacklinkSort::Created { dir: SortDir::Desc })`. Add the analogous `pagination_cursor_works_for_property_text_desc` for `sort.rs`.
-- **Pass-1 source:** 07/F44
 - **Status:** Open
 
 ### I-Search-19 — `Cursor` rank/position/deleted_at/seq fields are part of encoded payload — schema-leak in cursor format
@@ -2377,18 +2329,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** When wiring the accept-loop shutdown signal, `select!` on it in `serve_pipe` too; on shutdown drop the current `NamedPipeServer` and return `Ok(())`.
 - **Pass-1 source:** 09/F19
-- **Status:** Open
-
-### I-MCP-2 — `serve_pipe`'s second-instance `.create(pipe_path)` has no race guard
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/server.rs:691-693`; initial bind guard at `src-tauri/src/mcp/mod.rs:333-336` (`first_pipe_instance(true)`).
-- **What:** After handing off the current pipe connection, `serve_pipe` re-creates the next server instance with `ServerOptions::new().create(pipe_path)?`. The `first_pipe_instance(true)` guard applies only on the initial bind; subsequent re-creates inherit the default `first_pipe_instance(false)` and trust that the original bind retains namespace ownership. If a second Agaric process raced on the same pipe, the re-creation would not fail loudly.
-- **Why it matters:** A corner of a corner — the first-bind guard already detects double-launches, so the only way to hit this is for the first instance to die between accepts, which is itself unusual. Pure documentation gap.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Pass `first_pipe_instance(false)` explicitly on the re-create (it is the default, but explicit is better) and add a comment documenting "the initial bind serves as the per-process lock; subsequent `.create` calls inherit the namespace ownership".
-- **Pass-1 source:** 09/F20
 - **Status:** Open
 
 ### I-MCP-4 — ARCHITECTURE.md does not mention MCP at all
@@ -2439,30 +2379,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** No-op unless a single shared `device_id` validator emerges. If one does (e.g. matching `^[0-9A-Z]{26}$` for ULID-shaped ids, or whatever spec is canonical), call it from `bootstrap_spaces` and from the other op-emission entry points.
 - **Pass-1 source:** 10/F28
-- **Status:** Open
-
-### I-GCalSpaces-4 — `fill_full_window` doc-clarity gap on the `parse_window_days` clamp
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/gcal_push/connector.rs:801-807` (`fill_full_window`); clamp at `src-tauri/src/gcal_push/connector.rs:404-408` (`parse_window_days`); test at `src-tauri/src/gcal_push/connector.rs:1815-1820`.
-- **What:** `for i in 0..window_days.max(0)` — if `window_days` is 0 or negative, the loop body never runs and `dirty` stays empty. The only current caller (`parse_window_days`) clamps inputs to `[MIN_WINDOW_DAYS, MAX_WINDOW_DAYS] = [7, 90]` for valid integers and returns `DEFAULT_WINDOW_DAYS = 30` on empty/garbage, so today the `<= 0` branch is unreachable in production. The doc on `fill_full_window` does not call out this caller-side invariant; a future caller that constructs the value through a different path could pass 0 and silently disable push.
-- **Why it matters:** Doc-clarity gap, not a live bug. The caller-of-record (`parse_window_days`) closes the path; the function-level docstring should make the clamp dependency explicit so a future caller does not silently bypass it.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Document the caller-side invariant on `fill_full_window` ("callers must pass `window_days >= MIN_WINDOW_DAYS`; `parse_window_days` is the canonical sanitizer"). Optionally add `debug_assert!(window_days >= MIN_WINDOW_DAYS)` as a defensive guard against future-caller drift — note this is *not* a fix for an existing trigger.
-- **Pass-1 source:** 10/F29
-- **Status:** Open
-
-### I-GCalSpaces-DocNits — Aggregate placeholder for "doc nits" not enumerated in Pass-1
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** Various — `src-tauri/src/gcal_push/`, `src-tauri/src/spaces/`, `src-tauri/src/draft.rs`, `src-tauri/src/ulid.rs`
-- **What:** REVIEW-LATER.md's Info section header reads "GCal / Spaces (9)" but only F9, F28, F29 are explicitly named alongside an unspecified "doc nits" tail. Pass-1 source `10-gcal-spaces-misc.md` does not enumerate further actionable doc nits — its closing notes (lines 863-868) are observational rather than concrete (FEAT-5g deferred is correct; OAuth security posture is sound; ULID test suite is high-quality; `lease.rs` is clean; `digest.rs` is well-tested; `dirty_producer.rs` is well-scoped).
-- **Why it matters:** Tracker hygiene. The "(9)" count in REVIEW-LATER.md may be aspirational or sourced from a Pass-2 reorg note that did not reach Pass-1; without explicit Pass-1 backing, fabricating distinct entries would create unverifiable citations. This placeholder keeps the count honest and signals to the next reviewer that the Pass-1 review for this domain is essentially exhausted at the explicit findings.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either downgrade the REVIEW-LATER.md header to "(4)" to match the explicit Info findings (`I-GCalSpaces-1..4`), or, if a Pass-2 author identifies further small doc nits, expand them into discrete `I-GCalSpaces-N` entries with concrete file:line citations and retire this placeholder.
-- **Pass-1 source:** 10/closing-notes (no specific F#)
 - **Status:** Open
 
 ---

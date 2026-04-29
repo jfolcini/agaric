@@ -81,6 +81,19 @@ pub(crate) async fn resolve_tag_leaves(
 /// the single source of truth for the prefix leaf SQL — both
 /// `resolve_expr` (here) and `BacklinkFilter::HasTagPrefix`
 /// (`backlink/filters.rs`) call it (MAINT-143).
+///
+/// **I-Search-10 — `tags_cache` conflict-tag invariant.** The query
+/// joins `tags_cache → block_tags → blocks` and filters
+/// `b.deleted_at IS NULL AND b.is_conflict = 0` on the *associating*
+/// block (`b.id = bt.block_id`), NOT on the *tag* block
+/// (`tc.tag_id`). Conflict-copy tag blocks would surface here if
+/// `tags_cache` ever included them, but the cache-rebuild contract in
+/// [`crate::cache::rebuild_tags_cache`] explicitly excludes
+/// `is_conflict = 1` tag rows. The result is correct in practice; the
+/// SQL contract just doesn't make that dependency explicit. If the
+/// cache-rebuild rules ever change to include conflict tag rows, add a
+/// defensive `JOIN blocks t ON t.id = tc.tag_id WHERE t.is_conflict = 0`
+/// here (and in [`resolve_tag_leaves`] for `HasTag` parity).
 pub(crate) async fn resolve_tag_prefix_leaves(
     pool: &SqlitePool,
     prefix: &str,

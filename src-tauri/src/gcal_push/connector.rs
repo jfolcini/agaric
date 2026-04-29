@@ -871,7 +871,27 @@ fn hash_digest(digest: &DigestResult) -> Result<String, AppError> {
 
 /// Fill `dirty` with every date in `[today, today + window_days)`.
 /// Used by the reconcile sweep and by `force_gcal_resync`.
+///
+/// **I-GCalSpaces-4 — Caller-side invariant.** Callers MUST pass
+/// `window_days >= MIN_WINDOW_DAYS` (currently 7). The function uses
+/// `window_days.max(0)` defensively, so a 0 or negative value silently
+/// produces an empty `dirty` set rather than panicking — but that
+/// silently disables the push window for that tick. The canonical
+/// sanitizer is [`parse_window_days`], which clamps user-supplied
+/// strings to `[MIN_WINDOW_DAYS, MAX_WINDOW_DAYS]` and returns
+/// `DEFAULT_WINDOW_DAYS` on empty/garbage. Any future caller that
+/// constructs `window_days` through a different path (e.g. computed
+/// from a duration, or read from a different settings key) must apply
+/// the same lower bound or risk silently disabling push without any
+/// log breadcrumb. The `debug_assert!` below will fire in dev/test
+/// builds if a caller drifts; release builds preserve the
+/// silent-empty-set fallback so the connector never crashes.
 pub fn fill_full_window(dirty: &mut DirtySet, today: NaiveDate, window_days: i64) {
+    debug_assert!(
+        window_days >= MIN_WINDOW_DAYS,
+        "fill_full_window: window_days ({window_days}) < MIN_WINDOW_DAYS ({MIN_WINDOW_DAYS}) \
+         — caller must clamp via `parse_window_days` or apply the same lower bound"
+    );
     for i in 0..window_days.max(0) {
         if let Some(d) = today.checked_add_days(Days::new(i.cast_unsigned())) {
             dirty.insert(d);
