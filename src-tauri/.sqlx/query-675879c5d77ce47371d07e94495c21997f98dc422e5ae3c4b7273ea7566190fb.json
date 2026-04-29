@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, block_type, content FROM blocks\n               WHERE id IN (SELECT value FROM json_each(?1))\n                 AND deleted_at IS NULL AND is_conflict = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "block_type",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "content",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "675879c5d77ce47371d07e94495c21997f98dc422e5ae3c4b7273ea7566190fb"
+}

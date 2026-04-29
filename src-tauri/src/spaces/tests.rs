@@ -647,6 +647,67 @@ async fn bootstrap_does_not_re_emit_is_space_ops_on_second_boot() {
     );
 }
 
+/// M-92 regression: the batched migrator must correctly span multiple
+/// chunks. The chunk size is `MAX_SQL_PARAMS / 6 = 166` rows; seeding
+/// 200 unscoped pages exercises the two-chunk path (chunk #1 = 166 rows,
+/// chunk #2 = 34 rows). Confirms:
+///
+/// - Every page ends up with `space = SPACE_PERSONAL_ULID`.
+/// - Exactly N `SetProperty(key='space')` ops are appended (one per
+///   page, mirroring the pre-batch behaviour — the op_log invariant
+///   was preserved across the perf change).
+/// - A second `bootstrap_spaces` call appends zero new ops
+///   (idempotent — `pages_without_space` short-circuits because every
+///   page now carries `space`).
+#[tokio::test]
+async fn bootstrap_batched_migrator_handles_more_than_one_chunk() {
+    let (pool, _dir) = test_pool().await;
+
+    // 200 > 166 (= MAX_SQL_PARAMS / 6), so the multi-chunk path is exercised.
+    const N: usize = 200;
+    for i in 0..N {
+        // 26-char Crockford-base32 ULID: `01JABCDE` (8) +
+        // `0000000000000` (13) + `{:05}` (5) — all chars are valid
+        // Crockford (no I/L/O/U). Indices 00000..00199.
+        let id = format!("01JABCDE0000000000000{:05}", i);
+        debug_assert_eq!(id.len(), 26, "test fixture must produce a 26-char ULID");
+        insert_page(&pool, &id, "page").await;
+    }
+
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    // Every page gets the Personal-space ref — confirms both chunks
+    // landed (a regression where the second chunk's binding loop was
+    // wrong would leave pages 167..200 unscoped).
+    for i in 0..N {
+        let id = format!("01JABCDE0000000000000{:05}", i);
+        assert_eq!(
+            space_property(&pool, &id).await.as_deref(),
+            Some(SPACE_PERSONAL_ULID),
+            "page {id} must be migrated to Personal"
+        );
+    }
+
+    // Op-log invariant — one SetProperty(space=…) op per migrated page.
+    let space_ops = count_set_property_ops_for_key(&pool, "space").await;
+    assert_eq!(
+        space_ops, N as i64,
+        "exactly {N} SetProperty(key='space') ops in op_log; got {space_ops}"
+    );
+
+    // Idempotency — a second bootstrap call sees zero candidates and
+    // appends zero new ops (pages_without_space's NOT EXISTS filter
+    // short-circuits). This is the steady-state guarantee that gates
+    // the batched migrator behind a no-op check on every subsequent boot.
+    let ops_before = count_rows(&pool, "op_log").await;
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+    let ops_after = count_rows(&pool, "op_log").await;
+    assert_eq!(
+        ops_before, ops_after,
+        "second bootstrap call must append zero new ops (idempotent)"
+    );
+}
+
 // ---------------------------------------------------------------------
 // BUG-1 / H-3c — Property-test-style invariant: every page block has a
 // `space` property.

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_type FROM property_definitions WHERE key = 'space'",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_type",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bc0002aef335db6a1cafd349f3e796611a92f4ef8dac80643002b339f015ae33"
+}

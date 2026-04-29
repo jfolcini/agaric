@@ -57,6 +57,22 @@ const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
 /// does not abort the restore — the snapshot itself is already durable at
 /// this point. Callers that need a synchronous guarantee can
 /// `flush_background()` on the materializer after this returns.
+///
+/// # Caller responsibility: anchor the post-restore hash chain (M-70)
+///
+/// The caller is responsible for anchoring the post-restore hash chain via
+/// [`peer_refs::update_on_sync`](crate::peer_refs::update_on_sync) (or
+/// equivalent) — `apply_snapshot` itself commits the new state but does
+/// NOT persist `up_to_hash` as the local device's most-recent-seq-and-hash.
+/// Without this follow-up, the next local op's `prev_hash` will not chain
+/// correctly to the snapshot, and peer-side hash-chain validation will
+/// diverge. See M-70 for context.
+///
+/// The known production caller — `sync_daemon::snapshot_transfer::
+/// try_receive_snapshot_catchup` — performs this anchor immediately after
+/// `apply_snapshot` returns by calling `peer_refs::upsert_peer_ref` followed
+/// by `peer_refs::update_on_sync(pool, peer_id, &up_to_hash, "")`. Future
+/// callers MUST follow the same pattern.
 pub async fn apply_snapshot(
     pool: &SqlitePool,
     materializer: &Materializer,

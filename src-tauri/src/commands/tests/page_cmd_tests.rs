@@ -312,6 +312,15 @@ async fn resolve_page_by_alias_case_insensitive() {
 // ======================================================================
 // export_page_markdown (#519)
 // ======================================================================
+//
+// M-27 — `export_page_markdown_inner` walks the full descendant subtree
+// via the denormalised `blocks.page_id` column rather than the
+// `parent_id` direct-children filter. The raw `insert_block` helper
+// bypasses the materializer, so each export test must call
+// `crate::cache::rebuild_page_ids` after seeding rows so the column the
+// new walk keys on is populated. (Production paths set `page_id`
+// inside `create_block_in_tx`, so this is purely a test fixture
+// concern.)
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn export_page_markdown_basic() {
@@ -345,6 +354,7 @@ async fn export_page_markdown_basic() {
         Some(2),
     )
     .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
         .await
@@ -398,6 +408,7 @@ async fn export_page_markdown_resolves_tag_ulids() {
         Some(1),
     )
     .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
         .await
@@ -447,6 +458,7 @@ async fn export_page_markdown_resolves_page_link_ulids() {
         Some(1),
     )
     .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
         .await
@@ -460,6 +472,252 @@ async fn export_page_markdown_resolves_page_link_ulids() {
         !md.contains("01LINKPAGE000000000000LNK1"),
         "raw ULID should not appear in output"
     );
+}
+
+// ======================================================================
+// M-27 — descendant pagination & batched ref-resolution
+// ======================================================================
+//
+// Pre-fix `export_page_markdown_inner` walked direct children only with
+// a hard `limit = 1000` cap (silent truncation beyond that) and full-
+// scanned every non-deleted tag and page block in the vault to build
+// the resolver maps.  The post-fix walk paginates via cursor over the
+// `(position, id)` keyset on `blocks.page_id` until exhaustion (page
+// size 200) and resolves references through one `json_each(?)` query.
+//
+// The three tests below pin down:
+//   1. multi-page cursor traversal returns every descendant (no cap)
+//   2. mixed `#[ULID]` and `[[ULID]]` references resolve correctly
+//   3. unreferenced tags / pages don't perturb the export — the new
+//      code path only fetches the referenced blocks, but the assertion
+//      here is just functional success, not row count.
+
+/// Force the fixture row count above the production
+/// `DESCENDANT_PAGE_SIZE` (200) so the cursor loop has to iterate at
+/// least twice. Pre-fix the same scenario silently dropped descendants
+/// past the first 1000 (and any non-direct-children always).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_walks_full_subtree_with_pagination() {
+    let (pool, _dir) = test_pool().await;
+
+    // Page + 125 direct children + 125 grandchildren = 250 descendants,
+    // forcing two cursor fetches at page size 200.
+    let page_id = "01EXPORTPAGE0000000000PAGE";
+    insert_block(&pool, page_id, "page", "Big Page", None, Some(1)).await;
+
+    for i in 0..125 {
+        let child_id = format!("01CHILD{i:019}");
+        insert_block(
+            &pool,
+            &child_id,
+            "content",
+            &format!("child-{i}"),
+            Some(page_id),
+            Some(i64::from(i + 1)),
+        )
+        .await;
+        let grand_id = format!("01GRAND{i:019}");
+        insert_block(
+            &pool,
+            &grand_id,
+            "content",
+            &format!("grand-{i}"),
+            Some(&child_id),
+            Some(i64::from(i + 1)),
+        )
+        .await;
+    }
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, page_id).await.unwrap();
+
+    // Every descendant line must appear — direct children AND
+    // grandchildren. Pre-fix the grandchildren never appeared (direct-
+    // children-only filter); even the direct children would have been
+    // capped at 1000 if the fixture grew that large.
+    for i in 0..125 {
+        let child_line = format!("child-{i}\n");
+        assert!(
+            md.contains(&child_line),
+            "expected direct-child line {child_line:?} in export"
+        );
+        let grand_line = format!("grand-{i}\n");
+        assert!(
+            md.contains(&grand_line),
+            "expected grandchild line {grand_line:?} in export"
+        );
+    }
+}
+
+/// Pin the new `json_each(?)` batch resolve against regression: a page
+/// that mixes several `#[ULID]` and `[[ULID]]` tokens must still
+/// produce the exact same `#tagname` / `[[Page Title]]` substitutions
+/// the pre-fix full-scan path produced.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_batch_resolves_mixed_references() {
+    let (pool, _dir) = test_pool().await;
+
+    // Two tag blocks and two page blocks acting as reference targets.
+    insert_block(
+        &pool,
+        "01TAGAAAAAAAAAAAAAAAAATAGA",
+        "tag",
+        "alpha",
+        None,
+        None,
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01TAGBBBBBBBBBBBBBBBBBTAGB",
+        "tag",
+        "beta",
+        None,
+        None,
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01PAGEXXXXXXXXXXXXXXXXXPGX",
+        "page",
+        "Project X",
+        None,
+        Some(10),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01PAGEYYYYYYYYYYYYYYYYYPGY",
+        "page",
+        "Project Y",
+        None,
+        Some(11),
+    )
+    .await;
+
+    let page_id = "01EXPORTPAGEMIXED000000PAG";
+    insert_block(&pool, page_id, "page", "Mixed Refs", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "01BLKMIXED000000000000BLK1",
+        "content",
+        "Tags: #[01TAGAAAAAAAAAAAAAAAAATAGA] and #[01TAGBBBBBBBBBBBBBBBBBTAGB]",
+        Some(page_id),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01BLKMIXED000000000000BLK2",
+        "content",
+        "Pages: [[01PAGEXXXXXXXXXXXXXXXXXPGX]] / [[01PAGEYYYYYYYYYYYYYYYYYPGY]]",
+        Some(page_id),
+        Some(2),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01BLKMIXED000000000000BLK3",
+        "content",
+        "Mixed: #[01TAGAAAAAAAAAAAAAAAAATAGA] -> [[01PAGEYYYYYYYYYYYYYYYYYPGY]]",
+        Some(page_id),
+        Some(3),
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, page_id).await.unwrap();
+
+    assert!(
+        md.contains("Tags: #alpha and #beta"),
+        "tag refs should resolve to #name, got: {md}"
+    );
+    assert!(
+        md.contains("Pages: [[Project X]] / [[Project Y]]"),
+        "page refs should resolve to [[Title]], got: {md}"
+    );
+    assert!(
+        md.contains("Mixed: #alpha -> [[Project Y]]"),
+        "mixed refs in the same line should resolve, got: {md}"
+    );
+    // Raw ULIDs must not leak through the resolver.
+    assert!(
+        !md.contains("01TAGAAAAAAAAAAAAAAAAATAGA"),
+        "raw tag ULID should not appear in output"
+    );
+    assert!(
+        !md.contains("01PAGEYYYYYYYYYYYYYYYYYPGY"),
+        "raw page ULID should not appear in output"
+    );
+}
+
+/// Cardinality regression: 50 unrelated tag blocks must NOT cost
+/// anything in the export of a tiny page that only references two of
+/// them. Pre-fix the function loaded all 50 (full scan); post-fix the
+/// `json_each(?)` query is bound by the size of the deduped reference
+/// set, not the vault. The assertion here is the function still works
+/// — counting rows fetched would require query instrumentation; the
+/// observable contract is "exported markdown contains the two
+/// referenced names and no leaked ULIDs".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_handles_many_unrelated_tags() {
+    let (pool, _dir) = test_pool().await;
+
+    // 50 unrelated tag blocks — none referenced by the page below.
+    for i in 0..50 {
+        let id = format!("01UNRELATEDTAG{i:012}");
+        insert_block(&pool, &id, "tag", &format!("noise-{i}"), None, None).await;
+    }
+    // The two tag blocks the page actually references.
+    insert_block(
+        &pool,
+        "01REFTAG0000000000000RTAG1",
+        "tag",
+        "kept-1",
+        None,
+        None,
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01REFTAG0000000000000RTAG2",
+        "tag",
+        "kept-2",
+        None,
+        None,
+    )
+    .await;
+
+    let page_id = "01EXPORTSPARSE000000000PAG";
+    insert_block(&pool, page_id, "page", "Sparse Page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "01BLKSPARSE0000000000BLK1",
+        "content",
+        "Refs only #[01REFTAG0000000000000RTAG1] and #[01REFTAG0000000000000RTAG2]",
+        Some(page_id),
+        Some(1),
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, page_id).await.unwrap();
+
+    assert!(
+        md.contains("Refs only #kept-1 and #kept-2"),
+        "referenced tag names should appear, got: {md}"
+    );
+    // The 50 unrelated tag names must not have leaked into the export
+    // — there is no syntactic path for them to (the page's content
+    // never names them), but the assertion guards against any future
+    // refactor that re-introduces a full-table fan-out.
+    for i in 0..50 {
+        let noise = format!("noise-{i}");
+        assert!(
+            !md.contains(&noise),
+            "unreferenced tag name {noise:?} should NOT appear in export"
+        );
+    }
 }
 
 // ======================================================================

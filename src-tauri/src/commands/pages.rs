@@ -171,14 +171,22 @@ fn resolve_ulids_for_export(
     result
 }
 
-/// Export a page and its child blocks as a Markdown string with
+/// Export a page and its full descendant subtree as a Markdown string with
 /// human-readable tag/page references and optional YAML frontmatter.
 ///
 /// 1. Emits `# Page Title`
 /// 2. If the page has properties, emits a `---` YAML frontmatter block
-/// 3. For each child block (ordered by position), resolves `#[ULID]` and
-///    `[[ULID]]` references to their human-readable names, preserving all
-///    markdown formatting.
+/// 3. For each descendant block — direct children **and** transitively
+///    nested blocks — ordered by `(position, id)` over the keyset,
+///    resolves `#[ULID]` and `[[ULID]]` references to their human-readable
+///    names, preserving all markdown formatting.
+///
+/// The descendant walk is cursor-paginated through the denormalized
+/// `page_id` column (`idx_blocks_page_id`) and accumulates every page of
+/// rows into a single `Vec<BlockRow>` — there is no silent truncation.
+/// Tag and page reference targets are resolved with one batched
+/// `json_each(?)` query (M-27): pre-fix the function loaded *every*
+/// non-deleted tag and page in the vault on every export.
 ///
 /// # Errors
 ///
@@ -189,41 +197,149 @@ pub async fn export_page_markdown_inner(
     pool: &SqlitePool,
     page_id: &str,
 ) -> Result<String, AppError> {
+    use crate::fts::{PAGE_LINK_RE, TAG_REF_RE};
+    use std::collections::HashSet;
+
     // 1. Get the page
     let page = get_block_inner(pool, page_id.to_string()).await?;
     if page.block_type != "page" {
         return Err(AppError::Validation("not a page".into()));
     }
 
-    // 2. Get all child blocks (ordered by position)
-    let children = pagination::list_children(
-        pool,
-        Some(page_id),
-        &pagination::PageRequest::new(None, Some(1000))?,
-        None, // FEAT-3 Phase 2: export is per-page — no space filter needed.
-    )
-    .await?;
+    // 2. Walk the full descendant subtree, cursor-paginated over the
+    //    `(position, id)` keyset on the denormalised `page_id` column.
+    //    Loops through every page of results — `next_cursor = None`
+    //    ends the walk. Pre-fix this used `list_children` with a hard
+    //    `limit = 1000` direct-children cap and silently dropped every
+    //    descendant beyond it (M-27).
+    //
+    //    Page size of 200 matches `MAX_PAGE_SIZE` in the pagination
+    //    layer; the `+ 1` fetch-limit + `truncate` shape mirrors
+    //    `pagination::build_page_response`. `Cursor` and `PageRequest`
+    //    are reused from `crate::pagination` as the single source of
+    //    truth for keyset cursor encoding (versioning, base64).
+    const DESCENDANT_PAGE_SIZE: i64 = 200;
+    let mut descendants: Vec<BlockRow> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let req = PageRequest::new(cursor, Some(DESCENDANT_PAGE_SIZE))?;
+        let fetch_limit = req.limit + 1;
+        let (cursor_flag, cursor_pos, cursor_id): (Option<i64>, i64, &str) =
+            match req.after.as_ref() {
+                Some(c) => (Some(1), c.position.unwrap_or(NULL_POSITION_SENTINEL), &c.id),
+                None => (None, 0, ""),
+            };
 
-    // 3. Get all tag names and page titles for ULID replacement
-    let tag_rows = sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT id, content FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL",
-    )
-    .fetch_all(pool)
-    .await?;
-    let tag_names: HashMap<String, String> = tag_rows
-        .into_iter()
-        .filter_map(|(id, content)| content.map(|c| (id, c)))
-        .collect();
+        // Mirrors `get_page_inner`'s subtree walk: keyset on
+        // `(COALESCE(position, sentinel), id)` over `page_id = ?1`, with
+        // the page row itself (`id = ?1`) excluded. Invariant #9 —
+        // `is_conflict = 0` excludes conflict copies.
+        let rows = sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position,
+                    deleted_at, is_conflict as "is_conflict: bool",
+                    conflict_type, todo_state, priority, due_date, scheduled_date,
+                    page_id
+             FROM blocks
+             WHERE page_id = ?1
+               AND id != ?1
+               AND is_conflict = 0
+               AND deleted_at IS NULL
+               AND (?2 IS NULL OR (
+                    COALESCE(position, ?6) > ?3
+                    OR (COALESCE(position, ?6) = ?3 AND id > ?4)))
+             ORDER BY COALESCE(position, ?6) ASC, id ASC
+             LIMIT ?5"#,
+            page_id,                // ?1
+            cursor_flag,            // ?2
+            cursor_pos,             // ?3
+            cursor_id,              // ?4
+            fetch_limit,            // ?5
+            NULL_POSITION_SENTINEL, // ?6
+        )
+        .fetch_all(pool)
+        .await?;
 
-    let page_rows = sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT id, content FROM blocks WHERE block_type = 'page' AND deleted_at IS NULL",
-    )
-    .fetch_all(pool)
-    .await?;
-    let page_titles: HashMap<String, String> = page_rows
-        .into_iter()
-        .map(|(id, content)| (id, content.unwrap_or_else(|| "Untitled".to_string())))
-        .collect();
+        let limit_usize = usize::try_from(req.limit).unwrap_or(usize::MAX);
+        let has_more = rows.len() > limit_usize;
+        let mut page_rows = rows;
+        if has_more {
+            page_rows.truncate(limit_usize);
+        }
+
+        let next_cursor = if has_more {
+            let last = page_rows.last().expect("has_more implies non-empty");
+            let cur = Cursor {
+                id: last.id.clone(),
+                position: Some(last.position.unwrap_or(NULL_POSITION_SENTINEL)),
+                deleted_at: None,
+                seq: None,
+                rank: None,
+            };
+            Some(cur.encode()?)
+        } else {
+            None
+        };
+
+        descendants.extend(page_rows);
+        match next_cursor {
+            None => break,
+            Some(s) => cursor = Some(s),
+        }
+    }
+
+    // 3. Batch-resolve tag/page references: regex-extract the union of
+    //    `#[ULID]` and `[[ULID]]` tokens from descendant content, then
+    //    issue ONE `json_each(?)` query for the deduped ULID set.
+    //    Pre-fix two full-table scans loaded every non-deleted tag /
+    //    page in the vault on each export (M-27).
+    //
+    //    The block_type discriminator is applied in Rust rather than in
+    //    SQL: the union query returns `(id, block_type, content)` and
+    //    the loop fans rows into `tag_names` / `page_titles` per type,
+    //    preserving the existing maps' semantics (tags drop NULL
+    //    content; pages substitute `"Untitled"`).
+    let mut ulid_set: HashSet<String> = HashSet::new();
+    for block in &descendants {
+        if let Some(content) = block.content.as_deref() {
+            for cap in TAG_REF_RE.captures_iter(content) {
+                ulid_set.insert(cap[1].to_string());
+            }
+            for cap in PAGE_LINK_RE.captures_iter(content) {
+                ulid_set.insert(cap[1].to_string());
+            }
+        }
+    }
+
+    let mut tag_names: HashMap<String, String> = HashMap::new();
+    let mut page_titles: HashMap<String, String> = HashMap::new();
+    if !ulid_set.is_empty() {
+        let ulids: Vec<String> = ulid_set.into_iter().collect();
+        // sqlx requires `String` (NOT `Vec<String>`) for `json_each(?)`
+        // binds — encode the set as a JSON array text and bind that.
+        let ids_json = serde_json::to_string(&ulids)?;
+        let rows = sqlx::query!(
+            r#"SELECT id, block_type, content FROM blocks
+               WHERE id IN (SELECT value FROM json_each(?1))
+                 AND deleted_at IS NULL AND is_conflict = 0"#,
+            ids_json,
+        )
+        .fetch_all(pool)
+        .await?;
+        for r in rows {
+            match r.block_type.as_str() {
+                "tag" => {
+                    if let Some(c) = r.content {
+                        tag_names.insert(r.id, c);
+                    }
+                }
+                "page" => {
+                    page_titles.insert(r.id, r.content.unwrap_or_else(|| "Untitled".to_string()));
+                }
+                _ => {}
+            }
+        }
+    }
 
     // 4. Get page properties for frontmatter
     let properties: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
@@ -251,7 +367,7 @@ pub async fn export_page_markdown_inner(
     }
 
     // Block content
-    for block in &children.items {
+    for block in &descendants {
         let content = block.content.as_deref().unwrap_or("");
         let resolved = resolve_ulids_for_export(content, &tag_names, &page_titles);
         output.push_str(&resolved);
