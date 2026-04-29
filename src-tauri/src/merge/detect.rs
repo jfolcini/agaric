@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use sqlx::SqlitePool;
 
 use crate::dag;
+use crate::db::ReadPool;
 use crate::error::AppError;
 use crate::op::*;
 use crate::op_log;
@@ -218,7 +219,8 @@ async fn walk_to_create_block_root(
                 block_id, key.0, key.1,
             )));
         }
-        let record = op_log::get_op_by_seq(pool, &key.0, key.1).await?;
+        // I-Core-8: wrap to typed read-pool — caller is in write context
+        let record = op_log::get_op_by_seq(&ReadPool(pool.clone()), &key.0, key.1).await?;
         match record.op_type.as_str() {
             "create_block" => {
                 let payload: CreateBlockPayload = serde_json::from_str(&record.payload)?;

@@ -44,7 +44,9 @@ async fn add_tag_writes_op_log_entry() {
         .await
         .unwrap();
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 1, "exactly one op must be logged");
     assert_eq!(ops[0].op_type, "add_tag", "op_type must be add_tag");
     assert!(
@@ -211,7 +213,9 @@ async fn remove_tag_writes_op_log_entry() {
         .await
         .unwrap();
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 2, "add_tag + remove_tag = 2 ops");
     assert_eq!(ops[1].op_type, "remove_tag", "second op must be remove_tag");
     assert!(

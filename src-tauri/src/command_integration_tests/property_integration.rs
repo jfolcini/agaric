@@ -38,7 +38,9 @@ async fn set_property_writes_op_log_entry() {
     .await
     .unwrap();
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 2, "create + set_property = 2 ops");
     assert_eq!(
         ops[1].op_type, "set_property",
@@ -95,7 +97,9 @@ async fn delete_property_writes_op_log_entry() {
         .await
         .unwrap();
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 3, "create + set + delete = 3 ops");
     assert_eq!(
         ops[2].op_type, "delete_property",
@@ -312,7 +316,9 @@ async fn get_batch_properties_does_not_affect_op_log() {
     settle(&mat).await;
 
     // Count op_log entries before the read-only batch call
-    let ops_before = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops_before = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
 
     // Read-only batch fetch
     let _ = get_batch_properties_inner(&pool, vec![block.id.clone()])
@@ -320,7 +326,9 @@ async fn get_batch_properties_does_not_affect_op_log() {
         .unwrap();
 
     // op_log must not change
-    let ops_after = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops_after = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(
         ops_before.len(),
         ops_after.len(),

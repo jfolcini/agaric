@@ -1,5 +1,5 @@
 use super::*;
-use crate::db::init_pool;
+use crate::db::{init_pool, ReadPool};
 use crate::hash::compute_op_hash;
 use crate::op_log::append_local_op_at;
 use crate::ulid::BlockId;
@@ -92,7 +92,9 @@ async fn insert_remote_op_happy_path() {
     insert_remote_op(&pool, &record).await.unwrap();
 
     // Verify it landed in the DB
-    let fetched = get_op_by_seq(&pool, "remote-dev", 1).await.unwrap();
+    let fetched = get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 1)
+        .await
+        .unwrap();
     assert_eq!(fetched.device_id, "remote-dev");
     assert_eq!(fetched.seq, 1);
     assert_eq!(fetched.hash, record.hash);
@@ -116,7 +118,9 @@ async fn insert_remote_op_duplicate_is_ignored() {
     insert_remote_op(&pool, &record).await.unwrap();
 
     // Verify only one row exists
-    let fetched = get_op_by_seq(&pool, "remote-dev", 1).await.unwrap();
+    let fetched = get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 1)
+        .await
+        .unwrap();
     assert_eq!(fetched.hash, record.hash);
 }
 
@@ -168,7 +172,9 @@ async fn insert_remote_op_with_parent_seqs() {
     );
     insert_remote_op(&pool, &r2).await.unwrap();
 
-    let fetched = get_op_by_seq(&pool, "remote-dev", 2).await.unwrap();
+    let fetched = get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 2)
+        .await
+        .unwrap();
     assert_eq!(fetched.parent_seqs, parent_seqs);
 }
 
@@ -205,7 +211,7 @@ async fn insert_remote_op_rejects_unresolved_parent_seqs() {
     );
 
     // Confirm nothing was inserted.
-    let fetched = get_op_by_seq(&pool, "remote-dev", 1).await;
+    let fetched = get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 1).await;
     assert!(
         matches!(fetched, Err(AppError::NotFound(_))),
         "rejected op must not land in op_log"

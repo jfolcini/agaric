@@ -2511,7 +2511,9 @@ async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
     // (c) Op log contains a `delete_attachment` whose payload carries the
     // expected `fs_path`. Walk the log directly so we check the persisted
     // shape (this is what remote peers and the C-3c GC pass will see).
-    let ops = crate::op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = crate::op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let del_op = ops
         .iter()
         .find(|o| o.op_type == "delete_attachment")
@@ -2597,7 +2599,9 @@ async fn delete_attachment_succeeds_when_file_already_missing_on_disk() {
     assert!(maybe.is_none(), "DB row must be deleted");
 
     // Op log entry was still written.
-    let ops = crate::op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = crate::op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert!(
         ops.iter().any(|o| o.op_type == "delete_attachment"),
         "op-log must contain a delete_attachment entry"
@@ -2911,7 +2915,9 @@ async fn save_and_flush_draft() {
     );
 
     // An edit_block op should exist in the log
-    let ops = crate::op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = crate::op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 1, "flush must produce one op");
     assert_eq!(
         ops[0].op_type, "edit_block",

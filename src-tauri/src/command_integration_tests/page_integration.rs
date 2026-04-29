@@ -438,7 +438,9 @@ async fn restore_page_to_op_reverts_edits_after_target() {
     settle(&mat).await;
 
     // Record the seq of the op that set content to B
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let target_seq = ops.last().unwrap().seq;
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
@@ -538,7 +540,9 @@ async fn restore_page_to_op_with_all_pages_target() {
     settle(&mat).await;
 
     // Record target seq before edits
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let target_seq = ops.last().unwrap().seq;
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
@@ -624,7 +628,9 @@ async fn restore_page_to_op_invalid_seq_returns_empty() {
     settle(&mat).await;
 
     // Use the latest seq as target — nothing comes after it
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let latest_seq = ops.last().unwrap().seq;
 
     let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), latest_seq)
@@ -677,7 +683,9 @@ async fn restore_page_to_op_op_log_chain_valid_after_restore() {
     settle(&mat).await;
 
     // Record target after creates
-    let ops_snapshot = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops_snapshot = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let target_seq = ops_snapshot.last().unwrap().seq;
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
@@ -692,7 +700,9 @@ async fn restore_page_to_op_op_log_chain_valid_after_restore() {
         .unwrap();
     settle(&mat).await;
 
-    let ops_before_restore = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops_before_restore = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let count_before = ops_before_restore.len();
 
     // Restore to target — should revert both edits
@@ -704,7 +714,9 @@ async fn restore_page_to_op_op_log_chain_valid_after_restore() {
     assert_eq!(result.ops_reverted, 2, "should revert exactly 2 edit ops");
 
     // Fetch all ops after restore — reverse ops should be appended (not replacing old ones)
-    let ops_after = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops_after = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(
         ops_after.len(),
         count_before + 2,

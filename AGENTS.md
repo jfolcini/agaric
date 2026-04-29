@@ -35,8 +35,8 @@ prek run --all-files         # Pre-commit hooks
 ## Key Architectural Invariants
 
 1. **Op log is strictly append-only** — never mutate, never delete (except compaction)
-2. **CQRS split** — commands write ops → materializer writes derived state
-3. **Cursor-based pagination** on ALL list queries — no offset pagination
+2. **CQRS hybrid model** — commands write both the op log and primary state atomically (single `BEGIN IMMEDIATE` transaction); materializer rebuilds derived caches (FTS, tag inheritance, page-id lookup, agenda projection, link graphs)
+3. **Cursor-based pagination** on ALL list queries — no offset pagination. Carve-outs: (a) named small-cardinality lookups that return a fixed-size set (`list_property_keys`, `list_property_defs`, `list_tags` — bounded in practice by user vocabulary, not data volume) may return a flat `Vec<T>` with a `limit` parameter; (b) "fetch the Nth row" operations (e.g., `undo_page_op_inner` using `LIMIT 1 OFFSET ?`) where N is upper-bounded by a small constant (≤1000) are not list queries and may use `OFFSET` — document the rationale inline at the call site.
 4. **Single TipTap instance** — roving editor, static divs for non-focused blocks
 5. **Biome only** — no ESLint, no Prettier
 6. **sqlx compile-time queries** — `query!` / `query_as!` / `query_scalar!`. `.sqlx/` cache committed. Run `cargo sqlx prepare` after SQL changes.

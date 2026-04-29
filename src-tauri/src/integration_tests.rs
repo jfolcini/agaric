@@ -31,7 +31,7 @@
 #![allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
 
 use crate::commands::*;
-use crate::db::init_pool;
+use crate::db::{init_pool, ReadPool};
 use crate::draft;
 use crate::hash;
 use crate::materializer::Materializer;
@@ -140,7 +140,9 @@ async fn create_edit_delete_restore_produces_sequential_ops_with_valid_hashes() 
         .unwrap();
 
     // Verify 4 sequential ops with correct types
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 4, "pipeline should produce exactly 4 ops");
 
     let expected_types = [
@@ -220,7 +222,9 @@ async fn hash_chain_links_each_op_to_its_predecessor() {
         .await;
     }
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 5, "should have 5 ops for 5 creates");
 
     let mut seen_hashes = HashSet::new();
@@ -282,7 +286,9 @@ async fn mixed_operations_produce_consistent_op_log_and_block_state() {
         .unwrap();
 
     // 3 creates + 1 edit + 1 delete = 5 ops
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 5, "3 creates + 1 edit + 1 delete = 5 ops");
 
     let creates = ops.iter().filter(|o| o.op_type == "create_block").count();
@@ -328,7 +334,9 @@ async fn recovery_on_empty_database_is_noop() {
     assert_eq!(report.drafts_already_flushed, 0, "no flushed drafts");
     assert!(report.draft_errors.is_empty(), "no errors");
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert!(ops.is_empty(), "op_log should remain empty");
 }
 
@@ -365,7 +373,9 @@ async fn recovery_flushes_unflushed_draft_as_edit_op() {
     );
     assert_eq!(report.drafts_already_flushed, 0);
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 1, "one synthetic edit op");
     assert_eq!(ops[0].op_type, "edit_block");
     assert!(
@@ -416,7 +426,10 @@ async fn recovery_skips_already_flushed_draft_without_duplicate() {
     });
     op_log::append_local_op(&pool, DEV, payload).await.unwrap();
 
-    let ops_before = op_log::get_ops_since(&pool, DEV, 0).await.unwrap().len();
+    let ops_before = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap()
+        .len();
 
     let report = recovery::recover_at_boot(&pool, DEV).await.unwrap();
 
@@ -426,7 +439,9 @@ async fn recovery_skips_already_flushed_draft_without_duplicate() {
         "one draft already flushed"
     );
 
-    let ops_after = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops_after = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(
         ops_after.len(),
         ops_before,
@@ -460,14 +475,19 @@ async fn recovery_unflushed_draft_with_prior_edit_includes_prev_edit() {
         .await
         .unwrap();
 
-    let ops_before = op_log::get_ops_since(&pool, DEV, 0).await.unwrap().len();
+    let ops_before = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap()
+        .len();
 
     let report = recovery::recover_at_boot(&pool, DEV).await.unwrap();
 
     assert_eq!(report.drafts_recovered.len(), 1, "one draft recovered");
     assert_eq!(report.drafts_recovered[0], block.id);
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), ops_before + 1, "one new op from recovery");
 
     let recovery_op = ops.last().unwrap();
@@ -696,7 +716,9 @@ async fn purge_removes_block_tags_properties_and_attachments() {
     assert_eq!(atts_gone, 0, "attachments removed");
 
     // Op log preserved (append-only log is never purged)
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert!(!ops.is_empty(), "op_log entries preserved after purge");
     assert_eq!(ops.len(), 4, "create(block) + create(tag) + delete + purge");
     assert_eq!(ops[2].op_type, "delete_block");

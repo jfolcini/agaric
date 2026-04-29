@@ -343,7 +343,9 @@ async fn create_block_writes_op_log_entry() {
     .await
     .unwrap();
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 1, "exactly one op should be logged after create");
     assert_eq!(ops[0].seq, 1, "first op should have seq=1");
     assert_eq!(
@@ -765,7 +767,9 @@ async fn delete_block_writes_op_log_entry() {
         .await
         .unwrap();
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 2, "create + delete = 2 ops");
     assert_eq!(
         ops[1].op_type, "delete_block",
@@ -906,7 +910,9 @@ async fn restore_block_writes_op_log_entry() {
         .await
         .unwrap();
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 1, "exactly one op must be logged");
     assert_eq!(
         ops[0].op_type, "restore_block",
@@ -1367,7 +1373,9 @@ async fn purge_block_writes_op_log_entry() {
         .await
         .unwrap();
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 1, "exactly one op must be logged");
     assert_eq!(ops[0].op_type, "purge_block", "op_type must be purge_block");
     assert_eq!(ops[0].device_id, DEV, "device_id must match");
@@ -1833,7 +1841,9 @@ async fn move_block_writes_op_log_entry() {
         .await
         .unwrap();
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 1, "exactly one op must be logged");
     assert_eq!(ops[0].op_type, "move_block", "op_type must be move_block");
     assert!(

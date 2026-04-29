@@ -2,6 +2,7 @@
 
 pub use crate::commands::*;
 pub use crate::db::init_pool;
+pub use crate::db::ReadPool;
 pub use crate::error::AppError;
 pub use crate::materializer::Materializer;
 pub use sqlx::SqlitePool;
