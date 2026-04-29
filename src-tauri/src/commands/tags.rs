@@ -38,6 +38,16 @@ pub async fn add_tag_inner(
     block_id: String,
     tag_id: String,
 ) -> Result<TagResponse, AppError> {
+    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
+    // invariant #8 requires ULID uppercase for blake3 hash determinism;
+    // SQLite text comparison is byte-exact, so a lowercase caller would
+    // silently get NotFound. BlockId::from_trusted normalises on
+    // construction (op_log path), but raw String args from MCP tools /
+    // sync replay / scripted imports must be normalised here. Both
+    // `block_id` and `tag_id` reference `blocks.id`.
+    let block_id = block_id.to_ascii_uppercase();
+    let tag_id = tag_id.to_ascii_uppercase();
+
     // L-34: defence-in-depth guard against pathological inputs (MCP tool, sync
     // replay, scripted import) where a block tries to tag itself. Reject up-front
     // before any DB work; otherwise `tag_inheritance::propagate_tag_to_descendants`
@@ -147,6 +157,16 @@ pub async fn remove_tag_inner(
     block_id: String,
     tag_id: String,
 ) -> Result<TagResponse, AppError> {
+    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
+    // invariant #8 requires ULID uppercase for blake3 hash determinism;
+    // SQLite text comparison is byte-exact, so a lowercase caller would
+    // silently get NotFound. BlockId::from_trusted normalises on
+    // construction (op_log path), but raw String args from MCP tools /
+    // sync replay / scripted imports must be normalised here. Both
+    // `block_id` and `tag_id` reference `blocks.id`.
+    let block_id = block_id.to_ascii_uppercase();
+    let tag_id = tag_id.to_ascii_uppercase();
+
     // 1. Build OpPayload
     let payload = OpPayload::RemoveTag(RemoveTagPayload {
         block_id: BlockId::from_trusted(&block_id),
@@ -277,6 +297,13 @@ pub async fn list_tags_for_block_inner(
     pool: &SqlitePool,
     block_id: String,
 ) -> Result<Vec<String>, AppError> {
+    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
+    // invariant #8 requires ULID uppercase for blake3 hash determinism;
+    // SQLite text comparison is byte-exact, so a lowercase caller would
+    // silently get NotFound. BlockId::from_trusted normalises on
+    // construction (op_log path), but raw String args from MCP tools /
+    // sync replay / scripted imports must be normalised here.
+    let block_id = block_id.to_ascii_uppercase();
     tag_query::list_tags_for_block(pool, &block_id).await
 }
 

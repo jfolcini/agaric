@@ -1015,6 +1015,42 @@ async fn delete_block_nonexistent_returns_not_found() {
     );
 }
 
+/// I-CommandsCRUD-2 regression — block_id arguments must be normalised to
+/// uppercase at the SQL boundary. AGENTS.md invariant #8 mandates
+/// Crockford-uppercase ULIDs for blake3 hash determinism, but raw `String`
+/// args from MCP tools / sync replay / scripted imports can arrive
+/// lowercase. SQLite text comparison is byte-exact, so without
+/// normalisation the WHERE id = ? lookup would silently miss the row and
+/// surface as a confusing `NotFound`. This test inserts an uppercase
+/// block, then calls `delete_block_inner` with the lowercase form and
+/// expects the call to succeed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_block_normalises_lowercase_block_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "BLKNORM01", "content", "lowered", None, Some(1)).await;
+
+    // Pre-fix this would have returned NotFound because SQLite compares
+    // 'BLKNORM01' (stored) vs 'blknorm01' (queried) byte-for-byte.
+    let resp = delete_block_inner(&pool, DEV, &mat, "blknorm01".into())
+        .await
+        .expect("lowercase block_id must be normalised to uppercase before SQL lookup");
+    assert_eq!(
+        resp.block_id, "BLKNORM01",
+        "response should echo the canonical uppercase id"
+    );
+
+    let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", "BLKNORM01")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        row.deleted_at.is_some(),
+        "block should be soft-deleted after the lowercase delete call"
+    );
+}
+
 // ======================================================================
 // restore_block
 // ======================================================================

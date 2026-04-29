@@ -20,7 +20,7 @@ use futures_util::future::try_join_all;
 use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
-use super::filters::resolve_filter;
+use super::filters::resolve_filter_with_candidates;
 use super::sort::sort_ids;
 use super::types::*;
 use super::SMALL_IN_LIMIT;
@@ -90,8 +90,14 @@ pub async fn eval_backlink_query(
         if filter_list.is_empty() {
             base_ids
         } else {
-            // Resolve all top-level filters concurrently (#319)
-            let futures = filter_list.iter().map(|f| resolve_filter(pool, f, 0));
+            // Resolve all top-level filters concurrently (#319).
+            // Pass `base_ids` as candidates (I-Search-9) so leaf arms
+            // that support a candidate-scoped path (BlockType,
+            // PropertyIsEmpty) can push the IN-set into SQL instead of
+            // materialising every active block first.
+            let futures = filter_list
+                .iter()
+                .map(|f| resolve_filter_with_candidates(pool, f, 0, Some(&base_ids)));
             let results = try_join_all(futures).await?;
             let mut result = base_ids;
             for set in results {

@@ -28,11 +28,12 @@ Anytype, faster than Logseq.
 16. [Query System](#16-query-system)
 17. [Android Platform](#17-android-platform)
 18. [Sync & Networking](#18-sync--networking)
-19. [Planned Features](#19-planned-features)
-20. [Tauri Command API](#20-tauri-command-api)
-21. [Rust Backend Modules](#21-rust-backend-modules)
-22. [Scalability Characteristics](#22-scalability-characteristics)
-23. [Lessons Learned & Established Patterns](#23-lessons-learned--established-patterns)
+19. [MCP Server](#19-mcp-server)
+20. [Planned Features](#20-planned-features)
+21. [Tauri Command API](#21-tauri-command-api)
+22. [Rust Backend Modules](#22-rust-backend-modules)
+23. [Scalability Characteristics](#23-scalability-characteristics)
+24. [Lessons Learned & Established Patterns](#24-lessons-learned--established-patterns)
 
 ---
 
@@ -1639,7 +1640,173 @@ indefinite hangs during large op transfers.
 
 ---
 
-## 19. Planned Features
+## 19. MCP Server
+
+The MCP (Model Context Protocol) server exposes Agaric's notes to local AI agents over a Unix-
+domain socket on Linux/macOS or a Windows named pipe. It is opt-in, single-user, and runs
+inside the Tauri host process — no separate daemon, no network listener, no auth tokens.
+
+There are two parallel surfaces behind matching marker-file gates: a **read-only** server
+(`mcp-ro-enabled` → `mcp-ro.sock`) and a **read-write** server (`mcp-rw-enabled` →
+`mcp-rw.sock`). The RO surface is feature-complete; the RW surface ships incrementally and is
+treated as v2 — the set of writable tools is deliberately small and reversible.
+
+### Transport
+
+| Platform      | Bound at                                                  | Permissions                                                                                  |
+| ------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Linux / macOS | `<app_data_dir>/mcp-ro.sock` (and `mcp-rw.sock`)          | mode `0600` enforced after `bind()`                                                          |
+| Windows       | `\\.\pipe\agaric-mcp-ro` (and `\\.\pipe\agaric-mcp-rw`)   | default owner-only DACL from `CreateNamedPipeW`; `first_pipe_instance(true)` on initial bind |
+
+`bind_socket` (`src-tauri/src/mcp/mod.rs`) creates the parent directory, removes a stale socket
+file from a prior process when no live owner is detected, and returns
+`AppError::InvalidOperation` when another live instance already holds the path. The kernel
+already restricts connect access to the owning user; the explicit `0600` mode is belt-and-
+braces and the single hardening line called out in AGENTS.md §Threat Model.
+
+### JSON-RPC framing
+
+Newline-delimited JSON. Each message is one `\n`-terminated UTF-8 line — no `Content-Length`
+header, no chunked framing. Reads use `tokio::io::BufReader::read_line`. This matches the MCP
+spec's stdio subprocess framing, which the `agaric-mcp` stub binary forwards verbatim from
+stdin/stdout to the socket so spec-compliant clients connect without changes.
+
+Protocol level is `"2.0"` on every envelope. The server pins MCP protocol version
+`"2025-06-18"` in the `initialize` response (`MCP_PROTOCOL_VERSION` in `server.rs`); clients
+that advertise a different version still receive a reply — version negotiation is the
+client's responsibility per the MCP spec. Standard JSON-RPC error codes plus one server-
+defined extension; `-32001` is kept distinct from `-32601` so agents can split UX between
+"unknown JSON-RPC method" and "the resource you asked for does not exist":
+
+| Code     | Meaning                                                  |
+| -------- | -------------------------------------------------------- |
+| `-32700` | Parse error (malformed JSON line)                        |
+| `-32600` | Invalid request shape                                    |
+| `-32601` | Method not found (unknown JSON-RPC method endpoint)      |
+| `-32602` | Invalid params (rejected argument schema)                |
+| `-32603` | Internal error                                           |
+| `-32001` | Resource not found (unknown tool name, missing block id) |
+
+### `ToolRegistry` trait + RO/RW impls
+
+The dispatch contract (`src-tauri/src/mcp/registry.rs`):
+
+```rust
+pub trait ToolRegistry: Send + Sync + 'static {
+    fn list_tools(&self) -> Vec<ToolDescription>;
+    fn call_tool(&self, name: &str, args: Value, ctx: &ActorContext)
+        -> impl Future<Output = Result<Value, AppError>> + Send;
+}
+```
+
+Each registry owns its own `SqlitePool` rather than receiving one through the trait — RO holds
+the read pool (and the write pool only for `journal_for_date`'s page-create branch); RW holds
+the write pool. `call_tool` returns RPITIT with an explicit `+ Send` bound so the server can
+drive it across `tokio::spawn`. Adding a new tool is three changes: (1) a `pub(crate) const
+TOOL_<NAME>` in `registry.rs`, (2) a `ToolDescription` entry in `list_tools`, (3) a match arm
+in `call_tool` that delegates to the matching `*_inner` command handler — so the op-log /
+CQRS / sqlx-compile-time-query invariants of the frontend path apply verbatim to agent calls.
+
+Currently shipped tools:
+
+- **RO (9):** `list_pages`, `get_page`, `search`, `get_block`, `list_backlinks`, `list_tags`,
+  `list_property_defs`, `get_agenda`, `journal_for_date`. Each is a thin wrapper around the
+  matching `*_inner` handler in `commands/`.
+- **RW (6, v2):** `append_block`, `update_block_content`, `set_property`, `add_tag`,
+  `create_page`, `delete_block`. Reversible mutations only.
+
+Caps are enforced at the tool boundary: `search` is capped at 50 results with 512-char
+snippets, list-style tools at 100, `get_agenda` at 500. Out-of-range `limit` values are
+rejected as `-32602` rather than silently clamped, matching the strict
+`serde(deny_unknown_fields)` posture used elsewhere on the MCP boundary. RW deliberately
+omits `purge_block`, tag creation, property-definition mutation, conflict resolution,
+compaction, recovery, and anything that touches sync peers or the device id — if an agent
+needs one of these, the user runs it from the UI.
+
+### `ActorContext` task-local plumbing
+
+Every tool dispatch threads an `ActorContext { actor: Actor, request_id: String }` through a
+Tokio `task_local!` named `ACTOR` (`src-tauri/src/mcp/actor.rs`). The dispatcher wraps
+`registry.call_tool(...)` in `ACTOR.scope(ctx, ...)` so any downstream code can recover the
+caller via `current_actor()` without threading a parameter through every signature.
+`current_actor()` defaults to `Actor::User` outside a scope, which keeps the frontend path
+observationally identical to its pre-MCP behaviour.
+
+When the RW path appends to the op log, `Actor::origin_tag()` produces the string written into
+`op_log.origin`: `"user"` for frontend commands, `"agent:<name>"` for MCP calls. The `agent:`
+prefix keeps the column filterable by `LIKE 'agent:%'` and reserves the unprefixed namespace
+for future non-agent origins (`"import"`, `"migration"`) without a schema change.
+
+`Actor::Agent { name }` is treated as PII-adjacent: a manual `Debug` impl renders the
+discriminant only (`"Agent"`) so a stray `tracing::debug!(actor = ?actor)` cannot leak self-
+reported agent names into spans. `ActorContext` is not exported over Tauri IPC and
+deliberately omits `Serialize` / `Deserialize` / specta derives.
+
+### Activity ring + event emission
+
+Each completed `tools/call` (success or failure) appends one `ActivityEntry` to a bounded ring
+buffer of capacity `ACTIVITY_RING_CAPACITY = 100` (`src-tauri/src/mcp/activity.rs`) and emits
+an `mcp:activity` Tauri event carrying the same payload. The frontend `AgentAccess` Settings
+panel subscribes to the event channel and maintains its own 100-entry render buffer; the Rust
+ring exists only so late subscribers and diagnostics can inspect recent history without a
+pull-query surface. There is no persistence — a new table + retention policy was explicitly
+rejected.
+
+Each entry carries the tool name, a tool-built `summary` string (privacy-bound: **never**
+block content, page titles, or property values), a UTC timestamp, the actor discriminant, the
+agent name, the success/failure result, an opaque per-connection `session_id` ULID (so the
+frontend can group entries by MCP session and offer per-session undo on RW tools), and any
+`OpRef`s the call appended.
+
+The ring is held as `Arc<Mutex<ActivityRing>>`; lock poisoning is tolerated
+(`PoisonError::into_inner`) so a panic in one handler does not take down the whole activity
+surface. `agent_name` is redacted from the `Debug` impl on `ActivityEntry` for the same
+reason as `Actor::Agent` above.
+
+### Lifecycle
+
+`McpLifecycle` (`src-tauri/src/mcp/mod.rs`) holds the runtime state surfaced to the Settings
+UI:
+
+| Field                            | Role                                                                                                              |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `enabled: AtomicBool`            | Per-iteration accept-loop gate. `mcp_set_enabled(false)` clears it via `shutdown()`                               |
+| `disconnect_signal: Arc<Notify>` | One-shot kill switch. `disconnect_all()` calls `notify_waiters()` to wake every in-flight connection task         |
+| `active_connections: AtomicUsize`| Live connection count, maintained by `ConnectionCounterGuard` (RAII) so panics still decrement                    |
+| `task_running: AtomicBool`       | `true` while the accept loop owns the listener; consulted before re-spawning on re-enable                         |
+
+The marker file (`mcp-ro-enabled` or `mcp-rw-enabled`, sibling to `device-id` and `sync-cert`
+in the app data directory) is the on-disk gate: present → bind on startup, absent → stay
+dormant. The Settings toggle creates / removes the file atomically and flips `enabled` to
+match. No new persistence mechanism is introduced.
+
+The accept loop (`serve_unix` / `serve_pipe` in `server.rs`) uses `tokio::select!` to race
+`accept()` against `disconnect_signal.notified()` so a disable wakes the loop out of the
+kernel `accept(2)` syscall. After each accepted stream the loop re-checks `enabled` to defeat
+the disable-races-accept window. Per-connection tasks `select!` the same signal: when fired
+mid-call, an `MCP_DISCONNECT_GRACE_PERIOD` of 2 s lets the in-flight `tools/call` finish so
+the agent still sees its JSON-RPC reply and the activity feed records the entry. DB-layer
+cancellation safety is preserved either way — commits land before any further `.await`.
+
+`disconnect_all` is edge-triggered (`notify_waiters` only wakes already-parked tasks) and
+distinct from `shutdown`: the former kicks in-flight clients without affecting the listener,
+the latter clears `enabled` and pulls the listener out of `accept`. The `mcp_disconnect_all`
+Tauri command exposes the former as a one-shot kill switch.
+
+### Threat model carve-out
+
+Single-user, local-only. The socket is kernel-enforced to the current user via `0600` (unix)
+or owner-only DACL (Windows). There are no bearer tokens, no rate limits, no per-agent
+budgets, and no malicious-agent threat model — the user controls which agents they point at
+the socket, and revoking access means flipping the Settings toggle (which removes the marker
+file and calls `shutdown`). Self-reported agent names are treated as PII and redacted from
+`Debug` output, but they are not authenticated; trust is rooted in the kernel ACL on the
+socket path. See AGENTS.md §[Threat Model](AGENTS.md#threat-model) for the broader rationale
+this carve-out inherits from.
+
+---
+
+## 20. Planned Features
 
 Planned items are tracked in the [issue tracker](https://github.com/jfolcini/agaric/issues).
 
@@ -1677,7 +1844,7 @@ architectural changes were required.
 
 ---
 
-## 20. Tauri Command API
+## 21. Tauri Command API
 
 80+ total commands (including sync/pairing/file-transfer), split across `src-tauri/src/commands/` by domain: `blocks/` (crud + move + list + fetch), `pages.rs`, `tags.rs`, `properties.rs`, `agenda.rs`, `attachments.rs`, `history.rs`, `journal.rs`, `queries.rs`, `sync_cmds.rs`, `compaction.rs`, `drafts.rs`, `link_metadata.rs`, `logging.rs`. Each has an `inner_*` function taking `&SqlitePool` for testability. All use cursor-based pagination where applicable.
 
@@ -1790,13 +1957,13 @@ architectural changes were required.
 
 ---
 
-## 21. Rust Backend Modules
+## 22. Rust Backend Modules
 
 `backlink`, `cache`, `commands`, `dag`, `db`, `device`, `draft`, `error`, `fts`, `hash`, `import`, `link_metadata`, `materializer`, `merge`, `op`, `op_log`, `pagination`, `pairing`, `peer_refs`, `recovery`, `recurrence`, `reverse`, `snapshot`, `soft_delete`, `sync_cert`, `sync_daemon`, `sync_events`, `sync_files`, `sync_net`, `sync_protocol`, `sync_scheduler`, `tag_inheritance`, `tag_query`, `ulid`, `word_diff`
 
 ---
 
-## 22. Scalability Characteristics
+## 23. Scalability Characteristics
 
 Benchmark-driven analysis at 100K blocks. All measurements via Criterion on
 SQLite WAL mode with 2-writer + 4-reader pool.
@@ -1825,7 +1992,7 @@ integrity — `verify_op_record` checks hashes upfront).
 
 ---
 
-## 23. Lessons Learned & Established Patterns
+## 24. Lessons Learned & Established Patterns
 
 Hard-won patterns from 300+ development sessions. These are not aspirational — they are
 empirically validated through bugs found, fixes applied, and alternatives rejected.

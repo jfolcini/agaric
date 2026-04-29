@@ -402,6 +402,14 @@ pub async fn edit_block_inner(
     block_id: String,
     to_text: String,
 ) -> Result<BlockRow, AppError> {
+    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
+    // invariant #8 requires ULID uppercase for blake3 hash determinism;
+    // SQLite text comparison is byte-exact, so a lowercase caller would
+    // silently get NotFound. BlockId::from_trusted normalises on
+    // construction (op_log path), but raw String args from MCP tools /
+    // sync replay / scripted imports must be normalised here.
+    let block_id = block_id.to_ascii_uppercase();
+
     // F02: Begin IMMEDIATE transaction for atomic validation + op_log + blocks write.
     // All reads (block existence, prev_edit lookup) happen inside the tx
     // to prevent TOCTOU races (a concurrent delete_block could soft-delete
@@ -517,6 +525,14 @@ pub async fn delete_block_inner(
     materializer: &Materializer,
     block_id: String,
 ) -> Result<DeleteResponse, AppError> {
+    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
+    // invariant #8 requires ULID uppercase for blake3 hash determinism;
+    // SQLite text comparison is byte-exact, so a lowercase caller would
+    // silently get NotFound. BlockId::from_trusted normalises on
+    // construction (op_log path), but raw String args from MCP tools /
+    // sync replay / scripted imports must be normalised here.
+    let block_id = block_id.to_ascii_uppercase();
+
     let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(&block_id),
     });
@@ -654,6 +670,14 @@ pub async fn restore_block_inner(
     block_id: String,
     deleted_at_ref: String,
 ) -> Result<RestoreResponse, AppError> {
+    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
+    // invariant #8 requires ULID uppercase for blake3 hash determinism;
+    // SQLite text comparison is byte-exact, so a lowercase caller would
+    // silently get NotFound. BlockId::from_trusted normalises on
+    // construction (op_log path), but raw String args from MCP tools /
+    // sync replay / scripted imports must be normalised here.
+    let block_id = block_id.to_ascii_uppercase();
+
     // Single IMMEDIATE transaction: validation + op_log + restore.
     // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     // SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
@@ -763,6 +787,14 @@ pub async fn purge_block_inner(
     materializer: &Materializer,
     block_id: String,
 ) -> Result<PurgeResponse, AppError> {
+    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
+    // invariant #8 requires ULID uppercase for blake3 hash determinism;
+    // SQLite text comparison is byte-exact, so a lowercase caller would
+    // silently get NotFound. BlockId::from_trusted normalises on
+    // construction (op_log path), but raw String args from MCP tools /
+    // sync replay / scripted imports must be normalised here.
+    let block_id = block_id.to_ascii_uppercase();
+
     // F03: Single IMMEDIATE transaction for validation + op_log + physical purge.
     // Previously the op_log write and the physical purge were split across two
     // transactions, meaning a crash between them left the op_log recording a

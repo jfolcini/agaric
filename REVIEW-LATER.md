@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 751+ items across 508 sessions (per SESSION-LOG.md unique session count; latest is session 541).
+Previously resolved: 754+ items across 509 sessions (per SESSION-LOG.md unique session count; latest is session 542).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -2025,7 +2025,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F25
 - **Status:** Open
 
-## INFO / nits (17 — expanded)
+## INFO / nits (14 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2107,18 +2107,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 04/F10
 - **Status:** Open
 
-### I-CommandsCRUD-2 — ULID `block_id` parameters are not normalised at the SQL boundary
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/blocks/crud.rs:217-223,275-279,345-347,436-438`, `blocks/move_ops.rs:59-64`, `tags.rs:54-59`, `pages.rs:39-44`, etc.
-- **What:** AGENTS.md invariant #8 mandates ULID uppercase normalisation. `BlockId::from_trusted` (`ulid.rs:63`) normalises on construction, so op-log payloads stay canonical, but every command in this scope passes the raw `block_id: String` arg to `sqlx::query!("... WHERE id = ?", block_id)`. SQLite text comparison is byte-exact, so a lowercase input would silently fail the existence check.
-- **Why it matters:** Defence in depth. Frontend convention is uppercase today, but a future MCP tool, sync replay, or scripted import emitting lowercase would surface confusing `NotFound` errors with no log trace.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either normalise `block_id` once at the top of each `inner_*` function (`let block_id = block_id.to_ascii_uppercase();`), or change typed signatures to `BlockId` (which already normalises) — the latter eliminates the class.
-- **Pass-1 source:** 04/F16
-- **Status:** Open
-
 ### I-CommandsCRUD-3 — Doc/code drift between `AGENTS.md` (CQRS invariant) and `commands/mod.rs` module-doc
 - **Domain:** Commands (CRUD)
 - **Location:** `src-tauri/src/commands/mod.rs:1-9` vs `AGENTS.md:35-46` (key invariant #2)
@@ -2193,18 +2181,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Search & Links
 
-### I-Search-9 — `BacklinkFilter::BlockType` loads all blocks of type into memory
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/filters.rs:399-420`
-- **What:** The filter loads every active block of the given type into memory as `FxHashSet<String>` then intersects with the base set. For `block_type = 'content'` on a 100k-block vault that's ~30 MB of `String` allocations to discard most of. The comment at lines 400-411 acknowledges the issue; the candidate-aware variant `resolve_filter_with_candidates` (lines 112-119) was added later for `PropertyIsEmpty` and now exists, making the "invasive signature change" no longer applicable.
-- **Why it matters:** Pure allocation waste on every backlink query that includes a `BlockType` filter.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low/Medium
-- **Recommendation:** Add a candidates-scoped path: `WHERE block_type = ?1 AND id IN (SELECT value FROM json_each(?2))` mirroring `PropertyIsEmpty`. Wire it from the top-level intersection point in `eval_backlink_query` / `eval_backlink_query_grouped` so the base-set ids serve as candidates.
-- **Pass-1 source:** 07/F32
-- **Status:** Open
-
 ### I-Search-12 — `eval_backlink_query_grouped` group ordering ignores user `BacklinkSort`
 - **Domain:** Search & Links
 - **Location:** `src-tauri/src/backlink/grouped.rs:114-123, 162-167, 435-449`
@@ -2218,18 +2194,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### MCP
-
-### I-MCP-4 — ARCHITECTURE.md does not mention MCP at all
-- **Domain:** MCP
-- **Location:** `/home/javier/dev/org-mode-for-the-rest-of-us/ARCHITECTURE.md` (zero matches for `MCP|mcp|FEAT-4`); cross-ref `AGENTS.md` documentation map and §"Threat Model".
-- **What:** ARCHITECTURE.md is the ~1870-line deep-dive covering data model, op log, materializer, editor, sync, and search per AGENTS.md's documentation map. MCP shipped (FEAT-4a..h), but ARCHITECTURE.md has no section for it; the only architectural overview lives in REVIEW-LATER.md (a backlog file, not a stable reference) and inline doc comments.
-- **Why it matters:** New contributors / reviewers expect every shipped backend module to live in the architecture doc. Today MCP is a documentation orphan.
-- **Cost:** M (~100 LOC of prose)
-- **Risk:** Low
-- **Impact:** Medium (closes a real documentation gap that will cost future contributors hours)
-- **Recommendation:** Add an "MCP server" section to ARCHITECTURE.md covering: transport (UDS / named-pipe), JSON-RPC framing, `ToolRegistry` trait + RO/RW impls, `ActorContext` task-local plumbing, activity ring + event emission, lifecycle (marker file, disconnect signal), and the threat-model carve-out (single-user local, no auth tokens, no malicious-agent budget). Cross-link from AGENTS.md §"Threat Model".
-- **Pass-1 source:** 09/F22
-- **Status:** Open
 
 ### I-MCP-9 — `agaric-mcp` stub-binary integration test is `#[ignore]` and not exercised in CI
 - **Domain:** MCP

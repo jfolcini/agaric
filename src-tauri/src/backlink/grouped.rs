@@ -4,7 +4,7 @@ use futures_util::future::try_join_all;
 use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
-use super::filters::resolve_filter;
+use super::filters::resolve_filter_with_candidates;
 use super::query::{fetch_block_rows_by_ids, resolve_root_pages};
 use super::sort::sort_ids;
 use super::types::*;
@@ -115,7 +115,13 @@ pub async fn eval_backlink_query_grouped(
         if filter_list.is_empty() {
             base_ids
         } else {
-            let futures = filter_list.iter().map(|f| resolve_filter(pool, f, 0));
+            // I-Search-9: pass `base_ids` as candidates so leaf arms
+            // with a candidate-scoped SQL path (BlockType,
+            // PropertyIsEmpty) can prune at the database instead of
+            // materialising every active block first.
+            let futures = filter_list
+                .iter()
+                .map(|f| resolve_filter_with_candidates(pool, f, 0, Some(&base_ids)));
             let results = try_join_all(futures).await?;
             let mut result = base_ids;
             for set in results {
@@ -424,7 +430,11 @@ pub async fn eval_unlinked_references(
         if filter_list.is_empty() {
             matching_ids
         } else {
-            let futures = filter_list.iter().map(|f| resolve_filter(pool, f, 0));
+            // I-Search-9: scope leaf filters to the FTS-match set
+            // via the candidate-aware resolver.
+            let futures = filter_list
+                .iter()
+                .map(|f| resolve_filter_with_candidates(pool, f, 0, Some(&matching_ids)));
             let results = try_join_all(futures).await?;
             let mut result = matching_ids;
             for set in results {
