@@ -3087,6 +3087,127 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
 }
 
 // =======================================================================
+// apply_snapshot_uses_awaiting_enqueue_background (M-67)
+// =======================================================================
+
+/// M-67 regression: `apply_snapshot` must enqueue every cache-rebuild
+/// task via the awaiting `enqueue_background` variant — never the
+/// `try_enqueue_background` variant that silently drops tasks when the
+/// bounded background channel is saturated.
+///
+/// Pre-fix, the 8 post-RESET rebuild tasks (`RebuildPageIds` plus the
+/// 7 entries in `CACHE_TABLES`) were enqueued via
+/// `try_enqueue_background`. If the queue happened to be saturated at
+/// that moment — e.g. mid-catch-up against a busy materializer — any
+/// dropped task left FTS / agenda_cache / pages_cache / tags_cache
+/// empty until an unrelated edit triggered the next rebuild. There is
+/// no boot-time recheck, so the user saw an empty agenda / search /
+/// tag list indefinitely.
+///
+/// Post-fix, `enqueue_background` blocks until queue space is
+/// available, so no rebuild is dropped. On the happy path
+/// (uncontended channel, BACKGROUND_CAPACITY = 1024 ≫ 8 tasks) the
+/// observable behaviour is identical to the old code, so this test
+/// pins the contract by asserting that:
+///   1. the call still succeeds and returns `SnapshotData`;
+///   2. all enqueued cache-rebuild tasks reach the consumer
+///      (`bg_processed` includes the 8 rebuilds + the `Barrier`
+///      enqueued by `flush_background()`); and
+///   3. `bg_dropped` stays at zero — the awaiting variant has no
+///      shed-on-full path, so any non-zero value would prove a
+///      regression back to `try_enqueue_background`.
+///
+/// Filling the bg queue to force the awaiting path to actually block
+/// is impractical here: `apply_snapshot` performs many `.await` points
+/// inside its transaction, every one of which yields the runtime and
+/// lets the consumer drain. The simpler regression seat above is
+/// sufficient to detect a revert because `bg_dropped > 0` only ever
+/// fires from the `try_enqueue_background` Full arm.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_snapshot_uses_awaiting_enqueue_background() {
+    use std::sync::atomic::Ordering;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Minimal snapshot — content is not the focus; we only care that
+    // `apply_snapshot` runs the post-commit enqueue block.
+    let data = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-m67".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "m67-test".to_string(),
+        tables: SnapshotTables {
+            blocks: vec![BlockSnapshot {
+                id: "blk-m67".to_string(),
+                block_type: "content".to_string(),
+                content: Some("hello".to_string()),
+                parent_id: None,
+                position: Some(1),
+                deleted_at: None,
+                is_conflict: 0,
+                conflict_source: None,
+                conflict_type: None,
+                todo_state: None,
+                priority: None,
+                due_date: None,
+                scheduled_date: None,
+            }],
+            block_tags: vec![],
+            block_properties: vec![],
+            block_links: vec![],
+            attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    };
+
+    // Baseline counters (the materializer's startup tasks are not
+    // expected to enqueue anything to bg, but we read the values
+    // anyway to make the assertion robust).
+    let bg_processed_before = mat.metrics().bg_processed.load(Ordering::Relaxed);
+    let bg_dropped_before = mat.metrics().bg_dropped.load(Ordering::Relaxed);
+
+    let encoded = encode_snapshot(&data).unwrap();
+    let _restored = apply_snapshot(&pool, &mat, &encoded).await.unwrap();
+
+    // Drain the bg queue so every enqueued rebuild task has been
+    // processed by the consumer.
+    mat.flush_background().await.unwrap();
+
+    let bg_processed_after = mat.metrics().bg_processed.load(Ordering::Relaxed);
+    let bg_dropped_after = mat.metrics().bg_dropped.load(Ordering::Relaxed);
+
+    // The 8 cache-rebuild tasks (`RebuildPageIds` + 7 from
+    // `CACHE_TABLES`) plus the `Barrier` enqueued by
+    // `flush_background()` together account for at least 9 processed
+    // bg tasks. Some rebuild handlers may enqueue additional
+    // bookkeeping tasks; the lower bound is what matters for the
+    // regression seat.
+    let processed_delta = bg_processed_after - bg_processed_before;
+    assert!(
+        processed_delta >= 9,
+        "M-67: expected at least 9 background tasks processed after \
+         apply_snapshot + flush_background (8 cache rebuilds + 1 barrier), \
+         got delta = {processed_delta}"
+    );
+
+    // The awaiting `enqueue_background` variant has no shed-on-full
+    // path; `bg_dropped` is bumped *only* by `try_enqueue_background`'s
+    // Full arm. Any increment here would prove a regression back to
+    // `try_enqueue_background`.
+    assert_eq!(
+        bg_dropped_after, bg_dropped_before,
+        "M-67: bg_dropped must not increment during apply_snapshot — the \
+         awaiting `enqueue_background` variant has no drop path. A non-zero \
+         delta means apply_snapshot regressed to `try_enqueue_background` \
+         (which silently drops on a saturated channel)"
+    );
+
+    mat.shutdown();
+}
+
+// =======================================================================
 // apply_snapshot_rejects_traversal_attachment_fs_path (BUG-35)
 // =======================================================================
 

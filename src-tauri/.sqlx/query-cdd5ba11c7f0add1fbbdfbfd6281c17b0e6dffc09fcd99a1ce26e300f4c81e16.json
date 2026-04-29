@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT status, up_to_hash, up_to_seqs, data FROM log_snapshots WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "status",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "up_to_hash",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "up_to_seqs",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "data",
+        "ordinal": 3,
+        "type_info": "Blob"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "cdd5ba11c7f0add1fbbdfbfd6281c17b0e6dffc09fcd99a1ce26e300f4c81e16"
+}

@@ -50,11 +50,13 @@ const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
 /// `PRAGMA defer_foreign_keys = ON` (F02) so that block inserts succeed
 /// regardless of parent/child ordering in the snapshot data.
 ///
-/// Cache rebuild tasks are enqueued via `try_enqueue_background`; failures
-/// are logged at `warn!` but do not abort the restore (the snapshot itself
-/// is already durable at this point). Callers that need a synchronous
-/// guarantee can `flush_background()` on the materializer after this
-/// returns.
+/// Cache rebuild tasks are enqueued via the awaiting `enqueue_background`
+/// variant (M-67): it blocks until queue space is available, so no rebuild
+/// is dropped on a saturated channel. The only failure mode is
+/// channel-closed (shutdown-in-progress), which is logged at `error!` and
+/// does not abort the restore — the snapshot itself is already durable at
+/// this point. Callers that need a synchronous guarantee can
+/// `flush_background()` on the materializer after this returns.
 pub async fn apply_snapshot(
     pool: &SqlitePool,
     materializer: &Materializer,
@@ -306,10 +308,20 @@ pub async fn apply_snapshot(
 
     // BUG-42: Enqueue the full cache-rebuild set. Without this, the UI
     // sees empty agenda / tag list / page list / search until the next
-    // unrelated op triggers rebuilds by side-effect. `try_enqueue_background`
-    // silently drops if the queue is saturated (`warn!` logged), which is
-    // acceptable — the worst case is a slightly delayed rebuild on an
-    // overloaded system, not data loss.
+    // unrelated op triggers rebuilds by side-effect.
+    //
+    // M-67: use the awaiting `enqueue_background` variant. The previous
+    // `try_enqueue_background` shed tasks when the bounded background
+    // channel was saturated (a `warn!` was emitted but otherwise lost) —
+    // and this is exactly the moment when stale caches matter most:
+    // there is no boot-time recheck, so any dropped task left FTS /
+    // agenda_cache / pages_cache / tags_cache empty until an unrelated
+    // edit triggered the next rebuild. The awaiting variant blocks until
+    // queue space is available, ensuring no rebuild is dropped. Its only
+    // error mode is channel-closed (shutdown-in-progress); we log at
+    // `error!` ("should never happen" at this point — the materializer
+    // is by definition alive, we just used it) and continue so the
+    // caller still sees the durable `SnapshotData`.
     //
     // M-15: `RebuildPageIds` MUST be enqueued first so it is processed
     // before `RebuildAgendaCache` / `RebuildProjectedAgendaCache`. Both
@@ -322,19 +334,26 @@ pub async fn apply_snapshot(
     // leak into the agenda until something else triggered another
     // rebuild. (`RebuildPageIds` has no dedicated cache table, so it
     // does not appear in `CACHE_TABLES`.)
-    if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildPageIds) {
-        tracing::warn!(
+    if let Err(e) = materializer
+        .enqueue_background(MaterializeTask::RebuildPageIds)
+        .await
+    {
+        tracing::error!(
             task = "RebuildPageIds",
             error = %e,
-            "failed to enqueue cache rebuild task after apply_snapshot"
+            "failed to enqueue cache rebuild task after apply_snapshot \
+             (channel closed; shutdown-in-progress?). snapshot applied but \
+             cache rebuilds could not be enqueued; restart the app to repair caches"
         );
     }
     for (table, task) in CACHE_TABLES {
-        if let Err(e) = materializer.try_enqueue_background(task.clone()) {
-            tracing::warn!(
+        if let Err(e) = materializer.enqueue_background(task.clone()).await {
+            tracing::error!(
                 cache_table = table,
                 error = %e,
-                "failed to enqueue cache rebuild task after apply_snapshot"
+                "failed to enqueue cache rebuild task after apply_snapshot \
+                 (channel closed; shutdown-in-progress?). snapshot applied but \
+                 cache rebuilds could not be enqueued; restart the app to repair caches"
             );
         }
     }

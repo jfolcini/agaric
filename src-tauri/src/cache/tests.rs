@@ -2933,6 +2933,55 @@ async fn projected_cache_done_blocks_excluded() {
 }
 
 // ====================================================================
+// projected_agenda_cache — chunked-INSERT regression (M-18)
+// ====================================================================
+
+/// Forces the chunked `INSERT OR IGNORE` path in
+/// [`rebuild_projected_agenda_cache`] by creating enough projections to
+/// span multiple `MAX_SQL_PARAMS / 3 = 333`-row chunks. Pre-M-18 the
+/// rebuild emitted one INSERT per row; this test asserts the post-fix
+/// chunked code lands every projection correctly.
+#[tokio::test]
+async fn projected_agenda_cache_chunked_rebuild_handles_large_diff() {
+    let (pool, _dir) = test_pool().await;
+
+    let today = chrono::Local::now().date_naive();
+    let due = today.format("%Y-%m-%d").to_string();
+
+    // 10 daily-repeating blocks → ~365 projections each ⇒ >3500 rows,
+    // well above the 333-row chunk size, so the chunked code must run
+    // multiple INSERT statements within the same transaction.
+    const N_BLOCKS: usize = 10;
+    for i in 0..N_BLOCKS {
+        let id = format!("RPTBIG{i:02}");
+        insert_repeating_block(&pool, &id, &due, None, "daily", None, None, None).await;
+    }
+
+    rebuild_projected_agenda_cache(&pool).await.unwrap();
+
+    let total = count_rows(&pool, "projected_agenda_cache").await;
+    assert!(
+        total > 500,
+        "expected > 500 projected rows to exercise multi-chunk INSERT, got {total}"
+    );
+
+    // Every block contributes the same number of projections — assert
+    // the per-block count matches `total / N_BLOCKS` so a partial-write
+    // bug in the chunked path can't slip through.
+    let per_block: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = 'RPTBIG00'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        total,
+        per_block * (N_BLOCKS as i64),
+        "every block must contribute identical projection counts"
+    );
+}
+
+// ====================================================================
 // agenda_cache — source UPDATE path (T-12)
 // ====================================================================
 
@@ -3048,6 +3097,98 @@ async fn agenda_cache_source_update_property_key_change() {
     .await
     .unwrap();
     assert_eq!(count, 1, "PK dedup: still exactly one row");
+}
+
+// ====================================================================
+// agenda_cache — chunked diff regression (M-18)
+// ====================================================================
+
+/// Exercises the chunked DELETE / `INSERT OR IGNORE` path in
+/// [`rebuild_agenda_cache`] with a diff large enough to span multiple
+/// chunks (`MAX_SQL_PARAMS / 2 = 499` for DELETE,
+/// `MAX_SQL_PARAMS / 3 = 333` for INSERT). Pre-M-18 the rebuild emitted
+/// one statement per row — this test would still pass on the loop, but
+/// asserts the post-fix chunked path produces the same observable diff
+/// across two rebuilds (initial fill + mutation).
+#[tokio::test]
+async fn agenda_cache_chunked_rebuild_handles_large_diff() {
+    let (pool, _dir) = test_pool().await;
+
+    const N_BLOCKS: usize = 1000;
+
+    // Fill phase: 1000 blocks each with a unique `due_date` column —
+    // forces ≥ 4 INSERT chunks (1000 / 333) on the first rebuild.
+    let mut tx = pool.begin().await.unwrap();
+    for i in 0..N_BLOCKS {
+        let id = format!("BLK{i:04}");
+        // Stay in valid date space (months 1–12, days 1–28). Multiple
+        // blocks may share a date but every (date, block_id) is unique.
+        let month = (i / 28) % 12 + 1;
+        let day = (i % 28) + 1;
+        let due = format!("2025-{month:02}-{day:02}");
+        sqlx::query("INSERT INTO blocks (id, block_type, due_date) VALUES (?, 'content', ?)")
+            .bind(&id)
+            .bind(&due)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    rebuild_agenda_cache(&pool).await.unwrap();
+    assert_eq!(
+        count_rows(&pool, "agenda_cache").await,
+        N_BLOCKS as i64,
+        "all {N_BLOCKS} blocks must be present in agenda_cache after first rebuild"
+    );
+
+    // Mutation phase: re-date the first 500 blocks. The diff path must
+    // run a chunked DELETE (500 / 499 ⇒ 2 chunks) and a chunked INSERT
+    // (500 / 333 ⇒ 2 chunks) inside one transaction.
+    const N_MUTATED: usize = 500;
+    let mut tx = pool.begin().await.unwrap();
+    for i in 0..N_MUTATED {
+        let id = format!("BLK{i:04}");
+        sqlx::query("UPDATE blocks SET due_date = '2030-01-01' WHERE id = ?")
+            .bind(&id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    rebuild_agenda_cache(&pool).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "agenda_cache").await,
+        N_BLOCKS as i64,
+        "cache size remains {N_BLOCKS} after mutating {N_MUTATED} dates"
+    );
+
+    let on_new_date: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM agenda_cache WHERE date = '2030-01-01'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        on_new_date, N_MUTATED as i64,
+        "exactly {N_MUTATED} blocks must land on the new date after the diff rebuild"
+    );
+
+    // Untouched blocks retain their original date — no rows reference a
+    // date that no longer matches the live block's `due_date` column.
+    let stale_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agenda_cache ac \
+         JOIN blocks b ON b.id = ac.block_id \
+         WHERE b.due_date IS NOT NULL AND b.due_date != ac.date",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stale_count, 0,
+        "no rows should reference a stale date after the chunked diff rebuild"
+    );
 }
 
 // ====================================================================
