@@ -131,8 +131,13 @@ pub(crate) async fn collect_tables(
 
 /// Compute the op frontier: `device_id → max seq` and the hash of the latest op.
 ///
-/// Returns [`AppError::Snapshot`] if the op_log is empty — a snapshot without
-/// any ops to reference is meaningless.
+/// I-Lifecycle-2: when the op_log is empty (e.g., a freshly initialised
+/// device with no ops yet), this returns `(BTreeMap::new(), String::new())`
+/// rather than erroring. An empty snapshot is the deterministic
+/// representation of "device has zero ops" and is a legitimate input to
+/// `apply_snapshot` on a fresh peer. Callers that require a non-empty
+/// op_log (e.g., `compact_op_log`) gate this function behind their own
+/// row-count check before invocation.
 ///
 /// # `up_to_hash` is opaque, `up_to_seqs` is the real causal anchor (L-106)
 ///
@@ -164,10 +169,10 @@ pub(crate) async fn collect_frontier(
         .fetch_all(&mut *conn)
         .await?;
 
+    // I-Lifecycle-2: empty op_log → empty frontier, empty hash. Permits
+    // a fresh device to create + apply an empty snapshot deterministically.
     if rows.is_empty() {
-        return Err(AppError::Snapshot(
-            "cannot create snapshot: op_log is empty".to_string(),
-        ));
+        return Ok((BTreeMap::new(), String::new()));
     }
 
     let mut frontier = BTreeMap::new();

@@ -3020,3 +3020,62 @@ async fn move_block_depth_check_ignores_conflict_copy_descendants() {
         "conflict-copy descendants must not count toward subtree depth; got: {result:?}"
     );
 }
+
+// I-CommandsCRUD-13: the cycle-detection recursive CTE in
+// `move_block_inner` (move_ops.rs ~L95-103) MUST filter `is_conflict = 0`
+// in its recursive member, per AGENTS.md invariant #9. Without that
+// filter, the ancestor walk could traverse THROUGH a conflict-copy node
+// and falsely report a cycle when the moved block sits beyond the
+// conflict copy in the (logically detached) parent chain.
+//
+// The test pins both halves of the contract:
+//   (a) A real cycle through real ancestry is still detected even when
+//       a conflict copy is present in the DB.
+//   (b) A move whose ancestor walk only reaches the moved block by
+//       crossing a conflict-copy node must NOT be flagged as a cycle —
+//       the filter prunes the walk at the conflict copy.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_cycle_detection_ignores_conflict_copies_i_commandscrud_13() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Real chain: A (page) → B → C.
+    insert_block(&pool, "I13_A", "page", "A", None, Some(1)).await;
+    insert_block(&pool, "I13_B", "content", "B", Some("I13_A"), Some(1)).await;
+    insert_block(&pool, "I13_C", "content", "C", Some("I13_B"), Some(1)).await;
+
+    // Conflict copy B' (is_conflict = 1) with parent_id = C. Sits in the
+    // DB alongside the real chain. Its presence must not perturb the
+    // cycle CTE in either direction.
+    insert_conflict_copy_with_page(&pool, "I13_B_CC", "I13_C", None).await;
+
+    // (a) Real cycle through the genuine ancestry must still be caught:
+    // moving A under C would create the would-be parent chain A→C→B→A.
+    let real_cycle =
+        move_block_inner(&pool, DEV, &mat, "I13_A".into(), Some("I13_C".into()), 1).await;
+    assert!(
+        matches!(real_cycle, Err(AppError::Validation(ref msg)) if msg.contains("cycle detected")),
+        "real cycle A→B→C must be detected even with conflict copy B' in the DB, got: {real_cycle:?}"
+    );
+
+    // (b) Build a real block X whose parent_id IS the conflict copy.
+    // Walking up from X via parent_id reaches B'. With the
+    // `is_conflict = 0` filter, recursion stops there; without it, the
+    // walk would continue B' → C → B → A and falsely flag a move of A
+    // (or B, or C) under X as a cycle.
+    insert_block(&pool, "I13_X", "content", "X", Some("I13_B_CC"), Some(1)).await;
+
+    // Moving A under X must succeed: the only path back to A from X
+    // crosses the conflict copy, which the filter prunes. If the filter
+    // were missing, this assertion would fail with `Err(Validation(
+    // "cycle detected"))` because the unfiltered walk would surface A
+    // in the ancestor set.
+    let move_under_cc_chain =
+        move_block_inner(&pool, DEV, &mat, "I13_A".into(), Some("I13_X".into()), 1).await;
+    assert!(
+        move_under_cc_chain.is_ok(),
+        "moving A under X (whose ancestor chain crosses conflict copy B') \
+         must NOT be flagged as a cycle; the is_conflict = 0 filter on the \
+         recursive CTE must prune the walk at the conflict copy. Got: {move_under_cc_chain:?}"
+    );
+}
