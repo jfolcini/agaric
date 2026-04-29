@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 754+ items across 509 sessions (per SESSION-LOG.md unique session count; latest is session 542).
+Previously resolved: 757+ items across 510 sessions (per SESSION-LOG.md unique session count; latest is session 543).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -2119,30 +2119,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 04/F17
 - **Status:** Open
 
-### I-CommandsCRUD-4 — `page_aliases` is mutated outside the op log and not replicated by sync
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/pages.rs:33-90`
-- **What:** `set_page_aliases_inner` and `get_page_aliases_inner` work directly against the `page_aliases` table without writing any `OpPayload`. There is no `SetPageAliases` op type (verified by grep on `src-tauri/src/op.rs`). Aliases are included in snapshots, so they will reach a peer eventually, but day-to-day op replay does not propagate them.
-- **Why it matters:** AGENTS.md "Architectural Stability" reverses this: a feature needing a new op type should be discussed first. The inverse — per-page metadata maintained outside the op log — is a deliberate-but-undocumented design choice that confuses new maintainers.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Document the design choice in `pages.rs` and `ARCHITECTURE.md §20`. If full op-log integration is intended later, file a `MAINT-*` item; do not add an op type without approval per Architectural Stability.
-- **Pass-1 source:** 04/F18
-- **Status:** Open
-
-### I-CommandsCRUD-5 — `list_blocks_inner` silently drops `space_id` on the agenda and tag filter paths
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/blocks/queries.rs:46-69` (filter dispatch), context lines `:76-79`
-- **What:** The `filter_count` array does not include `space_id`. A caller passing `space_id = Some(...)` plus, say, `agenda_date = Some(...)` yields `filter_count = 1`, the agenda path runs, and the doc-comment notes the agenda/tag paths remain space-unscoped in Phase 2 — meaning `space_id` is silently ignored without an error.
-- **Why it matters:** Frontend callers expect `space_id` to scope the result; for these two paths it doesn't, and there is neither a warning nor a `Validation` error. Documented as a Phase-4 follow-up but the silent drop is surprising in the meantime.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Reject `space_id != None` on the agenda and tag paths with `AppError::Validation("space_id is not supported on this filter (FEAT-3 Phase 4)")`, or plumb `space_id` through `list_agenda` / `list_by_tag`. The validation route is the cheap-and-honest option.
-- **Pass-1 source:** 04/F20
-- **Status:** Open
-
 ### I-CommandsCRUD-7 — `list_property_keys` / `list_property_defs` / `list_tags` return unbounded `Vec` with no cursor
 - **Domain:** Commands (CRUD)
 - **Location:** `src-tauri/src/commands/properties.rs:19-21,459-469`, `src-tauri/src/commands/tags.rs:243-262`
@@ -2165,18 +2141,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Track roots explicitly via the cascade path — either record the originating block-id in op_log payloads or add a side table — so bulk operations replay exactly the ops performed. Alternatively, accept the heuristic and document the collision-window as a known limitation.
 - **Pass-1 source:** 04/F24
-- **Status:** Open
-
-### I-CommandsCRUD-10 — `apply_reverse_in_tx` asymmetric `rows_affected` behaviour across op types
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/history.rs:32-212`
-- **What:** Reverses for `AddTag`, `SetProperty`, `DeleteBlock`, `RestoreBlock` are treated as idempotent (no `rows_affected` check), while reverses for `EditBlock`, `MoveBlock`, `DeleteProperty`, `DeleteAttachment`, `AddAttachment` error on zero rows. The doc-comment explains the rationale (cascade vs user-visible live block) but the asymmetry breaks `revert_ops_inner` batches: an early `NotFound` rolls back the whole tx.
-- **Why it matters:** Subtle. Today's undo flow may produce user-visible "no-op-able" failures when one property in a batch is already absent (because the user manually cleared it after the original op).
-- **Cost:** S
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** Audit the asymmetry deliberately — either treat `DeleteProperty` / `DeleteAttachment` / `EditBlock` / `MoveBlock` reverses as idempotent (matching the AddTag/SetProperty side), or treat all as strict. Pick one, document it, and adjust the apply path.
-- **Pass-1 source:** 04/F26
 - **Status:** Open
 
 ### Search & Links

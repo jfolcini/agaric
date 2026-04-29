@@ -1567,6 +1567,84 @@ async fn list_blocks_rejects_conflicting_filters() {
     );
 }
 
+// FEAT-3 Phase 2: agenda and tag dispatch paths do not yet honour
+// space_id (deferred to Phase 4). The combination must be rejected
+// explicitly so callers don't silently get cross-space results.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_blocks_rejects_space_id_with_agenda_date() {
+    let (pool, _dir) = test_pool().await;
+
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("2025-01-15".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("SPACE01".into()),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("space_id is not supported") && msg.contains("FEAT-3 Phase 4")),
+        "space_id + agenda_date should be rejected: {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_blocks_rejects_space_id_with_tag_id() {
+    let (pool, _dir) = test_pool().await;
+
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        Some("TAG01".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("SPACE01".into()),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("space_id is not supported") && msg.contains("FEAT-3 Phase 4")),
+        "space_id + tag_id should be rejected: {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_blocks_rejects_space_id_with_agenda_date_range() {
+    let (pool, _dir) = test_pool().await;
+
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("2025-01-01".into()),
+        Some("2025-01-31".into()),
+        None,
+        None,
+        None,
+        Some("SPACE01".into()),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("space_id is not supported") && msg.contains("FEAT-3 Phase 4")),
+        "space_id + agenda_date_start/end should be rejected: {result:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_blocks_single_filter_is_accepted() {
     let (pool, _dir) = test_pool().await;

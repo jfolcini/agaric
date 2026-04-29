@@ -3615,7 +3615,7 @@ async fn apply_reverse_remove_tag_on_nonexistent_is_idempotent() {
 }
 
 #[tokio::test]
-async fn apply_reverse_delete_property_on_nonexistent_returns_not_found() {
+async fn apply_reverse_delete_property_on_nonexistent_is_idempotent() {
     let (pool, _dir) = test_pool().await;
     let mut tx = pool.begin().await.unwrap();
 
@@ -3625,14 +3625,19 @@ async fn apply_reverse_delete_property_on_nonexistent_returns_not_found() {
     });
     let result = apply_reverse_in_tx(&mut tx, &payload).await;
 
+    // I-CommandsCRUD-10: DeleteProperty's reverse is intentionally idempotent —
+    // its forward counterpart (SetProperty) is already idempotent (INSERT OR
+    // REPLACE), and a strict NotFound here would abort `revert_ops_inner`
+    // batches when a property had been manually cleared between the original
+    // op and the undo.
     assert!(
-        matches!(result, Err(AppError::NotFound(_))),
-        "deleting a nonexistent property should return NotFound, got: {result:?}"
+        result.is_ok(),
+        "deleting a nonexistent property should succeed (idempotent), got: {result:?}"
     );
 }
 
 #[tokio::test]
-async fn apply_reverse_delete_attachment_on_nonexistent_returns_not_found() {
+async fn apply_reverse_delete_attachment_on_nonexistent_is_idempotent() {
     let (pool, _dir) = test_pool().await;
     let mut tx = pool.begin().await.unwrap();
 
@@ -3642,9 +3647,14 @@ async fn apply_reverse_delete_attachment_on_nonexistent_returns_not_found() {
     });
     let result = apply_reverse_in_tx(&mut tx, &payload).await;
 
+    // I-CommandsCRUD-10: DeleteAttachment's reverse is intentionally idempotent —
+    // its forward counterpart (AddAttachment) is already idempotent (INSERT OR
+    // REPLACE), and a strict NotFound here would abort `revert_ops_inner`
+    // batches when an attachment had been manually purged between the
+    // original op and the undo.
     assert!(
-        matches!(result, Err(AppError::NotFound(_))),
-        "soft-deleting a nonexistent attachment should return NotFound, got: {result:?}"
+        result.is_ok(),
+        "soft-deleting a nonexistent attachment should succeed (idempotent), got: {result:?}"
     );
 }
 
