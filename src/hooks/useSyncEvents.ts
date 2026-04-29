@@ -12,8 +12,6 @@
  * Resolves REVIEW-LATER #276, #386, #378.
  */
 
-import { listen } from '@tauri-apps/api/event'
-import { useEffect } from 'react'
 import { toast } from 'sonner'
 import { announce } from '@/lib/announcer'
 import { i18n } from '@/lib/i18n'
@@ -23,6 +21,7 @@ import { pageBlockRegistry } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
+import { useTauriEventListener } from './useTauriEventListener'
 
 /** Payload shapes from the Rust backend sync_events.rs */
 export interface SyncProgressPayload {
@@ -68,17 +67,19 @@ export function mapBackendState(backendState: string): 'idle' | 'syncing' | 'err
  * Listens to Tauri sync events and updates the sync store.
  * No-op in browser mode (when Tauri APIs are unavailable).
  * Call once at app root (App.tsx).
+ *
+ * MAINT-122: lifecycle (`listen()` → `unlisten()` + unmount race) lives
+ * in `useTauriEventListener`; this hook owns the per-event handler
+ * bodies and the Tauri-only gate (`enabled`).
  */
 export function useSyncEvents(): void {
-  useEffect(() => {
-    // Only listen in Tauri context
-    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return
+  // Only listen in Tauri context — browser dev sessions skip
+  // registration entirely.
+  const enabled = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
-    const cleanups: Array<() => void> = []
-    let cancelled = false
-
-    // sync:progress
-    listen<SyncProgressPayload>('sync:progress', (event) => {
+  useTauriEventListener<SyncProgressPayload>(
+    'sync:progress',
+    (event) => {
       try {
         const { state, ops_received, ops_sent } = event.payload
         const store = useSyncStore.getState()
@@ -88,17 +89,18 @@ export function useSyncEvents(): void {
       } catch (err: unknown) {
         logger.error('useSyncEvents', 'sync:progress handler failed', undefined, err)
       }
-    })
-      .then((unlisten) => {
-        if (cancelled) unlisten()
-        else cleanups.push(unlisten)
-      })
-      .catch((err: unknown) => {
+    },
+    {
+      enabled,
+      onError: (err) => {
         logger.warn('useSyncEvents', 'Failed to listen to sync:progress', undefined, err)
-      })
+      },
+    },
+  )
 
-    // sync:complete
-    listen<SyncCompletePayload>('sync:complete', (event) => {
+  useTauriEventListener<SyncCompletePayload>(
+    'sync:complete',
+    (event) => {
       try {
         const { ops_received, ops_sent } = event.payload
         const store = useSyncStore.getState()
@@ -145,17 +147,18 @@ export function useSyncEvents(): void {
       } catch (err: unknown) {
         logger.error('useSyncEvents', 'sync:complete handler failed', undefined, err)
       }
-    })
-      .then((unlisten) => {
-        if (cancelled) unlisten()
-        else cleanups.push(unlisten)
-      })
-      .catch((err: unknown) => {
+    },
+    {
+      enabled,
+      onError: (err) => {
         logger.warn('useSyncEvents', 'Failed to listen to sync:complete', undefined, err)
-      })
+      },
+    },
+  )
 
-    // sync:error
-    listen<SyncErrorPayload>('sync:error', (event) => {
+  useTauriEventListener<SyncErrorPayload>(
+    'sync:error',
+    (event) => {
       try {
         const { message } = event.payload
         useSyncStore.getState().setState('error', message)
@@ -164,18 +167,12 @@ export function useSyncEvents(): void {
       } catch (err: unknown) {
         logger.error('useSyncEvents', 'sync:error handler failed', undefined, err)
       }
-    })
-      .then((unlisten) => {
-        if (cancelled) unlisten()
-        else cleanups.push(unlisten)
-      })
-      .catch((err: unknown) => {
+    },
+    {
+      enabled,
+      onError: (err) => {
         logger.warn('useSyncEvents', 'Failed to listen to sync:error', undefined, err)
-      })
-
-    return () => {
-      cancelled = true
-      for (const cleanup of cleanups) cleanup()
-    }
-  }, [])
+      },
+    },
+  )
 }

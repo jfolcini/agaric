@@ -8,9 +8,9 @@
  * useEffect re-runs in consumer components.
  */
 
-import { listen } from '@tauri-apps/api/event'
 import { useEffect, useRef, useState } from 'react'
 import { logger } from '../lib/logger'
+import { useTauriEventListener } from './useTauriEventListener'
 
 /** Event payload matching Rust PropertyChangedEvent. */
 interface PropertyChangedPayload {
@@ -26,37 +26,42 @@ export interface UseBlockPropertyEventsReturn {
   invalidationKey: number
 }
 
+/**
+ * MAINT-122: listener lifecycle (`listen()` → `unlisten()` + unmount
+ * race) lives in `useTauriEventListener`; this hook owns the debounce
+ * timer + the monotonic counter that consumers depend on for
+ * refetching.
+ */
 export function useBlockPropertyEvents(): UseBlockPropertyEventsReturn {
   const [invalidationKey, setInvalidationKey] = useState(0)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
-
-    // `@tauri-apps/api/event` is statically imported by useSyncEvents /
-    // ConflictList so it's already in the entry chunk — using a static
-    // import here too avoids Rolldown's INEFFECTIVE_DYNAMIC_IMPORT warning
-    // without changing behaviour.
-    const unlistenPromise = listen<PropertyChangedPayload>(EVENT_NAME, (_event) => {
-      if (cancelled) return
+  useTauriEventListener<PropertyChangedPayload>(
+    EVENT_NAME,
+    () => {
       // Debounce: batch rapid consecutive changes
       if (timerRef.current) clearTimeout(timerRef.current)
       timerRef.current = setTimeout(() => {
-        if (!cancelled) {
-          setInvalidationKey((prev) => prev + 1)
-        }
+        setInvalidationKey((prev) => prev + 1)
       }, DEBOUNCE_MS)
-    }).catch((err: unknown) => {
-      logger.warn('useBlockPropertyEvents', 'Failed to listen for property change events', {}, err)
-      return undefined
-    })
+    },
+    {
+      onError: (err) => {
+        logger.warn(
+          'useBlockPropertyEvents',
+          'Failed to listen for property change events',
+          {},
+          err,
+        )
+      },
+    },
+  )
 
+  // Clean up the pending debounce timer on unmount so a late timer
+  // can't fire `setInvalidationKey` after the component is gone.
+  useEffect(() => {
     return () => {
-      cancelled = true
       if (timerRef.current) clearTimeout(timerRef.current)
-      unlistenPromise.then((unlisten) => {
-        if (unlisten) unlisten()
-      })
     }
   }, [])
 

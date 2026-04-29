@@ -1,5 +1,45 @@
 # Session Log
 
+## Session 555 — Frontend MAINT refactors — close 2 items (MAINT-119, MAINT-122) (2026-04-29)
+
+**2 frontend MAINT items closed in one PROMPT.md batch with 2 parallel build subagents (out of 3 launched — MAINT-120 was canceled by the user before completion) + 1 review subagent.** Theme: continue clearing the frontend MAINT backlog with bounded refactors that extract reusable abstractions from duplicated patterns.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 35 → 33 (-2: MAINT-119, MAINT-122 closed).
+- **Previously-resolved counter:** 793+ → 795+ across 522 sessions.
+
+**Items closed (2):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-119 | `src/components/JournalPage.tsx` + 4 new files — Subagent 897806d1 | **`JournalPage.tsx` decomposed from 728 → 170 LOC.** Pre-fix: inlined `GlobalDateControls` + `JournalControls` components, byte-identical `listBlocks({blockType:'page',limit:500})` fetches at 3 different call sites that fired on every JournalPage mount, and a tangled page-create + template-load + block-insert flow. Post-fix: extracted `src/components/GlobalDateControls.tsx` (120 LOC), `src/components/JournalControls.tsx` (266 LOC), `src/hooks/useCalendarPageDates.ts` (134 LOC — uses module-level `inflight: Promise \| null` to dedupe concurrent IPC fetches; cleanup uses `.then(clear, clear)` pattern to avoid unhandled-rejection leaks that `.finally()` would produce on test mock-rejected paths), and `src/hooks/useJournalBlockCreation.ts` (166 LOC — owns `createdPages` state + accepts `pageMap` + `onPageCreated` callback). JournalPage.tsx now re-exports `GlobalDateControls`, `JournalControls`, `MAX_JOURNAL_DATE`, `MIN_JOURNAL_DATE`, and the `DayEntry` type so existing imports (`App.tsx` etc.) work without modification. New tests: 8 useCalendarPageDates + 8 useJournalBlockCreation + 10 JournalControls + 1 perf-win test in `JournalPage.test.tsx` asserting exactly ONE `list_blocks` call when `JournalPage + JournalControls` mount together (catches the dedupe regression). 130 + 15 + 10 + 8 + 8 = **171 tests pass**. |
+| MAINT-122 | `src/lib/createSpaceSubscriber.ts` + `src/hooks/useTauriEventListener.ts` + 7 callsite migrations — Subagent b32e92e2 | **Two duplicated patterns extracted into shared abstractions.** Pre-fix: 3 stores (`navigation.ts`, `journal.ts`, `recent-pages.ts`) had verbatim per-space-switch subscribers (29/41/70 LOC each — same `let prevSpaceKey` + `newKey = state.currentSpaceId ?? LEGACY_SPACE_KEY` + first-fire-seeds-on-undefined pattern); 3 hooks (`useSyncEvents.ts`, `useDeepLinkRouter.ts`, `useBlockPropertyEvents.ts`) had verbatim Tauri `listen()` + `unlisten()` lifecycle boilerplate with slightly different error-handling shapes. Post-fix: new `createSpaceSubscriber(onChange)` helper in `src/lib/` (57 LOC — first fire receives `(newKey, newKey)` so callers detect via `prevKey === newKey` to seed; same-key fires suppressed; distinct-key fires receive `(prevKey, newKey)`); new `useTauriEventListener<T>(eventName, handler, options?)` hook in `src/hooks/` (104 LOC — uses `useRef` for handler stability so callers can pass inline closures without re-registration; handles unmount-before-listen-resolves race via `cancelled` flag; per-callsite `enabled` gate replaces the original `'__TAURI_INTERNALS__' in window` short-circuit; per-callsite `onError` callback preserves the exact log shape the original code used). `LEGACY_SPACE_KEY` now exported from `src/stores/space.ts:42`. Net change: -19 LOC across 3 stores, +47 LOC across 3 hooks (useDeepLinkRouter expanded because hooks rules require 3 separate `useTauriEventListener` calls for its 3 events; useBlockPropertyEvents grew +5 LOC because the original `cancelled` flag served TWO purposes — listener gating + debounce-timer gating — and the migration split this into the listener call + a separate `useEffect` for timer cleanup). New tests: 6 createSpaceSubscriber + 8 useTauriEventListener = **14 new tests, all passing**. All 624 tests in migrated stores/hooks pass. |
+
+**MAINT-120 (CANCELED):** A third build subagent was launched in parallel for MAINT-120 (`useIpcCommand<T>` hook) but was canceled by the user mid-execution. No code from that subagent is in this commit; MAINT-120 remains open in REVIEW-LATER.md and can be picked up in a future batch.
+
+**Files touched (this session's batch — 7 modified backend + 13 modified/added frontend):**
+
+- Frontend new files (8): `components/GlobalDateControls.tsx` + `JournalControls.tsx` + 5 test files + `lib/createSpaceSubscriber.ts` + `hooks/useTauriEventListener.ts`.
+- Frontend modified (10): `components/JournalPage.tsx` (728→170), `components/__tests__/{GlobalDateControls,JournalPage}.test.tsx`, `hooks/{useBlockPropertyEvents,useDeepLinkRouter,useSyncEvents,useCalendarPageDates,useJournalBlockCreation}.ts`, `stores/{journal,navigation,recent-pages,space}.ts`.
+- Docs: `REVIEW-LATER.md` (MAINT-119 + MAINT-122 rows + detail entries removed; top-level summary count 35 → 33; previously-resolved counter 793+ → 795+; sessions 521 → 522; latest session 554 → 555), `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- MAINT-119: 130 JournalPage + 15 GlobalDateControls + 10 JournalControls + 8 useCalendarPageDates + 8 useJournalBlockCreation tests PASS.
+- MAINT-122: 6 createSpaceSubscriber + 8 useTauriEventListener tests PASS + 624 tests in migrated stores/hooks PASS.
+- Full vitest: 8615/8615 PASS, 324 files green.
+
+**Process notes:**
+
+- **2 build subagents converged with zero file overlap.** Each subagent worked on its own scope (MAINT-119 = JournalPage.tsx + extracted helpers; MAINT-122 = stores + hooks listener pattern). Pre-existing concurrent-test-pollution flakes in `useDeepLinkRouter.test.ts` were caused by MAINT-122's in-progress refactor of that file when MAINT-119's full-suite verification ran — both subagents' final test runs (after their own changes were complete) passed clean.
+- **MAINT-120 was canceled by the user mid-execution.** The subagent had not yet committed any changes when canceled, so the working tree was unaffected. MAINT-120 (the `useIpcCommand<T>` hook + 5 callsite migrations) remains open in REVIEW-LATER.md for a future session.
+- **1 review subagent APPROVED both items with zero blockers.** Reviewer (`893082d7`) confirmed MAINT-119's dedupe mechanics (module-level `inflight` cache + `.then(clear, clear)` cleanup pattern), backward-compat re-exports, and perf-win test correctness; and MAINT-122's three-case `createSpaceSubscriber` semantics, race handling in `useTauriEventListener`, `enabled` gate placement, `LEGACY_SPACE_KEY` export, and logger-shape preservation across all 6 migrated callsites.
+- **Biome auto-fix** applied import-organization fixes to 6 files; orchestrator ran `npx biome check --write` to apply, then re-staged. Re-ran prek → all green.
+- **No `cargo test -- specta_tests --ignored` rerun was needed** — no public type changes.
+
+---
+
 ## Session 554 — MAINT-137: extract test mega-blocks from 4 large backend files (2026-04-29)
 
 **MAINT-137 closed in one PROMPT.md batch with 4 parallel build subagents + 1 review subagent.** Theme: mechanical move of `#[cfg(test)] mod tests { ... }` blocks from the four largest backend source files into sibling `<file>/tests.rs` modules — matches the existing repo pattern (`dag.rs` + `dag/tests.rs`, `materializer/mod.rs` + `materializer/tests.rs`).

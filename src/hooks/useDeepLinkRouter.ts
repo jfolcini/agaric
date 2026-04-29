@@ -29,11 +29,11 @@
  * `__TAURI_INTERNALS__`).  Mount once in `App.tsx`.
  */
 
-import { listen } from '@tauri-apps/api/event'
 import { useEffect } from 'react'
 import { logger } from '@/lib/logger'
 import { getCurrentDeepLink } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
+import { useTauriEventListener } from './useTauriEventListener'
 
 /** Backend `deeplink:navigate-to-block` / `deeplink:navigate-to-page` payload. */
 export interface BlockNavigatePayload {
@@ -130,38 +130,89 @@ export function handleOpenSettingsPayload(payload: unknown): void {
  * Mount once at the app root.  Registers three Tauri event listeners
  * that translate routed deep-link events into navigation-store /
  * settings-tab side effects.  Cleans up listeners on unmount.
+ *
+ * MAINT-122: listener lifecycle (`listen()` → `unlisten()` + unmount
+ * race) lives in `useTauriEventListener`; this hook owns the per-event
+ * payload-validation + dispatch wrappers, the launch-URL backfill, and
+ * the Tauri-only gate (`enabled`).
  */
 export function useDeepLinkRouter(): void {
+  const enabled = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+
+  useTauriEventListener<unknown>(
+    DEEPLINK_EVENT_NAVIGATE_TO_BLOCK,
+    (event) => {
+      try {
+        handleNavigatePayload(event.payload, DEEPLINK_EVENT_NAVIGATE_TO_BLOCK)
+      } catch (err) {
+        logger.error(
+          'deeplink',
+          `${DEEPLINK_EVENT_NAVIGATE_TO_BLOCK} handler threw`,
+          undefined,
+          err,
+        )
+      }
+    },
+    {
+      enabled,
+      onError: (err) => {
+        logger.warn(
+          'deeplink',
+          `Failed to listen to ${DEEPLINK_EVENT_NAVIGATE_TO_BLOCK}`,
+          undefined,
+          err,
+        )
+      },
+    },
+  )
+
+  useTauriEventListener<unknown>(
+    DEEPLINK_EVENT_NAVIGATE_TO_PAGE,
+    (event) => {
+      try {
+        handleNavigatePayload(event.payload, DEEPLINK_EVENT_NAVIGATE_TO_PAGE)
+      } catch (err) {
+        logger.error('deeplink', `${DEEPLINK_EVENT_NAVIGATE_TO_PAGE} handler threw`, undefined, err)
+      }
+    },
+    {
+      enabled,
+      onError: (err) => {
+        logger.warn(
+          'deeplink',
+          `Failed to listen to ${DEEPLINK_EVENT_NAVIGATE_TO_PAGE}`,
+          undefined,
+          err,
+        )
+      },
+    },
+  )
+
+  useTauriEventListener<unknown>(
+    DEEPLINK_EVENT_OPEN_SETTINGS,
+    (event) => {
+      try {
+        handleOpenSettingsPayload(event.payload)
+      } catch (err) {
+        logger.error('deeplink', `${DEEPLINK_EVENT_OPEN_SETTINGS} handler threw`, undefined, err)
+      }
+    },
+    {
+      enabled,
+      onError: (err) => {
+        logger.warn(
+          'deeplink',
+          `Failed to listen to ${DEEPLINK_EVENT_OPEN_SETTINGS}`,
+          undefined,
+          err,
+        )
+      },
+    },
+  )
+
   useEffect(() => {
-    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return
-
-    const cleanups: Array<() => void> = []
+    if (!enabled) return
     let cancelled = false
-
-    function attachListener(eventName: string, handler: (payload: unknown) => void) {
-      listen<unknown>(eventName, (event) => {
-        try {
-          handler(event.payload)
-        } catch (err) {
-          logger.error('deeplink', `${eventName} handler threw`, undefined, err)
-        }
-      })
-        .then((unlisten) => {
-          if (cancelled) unlisten()
-          else cleanups.push(unlisten)
-        })
-        .catch((err: unknown) => {
-          logger.warn('deeplink', `Failed to listen to ${eventName}`, undefined, err)
-        })
-    }
-
-    attachListener(DEEPLINK_EVENT_NAVIGATE_TO_BLOCK, (payload) =>
-      handleNavigatePayload(payload, DEEPLINK_EVENT_NAVIGATE_TO_BLOCK),
-    )
-    attachListener(DEEPLINK_EVENT_NAVIGATE_TO_PAGE, (payload) =>
-      handleNavigatePayload(payload, DEEPLINK_EVENT_NAVIGATE_TO_PAGE),
-    )
-    attachListener(DEEPLINK_EVENT_OPEN_SETTINGS, (payload) => handleOpenSettingsPayload(payload))
 
     // Backfill: read the launch URL the OS used to open Agaric, if any.
     // The router on the Rust side already emits `deep-link://new-url`
@@ -183,9 +234,8 @@ export function useDeepLinkRouter(): void {
 
     return () => {
       cancelled = true
-      for (const cleanup of cleanups) cleanup()
     }
-  }, [])
+  }, [enabled])
 }
 
 /**

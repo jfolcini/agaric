@@ -14,9 +14,10 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { __resetCalendarPageDatesForTests } from '../../hooks/useCalendarPageDates'
 import { useJournalStore } from '../../stores/journal'
 import { useNavigationStore } from '../../stores/navigation'
-import { GlobalDateControls } from '../JournalPage'
+import { GlobalDateControls } from '../GlobalDateControls'
 
 // Mock the Calendar component used by JournalCalendarDropdown.
 //
@@ -37,6 +38,7 @@ const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  __resetCalendarPageDatesForTests()
   useJournalStore.setState({
     mode: 'daily',
     currentDate: new Date(2025, 5, 15),
