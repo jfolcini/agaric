@@ -1124,6 +1124,87 @@ async fn shutdown_aborts_in_flight_tasks_m12() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
+
+/// Regression test for the M-12 follow-up bug: the materializer
+/// constructors must not panic when called outside any Tokio runtime
+/// context, because that is exactly the context Tauri 2's `setup`
+/// callback runs in (synchronously on the main thread before the app
+/// loop enters its runtime). Pre-fix, the M-12 commit replaced the
+/// previous `tauri::async_runtime::spawn` (which uses Tauri's stored
+/// runtime handle) with `JoinSet::spawn` (which calls
+/// `Handle::current()` and panics outside a runtime), so the
+/// production AppImage panicked at startup with "there is no reactor
+/// running, must be called from the context of a Tokio 1.x runtime".
+/// The test suite did not catch it because every test runs inside
+/// `#[tokio::test]`, which provides a runtime context.
+///
+/// `Materializer::new` and `Materializer::with_read_pool_and_lifecycle`
+/// share the same private `Self::build` helper which performs all
+/// four startup `Self::spawn_task` calls, so a failure in either
+/// constructor surfaces the same bug. Both are covered by a dedicated
+/// `#[test]` (NOT `#[tokio::test]`) below: each uses a short-lived
+/// `tokio::runtime::Runtime` only to build a `SqlitePool` (the only
+/// async setup needed), drops the entered guard before constructing
+/// the materializer, and exercises the public constructor from the
+/// thread's bare context — reproducing Tauri's setup-time shape.
+#[test]
+fn materializer_new_does_not_panic_without_current_runtime() {
+    use tokio::runtime::Runtime;
+
+    let dir = TempDir::new().unwrap();
+    let db_path: PathBuf = dir.path().join("test.db");
+
+    let pool_runtime = Runtime::new().unwrap();
+    let pool = pool_runtime.block_on(async { init_pool(&db_path).await.unwrap() });
+    // After block_on returns, this thread is NOT in any tokio runtime
+    // context. Confirm that to make the test's invariant explicit.
+    assert!(
+        tokio::runtime::Handle::try_current().is_err(),
+        "test precondition: thread must not be in a tokio runtime context",
+    );
+
+    // Pre-fix this line panicked: `JoinSet::spawn` in the four
+    // construction-time `Self::spawn_task` calls invoked
+    // `Handle::current()` and there was no current runtime.
+    let mat = Materializer::new(pool);
+
+    // Sanity: shutdown must still work synchronously from a
+    // non-runtime thread.
+    mat.shutdown();
+
+    // Keep the pool runtime alive until after the materializer is
+    // dropped; otherwise tasks bound to Tauri's async_runtime that
+    // hold pool references would race teardown.
+    drop(pool_runtime);
+}
+
+/// Same regression as above, but covers
+/// `Materializer::with_read_pool_and_lifecycle` — the constructor
+/// actually used in `lib.rs` setup. Even though both constructors
+/// dispatch to the same `Self::build`, pinning both protects against
+/// a future refactor that splits the builders without re-checking
+/// the no-runtime invariant.
+#[test]
+fn materializer_with_read_pool_and_lifecycle_does_not_panic_without_current_runtime() {
+    use tokio::runtime::Runtime;
+
+    let dir = TempDir::new().unwrap();
+    let db_path: PathBuf = dir.path().join("test.db");
+
+    let pool_runtime = Runtime::new().unwrap();
+    let pool = pool_runtime.block_on(async { init_pool(&db_path).await.unwrap() });
+    assert!(
+        tokio::runtime::Handle::try_current().is_err(),
+        "test precondition: thread must not be in a tokio runtime context",
+    );
+
+    let lifecycle = crate::lifecycle::LifecycleHooks::new();
+    let mat = Materializer::with_read_pool_and_lifecycle(pool.clone(), pool, lifecycle);
+
+    mat.shutdown();
+    drop(pool_runtime);
+}
+
 #[tokio::test]
 async fn metrics_bg() {
     let (pool, _dir) = test_pool().await;

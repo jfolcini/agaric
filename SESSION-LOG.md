@@ -1,5 +1,42 @@
 # Session Log
 
+## Session 556 — Hotfix: AppImage startup panic — M-12 follow-up (2026-04-29)
+
+**1 critical regression fixed in a single hotfix commit.** The freshly-built v0.1.16 AppImage panicked at startup with `there is no reactor running, must be called from the context of a Tokio 1.x runtime` at `materializer/coordinator.rs:399:15`. Discovered via user-driven smoke-test of the bundled AppImage (no automated test caught it because every test runs inside `#[tokio::test]` which provides a runtime context).
+
+**REVIEW-LATER impact:** None — this fix is a regression discovered post-merge, not a previously-tracked REVIEW-LATER item. Top-level open count + previously-resolved counter unchanged.
+
+**Root cause:** Commit `6a71c5b` (Session 550, "M-12 materializer shutdown via `JoinSet::abort_all`") replaced `tauri::async_runtime::spawn(future)` with `JoinSet::spawn(future)` inside `Materializer::spawn_task`. The commit's claim — *"Tauri 2's `async_runtime::spawn` already delegates to `tokio::spawn`, so `JoinSet::spawn` produces an equivalent task in both modes"* — was wrong: `tauri::async_runtime::spawn` dispatches via Tauri's stored runtime handle in `RUNTIME: OnceCell<GlobalRuntime>`, **not** via `Handle::current()`. Tauri 2's `setup` callback runs synchronously on the main thread *outside* any Tokio runtime, so the four `Self::spawn_task(...)` calls inside `Materializer::build()` panicked at boot.
+
+**Items fixed (1):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| Hotfix | `src-tauri/src/materializer/{coordinator,tests}.rs` — orchestrator (no build subagent; 1-line logic change after exact-line root-cause analysis) | **`Materializer::spawn_task` now binds tasks via `JoinSet::spawn_on(future, &handle)` with a two-tier handle resolution.** Pre-fix: `guard.spawn(future)` → calls `Handle::current()` → panics at production `setup`. Post-fix: `match Handle::try_current()` → if `Ok(handle)` use it (preserves `#[tokio::test]` runtime semantics; covers async command handlers + `refresh_block_count_cache` callers); if `Err(_)` fall back to `tauri::async_runtime::handle().inner()` (the production `setup` path). M-12 abort-on-shutdown semantics fully preserved — tasks remain tracked on the same `JoinSet`, `shutdown()` still calls `abort_all()`. Doc comment rewritten to explicitly call out the M-12 commit's incorrect equivalence claim and document the `try_current` → fallback dispatch logic. **2 new regression tests** in `materializer/tests.rs` — both plain `#[test]` (NOT `#[tokio::test]`): `materializer_new_does_not_panic_without_current_runtime` and `materializer_with_read_pool_and_lifecycle_does_not_panic_without_current_runtime` cover both public constructors. Each builds a `SqlitePool` inside a short-lived `Runtime::new().block_on(...)`, asserts `Handle::try_current().is_err()` afterwards (test invariant), then exercises the constructor from the bare-thread context — reproducing the exact production setup-callback shape that the test suite was previously blind to. |
+
+**Files touched (2 modified):**
+
+- `src-tauri/src/materializer/coordinator.rs` — `spawn_task` rewritten (lines 395–413) + doc comment updated (lines 376–394).
+- `src-tauri/src/materializer/tests.rs` — 2 new `#[test]` regression tests (lines 1128–1206).
+
+**Verification:**
+
+- New regression tests pass: `cargo test --release --lib 'materializer::tests::materializer_'` → 2 passed (both constructors covered).
+- Existing M-12 abort-on-shutdown test (`shutdown_aborts_in_flight_tasks_m12`) still passes — abort-on-shutdown semantics preserved.
+- `prek run --all-files` → all hooks PASS.
+- **AppImage rebuilt + smoke-tested live:** `cargo tauri build --bundles appimage` + `bash scripts/fix-appimage-icons.sh` → repacked 85 MB AppImage launches successfully. Boot log shows full pipeline executing: log-dir init → migrations → `app started v0.1.16` → TLS cert load → `recovery completed` → projected_agenda cache rebuild → `spaces bootstrap complete` (4 personal seed pages, 96 work-migrated pages) → SyncDaemon dormant start → page_id / pages / agenda / projected_agenda cache rebuilds → `app foregrounded` → window appearance → `app backgrounded` (user-triggered close).
+
+**Process notes:**
+
+- **Out-of-band hotfix** discovered during user smoke-test of a bundled production AppImage, not from a REVIEW-LATER batch. The full PROMPT.md workflow was followed for the COMMIT path (review subagent + prek + commit + log) but the BUILD path was a 1-line orchestrator-applied logic change, not a parallel-subagent batch — the work didn't justify the subagent spawn overhead.
+- **Why the test suite missed it:** All 3000+ Rust tests pass under `#[tokio::test]` which provides a runtime context, so `Handle::current()` always succeeded in tests but failed in production. The 2 new regression tests are explicitly plain `#[test]` (not `#[tokio::test]`) and assert `Handle::try_current().is_err()` as a precondition to prevent future maintainers from accidentally turning them into `#[tokio::test]` and silently re-introducing the test-blindness gap.
+- **Two-tier handle resolution rationale:** The first branch (`Handle::try_current() => Ok(handle)`) preserves the prior test behavior (tasks bound to the test's own runtime) so the existing `shutdown_aborts_in_flight_tasks_m12` test still observes its abort assertion within 1s. The second branch (fallback to Tauri's stored handle via `tauri::async_runtime::handle().inner()`) is what actually fixes the production `setup` panic. Both branches go through the same `JoinSet::spawn_on` so M-12's abort-on-shutdown contract is preserved unchanged.
+- **1 review subagent APPROVED with 2 nits** (`d91a8df7`) — both nits addressed before commit: (a) test docstring rewritten to explicitly mention both constructors share `Self::build`; (b) added second regression test for `with_read_pool_and_lifecycle` (the production constructor used in `lib.rs:601`). Reviewer separately verified all 5 `spawn_task` call sites are covered (4 in `build()` + 1 in `refresh_block_count_cache`), confirmed `tauri::async_runtime::handle()` is safe to call before `tauri::Builder::default().run()` (lazy `OnceLock::get_or_init`), confirmed `OnceLock` thread-safety eliminates any race between construction-time spawns and runtime initialization, and confirmed `SqlitePool` is runtime-agnostic (no cross-runtime concerns when tasks bound to Tauri's runtime use a pool created inside the test's `Runtime::new()`).
+- **No `cargo sqlx prepare`** needed — no SQL changes.
+- **No `cargo test -- specta_tests --ignored`** rerun needed — no public type changes.
+
+---
+
 ## Session 555 — Frontend MAINT refactors — close 2 items (MAINT-119, MAINT-122) (2026-04-29)
 
 **2 frontend MAINT items closed in one PROMPT.md batch with 2 parallel build subagents (out of 3 launched — MAINT-120 was canceled by the user before completion) + 1 review subagent.** Theme: continue clearing the frontend MAINT backlog with bounded refactors that extract reusable abstractions from duplicated patterns.
