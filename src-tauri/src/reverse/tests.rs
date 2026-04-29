@@ -1094,3 +1094,361 @@ async fn reverse_set_reserved_property_scheduled_date_with_prior() {
         other => panic!("Expected SetProperty, got {:?}", other),
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// I-Lifecycle-3 — oracle-parity round-trip tests for ops whose
+// existing reverse tests only assert the returned `OpPayload` variant
+// (e.g. `assert!(matches!(reverse, OpPayload::DeleteBlock(_) ...))`).
+//
+// Variant-only assertions cannot detect a regression that emits the
+// right enum variant with wrong field values, and they never exercise
+// the apply→reverse→apply round-trip against the materialized
+// database. The tests below mirror the structure of
+// `undo_chain_*_round_trip` (above), but extend it: they actually
+// apply both the original op and its computed reverse via the
+// `Materializer` and assert that the affected materialized rows
+// return to the pre-original snapshot. This is the contract the
+// variant-only tests miss.
+// ──────────────────────────────────────────────────────────────────────
+
+/// Snapshot of one row in the `blocks` table. Used by the
+/// `*_apply_then_reverse_round_trip_i_lifecycle_3` tests below to
+/// compare the post-reverse state against the pre-original state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BlockRow {
+    id: String,
+    block_type: String,
+    content: Option<String>,
+    parent_id: Option<String>,
+    position: Option<i64>,
+    deleted_at: Option<String>,
+}
+
+async fn snapshot_blocks(pool: &SqlitePool) -> Vec<BlockRow> {
+    use sqlx::Row;
+    sqlx::query(
+        "SELECT id, block_type, content, parent_id, position, deleted_at \
+         FROM blocks ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|r| BlockRow {
+        id: r.get::<String, _>("id"),
+        block_type: r.get::<String, _>("block_type"),
+        content: r.get::<Option<String>, _>("content"),
+        parent_id: r.get::<Option<String>, _>("parent_id"),
+        position: r.get::<Option<i64>, _>("position"),
+        deleted_at: r.get::<Option<String>, _>("deleted_at"),
+    })
+    .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BlockTagRow {
+    block_id: String,
+    tag_id: String,
+}
+
+async fn snapshot_block_tags(pool: &SqlitePool) -> Vec<BlockTagRow> {
+    use sqlx::Row;
+    sqlx::query("SELECT block_id, tag_id FROM block_tags ORDER BY block_id, tag_id")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| BlockTagRow {
+            block_id: r.get::<String, _>("block_id"),
+            tag_id: r.get::<String, _>("tag_id"),
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AttachmentRow {
+    id: String,
+    block_id: String,
+    filename: String,
+    fs_path: String,
+    mime_type: String,
+    size_bytes: i64,
+}
+
+async fn snapshot_attachments(pool: &SqlitePool) -> Vec<AttachmentRow> {
+    use sqlx::Row;
+    sqlx::query(
+        "SELECT id, block_id, filename, fs_path, mime_type, size_bytes \
+         FROM attachments ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|r| AttachmentRow {
+        id: r.get::<String, _>("id"),
+        block_id: r.get::<String, _>("block_id"),
+        filename: r.get::<String, _>("filename"),
+        fs_path: r.get::<String, _>("fs_path"),
+        mime_type: r.get::<String, _>("mime_type"),
+        size_bytes: r.get::<i64, _>("size_bytes"),
+    })
+    .collect()
+}
+
+/// I-Lifecycle-3 — strict round-trip parity for `create_block`.
+///
+/// The pre-existing `reverse_create_block_produces_delete_block` test
+/// only checks that `compute_reverse` returns the `DeleteBlock`
+/// variant for the same `block_id`. It does not verify that applying
+/// the reverse op restores the database to the pre-original state.
+/// This test extends the contract: snapshot `blocks` empty → apply
+/// `CreateBlock` → snapshot post-original → apply `compute_reverse(...)`
+/// → snapshot post-reverse → assert post-reverse equals the empty
+/// pre-state.
+///
+/// **CURRENTLY FAILS — known design divergence (not a code bug).**
+///
+/// `compute_reverse(create_block)` returns `DeleteBlock`, and the
+/// materializer's `delete_block` arm is a **soft-delete** (sets
+/// `deleted_at = record.created_at` rather than removing the row).
+/// After `CreateBlock` + `DeleteBlock` the block row persists in
+/// `blocks` with `deleted_at IS NOT NULL`, so strict equality with
+/// the pre-state (zero rows) cannot hold. A true identity round-trip
+/// would require `compute_reverse(create_block)` to emit `PurgeBlock`
+/// (hard delete), but `PurgeBlock` is intentionally `NonReversible`
+/// and the user-facing undo contract preserves the tombstone for
+/// op-log convergence (sync replays must observe a deterministic
+/// sequence; a hard delete would lose the create→delete history).
+///
+/// This is a documented design choice, not a regression to fix in
+/// I-Lifecycle-3 scope. `#[ignore]` mirrors the I-Search-5 pattern
+/// (see `tag_query/resolve/tests.rs`): the failing test is preserved
+/// so the divergence is greppable and self-documenting, and so the
+/// next maintainer revisiting undo semantics has a concrete oracle
+/// to test against.
+#[tokio::test]
+#[ignore = "I-Lifecycle-3: strict round-trip cannot hold for create_block — \
+    reverse is DeleteBlock (soft-delete) which leaves a tombstone in `blocks`; \
+    a true identity round-trip would require PurgeBlock which is intentionally NonReversible. \
+    Test preserved as an oracle for any future change to undo semantics."]
+async fn create_block_apply_then_reverse_round_trip_i_lifecycle_3() {
+    use crate::materializer::Materializer;
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let pre_state = snapshot_blocks(&pool).await;
+    assert!(pre_state.is_empty(), "pre-state must be empty");
+
+    let create_payload = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::test_id("BLK_RT_CB"),
+        block_type: "content".into(),
+        parent_id: None,
+        position: Some(1),
+        content: "round-trip create".into(),
+    });
+    let create_rec = append_op(&pool, create_payload, "2025-01-15T12:00:00Z").await;
+    mat.dispatch_op(&create_rec).await.unwrap();
+    mat.flush().await.unwrap();
+
+    let post_original = snapshot_blocks(&pool).await;
+    assert_eq!(post_original.len(), 1, "block must exist after CreateBlock");
+
+    let reverse = compute_reverse(&pool, TEST_DEVICE, create_rec.seq)
+        .await
+        .unwrap();
+    let reverse_rec = append_op(&pool, reverse, "2025-01-15T12:01:00Z").await;
+    mat.dispatch_op(&reverse_rec).await.unwrap();
+    mat.flush().await.unwrap();
+
+    let post_reverse = snapshot_blocks(&pool).await;
+    assert_eq!(
+        post_reverse, pre_state,
+        "post-reverse `blocks` must equal pre-original (empty); divergence: {post_reverse:?}"
+    );
+}
+
+/// I-Lifecycle-3 — strict round-trip parity for `add_tag`.
+///
+/// The pre-existing `reverse_add_tag_produces_remove_tag` test only
+/// checks that `compute_reverse` returns the `RemoveTag` variant
+/// with the same `(block_id, tag_id)`. This test extends the
+/// contract: pre-snapshot `block_tags` (no row) → apply `AddTag` →
+/// post-original (one row) → apply `compute_reverse(...)` =
+/// `RemoveTag` → post-reverse must equal pre-state (no row).
+#[tokio::test]
+async fn add_tag_apply_then_reverse_round_trip_i_lifecycle_3() {
+    use crate::materializer::Materializer;
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Seed the target and tag blocks so foreign keys in `block_tags`
+    // are satisfied. `apply_op(AddTag)` calls
+    // `tag_inheritance::propagate_tag_to_descendants`; with no
+    // children the only mutation is the `block_tags` row itself.
+    let block_id = BlockId::test_id("BLK_RT_AT");
+    let tag_id = BlockId::test_id("TAG_RT_AT");
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'b'), (?, 'tag', 't')",
+    )
+    .bind(block_id.as_str())
+    .bind(tag_id.as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let pre_state = snapshot_block_tags(&pool).await;
+    assert!(pre_state.is_empty(), "pre-state must have no tag links");
+
+    let add_payload = OpPayload::AddTag(AddTagPayload {
+        block_id: block_id.clone(),
+        tag_id: tag_id.clone(),
+    });
+    let add_rec = append_op(&pool, add_payload, "2025-01-15T12:00:00Z").await;
+    mat.dispatch_op(&add_rec).await.unwrap();
+    mat.flush().await.unwrap();
+
+    let post_original = snapshot_block_tags(&pool).await;
+    assert_eq!(
+        post_original.len(),
+        1,
+        "block_tags row must exist after AddTag"
+    );
+
+    let reverse = compute_reverse(&pool, TEST_DEVICE, add_rec.seq)
+        .await
+        .unwrap();
+    let reverse_rec = append_op(&pool, reverse, "2025-01-15T12:01:00Z").await;
+    mat.dispatch_op(&reverse_rec).await.unwrap();
+    mat.flush().await.unwrap();
+
+    let post_reverse = snapshot_block_tags(&pool).await;
+    assert_eq!(
+        post_reverse, pre_state,
+        "post-reverse `block_tags` must equal pre-original (empty); divergence: {post_reverse:?}"
+    );
+}
+
+/// I-Lifecycle-3 — strict round-trip parity for `remove_tag`.
+///
+/// The pre-existing `reverse_remove_tag_produces_add_tag` test only
+/// checks the returned variant. This test seeds an existing tag
+/// link, applies `RemoveTag`, then applies `compute_reverse(...)` =
+/// `AddTag`, and asserts the original `(block_id, tag_id)` row is
+/// restored verbatim.
+#[tokio::test]
+async fn remove_tag_apply_then_reverse_round_trip_i_lifecycle_3() {
+    use crate::materializer::Materializer;
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block_id = BlockId::test_id("BLK_RT_RT");
+    let tag_id = BlockId::test_id("TAG_RT_RT");
+    // Seed both blocks and the existing tag link so RemoveTag has
+    // something to delete.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'b'), (?, 'tag', 't')",
+    )
+    .bind(block_id.as_str())
+    .bind(tag_id.as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(block_id.as_str())
+        .bind(tag_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let pre_state = snapshot_block_tags(&pool).await;
+    assert_eq!(pre_state.len(), 1, "pre-state must have one tag link");
+
+    let remove_payload = OpPayload::RemoveTag(RemoveTagPayload {
+        block_id: block_id.clone(),
+        tag_id: tag_id.clone(),
+    });
+    let remove_rec = append_op(&pool, remove_payload, "2025-01-15T12:00:00Z").await;
+    mat.dispatch_op(&remove_rec).await.unwrap();
+    mat.flush().await.unwrap();
+
+    let post_original = snapshot_block_tags(&pool).await;
+    assert!(
+        post_original.is_empty(),
+        "block_tags row must be gone after RemoveTag"
+    );
+
+    let reverse = compute_reverse(&pool, TEST_DEVICE, remove_rec.seq)
+        .await
+        .unwrap();
+    let reverse_rec = append_op(&pool, reverse, "2025-01-15T12:01:00Z").await;
+    mat.dispatch_op(&reverse_rec).await.unwrap();
+    mat.flush().await.unwrap();
+
+    let post_reverse = snapshot_block_tags(&pool).await;
+    assert_eq!(
+        post_reverse, pre_state,
+        "post-reverse `block_tags` must equal pre-original; divergence: {post_reverse:?}"
+    );
+}
+
+/// I-Lifecycle-3 — strict round-trip parity for `add_attachment`.
+///
+/// The pre-existing `reverse_add_attachment_produces_delete_attachment`
+/// test only checks the returned variant. This test pre-snapshots
+/// `attachments` (empty), applies `AddAttachment`, snapshots the
+/// post-original (one row), then applies `compute_reverse(...)` =
+/// `DeleteAttachment` (a hard delete in
+/// `materializer::handlers::apply_op_tx`) and asserts the
+/// `attachments` table returns to empty.
+#[tokio::test]
+async fn add_attachment_apply_then_reverse_round_trip_i_lifecycle_3() {
+    use crate::materializer::Materializer;
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Seed the host block so the FK from `attachments.block_id` is
+    // satisfied when `apply_op(AddAttachment)` inserts the row.
+    let host_block = BlockId::test_id("BLK_RT_AA");
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'host')")
+        .bind(host_block.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let pre_state = snapshot_attachments(&pool).await;
+    assert!(pre_state.is_empty(), "pre-state must have no attachments");
+
+    let attachment_id = BlockId::test_id("ATT_RT_AA");
+    let add_payload = OpPayload::AddAttachment(AddAttachmentPayload {
+        attachment_id: attachment_id.clone(),
+        block_id: host_block.clone(),
+        mime_type: "image/png".into(),
+        filename: "rt.png".into(),
+        size_bytes: 4096,
+        fs_path: "attachments/rt.png".into(),
+    });
+    let add_rec = append_op(&pool, add_payload, "2025-01-15T12:00:00Z").await;
+    mat.dispatch_op(&add_rec).await.unwrap();
+    mat.flush().await.unwrap();
+
+    let post_original = snapshot_attachments(&pool).await;
+    assert_eq!(
+        post_original.len(),
+        1,
+        "attachments row must exist after AddAttachment"
+    );
+
+    let reverse = compute_reverse(&pool, TEST_DEVICE, add_rec.seq)
+        .await
+        .unwrap();
+    let reverse_rec = append_op(&pool, reverse, "2025-01-15T12:01:00Z").await;
+    mat.dispatch_op(&reverse_rec).await.unwrap();
+    mat.flush().await.unwrap();
+
+    let post_reverse = snapshot_attachments(&pool).await;
+    assert_eq!(
+        post_reverse, pre_state,
+        "post-reverse `attachments` must equal pre-original (empty); divergence: {post_reverse:?}"
+    );
+}

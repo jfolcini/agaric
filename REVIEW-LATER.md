@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 746+ items across 507 sessions (per SESSION-LOG.md unique session count; latest is session 540).
+Previously resolved: 751+ items across 508 sessions (per SESSION-LOG.md unique session count; latest is session 541).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -2025,7 +2025,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F25
 - **Status:** Open
 
-## INFO / nits (22 — expanded)
+## INFO / nits (17 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2091,20 +2091,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Wrap the variants' owned data in `Arc` (e.g. `ApplyOp(Arc<OpRecord>)`, `BatchApplyOps(Arc<Vec<OpRecord>>)`, `block_id: Arc<str>`) so all clones are cheap. Touches every dispatch site but is largely mechanical and pairs naturally with the M-10 fix.
 - **Pass-1 source:** 02/F23
-- **Status:** Open
-
-### Cache
-
-### I-Cache-6 — `space_filter_clause!` SQL inlined at four sites without an oracle
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/pagination/mod.rs:54-84` (FEAT-3 Phase 2 comment block); referenced from `src-tauri/src/pagination/hierarchy.rs` and `src-tauri/src/pagination/trash.rs`; macro itself in `crate::space_filter_clause!`
-- **What:** Several comments reference `crate::space_filter_clause!` as the canonical source, with the contract that any change to the SQL fragment must be mirrored across `list_children`, `list_by_type`, `list_trash`, and `fts::search_fts`. The macro is out of scope for this review (lives at crate root). The doc honestly notes "`sqlx::query_as!` requires a string literal and does not accept `concat!()`, so the fragment is inlined at each compile-time-checked callsite." With the SQL inlined at four sites, drift is a real maintenance risk.
-- **Why it matters:** When FEAT-3 Phase 4 expands the filter to agenda/tag/backlink paths (per the REVIEW-LATER FEAT-3 note in `commands/blocks/queries.rs`), each new callsite has to copy the SQL exactly.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Out of scope here (touches `crate::space_filter_clause!`), but worth flagging to the next reviewer touching `fts.rs` or the agenda paths. An SQL-level oracle test asserting each callsite matches a single `const FRAGMENT: &str = "…"` would help.
-- **Pass-1 source:** 03/F24
 - **Status:** Open
 
 ### Commands CRUD
@@ -2231,45 +2217,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 07/F36
 - **Status:** Open
 
-### I-Search-19 — `Cursor` rank/position/deleted_at/seq fields are part of encoded payload — schema-leak in cursor format
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/backlink/query.rs:182-191`, `src-tauri/src/fts/search.rs:392-403` and other encode sites
-- **What:** The `Cursor` struct (defined in `pagination::cursor` outside this scope) bundles fields for multiple use cases (rank, position, seq, deleted_at, id). Different callers fill different subsets and emit them all in the encoded payload. There is no documented version field, so a future schema change likely invalidates persisted cursors.
-- **Why it matters:** Tight coupling between every caller in this scope and the cursor schema; adding a new sort dimension is a cross-cutting change.
-- **Cost:** S (defer)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Defer to the pagination/cursor file review; flagged here to record the coupling. If a versioning fix lands, every Search & Links encode site will need updating.
-- **Pass-1 source:** 07/F45
-- **Status:** Open
-
-### Lifecycle
-
-### I-Lifecycle-3 — Test gap: no oracle parity for `compute_reverse(create_block)` and similar
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/reverse/tests.rs:25-37` and similar variant-only tests at lines 254-403
-- **What:** `reverse_create_block_produces_delete_block` only checks the returned payload variant (`assert!(matches!(reverse, OpPayload::DeleteBlock(_) if p.block_id == "BLK1"))`). It does not check that applying the reverse op + the original op leaves the database in the original (empty) state. Same gap for `reverse_add_tag`, `reverse_remove_tag`, `reverse_add_attachment`.
-- **Why it matters:** A reverse op that emits the wrong payload variant is caught; a reverse op that emits the right variant with the wrong field values is not.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Mirror the structure of `undo_chain_edit_round_trip` (line ~512) for every reversible op type: apply the original op → snapshot a "before" hash of the affected DB rows → apply the reverse → assert "before" matches.
-- **Pass-1 source:** 08/F36
-- **Status:** Open
-
 ### MCP
-
-### I-MCP-1 — `serve_pipe` shutdown bug (Windows-symmetric to the unix accept loop)
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/server.rs:670-701` (`serve_pipe`, in particular the unbounded `loop { server.connect().await?; ... }` body at lines 687-700).
-- **What:** Symmetric to the `serve_unix` accept loop: `serve_pipe` is `loop { server.connect().await?; ... server = ServerOptions::new().create(pipe_path)?; }` with no `select!` on a shutdown signal. Returns only on a `connect`-time I/O error — never on graceful disable.
-- **Why it matters:** Same root cause as the accept-loop disable bug; Windows-only manifestation. The "kill switch" toggle on Windows is just as ineffective until process restart as it is on unix.
-- **Cost:** S — handled by the same shutdown-signal fix that addresses the unix accept loop.
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** When wiring the accept-loop shutdown signal, `select!` on it in `serve_pipe` too; on shutdown drop the current `NamedPipeServer` and return `Ok(())`.
-- **Pass-1 source:** 09/F19
-- **Status:** Open
 
 ### I-MCP-4 — ARCHITECTURE.md does not mention MCP at all
 - **Domain:** MCP
@@ -2293,20 +2241,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Add `cargo build --bin agaric-mcp` as a CI step before nextest, and either remove the `#[ignore]` tag or replace it with a `#[cfg(feature = "ci-smoke")]` gate that CI enables. Keep the manual-run path documented for local dev.
 - **Pass-1 source:** 09/F29
-- **Status:** Open
-
-### GCal / Spaces
-
-### I-GCalSpaces-3 — `bootstrap_spaces` does not validate `device_id` shape
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/spaces/bootstrap.rs:39, 117-122`
-- **What:** `device_id: &str` is passed straight through to `op_log::append_local_op_in_tx`. The op_log is keyed by `(device_id, seq)` — a malformed or empty `device_id` corrupts the chain. There is no shape check (length, character set). All other op-emission paths share the same property; this is just the first new caller after the spaces feature shipped.
-- **Why it matters:** Defensive coding around the op-log primary key. Bootstrap is boot-fatal so a corrupt `device_id` is obvious immediately; no active bug.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** No-op unless a single shared `device_id` validator emerges. If one does (e.g. matching `^[0-9A-Z]{26}$` for ULID-shaped ids, or whatever spec is canonical), call it from `bootstrap_spaces` and from the other op-emission entry points.
-- **Pass-1 source:** 10/F28
 - **Status:** Open
 
 ---
