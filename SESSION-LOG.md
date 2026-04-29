@@ -1,5 +1,45 @@
 # Session Log
 
+## Session 540 — Backend INFO Cursor refactor + stale-entry cleanup — close 6 items (I-Search-11, I-Cache-4, I-Cache-5, I-Search-7, I-Search-13, I-GCalSpaces-2) (2026-04-28)
+
+**6 backend INFO/nits REVIEW-LATER items closed in one PROMPT.md batch with 1 build subagent + 5 orchestrator-direct stale-entry removals.** Theme: cursor constructor consolidation (I-Search-11) + 5 removals of items whose underlying dependencies have already resolved or that were always informational/wontfix.
+
+**REVIEW-LATER impact:**
+
+- **INFO / nits:** 28 → 22 (6 items resolved).
+- **Top-level open count (FEAT/MAINT/PERF/PUB/UX tracker):** 41 → 41.
+- **Previously-resolved counter:** 740+ → 746+ across 507 sessions (latest session 540).
+
+**Items closed (6):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| I-Search-11 | Pagination + Search + FTS + tag_query (`pagination/mod.rs:296-304,366-375` + 5 call sites) — Subagent e2fc6339 | **Add `Cursor::for_id_and_rank` constructor + collapse 5 inline `Cursor { id, position: None, deleted_at: None, seq: None, rank: ... }` literals to constructor calls.** Pre-state: `Cursor::for_id(id)` already existed; what was missing was a `for_id_and_rank` variant for the FTS site that sets `rank: Some(...)`. New `pub(super) fn for_id_and_rank(id: String, rank: f64)` mirrors the existing `pub(super)` constructor style. 5 call sites collapsed: 4 to `Cursor::for_id(...)` (`backlink/query.rs:200`, `backlink/grouped.rs:261` + `:575`, `tag_query/query.rs:78`) and 1 to `Cursor::for_id_and_rank(...)` (`fts/search.rs:438`). Adding a future cursor field now requires touching ONE place (the constructor) instead of 5. Pure refactor — zero behavioural change. 430/430 pagination + backlink + fts + tag_query tests PASS. Existing `Cursor` literals in `commands/pages.rs:566` (already uses `for_id_and_position`) and test fixtures intentionally left untouched. |
+| I-Cache-4 | Cache — orchestrator-direct (removal) | **Remove from REVIEW-LATER as informational only.** The recommendation explicitly said *"No action — informational only."* The entry was a Pass-2 verification note that the pagination module deliberately omits `total_count` (per AGENTS.md Backend Pattern #4 carve-out for non-post-filter queries). Verified: none of the 8 paginated functions return a count. ARCHITECTURE.md confirms the convention. The note served no actionable purpose post-verification. Pattern matches sessions 538/539's similar "no-action" closures. |
+| I-Cache-5 | Cache (`pagination/agenda.rs`) — orchestrator-direct (removal) | **Remove from REVIEW-LATER as already resolved.** The recommendation said *"After fixing H-1 (select `ac.date` directly into the row type), this nested fn becomes unnecessary and can be removed."* Verified: `extract_date_for_cursor` no longer exists in `pagination/agenda.rs` — the only remaining mention is a comment in `pagination/tests.rs:2146` ("the 'wrong' date that the old extract_date_for_cursor would pick"). H-1 has been resolved in a prior session and the nested fn was cleaned up alongside. The tracker entry was stale. |
+| I-Search-7 | Search & Links — orchestrator-direct (removal) | **Remove from REVIEW-LATER as resolved-by-dependency.** The recommendation said *"Resolved by I-Search-2 — once short-token filtering lands in `sanitize_fts_query`, this branch is correct by construction."* Verified: I-Search-2 is no longer in REVIEW-LATER (closed in a prior batch). The "dead arm" in OR queries is therefore correct by construction; the tracker entry's wait-state is no longer applicable. |
+| I-Search-13 | Search & Links — orchestrator-direct (removal) | **Remove from REVIEW-LATER as resolved-by-dependency.** The recommendation said *"Addressed by M-62. No standalone fix needed."* Verified: M-62 is no longer in REVIEW-LATER (closed in a prior batch). The cursor-stability concern in `eval_unlinked_references` is therefore resolved. |
+| I-GCalSpaces-2 | GCal — orchestrator-direct (removal) | **Remove from REVIEW-LATER as F3 fix landed + materializer hook verified.** The recommendation said *"Once the F3 fix lands (`Clock::today` switches to `chrono::Local::now().date_naive()`), confirm the materializer hook calls `compute_dirty_event(record, prior, chrono::Local::now().date_naive())` and not `Utc::now().date_naive()` directly."* Verified: F3 has been fixed (`Clock::today()` reads `Local::now().date_naive()` at `gcal_push/connector.rs:230`); both materializer hook sites use Local: `materializer/coordinator.rs:300` (`let today = chrono::Local::now().date_naive();`) and `materializer/handlers.rs:144` (same). The hook-site verification is complete. |
+
+**Files touched (this session's batch — 5 modified):**
+
+- Backend Pagination + Search + FTS (5): `src-tauri/src/pagination/mod.rs`, `src-tauri/src/backlink/query.rs`, `src-tauri/src/backlink/grouped.rs`, `src-tauri/src/tag_query/query.rs`, `src-tauri/src/fts/search.rs` (I-Search-11)
+- Docs (2): `REVIEW-LATER.md` (6 items removed; INFO count 28 → 22; previously-resolved counter bumped), `SESSION-LOG.md` (this entry)
+
+**Verification:** `prek run --all-files` → all hooks PASS. Targeted runs:
+
+- I-Search-11: 430/430 pagination + backlink + fts + tag_query tests PASS; `cargo check --tests` clean.
+- I-Cache-4 + I-Cache-5 + I-Search-7 + I-Search-13 + I-GCalSpaces-2: doc-only removals, no test (verified via grep that the underlying conditions / dependencies have all resolved).
+
+**Process notes:**
+
+- **Sweep of stale entries was the right move.** This session's batch is dominated by removals (5 of 6) — all because the prerequisites those entries waited on (I-Search-2, M-62, H-1, F3) have already been resolved in prior batches without anyone going back to clean up the dependent INFO entries. Pattern: every few sessions, sweep the INFO section for entries whose recommendations include "once X lands" / "addressed by Y" / "resolved by Z", verify the dependency is gone, and close the dependent. This is cheap (no code change) but keeps REVIEW-LATER focused on actionable work.
+- **I-Search-11 was the only "real fix" in this batch.** The constructor refactor collapses 5 inline literals to constructor calls; the remaining `Cursor` literals (in `commands/pages.rs` and test fixtures) intentionally stay because they exercise specific cursor shapes that need explicit field setting. Adding a future cursor field now requires touching one place (the constructor) instead of fanning out to every encode site.
+- **F3 fix verification was the most rigorous of the removals.** I-GCalSpaces-2 explicitly required confirming the materializer hook uses `Local::now()` not `Utc::now()`. Verified at two sites (`coordinator.rs:300`, `handlers.rs:144`). The "verify-then-remove" pattern is more rigorous than the "X is gone, so Y must be done" inference; worth using for any GCal/Spaces follow-up entry.
+- **The "5 removals + 1 fix" ratio is unusual but valid.** Most batches have 3-4 fixes and 1-2 removals. This session inverted the ratio because a critical mass of stale entries had accumulated waiting on dependencies that have since landed. Future batches should rebalance back toward more fixes, but the cleanup pass was overdue.
+
+---
+
 ## Session 539 — Backend INFO CRUD/Search/MCP/GCal cleanup batch — close 7 items (I-CommandsCRUD-11, I-Search-10, I-Search-15, I-Search-18, I-MCP-2, I-GCalSpaces-4, I-GCalSpaces-DocNits) (2026-04-28)
 
 **7 backend INFO/nits REVIEW-LATER items closed in one PROMPT.md batch with 1 parallel build subagent + 5 orchestrator-direct edits/removals.** Theme: small Commands-CRUD error-path tightening + Search documentation/test gaps + MCP namespace ownership clarification + GCal docclarity gap + 2 cleanup removals. The I-Search-18 test surfaced no new bugs (the upstream H-10 binary_search_by-on-desc was already fixed in production).

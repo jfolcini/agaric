@@ -435,16 +435,7 @@ pub async fn search_fts(
 
     let next_cursor = if has_more {
         let (cursor_id, cursor_rank) = cursor_data.unwrap();
-        Some(
-            Cursor {
-                id: cursor_id,
-                position: None,
-                deleted_at: None,
-                seq: None,
-                rank: Some(cursor_rank),
-            }
-            .encode()?,
-        )
+        Some(Cursor::for_id_and_rank(cursor_id, cursor_rank).encode()?)
     } else {
         None
     };
