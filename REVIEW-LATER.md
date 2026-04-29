@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-38 open items — 38 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 9 backend Medium findings closed across sessions 549-550 (M-16, M-18, M-67, M-91 in 549; M-12, M-27, M-37, M-70, M-92 in 550).**
+38 open items — 38 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 14 backend Medium findings closed across sessions 549-551 (M-16, M-18, M-67, M-91 in 549; M-12, M-27, M-37, M-70, M-92 in 550; M-6 stale, M-26, M-71, M-84, M-94 in 551).**
 
-Previously resolved: 781+ items across 517 sessions (per SESSION-LOG.md unique session count; latest is session 550).
+Previously resolved: 786+ items across 518 sessions (per SESSION-LOG.md unique session count; latest is session 551).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1381,10 +1381,10 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Dropped (hallucinated / out-of-scope / duplicate / wontfix-intentional) | 12 |
 | Severity-downgraded by Pass 2 | 49 |
 | Already-tracked in REVIEW-LATER (PERF-19, PERF-20, PERF-23) | 3 |
-| Net findings in this report | 324 |
+| Net findings in this report | 319 |
 | **Critical** | **1** |
 | **High** | **4** |
-| **Medium** | **19** |
+| **Medium** | **14** |
 | **Low** | **124** |
 | **Info / nits** | **125** |
 
@@ -1397,16 +1397,16 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 | Domain | Crit | High | Med | Low | Info |
 |---|---|---|---|---|---|
-| Core data layer | 0 | 1 | 4 | 9 | 11 |
+| Core data layer | 0 | 1 | 3 | 9 | 11 |
 | Materializer | 1 | 2 | 4 | 8 | 4 |
 | Cache + Pagination | 0 | 0 | 4 | 12 | 6 |
-| Commands (CRUD) | 0 | 1 | 5 | 9 | 13 |
+| Commands (CRUD) | 0 | 1 | 4 | 9 | 13 |
 | Commands (System) | 0 | 2 | 9 | 13 | 6 |
 | Sync stack | 0 | 3 | 10 | 25 | 5 |
 | Search & Links | 0 | 2 | 4 | 16 | 19 |
-| Lifecycle / Snapshots | 0 | 0 | 15 | 16 | 8 |
-| MCP | 0 | 0 | 6 | 12 | 8 |
-| GCal / Spaces / Drafts | 0 | 0 | 7 | 11 | 9 |
+| Lifecycle / Snapshots | 0 | 0 | 14 | 16 | 8 |
+| MCP | 0 | 0 | 5 | 12 | 8 |
+| GCal / Spaces / Drafts | 0 | 0 | 6 | 11 | 9 |
 
 (Numbers approximate; some findings span domains and are listed under the primary one.)
 
@@ -1503,18 +1503,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 01/F4
 - **Status:** Open
 
-### M-6 — `cleanup_orphaned_attachments` is a no-op TODO that ships in production
-- **Domain:** Core
-- **Location:** `src-tauri/src/materializer/handlers.rs:520-524` (handler), `:571` (dispatch wiring)
-- **What:** The handler returns `Ok(())` after a single `tracing::debug!` and an explicit `let _ = pool;`. The `MaterializeTask::CleanupOrphanedAttachments` variant is wired through dispatch and tested as if it works. With `delete_block`/purge already operational and attachment file transfer running through the sync daemon, attachment files in the on-disk store are never reclaimed.
-- **Why it matters:** On a long-lived install, deleted/purged blocks free DB rows but the underlying attachment files accumulate indefinitely, silently filling the user's disk. There is no GC path elsewhere for orphaned attachment files.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Implement the handler against the existing `attachments` table: enumerate the attachments root directory, `SELECT id, fs_path FROM attachments WHERE deleted_at IS NULL`, and unlink files with no live DB row. At minimum, escalate the placeholder log from `debug!` to `warn!` so the deferred-work signal is visible. Implementation stays within existing schema + task type.
-- **Pass-1 source:** 02/F12
-- **Status:** Open
-
 ### Materializer
 
 
@@ -1556,18 +1544,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** Change the return type to `PageResponse<ProjectedAgendaEntry>` keyed on `(projected_date, block_id)` from `projected_agenda_cache`, and keep the current cap only as a degenerate first-run behaviour for the on-the-fly fallback.
 - **Pass-1 source:** 04/F9
-- **Status:** Open
-
-### M-26 — `delete_property_def_inner` orphans `block_properties` rows for the deleted key
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/properties.rs:520-537`
-- **What:** Deleting a property definition leaves every `block_properties` row whose `key` matches in place. Since `def_meta` is then `None` in `set_property_in_tx` (`crud.rs:1144-1149`), subsequent writes silently skip the type/options validation block — i.e. deleting a definition relaxes validation on every prior row using that key.
-- **Why it matters:** Properties are the documented primary extension point (AGENTS.md "Architectural Stability"); the doc-comment promises "Returns error if the key doesn't exist" but the code "deletes the registry row and orphans the data". Recreating the same key with a different `value_type` later mismatches existing data.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** Inside a single tx, `SELECT EXISTS(...)` for `block_properties` rows on this key and reject the delete unless the caller passes a `force` flag (or cascade-clears those rows). Add tests for both directions.
-- **Pass-1 source:** 04/F12
 - **Status:** Open
 
 ### Commands (System)
@@ -1637,18 +1613,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 ### Lifecycle / Snapshots / Merge / Recurrence
 
 
-### M-71 — `compute_reverse(restore_block)` translates back to bare delete_block
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/reverse/block_ops.rs:78-83`
-- **What:** Reverse-of-restore is `DeleteBlockPayload { block_id }`; the original `RestoreBlockPayload`'s `deleted_at_ref` is discarded. A subsequent `cascade_soft_delete` mints a fresh `deleted_at` timestamp, breaking the original cascade-group identity. Undo→redo→undo→redo is therefore asymmetric on the timestamp group used by the Trash UI.
-- **Why it matters:** Trash view groups by `deleted_at` string (ARCHITECTURE.md §2 "Cascade delete and Trash"); inverse-op generation should preserve groupability if it can. The user-visible effect is timestamp groups in Trash being lost across undo cycles.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** Either accept the asymmetry and document it in the reverse-op module docs and the Trash UI spec, or carry the original `deleted_at_ref` through a new payload field — the latter requires user approval per Architectural Stability (op-payload extension). Pinning the current behaviour with a regression test is the minimum.
-- **Pass-1 source:** 08/F12
-- **Status:** Open
-
 ### M-81 — `cascade_soft_delete` ignores conflict copies — orphaned
 - **Domain:** Lifecycle
 - **Location:** `src-tauri/src/soft_delete/trash.rs:46-55`
@@ -1700,18 +1664,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Add a migration `block_id REFERENCES blocks(id) ON DELETE CASCADE`. **Requires user approval** under AGENTS.md §"Architectural Stability" (new schema constraint on a shipped table). Pair with H-12's existence check so flush also short-circuits on missing/soft-deleted blocks. Document the cascade interaction with soft-deletes (drafts survive soft-delete, are wiped on hard-delete/purge).
 - **Pass-1 source:** 10/F18
-- **Status:** Open
-
-### M-94 — JWT `id_token` signature is not verified before extracting the email claim
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/gcal_push/oauth.rs:619-647`
-- **What:** `extract_email_from_id_token` base64-decodes the JWT payload and reads `email` without verifying the RS256 signature against Google's JWKS. The doc explicitly accepts this on the grounds that the token came over TLS direct from Google's token endpoint and the email is "display-only".
-- **Why it matters:** Per the user's threat-model carve-out, gcal_push is internet-facing — so OAuth token handling is in scope. The email is persisted to `gcal_settings.oauth_account_email` and shown in Settings; an unverified claim could mislead the user about which Google account is connected. In practice spoofing requires compromising the TLS channel (no realistic attacker today), but the posture is fragile if the token ever flows through a non-direct channel (proxy, Android browser handoff, FEAT-5g).
-- **Cost:** M (JWKS fetch + cache + RSA verify; e.g. `jsonwebtoken` crate)
-- **Risk:** Medium
-- **Impact:** Low
-- **Recommendation:** Either (a) implement full JWKS-based verification (cache JWKS, verify RS256, accept on `iss == https://accounts.google.com`, fail closed) **or** (b) keep the current behaviour and tighten the docstring + tracing to mark the email as `unverified_email` everywhere it surfaces. Option (a) is the right answer once FEAT-5g (Android) lands; (b) is acceptable while desktop-only.
-- **Pass-1 source:** 10/F19
 - **Status:** Open
 
 ### M-95 — `recover_calendar_gone` does not also clear `oauth_account_email`
@@ -1822,18 +1774,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Leave as-is per Pass 2's "leave-as-is" finding; the warn log is sufficient diagnostic. If a clean fix is desired, add a `spawning: AtomicBool` on `McpLifecycle` and gate the spawn with `compare_exchange`.
 - **Pass-1 source:** 09/F11
-- **Status:** Open
-
-### M-84 — `journal_for_date` is exposed on the RO server but writes to op_log
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/tools_ro.rs:182-208` (module doc), `src-tauri/src/mcp/tools_ro.rs:212-224` (9-tool list), `src-tauri/src/mcp/tools_ro.rs:245-263` (ACTOR scope), `src-tauri/src/mcp/tools_ro.rs:550-564` (handler); REVIEW-LATER.md FEAT-4 line 199 (lists `journal_for_date` as RO).
-- **What:** `ReadOnlyTools` carries a `device_id` and a writer-capable `Materializer` solely so `journal_for_date` can call `create_block_inner` for missing dates. The resulting op lands in `op_log` with `origin = "agent:<name>"`. The user toggling on the **read-only** marker therefore implicitly grants "agent can append a `create_block` for a journal page", and the user-facing copy in Settings does not surface this.
-- **Why it matters:** Even in the local-only model, the Settings tab labels this as a read-only surface; an agent calling `journal_for_date` for an unseen date adds an entry to the recent-activity feed that the user did not consent to in mental-model terms. Pass 2 downgraded the severity (no security impact), but the wording drift is real.
-- **Cost:** S (docs/UI label) — L (split tool requires user approval per AGENTS.md "Architectural Stability")
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Update the Settings tooltip and the FEAT-4 doc to say "RO tools may create a journal page on first read-of-the-day"; do not split the tool without explicit user approval since changing the MCP tool surface is a public API change.
-- **Pass-1 source:** 09/F4
 - **Status:** Open
 
 ### GCal / Spaces / Drafts

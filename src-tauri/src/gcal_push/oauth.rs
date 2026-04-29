@@ -441,9 +441,12 @@ impl OAuthClient {
 
     /// Complete the Authorization Code flow: trade `code` + PKCE
     /// verifier (recovered by `state`) for a [`Token`] pair.  On
-    /// success, the ID token's `email` claim (if present) is returned
-    /// alongside the token so the caller can persist it to
-    /// `gcal_settings.oauth_account_email`.
+    /// success, the ID token's **unverified** `email` claim (if
+    /// present) is returned alongside the token so the caller can
+    /// persist it to `gcal_settings.oauth_account_email` for display
+    /// in the Settings tab.  See [`extract_email_from_id_token`] for
+    /// the M-94 trust posture — the email is display-only and MUST
+    /// NOT be used for authorization decisions.
     ///
     /// # Errors
     /// * [`AppError::Validation`] keyed `oauth.invalid_state` — the
@@ -490,8 +493,8 @@ impl OAuthClient {
             refresh,
             expires_at: access_part.expires_at,
         };
-        let email = extract_email_from_response(&response);
-        Ok((token, email))
+        let unverified_email = extract_unverified_email_from_response(&response);
+        Ok((token, unverified_email))
     }
 
     /// Use the refresh token to obtain a new access token.  Google
@@ -649,11 +652,20 @@ where
 /// the Settings tab.  The token itself is NOT written to the DB — it
 /// belongs in the OS keychain only.
 ///
+/// The `unverified_email` argument is the **unverified** ID-token
+/// claim returned by [`extract_email_from_id_token`] — see that
+/// helper for the M-94 trust posture.  This setting is purely for
+/// user-visible display; do NOT route it into authorization or
+/// account-binding code paths.
+///
 /// # Errors
 /// [`AppError::Database`] / [`AppError::NotFound`] forwarded from the
 /// underlying [`models::set_setting`] call.
-pub async fn persist_oauth_account_email(pool: &SqlitePool, email: &str) -> Result<(), AppError> {
-    models::set_setting(pool, GcalSettingKey::OauthAccountEmail, email).await
+pub async fn persist_oauth_account_email(
+    pool: &SqlitePool,
+    unverified_email: &str,
+) -> Result<(), AppError> {
+    models::set_setting(pool, GcalSettingKey::OauthAccountEmail, unverified_email).await
 }
 
 // ---------------------------------------------------------------------------
@@ -709,23 +721,51 @@ fn token_from_response(
     Ok((AccessPart { access, expires_at }, refresh))
 }
 
-/// Pull the `email` claim out of an ID token carried in the
-/// [`GoogleExtraFields`] struct, if one was returned.
-///
-/// We intentionally do NOT verify the JWT signature here — the token
-/// was obtained over TLS directly from Google's token endpoint, so
-/// this is a trusted channel per FEAT-5 parent § "Threat Model".
-/// Adding full JWT verification would pull in a ~100-dep crate for
-/// what amounts to a display-only value.
-fn extract_email_from_response(response: &GoogleTokenResponse) -> Option<String> {
+/// Pull the unverified `email` claim out of an ID token carried in
+/// the [`GoogleExtraFields`] struct, if one was returned.  See
+/// [`extract_email_from_id_token`] for the trust posture and the
+/// M-94 reference — the value is display-only and MUST NOT be used
+/// for authorization decisions.
+fn extract_unverified_email_from_response(response: &GoogleTokenResponse) -> Option<String> {
     let id_token = response.extra_fields().id_token.as_deref()?;
     extract_email_from_id_token(id_token)
 }
 
-/// Decode the `email` claim from a JWT without verifying its
-/// signature.  Returns `None` on any parse failure (malformed JWT,
-/// missing `email` claim, etc.) — the caller treats the email as
-/// optional display metadata anyway.
+/// Decode the `email` claim from a Google ID token **without
+/// verifying its RS256 signature**.
+///
+/// # Trust model (M-94)
+///
+/// We rely entirely on transport-level trust: the token reached us
+/// via a TLS-pinned HTTP exchange against Google's token endpoint
+/// (`oauth2.googleapis.com/token`), which we initiated ourselves.
+/// We do **not** fetch Google's JWKS, do **not** validate the `iss`
+/// claim, and do **not** check the signature.  The implicit trust
+/// chain is therefore: TLS to Google → Google's token endpoint
+/// returned this JWT.  Anything stronger (signature verification,
+/// issuer pinning, audience binding) is deliberately out of scope
+/// here.
+///
+/// # Caller contract
+///
+/// The returned email is **unverified** and intended for **display
+/// only** (Settings tab "Connected as …" label, persisted to
+/// `gcal_settings.oauth_account_email`).  Callers MUST NOT use the
+/// returned value for authorization, account-binding, deduplication,
+/// or any other security-relevant decision — a malicious or
+/// misconfigured token could lie about which Google account is
+/// connected and we would have no way to detect it.
+///
+/// If a future feature needs an authoritative email (e.g. FEAT-5g
+/// Android, where the threat surface broadens), upgrade this helper
+/// to perform full JWKS-based RS256 verification (cache JWKS,
+/// validate `iss == "https://accounts.google.com"`, validate `aud`
+/// against our client ID, fail closed on signature mismatch).  M-94
+/// option (a) — currently deferred.
+///
+/// Returns `None` on any parse failure (malformed JWT, missing
+/// `email` claim, etc.) — the caller treats the unverified email as
+/// optional metadata anyway.
 pub(crate) fn extract_email_from_id_token(id_token: &str) -> Option<String> {
     let mut parts = id_token.split('.');
     let _header = parts.next()?;
@@ -1135,7 +1175,7 @@ mod tests {
     // ── exchange_code ──────────────────────────────────────────────
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn exchange_code_happy_path_returns_token_and_email_and_persists_it() {
+    async fn exchange_code_happy_path_returns_token_and_unverified_email_and_persists_it() {
         let mock = MockServer::start().await;
         let client = build_client(&mock).await;
         let authorize = client.begin_authorize().unwrap();
@@ -1156,18 +1196,18 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let (token, email) = client
+        let (token, unverified_email) = client
             .exchange_code("the-code".to_owned(), authorize.state)
             .await
             .unwrap();
 
         assert_eq!(token.access.expose_secret(), "ya29.access-abc");
         assert_eq!(token.refresh.expose_secret(), "1//refresh-xyz");
-        assert_eq!(email.as_deref(), Some("user@example.com"));
+        assert_eq!(unverified_email.as_deref(), Some("user@example.com"));
 
         // Persist to DB (FEAT-5a helper).
         let (pool, _dir) = test_pool().await;
-        persist_oauth_account_email(&pool, email.as_deref().unwrap())
+        persist_oauth_account_email(&pool, unverified_email.as_deref().unwrap())
             .await
             .unwrap();
         let stored = models::get_setting(&pool, GcalSettingKey::OauthAccountEmail)

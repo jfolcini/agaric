@@ -698,7 +698,31 @@ pub async fn update_property_def_options_inner(
 }
 
 /// Delete a property definition by key.
-/// Returns error if the key doesn't exist.
+///
+/// Returns error if the key doesn't exist, is a built-in, or is still
+/// referenced by `block_properties` rows.
+///
+/// # M-26 — reject when dependent rows exist
+///
+/// The previous behaviour deleted the `property_definitions` row
+/// unconditionally, which orphaned any `block_properties` rows that
+/// referenced the same key: `def_meta` then became `None` in
+/// `set_property_in_tx`, the type/options validation block was skipped
+/// silently, and re-creating the same key with a different `value_type`
+/// later mismatched the existing data.
+///
+/// Cascading the delete is not an option — `block_properties` rows are
+/// produced by SetProperty ops and the op log is strictly append-only,
+/// so removing them outside the op-log path would violate that
+/// invariant. Instead we reject the delete with [`AppError::Validation`]
+/// and surface the count plus a suggested clean-up path so the user
+/// knows exactly which key to clear before retrying.
+///
+/// The EXISTS / COUNT check and the DELETE both run inside a single
+/// `BEGIN IMMEDIATE` transaction so a concurrent `set_property` cannot
+/// race in between the count and the DELETE and create a fresh
+/// `block_properties` row that the caller never saw in the rejection
+/// message.
 #[instrument(skip(pool), err)]
 pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result<(), AppError> {
     if crate::op::is_builtin_property_key(&key) {
@@ -707,15 +731,34 @@ pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result
         ));
     }
 
+    // M-26: open a BEGIN IMMEDIATE tx so the dependent-row check and
+    // the DELETE are TOCTOU-safe. Dropping the tx without commit (early
+    // returns below) rolls it back automatically.
+    let mut tx = crate::db::begin_immediate_logged(pool, "delete_property_def").await?;
+
+    let dependent_count: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM block_properties WHERE key = ?", key,)
+            .fetch_one(&mut *tx)
+            .await?;
+
+    if dependent_count > 0 {
+        return Err(AppError::Validation(format!(
+            "cannot delete property definition '{key}': {dependent_count} block_properties \
+             row(s) reference this key. Clear them first via set_property(value=None) on each \
+             affected block."
+        )));
+    }
+
     let result = sqlx::query("DELETE FROM property_definitions WHERE key = ?")
         .bind(&key)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("property definition '{key}'")));
     }
 
+    tx.commit().await?;
     Ok(())
 }
 

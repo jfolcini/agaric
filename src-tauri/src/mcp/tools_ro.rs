@@ -18,7 +18,7 @@
 //! | `list_tags` | [`list_tags_inner`](crate::commands::list_tags_inner) | All tags; thin wrapper over `list_tags_by_prefix_inner("")`. |
 //! | `list_property_defs` | [`list_property_defs_inner`](crate::commands::list_property_defs_inner) | Typed property schema. |
 //! | `get_agenda` | [`list_projected_agenda_inner`](crate::commands::list_projected_agenda_inner) | Date-range agenda projection. |
-//! | `journal_for_date` | [`journal_for_date_inner`](crate::commands::journal_for_date_inner) | Idempotent date → page lookup. |
+//! | `journal_for_date` | [`journal_for_date_inner`](crate::commands::journal_for_date_inner) | Idempotent date → page lookup. **M-84 carve-out:** on first read-of-the-day this RO tool emits a single `CreateBlock` op (origin `agent:<name>`) for the missing journal page; see the M-82/M-84 commentary on [`ReadOnlyTools`] below. |
 //!
 //! # Actor scoping
 //!
@@ -210,6 +210,19 @@ struct JournalForDateArgs {
 /// **both** pools: `pool` (reader) is used by the eight pure-read tools
 /// and the lookup branch of `journal_for_date`, while `writer_pool` is
 /// used by `journal_for_date` whenever it has to insert a new page.
+///
+/// M-84: because of the M-82 carve-out, **enabling the read-only MCP
+/// server implicitly grants the agent permission to append a single
+/// `CreateBlock` op to `op_log` (origin `agent:<name>`) on the first
+/// read-of-the-day for any space**. The op is reversible (ordinary
+/// `page` block via `create_block_inner`) and shows up in the agent
+/// activity feed like any other agent-authored write, but it is **not**
+/// a pure read. The Settings "Read-only access" tooltip
+/// (`agentAccess.roToggleDescription` in `src/lib/i18n.ts`) and the
+/// FEAT-4 entry in `REVIEW-LATER.md` surface this carve-out to the
+/// user. Splitting `journal_for_date` into RO+RW halves was rejected as
+/// a public API change requiring explicit user approval — the
+/// docs-only fix preserves the v1 tool surface.
 pub struct ReadOnlyTools {
     pool: SqlitePool,
     /// Writer pool from `DbPools::write` — used exclusively by
@@ -641,6 +654,19 @@ async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppE
     to_tool_result(&resp)
 }
 
+/// Handle the `journal_for_date` MCP tool call.
+///
+/// **M-84 — RO tool with a write side-effect.** Despite living on the
+/// read-only [`ReadOnlyTools`] registry, this handler may emit a single
+/// `CreateBlock` op (origin `agent:<name>`) when the requested date
+/// has no existing journal page in the given space. The op lands in
+/// `op_log` via [`journal_for_date_inner`] → `create_block_inner` and
+/// is reversible from the agent activity feed like any other
+/// agent-authored write. The first call for a given (space, date)
+/// pair therefore mutates state; subsequent calls for the same pair
+/// are pure lookups (idempotent per-space). See the M-82/M-84 block
+/// on [`ReadOnlyTools`] for the rationale and for why this is wired
+/// to the writer pool instead of the reader pool.
 async fn handle_journal_for_date(
     pool: &SqlitePool,
     materializer: &Materializer,

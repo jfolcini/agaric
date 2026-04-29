@@ -75,6 +75,28 @@ pub async fn reverse_move_block(
     }))
 }
 
+// M-71: Reverse-of-restore is a bare `DeleteBlock(block_id)`. The
+// original `RestoreBlockPayload::deleted_at_ref` is intentionally
+// discarded — we do *not* propagate it into the reverse op.
+//
+// Trade-off: when the reverse is applied, `cascade_soft_delete` mints
+// a fresh `deleted_at` timestamp. That new timestamp will not match
+// the original cascade group's timestamp, so the Trash UI's
+// timestamp-based grouping does not reproduce the original
+// cascade-group identity across an undo→redo→undo→redo cycle. The
+// asymmetry is observable in the Trash UI grouping but does not
+// corrupt structural state — every block still has a coherent
+// `deleted_at` and is restorable.
+//
+// Carrying `deleted_at_ref` through the reverse would require
+// extending `DeleteBlockPayload` with a new optional field, which is
+// an op_log payload (wire-format) extension and out of scope under
+// AGENTS.md "Architectural Stability" — op payload extensions
+// require explicit user approval. The pinning test
+// `compute_reverse_restore_discards_deleted_at_ref_m71` in
+// `reverse/tests.rs` makes this asymmetry loud rather than silent;
+// flipping that assertion is the signal that the trade-off has been
+// renegotiated.
 pub fn reverse_restore_block(record: &OpRecord) -> Result<OpPayload, AppError> {
     let payload: RestoreBlockPayload = serde_json::from_str(&record.payload)?;
     Ok(OpPayload::DeleteBlock(DeleteBlockPayload {
