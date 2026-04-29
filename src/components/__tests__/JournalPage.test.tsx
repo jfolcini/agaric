@@ -129,6 +129,7 @@ vi.mock('../journal/MonthlyDayCell', () => ({
   },
 }))
 
+import { __resetCalendarPageDatesForTests } from '../../hooks/useCalendarPageDates'
 import { useBlockStore } from '../../stores/blocks'
 import { useJournalStore } from '../../stores/journal'
 import { useNavigationStore } from '../../stores/navigation'
@@ -165,6 +166,7 @@ if (!HTMLElement.prototype.scrollIntoView) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  __resetCalendarPageDatesForTests()
   filterChangeRef.current = null
   useBlockStore.setState({
     focusedBlockId: null,
@@ -639,6 +641,30 @@ describe('JournalPage', () => {
         'aria-selected',
         'false',
       )
+    })
+  })
+
+  // ── MAINT-119: page-list fetch dedupe ────────────────────────────────
+
+  describe('page-list fetch dedupe (MAINT-119)', () => {
+    it('issues exactly ONE list_blocks page-fetch when JournalPage + JournalControls mount together', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const pageFetchCalls = mockedInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === 'list_blocks' &&
+          (args as { blockType?: string; limit?: number })?.blockType === 'page' &&
+          (args as { blockType?: string; limit?: number })?.limit === 500,
+      )
+      // Pre-MAINT-119 this was 2 (one in JournalPage, one in JournalControls).
+      // After consolidation it must be exactly 1.
+      expect(pageFetchCalls).toHaveLength(1)
     })
   })
 

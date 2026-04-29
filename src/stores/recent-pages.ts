@@ -17,6 +17,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { createSpaceSubscriber } from '../lib/createSpaceSubscriber'
 import { useSpaceStore } from './space'
 
 export interface PageRef {
@@ -131,17 +132,17 @@ export const useRecentPagesStore = create<RecentPagesState>()(
  * with the per-space slice whenever the user switches space (mirrors the
  * navigation store's space-switch flush). Without this, switching from
  * space-A to space-B would leak A's MRU list into the active view.
+ *
+ * MAINT-122: subscription mechanics + diff detection live in
+ * `createSpaceSubscriber`; this site only owns the recent-pages flush /
+ * pull logic. On first fire (`prevKey === newKey`) we seed
+ * `recentPagesBySpace[newKey]` from the rehydrated flat list if it's
+ * missing, so a returning user migrated from version 0 retains their MRU
+ * under the active space.
  */
-// `prevSpaceKey` is initialised lazily on the first subscriber fire to
-// avoid the same module-load / persist-rehydration race documented in
-// `navigation.ts`. On first fire we seed `recentPagesBySpace[newKey]`
-// from the rehydrated flat list if it's missing, so a returning user
-// migrated from version 0 retains their MRU under the active space.
-let prevSpaceKey: string | undefined
-useSpaceStore.subscribe((state) => {
-  const newKey = state.currentSpaceId ?? LEGACY_SPACE_KEY
-  if (prevSpaceKey === undefined) {
-    const recentState = useRecentPagesStore.getState()
+createSpaceSubscriber((prevKey, newKey) => {
+  const recentState = useRecentPagesStore.getState()
+  if (prevKey === newKey) {
     if (recentState.recentPagesBySpace[newKey] === undefined) {
       useRecentPagesStore.setState({
         recentPagesBySpace: {
@@ -150,19 +151,15 @@ useSpaceStore.subscribe((state) => {
         },
       })
     }
-    prevSpaceKey = newKey
     return
   }
-  if (newKey === prevSpaceKey) return
-  const recentState = useRecentPagesStore.getState()
   const flushedBySpace = {
     ...recentState.recentPagesBySpace,
-    [prevSpaceKey]: recentState.recentPages,
+    [prevKey]: recentState.recentPages,
   }
   const next = recentState.recentPagesBySpace[newKey] ?? []
   useRecentPagesStore.setState({
     recentPages: next,
     recentPagesBySpace: flushedBySpace,
   })
-  prevSpaceKey = newKey
 })

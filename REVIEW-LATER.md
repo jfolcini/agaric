@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-35 open items — 35 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 17 backend Medium findings closed + 3 MAINT closed across sessions 549-554 (M-16, M-18, M-67, M-91 in 549; M-12, M-27, M-37, M-70, M-92 in 550; M-6 stale, M-26, M-71, M-84, M-94 in 551; M-17 partial tags+pages, M-28, MAINT-123 in 552; M-17 final projected_agenda+page_id, MAINT-114 spike-keep in 553; MAINT-137 in 554).**
+33 open items — 33 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 17 backend Medium findings closed + 5 MAINT closed across sessions 549-555 (M-16, M-18, M-67, M-91 in 549; M-12, M-27, M-37, M-70, M-92 in 550; M-6 stale, M-26, M-71, M-84, M-94 in 551; M-17 partial tags+pages, M-28, MAINT-123 in 552; M-17 final projected_agenda+page_id, MAINT-114 spike-keep in 553; MAINT-137 in 554; MAINT-119, MAINT-122 in 555).**
 
-Previously resolved: 793+ items across 521 sessions (per SESSION-LOG.md unique session count; latest is session 554).
+Previously resolved: 795+ items across 522 sessions (per SESSION-LOG.md unique session count; latest is session 555).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -37,9 +37,7 @@ Previously resolved: 793+ items across 521 sessions (per SESSION-LOG.md unique s
 | MAINT-113 | MAINT | `ConflictFreeBlockId` newtype to lift invariant #9 (`is_conflict = 0` + `depth < 100` in every recursive CTE over `blocks`) into the type system — 220 `is_conflict = 0` SQL occurrences across 70 files. LOW-priority refactor for elegance, not correctness; the convention + review + documented invariant are already working. Do NOT do on a deadline. | L |
 | MAINT-116 | MAINT | `useBlockSlashCommands.applyContentEdit` at `src/hooks/useBlockSlashCommands.ts:131-145` bypasses `pageStore.edit()` and omits `notifyUndoNewAction`, so heading / callout / numbered-list / divider slash commands silently leave the redo stack uncleared. Fix as part of adding a `setBlockProperty` action to `src/stores/page-blocks.ts` — also collapses 8 per-hook `pageStore.setState(...)` + rollback + `useUndoStore.getState().onNewAction(rootParentId)` copies across `useBlockProperties`, `useBlockSlashCommands`, `useBlockDatePicker`, `useCheckboxSyntax`. | S+M |
 | MAINT-118 | MAINT | Block-surface prop drilling — `BlockListRenderer` / `SortableBlockWrapper` / `SortableBlock` carry 33 / 32 / 32 props each with **14 verbatim-shared callbacks** (`onNavigate` … `onSelect`) + **4 verbatim-shared resolvers**. Deliver via `PageBlockContext`-style provider + 3 hooks (`useBlockActions`, `useBlockResolvers`, `useBlockState`). Kills the memoisation lost to callback identity churn and unblocks every "add a new block action" ticket. | M |
-| MAINT-119 | MAINT | Decompose `src/components/JournalPage.tsx` (728L) — extract `GlobalDateControls` / `JournalControls` to sibling files (currently inlined), extract `useCalendarPageDates()` hook that eliminates a **byte-identical** `listBlocks({blockType:'page',limit:500})` fetch at L356-369 ≡ L490-503 (runs twice on mount today), and extract `useJournalBlockCreation()` for the page-create + template-load + block-insert flow. Target ≤300 lines. | M |
 | MAINT-120 | MAINT | `useIpcCommand<T>(command, options?)` hook to collapse the status-load + optimistic-update + revert + `logger.error` + `toast.error` pattern repeated verbatim across `GoogleCalendarSettingsTab`, `AgentAccessSettingsTab`, `DeviceManagement`, `BugReportDialog`, `PairingDialog`. Returns `{ execute, loading, error }`. | M |
-| MAINT-122 | MAINT | Extract `createSpaceSubscriber(onChange)` helper + `useTauriEventListener(eventName, handler)` hook — the per-space-switch subscriber is duplicated nearly verbatim across `src/stores/navigation.ts:509-549` (41L) ≡ `journal.ts:187-256` (70L) ≡ `recent-pages.ts:140-168` (29L) (same `let prevSpaceKey` + `newKey = state.currentSpaceId ?? LEGACY_SPACE_KEY` + first-fire-seeds-on-undefined pattern). Tauri `listen()` + cleanup boilerplate also duplicated across `useSyncEvents` (×3 `.then/.catch` chains), `useDeepLinkRouter.ts:141-156` (file-local helper), `useBlockPropertyEvents.ts:40-60` (4th shape). | M |
 | MAINT-124 | MAINT | Collapse `src/App.tsx` (1436L) — 20+ effects for independent concerns, keyboard shortcut logic scattered across 5 separate effects (journal / global / space / tab / close-overlays), sidebar tree inlined at L1159-1394 (236L). Extract `useAppKeyboardShortcuts()` (5 effects → 1), `useAppDialogs()`, `<ViewDispatcher>`, `<AppShell>` (sidebar header / menu / footer + main content). Same commit fixes the silent `.catch(() => {})` triplet at `App.tsx:935-939` (`w.unminimize`, `w.show`, `w.setFocus` — outer `try/catch` does not trap because each `.catch` resolves the rejected promise to `undefined`) and standardizes 4 different async styles used in the file. Target ≤500 lines. | L |
 | MAINT-125 | MAINT | `src/lib/tauri.ts` (1276L) hand-writes `invoke('<str>', ...)` wrappers for commands already typed by `src/lib/bindings.ts` (873L, auto-generated by Tauri Specta). Every new backend command is added in two places; renames drift silently. Stage migration in batches of ~10 wrappers that delegate to typed `commands.*` from `bindings.ts`, keeping the public surface stable. Pairs with MAINT-123 (typed `HANDLERS`) for end-to-end compile-time mock-drift detection. | L |
 | MAINT-126 | MAINT | Split `src/lib/i18n.ts` (2351L single `en` resource, 800+ keys) by namespace (`common.ts`, `agenda.ts`, `editor.ts`, `settings.ts`, …). Do NOT add unused locales — `lng: 'en'` and `fallbackLng: 'en'` stay. Purely a readability / merge-conflict reduction. | M |
@@ -766,21 +764,6 @@ Consumers read via `useBlockActions()` / `useBlockResolvers()` hooks. The wrappi
 **Risk:** Medium — re-render behaviour may shift; run BlockTree + SortableBlock tests with fake-timer traces.
 **Impact:** M — the single most-felt cost on every block-surface ticket; also unblocks adding new block actions without drilling 3 layers.
 
-### MAINT-119 — Decompose `src/components/JournalPage.tsx` (728L)
-
-**What:** `JournalPage.tsx` inlines two large sub-components (`GlobalDateControls`, `JournalControls`) that can't be tested independently; includes page-create + template-load + block-insert logic at L170-270; and contains a **byte-identical duplicate fetch** at L356-369 ≡ L490-503 (both sub-components fetch the same calendar page-dates set on mount, so the IPC fires twice).
-
-**Fix:**
-
-1. Extract `src/components/journal/GlobalDateControls.tsx` (~120L) and `src/components/journal/JournalControls.tsx` (~120L).
-2. Extract `src/hooks/useCalendarPageDates.ts` that wraps `listBlocks({ blockType: 'page', limit: 500 })` + the YYYY-MM-DD parse + highlightedDays memo, used by both sub-components.
-3. Extract `src/hooks/useJournalBlockCreation.ts` covering `handleAddBlock` (page-create, template-load, block-insert, undo-notify).
-4. Target JournalPage ≤300 lines (~300 shed).
-
-**Cost:** M.
-**Risk:** Low — refactor-only.
-**Impact:** M — shrinks the third-largest component AND halves calendar-fetch IPC on journal mount.
-
 ### MAINT-120 — `useIpcCommand<T>` hook for settings/dialog components
 
 **What:** Five components (`GoogleCalendarSettingsTab`, `AgentAccessSettingsTab`, `DeviceManagement`, `BugReportDialog`, `PairingDialog`) each carry their own copy of the "status-load + optimistic-update + revert + logger.error + toast.error" IPC pattern:
@@ -821,49 +804,6 @@ Migrate the 5 components to consume it. Pairs naturally with MAINT-115 (`reportI
 **Cost:** M (hook ~50 LOC; migration per-file).
 **Risk:** Low.
 **Impact:** M — removes the single biggest source of component-level boilerplate in the settings area.
-
-### MAINT-122 — `createSpaceSubscriber()` helper + `useTauriEventListener()` hook
-
-**What:** Two related duplications in the store / hook layers:
-
-**(a) Per-space-switch subscriber — 3 stores, ~140 LOC of near-identical code:**
-
-| File | Range | LOC | Pattern |
-|---|---|---|---|
-| `src/stores/navigation.ts` | L509-549 | 41 | `let prevSpaceKey; useSpaceStore.subscribe(...); newKey = state.currentSpaceId ?? LEGACY_SPACE_KEY; first-fire seeds on undefined` |
-| `src/stores/journal.ts` | L187-256 | 70 | same shape |
-| `src/stores/recent-pages.ts` | L140-168 | 29 | same shape |
-
-**(b) Tauri `listen()` + cleanup boilerplate — 3+ hook variants:**
-
-| File | Shape |
-|---|---|
-| `src/hooks/useSyncEvents.ts` | three `.then((unlisten) => { if (cancelled) unlisten(); else cleanups.push(unlisten) }).catch(...)` chains |
-| `src/hooks/useDeepLinkRouter.ts:141-156` | file-local `attachListener(eventName, handler)` factor |
-| `src/hooks/useBlockPropertyEvents.ts:40-60` | 4th shape with `unlistenPromise.then(fn => fn?.())` in cleanup |
-
-The `useDeepLinkRouter` file-local factor is a tell that the extraction should live at the hooks layer.
-
-**Fix:**
-
-```ts
-// src/stores/create-space-subscriber.ts
-export function createSpaceSubscriber(
-  storeKey: string,
-  onChange: (newSpaceKey: string, prevSpaceKey: string | undefined) => void,
-): Unsubscribe
-
-// src/hooks/useTauriEventListener.ts
-export function useTauriEventListener<T>(
-  eventName: string,
-  handler: (payload: T) => void,
-  deps?: React.DependencyList,
-): void
-```
-
-**Cost:** M — 2 helpers + 3+4 call sites.
-**Risk:** Low — pure refactor, existing tests for each store's subscriber should keep passing.
-**Impact:** M — removes ~140 LOC of verbatim duplication and makes adding a 4th space-scoped store / a 5th Tauri event listener a 1-line call.
 
 ### MAINT-124 — Collapse `src/App.tsx` (1436L) god component
 

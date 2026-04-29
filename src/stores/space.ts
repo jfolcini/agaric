@@ -32,6 +32,15 @@ const LOG_MODULE = 'stores/space'
  */
 export const DEFAULT_ACCENT_TOKEN = 'accent-blue'
 
+/**
+ * Reserved key for the no-active-space slot in per-space partition maps
+ * (`tabsBySpace`, `recentPagesBySpace`, `currentDateBySpace`, …). Used
+ * by `createSpaceSubscriber` and the per-space stores when
+ * `currentSpaceId` is `null` (pre-bootstrap, or migrated v0 data that
+ * predates spaces).
+ */
+export const LEGACY_SPACE_KEY = '__legacy__'
+
 interface SpaceState {
   /** ULID of the active space, or `null` until the first refresh completes. */
   currentSpaceId: string | null

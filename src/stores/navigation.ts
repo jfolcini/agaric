@@ -18,6 +18,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { createSpaceSubscriber } from '../lib/createSpaceSubscriber'
 import { isDateFormattedPage } from '../lib/date-utils'
 import { parseDate } from '../lib/parse-date'
 import { useJournalStore } from './journal'
@@ -496,21 +497,18 @@ export function resetTabIdCounter(): void {
  * This keeps reads (`selectTabsForSpace`, `selectPageStack`, every consumer
  * that reads the flat field) consistent with whichever space the user is
  * currently on, without forcing every consumer to thread the space id.
+ *
+ * MAINT-122: subscription mechanics + diff detection live in
+ * `createSpaceSubscriber`; this site only owns the navigation-specific
+ * flush / pull logic. On first fire (`prevKey === newKey`) we seed
+ * `tabsBySpace[newKey]` from the rehydrated flat tabs if it's missing,
+ * so a returning user who migrated from version 0 (where their tabs only
+ * exist under the `__legacy__` key) keeps their tabs accessible from the
+ * active space.
  */
-// `prevSpaceKey` is initialised lazily on the first subscriber fire so we
-// don't sample `useSpaceStore.getState().currentSpaceId` at module-load
-// time (which races with Zustand's async persist rehydration — the space
-// store may rehydrate AFTER the navigation store and would otherwise
-// trigger a spurious flush of the just-rehydrated flat tabs into the
-// `__legacy__` slice).  On first fire we also seed `tabsBySpace[newKey]`
-// from the rehydrated flat tabs if it's missing, so a returning user who
-// migrated from version 0 (where their tabs only exist under the
-// `__legacy__` key) keeps their tabs accessible from the active space.
-let prevSpaceKey: string | undefined
-useSpaceStore.subscribe((state) => {
-  const newKey = state.currentSpaceId ?? LEGACY_SPACE_KEY
-  if (prevSpaceKey === undefined) {
-    const navState = useNavigationStore.getState()
+createSpaceSubscriber((prevKey, newKey) => {
+  const navState = useNavigationStore.getState()
+  if (prevKey === newKey) {
     if (navState.tabsBySpace[newKey] === undefined) {
       useNavigationStore.setState({
         tabsBySpace: {
@@ -523,18 +521,15 @@ useSpaceStore.subscribe((state) => {
         },
       })
     }
-    prevSpaceKey = newKey
     return
   }
-  if (newKey === prevSpaceKey) return
-  const navState = useNavigationStore.getState()
   const flushedTabsBySpace = {
     ...navState.tabsBySpace,
-    [prevSpaceKey]: navState.tabs,
+    [prevKey]: navState.tabs,
   }
   const flushedIndexBySpace = {
     ...navState.activeTabIndexBySpace,
-    [prevSpaceKey]: navState.activeTabIndex,
+    [prevKey]: navState.activeTabIndex,
   }
   const newTabs = navState.tabsBySpace[newKey] ?? emptyTabList()
   const newIndex = navState.activeTabIndexBySpace[newKey] ?? 0
@@ -545,5 +540,4 @@ useSpaceStore.subscribe((state) => {
     activeTabIndexBySpace: flushedIndexBySpace,
     selectedBlockId: null,
   })
-  prevSpaceKey = newKey
 })

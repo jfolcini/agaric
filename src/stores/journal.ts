@@ -21,6 +21,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { createSpaceSubscriber } from '../lib/createSpaceSubscriber'
 import { useSpaceStore } from './space'
 
 export type JournalMode = 'daily' | 'weekly' | 'monthly' | 'agenda'
@@ -175,24 +176,18 @@ export const useJournalStore = create<JournalStore>()(
 //      `daily` (and seed both slices so the user lands somewhere
 //      stable).
 //
-// `prevSpaceKey` is initialised lazily on the first subscriber fire so we
-// don't sample `useSpaceStore.getState().currentSpaceId` at module-load
-// time (which races with Zustand's async persist rehydration — the space
-// store may rehydrate AFTER the journal store and would otherwise
-// trigger a spurious flush of the just-rehydrated flat fields into the
-// `__legacy__` slice). On first fire we also pull the active-space
-// slice into the flat fields so a returning user lands on the same
-// date + mode they last had in their active space, even though the
-// flat fields were not persisted.
-let prevSpaceKey: string | undefined
-
-useSpaceStore.subscribe((state) => {
-  const newKey = state.currentSpaceId ?? LEGACY_SPACE_KEY
-  if (prevSpaceKey === undefined) {
+// MAINT-122: subscription mechanics + diff detection live in
+// `createSpaceSubscriber`; this site only owns the journal-specific
+// flush / pull logic. On first fire (`prevKey === newKey`) we pull the
+// active-space slice into the flat fields so a returning user lands on
+// the same date + mode they last had in their active space, even
+// though the flat fields were not persisted.
+createSpaceSubscriber((prevKey, newKey) => {
+  const journal = useJournalStore.getState()
+  if (prevKey === newKey) {
     // First fire after boot — pull the active-space slice into the flat
     // fields if it exists. If not, leave the defaults (today + daily)
     // and seed the slice so the next space switch can flush cleanly.
-    const journal = useJournalStore.getState()
     const persistedDate = journal.currentDateBySpace[newKey]
     const persistedMode = journal.modeBySpace[newKey]
     const newDate = persistedDate
@@ -211,21 +206,17 @@ useSpaceStore.subscribe((state) => {
         [newKey]: newMode,
       },
     })
-    prevSpaceKey = newKey
     return
   }
-  if (newKey === prevSpaceKey) return
-
-  const journal = useJournalStore.getState()
 
   // 1. Flush outgoing.
   const flushedDateBySpace = {
     ...journal.currentDateBySpace,
-    [prevSpaceKey]: dateToISO(journal.currentDate),
+    [prevKey]: dateToISO(journal.currentDate),
   }
   const flushedModeBySpace = {
     ...journal.modeBySpace,
-    [prevSpaceKey]: journal.mode,
+    [prevKey]: journal.mode,
   }
 
   // 2. Pull incoming, defaulting to today + daily.
@@ -252,5 +243,4 @@ useSpaceStore.subscribe((state) => {
     scrollToDate: null,
     scrollToPanel: null,
   })
-  prevSpaceKey = newKey
 })
