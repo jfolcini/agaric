@@ -82,6 +82,16 @@ pub enum GcalSettingKey {
     PushLeaseExpiresAt,
     /// Email address of the connected Google account (display only —
     /// the access/refresh tokens live in the OS keychain, not here).
+    ///
+    /// **M-94:** the value stored here is the **unverified** `email`
+    /// claim decoded from Google's ID token by
+    /// [`crate::gcal_push::oauth::extract_email_from_id_token`].  Its
+    /// signature is NOT checked against Google's JWKS — we trust the
+    /// TLS channel to the token endpoint and nothing more.  Read this
+    /// setting only for user-visible display (Settings tab "Connected
+    /// as …" label, bug-report scrubbing); never use it as an
+    /// authoritative identity for authorization or account-binding
+    /// decisions.
     OauthAccountEmail,
 }
 

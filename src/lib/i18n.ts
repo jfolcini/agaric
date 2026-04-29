@@ -2241,7 +2241,7 @@ const resources = {
       'agentAccess.loadFailed': 'Failed to load MCP status',
       'agentAccess.roToggleLabel': 'Read-only access',
       'agentAccess.roToggleDescription':
-        'Expose read tools (search, get_page, list_backlinks, …) on a local socket.',
+        'Expose read tools (search, get_page, list_backlinks, …) on a local socket. Note: RO tools may create today\u2019s journal page on first read-of-the-day; the resulting op is reversible from the activity feed.',
       'agentAccess.toggleOnSuccess': 'Read-only agent access enabled',
       'agentAccess.toggleOffSuccess': 'Read-only agent access disabled',
       'agentAccess.toggleFailed': 'Failed to toggle agent access',

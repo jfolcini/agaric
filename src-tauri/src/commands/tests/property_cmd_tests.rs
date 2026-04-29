@@ -3894,6 +3894,187 @@ async fn delete_property_def_preserves_user_facing_errors_through_sanitize() {
     );
 }
 
+// ─── M-26: delete_property_def must not orphan block_properties rows ─────────
+//
+// `delete_property_def_inner` previously DELETEd the `property_definitions`
+// row unconditionally, leaving any `block_properties` rows that referenced
+// the same key as orphans: `set_property_in_tx` would then see `def_meta =
+// None`, skip type/options validation, and accept arbitrary values for the
+// key on subsequent writes. Re-creating the same key with a different
+// `value_type` later mismatched the existing data.
+//
+// The fix rejects the delete with `AppError::Validation` whenever any
+// `block_properties` row references the key. Cascading the delete would
+// violate the append-only op-log invariant (the rows were created via
+// SetProperty ops and can't be removed outside the op-log path), and
+// changing the public signature with a `force` flag would require explicit
+// approval. The tests below pin the new behaviour.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn m26_delete_property_def_happy_path_removes_row_when_no_dependents() {
+    // No `block_properties` rows reference the key → the delete should
+    // succeed and the `property_definitions` row should be gone.
+    let (pool, _dir) = test_pool().await;
+
+    create_property_def_inner(&pool, "scratch".into(), "text".into(), None)
+        .await
+        .unwrap();
+
+    delete_property_def_inner(&pool, "scratch".into())
+        .await
+        .expect("delete must succeed when no block_properties reference the key");
+
+    let still_present: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM property_definitions WHERE key = ?")
+            .bind("scratch")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        still_present, 0,
+        "property_definitions row must be gone after a successful delete"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn m26_delete_property_def_rejects_when_block_properties_reference_key() {
+    // Definition exists AND a block_properties row references the key →
+    // the delete must reject with Validation, the property_definitions row
+    // must still be present (no partial delete), and the dependent row
+    // must be untouched.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    create_property_def_inner(&pool, "importance".into(), "text".into(), None)
+        .await
+        .unwrap();
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "m26 dependent block".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "importance".into(),
+        Some("high".into()),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let result = delete_property_def_inner(&pool, "importance".into()).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "delete must return Validation when block_properties reference the key, got: {result:?}"
+    );
+
+    // No partial delete — the property_definitions row must still be there.
+    let def_present: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM property_definitions WHERE key = ?")
+            .bind("importance")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        def_present, 1,
+        "property_definitions row must survive a rejected delete (no partial delete)"
+    );
+
+    // The dependent block_properties row must also still be there.
+    let dep_present: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = ?")
+            .bind(&block.id)
+            .bind("importance")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        dep_present, 1,
+        "block_properties row must be untouched by a rejected delete"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn m26_delete_property_def_rejection_message_includes_key_and_count() {
+    // The rejection must name the offending key (so the user knows which
+    // property to clear) and surface the dependent-row count (so the user
+    // knows how much clean-up is involved).
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    create_property_def_inner(&pool, "importance".into(), "text".into(), None)
+        .await
+        .unwrap();
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "m26 message block".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "importance".into(),
+        Some("high".into()),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let result = delete_property_def_inner(&pool, "importance".into()).await;
+    match result {
+        Err(AppError::Validation(msg)) => {
+            assert!(
+                msg.contains("importance"),
+                "rejection message must name the offending key, got: {msg:?}"
+            );
+            assert!(
+                msg.contains('1'),
+                "rejection message must surface the dependent-row count, got: {msg:?}"
+            );
+            assert!(
+                msg.contains("set_property"),
+                "rejection message must point users at the clean-up path, got: {msg:?}"
+            );
+        }
+        other => panic!("expected Validation rejection, got: {other:?}"),
+    }
+
+    mat.shutdown();
+}
+
 // ─── BUG-20: Select/enum property value validation against options ───
 //
 // Previously the backend only validated property *types*, not whether

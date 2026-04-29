@@ -1452,3 +1452,88 @@ async fn add_attachment_apply_then_reverse_round_trip_i_lifecycle_3() {
         "post-reverse `attachments` must equal pre-original (empty); divergence: {post_reverse:?}"
     );
 }
+
+/// M-71 pinning test: `compute_reverse(restore_block)` discards the
+/// original `RestoreBlockPayload::deleted_at_ref` and produces a bare
+/// `DeleteBlock(block_id)`. A subsequent `cascade_soft_delete`
+/// therefore mints a fresh `deleted_at` distinct from the original
+/// cascade group's timestamp.
+///
+/// This pins the current behaviour described in the doc comment on
+/// `reverse_restore_block` in `reverse/block_ops.rs`. If a future
+/// contributor extends the op payload to carry `deleted_at_ref`
+/// through the reverse (with explicit user approval per
+/// Architectural Stability), the `assert_ne!` below will need to flip
+/// to `assert_eq!`, and the doc comment must be updated in lockstep.
+#[tokio::test]
+async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
+    let (pool, _dir) = test_pool().await;
+
+    // Seed a block in the `blocks` table so cascade_soft_delete /
+    // restore_block have a target. Direct SQL mirrors the inline
+    // pattern used by `add_attachment_apply_then_reverse_round_trip_*`
+    // earlier in this file; we are not using the materializer here.
+    let block_id = "BLKM71";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'content', 'm71 fixture', NULL, 1)",
+    )
+    .bind(block_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Step 1: cascade_soft_delete records the original `deleted_at_a`.
+    let (deleted_at_a, _count_a) = crate::soft_delete::cascade_soft_delete(&pool, block_id)
+        .await
+        .unwrap();
+
+    // Step 2: restore so the block is alive again, then append a
+    // RestoreBlock op carrying `deleted_at_a` so we have a record to
+    // feed into compute_reverse.
+    crate::soft_delete::restore_block(&pool, block_id, &deleted_at_a)
+        .await
+        .unwrap();
+    let restore_rec = append_op(
+        &pool,
+        OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::test_id(block_id),
+            deleted_at_ref: deleted_at_a.clone(),
+        }),
+        FIXED_TS,
+    )
+    .await;
+
+    // Step 3: compute the reverse. M-71: it must be bare DeleteBlock —
+    // `deleted_at_ref` is intentionally NOT propagated.
+    let reverse = compute_reverse(&pool, TEST_DEVICE, restore_rec.seq)
+        .await
+        .unwrap();
+    assert!(
+        matches!(&reverse, OpPayload::DeleteBlock(p) if p.block_id == block_id),
+        "M-71: reverse(RestoreBlock) must be bare DeleteBlock(block_id); got: {reverse:?}"
+    );
+
+    // Sleep ≥1ms so the second cascade's millisecond-precision
+    // timestamp is guaranteed to differ from `deleted_at_a` (matches
+    // the pattern in `soft_delete::tests::cascade_soft_delete_skips_already_deleted_subtree`).
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+    // Step 4: apply the reverse — equivalent to what the redo path
+    // does in production — and capture the new `deleted_at_b`.
+    let (deleted_at_b, _count_b) = crate::soft_delete::cascade_soft_delete(&pool, block_id)
+        .await
+        .unwrap();
+
+    // The asymmetry: the reverse did not carry `deleted_at_ref`
+    // through, so the new timestamp is distinct from the original
+    // cascade group's timestamp.
+    assert_ne!(
+        deleted_at_a, deleted_at_b,
+        "M-71: reverse(RestoreBlock) does not propagate deleted_at_ref, \
+         so a subsequent cascade_soft_delete mints a fresh deleted_at. \
+         If this assertion ever flips to equal, update the doc comment \
+         on `reverse_restore_block` in `reverse/block_ops.rs` to match \
+         the new behaviour."
+    );
+}
