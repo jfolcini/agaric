@@ -1,5 +1,48 @@
 # Session Log
 
+## Session 553 — Close M-17 fully + MAINT-114 spike — close 3 items (M-17 final, MAINT-114 spike-keep) (2026-04-29)
+
+**3 items closed in one PROMPT.md batch with 3 parallel build subagents + 1 review subagent.** Theme: finish closing M-17 by splitting the remaining `projected_agenda` and `page_id` cache rebuilds, plus a spike on MAINT-114 (GH workflows consolidation) — verdict was "leave as-is".
+
+**REVIEW-LATER impact:**
+
+- **Backend Code Review Medium count:** 13 → 12 (-1: M-17 fully closed across both partials).
+- **Top-level open count (summary table):** 37 → 36 (-1: MAINT-114 closed spike-keep).
+- **Net findings in the appendix:** 318 → 317.
+- **Previously-resolved counter:** 789+ → 792+ across 520 sessions.
+
+**Items closed (3):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-114 | `.github/workflows/` (no code change) — Subagent 2ef4a3b1 (spike) | **Spike completed: leave as-is.** Subagent inventoried all 4 workflow files (`ci.yml` 288L, `_validate.yml` 143L reusable, `release.yml` 464L, `release-tag.yml` 78L) and evaluated the proposed 4 → 3 fold (release-tag.yml → release.yml as `workflow_dispatch`). Verdict: **abandon consolidation**. The 6% LOC saving (~32 lines) is not worth the 5 documented downsides: (1) discoverability regression — sidebar collapses from 3 named entries to 2 (the orchestrator's own gate explicitly required the dispatch path stay at least as discoverable as the standalone "Release Tag" entry), (2) two responsibilities (cut-a-tag vs. build-the-tag) merged into one file, (3) four new `if: github.event_name == 'push'` conditions on production release jobs (typo → silent no-op release), (4) `github.ref_name` semantics diverging across paths within one file (branch on dispatch vs. tag on push), (5) no shared runner setup / cache keys / matrix dimensions to DRY. The reusable `_validate.yml` is correctly factored already — no further consolidation possible there. **No code change**; appendix entry removed and top-level summary count decremented. |
+| M-17 (projected_agenda) | `src-tauri/src/cache/projected_agenda.rs` + `tests.rs` — Subagent c5a297ff | **`rebuild_projected_agenda_cache_split` now actually uses the read pool.** Pre-fix: delegated to single-pool `rebuild_projected_agenda_cache(write_pool)`, ignoring the `_read_pool` parameter — held the writer lock for the entire SELECT + Rust-side recurrence compute (up to 365 projections per repeating block × N blocks). Post-fix: opens a snapshot-isolated read tx on `read_pool`, materializes repeating-block + property rows into `Vec<CacheRepeatingRow>`, drops the read tx, calls the NEW shared `compute_projection_entries(today, horizon, rows)` helper outside any tx (writer lock NOT held during compute), then opens a write tx on `write_pool` for `DELETE FROM projected_agenda_cache` + chunked multi-row `INSERT OR IGNORE` with chunk size = `REBUILD_CHUNK = MAX_SQL_PARAMS / 3 = 333`. The `compute_projection_entries` helper is the source-of-truth — both single-pool and split impls call it with identical inputs ⇒ identical outputs. `today` + horizon captured BEFORE the read tx (single reference date for the whole rebuild, preserves L-26 timezone semantics). All filters preserved (`deleted_at IS NULL`, `is_conflict = 0`, non-DONE, `repeat` property present, at least one date column, template-page exclusion). Renamed `INSERT_CHUNK` → `REBUILD_CHUNK` to match `tags.rs` / `pages.rs` naming. 1 new test `projected_agenda_cache_split_chunked_rebuild_handles_large_input` (10 daily-repeating blocks → ~3650 projections forces multi-chunk; per-block parity + byte-identical `(block_id, projected_date, source)` rows vs. single-pool). Both `l26_tests::*` continue to pass. |
+| M-17 (page_id) | `src-tauri/src/cache/page_id.rs` + `tests.rs` — Subagent 20f57333 | **`rebuild_page_ids_split` now actually uses the read pool.** Pre-fix: delegated to single-pool — held the writer lock during the recursive ancestor CTE compute. Post-fix: opens a snapshot-isolated read tx on `read_pool`, runs the recursive CTE as a SELECT producing `Vec<(block_id, page_id)>` (preserves invariant #9: filters `is_conflict = 0` on seed + both child and parent recursive joins, bounds `depth < 100`), drops the read tx, then opens a write tx on `write_pool` for (a) `UPDATE blocks SET page_id = NULL WHERE is_conflict = 0` (NULL-reset that mirrors the single-pool variant's correlated-subquery NULL-for-unmatched semantics, so orphans/conflict-only descendants stay NULL), then (b) chunked CASE-expression UPDATEs `UPDATE blocks SET page_id = CASE id WHEN ? THEN ? … ELSE page_id END WHERE id IN (?, …) AND is_conflict = 0`. Chunk size = `REBUILD_CHUNK = MAX_SQL_PARAMS / 3 = 333` (2 binds in CASE + 1 in IN = 3 per row). The `WHERE is_conflict = 0` UPDATE filter preserves invariant #9 even if the DB state shifted between read and write phases. NULL-reset + all chunks share a single write tx (atomic). 1 new test `page_id_split_chunked_rebuild_handles_large_input` (4 pages × 100 children = 400 non-page blocks, > 333 chunk size) verifies (a) every page maps to itself, (b) every non-page child maps to its page parent, (c) byte-identical `(id, page_id)` parity vs. single-pool variant. New SQL → `.sqlx/query-58d30b7…json` for the NULL-reset (the chunked CASE UPDATE is dynamic via `sqlx::query()` and bypasses the macro cache). |
+
+**Files touched (this session's batch — 4 modified + 1 new sqlx cache):**
+
+- Backend (3): `cache/page_id.rs`, `cache/projected_agenda.rs`, `cache/tests.rs`.
+- `.sqlx/` cache: 1 added (`query-58d30b7…json` for the page_id NULL-reset).
+- Docs: `REVIEW-LATER.md` (M-17 detail entry removed entirely now that all 4 split variants are real splits; MAINT-114 row + analysis section removed; appendix Executive Summary count 318 → 317 and Medium 13 → 12; Findings by Domain × Severity adjusted: Cache+Pag Med 4→3; top-level summary table 37 → 36 with MAINT-114 row removed; previously-resolved counter 789+ → 792+; sessions 519 → 520; latest session 552 → 553), `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- M-17 projected_agenda: 27/27 projected_agenda tests PASS including the new chunked rebuild test + both `l26_tests` + the existing parity test.
+- M-17 page_id: 11/11 page_id tests PASS including the new chunked rebuild test + the oracle test (which exercises invariant #9 edge cases with conflicts, orphans, depth bounds).
+- Full backend: 3229/3229 PASS, 3 skipped, 0 failed.
+
+**Process notes:**
+
+- **3 build subagents converged with zero file overlap.** Split: MAINT-114 (`.github/workflows/`), M-17 projected_agenda (`cache/projected_agenda.rs`), M-17 page_id (`cache/page_id.rs`). Tests file (`cache/tests.rs`) was modified by both M-17 subagents but they appended to non-overlapping sections (different test names, different positions in the file — no merge conflicts).
+- **1 review subagent APPROVED both M-17 partials with zero blockers.** Reviewer (`330f303c`) confirmed: source-of-truth shared via `compute_projection_entries`, tx scope correct (writer released during compute), invariant #9 preserved on the recursive CTE, NULL-reset semantics match single-pool's correlated-subquery behaviour, chunk-size math correct (3 binds per row → MAX_SQL_PARAMS / 3 = 333).
+- **MAINT-114 was a spike-only task** — no review subagent needed since the deliverable was a written verdict (leave-as-is) with reasoning, not code changes. The spike report itself is preserved in this session log.
+- **Clippy auto-deref nit on M-17 page_id** caught two `std::iter::repeat().take(N)` patterns; orchestrator replaced with `std::iter::repeat_n(s, N)` (newer idiomatic form). Re-ran prek → all green.
+- **No `cargo test -- specta_tests --ignored` rerun was needed** — public types unchanged.
+- **PERF-19, PERF-20, PERF-23 reviewed for inclusion in this batch but explicitly skipped** — all three are documented as "Defer — keep tracked in REVIEW-LATER as a deliberate non-fix" in their entries; the deferral rationale is intentional (page sizes too small to matter today, future work only if specific use cases ship). Future sessions should not be tempted to "fix" them either.
+- **The pure-code, no-approval-needed Medium-severity findings are now substantially exhausted.** Remaining items either require user approval (M-3 AGENTS.md edit, M-30/M-93 migrations, M-34/M-90 architectural decisions, M-25/M-85 public API changes, M-71-style op payload extensions) or are explicitly deferred (M-95 leave-as-is, L-118 leave-as-is, L-132/L-55 defer, L-65 UX choice). Future batches will need to mix in MAINT items from the main summary or shift focus to L-cost god-component decompositions.
+
+---
+
 ## Session 552 — Cache split + dead-filter cleanup + mock-drift test — close 3 items (M-17 partial, M-28, MAINT-123) (2026-04-29)
 
 **3 mixed-domain backend findings closed in one PROMPT.md batch with 3 parallel build subagents + 2 parallel review subagents.** Theme: incremental cleanup of long-tail items — actually-split tags+pages cache rebuilds, remove dead `attachments.deleted_at` filter, and add runtime mock-drift detection.
