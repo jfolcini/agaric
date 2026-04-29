@@ -84,11 +84,17 @@ pub async fn list_trash(
 /// For each root in `root_ids`, return the count of descendants that share
 /// the root's `deleted_at` timestamp (i.e., were cascade-deleted together).
 ///
+/// Descendants are walked via a recursive CTE rooted at each requested id,
+/// following `parent_id` links and requiring the same `deleted_at` on every
+/// hop — so two unrelated roots that happen to share a `deleted_at`
+/// timestamp do not pollute each other's counts.
+///
 /// Roots with zero descendants are omitted from the map — callers should
 /// default to `0` when a root id is not present. Non-existent ids and ids
 /// that aren't actually soft-deleted yield no entry. Conflict blocks
 /// (`is_conflict = 1`) are excluded from both the root lookup and the
-/// descendant count, matching `list_trash` semantics.
+/// recursive descendant walk, matching `list_trash` semantics. Recursion
+/// is bounded at depth 100 per AGENTS.md invariant #9.
 ///
 /// Uses a single `json_each()`-driven query — no N+1 (AGENTS.md Backend
 /// Pattern #3).
@@ -107,23 +113,37 @@ pub async fn trash_descendant_counts(
 
     let ids_json = serde_json::to_string(root_ids)?;
 
-    // For each requested root, join blocks (rb) to blocks (d) on the shared
-    // `deleted_at` timestamp — this picks up every block in the same
-    // cascade_soft_delete batch. COUNT(d.id) - 1 subtracts the root itself.
-    // Roots that aren't soft-deleted (no matching rb row) are filtered by
-    // the WHERE predicate. `is_conflict = 0` on both sides matches
-    // `list_trash`.
+    // Per-root recursive CTE: each requested root seeds the walk with
+    // (root_id, root_id, deleted_at, depth=0) and the recursive member
+    // follows `parent_id` edges that share the root's `deleted_at`. This
+    // enforces actual ancestry, so two unrelated roots that happen to share
+    // a `deleted_at` (e.g. millisecond collisions in `cascade_soft_delete`,
+    // or test fixtures with `FIXED_DELETED_AT`) do not contaminate each
+    // other's counts. `is_conflict = 0` on the recursive member and the
+    // seed matches `list_trash`. Depth is bounded at 100 per AGENTS.md
+    // invariant #9. `COUNT(*) - 1` subtracts the root row itself so the
+    // result is the descendant count (excluding the root).
     let rows = sqlx::query!(
-        r#"SELECT rb.id AS "root_id!: String",
-                  (COUNT(d.id) - 1) AS "descendant_count!: i64"
-           FROM blocks rb
-           JOIN blocks d
-             ON d.deleted_at = rb.deleted_at
-            AND d.is_conflict = 0
-           WHERE rb.id IN (SELECT value FROM json_each(?1))
-             AND rb.deleted_at IS NOT NULL
-             AND rb.is_conflict = 0
-           GROUP BY rb.id"#,
+        r#"WITH RECURSIVE descendants AS (
+               SELECT rb.id AS root_id, rb.id AS desc_id,
+                      rb.deleted_at AS batch_deleted_at, 0 AS depth
+               FROM blocks rb
+               WHERE rb.id IN (SELECT value FROM json_each(?1))
+                 AND rb.deleted_at IS NOT NULL
+                 AND rb.is_conflict = 0
+               UNION ALL
+               SELECT d.root_id, c.id, d.batch_deleted_at, d.depth + 1
+               FROM descendants d
+               JOIN blocks c
+                 ON c.parent_id = d.desc_id
+                AND c.deleted_at = d.batch_deleted_at
+                AND c.is_conflict = 0
+               WHERE d.depth < 100
+           )
+           SELECT root_id AS "root_id!: String",
+                  (COUNT(*) - 1) AS "descendant_count!: i64"
+           FROM descendants
+           GROUP BY root_id"#,
         ids_json,
     )
     .fetch_all(pool)
@@ -131,10 +151,10 @@ pub async fn trash_descendant_counts(
 
     let mut out: HashMap<String, u64> = HashMap::new();
     for row in rows {
-        // Clamp at zero: COUNT(d.id) is always >= 1 because rb itself matches
-        // the d-side join (same deleted_at, non-conflict). Subtracting 1
-        // yields the descendant count. Never negative in practice, but we
-        // guard to keep the u64 conversion total.
+        // Clamp at zero: COUNT(*) is always >= 1 because the root itself
+        // seeds the CTE. Subtracting 1 yields the descendant count. Never
+        // negative in practice, but we guard to keep the u64 conversion
+        // total.
         let count = u64::try_from(row.descendant_count.max(0)).unwrap_or(0);
         if count > 0 {
             out.insert(row.root_id, count);

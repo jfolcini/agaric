@@ -1,6 +1,12 @@
 use sqlx::SqlitePool;
 
+use crate::db::MAX_SQL_PARAMS;
 use crate::error::AppError;
+
+/// `projected_agenda_cache` has 3 columns per row
+/// (block_id, projected_date, source) → `MAX_SQL_PARAMS / 3 = 333` rows
+/// per chunked `INSERT OR IGNORE` (M-18).
+const INSERT_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 
 // ---------------------------------------------------------------------------
 // rebuild_projected_agenda_cache (P-16)
@@ -233,15 +239,22 @@ async fn rebuild_projected_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, A
         .execute(&mut *tx)
         .await?;
 
-    for (block_id, date, source) in &entries {
-        sqlx::query(
-            "INSERT OR IGNORE INTO projected_agenda_cache (block_id, projected_date, source) VALUES (?1, ?2, ?3)",
-        )
-        .bind(block_id)
-        .bind(date)
-        .bind(source)
-        .execute(&mut *tx)
-        .await?;
+    // Chunked multi-row INSERT (M-18): 3 columns per row, so each
+    // statement binds at most `INSERT_CHUNK * 3 ≤ MAX_SQL_PARAMS`
+    // parameters. Replaces the per-row INSERT loop that violated the
+    // chunked-INSERT convention from AGENTS.md.
+    for chunk in entries.chunks(INSERT_CHUNK) {
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?)").collect();
+        let sql = format!(
+            "INSERT OR IGNORE INTO projected_agenda_cache \
+             (block_id, projected_date, source) VALUES {}",
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query(&sql);
+        for (block_id, date, source) in chunk {
+            q = q.bind(block_id).bind(date).bind(source);
+        }
+        q.execute(&mut *tx).await?;
     }
 
     tx.commit().await?;

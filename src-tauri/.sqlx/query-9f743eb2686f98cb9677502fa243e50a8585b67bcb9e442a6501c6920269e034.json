@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE descendants AS (\n               SELECT rb.id AS root_id, rb.id AS desc_id,\n                      rb.deleted_at AS batch_deleted_at, 0 AS depth\n               FROM blocks rb\n               WHERE rb.id IN (SELECT value FROM json_each(?1))\n                 AND rb.deleted_at IS NOT NULL\n                 AND rb.is_conflict = 0\n               UNION ALL\n               SELECT d.root_id, c.id, d.batch_deleted_at, d.depth + 1\n               FROM descendants d\n               JOIN blocks c\n                 ON c.parent_id = d.desc_id\n                AND c.deleted_at = d.batch_deleted_at\n                AND c.is_conflict = 0\n               WHERE d.depth < 100\n           )\n           SELECT root_id AS \"root_id!: String\",\n                  (COUNT(*) - 1) AS \"descendant_count!: i64\"\n           FROM descendants\n           GROUP BY root_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "root_id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "descendant_count!: i64",
+        "ordinal": 1,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "9f743eb2686f98cb9677502fa243e50a8585b67bcb9e442a6501c6920269e034"
+}

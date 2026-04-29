@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-38 open items — 38 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548).**
+38 open items — 38 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 4 backend Medium findings (M-16, M-18, M-67, M-91) closed in session 549.**
 
-Previously resolved: 772+ items across 515 sessions (per SESSION-LOG.md unique session count; latest is session 548).
+Previously resolved: 776+ items across 516 sessions (per SESSION-LOG.md unique session count; latest is session 549).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1381,17 +1381,17 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Dropped (hallucinated / out-of-scope / duplicate / wontfix-intentional) | 12 |
 | Severity-downgraded by Pass 2 | 49 |
 | Already-tracked in REVIEW-LATER (PERF-19, PERF-20, PERF-23) | 3 |
-| Net findings in this report | 333 |
+| Net findings in this report | 329 |
 | **Critical** | **1** |
 | **High** | **4** |
-| **Medium** | **28** |
+| **Medium** | **24** |
 | **Low** | **124** |
 | **Info / nits** | **125** |
 
 ### Top-priority items (Impact ÷ Cost)
 
-1. **C-2b** — Boot-time op-log replay path for unmaterialized ops; op_log diverges from materialized state with no automatic remediation (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/materializer/consumer.rs" />). C-2a (divergence detection) shipped — divergence is now visible via `fg_apply_dropped` in `StatusInfo`; C-2b remains as the actual replay path. **Schema migration approval required**.
-2. **H-17** — `recurrence::handle_recurrence` reads counters BEFORE `BEGIN IMMEDIATE` (TOCTOU); two clicks on a recurring task can duplicate or skip the next-occurrence sibling (<ref_file file="/home/javier/dev/org-mode-for-the-rest-of-us/src-tauri/src/recurrence/handle.rs" />).
+1. **C-2b** — Boot-time op-log replay path for unmaterialized ops; op_log diverges from materialized state with no automatic remediation (<ref_file file="/home/javier/dev/agaric/src-tauri/src/materializer/consumer.rs" />). C-2a (divergence detection) shipped — divergence is now visible via `fg_apply_dropped` in `StatusInfo`; C-2b remains as the actual replay path. **Schema migration approval required**.
+2. **H-17** — `recurrence::handle_recurrence` reads counters BEFORE `BEGIN IMMEDIATE` (TOCTOU); two clicks on a recurring task can duplicate or skip the next-occurrence sibling (<ref_file file="/home/javier/dev/agaric/src-tauri/src/recurrence/handle.rs" />).
 
 ### Findings by Domain × Severity
 
@@ -1399,14 +1399,14 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 |---|---|---|---|---|---|
 | Core data layer | 0 | 1 | 4 | 9 | 11 |
 | Materializer | 1 | 2 | 5 | 8 | 4 |
-| Cache + Pagination | 0 | 0 | 6 | 12 | 6 |
+| Cache + Pagination | 0 | 0 | 4 | 12 | 6 |
 | Commands (CRUD) | 0 | 1 | 6 | 9 | 13 |
 | Commands (System) | 0 | 2 | 10 | 13 | 6 |
 | Sync stack | 0 | 3 | 10 | 25 | 5 |
 | Search & Links | 0 | 2 | 4 | 16 | 19 |
-| Lifecycle / Snapshots | 0 | 0 | 17 | 16 | 8 |
+| Lifecycle / Snapshots | 0 | 0 | 16 | 16 | 8 |
 | MCP | 0 | 0 | 6 | 12 | 8 |
-| GCal / Spaces / Drafts | 0 | 0 | 9 | 11 | 9 |
+| GCal / Spaces / Drafts | 0 | 0 | 8 | 11 | 9 |
 
 (Numbers approximate; some findings span domains and are listed under the primary one.)
 
@@ -1532,18 +1532,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Cache + Pagination
 
-### M-16 — `trash_descendant_counts` joins on `deleted_at` only — over-counts when batches collide
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/pagination/trash.rs:120-134` (REVIEW-LATER.md mis-cites this as `cache/trash.rs`; the file is `pagination/trash.rs`).
-- **What:** The descendant-count query joins `blocks d` to `blocks rb` purely on `d.deleted_at = rb.deleted_at AND d.is_conflict = 0`, with no ancestry constraint. Two unrelated roots that happen to be soft-deleted at the same `deleted_at` (timestamp collisions are possible — `cascade_soft_delete` writes `now_rfc3339()`, tests use `FIXED_DELETED_AT = "2025-01-15T00:00:00+00:00"`, and bulk operations can share a millisecond) each see the other batch's blocks counted as their descendants. The doc-comment promises ancestry but the SQL does not enforce it.
-- **Why it matters:** The Trash UI's "+N more" badge under each root shows inflated counts whenever timestamps collide. None of the current tests exercise two unrelated roots with the same `deleted_at`.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Restrict the `d`/`rb` join to actual descendants — either a recursive CTE rooted at each `rb.id` (filter `is_conflict = 0`, bound `depth < 100` per invariant #9), or an ancestry subquery using `parent_id`. Add a test creating two unrelated trees soft-deleted at the same `deleted_at` and asserting each reports only its own descendants.
-- **Pass-1 source:** 03/F4
-- **Status:** Open
-
 ### M-17 — Four `*_split` cache rebuilds ignore the `read_pool` and run reads on the writer
 - **Domain:** Cache + Pagination
 - **Location:** `src-tauri/src/cache/tags.rs:95-99`, `src-tauri/src/cache/pages.rs:66-71`, `src-tauri/src/cache/projected_agenda.rs:244-249`, `src-tauri/src/cache/page_id.rs:64-68`
@@ -1554,18 +1542,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium
 - **Recommendation:** For `projected_agenda` and `page_ids`, materialize the input on `read_pool` (page_ids: read all `(id, parent_id, block_type, is_conflict)` rows then UPDATE on writer; projected_agenda: read repeating-block + property rows on reader, compute, then chunked INSERT on writer). For tags/pages, either pre-fetch on the reader and chunked-INSERT on the writer, or rename them `*_no_split` to make the contract explicit. Update the AGENTS.md "Split read/write pool pattern" note to enumerate the exempt rebuilds.
 - **Pass-1 source:** 03/F5
-- **Status:** Open
-
-### M-18 — Per-row INSERT/UPDATE/DELETE loops in agenda diff and projected-agenda rebuild
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/cache/agenda.rs:160-186` (single-pool) and `:342-368` (split); `src-tauri/src/cache/projected_agenda.rs:223-232`
-- **What:** Both incremental agenda rebuilds and the projected-agenda rebuild apply changes one row at a time inside the transaction — separate prepared statements per delete, per update, and per insert in agenda diff; per-entry `INSERT OR IGNORE … VALUES (?,?,?)` after a single `DELETE FROM projected_agenda_cache` for projected agenda. This violates Backend Pattern #6 (multi-row chunked INSERT bounded by `MAX_SQL_PARAMS`); `cache/block_tag_refs.rs:258-272` already implements the chunked pattern correctly in the same module.
-- **Why it matters:** For a 365-day projection × thousands of repeating blocks, the projected-agenda rebuild is dominated by per-row round-trips; same for large agenda diffs after bulk imports. With ~10K rows the difference is roughly 10K vs. ~20 round-trips inside the transaction.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Adopt the `MAX_SQL_PARAMS / N`-chunked multi-row INSERT pattern from `cache/block_tag_refs.rs` for `projected_agenda` (3 columns → chunk 333) and the agenda-diff inserts. For agenda-diff deletes, replace the per-row loop with a single `DELETE FROM agenda_cache WHERE (date, block_id) IN (SELECT value->>'$[0]', value->>'$[1]' FROM json_each(?))` driven by the `to_delete` set.
-- **Pass-1 source:** 03/F6
 - **Status:** Open
 
 ### M-19 — Unbounded `Vec` materialization on full-vault scans
@@ -1696,18 +1672,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 ### Lifecycle / Snapshots / Merge / Recurrence
 
 
-### M-67 — `apply_snapshot` cache-rebuild tasks use `try_enqueue_background` (silent drop)
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/snapshot/restore.rs:284-292`
-- **What:** After committing the wipe+restore tx, the function enqueues 8 cache-rebuild tasks (FTS, agenda, projected agenda, tag inheritance, page IDs, tags, pages, block-tag refs) via `try_enqueue_background`, which silently drops with a `warn!` if the queue is saturated. There is no boot-time recheck that would re-enqueue dropped work.
-- **Why it matters:** If the warn fires and no further op happens, FTS / agenda_cache / pages_cache / tags_cache stay empty indefinitely; the user sees an empty agenda/search/tag list with no actionable signal. Cross-references M-7 (`Materializer::try_enqueue_background` semantics).
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** Use the awaiting `enqueue_background` variant for these post-RESET tasks (the apply path is exactly when stale caches matter), or persist a "needs rebuild" marker (new table — requires user approval per Architectural Stability) and gate startup on it.
-- **Pass-1 source:** 08/F7
-- **Status:** Open
-
 ### M-70 — `apply_snapshot` does not anchor the post-snapshot hash chain
 - **Domain:** Lifecycle
 - **Location:** `src-tauri/src/snapshot/restore.rs:89, 254`
@@ -1770,18 +1734,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Either (a) change the `is_space` property type from `text` to `select` with `options = '["true", "false"]'` so `set_property_in_tx`'s options-membership guard kicks in (the current `text` type bypasses that guard — `commands/blocks/crud.rs:1190` only enforces options when `expected_type == "select"`), **or** (b) pivot the test to check non-empty truthy `value_text` in the queries. Prefer (a) for type safety. Add a test that `set_property` with `value_text='True'` is rejected once the type is changed.
 - **Pass-1 source:** 10/F12
-- **Status:** Open
-
-### M-91 — `create_page_in_space_inner` does not require parent and child to share the same space
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/commands/spaces.rs:100-167` (parent path); test gap at `src-tauri/src/commands/spaces.rs:680-723`
-- **What:** When `parent_id` is supplied, the helper validates only that `space_id` resolves to a live `is_space='true'` block; it never checks the parent's `space` property matches. A frontend that resolves `parent_id` from one space's tree but submits `space_id` for another succeeds and lands an op pair where the new page belongs to space X but its parent belongs to space Y.
-- **Why it matters:** REVIEW-LATER.md FEAT-3 pins "Nothing outside of spaces. … No cross-space 'show everything' view." Cross-space parents undermine the "page sets are disjoint and their union is total" invariant — recursive CTE walkers that follow `parent_id` will then traverse across space boundaries.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Inside the `create_page_in_space_inner` tx, when `parent_id` is `Some`, fetch the parent's `space` ref-property and reject with `AppError::Validation` if it differs from `space_id`. Add a regression test `(parent in Personal, space_id=Work)` asserting the create fails and no ops are appended.
-- **Pass-1 source:** 10/F13
 - **Status:** Open
 
 ### M-92 — `bootstrap_spaces`'s `pages_without_space` migration does N round-trips for N pages

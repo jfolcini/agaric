@@ -1301,6 +1301,128 @@ async fn trash_descendant_counts_excludes_conflict_descendants() {
     );
 }
 
+#[tokio::test]
+async fn trash_descendant_counts_isolates_unrelated_roots_sharing_deleted_at() {
+    // M-16 regression: two unrelated trees soft-deleted at the *same*
+    // `deleted_at` (e.g. millisecond collision in cascade_soft_delete or a
+    // shared FIXED_DELETED_AT in tests) must not contaminate each other's
+    // descendant count. Pre-fix, the bare deleted_at join saw all 6 deleted
+    // rows for both roots (each reporting 5 descendants instead of 2).
+    let (pool, _dir) = test_pool().await;
+
+    let ts = FIXED_DELETED_AT;
+
+    // Tree A: root_a + a_child1 + a_child2 (siblings under root_a).
+    insert_block(&pool, "ROOT_AAA", "page", "tree A", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "A_CHILD1",
+        "content",
+        "a child 1",
+        Some("ROOT_AAA"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "A_CHILD2",
+        "content",
+        "a child 2",
+        Some("ROOT_AAA"),
+        Some(2),
+    )
+    .await;
+
+    // Tree B: root_b + b_child1 + b_child2 (siblings under root_b).
+    insert_block(&pool, "ROOT_BBB", "page", "tree B", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "B_CHILD1",
+        "content",
+        "b child 1",
+        Some("ROOT_BBB"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "B_CHILD2",
+        "content",
+        "b child 2",
+        Some("ROOT_BBB"),
+        Some(2),
+    )
+    .await;
+
+    // Soft-delete every block in both trees with the SAME timestamp.
+    soft_delete_block(&pool, "ROOT_AAA", ts).await;
+    soft_delete_block(&pool, "A_CHILD1", ts).await;
+    soft_delete_block(&pool, "A_CHILD2", ts).await;
+    soft_delete_block(&pool, "ROOT_BBB", ts).await;
+    soft_delete_block(&pool, "B_CHILD1", ts).await;
+    soft_delete_block(&pool, "B_CHILD2", ts).await;
+
+    let counts = trash_descendant_counts(&pool, &["ROOT_AAA".to_string(), "ROOT_BBB".to_string()])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        counts.get("ROOT_AAA").copied(),
+        Some(2),
+        "ROOT_AAA must report only its own 2 descendants, not 5; got {counts:?}"
+    );
+    assert_eq!(
+        counts.get("ROOT_BBB").copied(),
+        Some(2),
+        "ROOT_BBB must report only its own 2 descendants, not 5; got {counts:?}"
+    );
+}
+
+#[tokio::test]
+async fn trash_descendant_counts_walks_multiple_levels_of_descendants() {
+    // Happy-path: nested grandchildren that share the root's deleted_at
+    // are counted (the recursive CTE walks through every level, bounded
+    // at depth 100 per AGENTS.md invariant #9).
+    let (pool, _dir) = test_pool().await;
+
+    let ts = "2025-11-01T00:00:00+00:00";
+
+    // root → child → grandchild (3-level chain).
+    insert_block(&pool, "DEEPROOT", "page", "deep root", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "DEEPCHLD",
+        "content",
+        "child",
+        Some("DEEPROOT"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "DEEPGCHD",
+        "content",
+        "grandchild",
+        Some("DEEPCHLD"),
+        Some(1),
+    )
+    .await;
+
+    soft_delete_block(&pool, "DEEPROOT", ts).await;
+    soft_delete_block(&pool, "DEEPCHLD", ts).await;
+    soft_delete_block(&pool, "DEEPGCHD", ts).await;
+
+    let counts = trash_descendant_counts(&pool, &["DEEPROOT".to_string()])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        counts.get("DEEPROOT").copied(),
+        Some(2),
+        "DEEPROOT must include both child and grandchild; got {counts:?}"
+    );
+}
+
 // ====================================================================
 // Cursor stability
 // ====================================================================

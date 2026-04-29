@@ -165,6 +165,43 @@ pub async fn create_page_in_space_inner(
         )));
     }
 
+    // M-91 — when a parent is supplied, enforce that it belongs to the
+    // SAME space as `space_id`. Otherwise a frontend bug (e.g. resolving
+    // `parent_id` from another space's tree but passing the current
+    // `space_id`) could land a page whose `parent_id` walks across a
+    // space boundary, breaking the FEAT-3 "page sets are disjoint"
+    // invariant. The check happens inside the tx so it is TOCTOU-safe
+    // against a concurrent move. The `space` ref-property lives in
+    // `value_ref` (see `set_property_in_tx` signature in
+    // `commands/blocks/crud.rs` and the bootstrap writes in
+    // `spaces/bootstrap.rs`).
+    if let Some(parent) = parent_id.as_ref() {
+        let parent_space: Option<String> = sqlx::query_scalar!(
+            r#"SELECT value_ref as "space?: String"
+               FROM block_properties
+               WHERE block_id = ? AND key = 'space'"#,
+            parent,
+        )
+        .fetch_optional(&mut **tx)
+        .await?
+        .flatten();
+        match parent_space {
+            Some(s) if s == space_id => {} // OK — same space
+            Some(other) => {
+                return Err(AppError::Validation(format!(
+                    "parent_id '{parent}' belongs to space '{other}'; cannot create child in space '{space_id}'"
+                )));
+            }
+            None => {
+                // Parent has no `space` property — refuse rather than
+                // allow a cross-space orphan or invent a default.
+                return Err(AppError::Validation(format!(
+                    "parent_id '{parent}' has no `space` property; cannot create child in space '{space_id}'"
+                )));
+            }
+        }
+    }
+
     // 2. Create the page block. `create_block_in_tx` generates the ULID,
     //    appends a `CreateBlock` op, and inserts the materialized row.
     let (block, page_op_record) = create_block_in_tx(
@@ -854,6 +891,116 @@ mod tests {
             child_space.as_deref(),
             Some(SPACE_PERSONAL_ULID),
             "child must carry the same space property as its parent"
+        );
+    }
+
+    /// M-91 — a parent resolved from one space (Personal) must NOT
+    /// be accepted when the caller submits a different `space_id`
+    /// (Work). Otherwise the new page belongs to Work but its
+    /// `parent_id` walks back into Personal, violating the FEAT-3
+    /// "page sets are disjoint" invariant.
+    #[tokio::test]
+    async fn create_page_in_space_rejects_cross_space_parent() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        bootstrap_spaces(&pool, DEV).await.unwrap();
+
+        // Parent lives in Personal.
+        let parent_in_personal = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &materializer,
+            None,
+            "Parent in Personal".into(),
+            SPACE_PERSONAL_ULID.to_owned(),
+        )
+        .await
+        .expect("parent create in Personal must succeed");
+        let parent = parent_in_personal.as_str().to_owned();
+
+        let before_ops = count_op_log(&pool).await;
+        let before_blocks = sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM blocks"#)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        // Attempt to create a child whose declared `space_id` is Work
+        // even though the parent lives in Personal.
+        let result = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &materializer,
+            Some(parent.clone()),
+            "Cross-space child".into(),
+            SPACE_WORK_ULID.to_owned(),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "cross-space parent must be rejected with Validation, got {result:?}"
+        );
+        assert_eq!(
+            count_op_log(&pool).await,
+            before_ops,
+            "atomicity: validation failure must not append any ops"
+        );
+        let after_blocks = sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM blocks"#)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            after_blocks, before_blocks,
+            "atomicity: no new block row must be materialised on rejection"
+        );
+    }
+
+    /// M-91 — when a parent block exists but carries no `space`
+    /// property (e.g. some legacy / hand-inserted block), the helper
+    /// must refuse rather than invent a default or silently produce a
+    /// cross-space orphan.
+    #[tokio::test]
+    async fn create_page_in_space_rejects_parent_without_space_property() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        bootstrap_spaces(&pool, DEV).await.unwrap();
+
+        // A live page block that has NO `space` property at all.
+        let plain_id = "01JPLAIN0000000000000000CD";
+        insert_plain_page(&pool, plain_id, "Plain page").await;
+
+        let before_ops = count_op_log(&pool).await;
+        let before_blocks = sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM blocks"#)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let result = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &materializer,
+            Some(plain_id.to_owned()),
+            "Child of unspaced parent".into(),
+            SPACE_PERSONAL_ULID.to_owned(),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "parent without `space` property must be rejected with Validation, got {result:?}"
+        );
+        assert_eq!(
+            count_op_log(&pool).await,
+            before_ops,
+            "atomicity: validation failure must not append any ops"
+        );
+        let after_blocks = sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM blocks"#)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            after_blocks, before_blocks,
+            "atomicity: no new block row must be materialised on rejection"
         );
     }
 }

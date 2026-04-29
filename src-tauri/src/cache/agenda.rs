@@ -1,7 +1,61 @@
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 
+use crate::db::MAX_SQL_PARAMS;
 use crate::error::AppError;
+
+// `agenda_cache` PK is `(date, block_id)`. The chunked DELETE binds 2
+// params per row → `MAX_SQL_PARAMS / 2 = 499` rows per chunk. The
+// chunked `INSERT OR IGNORE` writes 3 columns per row
+// (date, block_id, source) → `MAX_SQL_PARAMS / 3 = 333` rows per chunk.
+// Mirrors the constant in `cache/block_tag_refs.rs` (M-18).
+const DELETE_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
+const INSERT_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
+
+/// Apply an agenda diff inside an open transaction in chunks bounded by
+/// [`MAX_SQL_PARAMS`] (M-18).
+///
+/// Plan (a) from the M-18 fix: UPDATEs are folded into the merged
+/// DELETE + INSERT lists. The PK is `(date, block_id)` so DELETE+INSERT
+/// is equivalent to UPDATE on `source` — and avoids a specialised
+/// chunked UPDATE statement.
+///
+/// `delete_rows` and `insert_rows` are caller-owned and may be empty;
+/// each chunk emits a single multi-row statement so a 1000-row diff
+/// produces 2 DELETEs + 3 INSERTs instead of 1000 individual statements.
+async fn apply_agenda_diff(
+    conn: &mut sqlx::SqliteConnection,
+    delete_rows: &[(&str, &str)],
+    insert_rows: &[((&str, &str), &str)],
+) -> Result<(), AppError> {
+    for chunk in delete_rows.chunks(DELETE_CHUNK) {
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?)").collect();
+        let sql = format!(
+            "DELETE FROM agenda_cache WHERE (date, block_id) IN ({})",
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query(&sql);
+        for (date, block_id) in chunk {
+            q = q.bind(date).bind(block_id);
+        }
+        q.execute(&mut *conn).await?;
+    }
+
+    for chunk in insert_rows.chunks(INSERT_CHUNK) {
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?)").collect();
+        let sql = format!(
+            "INSERT OR IGNORE INTO agenda_cache (date, block_id, source) VALUES {}",
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query(&sql);
+        for ((date, block_id), source) in chunk {
+            q = q.bind(date).bind(block_id).bind(source);
+        }
+        q.execute(&mut *conn).await?;
+    }
+
+    Ok(())
+}
 
 // ---------------------------------------------------------------------------
 // Desired-state SQL (L-27)
@@ -163,36 +217,24 @@ async fn rebuild_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
         return Ok(0);
     }
 
+    // Logical change count: preserve the externally-observed semantics
+    // even though M-18 merges UPDATEs into the DELETE+INSERT chunks.
     let changed = (to_delete.len() + to_insert.len() + to_update.len()) as u64;
 
-    // Step 4: Apply diff.
-    for (date, block_id) in &to_delete {
-        sqlx::query("DELETE FROM agenda_cache WHERE date = ?1 AND block_id = ?2")
-            .bind(date)
-            .bind(block_id)
-            .execute(&mut *tx)
-            .await?;
-    }
+    // Step 4: Apply diff in chunks bounded by MAX_SQL_PARAMS (M-18).
+    // UPDATEs collapse into DELETE+INSERT because the PK is
+    // (date, block_id) — re-inserting with the new `source` is
+    // equivalent to UPDATE source.
+    let mut delete_rows: Vec<(&str, &str)> = Vec::with_capacity(to_delete.len() + to_update.len());
+    delete_rows.extend(to_delete.iter().copied());
+    delete_rows.extend(to_update.iter().map(|(k, _)| *k));
 
-    for ((date, block_id), source) in &to_update {
-        sqlx::query("UPDATE agenda_cache SET source = ?1 WHERE date = ?2 AND block_id = ?3")
-            .bind(source)
-            .bind(date)
-            .bind(block_id)
-            .execute(&mut *tx)
-            .await?;
-    }
+    let mut insert_rows: Vec<((&str, &str), &str)> =
+        Vec::with_capacity(to_insert.len() + to_update.len());
+    insert_rows.extend(to_insert.iter().copied());
+    insert_rows.extend(to_update.iter().copied());
 
-    for ((date, block_id), source) in &to_insert {
-        sqlx::query(
-            "INSERT OR IGNORE INTO agenda_cache (date, block_id, source) VALUES (?1, ?2, ?3)",
-        )
-        .bind(date)
-        .bind(block_id)
-        .bind(source)
-        .execute(&mut *tx)
-        .await?;
-    }
+    apply_agenda_diff(&mut tx, &delete_rows, &insert_rows).await?;
 
     tx.commit().await?;
     Ok(changed)
@@ -295,39 +337,24 @@ async fn rebuild_agenda_cache_split_impl(
         return Ok(0);
     }
 
+    // Logical change count: preserve the externally-observed semantics
+    // even though M-18 merges UPDATEs into the DELETE+INSERT chunks.
     let changed = (to_delete.len() + to_insert.len() + to_update.len()) as u64;
 
-    // Step 4: Apply diff on write pool.
+    // Step 4: Apply diff on write pool, chunked (M-18). UPDATEs collapse
+    // into DELETE+INSERT — the PK is (date, block_id), so re-inserting
+    // with the new `source` is equivalent to UPDATE source.
+    let mut delete_rows: Vec<(&str, &str)> = Vec::with_capacity(to_delete.len() + to_update.len());
+    delete_rows.extend(to_delete.iter().copied());
+    delete_rows.extend(to_update.iter().map(|(k, _)| *k));
+
+    let mut insert_rows: Vec<((&str, &str), &str)> =
+        Vec::with_capacity(to_insert.len() + to_update.len());
+    insert_rows.extend(to_insert.iter().copied());
+    insert_rows.extend(to_update.iter().copied());
+
     let mut tx = write_pool.begin().await?;
-
-    for (date, block_id) in &to_delete {
-        sqlx::query("DELETE FROM agenda_cache WHERE date = ?1 AND block_id = ?2")
-            .bind(date)
-            .bind(block_id)
-            .execute(&mut *tx)
-            .await?;
-    }
-
-    for ((date, block_id), source) in &to_update {
-        sqlx::query("UPDATE agenda_cache SET source = ?1 WHERE date = ?2 AND block_id = ?3")
-            .bind(source)
-            .bind(date)
-            .bind(block_id)
-            .execute(&mut *tx)
-            .await?;
-    }
-
-    for ((date, block_id), source) in &to_insert {
-        sqlx::query(
-            "INSERT OR IGNORE INTO agenda_cache (date, block_id, source) VALUES (?1, ?2, ?3)",
-        )
-        .bind(date)
-        .bind(block_id)
-        .bind(source)
-        .execute(&mut *tx)
-        .await?;
-    }
-
+    apply_agenda_diff(&mut tx, &delete_rows, &insert_rows).await?;
     tx.commit().await?;
     Ok(changed)
 }
