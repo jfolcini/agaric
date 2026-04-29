@@ -10,6 +10,7 @@ pub(crate) use block_ops::find_prior_text;
 use sqlx::SqlitePool;
 use std::str::FromStr;
 
+use crate::db::ReadPool;
 use crate::error::AppError;
 use crate::op::{OpPayload, OpType};
 
@@ -18,7 +19,8 @@ pub async fn compute_reverse(
     device_id: &str,
     seq: i64,
 ) -> Result<OpPayload, AppError> {
-    let record = crate::op_log::get_op_by_seq(pool, device_id, seq).await?;
+    // I-Core-8: wrap to typed read-pool — caller is in write context
+    let record = crate::op_log::get_op_by_seq(&ReadPool(pool.clone()), device_id, seq).await?;
     let op_type = OpType::from_str(&record.op_type)
         .map_err(|e| AppError::Validation(format!("unknown op_type in record: {e}")))?;
     match op_type {

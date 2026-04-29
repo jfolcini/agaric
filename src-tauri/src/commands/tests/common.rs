@@ -2,6 +2,7 @@
 #![allow(unused_imports)]
 use super::*;
 use crate::db::init_pool;
+pub use crate::db::ReadPool;
 use crate::materializer::Materializer;
 use sqlx::SqlitePool;
 use std::path::PathBuf;

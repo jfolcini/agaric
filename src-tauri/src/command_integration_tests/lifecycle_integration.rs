@@ -131,7 +131,9 @@ async fn concurrent_creates_from_multiple_devices_no_conflicts() {
 
     // Verify each device's op_log is independent
     for dev in &devices {
-        let ops = op_log::get_ops_since(&pool, dev, 0).await.unwrap();
+        let ops = op_log::get_ops_since(&ReadPool(pool.clone()), dev, 0)
+            .await
+            .unwrap();
         assert_eq!(
             ops.len(),
             5,
@@ -426,7 +428,9 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
     );
 
     // 6. Verify op_log contains all operations
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let op_types: Vec<&str> = ops.iter().map(|o| o.op_type.as_str()).collect();
     assert!(
         op_types.contains(&"create_block"),

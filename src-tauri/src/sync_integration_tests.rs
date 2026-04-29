@@ -19,7 +19,7 @@
 //!    full flows.
 
 use crate::dag::{get_block_edit_heads, insert_remote_op};
-use crate::db::init_pool;
+use crate::db::{init_pool, ReadPool};
 use crate::hash::compute_op_hash;
 use crate::materializer::Materializer;
 use crate::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
@@ -102,7 +102,9 @@ fn edit_payload_with_prev(
 
 /// Read all ops for a device from the op log and convert to OpTransfer.
 async fn ops_as_transfers(pool: &SqlitePool, device_id: &str) -> Vec<OpTransfer> {
-    let ops = op_log::get_ops_since(pool, device_id, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), device_id, 0)
+        .await
+        .unwrap();
     ops.into_iter().map(OpTransfer::from).collect()
 }
 
@@ -184,7 +186,9 @@ async fn two_device_create_sync_both_see_block() {
     );
 
     // Verify the op is readable in B
-    let op_in_b = op_log::get_op_by_seq(&pool_b, DEV_A, 1).await.unwrap();
+    let op_in_b = op_log::get_op_by_seq(&ReadPool(pool_b.clone()), DEV_A, 1)
+        .await
+        .unwrap();
     assert_eq!(
         op_in_b.op_type, "create_block",
         "op_type must be create_block in B"
@@ -403,11 +407,15 @@ async fn two_device_bidirectional_sync() {
     );
 
     // Verify A has B's ops
-    let a_ops_devb = op_log::get_ops_since(&pool_a, DEV_B, 0).await.unwrap();
+    let a_ops_devb = op_log::get_ops_since(&ReadPool(pool_a.clone()), DEV_B, 0)
+        .await
+        .unwrap();
     assert_eq!(a_ops_devb.len(), 2, "A should have 2 ops from DEV_B");
 
     // Verify B has A's ops
-    let b_ops_deva = op_log::get_ops_since(&pool_b, DEV_A, 0).await.unwrap();
+    let b_ops_deva = op_log::get_ops_since(&ReadPool(pool_b.clone()), DEV_A, 0)
+        .await
+        .unwrap();
     assert_eq!(b_ops_deva.len(), 2, "B should have 2 ops from DEV_A");
 
     mat_a.shutdown();
@@ -448,7 +456,9 @@ async fn duplicate_op_delivery_is_idempotent() {
     assert_eq!(r2.duplicates, 1, "second apply should detect 1 duplicate");
 
     // Verify only 1 op in B's log
-    let ops = op_log::get_ops_since(&pool_b, DEV_A, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool_b.clone()), DEV_A, 0)
+        .await
+        .unwrap();
     assert_eq!(
         ops.len(),
         1,
@@ -495,7 +505,9 @@ async fn out_of_order_ops_applied_correctly() {
     assert_eq!(r2.inserted, 1, "op 2 should insert");
 
     // Verify all 3 present
-    let ops = op_log::get_ops_since(&pool_b, DEV_A, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool_b.clone()), DEV_A, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 3, "all 3 ops should be present in B");
     let seqs: Vec<i64> = ops.iter().map(|o| o.seq).collect();
     assert!(seqs.contains(&1), "seq 1 should be present");
@@ -534,13 +546,13 @@ async fn ops_with_gaps_in_sequence() {
     assert_eq!(result.hash_mismatches, 0, "no hash mismatches");
 
     // Verify both present
-    let op1 = op_log::get_op_by_seq(&pool_b, DEV_A, 1).await;
+    let op1 = op_log::get_op_by_seq(&ReadPool(pool_b.clone()), DEV_A, 1).await;
     assert!(op1.is_ok(), "seq 1 should be present in B");
-    let op5 = op_log::get_op_by_seq(&pool_b, DEV_A, 5).await;
+    let op5 = op_log::get_op_by_seq(&ReadPool(pool_b.clone()), DEV_A, 5).await;
     assert!(op5.is_ok(), "seq 5 should be present in B");
 
     // Verify seq 3 is NOT present (it was not sent)
-    let op3 = op_log::get_op_by_seq(&pool_b, DEV_A, 3).await;
+    let op3 = op_log::get_op_by_seq(&ReadPool(pool_b.clone()), DEV_A, 3).await;
     assert!(op3.is_err(), "seq 3 should not be present in B (not sent)");
 
     mat_b.shutdown();
@@ -571,7 +583,9 @@ async fn hash_mismatch_op_rejected() {
     );
 
     // Verify nothing in B's log
-    let ops = op_log::get_ops_since(&pool_b, DEV_A, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool_b.clone()), DEV_A, 0)
+        .await
+        .unwrap();
     assert!(
         ops.is_empty(),
         "B's op log should be empty after rejecting tampered op"
@@ -627,7 +641,7 @@ async fn sync_after_compaction_detects_reset_required() {
     );
 
     // Verify old ops are gone
-    let op5 = op_log::get_op_by_seq(&pool, DEV_A, 5).await;
+    let op5 = op_log::get_op_by_seq(&ReadPool(pool.clone()), DEV_A, 5).await;
     assert!(op5.is_err(), "seq 5 should be purged after compaction");
 
     // Remote claims it last saw seq 5 for DEV_A — which was compacted
@@ -712,7 +726,9 @@ async fn sync_resume_from_last_hash_sends_only_new_ops() {
     assert_eq!(result.duplicates, 0, "no duplicates in incremental sync");
 
     // Verify B now has all 15
-    let all_ops = op_log::get_ops_since(&pool_b, DEV_A, 0).await.unwrap();
+    let all_ops = op_log::get_ops_since(&ReadPool(pool_b.clone()), DEV_A, 0)
+        .await
+        .unwrap();
     assert_eq!(
         all_ops.len(),
         15,
@@ -762,7 +778,9 @@ async fn large_op_log_sync_5000_ops() {
     }
 
     // Verify A has op_count ops
-    let a_ops = op_log::get_ops_since(&pool_a, DEV_A, 0).await.unwrap();
+    let a_ops = op_log::get_ops_since(&ReadPool(pool_a.clone()), DEV_A, 0)
+        .await
+        .unwrap();
     assert_eq!(a_ops.len(), op_count, "A should have {op_count} ops");
 
     // Get heads
@@ -792,7 +810,9 @@ async fn large_op_log_sync_5000_ops() {
     assert_eq!(result.hash_mismatches, 0, "no hash mismatches in bulk sync");
 
     // Verify counts match
-    let b_ops = op_log::get_ops_since(&pool_b, DEV_A, 0).await.unwrap();
+    let b_ops = op_log::get_ops_since(&ReadPool(pool_b.clone()), DEV_A, 0)
+        .await
+        .unwrap();
     assert_eq!(
         b_ops.len(),
         op_count,
@@ -878,7 +898,9 @@ async fn large_op_log_incremental_sync() {
     );
 
     // Verify totals
-    let final_b_ops = op_log::get_ops_since(&pool_b, DEV_A, 0).await.unwrap();
+    let final_b_ops = op_log::get_ops_since(&ReadPool(pool_b.clone()), DEV_A, 0)
+        .await
+        .unwrap();
     assert_eq!(
         final_b_ops.len(),
         initial_count + extra_count,
@@ -1060,7 +1082,9 @@ async fn orchestrator_full_flow_receiver_side() {
     );
 
     // Verify B actually has A's ops
-    let b_ops = op_log::get_ops_since(&pool_b, DEV_A, 0).await.unwrap();
+    let b_ops = op_log::get_ops_since(&ReadPool(pool_b.clone()), DEV_A, 0)
+        .await
+        .unwrap();
     assert_eq!(
         b_ops.len(),
         3,
@@ -1178,7 +1202,9 @@ async fn repeated_sync_sessions_converge() {
     );
 
     // Verify B has exactly 5 ops total
-    let all_ops = op_log::get_ops_since(&pool_b, DEV_A, 0).await.unwrap();
+    let all_ops = op_log::get_ops_since(&ReadPool(pool_b.clone()), DEV_A, 0)
+        .await
+        .unwrap();
     assert_eq!(
         all_ops.len(),
         5,
@@ -1264,7 +1290,9 @@ async fn insert_remote_op_hash_verification_integration() {
     insert_remote_op(&pool, &valid_record).await.unwrap();
 
     // Verify it's in the DB
-    let fetched = op_log::get_op_by_seq(&pool, "remote-dev", 1).await.unwrap();
+    let fetched = op_log::get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 1)
+        .await
+        .unwrap();
     assert_eq!(fetched.hash, hash, "stored hash should match");
 
     // Build an invalid record with wrong hash

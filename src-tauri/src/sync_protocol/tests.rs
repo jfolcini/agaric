@@ -1,5 +1,5 @@
 use super::*;
-use crate::db::init_pool;
+use crate::db::{init_pool, ReadPool};
 use crate::materializer::Materializer;
 use crate::op::{
     CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
@@ -474,7 +474,7 @@ async fn apply_remote_ops_populates_block_id_sidecar_l13() {
         "single new remote op should be inserted"
     );
 
-    let fetched = crate::op_log::get_op_by_seq(&pool, "remote-dev", 1)
+    let fetched = crate::op_log::get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 1)
         .await
         .unwrap();
     assert_eq!(
@@ -2172,7 +2172,7 @@ async fn apply_remote_ops_rejects_batch_on_invalid_payload() {
     );
 
     // Ensure nothing was inserted.
-    let ops_in_local = crate::op_log::get_ops_since(&local_pool, "remote-dev", 0)
+    let ops_in_local = crate::op_log::get_ops_since(&ReadPool(local_pool.clone()), "remote-dev", 0)
         .await
         .unwrap();
     assert!(
@@ -2253,7 +2253,7 @@ async fn apply_remote_ops_rejects_batch_when_middle_op_payload_malformed() {
     );
 
     // None of the three ops should have landed in op_log.
-    let ops_in_local = crate::op_log::get_ops_since(&local_pool, "remote-dev", 0)
+    let ops_in_local = crate::op_log::get_ops_since(&ReadPool(local_pool.clone()), "remote-dev", 0)
         .await
         .unwrap();
     assert!(
@@ -2336,7 +2336,7 @@ async fn apply_remote_ops_rejects_batch_when_first_op_payload_malformed() {
     );
 
     // None of the three ops should have landed in op_log.
-    let ops_in_local = crate::op_log::get_ops_since(&local_pool, "remote-dev", 0)
+    let ops_in_local = crate::op_log::get_ops_since(&ReadPool(local_pool.clone()), "remote-dev", 0)
         .await
         .unwrap();
     assert!(
@@ -2419,7 +2419,7 @@ async fn apply_remote_ops_rejects_batch_when_last_op_payload_malformed() {
     );
 
     // None of the three ops should have landed in op_log.
-    let ops_in_local = crate::op_log::get_ops_since(&local_pool, "remote-dev", 0)
+    let ops_in_local = crate::op_log::get_ops_since(&ReadPool(local_pool.clone()), "remote-dev", 0)
         .await
         .unwrap();
     assert!(
@@ -2986,7 +2986,7 @@ async fn receiver_accumulates_multi_batch_ops() {
     );
 
     // Verify ops were actually inserted into the local database
-    let local_ops = op_log::get_ops_since(&local_pool, "remote-dev", 0)
+    let local_ops = op_log::get_ops_since(&ReadPool(local_pool.clone()), "remote-dev", 0)
         .await
         .unwrap();
     assert_eq!(
@@ -3064,7 +3064,7 @@ async fn lww_resolves_property_conflict_by_timestamp() {
 
     // B's value should win — verify the resolution op has B's value
     let resolution_ops: Vec<crate::op_log::OpRecord> =
-        crate::op_log::get_ops_since(&pool, "device-A", 0)
+        crate::op_log::get_ops_since(&ReadPool(pool.clone()), "device-A", 0)
             .await
             .unwrap();
     let last_set_prop = resolution_ops
@@ -3150,7 +3150,7 @@ async fn lww_resolves_move_conflict_by_timestamp() {
 
     // B's move should win — verify the resolution op has B's parent+position
     let resolution_ops: Vec<crate::op_log::OpRecord> =
-        crate::op_log::get_ops_since(&pool, "device-A", 0)
+        crate::op_log::get_ops_since(&ReadPool(pool.clone()), "device-A", 0)
             .await
             .unwrap();
     let last_move = resolution_ops
@@ -3883,7 +3883,7 @@ async fn apply_remote_ops_rollback_on_integrity_error() {
     );
 
     // The valid op must NOT be present in the local database (rollback)
-    let ops_in_local = crate::op_log::get_ops_since(&local_pool, "remote-dev", 0)
+    let ops_in_local = crate::op_log::get_ops_since(&ReadPool(local_pool.clone()), "remote-dev", 0)
         .await
         .unwrap();
     assert!(

@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
+41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547).**
 
-Previously resolved: 764+ items across 513 sessions (per SESSION-LOG.md unique session count; latest is session 546).
+Previously resolved: 769+ items across 514 sessions (per SESSION-LOG.md unique session count; latest is session 547).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -2023,76 +2023,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Defer until profiling shows it matters. If the connector ever drops to a sub-second cycle, batch the reads and writes.
 - **Pass-1 source:** 10/F25
-- **Status:** Open
-
-## INFO / nits (14 — expanded)
-
-> Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
-
-### Core
-
-### I-Core-7 — Command list duplicated between `run()` and `specta_tests::specta_builder`
-- **Domain:** Core
-- **Location:** `src-tauri/src/lib.rs:183-303` (production `collect_commands!` in `run()`) and `src-tauri/src/lib.rs:947-1068` (`specta_tests::specta_builder`)
-- **What:** The same ~80-command list is hand-written in two places. Adding a new command requires touching both. The `ts_bindings_up_to_date` test only catches drift after `regenerate_ts_bindings` has been run and the diff committed; adding a command in `run()` but not `specta_builder` produces a runtime-but-not-bindings command silently, and vice versa.
-- **Why it matters:** Long-running maintenance trap. The two ~80-line literal blocks are structural debt with no current correctness impact (the lists agree as of this review).
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Low
-- **Recommendation:** Factor the command list into a single `macro_rules! agaric_commands` (because `tauri_specta::collect_commands!` is itself a macro that needs the token tree at expansion time). Reference the wrapper macro from both call sites. **Requires user approval per AGENTS.md Architectural Stability — adding a macro that generates the command list is a structural change.**
-- **Pass-1 source:** 01/F22
-- **Status:** Open
-
-### I-Core-8 — Op-log read helpers take generic `SqlitePool` (no read/write-pool typing)
-- **Domain:** Core
-- **Location:** `src-tauri/src/op_log.rs:252-298` (`get_op_by_seq`, `get_latest_seq`, `get_ops_since`)
-- **What:** ARCHITECTURE.md §3 promotes `WritePool` / `ReadPool` newtypes (`db.rs:90-98`) to prevent accidental writes on the read pool. The op-log read helpers still take a bare `&SqlitePool`, so callers can pass either. A grep shows `get_op_by_seq` is invoked with the write pool inside `dag::find_lca`'s chain walk — correct, but it contends with writers on the hot merge path.
-- **Why it matters:** Defeats the split-pool architecture for a strict-read path. Pure typing/defence-in-depth nit.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either change the helper signatures to `pool: &ReadPool` (and update non-read callers explicitly) or add `_reading` variants that accept `&ReadPool`. At minimum, change `dag::find_lca` to thread a `&ReadPool` through to `get_op_by_seq`.
-- **Pass-1 source:** 01/F23
-- **Status:** Open
-
-### Materializer
-
-### I-Materializer-1 — `sweep_once` uses a single pool for both reads and writes
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/retry_queue.rs:205-245`, called from `lib.rs:544-548` via `spawn_sweeper()` and the sweeper loop at `retry_queue.rs:261-278`
-- **What:** `sweep_once(pool: &SqlitePool, mat: &Materializer)` takes a single pool argument. Both `fetch_due` (a SELECT) and `clear_entry` (a DELETE) run against it. There is no parameter to pass the `reader_pool` for the SELECT and the writer pool for the DELETE — a divergence from the `cache::*_split` pattern used throughout the cache layer.
-- **Why it matters:** Per AGENTS.md "Background tasks use split read/write pools — reads from reader pool, writes only for the final transaction" (split-pool invariant). This sweeper is a background task and runs SELECTs on the writer pool, regressing the latency invariant the split-pool design protects.
-- **Cost:** S (<2h)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add a `read_pool: &SqlitePool` parameter to `sweep_once` and `spawn_sweeper`, route `fetch_due` to it, and keep `clear_entry` on the writer pool — mirroring the existing `cache::*_split` helpers. **Needs user approval per AGENTS.md Architectural Stability** — adding the `read_pool` parameter is an API-shape change to a public helper.
-- **Pass-1 source:** 02/F16
-- **Status:** Open
-
-### Commands CRUD
-
-### I-CommandsCRUD-3 — Doc/code drift between `AGENTS.md` (CQRS invariant) and `commands/mod.rs` module-doc
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/mod.rs:1-9` vs `AGENTS.md:35-46` (key invariant #2)
-- **What:** AGENTS.md invariant #2 says "commands write ops → materializer writes derived state". `commands/mod.rs`'s module-doc says the opposite: every command writes both the op record and the materialised mutation in a single IMMEDIATE transaction; the materializer only rebuilds derived caches. Reading the code, the module doc is correct.
-- **Why it matters:** Reviewers using AGENTS.md as the source of truth would (correctly, per the literal text) flag every command as a CQRS violation. The invariant should reflect the hybrid model the codebase actually implements.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Rephrase invariant #2 as "commands write both the op log and primary state atomically; materializer rebuilds derived caches". Otherwise file a `MAINT-*` item tracking the doc-drift. **Requires user approval per AGENTS.md self-rule.**
-- **Pass-1 source:** 04/F17
-- **Status:** Open
-
-### I-CommandsCRUD-7 — `list_property_keys` / `list_property_defs` / `list_tags` return unbounded `Vec` with no cursor
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/properties.rs:19-21,459-469`, `src-tauri/src/commands/tags.rs:243-262`
-- **What:** AGENTS.md invariant #3 mandates cursor pagination on every list query. These three commands return raw `Vec<String>` / `Vec<PropertyDefinition>` / `Vec<TagCacheRow>` with at most a `limit` parameter (no cursor, no `next_cursor`). Result sets are tiny in practice (dozens of property keys, hundreds of tags), but the invariant is unconditional.
-- **Why it matters:** Either the invariant should explicitly carve out small-cardinality lookup tables, or these queries should adopt cursors. Today's drift is in the doc, not the data.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add a sentence to AGENTS.md "Backend Patterns" exempting named small-cardinality lookups, or migrate them to cursor pagination. The latter is mechanical given the existing `PageResponse` helpers.
-- **Pass-1 source:** 04/F22
 - **Status:** Open
 
 ---

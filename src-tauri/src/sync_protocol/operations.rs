@@ -2,6 +2,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 
 use super::types::*;
+use crate::db::ReadPool;
 use crate::error::AppError;
 use crate::materializer::{MaterializeTask, Materializer};
 use crate::merge;
@@ -81,7 +82,10 @@ pub async fn compute_ops_to_send(
             continue; // remote is up-to-date for this device
         }
 
-        let device_ops = op_log::get_ops_since(pool, &local_head.device_id, after_seq).await?;
+        // I-Core-8: wrap to typed read-pool — caller is in write context
+        let device_ops =
+            op_log::get_ops_since(&ReadPool(pool.clone()), &local_head.device_id, after_seq)
+                .await?;
         ops.extend(device_ops);
     }
 
@@ -97,7 +101,8 @@ pub async fn check_reset_required(
     remote_heads: &[DeviceHead],
 ) -> Result<bool, AppError> {
     for head in remote_heads {
-        match op_log::get_op_by_seq(pool, &head.device_id, head.seq).await {
+        // I-Core-8: wrap to typed read-pool — caller is in write context
+        match op_log::get_op_by_seq(&ReadPool(pool.clone()), &head.device_id, head.seq).await {
             Ok(_) => {}
             Err(AppError::NotFound(_)) => return Ok(true),
             Err(e) => return Err(e),

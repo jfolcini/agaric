@@ -10,6 +10,7 @@ use std::collections::HashSet;
 
 use sqlx::SqlitePool;
 
+use crate::db::ReadPool;
 use crate::error::AppError;
 use crate::hash::{compute_op_hash, verify_op_hash};
 use crate::op::*;
@@ -261,7 +262,8 @@ async fn fetch_prev_edit_oracle(
     seq: i64,
     has_snapshots: bool,
 ) -> Result<Option<(String, i64)>, AppError> {
-    match get_op_by_seq(pool, device_id, seq).await {
+    // I-Core-8: wrap to typed read-pool — caller is in write context
+    match get_op_by_seq(&ReadPool(pool.clone()), device_id, seq).await {
         Ok(record) => extract_prev_edit(&record),
         Err(AppError::NotFound(_)) if has_snapshots => Err(AppError::InvalidOperation(format!(
             "edit chain broken at ({device_id}, {seq}) — likely due to op log compaction; \
@@ -606,7 +608,8 @@ pub async fn find_lca_oracle(
 /// - `create_block` → `content`
 /// - anything else → `AppError::InvalidOperation`
 pub async fn text_at(pool: &SqlitePool, device_id: &str, seq: i64) -> Result<String, AppError> {
-    let record = get_op_by_seq(pool, device_id, seq).await?;
+    // I-Core-8: wrap to typed read-pool — caller is in write context
+    let record = get_op_by_seq(&ReadPool(pool.clone()), device_id, seq).await?;
     match record.op_type.as_str() {
         "edit_block" => {
             let payload: EditBlockPayload = serde_json::from_str(&record.payload)?;

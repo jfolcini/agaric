@@ -45,6 +45,146 @@ pub mod task_locals;
 pub mod ulid;
 pub mod word_diff;
 
+/// I-Core-7: Single source of truth for the list of Tauri commands
+/// exposed to the frontend.
+///
+/// Both [`run`] and `specta_tests::specta_builder` expand this macro,
+/// so the production invoke handler and the TypeScript-bindings export
+/// cannot drift. **To add or remove a command, edit only this macro.**
+///
+/// `tauri_specta::collect_commands!` is itself a macro that consumes
+/// the literal token tree of command paths at expansion time, so we
+/// wrap it in a `macro_rules!` that re-emits those tokens at every
+/// call site.
+macro_rules! agaric_commands {
+    () => {
+        ::tauri_specta::collect_commands![
+            $crate::commands::create_block,
+            $crate::commands::edit_block,
+            $crate::commands::delete_block,
+            $crate::commands::restore_block,
+            $crate::commands::purge_block,
+            $crate::commands::move_block,
+            $crate::commands::list_blocks,
+            $crate::commands::get_block,
+            $crate::commands::batch_resolve,
+            $crate::commands::add_tag,
+            $crate::commands::remove_tag,
+            $crate::commands::get_backlinks,
+            $crate::commands::get_block_history,
+            $crate::commands::get_conflicts,
+            $crate::commands::get_status,
+            $crate::commands::search_blocks,
+            $crate::commands::query_by_tags,
+            $crate::commands::query_by_property,
+            $crate::commands::list_tags_by_prefix,
+            $crate::commands::list_tags_for_block,
+            $crate::commands::set_property,
+            $crate::commands::set_todo_state,
+            $crate::commands::set_priority,
+            $crate::commands::set_due_date,
+            $crate::commands::set_scheduled_date,
+            $crate::commands::delete_property,
+            $crate::commands::get_properties,
+            $crate::commands::get_batch_properties,
+            $crate::commands::list_page_history,
+            $crate::commands::revert_ops,
+            $crate::commands::undo_page_op,
+            $crate::commands::redo_page_op,
+            $crate::commands::compute_edit_diff,
+            $crate::commands::query_backlinks_filtered,
+            $crate::commands::list_backlinks_grouped,
+            $crate::commands::list_unlinked_references,
+            $crate::commands::list_property_keys,
+            $crate::commands::create_property_def,
+            $crate::commands::list_property_defs,
+            $crate::commands::update_property_def_options,
+            $crate::commands::delete_property_def,
+            // Sync
+            $crate::commands::list_peer_refs,
+            $crate::commands::get_peer_ref,
+            $crate::commands::delete_peer_ref,
+            $crate::commands::update_peer_name,
+            $crate::commands::set_peer_address,
+            $crate::commands::get_device_id,
+            // Sync — pairing & session (#275, #278)
+            $crate::commands::start_pairing,
+            $crate::commands::confirm_pairing,
+            $crate::commands::cancel_pairing,
+            $crate::commands::start_sync,
+            $crate::commands::cancel_sync,
+            // Batch count commands (#604)
+            $crate::commands::count_agenda_batch,
+            $crate::commands::count_agenda_batch_by_source,
+            $crate::commands::count_backlinks_batch,
+            // Page aliases (#598)
+            $crate::commands::set_page_aliases,
+            $crate::commands::get_page_aliases,
+            $crate::commands::resolve_page_by_alias,
+            // Markdown export (#519)
+            $crate::commands::export_page_markdown,
+            // Agenda projection (#644)
+            $crate::commands::list_projected_agenda,
+            // Undated tasks (FEAT-1)
+            $crate::commands::list_undated_tasks,
+            // Logseq/Markdown import (#660)
+            $crate::commands::import_markdown,
+            // Attachments (F-7)
+            $crate::commands::add_attachment,
+            $crate::commands::delete_attachment,
+            $crate::commands::list_attachments,
+            // Graph visualization (F-33)
+            $crate::commands::list_page_links,
+            // Draft autosave (F-17)
+            $crate::commands::save_draft,
+            $crate::commands::flush_draft,
+            $crate::commands::delete_draft,
+            $crate::commands::list_drafts,
+            // Frontend logging (F-19)
+            $crate::commands::log_frontend,
+            $crate::commands::get_log_dir,
+            // Op log compaction (F-20)
+            $crate::commands::get_compaction_status,
+            $crate::commands::compact_op_log_cmd,
+            // Point-in-time restore (F-26)
+            $crate::commands::restore_page_to_op,
+            // Bulk trash operations (B-46)
+            $crate::commands::restore_all_deleted,
+            $crate::commands::purge_all_deleted,
+            // Trash descendant counts (UX-243)
+            $crate::commands::trash_descendant_counts,
+            // Link metadata (UX-165)
+            $crate::commands::fetch_link_metadata,
+            $crate::commands::get_link_metadata,
+            // Bug report (FEAT-5)
+            $crate::commands::collect_bug_report_metadata,
+            $crate::commands::read_logs_for_report,
+            // MCP (FEAT-4e) — Settings "Agent access" tab
+            $crate::commands::get_mcp_status,
+            $crate::commands::get_mcp_socket_path,
+            $crate::commands::mcp_set_enabled,
+            $crate::commands::mcp_disconnect_all,
+            // MCP RW (FEAT-4h slice 2)
+            $crate::commands::get_mcp_rw_status,
+            $crate::commands::get_mcp_rw_socket_path,
+            $crate::commands::mcp_rw_set_enabled,
+            $crate::commands::mcp_rw_disconnect_all,
+            // Google Calendar push (FEAT-5e) — Settings "Google Calendar" tab
+            $crate::commands::get_gcal_status,
+            $crate::commands::force_gcal_resync,
+            $crate::commands::disconnect_gcal,
+            $crate::commands::set_gcal_window_days,
+            $crate::commands::set_gcal_privacy_mode,
+            // Spaces (FEAT-3 Phase 1 + Phase 2 + Phase 6)
+            $crate::commands::list_spaces,
+            $crate::commands::create_page_in_space,
+            $crate::commands::create_space,
+            // Quick capture (FEAT-12) — desktop global-shortcut entry point
+            $crate::commands::quick_capture_block,
+        ]
+    };
+}
+
 /// Return the current UTC time as an RFC 3339 string with millisecond
 /// precision and a `Z` suffix (e.g. `2025-01-15T12:34:56.789Z`).
 ///
@@ -197,7 +337,7 @@ pub fn run() {
     use materializer::{MaterializeTask, Materializer};
     use sync_cert::PersistedCert;
     use tauri::Manager;
-    use tauri_specta::{collect_commands, Builder};
+    use tauri_specta::Builder;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::EnvFilter;
@@ -224,130 +364,9 @@ pub fn run() {
         tracing::error!(target: "agaric", panic = %payload, location = %location, "PANIC");
     }));
 
-    let builder = Builder::<tauri::Wry>::new().commands(collect_commands![
-        commands::create_block,
-        commands::edit_block,
-        commands::delete_block,
-        commands::restore_block,
-        commands::purge_block,
-        commands::move_block,
-        commands::list_blocks,
-        commands::get_block,
-        commands::batch_resolve,
-        commands::add_tag,
-        commands::remove_tag,
-        commands::get_backlinks,
-        commands::get_block_history,
-        commands::get_conflicts,
-        commands::get_status,
-        commands::search_blocks,
-        commands::query_by_tags,
-        commands::query_by_property,
-        commands::list_tags_by_prefix,
-        commands::list_tags_for_block,
-        commands::set_property,
-        commands::set_todo_state,
-        commands::set_priority,
-        commands::set_due_date,
-        commands::set_scheduled_date,
-        commands::delete_property,
-        commands::get_properties,
-        commands::get_batch_properties,
-        commands::list_page_history,
-        commands::revert_ops,
-        commands::undo_page_op,
-        commands::redo_page_op,
-        commands::compute_edit_diff,
-        commands::query_backlinks_filtered,
-        commands::list_backlinks_grouped,
-        commands::list_unlinked_references,
-        commands::list_property_keys,
-        commands::create_property_def,
-        commands::list_property_defs,
-        commands::update_property_def_options,
-        commands::delete_property_def,
-        // Sync
-        commands::list_peer_refs,
-        commands::get_peer_ref,
-        commands::delete_peer_ref,
-        commands::update_peer_name,
-        commands::set_peer_address,
-        commands::get_device_id,
-        // Sync — pairing & session (#275, #278)
-        commands::start_pairing,
-        commands::confirm_pairing,
-        commands::cancel_pairing,
-        commands::start_sync,
-        commands::cancel_sync,
-        // Batch count commands (#604)
-        commands::count_agenda_batch,
-        commands::count_agenda_batch_by_source,
-        commands::count_backlinks_batch,
-        // Page aliases (#598)
-        commands::set_page_aliases,
-        commands::get_page_aliases,
-        commands::resolve_page_by_alias,
-        // Markdown export (#519)
-        commands::export_page_markdown,
-        // Agenda projection (#644)
-        commands::list_projected_agenda,
-        // Undated tasks (FEAT-1)
-        commands::list_undated_tasks,
-        // Logseq/Markdown import (#660)
-        commands::import_markdown,
-        // Attachments (F-7)
-        commands::add_attachment,
-        commands::delete_attachment,
-        commands::list_attachments,
-        // Graph visualization (F-33)
-        commands::list_page_links,
-        // Draft autosave (F-17)
-        commands::save_draft,
-        commands::flush_draft,
-        commands::delete_draft,
-        commands::list_drafts,
-        // Frontend logging (F-19)
-        commands::log_frontend,
-        commands::get_log_dir,
-        // Op log compaction (F-20)
-        commands::get_compaction_status,
-        commands::compact_op_log_cmd,
-        // Point-in-time restore (F-26)
-        commands::restore_page_to_op,
-        // Bulk trash operations (B-46)
-        commands::restore_all_deleted,
-        commands::purge_all_deleted,
-        // Trash descendant counts (UX-243)
-        commands::trash_descendant_counts,
-        // Link metadata (UX-165)
-        commands::fetch_link_metadata,
-        commands::get_link_metadata,
-        // Bug report (FEAT-5)
-        commands::collect_bug_report_metadata,
-        commands::read_logs_for_report,
-        // MCP (FEAT-4e) — Settings "Agent access" tab
-        commands::get_mcp_status,
-        commands::get_mcp_socket_path,
-        commands::mcp_set_enabled,
-        commands::mcp_disconnect_all,
-        // MCP RW (FEAT-4h slice 2)
-        commands::get_mcp_rw_status,
-        commands::get_mcp_rw_socket_path,
-        commands::mcp_rw_set_enabled,
-        commands::mcp_rw_disconnect_all,
-        // Google Calendar push (FEAT-5e) — Settings "Google Calendar" tab
-        commands::get_gcal_status,
-        commands::force_gcal_resync,
-        commands::disconnect_gcal,
-        commands::set_gcal_window_days,
-        commands::set_gcal_privacy_mode,
-        // Spaces (FEAT-3 Phase 1 + Phase 2 + Phase 6)
-        commands::list_spaces,
-        commands::create_page_in_space,
-        commands::create_space,
-        // Quick capture (FEAT-12) — desktop global-shortcut entry point
-        commands::quick_capture_block,
-    ]);
+    // I-Core-7: command list lives in the `agaric_commands!` macro near the
+    // top of this file. Edit that macro to add or remove a command.
+    let builder = Builder::<tauri::Wry>::new().commands(agaric_commands!());
 
     // `mut` is only consumed by the `#[cfg(desktop)]` / `#[cfg(not(mobile))]`
     // plugin registrations below. On Android/iOS the binding is never
@@ -729,6 +748,7 @@ pub fn run() {
             // re-enqueues rows that have reached their `next_attempt_at`.
             let retry_shutdown = Arc::new(AtomicBool::new(false));
             materializer::retry_queue::spawn_sweeper(
+                pools.read.clone(),
                 pools.write.clone(),
                 materializer.clone(),
                 retry_shutdown.clone(),
@@ -1165,137 +1185,16 @@ pub fn cleanup_old_log_files(dir: &std::path::Path, max_age_days: u32) {
 
 #[cfg(test)]
 mod specta_tests {
-    use tauri_specta::{collect_commands, Builder};
+    use tauri_specta::Builder;
 
     /// Build the tauri-specta [`Builder`] with every registered command.
     ///
     /// Shared between the export test and (potentially) runtime setup so the
-    /// command list stays in sync.
+    /// command list stays in sync. I-Core-7: the command list itself lives
+    /// in the `agaric_commands!` macro near the top of `lib.rs`; this
+    /// function and `run()` both expand it so they cannot drift.
     fn specta_builder() -> Builder {
-        Builder::<tauri::Wry>::new().commands(collect_commands![
-            crate::commands::create_block,
-            crate::commands::edit_block,
-            crate::commands::delete_block,
-            crate::commands::restore_block,
-            crate::commands::purge_block,
-            crate::commands::move_block,
-            crate::commands::list_blocks,
-            crate::commands::get_block,
-            crate::commands::batch_resolve,
-            crate::commands::add_tag,
-            crate::commands::remove_tag,
-            crate::commands::get_backlinks,
-            crate::commands::get_block_history,
-            crate::commands::get_conflicts,
-            crate::commands::get_status,
-            crate::commands::search_blocks,
-            crate::commands::query_by_tags,
-            crate::commands::query_by_property,
-            crate::commands::list_tags_by_prefix,
-            crate::commands::list_tags_for_block,
-            crate::commands::set_property,
-            crate::commands::set_todo_state,
-            crate::commands::set_priority,
-            crate::commands::set_due_date,
-            crate::commands::set_scheduled_date,
-            crate::commands::delete_property,
-            crate::commands::get_properties,
-            crate::commands::get_batch_properties,
-            crate::commands::list_page_history,
-            crate::commands::revert_ops,
-            crate::commands::undo_page_op,
-            crate::commands::redo_page_op,
-            crate::commands::compute_edit_diff,
-            crate::commands::query_backlinks_filtered,
-            crate::commands::list_backlinks_grouped,
-            crate::commands::list_unlinked_references,
-            crate::commands::list_property_keys,
-            crate::commands::create_property_def,
-            crate::commands::list_property_defs,
-            crate::commands::update_property_def_options,
-            crate::commands::delete_property_def,
-            // Sync
-            crate::commands::list_peer_refs,
-            crate::commands::get_peer_ref,
-            crate::commands::delete_peer_ref,
-            crate::commands::update_peer_name,
-            crate::commands::set_peer_address,
-            crate::commands::get_device_id,
-            // Sync — pairing & session (#275, #278)
-            crate::commands::start_pairing,
-            crate::commands::confirm_pairing,
-            crate::commands::cancel_pairing,
-            crate::commands::start_sync,
-            crate::commands::cancel_sync,
-            // Batch count commands (#604)
-            crate::commands::count_agenda_batch,
-            crate::commands::count_agenda_batch_by_source,
-            crate::commands::count_backlinks_batch,
-            // Page aliases (#598)
-            crate::commands::set_page_aliases,
-            crate::commands::get_page_aliases,
-            crate::commands::resolve_page_by_alias,
-            // Markdown export (#519)
-            crate::commands::export_page_markdown,
-            // Agenda projection (#644)
-            crate::commands::list_projected_agenda,
-            // Undated tasks (FEAT-1)
-            crate::commands::list_undated_tasks,
-            // Logseq/Markdown import (#660)
-            crate::commands::import_markdown,
-            // Attachments (F-7)
-            crate::commands::add_attachment,
-            crate::commands::delete_attachment,
-            crate::commands::list_attachments,
-            // Graph visualization (F-33)
-            crate::commands::list_page_links,
-            // Draft autosave (F-17)
-            crate::commands::save_draft,
-            crate::commands::flush_draft,
-            crate::commands::delete_draft,
-            crate::commands::list_drafts,
-            // Frontend logging (F-19)
-            crate::commands::log_frontend,
-            crate::commands::get_log_dir,
-            // Op log compaction (F-20)
-            crate::commands::get_compaction_status,
-            crate::commands::compact_op_log_cmd,
-            // Point-in-time restore (F-26)
-            crate::commands::restore_page_to_op,
-            // Bulk trash operations (B-46)
-            crate::commands::restore_all_deleted,
-            crate::commands::purge_all_deleted,
-            // Trash descendant counts (UX-243)
-            crate::commands::trash_descendant_counts,
-            // Link metadata (UX-165)
-            crate::commands::fetch_link_metadata,
-            crate::commands::get_link_metadata,
-            // Bug report (FEAT-5)
-            crate::commands::collect_bug_report_metadata,
-            crate::commands::read_logs_for_report,
-            // MCP (FEAT-4e) — Settings "Agent access" tab
-            crate::commands::get_mcp_status,
-            crate::commands::get_mcp_socket_path,
-            crate::commands::mcp_set_enabled,
-            crate::commands::mcp_disconnect_all,
-            // MCP RW (FEAT-4h slice 2)
-            crate::commands::get_mcp_rw_status,
-            crate::commands::get_mcp_rw_socket_path,
-            crate::commands::mcp_rw_set_enabled,
-            crate::commands::mcp_rw_disconnect_all,
-            // Google Calendar push (FEAT-5e) — Settings "Google Calendar" tab
-            crate::commands::get_gcal_status,
-            crate::commands::force_gcal_resync,
-            crate::commands::disconnect_gcal,
-            crate::commands::set_gcal_window_days,
-            crate::commands::set_gcal_privacy_mode,
-            // Spaces (FEAT-3 Phase 1 + Phase 2 + Phase 6)
-            crate::commands::list_spaces,
-            crate::commands::create_page_in_space,
-            crate::commands::create_space,
-            // Quick capture (FEAT-12) — desktop global-shortcut entry point
-            crate::commands::quick_capture_block,
-        ])
+        Builder::<tauri::Wry>::new().commands(agaric_commands!())
     }
 
     /// Verify the generated TypeScript bindings match the committed file.

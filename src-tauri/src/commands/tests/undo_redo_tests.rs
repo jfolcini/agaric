@@ -312,7 +312,9 @@ async fn revert_ops_reverses_single_edit() {
     );
 
     // Get the edit op's seq
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let edit_op = ops.iter().find(|o| o.op_type == "edit_block").unwrap();
 
     // Revert it
@@ -385,7 +387,9 @@ async fn revert_ops_reverses_multiple_ops_in_correct_order() {
     mat.flush_background().await.unwrap();
 
     // Get both edit ops
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let edit_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "edit_block").collect();
     assert_eq!(edit_ops.len(), 2, "should have exactly two edit ops");
 
@@ -434,7 +438,9 @@ async fn revert_ops_appends_op_log_entry() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    let ops_before = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops_before = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let count_before = ops_before.len();
     let edit_op = ops_before
         .iter()
@@ -457,7 +463,9 @@ async fn revert_ops_appends_op_log_entry() {
     assert_eq!(results.len(), 1, "should produce one result");
 
     // Verify the reverse op was appended to the op log
-    let ops_after = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops_after = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(
         ops_after.len(),
         count_before + 1,
@@ -505,7 +513,9 @@ async fn revert_ops_rejects_non_reversible_op() {
     mat.flush_background().await.unwrap();
 
     // Get the purge op
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let purge_op = ops.iter().find(|o| o.op_type == "purge_block").unwrap();
 
     // Try to revert it — should fail
@@ -589,7 +599,9 @@ async fn restore_page_to_op_reverts_ops_after_target() {
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Record the seq after b1 edit — this will be our restore target
-    let ops_after_b1 = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops_after_b1 = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let target_op = ops_after_b1
         .iter()
         .rev()
@@ -685,7 +697,9 @@ async fn restore_page_to_op_skips_non_reversible() {
     .unwrap();
 
     // Record target
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let target_seq = ops.last().unwrap().seq;
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
@@ -790,7 +804,9 @@ async fn restore_page_to_op_global_scope() {
     .await
     .unwrap();
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let target_seq = ops.last().unwrap().seq;
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
@@ -853,7 +869,9 @@ async fn restore_page_to_op_no_ops_after_target() {
     .await
     .unwrap();
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let target_seq = ops.last().unwrap().seq;
 
     let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), target_seq)
@@ -915,7 +933,9 @@ async fn restore_page_to_op_includes_nested_blocks() {
     .unwrap();
 
     // Record target after initial setup
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let target_seq = ops.last().unwrap().seq;
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
@@ -1039,7 +1059,9 @@ async fn restore_page_to_op_verifies_reverse_ops_in_op_log() {
     .unwrap();
 
     // Record ops count and target after creates
-    let ops_before = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops_before = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let target_seq = ops_before.last().unwrap().seq;
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
@@ -1055,7 +1077,9 @@ async fn restore_page_to_op_verifies_reverse_ops_in_op_log() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    let ops_before_restore = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops_before_restore = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let count_before = ops_before_restore.len();
 
     // Restore to target — should revert both edits
@@ -1067,7 +1091,9 @@ async fn restore_page_to_op_verifies_reverse_ops_in_op_log() {
     assert_eq!(result.ops_reverted, 2, "should revert exactly 2 edit ops");
 
     // Fetch all ops after restore — should have 2 new reverse ops appended
-    let ops_after = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops_after = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(
         ops_after.len(),
         count_before + 2,
@@ -1191,7 +1217,9 @@ async fn restore_page_to_op_skips_delete_attachment() {
     .unwrap();
 
     // Record target seq AFTER the add_attachment
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let target_seq = ops.last().unwrap().seq;
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
@@ -1313,7 +1341,9 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
     .unwrap();
 
     // Record target seq AFTER the add_attachment
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let target_seq = ops.last().unwrap().seq;
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
@@ -1743,7 +1773,9 @@ async fn revert_create_block_soft_deletes() {
     mat.flush_background().await.unwrap();
 
     // Get the create_block op
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let create_op = ops.iter().find(|o| o.op_type == "create_block").unwrap();
 
     // Revert the create (reverse = DeleteBlock → soft-deletes the block)
@@ -1840,7 +1872,9 @@ async fn revert_delete_block_restores_with_descendants() {
     assert!(p_row.deleted_at.is_some(), "parent should be deleted");
 
     // Get the delete_block op
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let delete_op = ops.iter().find(|o| o.op_type == "delete_block").unwrap();
 
     // Revert the delete (reverse = RestoreBlock)
@@ -1942,7 +1976,9 @@ async fn revert_move_block_restores_original_position() {
     );
 
     // Get the move_block op
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let move_op = ops.iter().find(|o| o.op_type == "move_block").unwrap();
 
     // Revert the move
@@ -2016,7 +2052,9 @@ async fn revert_add_tag_removes_association() {
     assert!(before.is_some(), "tag should be applied");
 
     // Get the add_tag op
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let add_tag_op = ops.iter().find(|o| o.op_type == "add_tag").unwrap();
 
     // Revert the add_tag (reverse = RemoveTag)
@@ -2095,7 +2133,9 @@ async fn revert_remove_tag_restores_association() {
     assert!(before.is_none(), "tag should be removed");
 
     // Get the remove_tag op
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let remove_tag_op = ops.iter().find(|o| o.op_type == "remove_tag").unwrap();
 
     // Revert the remove_tag (reverse = AddTag)
@@ -2183,7 +2223,9 @@ async fn revert_set_property_restores_prior_value() {
     );
 
     // Get the second set_property op (the one that set "low")
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let set_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_property").collect();
     let second_set = set_ops.last().unwrap();
 
@@ -2246,7 +2288,9 @@ async fn revert_set_property_first_produces_delete() {
     mat.flush_background().await.unwrap();
 
     // Get the set_property op
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let set_op = ops.iter().find(|o| o.op_type == "set_property").unwrap();
 
     // Revert the first set (no prior → reverse = DeleteProperty)
@@ -2319,7 +2363,9 @@ async fn revert_delete_property_restores_value() {
     );
 
     // Get the delete_property op
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let del_op = ops.iter().find(|o| o.op_type == "delete_property").unwrap();
 
     // Revert the delete (reverse = SetProperty with prior value)
@@ -2404,7 +2450,9 @@ async fn revert_add_attachment_soft_deletes() {
     .unwrap();
 
     // Get the add_attachment op
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let add_att_op = ops.iter().find(|o| o.op_type == "add_attachment").unwrap();
 
     // Revert the add_attachment (reverse = DeleteAttachment → soft-delete)
@@ -2543,7 +2591,9 @@ async fn revert_ops_mixed_reversible_non_reversible_rejects_all() {
     mat.flush_background().await.unwrap();
 
     // Gather op refs
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let edit_op = ops.iter().find(|o| o.op_type == "edit_block").unwrap();
     let purge_op = ops.iter().find(|o| o.op_type == "purge_block").unwrap();
 
@@ -2582,7 +2632,9 @@ async fn revert_ops_mixed_reversible_non_reversible_rejects_all() {
     );
 
     // Verify op_log count unchanged
-    let ops_after = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops_after = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(
         count_before,
         ops_after.len(),
@@ -2962,7 +3014,9 @@ async fn revert_ops_from_different_devices() {
     );
 
     // Get the create_block op from DEV
-    let dev_ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let dev_ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let create_op = dev_ops
         .iter()
         .find(|o| o.op_type == "create_block")
@@ -3872,7 +3926,9 @@ async fn restore_page_to_op_ignores_ops_on_conflict_copy_descendants() {
     mat.flush_background().await.unwrap();
 
     // Record target: point-in-time before any later edits.
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let target_seq = ops.last().unwrap().seq;
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 

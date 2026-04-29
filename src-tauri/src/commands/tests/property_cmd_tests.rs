@@ -2039,7 +2039,9 @@ async fn set_todo_state_writes_op_log_entry() {
         .await
         .unwrap();
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let set_prop_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_property").collect();
     // null→TODO now also sets created_at, so we expect 2 set_property ops
     assert_eq!(
@@ -2082,7 +2084,9 @@ async fn set_priority_writes_op_log_entry() {
         .await
         .unwrap();
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let set_prop_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_property").collect();
     assert_eq!(
         set_prop_ops.len(),
@@ -2126,7 +2130,9 @@ async fn set_due_date_writes_op_log_entry() {
     .await
     .unwrap();
 
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     let set_prop_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_property").collect();
     assert_eq!(
         set_prop_ops.len(),

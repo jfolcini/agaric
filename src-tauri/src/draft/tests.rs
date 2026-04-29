@@ -3,7 +3,7 @@
 //! the conditional-write optimisation in `save_draft_if_changed`.
 
 use super::*;
-use crate::db::init_pool;
+use crate::db::{init_pool, ReadPool};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -388,7 +388,7 @@ async fn flush_draft_is_atomic_op_and_draft_delete_share_transaction() {
         .unwrap();
 
     // Op committed
-    let op = crate::op_log::get_op_by_seq(&pool, DEVICE, record.seq)
+    let op = crate::op_log::get_op_by_seq(&ReadPool(pool.clone()), DEVICE, record.seq)
         .await
         .unwrap();
     assert_eq!(op.op_type, "edit_block", "op must be committed");
@@ -409,7 +409,9 @@ async fn flush_draft_rollback_neither_op_nor_draft_deleted() {
 
     save_draft(&pool, BLOCK_A, "rollback test").await.unwrap();
 
-    let seq_before = get_latest_seq(&pool, DEVICE).await.unwrap();
+    let seq_before = get_latest_seq(&ReadPool(pool.clone()), DEVICE)
+        .await
+        .unwrap();
 
     // Manually replicate flush_draft's logic but roll back instead
     // of committing, to prove rollback semantics.
@@ -429,7 +431,9 @@ async fn flush_draft_rollback_neither_op_nor_draft_deleted() {
     }
 
     // Op must NOT have been committed
-    let seq_after = get_latest_seq(&pool, DEVICE).await.unwrap();
+    let seq_after = get_latest_seq(&ReadPool(pool.clone()), DEVICE)
+        .await
+        .unwrap();
     assert_eq!(
         seq_before, seq_after,
         "op_log seq must not advance after rollback"
@@ -465,7 +469,7 @@ async fn flush_draft_sequential_flushes_produce_chained_ops() {
 
     // Both ops are in the log, no drafts remain
     assert_eq!(draft_count(&pool).await.unwrap(), 0);
-    let ops = crate::op_log::get_ops_since(&pool, DEVICE, 0)
+    let ops = crate::op_log::get_ops_since(&ReadPool(pool.clone()), DEVICE, 0)
         .await
         .unwrap();
     assert_eq!(ops.len(), 2, "both ops must be persisted");
@@ -508,7 +512,7 @@ async fn flush_draft_when_delete_draft_fails_after_op_commit() {
     );
 
     // Verify both ops exist in the log
-    let ops = crate::op_log::get_ops_since(&pool, DEVICE, 0)
+    let ops = crate::op_log::get_ops_since(&ReadPool(pool.clone()), DEVICE, 0)
         .await
         .unwrap();
     assert_eq!(

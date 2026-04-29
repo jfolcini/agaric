@@ -271,13 +271,19 @@ pub(crate) fn task_from_row(row: &DueRow) -> Option<MaterializeTask> {
 /// delete the row. Failures to enqueue leave the row in place so the next
 /// sweep can try again.
 ///
+/// I-Materializer-1: split the pool into `read_pool` (for the `fetch_due`
+/// SELECT) and `write_pool` (for the `clear_entry` DELETE) to match the
+/// "background tasks use split read/write pools" pattern documented in
+/// AGENTS.md. Tests pass the same pool for both arguments.
+///
 /// Returns the number of rows re-enqueued.
 pub async fn sweep_once(
-    pool: &SqlitePool,
+    read_pool: &SqlitePool,
+    write_pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,
 ) -> Result<usize, AppError> {
     const SWEEP_BATCH_LIMIT: i64 = 64;
-    let due = fetch_due(pool, SWEEP_BATCH_LIMIT).await?;
+    let due = fetch_due(read_pool, SWEEP_BATCH_LIMIT).await?;
     let mut re_enqueued = 0usize;
     for row in &due {
         let Some(task) = task_from_row(row) else {
@@ -288,14 +294,14 @@ pub async fn sweep_once(
                 task_type = %row.task_type,
                 "dropping retry row for unknown task_type"
             );
-            clear_entry(pool, &row.block_id, &row.task_type).await?;
+            clear_entry(write_pool, &row.block_id, &row.task_type).await?;
             continue;
         };
         match materializer.try_enqueue_background(task) {
             Ok(()) => {
                 // Re-enqueued. Clear the row — the consumer will re-persist
                 // the entry with incremented attempts if it fails again.
-                clear_entry(pool, &row.block_id, &row.task_type).await?;
+                clear_entry(write_pool, &row.block_id, &row.task_type).await?;
                 re_enqueued += 1;
             }
             Err(e) => {
@@ -316,9 +322,14 @@ pub async fn sweep_once(
 
 /// Spawn a long-lived task that sweeps the retry queue every 60 seconds
 /// and exits when `shutdown_flag` is set.
+///
+/// I-Materializer-1: takes both pools so `sweep_once` can route SELECTs
+/// to the reader pool and DELETEs to the writer pool, mirroring the
+/// `cache::*_split` helpers used elsewhere in the materializer.
 #[cfg(not(tarpaulin_include))]
 pub fn spawn_sweeper(
-    pool: SqlitePool,
+    read_pool: SqlitePool,
+    write_pool: SqlitePool,
     materializer: crate::materializer::Materializer,
     shutdown_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
@@ -330,7 +341,7 @@ pub fn spawn_sweeper(
     // discard the JoinHandle — the task stops when `shutdown_flag` flips.
     let _handle = spawn_fn(async move {
         // First pass at boot to drain entries left by a previous session.
-        if let Err(e) = sweep_once(&pool, &materializer).await {
+        if let Err(e) = sweep_once(&read_pool, &write_pool, &materializer).await {
             tracing::warn!(error = %e, "boot-time retry queue sweep failed");
         }
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -341,7 +352,7 @@ pub fn spawn_sweeper(
             if shutdown_flag.load(std::sync::atomic::Ordering::Acquire) {
                 break;
             }
-            if let Err(e) = sweep_once(&pool, &materializer).await {
+            if let Err(e) = sweep_once(&read_pool, &write_pool, &materializer).await {
                 tracing::warn!(error = %e, "periodic retry queue sweep failed");
             }
         }
@@ -668,7 +679,7 @@ mod tests {
         .await
         .unwrap();
 
-        let n = sweep_once(&pool, &mat).await.unwrap();
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
         assert_eq!(n, 1, "one due row must be re-enqueued");
         // Clear: after re-enqueue, row is deleted (consumer will re-add on failure).
         let remaining = pending_count(&pool).await.unwrap();
@@ -699,7 +710,7 @@ mod tests {
         .await
         .unwrap();
 
-        let n = sweep_once(&pool, &mat).await.unwrap();
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
         assert_eq!(n, 0, "future-dated rows must NOT be swept");
         let remaining = pending_count(&pool).await.unwrap();
         assert_eq!(remaining, 1, "future row must remain in the queue");
@@ -726,7 +737,7 @@ mod tests {
         .await
         .unwrap();
 
-        let n = sweep_once(&pool, &mat).await.unwrap();
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
         assert_eq!(
             n, 0,
             "unknown task_type rows are NOT counted as re-enqueued"

@@ -44,7 +44,9 @@ async fn restore_all_deleted_restores_all_soft_deleted_blocks() {
     assert!(row3.deleted_at.is_none(), "RA_ALIVE must remain alive");
 
     // Op log should have 2 restore_block entries
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(ops.len(), 2, "2 restore_block ops must be logged");
     for op in &ops {
         assert_eq!(op.op_type, "restore_block", "op_type must be restore_block");
@@ -66,7 +68,9 @@ async fn restore_all_deleted_empty_trash_returns_zero() {
     );
 
     // No ops logged
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert!(ops.is_empty(), "no ops should be logged for empty trash");
 }
 
@@ -94,7 +98,9 @@ async fn restore_all_deleted_handles_cascade_deleted_blocks() {
     assert_eq!(resp.affected_count, 2, "both blocks should be restored");
 
     // Only 1 root op in op_log (child has same deleted_at as parent)
-    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
     assert_eq!(
         ops.len(),
         1,

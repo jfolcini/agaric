@@ -1,6 +1,7 @@
 use super::detect::MAX_CHAIN_WALK_ITERATIONS;
 use super::*;
 use crate::dag;
+use crate::db::ReadPool;
 use crate::error::AppError;
 use crate::hash::compute_op_hash;
 use crate::materializer::Materializer;
@@ -2479,7 +2480,9 @@ async fn merge_property_conflict_one_side_null() {
 
     // 6. Verify the winning value is "world" (B's value)
     let resolution_ops: Vec<OpRecord> =
-        crate::op_log::get_ops_since(&pool, DEV_A, 0).await.unwrap();
+        crate::op_log::get_ops_since(&ReadPool(pool.clone()), DEV_A, 0)
+            .await
+            .unwrap();
     let last_set_prop = resolution_ops
         .iter()
         .rev()

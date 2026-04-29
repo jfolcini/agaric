@@ -260,7 +260,9 @@ pub async fn revert_ops_inner(
     for op_ref in &ops {
         let reverse_payload = reverse::compute_reverse(pool, &op_ref.device_id, op_ref.seq).await?;
         // Fetch created_at for sorting AND op_type for the UndoResult response
-        let record = op_log::get_op_by_seq(pool, &op_ref.device_id, op_ref.seq).await?;
+        // I-Core-8: wrap to typed read-pool — caller is in write context
+        let record =
+            op_log::get_op_by_seq(&ReadPool(pool.clone()), &op_ref.device_id, op_ref.seq).await?;
         reverses.push((
             op_ref.clone(),
             reverse_payload,
@@ -354,7 +356,9 @@ pub async fn restore_page_to_op_inner(
     target_seq: i64,
 ) -> Result<RestoreToOpResult, AppError> {
     // Fetch the target op's created_at timestamp
-    let target_record = op_log::get_op_by_seq(pool, &target_device_id, target_seq).await?;
+    // I-Core-8: wrap to typed read-pool — caller is in write context
+    let target_record =
+        op_log::get_op_by_seq(&ReadPool(pool.clone()), &target_device_id, target_seq).await?;
     let target_ts = &target_record.created_at;
 
     // Query all ops after the target.
@@ -568,7 +572,9 @@ pub async fn redo_page_op_inner(
 
     // Fetch the undo op's op_type (the one we're reversing).
     // Surfaces to the frontend as `reversed_op_type` for descriptive toasts.
-    let undo_record = op_log::get_op_by_seq(pool, &undo_device_id, undo_seq).await?;
+    // I-Core-8: wrap to typed read-pool — caller is in write context
+    let undo_record =
+        op_log::get_op_by_seq(&ReadPool(pool.clone()), &undo_device_id, undo_seq).await?;
 
     // Compute reverse of the undo op
     let reverse_payload = reverse::compute_reverse(pool, &undo_device_id, undo_seq).await?;
