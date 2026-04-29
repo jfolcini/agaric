@@ -2981,6 +2981,88 @@ async fn projected_agenda_cache_chunked_rebuild_handles_large_diff() {
     );
 }
 
+/// Forces the chunked `INSERT OR IGNORE` path in the **split-pool**
+/// variant [`rebuild_projected_agenda_cache_split`] (M-17).  Pre-fix
+/// the split function delegated to the single-pool variant on
+/// `write_pool`, ignoring the read pool entirely; this test asserts the
+/// post-fix split path actually runs the SELECT on `read_pool`,
+/// computes the projection set in Rust outside the writer lock, and
+/// lands every row through the chunked INSERT on `write_pool`.
+///
+/// Seeds 10 daily-repeating blocks with a ~365-day horizon so the
+/// rebuild produces well over `MAX_SQL_PARAMS / 3 = 333` projections,
+/// forcing at least 2 chunks of the multi-row INSERT.  Asserts
+/// per-block parity (no chunk loses rows) and end-to-end parity with
+/// the single-pool variant on `(block_id, projected_date, source)`.
+#[tokio::test]
+async fn projected_agenda_cache_split_chunked_rebuild_handles_large_input() {
+    let (pool, _dir) = test_pool().await;
+
+    let today = chrono::Local::now().date_naive();
+    let due = today.format("%Y-%m-%d").to_string();
+
+    // 10 daily-repeating blocks → ~365 projections each ⇒ >3500 rows,
+    // well above the 333-row chunk size, so the chunked code must run
+    // multiple INSERT statements within the same transaction.
+    const N_BLOCKS: usize = 10;
+    for i in 0..N_BLOCKS {
+        let id = format!("RPTSPLIT{i:02}");
+        insert_repeating_block(&pool, &id, &due, None, "daily", None, None, None).await;
+    }
+
+    rebuild_projected_agenda_cache_split(&pool, &pool)
+        .await
+        .unwrap();
+
+    let total = count_rows(&pool, "projected_agenda_cache").await;
+    assert!(
+        total > 500,
+        "expected > 500 projected rows to exercise multi-chunk INSERT, got {total}"
+    );
+
+    // Every block contributes the same number of projections — assert
+    // the per-block count matches `total / N_BLOCKS` so a partial-write
+    // bug in the chunked path can't slip through.
+    let per_block: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = 'RPTSPLIT00'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        total,
+        per_block * (N_BLOCKS as i64),
+        "every block must contribute identical projection counts"
+    );
+
+    // Parity check: split-rebuild rows must match single-pool rebuild
+    // rows on (block_id, projected_date, source). Both paths share the
+    // `compute_projection_entries` helper, so identical inputs must
+    // produce byte-identical outputs.
+    let split_rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT block_id, projected_date, source FROM projected_agenda_cache \
+         ORDER BY block_id, projected_date, source",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    rebuild_projected_agenda_cache(&pool).await.unwrap();
+    let single_rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT block_id, projected_date, source FROM projected_agenda_cache \
+         ORDER BY block_id, projected_date, source",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        split_rows, single_rows,
+        "split and single-pool rebuilds must produce identical \
+         (block_id, projected_date, source) rows"
+    );
+}
+
 // ====================================================================
 // agenda_cache — source UPDATE path (T-12)
 // ====================================================================
@@ -4170,5 +4252,116 @@ async fn rebuild_page_ids_oracle_matches_rust_ancestor_walk() {
     assert!(
         actual.get("CCONFLICT").cloned().flatten().is_none(),
         "conflict copy must have its page_id preserved (NULL in this fixture)",
+    );
+}
+
+/// M-17 regression: forces the chunked CASE-expression UPDATE path in
+/// [`rebuild_page_ids_split`] by seeding more non-page blocks than
+/// fit in a single statement (`MAX_SQL_PARAMS / 3 = 333` rows per
+/// chunk). Pre-fix the split variant delegated to the single-pool
+/// implementation and ignored `read_pool`; post-fix it asserts the
+/// chunked code lands every row's `page_id` correctly AND matches the
+/// single-pool variant for parity on a separate test pool.
+#[tokio::test]
+async fn page_id_split_chunked_rebuild_handles_large_input() {
+    // 400 > 333 so the multi-chunk UPDATE path runs at least 2 chunks.
+    const N_PAGES: usize = 4;
+    const PER_PAGE: usize = 100; // 4 * 100 = 400 non-page blocks
+    const N_BLOCKS: usize = N_PAGES * PER_PAGE;
+
+    fn page_id(p: usize) -> String {
+        format!("PAGECHUNK{p:05}AAAAAAAAAAAA")
+    }
+    fn block_id(p: usize, j: usize) -> String {
+        format!("BLKCHUNK{p:03}{j:05}AAAAAAAAAA")
+    }
+
+    async fn seed(pool: &SqlitePool) {
+        let mut tx = pool.begin().await.unwrap();
+        for p in 0..N_PAGES {
+            let pid = page_id(p);
+            sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', ?)")
+                .bind(&pid)
+                .bind(format!("Page {p}"))
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            for j in 0..PER_PAGE {
+                let bid = block_id(p, j);
+                sqlx::query(
+                    "INSERT INTO blocks (id, block_type, content, parent_id) \
+                     VALUES (?, 'content', ?, ?)",
+                )
+                .bind(&bid)
+                .bind(format!("Content {p}-{j}"))
+                .bind(&pid)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            }
+        }
+        tx.commit().await.unwrap();
+    }
+
+    // Pool A: split rebuild.
+    let (pool_split, _dir_split) = test_pool().await;
+    seed(&pool_split).await;
+    rebuild_page_ids_split(&pool_split, &pool_split)
+        .await
+        .unwrap();
+
+    let split_rows: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT id, page_id FROM blocks ORDER BY id")
+            .fetch_all(&pool_split)
+            .await
+            .unwrap();
+
+    assert_eq!(
+        split_rows.len(),
+        N_PAGES + N_BLOCKS,
+        "fixture row count must match pages + non-page blocks"
+    );
+
+    // Per-row correctness: every page → page_id = self; every non-page
+    // child → page_id = its page parent.
+    for p in 0..N_PAGES {
+        let pid = page_id(p);
+        let actual_page = split_rows
+            .iter()
+            .find(|(id, _)| *id == pid)
+            .and_then(|(_, p)| p.as_deref());
+        assert_eq!(
+            actual_page,
+            Some(pid.as_str()),
+            "page block {pid} must have page_id = self after split rebuild",
+        );
+        for j in 0..PER_PAGE {
+            let bid = block_id(p, j);
+            let actual_page = split_rows
+                .iter()
+                .find(|(id, _)| *id == bid)
+                .and_then(|(_, p)| p.as_deref());
+            assert_eq!(
+                actual_page,
+                Some(pid.as_str()),
+                "non-page block {bid} must point to page {pid} after split rebuild",
+            );
+        }
+    }
+
+    // Pool B: single-pool rebuild on identical fixture; parity check.
+    let (pool_single, _dir_single) = test_pool().await;
+    seed(&pool_single).await;
+    rebuild_page_ids(&pool_single).await.unwrap();
+
+    let single_rows: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT id, page_id FROM blocks ORDER BY id")
+            .fetch_all(&pool_single)
+            .await
+            .unwrap();
+
+    assert_eq!(
+        split_rows, single_rows,
+        "split and single-pool rebuilds must produce identical (id, page_id) rows"
     );
 }

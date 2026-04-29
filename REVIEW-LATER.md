@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-37 open items — 37 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 16 backend Medium findings closed + 1 MAINT closed across sessions 549-552 (M-16, M-18, M-67, M-91 in 549; M-12, M-27, M-37, M-70, M-92 in 550; M-6 stale, M-26, M-71, M-84, M-94 in 551; M-17 partial tags+pages, M-28, MAINT-123 in 552).**
+36 open items — 36 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 17 backend Medium findings closed + 2 MAINT closed across sessions 549-553 (M-16, M-18, M-67, M-91 in 549; M-12, M-27, M-37, M-70, M-92 in 550; M-6 stale, M-26, M-71, M-84, M-94 in 551; M-17 partial tags+pages, M-28, MAINT-123 in 552; M-17 final projected_agenda+page_id, MAINT-114 spike-keep in 553).**
 
-Previously resolved: 789+ items across 519 sessions (per SESSION-LOG.md unique session count; latest is session 552).
+Previously resolved: 792+ items across 520 sessions (per SESSION-LOG.md unique session count; latest is session 553).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -35,7 +35,6 @@ Previously resolved: 789+ items across 519 sessions (per SESSION-LOG.md unique s
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L |
 | MAINT-111 | MAINT | Spike `rmcp` (official Rust MCP SDK) vs the hand-rolled JSON-RPC 2.0 dispatch in `mcp/server.rs` (~492 LOC of framing + `make_success` / `make_error` / `parse_request` / method-dispatch boilerplate); keep existing `ToolRegistry` + activity-feed if the adapter stays thin | M |
 | MAINT-113 | MAINT | `ConflictFreeBlockId` newtype to lift invariant #9 (`is_conflict = 0` + `depth < 100` in every recursive CTE over `blocks`) into the type system — 220 `is_conflict = 0` SQL occurrences across 70 files. LOW-priority refactor for elegance, not correctness; the convention + review + documented invariant are already working. Do NOT do on a deadline. | L |
-| MAINT-114 | MAINT | Audit `.github/workflows/` (4 files — `ci.yml`, `_validate.yml`, `release.yml`, `release-tag.yml`) for consolidation. Minimum wins likely 4 → 3 (fold `release-tag.yml` into `release.yml` as `workflow_dispatch`); full 4 → 2 (validate + release) probably not cleanly achievable without losing the per-push-vs-per-tag split. Spike first, commit only if the merged file is not worse than the pair. | S–M |
 | MAINT-116 | MAINT | `useBlockSlashCommands.applyContentEdit` at `src/hooks/useBlockSlashCommands.ts:131-145` bypasses `pageStore.edit()` and omits `notifyUndoNewAction`, so heading / callout / numbered-list / divider slash commands silently leave the redo stack uncleared. Fix as part of adding a `setBlockProperty` action to `src/stores/page-blocks.ts` — also collapses 8 per-hook `pageStore.setState(...)` + rollback + `useUndoStore.getState().onNewAction(rootParentId)` copies across `useBlockProperties`, `useBlockSlashCommands`, `useBlockDatePicker`, `useCheckboxSyntax`. | S+M |
 | MAINT-118 | MAINT | Block-surface prop drilling — `BlockListRenderer` / `SortableBlockWrapper` / `SortableBlock` carry 33 / 32 / 32 props each with **14 verbatim-shared callbacks** (`onNavigate` … `onSelect`) + **4 verbatim-shared resolvers**. Deliver via `PageBlockContext`-style provider + 3 hooks (`useBlockActions`, `useBlockResolvers`, `useBlockState`). Kills the memoisation lost to callback identity churn and unblocks every "add a new block action" ticket. | M |
 | MAINT-119 | MAINT | Decompose `src/components/JournalPage.tsx` (728L) — extract `GlobalDateControls` / `JournalControls` to sibling files (currently inlined), extract `useCalendarPageDates()` hook that eliminates a **byte-identical** `listBlocks({blockType:'page',limit:500})` fetch at L356-369 ≡ L490-503 (runs twice on mount today), and extract `useJournalBlockCreation()` for the page-create + template-load + block-insert flow. Target ≤300 lines. | M |
@@ -1360,10 +1359,10 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 | Dropped (hallucinated / out-of-scope / duplicate / wontfix-intentional) | 12 |
 | Severity-downgraded by Pass 2 | 49 |
 | Already-tracked in REVIEW-LATER (PERF-19, PERF-20, PERF-23) | 3 |
-| Net findings in this report | 318 |
+| Net findings in this report | 317 |
 | **Critical** | **1** |
 | **High** | **4** |
-| **Medium** | **13** |
+| **Medium** | **12** |
 | **Low** | **124** |
 | **Info / nits** | **125** |
 
@@ -1378,7 +1377,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 |---|---|---|---|---|---|
 | Core data layer | 0 | 1 | 3 | 9 | 11 |
 | Materializer | 1 | 2 | 4 | 8 | 4 |
-| Cache + Pagination | 0 | 0 | 4 | 12 | 6 |
+| Cache + Pagination | 0 | 0 | 3 | 12 | 6 |
 | Commands (CRUD) | 0 | 1 | 4 | 9 | 13 |
 | Commands (System) | 0 | 2 | 8 | 13 | 6 |
 | Sync stack | 0 | 3 | 10 | 25 | 5 |
@@ -1486,18 +1485,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 
 ### Cache + Pagination
-
-### M-17 — Two remaining `*_split` cache rebuilds ignore the `read_pool` (projected_agenda, page_id)
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/cache/projected_agenda.rs:244-249`, `src-tauri/src/cache/page_id.rs:64-68`
-- **What:** Per AGENTS.md invariant #7, background rebuilds should read from the reader pool and only acquire a writer for the final INSERT/DELETE transaction. Two of the `*_split` variants accept a `_read_pool: &SqlitePool` parameter, ignore it, and delegate to the single-pool implementation against `write_pool`. The doc-comments justify it as "background, stale-OK", but `rebuild_projected_agenda_cache` in particular performs substantial Rust-side computation (up to 365 projections per repeating block) while holding a writer — the exact scenario the split-pool pattern was introduced to avoid. Tags + pages were already split in session 552 (chunked INSERT pattern from M-18); the two remaining variants are heavier (`projected_agenda` Rust compute, `page_id` UPDATE-style writes).
-- **Why it matters:** Hot-path writes (op apply) wait on writer-pool capacity; cache rebuilds that hold writers longer than necessary increase tail latency. The `_unused` parameter also makes it harder for future maintainers to reason about which rebuilds follow the documented pattern.
-- **Cost:** M (projected_agenda has Rust-side compute; page_ids needs UPDATE-style write).
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** For `projected_agenda`, read repeating-block + property rows on reader, compute the projection set in Rust, then chunked INSERT on writer (the chunked INSERT shape from M-18 already handles the write side). For `page_ids`, read all `(id, parent_id, block_type, is_conflict)` rows on reader, compute the page-id mapping in Rust, then chunked UPDATE on writer.
-- **Pass-1 source:** 03/F5
-- **Status:** Partial — tags + pages closed in session 552; projected_agenda + page_id remain open.
 
 ### M-19 — Unbounded `Vec` materialization on full-vault scans
 - **Domain:** Cache + Pagination

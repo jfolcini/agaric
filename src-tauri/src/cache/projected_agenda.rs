@@ -5,8 +5,10 @@ use crate::error::AppError;
 
 /// `projected_agenda_cache` has 3 columns per row
 /// (block_id, projected_date, source) → `MAX_SQL_PARAMS / 3 = 333` rows
-/// per chunked `INSERT OR IGNORE` (M-18).
-const INSERT_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
+/// per chunked `INSERT OR IGNORE` (M-18). Mirrors the constant naming in
+/// `cache/tags.rs` and `cache/pages.rs` for consistency across split-pool
+/// rebuilds.
+const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 
 // ---------------------------------------------------------------------------
 // rebuild_projected_agenda_cache (P-16)
@@ -16,6 +18,12 @@ const INSERT_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 ///
 /// Mirrors `RepeatingBlockRow` in `commands/mod.rs` but lives here to avoid
 /// a circular dependency (cache -> commands).
+///
+/// `#[derive(sqlx::FromRow)]` lets the split-pool rebuild use the dynamic
+/// `sqlx::query_as` (no compile-time SQL check) while the single-pool
+/// rebuild still uses the `sqlx::query_as!` macro.  Both decode into the
+/// same struct so the shared compute helper sees identical inputs.
+#[derive(sqlx::FromRow)]
 struct CacheRepeatingRow {
     id: String,
     due_date: Option<String>,
@@ -103,10 +111,55 @@ async fn rebuild_projected_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, A
     .fetch_all(pool)
     .await?;
 
-    // Build all projected entries in memory.
+    let entries = compute_projection_entries(today, horizon, &rows);
+    let written = entries.len() as u64;
+
+    // Write to DB: DELETE + INSERT in a single transaction.
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("DELETE FROM projected_agenda_cache")
+        .execute(&mut *tx)
+        .await?;
+
+    // Chunked multi-row INSERT (M-18): 3 columns per row, so each
+    // statement binds at most `REBUILD_CHUNK * 3 ≤ MAX_SQL_PARAMS`
+    // parameters. Replaces the per-row INSERT loop that violated the
+    // chunked-INSERT convention from AGENTS.md.
+    for chunk in entries.chunks(REBUILD_CHUNK) {
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?)").collect();
+        let sql = format!(
+            "INSERT OR IGNORE INTO projected_agenda_cache \
+             (block_id, projected_date, source) VALUES {}",
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query(&sql);
+        for (block_id, date, source) in chunk {
+            q = q.bind(block_id).bind(date).bind(source);
+        }
+        q.execute(&mut *tx).await?;
+    }
+
+    tx.commit().await?;
+    Ok(written)
+}
+
+/// Source-of-truth projection compute step shared by the single-pool and
+/// split-pool rebuilds.
+///
+/// Given a snapshot of repeating-block rows + a `today` reference date and
+/// 365-day `horizon`, returns the `(block_id, projected_date, source)`
+/// entries the caller will write into `projected_agenda_cache`.  Both
+/// rebuild paths must produce **identical** entries for identical inputs;
+/// keeping the recurrence logic in one helper removes the risk of the two
+/// paths drifting (M-17 invariant #7).
+fn compute_projection_entries(
+    today: chrono::NaiveDate,
+    horizon: chrono::NaiveDate,
+    rows: &[CacheRepeatingRow],
+) -> Vec<(String, String, String)> {
     let mut entries: Vec<(String, String, String)> = Vec::new(); // (block_id, date, source)
 
-    for block in &rows {
+    for block in rows {
         let rule = match &block.repeat_rule {
             Some(r) if !r.is_empty() => r.clone(),
             _ => continue,
@@ -230,20 +283,98 @@ async fn rebuild_projected_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, A
         }
     }
 
+    entries
+}
+
+/// Read/write split variant of [`rebuild_projected_agenda_cache`] (M-17).
+///
+/// Reads repeating blocks from `read_pool` inside a snapshot-isolated
+/// transaction, materialises them into memory, runs the (potentially
+/// substantial — up to 365 projections per block) recurrence compute in
+/// Rust with the read tx already dropped, then runs `DELETE FROM
+/// projected_agenda_cache` plus chunked `INSERT OR IGNORE` on
+/// `write_pool`.  The writer lock is held only for the final write
+/// transaction, never across the Rust-side compute.
+///
+/// Stale-while-revalidate: between dropping the read tx and beginning
+/// the write tx another writer may mutate `blocks` / `block_properties`.
+/// The next rebuild reconciles any churn — cache rebuilds are background,
+/// eventually consistent (AGENTS.md "Performance Conventions / Split
+/// read/write pool pattern").
+///
+/// L-26 timezone semantics: `today` is captured **before** the read tx
+/// using [`chrono::Local::now`] so the entire rebuild — read, compute,
+/// write — sees one stable reference date.  See
+/// [`rebuild_projected_agenda_cache`] for the documentation pin on
+/// device-local timezone behaviour.
+pub async fn rebuild_projected_agenda_cache_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<(), AppError> {
+    super::rebuild_with_timing("projected_agenda", || {
+        rebuild_projected_agenda_cache_split_impl(write_pool, read_pool)
+    })
+    .await
+}
+
+async fn rebuild_projected_agenda_cache_split_impl(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<u64, AppError> {
+    // Capture `today` + horizon **before** the read tx so every entry in
+    // this rebuild shares one reference date — matches the single-pool
+    // variant's semantics and the L-26 device-local-timezone pin.
+    let today = chrono::Local::now().date_naive();
+    let horizon = today + chrono::Duration::days(365);
+
+    // Read phase — snapshot-isolated SELECT on `read_pool`. Same shape
+    // and filters as `rebuild_projected_agenda_cache_impl`:
+    // `is_conflict = 0`, `deleted_at IS NULL`, repeat property present,
+    // at least one date column, template-page exclusion.
+    let mut read_tx = read_pool.begin().await?;
+    let rows: Vec<CacheRepeatingRow> = sqlx::query_as::<_, CacheRepeatingRow>(
+        "SELECT b.id,
+                b.due_date, b.scheduled_date,
+                bp.value_text AS repeat_rule,
+                bp_until.value_date AS repeat_until,
+                bp_count.value_num AS repeat_count,
+                bp_seq.value_num AS repeat_seq
+         FROM blocks b
+         JOIN block_properties bp ON bp.block_id = b.id AND bp.key = 'repeat'
+         LEFT JOIN block_properties bp_until ON bp_until.block_id = b.id AND bp_until.key = 'repeat-until'
+         LEFT JOIN block_properties bp_count ON bp_count.block_id = b.id AND bp_count.key = 'repeat-count'
+         LEFT JOIN block_properties bp_seq ON bp_seq.block_id = b.id AND bp_seq.key = 'repeat-seq'
+         WHERE b.deleted_at IS NULL
+           AND b.is_conflict = 0
+           AND (b.todo_state IS NULL OR b.todo_state != 'DONE')
+           AND bp.value_text IS NOT NULL
+           AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)
+           AND NOT EXISTS (
+               SELECT 1 FROM block_properties tp
+               WHERE tp.block_id = b.page_id AND tp.key = 'template'
+           )",
+    )
+    .fetch_all(&mut *read_tx)
+    .await?;
+    drop(read_tx);
+
+    // Compute phase — pure-Rust recurrence projection.  Held outside any
+    // tx so the writer lock is not blocked while the (potentially up to
+    // 365 projections per block) loop runs.
+    let entries = compute_projection_entries(today, horizon, &rows);
     let written = entries.len() as u64;
 
-    // Write to DB: DELETE + INSERT in a single transaction.
-    let mut tx = pool.begin().await?;
+    // Write phase — DELETE + chunked `INSERT OR IGNORE` on `write_pool`,
+    // all wrapped in a single transaction.  Mirrors M-18's chunked-INSERT
+    // shape so a single statement binds at most
+    // `REBUILD_CHUNK * 3 = 999 ≤ MAX_SQL_PARAMS`.
+    let mut tx = write_pool.begin().await?;
 
     sqlx::query("DELETE FROM projected_agenda_cache")
         .execute(&mut *tx)
         .await?;
 
-    // Chunked multi-row INSERT (M-18): 3 columns per row, so each
-    // statement binds at most `INSERT_CHUNK * 3 ≤ MAX_SQL_PARAMS`
-    // parameters. Replaces the per-row INSERT loop that violated the
-    // chunked-INSERT convention from AGENTS.md.
-    for chunk in entries.chunks(INSERT_CHUNK) {
+    for chunk in entries.chunks(REBUILD_CHUNK) {
         let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?)").collect();
         let sql = format!(
             "INSERT OR IGNORE INTO projected_agenda_cache \
@@ -259,19 +390,6 @@ async fn rebuild_projected_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, A
 
     tx.commit().await?;
     Ok(written)
-}
-
-/// Read/write split variant of [`rebuild_projected_agenda_cache`].
-///
-/// Reads repeating blocks from `read_pool`, computes projections, then
-/// writes to `write_pool`. Delegates to the single-pool implementation
-/// using the write pool for the combined read+write — acceptable because
-/// cache rebuilds are background stale-while-revalidate operations.
-pub async fn rebuild_projected_agenda_cache_split(
-    write_pool: &SqlitePool,
-    _read_pool: &SqlitePool,
-) -> Result<(), AppError> {
-    rebuild_projected_agenda_cache(write_pool).await
 }
 
 // ---------------------------------------------------------------------------

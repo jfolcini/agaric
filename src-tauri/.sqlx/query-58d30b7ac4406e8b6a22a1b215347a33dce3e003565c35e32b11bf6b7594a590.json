@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE blocks SET page_id = NULL WHERE is_conflict = 0",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "58d30b7ac4406e8b6a22a1b215347a33dce3e003565c35e32b11bf6b7594a590"
+}
