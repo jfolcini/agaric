@@ -1,5 +1,50 @@
 # Session Log
 
+## Session 552 — Cache split + dead-filter cleanup + mock-drift test — close 3 items (M-17 partial, M-28, MAINT-123) (2026-04-29)
+
+**3 mixed-domain backend findings closed in one PROMPT.md batch with 3 parallel build subagents + 2 parallel review subagents.** Theme: incremental cleanup of long-tail items — actually-split tags+pages cache rebuilds, remove dead `attachments.deleted_at` filter, and add runtime mock-drift detection.
+
+**REVIEW-LATER impact:**
+
+- **Backend Code Review Medium count:** 14 → 13 (-1: M-28 Commands System; M-17 partial close — full M-17 still tracks the projected_agenda + page_id variants).
+- **Top-level open count (summary table):** 38 → 37 (-1: MAINT-123 closed).
+- **Net findings in the appendix:** 319 → 318.
+- **Previously-resolved counter:** 786+ → 789+ across 519 sessions.
+
+**Items closed (3):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| M-17 (tags+pages) | `src-tauri/src/cache/{tags,pages,tests}.rs` — Subagent 9d8a9e9c | **Split cache rebuilds for tags + pages now actually use the read pool.** Pre-fix: `rebuild_tags_cache_split` and `rebuild_pages_cache_split` accepted a `_read_pool` parameter, IGNORED it, and delegated to the single-pool implementation against `write_pool` — held the writer lock for the entire SELECT+INSERT despite the doc-comment promise of split semantics. Post-fix: each `_split_impl` now opens a snapshot-isolated read transaction on `read_pool`, materializes the desired rows into `Vec<(...)>`, drops the read tx, then opens a write transaction on `write_pool` for `DELETE FROM <table>` + chunked multi-row `INSERT OR IGNORE INTO <table> VALUES (?,?,?), …`. Tags chunk size = `MAX_SQL_PARAMS / 4 = 249` (4 columns: tag_id, name, usage_count, updated_at); pages chunk size = `MAX_SQL_PARAMS / 3 = 333` (3 columns: page_id, title, updated_at). Single `now_rfc3339()` shared across all chunks (matches single-pool semantics). All WHERE filters preserved (`is_conflict = 0`, `deleted_at IS NULL`, `content IS NOT NULL`, UX-250 UNION over block_tags ∪ block_tag_refs for tags). 2 new parity tests `tags_cache_split_chunked_rebuild_handles_large_input` (251 tags > 249 chunk) and `pages_cache_split_chunked_rebuild_handles_large_input` (401 pages > 333 chunk) seed beyond chunk boundaries and verify split + single-pool variants produce identical cache contents. Reviewer flagged a small consistency nit — `rebuild_pages_cache_impl` used plain `INSERT` while the split used `INSERT OR IGNORE`; orchestrator unified both to `INSERT OR IGNORE` (semantically equivalent after `DELETE`, but the IGNORE form documents intent). 121/121 cache tests PASS. **Note: `projected_agenda.rs` and `page_id.rs` _split variants are still on the single-pool delegation path; those remain in M-17 as smaller follow-up work.** |
+| M-28 | `src-tauri/src/commands/attachments.rs` + `commands/tests/block_cmd_tests.rs` — Subagent ed4034eb | **Dead `AND deleted_at IS NULL` filter removed from `list_attachments_inner`; column status documented.** Pre-fix: `list_attachments_inner` filtered `WHERE block_id = ? AND deleted_at IS NULL ORDER BY created_at`. The `attachments.deleted_at` column declared in migration 0001 is never written by any production code path — `delete_attachment_inner` and `OpType::DeleteAttachment` both issue hard `DELETE FROM attachments`. The filter was therefore a no-op (every surviving row already had NULL). Post-fix per recommendation option (a) subset (filter removal only — the full option (a) "drop column in new migration" requires user approval): filter removed; new multi-paragraph M-28 doc-comment on `list_attachments_inner` explains the dead-state, references both code paths that hard-delete (`delete_attachment_inner` + materializer's `OpType::DeleteAttachment`), and lists the open architectural items (drop column / flip to soft-delete) as out-of-scope. 1 new regression test `list_attachments_returns_rows_with_deleted_at_set` directly inserts a row with `deleted_at = '2025-01-02T00:00:00Z'` (bypassing the hard-delete path) and asserts the row IS returned — pre-fix the filter would have hidden it. 53/53 attachment tests PASS. .sqlx cache regenerated for the modified `query_as!`. |
+| MAINT-123 | `src/lib/tauri-mock/__tests__/handlers-drift.test.ts` (new) — Subagent 8a363428 | **Runtime mock-drift detection test landed.** Pre-state: `HANDLERS: Record<string, Handler>` had no compile-time or runtime safety net. The original example (`trash_descendant_counts` missing from HANDLERS) was already fixed in a prior session — verified all 99 commands in `bindings.ts` already have a HANDLERS entry. New test reads `bindings.ts` source via `node:fs` + `import.meta.url` and regex-extracts every `__TAURI_INVOKE("snake_case_name", …)` literal (chosen over camelCase→snake_case mapping because acronyms like `gcal`/`mcp`/`id` make naive conversion unsafe). 4 tests: (1) sanity guard (>50 commands extracted — catches silent regex breakage), (2) forward drift (every binding has a handler or is allowlisted), (3) reverse drift (every HANDLERS key is a real binding — catches stale mocks), (4) allowlist sanity (no double-listing). `INTENTIONALLY_NOT_MOCKED: ReadonlySet<string>` constant currently empty. The full type-level approach (compile-time enforcement) is blocked by `bindings.ts` carrying `// @ts-nocheck` (auto-gen) — documented in test comments as a future enhancement paired with MAINT-125. 4/4 drift-test cases PASS. Drift simulation (rename a handler key) verified the test fails loudly with the offending command name in the failure message. |
+
+**Files touched (this session's batch — 7 modified):**
+
+- Backend (5): `cache/tags.rs`, `cache/pages.rs` (incl. orchestrator polish for INSERT consistency), `cache/tests.rs`, `commands/attachments.rs`, `commands/tests/block_cmd_tests.rs`.
+- Frontend (1): `src/lib/tauri-mock/__tests__/handlers-drift.test.ts` (new file, 114 lines).
+- `.sqlx/` cache: 1 swap (replace old `list_attachments_inner` query metadata with the filter-less version) + 1 added (`pages_cache` `INSERT OR IGNORE` replaces plain `INSERT`).
+- Docs: `REVIEW-LATER.md` (M-28 + MAINT-123 detail entries removed; M-17 entry updated to focus on the projected_agenda + page_id variants only; appendix Executive Summary count 319 → 318 and Medium 14 → 13; Findings by Domain × Severity adjusted: Commands System Med 9→8; top-level summary table 38 → 37 with MAINT-123 row removed; previously-resolved counter 786+ → 789+; sessions 518 → 519; latest session 551 → 552), `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- M-17: 121/121 cache tests PASS including 2 new parity tests crossing chunk boundaries.
+- M-28: 53/53 attachment tests PASS including the new regression test.
+- MAINT-123: 4/4 drift-test cases PASS; full vitest run had 2 unrelated pre-existing SearchPanel flakes that pass in isolation.
+- Full backend: 3225/3225 PASS, 3 skipped, 0 failed.
+
+**Process notes:**
+
+- **3 build subagents converged with zero file overlap.** Split: M-17 (`cache/{tags,pages,tests}.rs`), M-28 (`commands/attachments.rs` + `commands/tests/block_cmd_tests.rs`), MAINT-123 (new test file).
+- **2 review subagents APPROVED with one nit each on M-17.** Reviewer A (`bc869f66`, M-17 + M-28) flagged a consistency nit — `rebuild_pages_cache_impl` used plain `INSERT` while the split used `INSERT OR IGNORE`. Orchestrator unified both to `INSERT OR IGNORE` (semantically equivalent after `DELETE FROM pages_cache`, but explicit). Reviewer B (`a1f5e612`, MAINT-123) flagged no concerns — clean APPROVE.
+- **`trash_descendant_counts` was already in HANDLERS** when the MAINT-123 subagent verified — that specific drift was closed in a prior session, leaving only the broader "type the HANDLERS map" recommendation open. The runtime test is the practical equivalent until `bindings.ts`'s `// @ts-nocheck` is resolved.
+- **Biome auto-fix** caught import-ordering on the new test file; orchestrator ran `npx biome check --write` to apply the safe-fix and re-staged.
+- **Rustfmt was clean** this round — no long-line wrapping needed.
+- **M-17 partial close.** REVIEW-LATER's M-17 entry was rewritten to track only the projected_agenda + page_id variants (the heavier-compute / structurally-different rebuilds). Tags + pages are now off the M-17 finding list.
+- **Two pre-existing flaky tests** (`apply_remote_ops_groups_by_block_id_l68`, `run_file_transfer_initiator_breaks_on_cancel_m47`) showed up in the full backend run and retried-passed; both unrelated and tracked elsewhere. Two pre-existing SearchPanel flakes in the full vitest run (`disables result button during click loading`, `updates recent pages in localStorage when clicking a search result (child block)`) pass in isolation; orchestrator did not file new tracking entries since they're flake-class behaviour, not regressions.
+
+---
+
 ## Session 551 — Backend medium findings (continued II) — close 5 items (M-6 stale, M-26, M-71, M-84, M-94) (2026-04-29)
 
 **5 backend MEDIUM-severity findings closed in one PROMPT.md batch with 4 parallel build subagents + 2 parallel review subagents + 1 stale-entry cleanup.** Theme: continue clearing actionable medium-severity backend findings (commands CRUD, lifecycle/reverse, MCP, GCal) — pure code or docs/naming, no architectural decisions.

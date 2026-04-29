@@ -257,9 +257,24 @@ pub async fn delete_attachment_inner(
     Ok(())
 }
 
-/// List all (non-deleted) attachments for a block.
+/// List all attachments for a block.
 ///
 /// Pure read — no op log entry, no materializer dispatch.
+///
+/// M-28: the `attachments` table declares a `deleted_at` column (see
+/// migration `0001_initial.sql`), but no code path ever writes a non-NULL
+/// value to it. Both [`delete_attachment_inner`] and the materializer's
+/// `OpType::DeleteAttachment` handler (`materializer/handlers.rs`) issue
+/// `DELETE FROM attachments` — i.e. hard-delete. The historical filter
+/// `AND deleted_at IS NULL` was therefore a no-op: every surviving row
+/// already had `deleted_at IS NULL`. It has been removed so the query
+/// reflects what actually happens at runtime and so future readers do
+/// not assume soft-delete semantics.
+///
+/// The column itself is left in place: dropping it would require a new
+/// migration, and flipping the delete path to a real soft-delete would
+/// require a new op-type or payload extension. Both are out of scope per
+/// AGENTS.md "Architectural Stability" and need explicit user approval.
 ///
 /// # Errors
 ///
@@ -272,7 +287,7 @@ pub async fn list_attachments_inner(
     let rows = sqlx::query_as!(
         AttachmentRow,
         "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at \
-         FROM attachments WHERE block_id = ? AND deleted_at IS NULL \
+         FROM attachments WHERE block_id = ? \
          ORDER BY created_at",
         block_id
     )
