@@ -951,6 +951,23 @@ pub async fn purge_block_inner(
 /// Finds root-level deleted blocks (those whose parent is not deleted with the
 /// same timestamp), creates a `RestoreBlock` op for each, then clears
 /// `deleted_at` on ALL deleted blocks. Recomputes tag inheritance afterward.
+///
+/// # Known limitation: `deleted_at` collision window (I-CommandsCRUD-9)
+///
+/// Cascade roots are inferred via the heuristic "block is a root if its
+/// `parent_id IS NULL` or its parent does NOT share the same `deleted_at`
+/// value". Two distinct cascade-delete events whose root blocks happen
+/// to land on the same RFC3339 millisecond would be conflated into a
+/// single root, producing one fewer `RestoreBlock` op than was actually
+/// performed. A peer device replaying the op log would then leave one of
+/// the two subtrees unrestored.
+///
+/// `now_rfc3339()` is millisecond-precision and not strictly monotonic
+/// across pool connections, so the collision-window is non-zero but
+/// vanishingly small under normal load (single-user, multi-device,
+/// occasional bulk restore). The mitigation path — explicitly recording
+/// the originating block-id in the op-log payload or a side table — is
+/// gated by AGENTS.md "Architectural Stability" and tracked separately.
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn restore_all_deleted_inner(
     pool: &SqlitePool,
@@ -1052,6 +1069,21 @@ pub async fn restore_all_deleted_inner(
 ///
 /// Creates `PurgeBlock` ops for root-level deleted blocks, then bulk-deletes
 /// all dependent rows and the blocks themselves. Irreversible.
+///
+/// # Known limitation: `deleted_at` collision window (I-CommandsCRUD-9)
+///
+/// Same heuristic as `restore_all_deleted_inner`: a block is treated as
+/// a cascade root if its `parent_id IS NULL` or its parent has a
+/// different `deleted_at` value. Two distinct cascade-delete events
+/// whose root blocks share an RFC3339 millisecond would emit a single
+/// `PurgeBlock` op instead of two, leaving a peer device with one
+/// subtree intact after replay. The collision-window is non-zero
+/// because `now_rfc3339()` is millisecond-precision and not strictly
+/// monotonic across pool connections, but the practical likelihood is
+/// vanishingly small under normal load (single-user, multi-device,
+/// occasional bulk purge). The fix path — recording the originating
+/// block-id explicitly in the op-log payload or a side table — is
+/// gated by AGENTS.md "Architectural Stability" and tracked separately.
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn purge_all_deleted_inner(
     pool: &SqlitePool,
