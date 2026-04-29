@@ -202,7 +202,7 @@ pub async fn create_conflict_copy_with_reindex(
 
     materializer
         .enqueue_background(MaterializeTask::ReindexBlockLinks {
-            block_id: new_block_id,
+            block_id: std::sync::Arc::from(new_block_id),
         })
         .await?;
 

@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-42 open items — 39 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
+41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 762+ items across 512 sessions (per SESSION-LOG.md unique session count; latest is session 545).
+Previously resolved: 764+ items across 513 sessions (per SESSION-LOG.md unique session count; latest is session 546).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -56,7 +56,6 @@ Previously resolved: 762+ items across 512 sessions (per SESSION-LOG.md unique s
 | MAINT-142 | MAINT | Split `tag_inheritance.rs` (~1233L) into `tag_inheritance/mod.rs` (dispatcher) + `incremental.rs` + `rebuild.rs` + `tests.rs` — matches the pattern used by sibling modules. The file documents `apply_op_tag_inheritance` as "the" single entry point but 7 other `pub async fn` are also callable; demote helpers to `pub(crate)` as part of the split. Macros file (`tag_inheritance_macros.rs`) is a sibling and stays where it is. | M |
 | MAINT-159 | MAINT | `scripts/check-ipc-error-path.mjs` only enforces error-path coverage for `src/components/*.tsx` top-level files (`files = "^src/components/([^/]+\\.tsx\|...)$"` in `prek.toml:189`). Subdirectory components in `src/components/agent-access/`, `src/components/journal/`, `src/components/block-tree/`, `src/components/backlink-filter/`, and the new `src/components/settings/` (after MAINT-128) are out of scope. The script header itself documents this as a "HARD-NARROWED" scope with a deferred FOLLOW-UP. Subdirectory components import from `@/lib/tauri` and may have no error-path test today — the gate doesn't fire. Fix: walk `src/components/**/*.tsx` recursively (update both the script's file walk and the prek `files` regex), then address whatever new gaps the recursive walk surfaces. Land AFTER MAINT-128 so the new subdirectories from the god-component split are in place. | S |
 | MAINT-162 | MAINT | ARIA role re-evaluation for list views — `nested-interactive: { enabled: false }` at ~20 axe sites (`PageBrowser.test.tsx`, `TrashView.test.tsx`, `ConflictList.test.tsx`, `HistoryListItem.test.tsx`, `StaticBlock.test.tsx` ×7, `TagFilterPanel.test.tsx`) and `aria-required-children: { enabled: false }` at `PageBrowser.test.tsx:2187` (FEAT-14 mixed-mode list with options + tree-button rows) both paper over the same root cause: `role="listbox"` + `role="option"` on rows that contain action buttons (star, delete, navigate). Per WAI-ARIA APG, options must be atomic and non-interactive — the suppressions silence a real screen-reader-broken state. Correct primitive is `role="grid"` + `role="row"` + `role="gridcell"` which explicitly permits nested interactive widgets. Pairs with MAINT-128: when each god-component is split (PageBrowser, TrashView, ConflictList, HistoryView, StaticBlock), re-evaluate the list role choice and remove the axe suppressions. PageBrowser specifically has the strongest case for grid given the FEAT-14 mixed-mode children. May be deferred behind MAINT-128 or shipped earlier as a per-file role flip — the role change is independent of the file-size split. | M |
-| MAINT-163 | MAINT | Pre-existing date-validation regression invisible to prek gate. `command_integration_tests::lifecycle_integration::test_list_blocks_rejects_invalid_date` and `date_validation_two_digit_year_returns_validation` both fail on `main` (commit `9b394f9`, session 544 onward) — `validate_date_format` accepts `2025-1-1` (single-digit month/day) where the tests expect `AppError::Validation`. Failures survive the prek `cargo nextest` gate because `scripts/test-related-rust.sh` only runs tests for STAGED files' modules; `command_integration_tests::lifecycle_integration` is not exercised unless a file in that path is staged. Fix: (a) trace the regression — likely a chrono or date-parser change accepted permissively; (b) tighten `validate_date_format` to reject `\d{1,2}-\d{1,2}` patterns; (c) consider expanding `test-related-rust.sh`'s fallback patterns to include `commands/blocks/queries.rs` so the lifecycle integration tests run when queries.rs is staged. Spotted during session 545. Root cause is in `src-tauri/src/commands/`. | S |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
@@ -2068,18 +2067,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Add a `read_pool: &SqlitePool` parameter to `sweep_once` and `spawn_sweeper`, route `fetch_due` to it, and keep `clear_entry` on the writer pool — mirroring the existing `cache::*_split` helpers. **Needs user approval per AGENTS.md Architectural Stability** — adding the `read_pool` parameter is an API-shape change to a public helper.
 - **Pass-1 source:** 02/F16
-- **Status:** Open
-
-### I-Materializer-3 — `MaterializeTask::Clone` clones `String`s on the bg-side hot path
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/mod.rs:22-57`, `src-tauri/src/materializer/consumer.rs:232`, `src-tauri/src/materializer/consumer.rs:250`
-- **What:** `MaterializeTask` derives `Clone`. The `Barrier(Arc<Notify>)` variant is cheap (refcount bump), but the per-block variants own a `String block_id` and `ApplyOp(OpRecord)` / `BatchApplyOps(Vec<OpRecord>)` own owned `String` payloads. The bg consumer clones the task once before the first attempt (`consumer.rs:232`) and again on each retry (`consumer.rs:250`) — for `ApplyOp` this is two `OpRecord`-sized String allocations per retry. Overlaps with M-10 (which targets the `BatchApplyOps` case specifically).
-- **Why it matters:** Per-op allocations accumulate under sustained load (sync catch-up, batch replays). Not severe, but the same Arc-wrapping fix that closes M-10 also collapses these clones to refcount bumps.
-- **Cost:** S (<2h)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Wrap the variants' owned data in `Arc` (e.g. `ApplyOp(Arc<OpRecord>)`, `BatchApplyOps(Arc<Vec<OpRecord>>)`, `block_id: Arc<str>`) so all clones are cheap. Touches every dispatch site but is largely mechanical and pairs naturally with the M-10 fix.
-- **Pass-1 source:** 02/F23
 - **Status:** Open
 
 ### Commands CRUD

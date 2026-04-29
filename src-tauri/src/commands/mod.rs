@@ -350,7 +350,26 @@ const ALLOWED_MIME_PATTERNS: &[&str] = &[
 /// The agenda re-parse becomes redundant and can be removed in a
 /// follow-up; this change keeps the validator's return type stable so
 /// existing callers don't need updating.
+///
+/// MAINT-163: chrono's `%Y-%m-%d` accepts non-zero-padded forms like
+/// `2025-1-1` and 2-digit years like `25-1-1`. Pre-validate the strict
+/// shape (`\d{4}-\d{2}-\d{2}`) before delegating calendar validity to
+/// chrono — otherwise these slip through and downstream callers get
+/// surprising "valid" dates that the canonical date format invariant
+/// rejects.
 pub(crate) fn validate_date_format(s: &str) -> Result<(), AppError> {
+    let bytes = s.as_bytes();
+    let shape_ok = bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[8..10].iter().all(u8::is_ascii_digit);
+    if !shape_ok {
+        return Err(AppError::Validation(format!(
+            "expected YYYY-MM-DD format with calendar-valid date, got '{s}'"
+        )));
+    }
     chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map(|_| ())
         .map_err(|_| {

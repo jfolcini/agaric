@@ -1093,7 +1093,7 @@ async fn metrics_fg() {
         }),
     )
     .await;
-    mat.enqueue_foreground(MaterializeTask::ApplyOp(r))
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(r)))
         .await
         .unwrap();
     mat.flush_foreground().await.unwrap();
@@ -1141,7 +1141,7 @@ async fn flush_fg() {
         }),
     )
     .await;
-    mat.enqueue_foreground(MaterializeTask::ApplyOp(r))
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(r)))
         .await
         .unwrap();
     mat.flush_foreground().await.unwrap();
@@ -1180,7 +1180,7 @@ async fn flush_both() {
         }),
     )
     .await;
-    mat.enqueue_foreground(MaterializeTask::ApplyOp(r))
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(r)))
         .await
         .unwrap();
     mat.enqueue_background(MaterializeTask::RebuildPagesCache)
@@ -1265,11 +1265,11 @@ fn dedup_block_links() {
 fn dedup_apply_op() {
     let r = fake_op_record("create_block", "{}");
     let d = dedup_tasks(vec![
-        MaterializeTask::ApplyOp(r.clone()),
+        MaterializeTask::ApplyOp(StdArc::new(r.clone())),
         MaterializeTask::RebuildTagsCache,
-        MaterializeTask::ApplyOp(r.clone()),
+        MaterializeTask::ApplyOp(StdArc::new(r.clone())),
         MaterializeTask::RebuildTagsCache,
-        MaterializeTask::ApplyOp(r),
+        MaterializeTask::ApplyOp(StdArc::new(r)),
     ]);
     assert_eq!(
         d.len(),
@@ -1474,10 +1474,10 @@ async fn foreground_distinct_block_edits_land_in_fifo_order() {
         }),
     )
     .await;
-    mat.enqueue_foreground(MaterializeTask::ApplyOp(ra))
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(ra)))
         .await
         .unwrap();
-    mat.enqueue_foreground(MaterializeTask::ApplyOp(rb))
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(rb)))
         .await
         .unwrap();
     mat.flush_foreground().await.unwrap();
@@ -1641,10 +1641,10 @@ async fn handle_fg_apply_op() {
     .execute(&pool)
     .await
     .unwrap();
-    let task = MaterializeTask::ApplyOp(fake_op_record(
+    let task = MaterializeTask::ApplyOp(StdArc::new(fake_op_record(
         "edit_block",
         r#"{"block_id":"NOOP_BLK","to_text":"modified","prev_edit":null}"#,
-    ));
+    )));
     assert!(
         handle_foreground_task(&pool, &task, &empty_gcal_handle())
             .await
@@ -1736,10 +1736,10 @@ async fn handle_bg_unexpected_apply() {
     let (pool, _dir) = test_pool().await;
     let result = handle_background_task(
         &pool,
-        &MaterializeTask::ApplyOp(fake_op_record(
+        &MaterializeTask::ApplyOp(StdArc::new(fake_op_record(
             "create_block",
             r#"{"block_id":"X","block_type":"content","content":"t","parent_id":null,"position":null}"#,
-        )),
+        ))),
         None,
         None,
     )
@@ -2313,10 +2313,10 @@ async fn apply_op_add_tag() {
 async fn apply_op_invalid_payload() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    mat.enqueue_foreground(MaterializeTask::ApplyOp(fake_op_record(
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(fake_op_record(
         "create_block",
         r#"{"not_valid": true}"#,
-    )))
+    ))))
     .await
     .unwrap();
     mat.flush_foreground().await.unwrap();
@@ -2330,10 +2330,10 @@ async fn apply_op_invalid_payload() {
 async fn apply_op_unknown_op() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    mat.enqueue_foreground(MaterializeTask::ApplyOp(fake_op_record(
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(fake_op_record(
         "unknown_op",
         r#"{}"#,
-    )))
+    ))))
     .await
     .unwrap();
     mat.flush_foreground().await.unwrap();
@@ -2361,7 +2361,7 @@ async fn fg_retry_success() {
     .await;
     process_single_foreground_task(
         &pool,
-        MaterializeTask::ApplyOp(r),
+        MaterializeTask::ApplyOp(StdArc::new(r)),
         &metrics,
         &empty_gcal_handle_arc(),
     )
@@ -2410,7 +2410,7 @@ async fn fg_retry_bad_payload() {
     let metrics = Arc::new(QueueMetrics::default());
     process_single_foreground_task(
         &pool,
-        MaterializeTask::ApplyOp(fake_op_record("bogus_op_type", "{}")),
+        MaterializeTask::ApplyOp(StdArc::new(fake_op_record("bogus_op_type", "{}"))),
         &metrics,
         &empty_gcal_handle_arc(),
     )
@@ -2463,10 +2463,10 @@ async fn fg_lifecycle() {
 async fn apply_op_failure_propagated() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    mat.enqueue_foreground(MaterializeTask::ApplyOp(fake_op_record(
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(fake_op_record(
         "create_block",
         "{}",
-    )))
+    ))))
     .await
     .unwrap();
     mat.flush().await.unwrap();
@@ -2519,7 +2519,7 @@ async fn apply_op_success() {
         }),
     )
     .await;
-    mat.enqueue_foreground(MaterializeTask::ApplyOp(r))
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(r)))
         .await
         .unwrap();
     mat.flush().await.unwrap();
@@ -2553,10 +2553,10 @@ async fn fg_apply_dropped_bumps_when_apply_op_retry_exhausts() {
     // `serde_json::from_str::<CreateBlockPayload>` inside `apply_op_tx`,
     // so both the first attempt and the 100ms retry land on Ok(Err(_)).
     // That is exactly the retry-exhaust path we want to observe.
-    mat.enqueue_foreground(MaterializeTask::ApplyOp(fake_op_record(
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(fake_op_record(
         "create_block",
         "{}",
-    )))
+    ))))
     .await
     .unwrap();
     mat.flush_foreground().await.unwrap();
@@ -2985,7 +2985,7 @@ async fn concurrent_fg_bg() {
         let record = fake_op_record("edit_block", &ps);
         handles.push(tokio::spawn(async move {
             let _ = mat_fg
-                .enqueue_foreground(MaterializeTask::ApplyOp(record))
+                .enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(record)))
                 .await;
         }));
         let mat_bg = mat.clone();
@@ -3171,7 +3171,7 @@ async fn purge_handler_cleans_page_aliases() {
         }),
     )
     .await;
-    let task = MaterializeTask::ApplyOp(r);
+    let task = MaterializeTask::ApplyOp(StdArc::new(r));
     handle_foreground_task(&pool, &task, &empty_gcal_handle())
         .await
         .unwrap();
@@ -3229,7 +3229,7 @@ async fn purge_handler_cleans_projected_agenda_cache() {
         }),
     )
     .await;
-    let task = MaterializeTask::ApplyOp(r);
+    let task = MaterializeTask::ApplyOp(StdArc::new(r));
     handle_foreground_task(&pool, &task, &empty_gcal_handle())
         .await
         .unwrap();
@@ -3310,7 +3310,7 @@ async fn remove_tag_handler_cleans_inherited() {
         }),
     )
     .await;
-    let task = MaterializeTask::ApplyOp(r);
+    let task = MaterializeTask::ApplyOp(StdArc::new(r));
     handle_foreground_task(&pool, &task, &empty_gcal_handle())
         .await
         .unwrap();
@@ -4906,10 +4906,10 @@ async fn h5_parent_and_child_create_both_land_under_strict_fifo() {
     // pre-fix JoinSet dispatch these hashed to different buckets (one
     // per block_id) and raced; the strict-FIFO path must land both
     // deterministically.
-    mat.enqueue_foreground(MaterializeTask::ApplyOp(parent))
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(parent)))
         .await
         .unwrap();
-    mat.enqueue_foreground(MaterializeTask::ApplyOp(child))
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(child)))
         .await
         .unwrap();
     mat.flush_foreground().await.unwrap();
@@ -5010,7 +5010,7 @@ async fn h6_batch_and_concurrent_apply_op_serialize_in_fifo() {
     .await;
 
     mat.enqueue_foreground(batch).await.unwrap();
-    mat.enqueue_foreground(MaterializeTask::ApplyOp(edit_y))
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(edit_y)))
         .await
         .unwrap();
     mat.flush_foreground().await.unwrap();
@@ -5097,7 +5097,7 @@ async fn apply_op_permanent_failure_leaves_op_log_populated_l15() {
     // Use `enqueue_foreground` directly (rather than `dispatch_op`) to
     // isolate the foreground apply-retry behavior from the parallel
     // background fan-out — this test only cares about the fg drop.
-    mat.enqueue_foreground(MaterializeTask::ApplyOp(record))
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(record)))
         .await
         .unwrap();
     mat.flush_foreground().await.unwrap();

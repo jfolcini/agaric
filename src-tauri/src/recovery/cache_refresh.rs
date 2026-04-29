@@ -44,15 +44,14 @@ pub async fn refresh_caches_for_recovered_drafts(
     }
 
     for block_id in recovered_block_ids {
+        let block_id: std::sync::Arc<str> = std::sync::Arc::from(block_id.as_str());
         materializer
             .enqueue_background(MaterializeTask::UpdateFtsBlock {
-                block_id: block_id.clone(),
+                block_id: std::sync::Arc::clone(&block_id),
             })
             .await?;
         materializer
-            .enqueue_background(MaterializeTask::ReindexBlockLinks {
-                block_id: block_id.clone(),
-            })
+            .enqueue_background(MaterializeTask::ReindexBlockLinks { block_id })
             .await?;
     }
 

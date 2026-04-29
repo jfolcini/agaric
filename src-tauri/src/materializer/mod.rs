@@ -21,7 +21,12 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum MaterializeTask {
-    ApplyOp(OpRecord),
+    /// I-Materializer-3: the inner `OpRecord` is wrapped in an `Arc`
+    /// so that cloning the task (e.g. for the foreground/background
+    /// retry arms in `consumer.rs`) is a refcount bump rather than a
+    /// deep clone of the record's owned `String` payloads. Pairs with
+    /// the M-10 fix on `BatchApplyOps`.
+    ApplyOp(Arc<OpRecord>),
     /// M-10: the inner `Vec<OpRecord>` is wrapped in an `Arc` so that
     /// cloning the task (e.g. for the foreground/background retry arms in
     /// `consumer.rs`) is a refcount bump rather than a deep clone of a
@@ -34,21 +39,21 @@ pub enum MaterializeTask {
     RebuildPagesCache,
     RebuildAgendaCache,
     ReindexBlockLinks {
-        block_id: String,
+        block_id: Arc<str>,
     },
     /// UX-250: incremental reindex of `block_tag_refs` for a single
     /// block after a content mutation. Mirrors `ReindexBlockLinks`.
     ReindexBlockTagRefs {
-        block_id: String,
+        block_id: Arc<str>,
     },
     UpdateFtsBlock {
-        block_id: String,
+        block_id: Arc<str>,
     },
     ReindexFtsReferences {
-        block_id: String,
+        block_id: Arc<str>,
     },
     RemoveFtsBlock {
-        block_id: String,
+        block_id: Arc<str>,
     },
     RebuildFtsIndex,
     FtsOptimize,
