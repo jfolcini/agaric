@@ -1,5 +1,47 @@
 # Session Log
 
+## Session 554 — MAINT-137: extract test mega-blocks from 4 large backend files (2026-04-29)
+
+**MAINT-137 closed in one PROMPT.md batch with 4 parallel build subagents + 1 review subagent.** Theme: mechanical move of `#[cfg(test)] mod tests { ... }` blocks from the four largest backend source files into sibling `<file>/tests.rs` modules — matches the existing repo pattern (`dag.rs` + `dag/tests.rs`, `materializer/mod.rs` + `materializer/tests.rs`).
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 36 → 35 (-1: MAINT-137 closed).
+- **Backend Code Review appendix counts:** unchanged (MAINT-137 lives in the main summary).
+- **Previously-resolved counter:** 792+ → 793+ across 521 sessions.
+
+**Items closed (1 — split into 4 mechanical extractions):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-137 | 4 large backend source files — Subagents a40d8ec5 (server), e6a84d82 (tools_ro), a2324b05 (tools_rw), aeb5f684 (sync_files) | **Test mega-blocks moved out of the production-source view.** Pre-fix: four backend files had ~70-80% of their lines in `#[cfg(test)] mod tests { ... }` blocks at the bottom (`mcp/server.rs` 3467L total / ~915 prod, `mcp/tools_ro.rs` 2520L / ~645 prod, `mcp/tools_rw.rs` 1390L / ~449 prod, `sync_files.rs` 2523L / ~720 prod). Post-fix per the established repo pattern: each test mega-block was moved verbatim into a sibling `<file>/tests.rs` (dedented by 4 spaces; outer `mod tests {` and closing `}` stripped — file IS the module body), and the source file's inline `mod tests` block was replaced with `#[cfg(test)] mod tests;` declaration. Final layout: source files dropped to **1126/893/451/718** lines respectively, with new test files at **2340/1626/938/1804** lines. **Net production-source view shrinkage: ~6712 lines moved out of the four largest scan targets.** Two intentional carve-outs were preserved verbatim in their original positions: `mcp/server.rs` retains `mod tests_m83` (Windows named-pipe path handling) and `mcp/tools_ro.rs` retains `mod tests_m82` (split-pool semantics) — both have descriptive comment blocks marking them distinct from the main test module. Insta snapshot files were relocated from `mcp/snapshots/` to `mcp/tools_ro/snapshots/` (10 files) and `mcp/tools_rw/snapshots/` (1 file) since insta resolves snapshot paths relative to the test source directory; the empty `mcp/snapshots/` dir was removed. All snapshot YAML content is byte-identical pre/post move (only the `source:` and `assertion_line:` metadata header lines changed). Zero visibility changes were needed — all tests use `super::*;` and access private items via the new child-module relationship. |
+
+**Files touched (this session's batch — 4 modified + 4 new test files + 11 snapshot files relocated):**
+
+- Backend source (4): `mcp/server.rs`, `mcp/tools_ro.rs`, `mcp/tools_rw.rs`, `sync_files.rs` (all reduced to production-only + `mod tests;` declaration).
+- New test files (4): `mcp/server/tests.rs`, `mcp/tools_ro/tests.rs`, `mcp/tools_rw/tests.rs`, `sync_files/tests.rs`.
+- Snapshot relocation (11 files): `mcp/snapshots/agaric_lib__mcp__tools_{ro,rw}__tests__*.snap` → `mcp/tools_{ro,rw}/snapshots/`. Empty `mcp/snapshots/` dir removed.
+- Docs: `REVIEW-LATER.md` (MAINT-137 row + detail entry removed; top-level summary count 36 → 35; previously-resolved counter 792+ → 793+; sessions 520 → 521; latest session 553 → 554), `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- `mcp::server`: 48/48 PASS (same set name-for-name).
+- `mcp::tools_ro`: 52/52 PASS (50 in extracted `tests::*` + 2 in retained `tests_m82::*`).
+- `mcp::tools_rw`: 26/26 PASS.
+- `sync_files`: 53/53 PASS.
+- Full backend: 3229/3229 PASS, 3 skipped, 0 failed.
+
+**Process notes:**
+
+- **4 build subagents converged with zero file overlap.** Each subagent worked on its own `<file>.rs` + new `<file>/tests.rs` pair. The four extractions are independent because each test module is fully self-contained within its source file (`use super::*;` is the only cross-module reference, and that resolves identically in the new child-module location).
+- **1 review subagent APPROVED with zero blockers.** Reviewer confirmed mechanical-only changes (zero production code modification), test code preservation (test names, helpers, attributes verbatim), snapshot relocation correctness (metadata `source:` / `assertion_line:` changes only — YAML content byte-identical), module path resolution (existing repo pattern `<file>/tests.rs`), and architectural stability (no new tables, ops, sync messages, or public types).
+- **Insta snapshots relocation was unavoidable.** The reviewer initially flagged this as "files outside the listed two" but on closer inspection it's a pure mechanical move forced by insta's path-resolution model; no snapshot YAML content was edited. Two subagents (tools_ro, tools_rw) independently arrived at the same solution.
+- **`mod tests_m82` / `mod tests_m83` carve-outs intentionally preserved.** The build subagents followed the literal task wording ("extract the `#[cfg(test)] mod tests { ... }` block specifically"). Both retained blocks have descriptive comment headers in their source files explaining their separate scope. If a future session decides to consolidate them into `tests.rs`, that's a clean follow-up — but they're not duplications, they're intentional separations.
+- **Cargo fmt cycle** caught one trailing-whitespace nit in a moved test file (likely from the dedent step); orchestrator ran `cargo fmt` and re-staged.
+- **No `cargo test -- specta_tests --ignored` rerun was needed** — public types unchanged.
+
+---
+
 ## Session 553 — Close M-17 fully + MAINT-114 spike — close 3 items (M-17 final, MAINT-114 spike-keep) (2026-04-29)
 
 **3 items closed in one PROMPT.md batch with 3 parallel build subagents + 1 review subagent.** Theme: finish closing M-17 by splitting the remaining `projected_agenda` and `page_id` cache rebuilds, plus a spike on MAINT-114 (GH workflows consolidation) — verdict was "leave as-is".
