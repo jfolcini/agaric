@@ -70,6 +70,11 @@ export class FeatureErrorBoundary extends React.Component<
           <p className="max-w-xs text-center text-xs text-muted-foreground">
             {this.state.error?.message ?? i18n.t('error.unexpected')}
           </p>
+          {/* UX-12: reassure the user that retrying is non-destructive so the
+              raw error.message above doesn't read as data loss. */}
+          <p className="max-w-xs text-center text-sm text-muted-foreground">
+            {i18n.t('errorBoundary.dataSafe')}
+          </p>
           <div className="flex flex-wrap gap-2 justify-center">
             <Button variant="outline" size="sm" onClick={this.handleRetry}>
               <RefreshCw className="h-3.5 w-3.5" />

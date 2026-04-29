@@ -129,7 +129,7 @@ export function ConflictListItem({
                 <Badge
                   variant="outline"
                   className={cn(
-                    'conflict-type-badge shrink-0',
+                    'conflict-type-badge shrink-0 cursor-help border-dashed',
                     conflictTypeBadgeClass(conflictType),
                   )}
                   aria-label={t(`conflict.type${conflictType}`)}

@@ -130,6 +130,23 @@ describe('ConflictListItem', () => {
     expect(typeBadge?.className).toContain('bg-conflict-text')
   })
 
+  // UX-12 — the conflict-type badge has a tooltip but previously had no
+  // visual affordance. It should now render `cursor-help` and a dashed
+  // border so users can tell it is interactive.
+  it('conflict type badge has cursor-help affordance for the tooltip', () => {
+    const block = makeConflict({ id: 'C1', content: 'text' })
+
+    const { container } = render(
+      <ul>
+        <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
+      </ul>,
+    )
+
+    const typeBadge = container.querySelector('.conflict-type-badge')
+    expect(typeBadge?.className).toContain('cursor-help')
+    expect(typeBadge?.className).toContain('border-dashed')
+  })
+
   it('renders block type badge', () => {
     const block = makeConflict({ id: 'C1', content: 'text', block_type: 'content' })
 

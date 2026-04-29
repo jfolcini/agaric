@@ -132,17 +132,29 @@ export function DataSettingsTab(): React.ReactElement {
             </Button>
           </div>
           {currentFileIndex !== null && (
-            <p
-              className="text-xs text-muted-foreground mt-2"
-              data-testid="import-progress"
-              aria-live="polite"
-            >
-              {t('data.importingProgress', {
-                index: currentFileIndex,
-                total: totalFiles,
-                name: currentFileName,
-              })}
-            </p>
+            <>
+              <p
+                className="text-xs text-muted-foreground mt-2"
+                data-testid="import-progress"
+                aria-live="polite"
+              >
+                {t('data.importingProgress', {
+                  index: currentFileIndex,
+                  total: totalFiles,
+                  name: currentFileName,
+                })}
+              </p>
+              {/* UX-12: paired progress bar so users get a visual signal
+                  alongside the textual "Importing N of M" message. No
+                  design-system Progress primitive yet — use the native
+                  <progress> element. */}
+              <progress
+                className="w-full h-1 mt-2"
+                data-testid="import-progress-bar"
+                value={currentFileIndex}
+                max={totalFiles}
+              />
+            </>
           )}
           {importResult && (
             <div className="import-result mt-3 text-xs space-y-1" data-testid="import-result">

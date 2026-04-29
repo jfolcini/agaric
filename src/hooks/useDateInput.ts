@@ -32,6 +32,14 @@ export interface UseDateInputReturn {
   datePreview: string | null
   /** True after a blur with an unparseable non-empty value. */
   dateError: boolean
+  /**
+   * True while a NL-parse debounce timer is pending (i.e. the user typed
+   * something non-ISO and the 300 ms timer has not yet fired). Callers can
+   * render a small transient "parsing…" indicator so users do not think
+   * their keystrokes went nowhere. Resets to false as soon as the parse
+   * completes (success or failure) or the input is cleared / blurred.
+   */
+  isParsing: boolean
   /** onChange handler for the text input. */
   handleChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   /** onBlur handler — parses input, calls onSave, updates state. */
@@ -45,6 +53,7 @@ export function useDateInput({
   const [dateInput, setDateInput] = useState(initialValue)
   const [datePreview, setDatePreview] = useState<string | null>(null)
   const [dateError, setDateError] = useState(false)
+  const [isParsing, setIsParsing] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const cancelPendingParse = useCallback(() => {
@@ -52,6 +61,7 @@ export function useDateInput({
       clearTimeout(debounceRef.current)
       debounceRef.current = null
     }
+    setIsParsing(false)
   }, [])
 
   // Re-sync when the external value changes (e.g. prop updated by parent)
@@ -88,10 +98,12 @@ export function useDateInput({
       // Debounce NL parse — only set datePreview when parsing succeeds, so
       // partial keystrokes (e.g. "tomo" on the way to "tomorrow") do not
       // briefly flash a null preview or stale "could not parse" hints.
+      setIsParsing(true)
       debounceRef.current = setTimeout(() => {
         debounceRef.current = null
         const parsed = parseDate(trimmed)
         if (parsed) setDatePreview(parsed)
+        setIsParsing(false)
       }, NL_PARSE_DEBOUNCE_MS)
     },
     [cancelPendingParse],
@@ -119,5 +131,13 @@ export function useDateInput({
     }
   }, [dateInput, onSave, cancelPendingParse])
 
-  return { dateInput, setDateInput, datePreview, dateError, handleChange, handleBlur }
+  return {
+    dateInput,
+    setDateInput,
+    datePreview,
+    dateError,
+    isParsing,
+    handleChange,
+    handleBlur,
+  }
 }

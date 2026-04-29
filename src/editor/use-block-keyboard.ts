@@ -18,6 +18,13 @@ import { matchesShortcutBinding } from '../lib/keyboard-config'
 function isSuggestionPopupVisible(): boolean {
   const popup = document.querySelector('.suggestion-popup') as HTMLElement | null
   if (!popup) return false
+  // A `.suggestion-popup` element can survive in memory after being detached
+  // from the document (e.g. a leaked TipTap renderer). `checkVisibility()`
+  // returns `false` for detached nodes in modern browsers, but `offsetParent`
+  // is `null` for both `display:none` and detached nodes — so the fallback
+  // path can't tell them apart. Bail explicitly on detached nodes so a stale
+  // popup never swallows arrow-key block navigation.
+  if (!popup.isConnected) return false
   return typeof popup.checkVisibility === 'function'
     ? popup.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
     : popup.offsetParent !== null

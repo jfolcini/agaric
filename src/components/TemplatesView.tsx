@@ -235,7 +235,13 @@ export function TemplatesView(): React.ReactElement {
 
             {/* No search results */}
             {filtered.length === 0 && search.length > 0 && (
-              <EmptyState icon={Search} message={t('templates.noSearchResults')} compact />
+              <EmptyState
+                icon={Search}
+                message={t('templates.noSearchResultsWithTotal', {
+                  total: templates.length,
+                })}
+                compact
+              />
             )}
           </>
         )}

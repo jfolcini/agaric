@@ -12,14 +12,22 @@
  *  - Accessibility audit
  */
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { writeText } from '@/lib/clipboard'
 import { PairingQrDisplay } from '../PairingQrDisplay'
+
+vi.mock('@/lib/clipboard', () => ({
+  writeText: vi.fn().mockResolvedValue(undefined),
+}))
+const mockedWriteText = vi.mocked(writeText)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockedWriteText.mockResolvedValue(undefined)
 })
 
 const defaultProps = {
@@ -157,6 +165,61 @@ describe('PairingQrDisplay', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // ── UX-12: passphrase copy button + visible pause indicator ─────────
+  describe('passphrase copy button (UX-12)', () => {
+    it('renders a copy button with the localized aria-label', () => {
+      render(<PairingQrDisplay {...defaultProps} />)
+
+      expect(screen.getByRole('button', { name: /Copy passphrase/i })).toBeInTheDocument()
+    })
+
+    it('writes the passphrase to the clipboard on click', async () => {
+      const user = userEvent.setup()
+      render(<PairingQrDisplay {...defaultProps} passphrase="word1 word2 word3 word4" />)
+
+      await user.click(screen.getByRole('button', { name: /Copy passphrase/i }))
+
+      await waitFor(() => {
+        expect(mockedWriteText).toHaveBeenCalledWith('word1 word2 word3 word4')
+      })
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Passphrase copied')
+      })
+    })
+
+    it('shows an error toast when the clipboard write fails', async () => {
+      const user = userEvent.setup()
+      mockedWriteText.mockRejectedValueOnce(new Error('clipboard denied'))
+
+      render(<PairingQrDisplay {...defaultProps} />)
+
+      await user.click(screen.getByRole('button', { name: /Copy passphrase/i }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to copy passphrase')
+      })
+    })
+
+    it('passes axe with the copy button mounted', async () => {
+      const { container } = render(<PairingQrDisplay {...defaultProps} />)
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('renders the visible pause indicator with text-foreground emphasis (UX-12)', () => {
+    const { container } = render(<PairingQrDisplay {...defaultProps} pausedByTyping={true} />)
+
+    const paused = container.querySelector('.pairing-countdown-paused')
+    expect(paused).toBeTruthy()
+    // UX-12 bumped the indicator from muted italic to text-foreground +
+    // medium weight + Pause icon.
+    expect(paused?.className).toContain('text-foreground')
+    expect(paused?.className).toContain('font-medium')
+    // Inline Pause icon (lucide-react renders as <svg>).
+    expect(paused?.querySelector('svg')).toBeTruthy()
   })
 
   it('has no a11y violations when expired', async () => {

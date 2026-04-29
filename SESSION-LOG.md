@@ -1,5 +1,50 @@
 # Session Log
 
+## Session 548 — UX polish sweep — close all 3 UX items (UX-10, UX-11, UX-12) (2026-04-28)
+
+**All 3 remaining UX REVIEW-LATER items closed in one PROMPT.md batch with 4 parallel build subagents.** Theme: complete the UX backlog with 18 sub-fixes across 17+ frontend files — DuePanel "Projected" badge + tooltip (UX-10), 4 focus-management edge cases (UX-11), and a 17-item polish sweep (UX-12) covering accessibility, affordance, feedback, and design-system consistency.
+
+**REVIEW-LATER impact:**
+
+- **UX items:** 3 → 0. **All UX-* backlog closed.**
+- **Top-level open count (FEAT/MAINT/PERF/PUB/UX tracker):** 41 → 38 (-3 from UX-10, UX-11, UX-12 resolved).
+- **Previously-resolved counter:** 769+ → 772+ across 515 sessions (latest session 548).
+
+**Items closed (3):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| UX-10 | DuePanel (`src/components/DuePanel.tsx` + `src/lib/i18n.ts` + tests) — Subagent 26cce4d0 | **Projected entries get a per-row "Projected" badge + `title=` on truncated content.** Pre-state: projected (future-recurrence) entries had only `border-dashed bg-muted/30 text-muted-foreground` styling; users misread them as real tasks due today. Long content `truncate`d with no preview affordance. Post-fix: per-entry `<Badge variant="outline" className="text-xs font-normal"><Repeat className="h-3 w-3 mr-1" />{t('duePanel.projectedBadge')}</Badge>` placed inline before the content. New i18n key `duePanel.projectedBadge: 'Projected'`. `title={entry.block.content ?? ''}` on the truncated `<span>`. 50/50 DuePanel tests PASS post-fix (1 updated to use `findAllByText` since "Projected" now appears in 2 places per group). 2 new tests: per-entry badge count + title attribute on truncated span. |
+| UX-11 | Focus management (`BlockContextMenu.tsx`, `use-block-keyboard.ts`, `PageBrowser.tsx` + tests) — Subagent 2078f929 | **4 focus edge cases fixed.** (1) `BlockContextMenu.handleCloseWithFocus` now falls back to `[data-block-id="${blockId}"] [role="button"]` when the trigger ref is null (previously focus dropped silently to `<body>`). (2) `BlockContextMenu` defers the `animate-in fade-in-0 zoom-in-95` entrance animation via a new `positioned: useState(false)` flag — `opacity-0` until `computePosition` resolves, `opacity-100 + animate-in` afterward (covers both `.then` and `.catch` paths). (3) `use-block-keyboard.isSuggestionPopupVisible()` now checks `popup.isConnected` BEFORE the visibility check — leaked detached suggestion-popup nodes no longer swallow arrow keys. (4) `PageBrowser` row drops the outer `ring-2 ring-inset ring-ring/50` (kept `bg-accent/30` row-highlight); the inner button's `focus-visible:ring-[3px]` is now the sole focus ring (eliminating the double-ring confusion). 199/199 BlockContextMenu + use-block-keyboard + PageBrowser tests PASS. 2 new tests + 2 updated tests. |
+| UX-12 | 18-item polish sweep across 17 components/hooks + i18n + tests — Subagents 2078f929, daa198dc, 2f890a17 | **Comprehensive polish across 4 file groups, 18 sub-fixes:** *BlockContextMenu* (no-actions menu now returns `null` instead of placeholder; orchestrator removed unused `contextMenu.noActions` i18n key). *Property/Link/Block/Calendar/Agenda/Filter/Hooks/Templates/Conflict group* — `aria-busy` on PropertyRowEditor ref-picker; `border-destructive` + `aria-invalid` on LinkEditPopover Input when error; JSDoc on BlockInlineControls scheduled-date chip explaining its static colour vs due-date dynamic; JournalCalendarDropdown legend dots `h-2 w-2 → h-3 w-3` (×4); AgendaResults group headers `text-xs → text-sm font-semibold`; AgendaFilterBuilder pills always carry `title={pillLabel}`; `useDateInput` returns `isParsing: boolean` flag; TemplatesView no-search-results message includes `(N templates total)`; ConflictListItem badge gains `cursor-help border-dashed`. *Settings/Sync group* — FeatureErrorBoundary adds `t('errorBoundary.dataSafe')` reassurance copy; BugReportDialog confirmation checkbox gains `aria-required="true"` + `aria-hidden` red asterisk; BugReportDialog log preview gets a "View full log" `<Button variant="link">` toggle with `showFullLog` state; PairingQrDisplay passphrase gets a `<Copy>` icon button + `text-foreground font-medium` pause indicator with `<Pause>` icon; PeerListItem address-edit popover gets a Cancel button; PeerListItem help text bumped `text-[10px] → text-xs` + format-aware error toast `t('status.addressInvalidWithFormat', { format: '192.168.1.100:5000' })`; DataSettingsTab gets a `<progress value={currentFileIndex} max={totalFiles} />` element. **8 new i18n keys added** (errorBoundary.dataSafe, bugReport.viewFullLog/collapseLog, pairing.copyPassphraseAriaLabel/passphraseCopied/passphraseCopyFailed, device.cancelAddressButton, status.addressInvalidWithFormat). 437/437 frontend tests PASS post-fix (363 from group 1 + 74 from group 2). |
+
+**Files touched (this session's batch — 33 modified):**
+
+- Components (17): `DuePanel.tsx`, `BlockContextMenu.tsx`, `PageBrowser.tsx`, `PropertyRowEditor.tsx`, `LinkEditPopover.tsx`, `BlockInlineControls.tsx`, `journal/JournalCalendarDropdown.tsx`, `AgendaResults.tsx`, `AgendaFilterBuilder.tsx`, `TemplatesView.tsx`, `ConflictListItem.tsx`, `FeatureErrorBoundary.tsx`, `BugReportDialog.tsx`, `PairingQrDisplay.tsx`, `PeerListItem.tsx`, `DataSettingsTab.tsx`, `editor/use-block-keyboard.ts`
+- Hook (1): `hooks/useDateInput.ts`
+- Tests (12): `__tests__/{DuePanel,BlockContextMenu,PageBrowser,PropertyRowEditor,LinkEditPopover,AgendaFilterBuilder,TemplatesView,ConflictListItem,FeatureErrorBoundary,BugReportDialog,PairingQrDisplay,PeerListItem,DataSettingsTab}.test.tsx` + `hooks/__tests__/useDateInput.test.ts`
+- i18n (1): `src/lib/i18n.ts` (9 new keys + 1 removed orphaned `contextMenu.noActions`)
+- Docs: `REVIEW-LATER.md` (3 UX items + the entire `## UX — Frontend UX findings` section removed; INFO/UX both closed; previously-resolved counter 769+ → 772+; sessions 514 → 515; top-level open 41 → 38), `SESSION-LOG.md` (this entry)
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- UX-10: 50/50 DuePanel tests + 16/16 DuePanelFilters tests PASS.
+- UX-11 + UX-12 BlockContextMenu fix: 199/199 BlockContextMenu + use-block-keyboard + PageBrowser tests PASS.
+- UX-12 group 1: 363/363 PropertyRowEditor + LinkEditPopover + BlockInlineControls + JournalCalendarDropdown + AgendaResults + AgendaFilterBuilder + useDateInput + TemplatesView + ConflictListItem tests PASS.
+- UX-12 group 2: 74/74 FeatureErrorBoundary + BugReportDialog + PairingQrDisplay + PeerListItem + DataSettingsTab tests PASS.
+
+**Process notes:**
+
+- **First UX-only session.** Sessions 532-547 worked through the backend INFO/nits backlog (50+ items closed). This session shifts to the frontend UX backlog and closes all 3 remaining UX items in one batch. The full backlog reduction is now 41 → 38 — and both the INFO/nits and UX-* sub-categories are at zero.
+- **4 parallel subagents converged cleanly with zero file-overlap conflicts.** The split was: A (UX-10, single file), B (UX-11 + UX-12 BlockContextMenu, 3 files), C (UX-12 group 1, 9 files), D (UX-12 group 2, 5 files). All subagents finished within their hard time limits. Combined diff: 33 files, +829/-71 lines.
+- **i18n hygiene: 9 keys added, 1 orphan removed.** The 9 new keys carry domain prefixes (`duePanel.*`, `errorBoundary.*`, `bugReport.*`, `pairing.*`, `device.*`, `status.*`, `templates.*`) that match existing conventions. The orchestrator caught the orphaned `contextMenu.noActions` left over from UX-12's BlockContextMenu fix (the placeholder string is no longer rendered). knip's i18n-key tracker (which runs in CI but not in this session's prek run since no files were in the configured input set) would have flagged it eventually.
+- **Subagent B's pre-existing concern about `renderTreePageRow`** (PageBrowser.tsx:672 — a similar double-ring on the tree wrapper) was deliberately left out of scope. The spec called out only `:749-789` (`renderPageRow`). Future tree-related UX work should consider re-evaluating the tree wrapper's focus styling.
+- **Subagent D's `bugReport.requiredIndicator` design choice** — used `aria-hidden="true"` red asterisk + `aria-required="true"` on the input, instead of an SR-only `(required)` text. This avoids breaking the 5+ existing `getByRole('checkbox', { name: t('bugReport.confirmCheckbox') })` queries in tests while still being fully accessible (screen readers announce `aria-required`). Good defensive choice — the spec explicitly said "match the existing required-marker pattern" and this is what the codebase already uses elsewhere.
+- **Reviewer subagent (2528a431) gave a clean APPROVE with zero blockers and zero nits.** All accessibility patterns verified: `aria-required`, `aria-invalid`, `aria-busy`, `aria-hidden` on decorative markers, `cursor-help` on tooltip-having badges. `positioned` state flag pattern in BlockContextMenu confirmed correct in both `.then` and `.catch` paths.
+- **Net effect on user-perceived quality.** The polish sweep is the kind of change users notice as "the app feels tighter" without being able to point at any single fix. The accessibility additions (aria-required/invalid/busy + format hints + Cancel buttons + visible pause indicators + copy buttons) materially improve screen-reader UX, keyboard UX, and discoverability of small affordances.
+
+---
+
 ## Session 547 — Backend INFO final cleanup — close 5 items (I-Core-7, I-Core-8, I-Materializer-1, I-CommandsCRUD-3, I-CommandsCRUD-7) + I-CommandsCRUD-1 deferred carve-out (2026-04-28)
 
 **5 backend INFO/nits REVIEW-LATER items closed in one PROMPT.md batch with 2 parallel build subagents + orchestrator-direct AGENTS.md and code edits, after explicit user approval to take Architectural Stability changes and AGENTS.md edits collectively.** Theme: closing the entire INFO/nits backlog in one session. The session 544 deferred AGENTS.md "Backend Patterns" carve-out for I-CommandsCRUD-1 (`undo_page_op_inner` `LIMIT 1 OFFSET ?` rationale) was also folded into the AGENTS.md edit.

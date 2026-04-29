@@ -514,14 +514,18 @@ describe('TemplatesView', () => {
     })
   })
 
-  it('shows "no results" message when search filters out all templates', async () => {
+  it('shows "no results" message with total count when search filters out all templates', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
         const params = args as { key: string }
         if (params.key === 'template') {
           return {
-            items: [makeTemplate('T1', 'Meeting Notes')],
+            items: [
+              makeTemplate('T1', 'Meeting Notes'),
+              makeTemplate('T2', 'Weekly Review'),
+              makeTemplate('T3', 'Daily Plan'),
+            ],
             next_cursor: null,
             has_more: false,
           }
@@ -539,7 +543,11 @@ describe('TemplatesView', () => {
     await user.type(searchInput, 'zzzzz')
 
     expect(screen.queryByText('Meeting Notes')).not.toBeInTheDocument()
-    expect(screen.getByText('No templates match your search.')).toBeInTheDocument()
+    // UX-12 — the "no search results" message now includes the total
+    // template count so users have context for the empty state.
+    expect(
+      screen.getByText('No templates match your search (3 templates total).'),
+    ).toBeInTheDocument()
   })
 
   it('shows error toast when loading templates fails', async () => {

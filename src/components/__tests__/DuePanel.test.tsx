@@ -53,6 +53,7 @@ vi.mock('lucide-react', () => ({
   CheckCircle2: (props: Record<string, unknown>) => <svg data-testid="check-circle" {...props} />,
   Loader2: (props: Record<string, unknown>) => <svg data-testid="loader-spinner" {...props} />,
   CalendarDays: (props: Record<string, unknown>) => <svg data-testid="calendar-days" {...props} />,
+  Repeat: (props: Record<string, unknown>) => <svg data-testid="repeat-icon" {...props} />,
 }))
 
 vi.mock('@/components/ui/button', () => ({
@@ -709,7 +710,10 @@ describe('DuePanel', () => {
 
       render(<DuePanel date="2026-04-13" />)
 
-      expect(await screen.findByText('Projected')).toBeInTheDocument()
+      // "Projected" appears in both the section header and the per-entry badge
+      // (UX-10), so use getAllByText.
+      const projectedLabels = await screen.findAllByText('Projected')
+      expect(projectedLabels.length).toBeGreaterThanOrEqual(1)
       expect(screen.getByText(/Projected task/)).toBeInTheDocument()
     })
 
@@ -723,6 +727,74 @@ describe('DuePanel', () => {
       await waitFor(() => {
         expect(screen.queryByText('Projected')).not.toBeInTheDocument()
       })
+    })
+
+    // UX-10: per-entry "Projected" badge so users don't misread projected
+    // entries as real tasks due today.
+    it('renders a per-entry "Projected" badge for each projected entry', async () => {
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedListProjectedAgenda.mockResolvedValue([
+        {
+          block: makeBlock({
+            id: 'PROJ_BADGE_1',
+            content: 'First projected',
+            parent_id: null,
+            todo_state: 'TODO',
+            due_date: '2026-04-13',
+          }),
+          projected_date: '2026-04-13',
+          source: 'due_date',
+        },
+        {
+          block: makeBlock({
+            id: 'PROJ_BADGE_2',
+            content: 'Second projected',
+            parent_id: null,
+            todo_state: 'TODO',
+            due_date: '2026-04-13',
+          }),
+          projected_date: '2026-04-13',
+          source: 'due_date',
+        },
+      ])
+
+      render(<DuePanel date="2026-04-13" />)
+
+      await screen.findByText(/First projected/)
+
+      // One badge per projected entry, plus the section header.
+      // Badge has data-slot="badge" set by the Badge primitive.
+      const badges = document.querySelectorAll('[data-slot="badge"]')
+      // 2 projected entries → 2 "Projected" badges (priority badges live
+      // elsewhere only when priority is set; these blocks have no priority).
+      const projectedBadges = Array.from(badges).filter((b) => b.textContent?.includes('Projected'))
+      expect(projectedBadges).toHaveLength(2)
+    })
+
+    // UX-10: truncated content gets a `title=` so long names are previewable.
+    it('sets title attribute on truncated projected content', async () => {
+      const longContent = 'A very long projected task content that will be truncated visually'
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedListProjectedAgenda.mockResolvedValue([
+        {
+          block: makeBlock({
+            id: 'PROJ_TITLE',
+            content: longContent,
+            parent_id: null,
+            todo_state: 'TODO',
+            due_date: '2026-04-13',
+          }),
+          projected_date: '2026-04-13',
+          source: 'due_date',
+        },
+      ])
+
+      render(<DuePanel date="2026-04-13" />)
+
+      const li = await screen.findByTestId('projected-entry')
+      const truncatedSpan = li.querySelector('span.truncate') as HTMLElement | null
+      expect(truncatedSpan).not.toBeNull()
+      expect(truncatedSpan?.getAttribute('title')).toBe(longContent)
     })
 
     it('projected entry navigates to parent page on click', async () => {

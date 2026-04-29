@@ -357,3 +357,71 @@ describe('useDateInput setDateInput', () => {
     expect(result.current.dateInput).toBe('2025-12-25')
   })
 })
+
+// UX-12 — `isParsing` exposes the in-flight NL-parse debounce so callers
+// can render a "parsing…" hint while the 300 ms timer is pending.
+describe('useDateInput isParsing', () => {
+  it('is false initially', () => {
+    const { result } = renderHook(() => useDateInput())
+    expect(result.current.isParsing).toBe(false)
+  })
+
+  it('flips to true while the NL debounce is pending and false after it fires', () => {
+    const { result } = renderHook(() => useDateInput())
+
+    act(() => {
+      result.current.handleChange(makeChangeEvent('tomorrow'))
+    })
+
+    // Debounce timer is pending — the caller should be able to render
+    // a "parsing…" indicator.
+    expect(result.current.isParsing).toBe(true)
+
+    flushDebounce()
+
+    expect(result.current.isParsing).toBe(false)
+    expect(result.current.datePreview).toBe('2025-07-02')
+  })
+
+  it('stays false for ISO input (no debounce path)', () => {
+    const { result } = renderHook(() => useDateInput())
+
+    act(() => {
+      result.current.handleChange(makeChangeEvent('2025-04-15'))
+    })
+
+    // ISO is parsed synchronously — no debounce, no isParsing flicker.
+    expect(result.current.isParsing).toBe(false)
+    expect(result.current.datePreview).toBe('2025-04-15')
+  })
+
+  it('resets to false on blur even if a debounce was pending', () => {
+    const { result } = renderHook(() => useDateInput())
+
+    act(() => {
+      result.current.handleChange(makeChangeEvent('tomorrow'))
+    })
+    expect(result.current.isParsing).toBe(true)
+
+    act(() => {
+      result.current.handleBlur()
+    })
+
+    expect(result.current.isParsing).toBe(false)
+  })
+
+  it('resets to false when the input is cleared mid-debounce', () => {
+    const { result } = renderHook(() => useDateInput())
+
+    act(() => {
+      result.current.handleChange(makeChangeEvent('tomorrow'))
+    })
+    expect(result.current.isParsing).toBe(true)
+
+    act(() => {
+      result.current.handleChange(makeChangeEvent(''))
+    })
+
+    expect(result.current.isParsing).toBe(false)
+  })
+})

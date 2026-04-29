@@ -192,6 +192,59 @@ describe('DataSettingsTab', () => {
     })
   })
 
+  it('renders a <progress> bar alongside the text during multi-file import (UX-12)', async () => {
+    let resolveFirst: (v: unknown) => void = () => {}
+    let resolveSecond: (v: unknown) => void = () => {}
+    mockImportMarkdown
+      .mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolveFirst = r
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolveSecond = r
+          }),
+      )
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file1 = new File(['# A'], 'one.md', { type: 'text/markdown' })
+    const file2 = new File(['# B'], 'two.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file1, file2] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    // Progress bar tracks the current file index against the total.
+    const progressBar = (await screen.findByTestId('import-progress-bar')) as HTMLProgressElement
+    expect(progressBar.tagName).toBe('PROGRESS')
+    expect(progressBar.value).toBe(1)
+    expect(progressBar.max).toBe(2)
+
+    await act(async () => {
+      resolveFirst({ page_title: 'one', blocks_created: 1, properties_set: 0, warnings: [] })
+    })
+
+    await waitFor(() => {
+      const updated = screen.getByTestId('import-progress-bar') as HTMLProgressElement
+      expect(updated.value).toBe(2)
+    })
+
+    await act(async () => {
+      resolveSecond({ page_title: 'two', blocks_created: 1, properties_set: 0, warnings: [] })
+    })
+
+    // Once the import finishes, the progress bar disappears.
+    await waitFor(() => {
+      expect(screen.queryByTestId('import-progress-bar')).not.toBeInTheDocument()
+    })
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<DataSettingsTab />)
 

@@ -1217,6 +1217,61 @@ describe('PropertyRowEditor ref picker', () => {
       })
     })
 
+    // UX-12 — disabling all rows while one saves is intentional (prevents
+    // concurrent set_property calls). The list container exposes
+    // `aria-busy` so screen readers announce the busy state.
+    it('marks the ref-picker list container aria-busy while a save is pending', async () => {
+      const user = userEvent.setup()
+      let resolveSave: () => void = () => {}
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_blocks')
+          return {
+            items: [
+              { id: 'P1', content: 'Page One', block_type: 'page' },
+              { id: 'P2', content: 'Page Two', block_type: 'page' },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
+        if (cmd === 'set_property') {
+          return new Promise<void>((res) => {
+            resolveSave = () => res()
+          })
+        }
+        return null
+      })
+
+      render(
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('linked_page', { value_ref: null })}
+          def={makeDef('linked_page', 'ref')}
+          onSave={vi.fn()}
+          onRefSaved={vi.fn()}
+        />,
+      )
+
+      await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' })))
+      const pageOne = await screen.findByText('Page One')
+
+      // The Popover renders into a portal; query the document so we
+      // catch the list container whichever side of the portal it sits on.
+      const list = pageOne.closest('[aria-busy]') as HTMLElement | null
+      expect(list).not.toBeNull()
+      expect(list).toHaveAttribute('aria-busy', 'false')
+
+      await user.click(pageOne)
+
+      await waitFor(() => {
+        expect(list).toHaveAttribute('aria-busy', 'true')
+      })
+
+      resolveSave()
+      await waitFor(() => {
+        expect(list).toHaveAttribute('aria-busy', 'false')
+      })
+    })
+
     it('clears the Spinner when the save fails (does not stick)', async () => {
       const user = userEvent.setup()
       // Pre-initialize with a no-op so TS narrows the type without losing the

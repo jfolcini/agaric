@@ -96,6 +96,10 @@ export function BugReportDialog({
   const [previewContents, setPreviewContents] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState<boolean>(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  // UX-12: lets the user expand the truncated log preview to the full
+  // contents inline instead of having to copy the report just to see
+  // what was elided.
+  const [showFullLog, setShowFullLog] = useState<boolean>(false)
 
   // Reset form when re-opening, and load metadata lazily on open.
   useEffect(() => {
@@ -245,6 +249,7 @@ export function BugReportDialog({
       setPreviewContents(null)
       setPreviewError(null)
       setPreviewLoading(false)
+      setShowFullLog(false)
     }
   }, [])
 
@@ -389,9 +394,22 @@ export function BugReportDialog({
               onCheckedChange={(v) => {
                 if (typeof v === 'boolean') setConfirmed(v)
               }}
+              // UX-12: aria-required surfaces the required state to assistive
+              // tech without bloating the visible label / accessible name.
+              aria-required="true"
             />
             <Label htmlFor="bug-report-confirm" muted={false}>
               {t('bugReport.confirmCheckbox')}
+              {/* UX-12: visual asterisk marker. aria-hidden so it doesn't
+                  clutter the accessible name — aria-required on the
+                  checkbox already announces the required state. */}
+              <span
+                aria-hidden="true"
+                className="ml-1 text-destructive"
+                data-testid="bug-report-confirm-required-marker"
+              >
+                *
+              </span>
             </Label>
           </div>
         </div>
@@ -465,16 +483,30 @@ export function BugReportDialog({
                     data-testid="bug-report-log-preview-content"
                     className="text-xs leading-5 whitespace-pre-wrap break-words font-mono"
                   >
-                    {previewContents.slice(0, PREVIEW_MAX_CHARS)}
+                    {showFullLog ? previewContents : previewContents.slice(0, PREVIEW_MAX_CHARS)}
                   </pre>
                 </ScrollArea>
                 {previewContents.length > PREVIEW_MAX_CHARS && (
-                  <p className="text-xs text-muted-foreground">
-                    {t('bugReport.previewTruncated', {
-                      shown: PREVIEW_MAX_CHARS,
-                      total: previewContents.length,
-                    })}
-                  </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-muted-foreground">
+                      {showFullLog
+                        ? null
+                        : t('bugReport.previewTruncated', {
+                            shown: PREVIEW_MAX_CHARS,
+                            total: previewContents.length,
+                          })}
+                    </p>
+                    {/* UX-12: View-full / collapse affordance so the
+                        truncation notice isn't a dead end. */}
+                    <Button
+                      variant="link"
+                      size="sm"
+                      onClick={() => setShowFullLog((s) => !s)}
+                      data-testid="bug-report-log-preview-toggle"
+                    >
+                      {showFullLog ? t('bugReport.collapseLog') : t('bugReport.viewFullLog')}
+                    </Button>
+                  </div>
                 )}
               </div>
             )}

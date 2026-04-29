@@ -133,9 +133,17 @@ export function BlockContextMenu({
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
 
   const handleCloseWithFocus = useCallback(() => {
-    triggerRef?.current?.focus()
+    // If the trigger element has been removed from the DOM during the menu's
+    // lifetime (e.g. block deleted via the menu itself, or via remote sync),
+    // `triggerRef.current.focus()` no-ops silently and focus drops to <body>.
+    // Fall back to the block's gutter button so keyboard users keep a sane
+    // focus target near where the action took place.
+    const fallback = document.querySelector<HTMLElement>(
+      `[data-block-id="${blockId}"] [role="button"]`,
+    )
+    ;(triggerRef?.current ?? fallback)?.focus()
     onClose()
-  }, [triggerRef, onClose])
+  }, [triggerRef, blockId, onClose])
 
   // ── Close on click outside ───────────────────────────────────────
   // Defer registration by one animation frame so the same pointerdown
@@ -180,6 +188,11 @@ export function BlockContextMenu({
   // mirroring `BlockPropertyEditor.tsx` and `suggestion-renderer.ts`
   // (AGENTS.md §"Floating UI lifecycle logging").
   const [computedPos, setComputedPos] = useState(position)
+  // Defer the entrance animation until floating-ui has resolved the
+  // final coordinates. Without this, `animate-in fade-in-0 zoom-in-95`
+  // begins on the initial anchor coords and visibly jumps once
+  // `computePosition` settles a frame later.
+  const [positioned, setPositioned] = useState(false)
 
   useEffect(() => {
     const el = menuRef.current
@@ -216,6 +229,7 @@ export function BlockContextMenu({
         .then(({ x, y }) => {
           if (!el.isConnected) return
           setComputedPos({ x, y })
+          setPositioned(true)
         })
         .catch((err: unknown) => {
           logger.warn(
@@ -225,6 +239,7 @@ export function BlockContextMenu({
             err,
           )
           setComputedPos({ x: position.x, y: position.y })
+          setPositioned(true)
         })
     }
 
@@ -412,7 +427,10 @@ export function BlockContextMenu({
       ref={menuRef}
       role="menu"
       aria-label={t('contextMenu.blockActions')}
-      className="block-context-menu fixed z-50 min-w-[160px] rounded-lg border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"
+      className={cn(
+        'block-context-menu fixed z-50 min-w-[160px] rounded-lg border bg-popover p-1 shadow-md',
+        positioned ? 'animate-in fade-in-0 zoom-in-95 opacity-100' : 'opacity-0',
+      )}
       style={{ left: computedPos.x, top: computedPos.y }}
       onKeyDown={handleKeyDown}
     >
@@ -448,13 +466,12 @@ export function BlockContextMenu({
           })}
         </div>
       ))}
-      {visibleItems.length === 0 && (
-        <div className="px-2 py-1.5 text-sm text-muted-foreground">
-          {t('contextMenu.noActions')}
-        </div>
-      )}
     </div>
   )
 
-  return createPortal(menu, document.body)
+  // Don't render anything when there are no actionable items: showing an
+  // empty menu (or a "No actions available" placeholder) is a dead end —
+  // the user can't do anything but dismiss it. Short-circuit so the menu
+  // simply never appears.
+  return createPortal(visibleItems.length === 0 ? null : menu, document.body)
 }
