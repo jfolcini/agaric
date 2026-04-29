@@ -2456,9 +2456,28 @@ async fn projected_agenda_cache_basic_rebuild() {
     rebuild_projected_agenda_cache(&pool).await.unwrap();
 
     let count = count_rows(&pool, "projected_agenda_cache").await;
-    assert!(
-        count > 0,
-        "projected cache must contain entries after rebuild (got {count})"
+    // I-Cache-7: tightened from `count > 0` to exact count.
+    // L-26 follow-up would inject a fixed clock so this remains a strict
+    // `assert_eq!` regardless of wall-clock time of execution.
+    //
+    // Derivation: due = today - 3 days, weekly repeat (+7 days),
+    // horizon = today + 365. The impl seeds `current = due`, then in each
+    // iteration shifts +7 and pushes when `current ∈ [today, today + 365]`:
+    //   Iter 1:  today + 4   (push)
+    //   Iter 2:  today + 11  (push)
+    //   ...
+    //   Iter k:  today + 4 + 7*(k-1)  — push while ≤ today + 365
+    //                                  → 7*(k-1) ≤ 361 → k ≤ 52
+    //   Iter 53: today + 368 (> horizon → break)
+    // ⇒ count = 52.
+    //
+    // Robust to a 1-day midnight rollover between the test's
+    // `chrono::Local::now()` and the impl's: for δ = impl_today - test_today
+    // ∈ {0, 1}, k_max = floor((368 + δ) / 7) = 52 and k_min = 1, so count
+    // remains 52 in both cases.
+    assert_eq!(
+        count, 52,
+        "weekly projections from due 3 days ago over 365-day horizon (got {count})"
     );
 
     // All projected dates should be >= today and within 365 days
@@ -2614,9 +2633,26 @@ async fn projected_agenda_cache_split_variant_matches_single_pool() {
         .unwrap();
 
     let count = count_rows(&pool, "projected_agenda_cache").await;
-    assert!(
-        count > 0,
-        "split variant must produce entries (got {count})"
+    // I-Cache-7: tightened from `count > 0` to exact count.
+    // L-26 follow-up would inject a fixed clock so this remains a strict
+    // `assert_eq!` regardless of wall-clock time of execution.
+    //
+    // Derivation: due = today - 5 days, daily repeat (+1 day),
+    // horizon = today + 365. The impl seeds `current = due`, then in each
+    // iteration shifts +1 and pushes when `current ∈ [today, today + 365]`:
+    //   Iters 1..=4: today - 4 .. today - 1  (< today, skipped)
+    //   Iter 5:      today                   (push)
+    //   ...
+    //   Iter 370:    today + 365             (push)
+    //   Iter 371:    today + 366             (> horizon → break)
+    // ⇒ count = 370 - 5 + 1 = 366.
+    //
+    // Robust to a 1-day midnight rollover between the test's
+    // `chrono::Local::now()` and the impl's: count = (370 + δ) - (5 + δ) + 1
+    // = 366 for any δ.
+    assert_eq!(
+        count, 366,
+        "daily projections from due 5 days ago over 365-day horizon (got {count})"
     );
 }
 

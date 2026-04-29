@@ -128,6 +128,18 @@ pub async fn remove_inherited_tag(
     // Use a single SQL statement: for each descendant of block_id that doesn't
     // already have an entry in block_tag_inherited for this tag, find the
     // nearest ancestor with the tag via a lateral ancestor walk.
+    //
+    // I-Search-4: the `tag_inh_ancestors_walk!(1)` macro intentionally does NOT
+    // filter `is_conflict = 0` on the recursive member — see the
+    // `remove_subtree_inherited` docstring (line 319-330 of this file) and the
+    // macro doc-comment at `tag_inheritance_macros.rs:14-22` for the full
+    // rationale. Filtering on the walk would *under*-walk past a conflict
+    // ancestor (the walk stops short of the real-block ancestor we need) and
+    // produce wrong inheritance for descendants of conflict copies. The
+    // `is_conflict = 0` filter is instead applied at projection on the
+    // `nearest_ancestor` join below (line 141: `b.is_conflict = 0`), which
+    // correctly excludes the conflict copy from being chosen as the
+    // tag-source while still letting the walk traverse past it.
     sqlx::query(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_descendants_active!(),
@@ -159,6 +171,12 @@ pub async fn remove_inherited_tag(
 
     // Also re-insert for block_id itself if it's a descendant of the ancestor
     // (block_id no longer has the tag directly, but might inherit from above)
+    //
+    // I-Search-4: same ancestor-walk invariant as above — the
+    // `tag_inh_ancestors_walk!(1)` recursive member does NOT filter
+    // `is_conflict = 0` on purpose; the filter is applied at projection on
+    // the `nearest_ancestor` join. See the earlier comment block in this
+    // function and `remove_subtree_inherited`'s docstring for the rationale.
     sqlx::query(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_ancestors_walk!(1),
@@ -239,6 +257,14 @@ pub async fn recompute_subtree_inheritance(
     // Step 3: Handle tags inherited FROM OUTSIDE the subtree.
     // Walk up ancestors of root_id to find all tags that root_id and its
     // descendants should inherit from above.
+    //
+    // I-Search-4: same ancestor-walk invariant as in `remove_inherited_tag`
+    // above — the `tag_inh_ancestors_walk!(0)` recursive member does NOT
+    // filter `is_conflict = 0` on purpose (filtering would under-walk past
+    // conflict ancestors); the filter is applied at projection via the
+    // `JOIN blocks b ... WHERE b.is_conflict = 0` below. See
+    // `remove_subtree_inherited`'s docstring and
+    // `tag_inheritance_macros.rs:14-22` for the rationale.
     sqlx::query(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_ancestors_walk!(0),

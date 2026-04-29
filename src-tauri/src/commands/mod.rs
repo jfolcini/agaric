@@ -335,68 +335,29 @@ const ALLOWED_MIME_PATTERNS: &[&str] = &[
 // Response types
 // ---------------------------------------------------------------------------
 
-/// Validate that a date string is in `YYYY-MM-DD` format with reasonable
-/// range checks on month (01–12) and day (01–31). This is a structural
-/// check — it does NOT reject dates like Feb 30; the DB/agenda query
-/// handles that gracefully. The goal is to catch obviously malformed input
-/// before it reaches the query layer.
-fn validate_date_format(date: &str) -> Result<(), AppError> {
-    if date.len() != 10 {
-        return Err(AppError::Validation(format!(
-            "date must be exactly 10 characters (YYYY-MM-DD), got {} characters: '{date}'",
-            date.len()
-        )));
-    }
-
-    let bytes = date.as_bytes();
-    // Check pattern: DDDD-DD-DD where D is ASCII digit
-    let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9];
-    for &i in &digit_positions {
-        if !bytes[i].is_ascii_digit() {
-            return Err(AppError::Validation(format!(
-                "date must match YYYY-MM-DD pattern, got '{date}'"
-            )));
-        }
-    }
-    if bytes[4] != b'-' || bytes[7] != b'-' {
-        return Err(AppError::Validation(format!(
-            "date must match YYYY-MM-DD pattern, got '{date}'"
-        )));
-    }
-
-    let parts: Vec<&str> = date.split('-').collect();
-    if parts.len() != 3 {
-        return Err(AppError::Validation(format!(
-            "date must have 3 parts separated by '-', got '{date}'"
-        )));
-    }
-
-    let year_len = parts[0].len();
-    let month_len = parts[1].len();
-    let day_len = parts[2].len();
-    if year_len != 4 || month_len != 2 || day_len != 2 {
-        return Err(AppError::Validation(format!(
-            "date must be YYYY-MM-DD (4-2-2 digits), got '{date}'"
-        )));
-    }
-
-    let month: u32 = parts[1].parse().unwrap_or(0);
-    let day: u32 = parts[2].parse().unwrap_or(0);
-
-    if !(1..=12).contains(&month) {
-        return Err(AppError::Validation(format!(
-            "month must be 01–12, got '{}'",
-            parts[1]
-        )));
-    }
-    if !(1..=31).contains(&day) {
-        return Err(AppError::Validation(format!(
-            "day must be 01–31, got '{}'",
-            parts[2]
-        )));
-    }
-
-    Ok(())
+/// Validate that `s` parses as a calendar-valid `YYYY-MM-DD` date.
+///
+/// I-CommandsCRUD-6: previously did only structural validation (month
+/// 01–12, day 01–31) and explicitly accepted impossible combinations
+/// (Feb 30, Apr 31), relying on downstream callers to handle them. The
+/// agenda path (`list_projected_agenda_inner`) re-parsed via
+/// `NaiveDate::parse_from_str` and rejected with a different error
+/// shape — inconsistent failure for the same input depending on which
+/// command consumed it.
+///
+/// Now uses `NaiveDate::parse_from_str` directly so impossible dates
+/// are rejected at the boundary with a single canonical error message.
+/// The agenda re-parse becomes redundant and can be removed in a
+/// follow-up; this change keeps the validator's return type stable so
+/// existing callers don't need updating.
+pub(crate) fn validate_date_format(s: &str) -> Result<(), AppError> {
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .map(|_| ())
+        .map_err(|_| {
+            AppError::Validation(format!(
+                "expected YYYY-MM-DD format with calendar-valid date, got '{s}'"
+            ))
+        })
 }
 
 /// A date range for agenda queries. Both fields must be in `YYYY-MM-DD` format.

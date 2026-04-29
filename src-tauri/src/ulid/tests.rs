@@ -498,3 +498,50 @@ proptest::proptest! {
         );
     }
 }
+
+// --- I-GCalSpaces-1: ascii-only normalization parity ---
+
+/// I-GCalSpaces-1 — Pin the post-fix behaviour: `from_trusted` uses ASCII-only
+/// uppercase. Pre-fix Unicode `to_uppercase()` would have folded `"ß"` to
+/// `"SS"` (length change!) and `"ı"` to `"I"`, diverging from the
+/// `Deserialize` impl's `to_ascii_uppercase()` and breaking blake3 hash
+/// determinism (AGENTS.md invariant #8).
+#[test]
+fn from_trusted_uses_ascii_uppercase_i_gcalspaces_1() {
+    // Pre-fix Unicode behaviour: "ß".to_uppercase() == "SS" (length change).
+    // Post-fix: ASCII-only — non-ASCII chars pass through unchanged.
+    assert_eq!(BlockId::from_trusted("ß").as_str(), "ß");
+    assert_eq!(BlockId::from_trusted("ı").as_str(), "ı");
+    // Lowercase ASCII still uppercases.
+    assert_eq!(BlockId::from_trusted("abc123").as_str(), "ABC123");
+    // Already-uppercase ULIDs are unchanged.
+    assert_eq!(
+        BlockId::from_trusted("01ARZ3NDEKTSV4RRFFQ69G5FAV").as_str(),
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    );
+}
+
+/// I-GCalSpaces-1 — `from_trusted` and the `Deserialize` impl must agree
+/// byte-for-byte on every input, ASCII or not. Two normalisers meant two
+/// ways to break blake3 determinism (AGENTS.md invariant #8); aligning
+/// both on `to_ascii_uppercase` keeps the canonical form byte-stable.
+#[test]
+fn from_trusted_and_deserialize_agree_on_inputs_i_gcalspaces_1() {
+    for input in [
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "abc",
+        "ABC",
+        "01arz3ndektsv4rrffq69g5fav", // lowercase that Deserialize would canonicalise
+        "ß",                          // non-ASCII — verifies both paths agree on no-Unicode-folding
+    ] {
+        let from_trusted = BlockId::from_trusted(input);
+        // Round-trip through serde-JSON to invoke the Deserialize path.
+        let json = serde_json::json!(input).to_string();
+        let from_de: BlockId = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            from_trusted.as_str(),
+            from_de.as_str(),
+            "from_trusted and Deserialize must agree on '{input}'"
+        );
+    }
+}

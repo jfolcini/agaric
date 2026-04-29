@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 722+ items across 503 sessions (per SESSION-LOG.md unique session count; latest is session 536).
+Previously resolved: 727+ items across 504 sessions (per SESSION-LOG.md unique session count; latest is session 537).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -2025,7 +2025,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F25
 - **Status:** Open
 
-## INFO / nits (46 — expanded)
+## INFO / nits (41 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2131,18 +2131,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 03/F24
 - **Status:** Open
 
-### I-Cache-7 — Two projected-agenda tests use weak `count > 0` assertions
-- **Domain:** Cache + Pagination
-- **Location:** `src-tauri/src/cache/tests.rs:2166-2169` and `:2324-2327`
-- **What:** Two tests assert `count > 0` rather than the exact expected count. The number of weekly projections from a date 3 days ago over the 365-day horizon is computable and deterministic (~53). A `>` assertion catches "completely broken" but misses "off-by-one" or "horizon truncation" regressions.
-- **Why it matters:** Weak assertions miss regressions like "horizon shrunk to 30 days" or "first occurrence elided".
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Replace with exact-count assertions. The tests already pin `today` from `chrono::Local::now()` and compute `due` relative to it, so the expected count is derivable. (Combine with L-26's clock-injection recommendation for stable midnight behaviour.)
-- **Pass-1 source:** 03/F25
-- **Status:** Open
-
 ### Commands CRUD
 
 ### I-CommandsCRUD-1 — `undo_page_op_inner` uses `LIMIT 1 OFFSET ?2` to fetch the Nth recent op
@@ -2205,18 +2193,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 04/F20
 - **Status:** Open
 
-### I-CommandsCRUD-6 — `validate_date_format` accepts impossible dates (e.g. Feb 30) at the SQL boundary
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/mod.rs:331-388` and consumer `src-tauri/src/commands/agenda.rs:125-128`
-- **What:** The validator's docstring says "It does NOT reject dates like Feb 30; the DB/agenda query handles that gracefully." However, `list_projected_agenda_inner` re-parses with `chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")` which rejects impossible combinations with a different error ("invalid start_date"). The same input fails differently depending on which command consumes it.
-- **Why it matters:** Inconsistent failure shape; agenda batch endpoints accept Feb 30 silently and produce empty results, wasting a query and confusing callers.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either upgrade `validate_date_format` to call `chrono::NaiveDate::parse_from_str` once and reject impossible combinations, or remove the redundant secondary parse and rely on the structural check. Pick one and make every command consistent.
-- **Pass-1 source:** 04/F21
-- **Status:** Open
-
 ### I-CommandsCRUD-7 — `list_property_keys` / `list_property_defs` / `list_tags` return unbounded `Vec` with no cursor
 - **Domain:** Commands (CRUD)
 - **Location:** `src-tauri/src/commands/properties.rs:19-21,459-469`, `src-tauri/src/commands/tags.rs:243-262`
@@ -2227,18 +2203,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Add a sentence to AGENTS.md "Backend Patterns" exempting named small-cardinality lookups, or migrate them to cursor pagination. The latter is mechanical given the existing `PageResponse` helpers.
 - **Pass-1 source:** 04/F22
-- **Status:** Open
-
-### I-CommandsCRUD-8 — Two ISO-date validators (`validate_date_format` and `is_valid_iso_date`) coexist and partly overlap
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/mod.rs:331-388` (`validate_date_format`) vs `src-tauri/src/commands/properties.rs:322-339` (`is_valid_iso_date`)
-- **What:** Both functions structurally validate `YYYY-MM-DD` with month 01-12 and day 01-31. `validate_date_format` returns `Result<(), AppError>` with descriptive messages; `is_valid_iso_date` returns `bool`. They are kept in sync by hand and `is_valid_iso_date` is re-exported via `pub(crate)` through `mod.rs:300`.
-- **Why it matters:** Drift between these helpers will produce asymmetric validation depending on which command runs. Easy to consolidate.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Implement `is_valid_iso_date(s)` as `validate_date_format(s).is_ok()` (or vice-versa) so there is one source of truth.
-- **Pass-1 source:** 04/F23
 - **Status:** Open
 
 ### I-CommandsCRUD-9 — `restore_all_deleted_inner` / `purge_all_deleted_inner` infer roots via shared `deleted_at` timestamp (collision under load)
@@ -2318,18 +2282,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### Search & Links
-
-### I-Search-4 — `remove_inherited_tag` ancestor-walk consistency note (informational)
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/tag_inheritance.rs:140-145, 173-179, 285-292, 369-384`
-- **What:** Ancestor recursive members in `remove_inherited_tag` and `recompute_subtree_inheritance` already bound `a.depth < 100`; the leaf join filters `b.is_conflict = 0` at projection. Reviewer's only observation is that the `is_conflict = 0` filter is omitted on the recursive ancestor walks themselves (intentional per the docstring at lines 369-384 — filtering on the walk would *under*-walk past a conflict ancestor).
-- **Why it matters:** No bug. Worth a one-line comment on the ancestor-walk CTEs to record the intentional asymmetry, but the invariant is structurally satisfied today.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add a comment to each ancestor-walk CTE pointing at `remove_subtree_inherited`'s docstring explaining why `is_conflict = 0` is applied at projection rather than on the recursive member. No code change required.
-- **Pass-1 source:** 07/F26
-- **Status:** Open
 
 ### I-Search-5 — Tag-query oracle parity tests don't cover depth-100+ trees or conflict ancestors
 - **Domain:** Search & Links
@@ -2540,18 +2492,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### GCal / Spaces
-
-### I-GCalSpaces-1 — `BlockId::from_trusted` uses Unicode `to_uppercase()`, divergent from `Deserialize`
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/ulid.rs:18-29` (Deserialize: `s.to_ascii_uppercase()`); `src-tauri/src/ulid.rs:63-65` (`from_trusted`: `s.to_uppercase()`)
-- **What:** Two normalisation paths with different semantics — `Deserialize` uses ASCII-only `to_ascii_uppercase()`, `from_trusted` uses Unicode-aware `to_uppercase()` (where `"ß".to_uppercase() == "SS"`, `"ı".to_uppercase() == "I"`). ULIDs are Crockford base32 ASCII by spec so any well-formed ULID round-trips identically; non-ASCII inputs diverge.
-- **Why it matters:** AGENTS.md invariant 8 pins "ULID uppercase normalization — Crockford base32 for blake3 hash determinism." Two normalisers means two ways to break determinism. Cross-referenced as L-3 in the Core domain — listed here for completeness because the spaces / gcal modules use `BlockId::from_trusted` heavily.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Change `from_trusted` to `Self(s.to_ascii_uppercase())` to match `Deserialize`. Add a regression test that pins `BlockId::from_trusted("ß").as_str() == "ß"` (i.e. ASCII-only path leaves non-ASCII unchanged) and that both paths round-trip the same set of inputs.
-- **Pass-1 source:** 10/F9 (cross-ref L-3)
-- **Status:** Open
 
 ### I-GCalSpaces-2 — `clock.today()` UTC bug compounds with `clamp_to_window` filter (second site)
 - **Domain:** GCal / Spaces / Drafts
