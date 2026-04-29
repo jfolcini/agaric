@@ -1,6 +1,6 @@
 ---
-source: src/mcp/tools_rw.rs
-assertion_line: 537
+source: src/mcp/tools_rw/tests.rs
+assertion_line: 72
 expression: wire
 ---
 - description: "Append a content block under an existing parent. The block_type is always `content` — agents cannot create pages or tags through this tool."
