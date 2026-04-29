@@ -1274,3 +1274,226 @@ async fn find_lca_with_hashset_finds_correct_ancestor() {
         "LCA should be (device-A, 2) where both chains diverge"
     );
 }
+
+// =====================================================================
+// I-Core-2: CTE-driven `find_lca` vs the `#[cfg(test)]` Rust-walk oracle
+// =====================================================================
+//
+// `find_lca` (production) uses a single recursive CTE per chain; the
+// N+1 Rust walk is preserved as `find_lca_oracle` so these tests can
+// assert byte-for-byte agreement across the chain topologies that the
+// merge hot path exercises in production.
+
+/// Shared scenario runner: after the fixture is built, call both
+/// `find_lca` (CTE) and `find_lca_oracle` (Rust walk) with identical
+/// arguments and assert the results match — and, when specified, match
+/// an `expected` LCA as well.
+async fn assert_cte_matches_oracle(
+    pool: &sqlx::SqlitePool,
+    op_a: (String, i64),
+    op_b: (String, i64),
+    expected: Option<(String, i64)>,
+) {
+    let prod = super::find_lca(pool, &op_a, &op_b).await.unwrap();
+    let oracle = super::find_lca_oracle(pool, &op_a, &op_b).await.unwrap();
+    assert_eq!(
+        prod, oracle,
+        "CTE `find_lca` and `find_lca_oracle` must agree for \
+         op_a={op_a:?} op_b={op_b:?}"
+    );
+    assert_eq!(
+        prod, expected,
+        "LCA mismatch for op_a={op_a:?} op_b={op_b:?}"
+    );
+}
+
+/// Linear chain (A,1)→(A,2)→(A,3): LCA of (A,3) with itself is (A,3);
+/// LCA of (A,2) and (A,3) is (A,2).
+#[tokio::test]
+async fn cte_oracle_linear_chain() {
+    let (pool, _dir) = test_pool().await;
+
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+        .await
+        .unwrap();
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        make_edit("B1", "v1", Some((DEV_A.into(), 1))),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        make_edit("B1", "v2", Some((DEV_A.into(), 2))),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    // Self-LCA (head with itself) — short-circuit path.
+    assert_cte_matches_oracle(
+        &pool,
+        (DEV_A.into(), 3),
+        (DEV_A.into(), 3),
+        Some((DEV_A.into(), 3)),
+    )
+    .await;
+
+    // op_b sits inside chain A: LCA = op_b.
+    assert_cte_matches_oracle(
+        &pool,
+        (DEV_A.into(), 3),
+        (DEV_A.into(), 2),
+        Some((DEV_A.into(), 2)),
+    )
+    .await;
+
+    // Mirror: op_a inside chain B.
+    assert_cte_matches_oracle(
+        &pool,
+        (DEV_A.into(), 2),
+        (DEV_A.into(), 3),
+        Some((DEV_A.into(), 2)),
+    )
+    .await;
+}
+
+/// Diverging chains: A creates, A edits, then both A and B branch off
+/// that edit. LCA of (A,3) and (B,1) must be (A,2).
+#[tokio::test]
+async fn cte_oracle_diverging_chains() {
+    let (pool, _dir) = test_pool().await;
+
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+        .await
+        .unwrap();
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        make_edit("B1", "v1", Some((DEV_A.into(), 1))),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        make_edit("B1", "v2-A", Some((DEV_A.into(), 2))),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    let b_payload = r#"{"block_id":"B1","to_text":"v2-B","prev_edit":["device-A",2]}"#;
+    let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+    insert_remote_op(&pool, &b_record).await.unwrap();
+
+    assert_cte_matches_oracle(
+        &pool,
+        (DEV_A.into(), 3),
+        (DEV_B.into(), 1),
+        Some((DEV_A.into(), 2)),
+    )
+    .await;
+
+    // Also at the create: two edits both diverging off (A,1).
+    let c_payload = r#"{"block_id":"B1","to_text":"edit-from-C","prev_edit":["device-A",1]}"#;
+    let c_record = make_remote_record("device-C", 1, None, "edit_block", c_payload);
+    insert_remote_op(&pool, &c_record).await.unwrap();
+
+    assert_cte_matches_oracle(
+        &pool,
+        (DEV_B.into(), 1),
+        ("device-C".into(), 1),
+        Some((DEV_A.into(), 1)),
+    )
+    .await;
+}
+
+/// Genesis edit: a single `create_block` with no subsequent edits.
+/// LCA of the create with itself is the create.
+#[tokio::test]
+async fn cte_oracle_genesis_edit() {
+    let (pool, _dir) = test_pool().await;
+
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+        .await
+        .unwrap();
+
+    assert_cte_matches_oracle(
+        &pool,
+        (DEV_A.into(), 1),
+        (DEV_A.into(), 1),
+        Some((DEV_A.into(), 1)),
+    )
+    .await;
+}
+
+/// Two-op chain where the LCA is the genesis. create_block at (A,1),
+/// one edit at (A,2). LCA of (A,2) and (A,1) is (A,1).
+#[tokio::test]
+async fn cte_oracle_two_op_chain_lca_is_genesis() {
+    let (pool, _dir) = test_pool().await;
+
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+        .await
+        .unwrap();
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        make_edit("B1", "v1", Some((DEV_A.into(), 1))),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    // (A,2) vs (A,1): op_b is the ancestor create.
+    assert_cte_matches_oracle(
+        &pool,
+        (DEV_A.into(), 2),
+        (DEV_A.into(), 1),
+        Some((DEV_A.into(), 1)),
+    )
+    .await;
+
+    // Mirror: (A,1) vs (A,2).
+    assert_cte_matches_oracle(
+        &pool,
+        (DEV_A.into(), 1),
+        (DEV_A.into(), 2),
+        Some((DEV_A.into(), 1)),
+    )
+    .await;
+}
+
+/// Disjoint chains (M-72 shape): two independent create_block ops for
+/// the same block_id — chains never overlap. Both implementations must
+/// return `None`.
+#[tokio::test]
+async fn cte_oracle_disjoint_chains_return_none() {
+    let (pool, _dir) = test_pool().await;
+
+    // Device A: create + edit.
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v-A"), FIXED_TS.into())
+        .await
+        .unwrap();
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        make_edit("B1", "v-A'", Some((DEV_A.into(), 1))),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    // Device B: independent create for the same block_id.
+    let b_create =
+        r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"v-B"}"#;
+    let b_record = make_remote_record(DEV_B, 1, None, "create_block", b_create);
+    insert_remote_op(&pool, &b_record).await.unwrap();
+
+    assert_cte_matches_oracle(&pool, (DEV_A.into(), 2), (DEV_B.into(), 1), None).await;
+}

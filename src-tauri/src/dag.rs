@@ -19,17 +19,224 @@ use crate::op_log::{
 
 /// M-4: hard cap on the number of `prev_edit` chain steps `find_lca` will
 /// walk before giving up.  ARCHITECTURE.md §4 documents this 10,000-step
-/// cap as the cycle-detection ceiling; the constant turns the
-/// HashSet-only check into a true fail-fast ceiling so a pathologically
-/// long acyclic chain (corruption, future schema bug) can never issue an
-/// unbounded number of `get_op_by_seq` writer-pool acquires.
+/// cap as the cycle-detection ceiling; both the CTE's `depth < MAX_LCA_STEPS`
+/// recursion bound AND the Rust-side HashSet check below enforce it so a
+/// pathologically long acyclic chain (corruption, future schema bug) can
+/// never run unbounded.
 const MAX_LCA_STEPS: usize = 10_000;
 
-/// Extract the `prev_edit` pointer from an op record's payload.
+/// One row returned by the recursive CTE in [`fetch_edit_chain_rows`].
+///
+/// The anchor row (depth 0) is the chain head itself; successive rows
+/// (depth 1, 2, …) are the `prev_edit` ancestors in walk order.
+/// `prev_device_id` and `prev_seq` are both NULL when the row's payload
+/// has no `prev_edit` (e.g. `create_block`, or a genesis `edit_block`
+/// with `prev_edit = null`).
+#[derive(sqlx::FromRow, Debug)]
+struct ChainRow {
+    device_id: String,
+    seq: i64,
+    op_type: String,
+    prev_device_id: Option<String>,
+    prev_seq: Option<i64>,
+    // `depth` is only used to guarantee walk order via the outer ORDER BY.
+    // Unused by the post-processing loop but kept for debugging clarity.
+    #[allow(dead_code)]
+    depth: i64,
+}
+
+/// Outcome of a single edit-chain walk.
+enum WalkOutcome {
+    /// Walked the chain to its root (or terminated on a local cycle).
+    /// The returned `Vec` does **not** include the original `start` key —
+    /// only its ancestors, in walk order.
+    Completed(Vec<(String, i64)>),
+    /// The `stop_at` predicate matched on this key — the walk halted
+    /// before reaching the root.
+    Stopped((String, i64)),
+}
+
+/// Walk an edit chain backwards from `start` in a single DB round-trip via
+/// a recursive CTE, returning every visited row in depth order (anchor
+/// first).
+///
+/// I-Core-2 / CTE-oracle pattern: replaces the previous N+1
+/// `get_op_by_seq`-per-step walk. The Rust implementation survives as
+/// [`walk_edit_chain_oracle`] under `#[cfg(test)]`. The SQL bounds
+/// recursion at `c.depth < MAX_LCA_STEPS` so a pathologically long
+/// chain cannot run unbounded.
+///
+/// `prev_edit` is stored as a JSON array `[device_id, seq]`; the CTE
+/// uses `json_extract(payload, '$.prev_edit[0]')` / `'$.prev_edit[1]'`
+/// to thread the chain. Non-edit op payloads (that lack `prev_edit`)
+/// yield `NULL` from `json_extract`, so the recursive `INNER JOIN`
+/// naturally terminates when the chain reaches a `create_block`.
+async fn fetch_edit_chain_rows(
+    pool: &SqlitePool,
+    start: &(String, i64),
+) -> Result<Vec<ChainRow>, AppError> {
+    // The bound is inlined as a format placeholder rather than a sqlx bind
+    // because it's a CTE recursion depth (not per-row data) and SQLite
+    // does not accept parameters inside the recursive-member WHERE clause
+    // reliably. The constant lives in one place (`MAX_LCA_STEPS`).
+    let sql = format!(
+        "WITH RECURSIVE chain(device_id, seq, op_type, prev_device_id, prev_seq, depth) AS ( \
+             SELECT device_id, seq, op_type, \
+                    json_extract(payload, '$.prev_edit[0]') AS prev_device_id, \
+                    json_extract(payload, '$.prev_edit[1]') AS prev_seq, \
+                    0 AS depth \
+             FROM op_log \
+             WHERE device_id = ?1 AND seq = ?2 \
+             UNION ALL \
+             SELECT o.device_id, o.seq, o.op_type, \
+                    json_extract(o.payload, '$.prev_edit[0]') AS prev_device_id, \
+                    json_extract(o.payload, '$.prev_edit[1]') AS prev_seq, \
+                    c.depth + 1 \
+             FROM op_log o \
+             INNER JOIN chain c \
+                 ON o.device_id = c.prev_device_id AND o.seq = c.prev_seq \
+             WHERE c.depth < {MAX_LCA_STEPS} \
+         ) \
+         SELECT device_id, seq, op_type, prev_device_id, prev_seq, depth \
+         FROM chain \
+         ORDER BY depth"
+    );
+
+    let rows = sqlx::query_as::<_, ChainRow>(&sql)
+        .bind(&start.0)
+        .bind(start.1)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(rows)
+}
+
+/// Shared error constructor mirroring the previous `fetch_prev_edit`
+/// shape: compaction-aware `InvalidOperation` when snapshots exist,
+/// otherwise the same `NotFound` `get_op_by_seq` would have produced.
+fn missing_op_error(device_id: &str, seq: i64, has_snapshots: bool) -> AppError {
+    if has_snapshots {
+        AppError::InvalidOperation(format!(
+            "edit chain broken at ({device_id}, {seq}) — likely due to op log compaction; \
+             LCA requires intact chains"
+        ))
+    } else {
+        AppError::NotFound(format!("op_log ({device_id}, {seq})"))
+    }
+}
+
+/// Walk an edit chain backwards from `start` via the recursive CTE.
+///
+/// The walk terminates when one of the following happens:
+/// 1. `stop_at(key)` returns `true` for an ancestor — yields
+///    [`WalkOutcome::Stopped`] with that key.
+/// 2. A local cycle is detected (`key` already visited within this walk) —
+///    yields [`WalkOutcome::Completed`] with the keys collected so far.
+/// 3. The chain reaches a `create_block` op (no further `prev_edit`) —
+///    yields [`WalkOutcome::Completed`].
+/// 4. The chain exceeds [`MAX_LCA_STEPS`] — returns
+///    [`AppError::InvalidOperation`] (true fail-fast cap).
+///
+/// `start` itself is never passed to `stop_at`; only its ancestors are.
+///
+/// Semantics (errors, op-type validation, cycle-break, step-cap) match
+/// [`walk_edit_chain_oracle`] below byte-for-byte; the oracle parity test
+/// in `dag/tests.rs` exercises that contract.
+async fn walk_edit_chain<F>(
+    pool: &SqlitePool,
+    start: &(String, i64),
+    has_snapshots: bool,
+    mut stop_at: F,
+) -> Result<WalkOutcome, AppError>
+where
+    F: FnMut(&(String, i64)) -> bool,
+{
+    let rows = fetch_edit_chain_rows(pool, start).await?;
+
+    // Empty result ⇒ start op itself is missing. Preserve the old
+    // `get_op_by_seq → NotFound / compaction-wrapped InvalidOperation`
+    // error.
+    if rows.is_empty() {
+        return Err(missing_op_error(&start.0, start.1, has_snapshots));
+    }
+
+    // op_type validation (previously done row-by-row by `extract_prev_edit`).
+    // Every row the walker would have fetched must be edit_block or
+    // create_block; anything else is corruption and surfaces the same
+    // "expected edit_block or create_block, got X" error the Rust walker
+    // produced.
+    for row in &rows {
+        if row.op_type != "edit_block" && row.op_type != "create_block" {
+            return Err(AppError::InvalidOperation(format!(
+                "expected edit_block or create_block, got {}",
+                row.op_type
+            )));
+        }
+    }
+
+    let mut visited: HashSet<(String, i64)> = HashSet::new();
+    visited.insert((start.0.clone(), start.1));
+
+    let mut chain: Vec<(String, i64)> = Vec::new();
+    let mut steps: usize = 0;
+
+    // Iterate rows beyond the anchor (the anchor IS `start`).
+    for row in rows.iter().skip(1) {
+        let key = (row.device_id.clone(), row.seq);
+        if stop_at(&key) {
+            return Ok(WalkOutcome::Stopped(key));
+        }
+        if visited.contains(&key) {
+            // Cycle detected — matches the old `break` semantics: stop
+            // walking, return the partial chain, let the caller search
+            // elsewhere.  Tests:
+            // `find_lca_detects_cycle_in_chain`, `find_lca_detects_self_loop`.
+            return Ok(WalkOutcome::Completed(chain));
+        }
+        steps += 1;
+        if steps >= MAX_LCA_STEPS {
+            return Err(AppError::InvalidOperation(format!(
+                "find_lca exceeded max steps ({MAX_LCA_STEPS}) walking chain"
+            )));
+        }
+        visited.insert(key.clone());
+        chain.push(key);
+    }
+
+    // The CTE walked to a natural end.  If the last row's `prev_*` is
+    // NULL, the chain terminated cleanly (create_block or a genesis
+    // edit_block with `prev_edit = null`).  If it is non-NULL, the
+    // recursive JOIN produced no match — i.e. the next op is MISSING.
+    // Preserve the compaction-aware error the Rust walker emitted via
+    // `fetch_prev_edit`.
+    let last = rows.last().unwrap();
+    if let (Some(next_dev), Some(next_seq)) = (last.prev_device_id.as_deref(), last.prev_seq) {
+        return Err(missing_op_error(next_dev, next_seq, has_snapshots));
+    }
+
+    Ok(WalkOutcome::Completed(chain))
+}
+
+// ---------------------------------------------------------------------------
+// CTE-oracle pattern (per AGENTS.md §"Performance Conventions")
+// ---------------------------------------------------------------------------
+//
+// The following three helpers preserve the previous N+1 Rust walk used by
+// `find_lca` so the oracle parity test in `dag/tests.rs` can confirm the
+// CTE-driven path in `walk_edit_chain` agrees with the reference semantics
+// on a synthetic op-log fixture. They are `#[cfg(test)]`-gated so they do
+// not survive into production builds.
+//
+// I-Core-2: replaced on the hot path by `walk_edit_chain` above, which
+// issues a SINGLE `sqlx::query_as::<ChainRow>(..)` call per chain instead
+// of N round-trips through `get_op_by_seq`.
+
+/// Oracle: extract the `prev_edit` pointer from an op record's payload.
 ///
 /// - `edit_block` → returns `payload.prev_edit` (may be `None`)
 /// - `create_block` → returns `None` (root of the edit chain)
 /// - anything else → `AppError::InvalidOperation`
+#[cfg(test)]
 fn extract_prev_edit(record: &OpRecord) -> Result<Option<(String, i64)>, AppError> {
     match record.op_type.as_str() {
         "edit_block" => {
@@ -44,26 +251,11 @@ fn extract_prev_edit(record: &OpRecord) -> Result<Option<(String, i64)>, AppErro
     }
 }
 
-/// Outcome of a single edit-chain walk.
-enum WalkOutcome {
-    /// Walked the chain to its root (or terminated on a local cycle).
-    /// The returned `Vec` does **not** include the original `start` key —
-    /// only its ancestors, in walk order.
-    Completed(Vec<(String, i64)>),
-    /// The `stop_at` predicate matched on this key — the walk halted
-    /// before reaching the root.
-    Stopped((String, i64)),
-}
-
-/// Fetch the `prev_edit` pointer of `(device_id, seq)`.
-///
-/// When `has_snapshots` is true and the row is missing, treat the absence
-/// as compaction-induced chain breakage and surface a clear
-/// [`AppError::InvalidOperation`] instead of the bare `NotFound` —
-/// otherwise propagate the original error.  Used by [`walk_edit_chain`]
-/// as the per-step lookup primitive so the compaction-aware error
-/// message lives in exactly one place.
-async fn fetch_prev_edit(
+/// Oracle: fetch the `prev_edit` pointer of `(device_id, seq)` via a fresh
+/// `get_op_by_seq`, wrapping `NotFound` into the compaction-aware error
+/// shape when snapshots exist.
+#[cfg(test)]
+async fn fetch_prev_edit_oracle(
     pool: &SqlitePool,
     device_id: &str,
     seq: i64,
@@ -79,20 +271,14 @@ async fn fetch_prev_edit(
     }
 }
 
-/// Walk an edit chain backwards from `start`, following `prev_edit` pointers.
+/// Oracle: the original Rust walk, one `fetch_prev_edit_oracle` per step.
 ///
-/// The walk terminates when one of the following happens:
-/// 1. `stop_at(key)` returns `true` for an ancestor — yields
-///    [`WalkOutcome::Stopped`] with that key.
-/// 2. A local cycle is detected (`key` already visited within this walk) —
-///    yields [`WalkOutcome::Completed`] with the keys collected so far.
-/// 3. The chain reaches a `create_block` op (no further `prev_edit`) —
-///    yields [`WalkOutcome::Completed`].
-/// 4. The chain exceeds [`MAX_LCA_STEPS`] — returns
-///    [`AppError::InvalidOperation`] (true fail-fast cap).
-///
-/// `start` itself is never passed to `stop_at`; only its ancestors are.
-async fn walk_edit_chain<F>(
+/// Retained under `#[cfg(test)]` as the reference implementation that the
+/// production CTE path must match. Tests in `dag/tests.rs::cte_oracle_*`
+/// run this alongside [`walk_edit_chain`] on the same fixture and assert
+/// identical outputs.
+#[cfg(test)]
+async fn walk_edit_chain_oracle<F>(
     pool: &SqlitePool,
     start: &(String, i64),
     has_snapshots: bool,
@@ -102,25 +288,18 @@ where
     F: FnMut(&(String, i64)) -> bool,
 {
     let mut chain: Vec<(String, i64)> = Vec::new();
-    // Local cycle-detection set, seeded with `start` so a `prev_edit`
-    // pointing back at the chain head terminates the walk immediately.
     let mut visited: HashSet<(String, i64)> = HashSet::new();
     visited.insert((start.0.clone(), start.1));
 
     let mut next: Option<(String, i64)> =
-        fetch_prev_edit(pool, &start.0, start.1, has_snapshots).await?;
-    // M-4: bound the walk so a pathologically long acyclic chain
-    // cannot issue an unbounded number of writer-pool acquires.  The
-    // HashSet-based cycle break still terminates true cycles, but a
-    // long acyclic chain (e.g. corruption with no repeated key) must
-    // also fail fast.
+        fetch_prev_edit_oracle(pool, &start.0, start.1, has_snapshots).await?;
     let mut steps: usize = 0;
     while let Some(key) = next.take() {
         if stop_at(&key) {
             return Ok(WalkOutcome::Stopped(key));
         }
         if visited.contains(&key) {
-            break; // cycle detected — stop walking
+            break;
         }
         steps += 1;
         if steps >= MAX_LCA_STEPS {
@@ -131,7 +310,7 @@ where
         visited.insert(key.clone());
         chain.push(key);
         let last = chain.last().unwrap();
-        next = fetch_prev_edit(pool, &last.0, last.1, has_snapshots).await?;
+        next = fetch_prev_edit_oracle(pool, &last.0, last.1, has_snapshots).await?;
     }
     Ok(WalkOutcome::Completed(chain))
 }
@@ -366,6 +545,52 @@ pub async fn find_lca(
     // Walk chain B with an early-exit predicate that fires on the first
     // ancestor present in chain A's visited set — that ancestor is the LCA.
     match walk_edit_chain(pool, op_b, has_snapshots, |key| {
+        visited.contains(&(key.0.as_str(), key.1))
+    })
+    .await?
+    {
+        WalkOutcome::Stopped(key) => Ok(Some(key)),
+        WalkOutcome::Completed(_) => Ok(None),
+    }
+}
+
+/// Oracle: `find_lca` built on the N+1 Rust walk [`walk_edit_chain_oracle`]
+/// — the reference implementation replaced by the CTE-driven production
+/// path for I-Core-2.
+///
+/// Kept under `#[cfg(test)]` per AGENTS.md "CTE oracle pattern". The
+/// parity test in `dag/tests.rs::cte_oracle_*` runs this alongside
+/// [`find_lca`] on the same fixture and asserts the two return identical
+/// `(device_id, seq)` results across linear chains, diverging chains,
+/// and genesis-edit scenarios.
+#[cfg(test)]
+pub async fn find_lca_oracle(
+    pool: &SqlitePool,
+    op_a: &(String, i64),
+    op_b: &(String, i64),
+) -> Result<Option<(String, i64)>, AppError> {
+    let has_snapshots: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+            .fetch_one(pool)
+            .await?;
+    let has_snapshots = has_snapshots > 0;
+
+    let chain_a = match walk_edit_chain_oracle(pool, op_a, has_snapshots, |_| false).await? {
+        WalkOutcome::Completed(c) => c,
+        WalkOutcome::Stopped(_) => unreachable!("chain A predicate never matches"),
+    };
+
+    let mut visited: HashSet<(&str, i64)> = HashSet::with_capacity(chain_a.len() + 1);
+    visited.insert((&op_a.0, op_a.1));
+    for (s, n) in &chain_a {
+        visited.insert((s.as_str(), *n));
+    }
+
+    if visited.contains(&(op_b.0.as_str(), op_b.1)) {
+        return Ok(Some(op_b.clone()));
+    }
+
+    match walk_edit_chain_oracle(pool, op_b, has_snapshots, |key| {
         visited.contains(&(key.0.as_str(), key.1))
     })
     .await?

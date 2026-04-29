@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
+42 open items — 39 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 760+ items across 511 sessions (per SESSION-LOG.md unique session count; latest is session 544).
+Previously resolved: 762+ items across 512 sessions (per SESSION-LOG.md unique session count; latest is session 545).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -56,6 +56,7 @@ Previously resolved: 760+ items across 511 sessions (per SESSION-LOG.md unique s
 | MAINT-142 | MAINT | Split `tag_inheritance.rs` (~1233L) into `tag_inheritance/mod.rs` (dispatcher) + `incremental.rs` + `rebuild.rs` + `tests.rs` — matches the pattern used by sibling modules. The file documents `apply_op_tag_inheritance` as "the" single entry point but 7 other `pub async fn` are also callable; demote helpers to `pub(crate)` as part of the split. Macros file (`tag_inheritance_macros.rs`) is a sibling and stays where it is. | M |
 | MAINT-159 | MAINT | `scripts/check-ipc-error-path.mjs` only enforces error-path coverage for `src/components/*.tsx` top-level files (`files = "^src/components/([^/]+\\.tsx\|...)$"` in `prek.toml:189`). Subdirectory components in `src/components/agent-access/`, `src/components/journal/`, `src/components/block-tree/`, `src/components/backlink-filter/`, and the new `src/components/settings/` (after MAINT-128) are out of scope. The script header itself documents this as a "HARD-NARROWED" scope with a deferred FOLLOW-UP. Subdirectory components import from `@/lib/tauri` and may have no error-path test today — the gate doesn't fire. Fix: walk `src/components/**/*.tsx` recursively (update both the script's file walk and the prek `files` regex), then address whatever new gaps the recursive walk surfaces. Land AFTER MAINT-128 so the new subdirectories from the god-component split are in place. | S |
 | MAINT-162 | MAINT | ARIA role re-evaluation for list views — `nested-interactive: { enabled: false }` at ~20 axe sites (`PageBrowser.test.tsx`, `TrashView.test.tsx`, `ConflictList.test.tsx`, `HistoryListItem.test.tsx`, `StaticBlock.test.tsx` ×7, `TagFilterPanel.test.tsx`) and `aria-required-children: { enabled: false }` at `PageBrowser.test.tsx:2187` (FEAT-14 mixed-mode list with options + tree-button rows) both paper over the same root cause: `role="listbox"` + `role="option"` on rows that contain action buttons (star, delete, navigate). Per WAI-ARIA APG, options must be atomic and non-interactive — the suppressions silence a real screen-reader-broken state. Correct primitive is `role="grid"` + `role="row"` + `role="gridcell"` which explicitly permits nested interactive widgets. Pairs with MAINT-128: when each god-component is split (PageBrowser, TrashView, ConflictList, HistoryView, StaticBlock), re-evaluate the list role choice and remove the axe suppressions. PageBrowser specifically has the strongest case for grid given the FEAT-14 mixed-mode children. May be deferred behind MAINT-128 or shipped earlier as a per-file role flip — the role change is independent of the file-size split. | M |
+| MAINT-163 | MAINT | Pre-existing date-validation regression invisible to prek gate. `command_integration_tests::lifecycle_integration::test_list_blocks_rejects_invalid_date` and `date_validation_two_digit_year_returns_validation` both fail on `main` (commit `9b394f9`, session 544 onward) — `validate_date_format` accepts `2025-1-1` (single-digit month/day) where the tests expect `AppError::Validation`. Failures survive the prek `cargo nextest` gate because `scripts/test-related-rust.sh` only runs tests for STAGED files' modules; `command_integration_tests::lifecycle_integration` is not exercised unless a file in that path is staged. Fix: (a) trace the regression — likely a chrono or date-parser change accepted permissively; (b) tighten `validate_date_format` to reject `\d{1,2}-\d{1,2}` patterns; (c) consider expanding `test-related-rust.sh`'s fallback patterns to include `commands/blocks/queries.rs` so the lifecycle integration tests run when queries.rs is staged. Spotted during session 545. Root cause is in `src-tauri/src/commands/`. | S |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
@@ -2031,18 +2032,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Core
 
-### I-Core-2 — `find_lca` issues N+1 SELECTs — one round-trip per chain step
-- **Domain:** Core
-- **Location:** `src-tauri/src/dag.rs:186-292` (the `get_op_by_seq` calls at 207, 225, 256, 277)
-- **What:** Each `prev_edit` follow calls `get_op_by_seq(pool, ...)`, which is a fresh pool acquire + SELECT. For an N-step edit chain that is N round-trips per side (2N total when both chains are walked). The chain-walk Vec is bounded only by cycle detection (see M-4).
-- **Why it matters:** At the documented "personal note-taking" scale this is fine, and ARCHITECTURE.md says "trivially fast for realistic workloads." But the same primitive backs three-way merge on the sync hot path; a thousand-edit block produces hundreds of round-trips on every merge attempt.
-- **Cost:** M
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Optimisation, not correctness. Express the chain walk as a recursive CTE keyed on `parent_seqs` and `block_id` returning the visited set in DB order. Keep the existing Rust walk as a `#[cfg(test)]` oracle (per the AGENTS.md CTE-oracle pattern).
-- **Pass-1 source:** 01/F17
-- **Status:** Open
-
 ### I-Core-7 — Command list duplicated between `run()` and `specta_tests::specta_builder`
 - **Domain:** Core
 - **Location:** `src-tauri/src/lib.rs:183-303` (production `collect_commands!` in `run()`) and `src-tauri/src/lib.rs:947-1068` (`specta_tests::specta_builder`)
@@ -2117,18 +2106,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Add a sentence to AGENTS.md "Backend Patterns" exempting named small-cardinality lookups, or migrate them to cursor pagination. The latter is mechanical given the existing `PageResponse` helpers.
 - **Pass-1 source:** 04/F22
-- **Status:** Open
-
-### I-CommandsCRUD-9 — `restore_all_deleted_inner` / `purge_all_deleted_inner` infer roots via shared `deleted_at` timestamp (collision under load)
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/blocks/crud.rs:766-849` (restore), `:864-1073` (purge)
-- **What:** Root inference uses `b.parent_id IS NULL OR NOT EXISTS (SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND p.deleted_at = b.deleted_at)`. Two roots deleted at the same RFC3339 millisecond in distinct cascade events would be treated as one root. `now_rfc3339()` produces millisecond precision and isn't strictly monotonic across pool connections.
-- **Why it matters:** A missing op record means a peer device replaying the op log will not know one of the subtrees was restored/purged, leaving divergent state. Likelihood is low but non-zero under load.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** Track roots explicitly via the cascade path — either record the originating block-id in op_log payloads or add a side table — so bulk operations replay exactly the ops performed. Alternatively, accept the heuristic and document the collision-window as a known limitation.
-- **Pass-1 source:** 04/F24
 - **Status:** Open
 
 ---
