@@ -2250,6 +2250,106 @@ async fn reindex_fts_references_chunks_more_than_one_batch() {
     }
 }
 
+// ── I-Search-6: rename + immediate purge race ────────────────────
+//
+// If a tag T is renamed and then physically purged from `blocks`
+// before the queued `reindex_fts_references(pool, T)` runs, the
+// reindex must still leave referencing blocks' FTS entries free of
+// T's old name. `load_ref_maps` returns no entry for T (its row is
+// gone), so `strip_for_fts_with_maps` substitutes empty for the
+// now-broken inline `#[T]` reference and the source block's
+// `fts_blocks.stripped` ends without the stale resolved name.
+//
+// We simulate the partial-purge state where the tag row is gone but
+// an orphan `block_tags(B, T)` row survives (FK enforcement
+// temporarily disabled on this connection). `block_tags` has no
+// `ON DELETE CASCADE`, so this orphan row is the only path the
+// reindex has to discover B — exactly the contract we want to pin.
+#[tokio::test]
+async fn reindex_fts_references_handles_purged_tag_gracefully_i_search_6() {
+    let (pool, _dir) = test_pool().await;
+
+    let tag_id = "01HQTAGPRG6PRG6PRG6PRG6PR1";
+    let blk_id = "01HQBLKPRG6PRG6PRG6PRG6BK1";
+
+    // Tag block + content block whose content references the tag inline.
+    insert_block(&pool, tag_id, "tag", "OldName", None, Some(0)).await;
+    insert_block(
+        &pool,
+        blk_id,
+        "content",
+        &format!("task #[{tag_id}]"),
+        None,
+        Some(1),
+    )
+    .await;
+
+    // Explicit `block_tags` row keeps the reindex discovery path alive
+    // after the tag row is gone — `block_tags` has no
+    // `ON DELETE CASCADE`, unlike `block_tag_refs`, so it survives the
+    // purge below as an orphan row.
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(blk_id)
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Initial FTS index resolves `#[tag_id]` → "OldName".
+    update_fts_for_block(&pool, blk_id).await.unwrap();
+    let stripped_before: String =
+        sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+            .bind(blk_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        stripped_before.contains("OldName"),
+        "baseline: B's FTS must contain the resolved tag name 'OldName' before purge, got: {stripped_before:?}"
+    );
+
+    // Race: the tag has been renamed (so the existing FTS entry is
+    // stale) AND immediately purged before the queued
+    // `reindex_fts_references` could run. Simulate the purge having
+    // physically removed the tag row while the dependent
+    // `block_tags(B, T)` row has not yet been cleaned up — FK
+    // enforcement is temporarily disabled on this single connection
+    // so the orphan row survives.
+    let mut conn = pool.acquire().await.unwrap();
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM blocks WHERE id = ?")
+        .bind(tag_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    drop(conn);
+
+    // Run the queued reindex. It must not crash, and it must scrub
+    // any surviving "OldName" from B's FTS entry: `load_ref_maps`
+    // returns no entry for T (its row is gone) and
+    // `strip_for_fts_with_maps` substitutes empty for the inline
+    // `#[tag_id]` ref.
+    reindex_fts_references(&pool, tag_id).await.unwrap();
+
+    let stripped_after: String =
+        sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+            .bind(blk_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        !stripped_after.contains("OldName"),
+        "B's FTS must not retain purged tag's old name 'OldName' after reindex, got: {stripped_after:?}"
+    );
+}
+
 #[tokio::test]
 async fn rebuild_fts_index_populates_empty_table() {
     let (pool, _dir) = test_pool().await;

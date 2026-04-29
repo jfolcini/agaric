@@ -950,24 +950,105 @@ fn cbor_round_trip_option_f64() {
 }
 
 // =======================================================================
-// 15. create_snapshot_empty_op_log
+// 15. create_snapshot_empty_op_log_returns_empty_snapshot_i_lifecycle_2
 // =======================================================================
 
-/// `create_snapshot` must return a clear Snapshot error when op_log is
-/// empty — not a cryptic RowNotFound.
+/// I-Lifecycle-2: `create_snapshot` accepts an empty op_log and writes an
+/// empty snapshot (zero-op deterministic representation), so a freshly
+/// initialised device can run "Create Snapshot" without erroring. The
+/// previous behaviour — `AppError::Snapshot("op_log is empty")` — only
+/// made sense for compaction (which has nothing to compact); for the
+/// snapshot UX it broke the fresh-device path. Compaction still gates
+/// on its own row-count check, so this change does not affect that path.
 #[tokio::test]
-async fn create_snapshot_empty_op_log() {
+async fn create_snapshot_empty_op_log_returns_empty_snapshot_i_lifecycle_2() {
     let (pool, _dir) = test_pool().await;
 
-    // DB has blocks but no ops
+    // DB has blocks but no ops — the very-fresh-device shape.
     insert_block(&pool, "block-1", "content").await;
 
-    let err = create_snapshot(&pool, "dev-1").await.unwrap_err();
-    let msg = err.to_string();
+    let snapshot_id = create_snapshot(&pool, "dev-1")
+        .await
+        .expect("empty op_log must produce a snapshot, not an error");
+
+    // The snapshot row landed as 'complete' with an empty up_to_seqs map
+    // and an empty up_to_hash marker.
+    let row = sqlx::query!(
+        "SELECT status, up_to_hash, up_to_seqs, data \
+         FROM log_snapshots WHERE id = ?",
+        snapshot_id
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.status, "complete");
+    assert_eq!(row.up_to_hash, "");
+    assert_eq!(row.up_to_seqs, "{}");
+
+    // Decode the encoded blob and confirm the empty-frontier shape.
+    let decoded = decode_snapshot(&row.data).expect("encoded snapshot must decode");
     assert!(
-        msg.contains("op_log is empty"),
-        "expected 'op_log is empty' error, got: {msg}"
+        decoded.up_to_seqs.is_empty(),
+        "empty op_log → empty up_to_seqs"
     );
+    assert_eq!(decoded.up_to_hash, "", "empty op_log → empty up_to_hash");
+    // `tables` reflects current DB state, not op_log state — `block-1`
+    // exists in `blocks` (we inserted it directly, bypassing the op log)
+    // and `collect_tables` reads it. The contract this test pins is that
+    // an empty op_log is NOT a hard error; the table contents are
+    // orthogonal.
+}
+
+// =======================================================================
+// 15b. apply_empty_snapshot_on_fresh_db_is_noop_i_lifecycle_2
+// =======================================================================
+
+/// I-Lifecycle-2: round-trip — an empty snapshot (created from a fresh
+/// device with zero ops) must apply cleanly onto another fresh DB and
+/// leave the post-state empty: zero blocks, zero op_log rows. This is
+/// the on-the-wire counterpart to the pinning test above and ensures
+/// the "empty snapshot" contract is honoured end-to-end (create →
+/// encode → fetch → decode → apply).
+#[tokio::test]
+async fn apply_empty_snapshot_on_fresh_db_is_noop_i_lifecycle_2() {
+    // Create the empty snapshot on a fresh source pool (no ops, no blocks).
+    let (src_pool, _src_dir) = test_pool().await;
+    create_snapshot(&src_pool, "dev-src")
+        .await
+        .expect("empty op_log must produce a snapshot");
+    let (_, encoded) = get_latest_snapshot(&src_pool)
+        .await
+        .unwrap()
+        .expect("snapshot row must exist");
+
+    // Apply onto a separate fresh pool. Both blocks count and op_log count
+    // must remain zero (empty snapshot is a true no-op on a fresh DB).
+    let (dst_pool, _dst_dir) = test_pool().await;
+    let dst_mat = test_materializer(&dst_pool);
+    let restored = apply_snapshot(&dst_pool, &dst_mat, &encoded)
+        .await
+        .expect("applying an empty snapshot to a fresh DB must succeed");
+
+    assert!(
+        restored.tables.blocks.is_empty(),
+        "decoded snapshot must carry zero blocks"
+    );
+    assert!(
+        restored.up_to_seqs.is_empty(),
+        "decoded snapshot must carry an empty frontier"
+    );
+
+    let blocks_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&dst_pool)
+        .await
+        .unwrap();
+    assert_eq!(blocks_count, 0, "fresh DB must remain empty after apply");
+
+    let op_log_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&dst_pool)
+        .await
+        .unwrap();
+    assert_eq!(op_log_count, 0, "fresh DB op_log must remain empty");
 }
 
 // =======================================================================

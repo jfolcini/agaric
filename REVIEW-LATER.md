@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 41 open items — 38 planned work (FEAT/MAINT/PERF/PUB) + 3 UX (UX-10, UX-11, UX-12). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed.
 
-Previously resolved: 727+ items across 504 sessions (per SESSION-LOG.md unique session count; latest is session 537).
+Previously resolved: 733+ items across 505 sessions (per SESSION-LOG.md unique session count; latest is session 538).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -2025,7 +2025,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F25
 - **Status:** Open
 
-## INFO / nits (41 — expanded)
+## INFO / nits (35 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
 
@@ -2241,71 +2241,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 04/F29
 - **Status:** Open
 
-### I-CommandsCRUD-13 — Missing test coverage for the `is_conflict = 0` filter on the `move_block_inner` cycle CTE
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/tests/block_cmd_tests.rs` (no test asserts conflict-aware cycle detection); paired with `move_ops.rs:87-100`
-- **What:** A grep over `block_cmd_tests.rs` for "conflict" tests involving the move path returns nothing that exercises a conflict-copy ancestor. AGENTS.md "Backend Patterns" #1 explicitly lists conflict filtering on recursive CTEs as the most-caught review issue, and the cycle CTE in `move_block_inner` is the canonical site for this regression class.
-- **Why it matters:** Regressions are likely without a test; the missing CTE filter (tracked elsewhere as a cross-domain Pass-2 high) is exactly the kind of bug this codebase tries to catch.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Medium
-- **Recommendation:** Add a regression test alongside any cycle-CTE filter fix: build a chain `A -> B -> C` where `B` has a conflict copy `B'` whose `parent_id` is altered to point at `C`; attempt `move_block(A, new_parent=C)` and assert the cycle is correctly detected without spuriously matching `B'`.
-- **Pass-1 source:** 04/F33
-- **Status:** Open
-
-### Commands System
-
-### I-CommandsSystem-1 — PERF-23 verification: `read_attachment_file` still buffers the whole file
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/sync_files.rs:182-195` (cross-ref; the command-side relies on this for sync transfer initiation and `read_attachment_file_cmd`)
-- **What:** Per the review-brief PERF-23 item, `read_attachment_file` calls `std::fs::read(&full_path)` which loads the entire attachment into a `Vec<u8>` before the blake3 hash and chunked send. REVIEW-LATER.md:578-586 already records this as a deliberate non-fix ("Decision: Defer"). Confirmed unchanged in this pass.
-- **Why it matters:** Holds steady — listed only to close the review-brief checklist item; no regression observed.
-- **Cost:** S/M (sketch already in REVIEW-LATER)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Leave as-is per the existing REVIEW-LATER decision; revisit only if attachment-size profile changes.
-- **Pass-1 source:** 05/F33
-- **Status:** Open
-
-### Sync
-
-### I-Sync-5 — `MdnsService::shutdown` consumes `self`
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_net/websocket.rs:103-109`; caller at `src-tauri/src/sync_daemon/orchestrator.rs:284-288`
-- **What:** `pub fn shutdown(self) -> Result<(), AppError>` takes ownership; on `Err` the caller has already consumed the daemon and can only log.
-- **Why it matters:** Negligible. Shutdown failure is rare and the consumed-self signature actually matches "this is a one-shot operation".
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Accept as-is. If revisited later, an `&mut self` signature with an internal `idempotent: bool` flag would be slightly more conservative, but not worth the churn today.
-- **Pass-1 source:** 06/F55
-- **Status:** Open
-
 ### Search & Links
-
-### I-Search-5 — Tag-query oracle parity tests don't cover depth-100+ trees or conflict ancestors
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/tag_query/resolve/tests.rs:438-484, 870-1008`
-- **What:** `materialized_matches_cte_oracle` builds a 3-level tree (PAGE_O → CHILD_O1/O2 → GRAND_O1); `oracle_validates_complex_boolean_expressions` exercises boolean combinators on similarly small fixtures. Neither test exercises the `depth < 100` boundary or a conflict ancestor in the parent chain. Combined with M-59 (oracle missing depth bound), the parity tests pass only in the safe regime where neither implementation hits its mutually exclusive failure modes.
-- **Why it matters:** Test gap masks the asymmetry M-59 introduces. Adding a 105-level chain and a conflict-ancestor case would catch M-59 and any future regression.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add `materialized_matches_cte_oracle_at_depth_boundary` (build a 105-level chain, assert both helpers terminate consistently), and `materialized_skips_conflict_ancestor` (insert one conflict-copy ancestor and assert it doesn't propagate inheritance).
-- **Pass-1 source:** 07/F27
-- **Status:** Open
-
-### I-Search-6 — No FTS sync test for "rename a tag, then immediately purge it before the materializer runs"
-- **Domain:** Search & Links
-- **Location:** `src-tauri/src/fts/tests.rs` (`reindex_fts_references` coverage)
-- **What:** Existing tests cover the happy path (`reindex_fts_references_batches_correctly`), tag_refs variant, no-refs noop, batch-50-blocks, and the inline-only variant. None covers the order: (1) rename tag T, (2) `reindex_fts_references` enqueued, (3) T deleted/purged before reindex runs. Expected: `load_ref_maps` returns no entry for T, `strip_for_fts_with_maps` substitutes empty for T's references, fts_blocks for source blocks ends without T's old name.
-- **Why it matters:** Documents the race-survivable contract of the reindex pipeline. Without the test, a future change to `load_ref_maps` could strand stale tag content in `fts_blocks`.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Add a regression test that (1) inserts tag T, (2) inserts content block B referencing `#[T]`, (3) builds FTS, (4) deletes T, (5) runs `reindex_fts_references(pool, T)`, and asserts B's stripped content no longer mentions T's old name.
-- **Pass-1 source:** 07/F28
-- **Status:** Open
 
 ### I-Search-7 — `eval_unlinked_references` short-token "dead arm" in OR query
 - **Domain:** Search & Links
@@ -2416,18 +2352,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### Lifecycle
-
-### I-Lifecycle-2 — `create_snapshot` rejects empty op_log with `AppError::Snapshot`
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/snapshot/create.rs:79-90`
-- **What:** When `op_log` is empty, snapshot creation errors out with `AppError::Snapshot("cannot create snapshot: op_log is empty")`. That makes sense for compaction (nothing to compact), but a user calling "Create Snapshot" via a manual command on a fresh device gets an opaque error rather than an empty snapshot. Test `create_snapshot_empty_op_log` (line ~879) pins the current behaviour.
-- **Why it matters:** Edge case that breaks "manual snapshot before first sync" UX.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Allow snapshot creation with an empty frontier (`up_to_seqs = {}`, `up_to_hash` = a deterministic empty marker like `""`); update the pinning test to assert the new behaviour.
-- **Pass-1 source:** 08/F32
-- **Status:** Open
 
 ### I-Lifecycle-3 — Test gap: no oracle parity for `compute_reverse(create_block)` and similar
 - **Domain:** Lifecycle
