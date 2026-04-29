@@ -2810,6 +2810,65 @@ async fn list_attachments_returns_for_block() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_attachments_returns_rows_with_deleted_at_set() {
+    // M-28: `attachments.deleted_at` is dead code — no production path ever
+    // writes a non-NULL value (both `delete_attachment_inner` and the
+    // materializer's `DeleteAttachment` handler hard-delete). The historical
+    // `AND deleted_at IS NULL` filter in `list_attachments_inner` was
+    // therefore a no-op on real data.
+    //
+    // This test pins that the filter is gone: we bypass the normal command
+    // path and write a row with `deleted_at` populated directly. Pre-fix,
+    // the filter would have hidden it; post-fix, the row must come back.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "m28 block".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    // Insert a row directly into `attachments` with `deleted_at` set.
+    // This simulates the (unreachable in production) state the old filter
+    // was guarding against.
+    sqlx::query(
+        "INSERT INTO attachments \
+         (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("01HZ000000000000000000ATM28")
+    .bind(&block.id)
+    .bind("image/png")
+    .bind("ghost.png")
+    .bind(42_i64)
+    .bind("attachments/ghost.png")
+    .bind("2025-01-01T00:00:00Z")
+    .bind("2025-01-02T00:00:00Z")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let rows = list_attachments_inner(&pool, block.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.len(),
+        1,
+        "M-28: row with deleted_at set must be returned (the old filter was a no-op)"
+    );
+    assert_eq!(rows[0].filename, "ghost.png");
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn add_attachment_returns_io_error_when_file_missing_on_disk() {
     // M-29: when the frontend's `@tauri-apps/plugin-fs` write fails or
     // races so the file is never actually persisted, `add_attachment`

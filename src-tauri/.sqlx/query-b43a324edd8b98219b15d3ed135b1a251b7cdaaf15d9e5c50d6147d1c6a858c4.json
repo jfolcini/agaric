@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at FROM attachments WHERE block_id = ? AND deleted_at IS NULL ORDER BY created_at",
+  "query": "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at FROM attachments WHERE block_id = ? ORDER BY created_at",
   "describe": {
     "columns": [
       {
@@ -52,5 +52,5 @@
       false
     ]
   },
-  "hash": "544d47f1cb2f998a01ad2f7ae7ca9fa3f0b652c2f206105074db1c915a644b75"
+  "hash": "b43a324edd8b98219b15d3ed135b1a251b7cdaaf15d9e5c50d6147d1c6a858c4"
 }

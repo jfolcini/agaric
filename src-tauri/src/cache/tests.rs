@@ -3192,6 +3192,140 @@ async fn agenda_cache_chunked_rebuild_handles_large_diff() {
 }
 
 // ====================================================================
+// _split variants — chunked-INSERT regression (M-17)
+// ====================================================================
+
+/// Forces the chunked `INSERT OR IGNORE` path in
+/// [`rebuild_tags_cache_split`] by seeding more tag blocks than fit in
+/// a single statement (`MAX_SQL_PARAMS / 4 = 249` rows per chunk). Pre-
+/// M-17 the split variant delegated to the single-pool implementation,
+/// so this test would still pass on the old code; post-fix it asserts
+/// the chunked code lands every row correctly and the result matches
+/// the single-pool variant for parity.
+#[tokio::test]
+async fn tags_cache_split_chunked_rebuild_handles_large_input() {
+    let (pool, _dir) = test_pool().await;
+
+    // 251 > 249 so the multi-chunk INSERT path runs at least 2 chunks.
+    const N_TAGS: usize = 251;
+
+    // Seed the tag blocks in one transaction for speed.
+    let mut tx = pool.begin().await.unwrap();
+    for i in 0..N_TAGS {
+        let id = format!("TAGCHUNK{i:05}AAAAAAAAAAAAA");
+        let name = format!("tag-{i:05}");
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'tag', ?)")
+            .bind(&id)
+            .bind(&name)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    rebuild_tags_cache_split(&pool, &pool).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "tags_cache").await,
+        N_TAGS as i64,
+        "all {N_TAGS} tags must be present after chunked split rebuild"
+    );
+
+    // Parity check: capture (tag_id, name, usage_count) tuples from the
+    // split rebuild, then re-run the single-pool variant and compare.
+    // The `updated_at` column is captured per-rebuild from `now_rfc3339`
+    // and excluded from the parity tuple — its sole purpose is to share
+    // a single timestamp across all rows of one rebuild.
+    let split_rows: Vec<(String, String, i64)> =
+        sqlx::query_as("SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+    rebuild_tags_cache(&pool).await.unwrap();
+    let single_rows: Vec<(String, String, i64)> =
+        sqlx::query_as("SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+    assert_eq!(
+        split_rows, single_rows,
+        "split and single-pool rebuilds must produce identical (tag_id, name, usage_count) rows"
+    );
+
+    // Sanity: every row's updated_at is non-empty (single timestamp
+    // captured before the read tx, bound on every chunked INSERT row).
+    let any_empty: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM tags_cache WHERE updated_at = ''")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(any_empty, 0, "every row must have a non-empty updated_at");
+}
+
+/// Forces the chunked `INSERT OR IGNORE` path in
+/// [`rebuild_pages_cache_split`] by seeding more page blocks than fit
+/// in a single statement (`MAX_SQL_PARAMS / 3 = 333` rows per chunk).
+/// Asserts the chunked code lands every row correctly and matches the
+/// single-pool variant for parity.
+#[tokio::test]
+async fn pages_cache_split_chunked_rebuild_handles_large_input() {
+    let (pool, _dir) = test_pool().await;
+
+    // 401 > 333 so the multi-chunk INSERT path runs at least 2 chunks.
+    const N_PAGES: usize = 401;
+
+    let mut tx = pool.begin().await.unwrap();
+    for i in 0..N_PAGES {
+        let id = format!("PAGECHUNK{i:05}AAAAAAAAAAAA");
+        let title = format!("Page {i:05}");
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', ?)")
+            .bind(&id)
+            .bind(&title)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    rebuild_pages_cache_split(&pool, &pool).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "pages_cache").await,
+        N_PAGES as i64,
+        "all {N_PAGES} pages must be present after chunked split rebuild"
+    );
+
+    // Parity check: split-rebuild rows must match single-pool rebuild
+    // rows on (page_id, title). `updated_at` is per-rebuild and excluded.
+    let split_rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT page_id, title FROM pages_cache ORDER BY page_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+    rebuild_pages_cache(&pool).await.unwrap();
+    let single_rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT page_id, title FROM pages_cache ORDER BY page_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+    assert_eq!(
+        split_rows, single_rows,
+        "split and single-pool rebuilds must produce identical (page_id, title) rows"
+    );
+
+    let any_empty: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM pages_cache WHERE updated_at = ''")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(any_empty, 0, "every row must have a non-empty updated_at");
+}
+
+// ====================================================================
 // UX-250 — block_tag_refs (inline #[ULID] tag reference cache)
 // ====================================================================
 

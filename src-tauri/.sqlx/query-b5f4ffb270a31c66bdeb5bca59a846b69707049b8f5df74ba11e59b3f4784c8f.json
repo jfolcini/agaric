@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO pages_cache (page_id, title, updated_at)\n         SELECT id, content, ?\n         FROM blocks\n         WHERE block_type = 'page' AND deleted_at IS NULL AND content IS NOT NULL\n           AND is_conflict = 0",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "b5f4ffb270a31c66bdeb5bca59a846b69707049b8f5df74ba11e59b3f4784c8f"
+}
