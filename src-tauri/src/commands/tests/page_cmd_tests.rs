@@ -10,9 +10,9 @@ use super::common::*;
 async fn set_page_aliases_creates_and_returns_aliases() {
     let (pool, _dir) = test_pool().await;
 
-    insert_block(&pool, "page-1", "page", "My Page", None, Some(0)).await;
+    insert_block(&pool, "PAGE-1", "page", "My Page", None, Some(0)).await;
 
-    let inserted = set_page_aliases_inner(&pool, "page-1", vec!["Alpha".into(), "Beta".into()])
+    let inserted = set_page_aliases_inner(&pool, "PAGE-1", vec!["Alpha".into(), "Beta".into()])
         .await
         .unwrap();
 
@@ -27,7 +27,7 @@ async fn set_page_aliases_creates_and_returns_aliases() {
     );
 
     // Verify persistence
-    let aliases = get_page_aliases_inner(&pool, "page-1").await.unwrap();
+    let aliases = get_page_aliases_inner(&pool, "PAGE-1").await.unwrap();
     assert_eq!(
         aliases,
         vec!["Alpha", "Beta"],
@@ -39,17 +39,17 @@ async fn set_page_aliases_creates_and_returns_aliases() {
 async fn set_page_aliases_replaces_existing() {
     let (pool, _dir) = test_pool().await;
 
-    insert_block(&pool, "page-2", "page", "Page Two", None, Some(0)).await;
+    insert_block(&pool, "PAGE-2", "page", "Page Two", None, Some(0)).await;
 
     // Set initial aliases
-    set_page_aliases_inner(&pool, "page-2", vec!["Old1".into(), "Old2".into()])
+    set_page_aliases_inner(&pool, "PAGE-2", vec!["Old1".into(), "Old2".into()])
         .await
         .unwrap();
 
     // Replace with new aliases
     let inserted = set_page_aliases_inner(
         &pool,
-        "page-2",
+        "PAGE-2",
         vec!["New1".into(), "New2".into(), "New3".into()],
     )
     .await
@@ -57,7 +57,7 @@ async fn set_page_aliases_replaces_existing() {
 
     assert_eq!(inserted.len(), 3, "should insert 3 replacement aliases");
 
-    let aliases = get_page_aliases_inner(&pool, "page-2").await.unwrap();
+    let aliases = get_page_aliases_inner(&pool, "PAGE-2").await.unwrap();
     assert_eq!(
         aliases,
         vec!["New1", "New2", "New3"],
@@ -73,11 +73,11 @@ async fn set_page_aliases_replaces_existing() {
 async fn set_page_aliases_skips_empty_and_duplicates() {
     let (pool, _dir) = test_pool().await;
 
-    insert_block(&pool, "page-3", "page", "Page Three", None, Some(0)).await;
+    insert_block(&pool, "PAGE-3", "page", "Page Three", None, Some(0)).await;
 
     let inserted = set_page_aliases_inner(
         &pool,
-        "page-3",
+        "PAGE-3",
         vec![
             "  ".into(), // whitespace only — skipped
             "".into(),   // empty — skipped
@@ -112,23 +112,23 @@ async fn set_page_aliases_skips_empty_and_duplicates() {
 async fn set_page_aliases_atomic_replaces_full_set() {
     let (pool, _dir) = test_pool().await;
 
-    insert_block(&pool, "page-tx-1", "page", "Page Tx 1", None, Some(0)).await;
+    insert_block(&pool, "PAGE-TX-1", "page", "Page Tx 1", None, Some(0)).await;
 
     // Initial set: A, B, C
-    set_page_aliases_inner(&pool, "page-tx-1", vec!["A".into(), "B".into(), "C".into()])
+    set_page_aliases_inner(&pool, "PAGE-TX-1", vec!["A".into(), "B".into(), "C".into()])
         .await
         .unwrap();
-    let initial = get_page_aliases_inner(&pool, "page-tx-1").await.unwrap();
+    let initial = get_page_aliases_inner(&pool, "PAGE-TX-1").await.unwrap();
     assert_eq!(initial, vec!["A", "B", "C"], "initial set should be A,B,C");
 
     // Replace with: D, E
-    let inserted = set_page_aliases_inner(&pool, "page-tx-1", vec!["D".into(), "E".into()])
+    let inserted = set_page_aliases_inner(&pool, "PAGE-TX-1", vec!["D".into(), "E".into()])
         .await
         .unwrap();
     assert_eq!(inserted.len(), 2, "should insert exactly 2 new aliases");
 
     // Final state must be EXACTLY D, E — no leftovers from the prior set.
-    let final_state = get_page_aliases_inner(&pool, "page-tx-1").await.unwrap();
+    let final_state = get_page_aliases_inner(&pool, "PAGE-TX-1").await.unwrap();
     assert_eq!(
         final_state,
         vec!["D", "E"],
@@ -149,24 +149,24 @@ async fn set_page_aliases_atomic_replaces_full_set() {
 async fn set_page_aliases_empty_clears_all() {
     let (pool, _dir) = test_pool().await;
 
-    insert_block(&pool, "page-tx-2", "page", "Page Tx 2", None, Some(0)).await;
+    insert_block(&pool, "PAGE-TX-2", "page", "Page Tx 2", None, Some(0)).await;
 
-    set_page_aliases_inner(&pool, "page-tx-2", vec!["A".into(), "B".into()])
+    set_page_aliases_inner(&pool, "PAGE-TX-2", vec!["A".into(), "B".into()])
         .await
         .unwrap();
     assert_eq!(
-        get_page_aliases_inner(&pool, "page-tx-2").await.unwrap(),
+        get_page_aliases_inner(&pool, "PAGE-TX-2").await.unwrap(),
         vec!["A", "B"],
         "preconditions: aliases A, B should be set"
     );
 
     // Pass an empty list — should clear the set entirely.
-    let inserted = set_page_aliases_inner(&pool, "page-tx-2", vec![])
+    let inserted = set_page_aliases_inner(&pool, "PAGE-TX-2", vec![])
         .await
         .unwrap();
     assert!(inserted.is_empty(), "empty input should insert nothing");
 
-    let after = get_page_aliases_inner(&pool, "page-tx-2").await.unwrap();
+    let after = get_page_aliases_inner(&pool, "PAGE-TX-2").await.unwrap();
     assert!(
         after.is_empty(),
         "alias set must be empty after empty replace"
@@ -182,13 +182,13 @@ async fn set_page_aliases_in_transaction() {
     // sentinel alias value.
     let (pool, _dir) = test_pool().await;
 
-    insert_block(&pool, "page-tx-3", "page", "Page Tx 3", None, Some(0)).await;
+    insert_block(&pool, "PAGE-TX-3", "page", "Page Tx 3", None, Some(0)).await;
 
     // Prior set: A, B
-    set_page_aliases_inner(&pool, "page-tx-3", vec!["A".into(), "B".into()])
+    set_page_aliases_inner(&pool, "PAGE-TX-3", vec!["A".into(), "B".into()])
         .await
         .unwrap();
-    let before = get_page_aliases_inner(&pool, "page-tx-3").await.unwrap();
+    let before = get_page_aliases_inner(&pool, "PAGE-TX-3").await.unwrap();
     assert_eq!(before, vec!["A", "B"], "preconditions: prior set is A, B");
 
     // Install a trigger that aborts the INSERT when alias = '__FAIL__'.
@@ -210,7 +210,7 @@ async fn set_page_aliases_in_transaction() {
     // and the page would be left with just C (or empty).
     let result = set_page_aliases_inner(
         &pool,
-        "page-tx-3",
+        "PAGE-TX-3",
         vec!["C".into(), "__FAIL__".into(), "D".into()],
     )
     .await;
@@ -227,7 +227,7 @@ async fn set_page_aliases_in_transaction() {
         .unwrap();
 
     // The original aliases must still be present — DELETE rolled back.
-    let after = get_page_aliases_inner(&pool, "page-tx-3").await.unwrap();
+    let after = get_page_aliases_inner(&pool, "PAGE-TX-3").await.unwrap();
     assert_eq!(
         after, before,
         "transaction rollback must restore the original alias set"
@@ -246,17 +246,17 @@ async fn set_page_aliases_in_transaction() {
 async fn get_page_aliases_returns_sorted_list() {
     let (pool, _dir) = test_pool().await;
 
-    insert_block(&pool, "page-4", "page", "Page Four", None, Some(0)).await;
+    insert_block(&pool, "PAGE-4", "page", "Page Four", None, Some(0)).await;
 
     set_page_aliases_inner(
         &pool,
-        "page-4",
+        "PAGE-4",
         vec!["Zulu".into(), "Alpha".into(), "Mike".into()],
     )
     .await
     .unwrap();
 
-    let aliases = get_page_aliases_inner(&pool, "page-4").await.unwrap();
+    let aliases = get_page_aliases_inner(&pool, "PAGE-4").await.unwrap();
     assert_eq!(
         aliases,
         vec!["Alpha", "Mike", "Zulu"],
@@ -268,9 +268,9 @@ async fn get_page_aliases_returns_sorted_list() {
 async fn resolve_page_by_alias_case_insensitive() {
     let (pool, _dir) = test_pool().await;
 
-    insert_block(&pool, "page-5", "page", "Page Five", None, Some(0)).await;
+    insert_block(&pool, "PAGE-5", "page", "Page Five", None, Some(0)).await;
 
-    set_page_aliases_inner(&pool, "page-5", vec!["MyAlias".into()])
+    set_page_aliases_inner(&pool, "PAGE-5", vec!["MyAlias".into()])
         .await
         .unwrap();
 
@@ -278,7 +278,7 @@ async fn resolve_page_by_alias_case_insensitive() {
     let r1 = resolve_page_by_alias_inner(&pool, "MyAlias").await.unwrap();
     assert!(r1.is_some(), "exact alias should resolve");
     let (pid, title) = r1.unwrap();
-    assert_eq!(pid, "page-5", "resolved page id should match");
+    assert_eq!(pid, "PAGE-5", "resolved page id should match");
     assert_eq!(
         title.as_deref(),
         Some("Page Five"),
@@ -290,7 +290,7 @@ async fn resolve_page_by_alias_case_insensitive() {
     assert!(r2.is_some(), "lowercase alias should resolve");
     assert_eq!(
         r2.unwrap().0,
-        "page-5",
+        "PAGE-5",
         "lowercase should resolve to same page"
     );
 
@@ -298,7 +298,7 @@ async fn resolve_page_by_alias_case_insensitive() {
     assert!(r3.is_some(), "uppercase alias should resolve");
     assert_eq!(
         r3.unwrap().0,
-        "page-5",
+        "PAGE-5",
         "uppercase should resolve to same page"
     );
 

@@ -879,6 +879,87 @@ async fn filter_block_type_no_match() {
 }
 
 // ======================================================================
+// I-Search-9 — BlockType filter must honour an optional candidate set
+// ======================================================================
+//
+// `BacklinkFilter::BlockType` historically materialised every active
+// block of the requested type into an `FxHashSet<String>` before
+// intersecting with the surrounding base/candidate set in Rust. On a
+// 100k-block vault that pulled ~30 MB of `String` allocations only to
+// discard most of them. The candidate-aware path mirrors
+// `PropertyIsEmpty`'s json_each() optimisation.
+//
+// Both tests below seed 1000 active "content" blocks so the difference
+// between the unscoped and scoped paths is observable.
+
+/// Insert `n` active content blocks named `BLK_0001..BLK_{n}` and
+/// return their IDs in insertion order.
+async fn insert_n_content_blocks(pool: &SqlitePool, n: usize) -> Vec<String> {
+    let mut ids = Vec::with_capacity(n);
+    for i in 1..=n {
+        let id = format!("BLK_{i:04}");
+        insert_block(pool, &id, "content", &format!("body {i}")).await;
+        ids.push(id);
+    }
+    ids
+}
+
+#[tokio::test]
+async fn block_type_filter_with_candidates_returns_subset_i_search_9() {
+    let (pool, _dir) = test_pool().await;
+    let all_ids = insert_n_content_blocks(&pool, 1000).await;
+
+    // Ten arbitrary candidates — must be returned in full, and nothing
+    // else must leak through from the other 990 active content blocks.
+    let candidate_ids: Vec<String> = all_ids.iter().step_by(100).cloned().collect();
+    assert_eq!(candidate_ids.len(), 10, "expected 10 candidate ids");
+    let candidates: FxHashSet<String> = candidate_ids.iter().cloned().collect();
+
+    let filter = BacklinkFilter::BlockType {
+        block_type: "content".into(),
+    };
+    let set = resolve_filter_with_candidates(&pool, &filter, 0, Some(&candidates))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        set.len(),
+        10,
+        "candidate-scoped BlockType must not leak the other 990 content blocks"
+    );
+    for id in &candidate_ids {
+        assert!(set.contains(id), "expected candidate {id} in scoped result");
+    }
+    assert_eq!(
+        set, candidates,
+        "scoped BlockType result must equal the candidate set exactly"
+    );
+}
+
+#[tokio::test]
+async fn block_type_filter_without_candidates_unchanged_i_search_9() {
+    let (pool, _dir) = test_pool().await;
+    let all_ids = insert_n_content_blocks(&pool, 1000).await;
+
+    // No candidate set → fallback path; must still surface all 1000.
+    let filter = BacklinkFilter::BlockType {
+        block_type: "content".into(),
+    };
+    let set = resolve_filter(&pool, &filter, 0).await.unwrap();
+
+    assert_eq!(
+        set.len(),
+        1000,
+        "unscoped BlockType must still return every active block of the type"
+    );
+    let expected: FxHashSet<String> = all_ids.into_iter().collect();
+    assert_eq!(
+        set, expected,
+        "unscoped BlockType result must equal the full active set"
+    );
+}
+
+// ======================================================================
 // And / Or / Not compound filters
 // ======================================================================
 

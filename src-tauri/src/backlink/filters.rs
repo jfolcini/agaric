@@ -391,18 +391,35 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
             }
 
             BacklinkFilter::BlockType { block_type } => {
-                // Note (#321): This scans all blocks of the given type even though the
-                // result is later intersected with a smaller base/candidate set.  For
-                // common types like "content" this can return 10K+ rows.  Mitigations:
-                //   • And/Or combinators now resolve sub-filters in parallel (#319),
-                //     so the wall-clock cost overlaps with other concurrent filter
-                //     queries.
-                //   • The FxHashSet intersection in And/eval_backlink_query keeps
-                //     memory bounded to the smaller set.
-                //   • Pushing the candidate set into this query would require changing
-                //     resolve_filter's signature (invasive); a covering index on
-                //     (block_type, deleted_at, is_conflict) would also help but
-                //     requires a migration.
+                // I-Search-9: when a candidate set is provided, scope the
+                // query to those IDs via json_each() instead of loading
+                // every active block of the given type into memory.  For
+                // common types like "content" the unscoped path can return
+                // 10K+ rows that get discarded by the subsequent
+                // intersection in `eval_backlink_query`.
+                if let Some(cands) = candidates {
+                    if cands.is_empty() {
+                        return Ok(FxHashSet::default());
+                    }
+                    let json_ids = serde_json::to_string(&cands.iter().collect::<Vec<_>>())?;
+                    let rows = sqlx::query_scalar::<_, String>(
+                        "SELECT id FROM blocks \
+                         WHERE block_type = ?1 \
+                           AND deleted_at IS NULL AND is_conflict = 0 \
+                           AND id IN (SELECT value FROM json_each(?2))",
+                    )
+                    .bind(block_type)
+                    .bind(&json_ids)
+                    .fetch_all(pool)
+                    .await?;
+                    return Ok(rows.into_iter().collect());
+                }
+
+                // Fallback: no candidate set — scan every active block of
+                // this type.  Kept for callers that don't (yet) thread a
+                // candidate set through; And/Or combinators currently
+                // resolve sub-filters via the no-candidate `resolve_filter`
+                // helper.
                 let rows = sqlx::query_scalar::<_, String>(
                     "SELECT id FROM blocks \
                      WHERE block_type = ?1 AND deleted_at IS NULL AND is_conflict = 0",

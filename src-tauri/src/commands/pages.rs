@@ -34,11 +34,19 @@ pub async fn set_page_aliases_inner(
     page_id: &str,
     aliases: Vec<String>,
 ) -> Result<Vec<String>, AppError> {
+    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
+    // invariant #8 requires ULID uppercase for blake3 hash determinism;
+    // SQLite text comparison is byte-exact, so a lowercase caller would
+    // silently get NotFound. BlockId::from_trusted normalises on
+    // construction (op_log path), but raw String args from MCP tools /
+    // sync replay / scripted imports must be normalised here.
+    let page_id = page_id.to_ascii_uppercase();
+
     // Verify page exists and is a page type
     let exists: bool = sqlx::query_scalar(
         "SELECT COUNT(*) > 0 FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL",
     )
-    .bind(page_id)
+    .bind(&page_id)
     .fetch_one(pool)
     .await?;
 
@@ -56,7 +64,7 @@ pub async fn set_page_aliases_inner(
 
     // Delete existing aliases
     sqlx::query("DELETE FROM page_aliases WHERE page_id = ?1")
-        .bind(page_id)
+        .bind(&page_id)
         .execute(&mut *tx)
         .await?;
 
@@ -70,7 +78,7 @@ pub async fn set_page_aliases_inner(
         // INSERT OR IGNORE handles duplicate alias across different pages
         let result =
             sqlx::query("INSERT OR IGNORE INTO page_aliases (page_id, alias) VALUES (?1, ?2)")
-                .bind(page_id)
+                .bind(&page_id)
                 .bind(&trimmed)
                 .execute(&mut *tx)
                 .await?;
