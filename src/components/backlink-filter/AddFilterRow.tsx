@@ -3,17 +3,20 @@
  * entering its value(s) before applying it to the backlink query.
  *
  * Extracted from BacklinkFilterBuilder.tsx for file organization
- * (MAINT-96).  The category enum + the per-category build helpers move
- * with this component because they are only consumed here — the parent
- * stays in charge of duplicate detection, removal, and sort controls.
+ * (MAINT-96).  Per-category form bodies are split into sibling files
+ * under `categories/` (MAINT-128) — each form owns its own state
+ * slots and exposes a `getState()` slice via `useImperativeHandle`.
+ * AddFilterRow remains the orchestrator: it owns the category
+ * selector, holds a single ref to the currently mounted form, and
+ * dispatches Apply through the module-level `buildFilterForCategory`
+ * switch.
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { SearchInput } from '@/components/ui/search-input'
 import {
   Select,
   SelectContent,
@@ -21,11 +24,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
-import { logger } from '@/lib/logger'
-import type { BacklinkFilter, CompareOp } from '../../lib/tauri'
-import { listTagsByPrefix } from '../../lib/tauri'
-import { SearchablePopover } from '../SearchablePopover'
+import type { BacklinkFilter } from '../../lib/tauri'
+import { ContainsFilterForm } from './categories/ContainsFilterForm'
+import { DateFilterForm } from './categories/DateFilterForm'
+import { HasTagFilterForm } from './categories/HasTagFilterForm'
+import { PriorityFilterForm } from './categories/PriorityFilterForm'
+import { PropertyEmptyFilterForm } from './categories/PropertyEmptyFilterForm'
+import { PropertyFilterForm } from './categories/PropertyFilterForm'
+import { PropertySetFilterForm } from './categories/PropertySetFilterForm'
+import { StatusFilterForm } from './categories/StatusFilterForm'
+import { TagPrefixFilterForm } from './categories/TagPrefixFilterForm'
+import { TypeFilterForm } from './categories/TypeFilterForm'
+import type { BuildState, FilterFormHandle } from './categories/types'
 
 type FilterCategory =
   | 'type'
@@ -42,24 +52,6 @@ type FilterCategory =
 // ---------------------------------------------------------------------------
 // Per-category filter builders (extracted from handleApply to reduce complexity)
 // ---------------------------------------------------------------------------
-
-interface BuildState {
-  blockType: string
-  statusValue: string
-  priorityValue: string
-  containsQuery: string
-  propKey: string
-  propOp: CompareOp
-  propValue: string
-  propType: 'text' | 'num' | 'date'
-  dateAfter: string
-  dateBefore: string
-  propSetKey: string
-  propEmptyKey: string
-  tagValue: string
-  prefixValue: string
-  propertyKeys: string[]
-}
 
 type BuildResult = { filter: BacklinkFilter } | { error: string }
 // biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
@@ -181,6 +173,23 @@ export interface AddFilterRowProps {
   onCancel: () => void
 }
 
+const DEFAULT_BUILD_STATE: Omit<BuildState, 'propertyKeys'> = {
+  blockType: 'content',
+  statusValue: 'TODO',
+  priorityValue: '1',
+  containsQuery: '',
+  propKey: '',
+  propOp: 'Eq',
+  propValue: '',
+  propType: 'text',
+  dateAfter: '',
+  dateBefore: '',
+  propSetKey: '',
+  propEmptyKey: '',
+  tagValue: '',
+  prefixValue: '',
+}
+
 export function AddFilterRow({
   propertyKeys,
   tags,
@@ -189,99 +198,23 @@ export function AddFilterRow({
 }: AddFilterRowProps): React.ReactElement {
   const { t } = useTranslation()
   const [category, setCategory] = useState<FilterCategory | ''>('')
-  const [blockType, setBlockType] = useState('content')
-  const [statusValue, setStatusValue] = useState('TODO')
-  const [priorityValue, setPriorityValue] = useState('1')
-  const [containsQuery, setContainsQuery] = useState('')
-  const [propKey, setPropKey] = useState(propertyKeys[0] ?? '')
-  const [propOp, setPropOp] = useState<CompareOp>('Eq')
-  const [propValue, setPropValue] = useState('')
-  const [propType, setPropType] = useState<'text' | 'num' | 'date'>('text')
-  const [dateAfter, setDateAfter] = useState('')
-  const [dateBefore, setDateBefore] = useState('')
-  const [propSetKey, setPropSetKey] = useState(propertyKeys[0] ?? '')
-  const [propEmptyKey, setPropEmptyKey] = useState(propertyKeys[0] ?? '')
-  const [tagValue, setTagValue] = useState(tags[0]?.id ?? '')
-  const [prefixValue, setPrefixValue] = useState('')
-
-  // -----------------------------------------------------------------------
-  // Tag search state (B-72 — searchable tag filter)
-  // -----------------------------------------------------------------------
-  const [tagSearchOpen, setTagSearchOpen] = useState(false)
-  const [tagSearchQuery, setTagSearchQuery] = useState('')
-  const [tagSearchResults, setTagSearchResults] = useState<Array<{ id: string; name: string }>>([])
-  const [tagSearchLoading, setTagSearchLoading] = useState(false)
-
-  const debouncedTagSearch = useDebouncedCallback((query: string) => {
-    setTagSearchLoading(true)
-    listTagsByPrefix({ prefix: query, limit: 50 })
-      .then((rows) => {
-        setTagSearchResults(rows.map((r) => ({ id: r.tag_id, name: r.name })))
-      })
-      .catch((err) => {
-        logger.warn('Tag search failed', err)
-      })
-      .finally(() => {
-        setTagSearchLoading(false)
-      })
-  }, 150)
-
-  useEffect(() => {
-    if (tagSearchOpen) {
-      debouncedTagSearch.schedule(tagSearchQuery)
-    } else {
-      debouncedTagSearch.cancel()
-    }
-  }, [tagSearchQuery, tagSearchOpen, debouncedTagSearch])
+  const formRef = useRef<FilterFormHandle | null>(null)
 
   const handleApply = useCallback(() => {
     if (!category) return
-    const result = buildFilterForCategory(
-      category,
-      {
-        blockType,
-        statusValue,
-        priorityValue,
-        containsQuery,
-        propKey,
-        propOp,
-        propValue,
-        propType,
-        dateAfter,
-        dateBefore,
-        propSetKey,
-        propEmptyKey,
-        tagValue,
-        prefixValue,
-        propertyKeys,
-      },
-      t,
-    )
+    const slice = formRef.current?.getState() ?? {}
+    const state: BuildState = {
+      ...DEFAULT_BUILD_STATE,
+      ...slice,
+      propertyKeys,
+    }
+    const result = buildFilterForCategory(category, state, t)
     if ('filter' in result) {
       onApply(result.filter)
     } else {
       toast.error(result.error)
     }
-  }, [
-    category,
-    blockType,
-    statusValue,
-    priorityValue,
-    containsQuery,
-    propKey,
-    propOp,
-    propValue,
-    propType,
-    dateAfter,
-    dateBefore,
-    propSetKey,
-    propEmptyKey,
-    tagValue,
-    prefixValue,
-    propertyKeys,
-    onApply,
-    t,
-  ])
+  }, [category, propertyKeys, onApply, t])
 
   return (
     <form
@@ -317,219 +250,20 @@ export function AddFilterRow({
         </SelectContent>
       </Select>
 
-      {category === 'type' && (
-        <Select value={blockType} onValueChange={(val) => setBlockType(val)}>
-          <SelectTrigger size="sm" aria-label={t('backlink.blockTypeValueLabel')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="content">{t('backlink.contentType')}</SelectItem>
-            <SelectItem value="page">{t('backlink.pageType')}</SelectItem>
-            <SelectItem value="tag">{t('backlink.tagType')}</SelectItem>
-          </SelectContent>
-        </Select>
+      {category === 'type' && <TypeFilterForm ref={formRef} />}
+      {category === 'status' && <StatusFilterForm ref={formRef} />}
+      {category === 'priority' && <PriorityFilterForm ref={formRef} />}
+      {category === 'contains' && <ContainsFilterForm ref={formRef} />}
+      {category === 'property' && <PropertyFilterForm ref={formRef} propertyKeys={propertyKeys} />}
+      {category === 'date' && <DateFilterForm ref={formRef} />}
+      {category === 'property-set' && (
+        <PropertySetFilterForm ref={formRef} propertyKeys={propertyKeys} />
       )}
-
-      {category === 'status' && (
-        <Select value={statusValue} onValueChange={(val) => setStatusValue(val)}>
-          <SelectTrigger size="sm" aria-label={t('backlink.statusValueLabel')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="TODO">{t('backlink.todoStatus')}</SelectItem>
-            <SelectItem value="DOING">{t('backlink.doingStatus')}</SelectItem>
-            <SelectItem value="DONE">{t('backlink.doneStatus')}</SelectItem>
-          </SelectContent>
-        </Select>
+      {category === 'property-empty' && (
+        <PropertyEmptyFilterForm ref={formRef} propertyKeys={propertyKeys} />
       )}
-
-      {category === 'priority' && (
-        <Select value={priorityValue} onValueChange={(val) => setPriorityValue(val)}>
-          <SelectTrigger size="sm" aria-label={t('backlink.priorityValueLabel')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="1">{t('backlink.highPriority')}</SelectItem>
-            <SelectItem value="2">{t('backlink.mediumPriority')}</SelectItem>
-            <SelectItem value="3">{t('backlink.lowPriority')}</SelectItem>
-          </SelectContent>
-        </Select>
-      )}
-
-      {category === 'contains' && (
-        <SearchInput
-          className="h-7 w-40 text-xs [@media(pointer:coarse)]:w-full"
-          placeholder={t('backlink.searchTextPlaceholder')}
-          value={containsQuery}
-          onChange={(e) => setContainsQuery(e.target.value)}
-          aria-label={t('backlink.containsTextLabel')}
-        />
-      )}
-
-      {category === 'property' && (
-        <>
-          {propertyKeys.length > 0 ? (
-            <Select value={propKey} onValueChange={(val) => setPropKey(val)}>
-              <SelectTrigger size="sm" aria-label={t('backlink.propertyKeyLabel')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {propertyKeys.map((k) => (
-                  <SelectItem key={k} value={k}>
-                    {k}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <SearchInput
-              className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
-              placeholder={t('backlink.keyPlaceholder')}
-              value={propKey}
-              onChange={(e) => setPropKey(e.target.value)}
-              aria-label={t('backlink.propertyKeyLabel')}
-            />
-          )}
-          <Select value={propOp} onValueChange={(val) => setPropOp(val as CompareOp)}>
-            <SelectTrigger size="sm" aria-label={t('backlink.comparisonOpLabel')}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="Eq">=</SelectItem>
-              <SelectItem value="Neq">!=</SelectItem>
-              <SelectItem value="Lt">&lt;</SelectItem>
-              <SelectItem value="Gt">&gt;</SelectItem>
-              <SelectItem value="Lte">&lt;=</SelectItem>
-              <SelectItem value="Gte">&gt;=</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select
-            value={propType}
-            onValueChange={(val) => setPropType(val as 'text' | 'num' | 'date')}
-          >
-            <SelectTrigger size="sm" aria-label={t('backlink.propertyTypeLabel')}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="text">{t('backlink.textType')}</SelectItem>
-              <SelectItem value="num">{t('backlink.numberType')}</SelectItem>
-              <SelectItem value="date">{t('backlink.dateType')}</SelectItem>
-            </SelectContent>
-          </Select>
-          <SearchInput
-            className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
-            placeholder={t('backlink.valuePlaceholder')}
-            value={propValue}
-            onChange={(e) => setPropValue(e.target.value)}
-            aria-label={t('backlink.propertyValueLabel')}
-          />
-        </>
-      )}
-
-      {category === 'date' && (
-        <>
-          <SearchInput
-            type="date"
-            className="h-7 w-36 text-xs [@media(pointer:coarse)]:w-full"
-            value={dateAfter}
-            onChange={(e) => setDateAfter(e.target.value)}
-            aria-label={t('backlink.dateAfterLabel')}
-          />
-          <span className="text-xs text-muted-foreground">{t('backlink.dateTo')}</span>
-          <SearchInput
-            type="date"
-            className="h-7 w-36 text-xs [@media(pointer:coarse)]:w-full"
-            value={dateBefore}
-            onChange={(e) => setDateBefore(e.target.value)}
-            aria-label={t('backlink.dateBeforeLabel')}
-          />
-        </>
-      )}
-
-      {category === 'property-set' &&
-        (propertyKeys.length > 0 ? (
-          <Select value={propSetKey} onValueChange={(val) => setPropSetKey(val)}>
-            <SelectTrigger size="sm" aria-label={t('backlink.propertyKeyLabel')}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {propertyKeys.map((k) => (
-                <SelectItem key={k} value={k}>
-                  {k}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : (
-          <SearchInput
-            className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
-            placeholder={t('backlink.keyPlaceholder')}
-            value={propSetKey}
-            onChange={(e) => setPropSetKey(e.target.value)}
-            aria-label={t('backlink.propertyKeyLabel')}
-          />
-        ))}
-
-      {category === 'property-empty' &&
-        (propertyKeys.length > 0 ? (
-          <Select value={propEmptyKey} onValueChange={(val) => setPropEmptyKey(val)}>
-            <SelectTrigger size="sm" aria-label={t('backlink.propertyKeyLabel')}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {propertyKeys.map((k) => (
-                <SelectItem key={k} value={k}>
-                  {k}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : (
-          <SearchInput
-            className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
-            placeholder={t('backlink.keyPlaceholder')}
-            value={propEmptyKey}
-            onChange={(e) => setPropEmptyKey(e.target.value)}
-            aria-label={t('backlink.propertyKeyLabel')}
-          />
-        ))}
-
-      {category === 'has-tag' && (
-        <SearchablePopover
-          open={tagSearchOpen}
-          onOpenChange={setTagSearchOpen}
-          items={tagSearchResults.length > 0 ? tagSearchResults : tags}
-          isLoading={tagSearchLoading}
-          onSelect={(tag) => {
-            setTagValue(tag.id)
-            setTagSearchOpen(false)
-          }}
-          renderItem={(tag) => tag.name}
-          keyExtractor={(tag) => tag.id}
-          searchValue={tagSearchQuery}
-          onSearchChange={setTagSearchQuery}
-          searchPlaceholder={t('backlink.searchTagPlaceholder')}
-          emptyMessage={t('backlink.noTagsFound')}
-          triggerLabel={
-            tagValue
-              ? (tags.find((tg) => tg.id === tagValue)?.name ??
-                tagSearchResults.find((tg) => tg.id === tagValue)?.name ??
-                tagValue)
-              : t('backlink.selectTag')
-          }
-        />
-      )}
-
-      {category === 'tag-prefix' && (
-        <SearchInput
-          className="h-7 w-40 text-xs [@media(pointer:coarse)]:w-full"
-          placeholder={t('backlink.tagPrefixPlaceholder')}
-          value={prefixValue}
-          onChange={(e) => setPrefixValue(e.target.value)}
-          aria-label={t('backlink.tagPrefixLabel')}
-          maxLength={100}
-        />
-      )}
+      {category === 'has-tag' && <HasTagFilterForm ref={formRef} tags={tags} />}
+      {category === 'tag-prefix' && <TagPrefixFilterForm ref={formRef} />}
 
       {category && (
         <Button

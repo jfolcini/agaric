@@ -1,5 +1,45 @@
 # Session Log
 
+## Session 571 — Close MAINT-128 AddFilterRow per-category split (556L → 290L; component body ~90L) (2026-04-30)
+
+**1 MAINT-128 sub-row closed in one PROMPT.md batch with 1 build subagent + 1 review subagent + 1 nit-fix.** Closed the `backlink-filter/AddFilterRow.tsx` per-category decomposition (the 8th of 9 god-components). MAINT-128 now has only `PropertyRowEditor.tsx` remaining (rejected as design-heavy in session 563). The split distributed 14 form-value useState slots + 4 tag-search popover states across 10 per-category form components using React 19 ref-as-prop + `useImperativeHandle` pattern.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 23 → 23 (MAINT-128 row STAYS — 1 of 9 god-components remains, but it's the rejected-as-design-heavy PropertyRowEditor).
+- **Previously-resolved counter:** 821+ → 822+ across 537 → 538 sessions.
+
+**Items closed (1 sub-row of MAINT-128):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-128 AddFilterRow per-category split | `src/components/backlink-filter/AddFilterRow.tsx` (556L → 290L, -266L / -47.8%; component body itself is ~90L, the remaining ~200L is the module-level `build*Filter` helpers + types + JSDoc + the `buildFilterForCategory` switch which the task brief explicitly instructed to keep in place) + 11 new files under `src/components/backlink-filter/categories/`: `types.ts` (42L — shared `FilterFormHandle` + `BuildState` interfaces) + 10 per-category form components (`TypeFilterForm`, `StatusFilterForm`, `PriorityFilterForm`, `ContainsFilterForm`, `PropertyFilterForm`, `DateFilterForm`, `PropertySetFilterForm`, `PropertyEmptyFilterForm`, `HasTagFilterForm`, `TagPrefixFilterForm`, ranging 30-100L each) — Subagent 3328d948 | **Distributed 14 form-value useState slots + 4 tag-search popover states across 10 per-category form components.** Each form owns its own `useState` slots internally and exposes `getState()` via `useImperativeHandle` against a shared `FilterFormHandle = { getState: () => Partial<BuildState> }` type. AddFilterRow holds a single `useRef<FilterFormHandle | null>(null)` (only one form is mounted at a time via conditional rendering). On Apply, the parent merges `formRef.current?.getState() ?? {}` into a `DEFAULT_BUILD_STATE` constant + injects `propertyKeys` AFTER the merge (so user-typed values aren't clobbered) + dispatches through the existing module-level `buildFilterForCategory()` switch. **React 19 ref-as-prop pattern used throughout** — no `forwardRef`. **All 10 form components have complete + correct `useImperativeHandle` dependency arrays** (verified by reviewer per-form). 71 BacklinkFilterBuilder tests + 67 SearchPanel tests pass unchanged. **Drift caught + fixed:** subagent named the shared types file `_types.ts` (underscore prefix), but codebase convention is `types.ts` (no underscore — see `src/editor/types.ts`); orchestrator renamed to `types.ts` and updated 11 import paths. Reviewer (`e9e13bfe`) APPROVED WITH NITS (the only nit was the underscore-prefix naming, addressed). |
+
+**Process notes:**
+
+- **Single substantial subagent + reviewer + 1 nit-fix.** Per-category split with 10 new form components is a non-trivial refactor; subagent's design (ref-as-prop + `useImperativeHandle` + single `formRef` + `getState()` slice merge) is sound and matches the canonical React 19 pattern from `src/editor/SuggestionList.tsx`.
+- **Drift discovered (subagent flagged):** the subagent kept the 11 `build*Filter()` module-level helpers in `AddFilterRow.tsx` per the task brief. Moving them to `categories/builders.ts` would shrink AddFilterRow to ~120L but is explicitly out of scope for this batch.
+- **Drift caught by reviewer + fixed by orchestrator:** `_types.ts` → `types.ts` rename to match the codebase convention. 11 import paths updated via `sed`. Biome auto-organized the import order in `AddFilterRow.tsx` after the rename.
+- **MAINT-128 effective endgame:** only PropertyRowEditor remains (rejected as design-heavy in session 563 inspection — 5 typed editors share `localValue`, date hook state, select-options state, ref-picker state, 10+ callbacks; the existing `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` at L85 is honest).
+- **No `cargo sqlx prepare`** needed — no SQL changes.
+- **No FEATURE-MAP.md update needed** — internal frontend refactor; user-facing surface unchanged.
+
+**Files touched (this session's batch):**
+
+- Frontend new (11): `src/components/backlink-filter/categories/{types,TypeFilterForm,StatusFilterForm,PriorityFilterForm,ContainsFilterForm,PropertyFilterForm,DateFilterForm,PropertySetFilterForm,PropertyEmptyFilterForm,HasTagFilterForm,TagPrefixFilterForm}.ts(x)`.
+- Frontend modified (1): `src/components/backlink-filter/AddFilterRow.tsx` (556L → 290L).
+- Test files modified: 0 (71 BacklinkFilterBuilder + 67 SearchPanel tests pass unchanged).
+- Docs: `REVIEW-LATER.md` (MAINT-128 row trimmed to 1 component remaining: PropertyRowEditor). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- BacklinkFilterBuilder regression: `npx vitest run src/components/__tests__/BacklinkFilterBuilder` → **71/71 passed**.
+- SearchPanel regression: `npx vitest run src/components/__tests__/SearchPanel` → **67/67 passed**.
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome: clean (after auto-organize-imports for the rename).
+
+---
+
 ## Session 570 — Close MAINT-127 useGraphSimulation split (716L → 111L orchestrator) + bookkeeping cleanup (2026-04-30)
 
 **1 large MAINT item closed in one PROMPT.md batch with 1 build subagent + 1 review subagent + bookkeeping cleanup.** Closed the last MECHANICAL extraction in MAINT-127 — `useGraphSimulation.ts` decomposition (716L → 111L thin orchestrator + 4 hooks + 1 pure-helpers lib). MAINT-127 now has only `navigation.ts` remaining, which is blocked pending design discussion (cross-store coordination not allowed under "no new Zustand stores without approval"). Stale MAINT-124 description corrected: the silent `.catch(() => {})` triplet at App.tsx:935-939 is already fixed (each `.catch` now calls `logger.warn` with structured context).
