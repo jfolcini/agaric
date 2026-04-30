@@ -1,13 +1,20 @@
 //! Post-recovery cache refresh (BUG-23).
 //!
 //! [`recover_at_boot`] appends synthetic `edit_block` ops and updates
-//! `blocks.content` directly, but runs **before** the materializer is
-//! created (see [`crate::recovery`] module docs for the F04 design note).
-//! That leaves FTS / `block_links` / tags / pages caches stale for the
+//! `blocks.content` directly without driving them through the
+//! materializer's `UpdateFtsBlock` / `ReindexBlockLinks` paths. That
+//! leaves FTS / `block_links` / tags / pages caches stale for the
 //! recovered blocks until some later event causes re-materialization.
 //!
+//! (Pre-C-2b the materializer was constructed AFTER recovery, so this
+//! step also covered "no materializer existed during recovery". As of
+//! C-2b the materializer is built before `recover_at_boot` so the
+//! foreground queue can carry replayed `ApplyOp` tasks; the
+//! cache-refresh step still runs after recovery because draft recovery
+//! goes through `append_local_op` rather than the materializer.)
+//!
 //! This module exposes [`refresh_caches_for_recovered_drafts`] which the
-//! boot sequence calls **after** the materializer is created. It enqueues
+//! boot sequence calls **after** `recover_at_boot` returns. It enqueues
 //! targeted cache-update tasks (`UpdateFtsBlock`, `ReindexBlockLinks`)
 //! for each recovered block and rebuilds the tags/pages caches (in case
 //! a recovered edit touched a tag or page block), then awaits a barrier

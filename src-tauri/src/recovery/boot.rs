@@ -6,8 +6,10 @@ use std::time::Instant;
 use crate::db::MAX_SQL_PARAMS;
 use crate::draft::{delete_draft, get_all_drafts};
 use crate::error::AppError;
+use crate::materializer::Materializer;
 
 use super::draft_recovery::recover_single_draft;
+use super::replay::replay_unmaterialized_ops;
 use super::RecoveryReport;
 
 // ---------------------------------------------------------------------------
@@ -79,6 +81,7 @@ fn log_draft_error(draft_errors: &mut Vec<String>, block_id: &str, e: &AppError,
 pub async fn recover_at_boot(
     pool: &SqlitePool,
     device_id: &str,
+    materializer: &Materializer,
 ) -> Result<RecoveryReport, AppError> {
     // L-103: enforce the once-per-process contract. `compare_exchange`
     // atomically flips `false -> true` on the first call; subsequent
@@ -105,6 +108,33 @@ pub async fn recover_at_boot(
         .execute(pool)
         .await?;
     let pending_snapshots_deleted = delete_result.rows_affected();
+
+    // -----------------------------------------------------------------
+    // Step 1.5: C-2b — replay unmaterialized ops before draft recovery.
+    //
+    // Drafts emit synthetic edit_block ops; running drafts before
+    // replay would interleave the synthetic ops with the unmaterialized
+    // real ops, breaking the sequential apply order. The replay function
+    // drains the foreground queue via a Barrier before returning, so
+    // step 2's draft path observes a fully-applied state.
+    //
+    // Replay failures (e.g. a corrupted `op_log` or a stuck foreground
+    // queue) are captured into `replay_errors` rather than aborting
+    // boot — the same "log + continue" philosophy that the draft loop
+    // uses for individual-draft errors. Boot must succeed so the user
+    // can at least open the app and recover via UI.
+    // -----------------------------------------------------------------
+    let replay_report = match replay_unmaterialized_ops(pool, materializer).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "C-2b replay failed — continuing with draft recovery");
+            super::ReplayReport {
+                ops_replayed: 0,
+                ops_skipped_idempotent: 0,
+                replay_errors: vec![format!("replay aborted: {e}")],
+            }
+        }
+    };
 
     // -----------------------------------------------------------------
     // Step 2: Walk block_drafts and recover unflushed drafts
@@ -177,6 +207,8 @@ pub async fn recover_at_boot(
         drafts_recovered = drafts_recovered.len(),
         already_flushed = drafts_already_flushed,
         errors = draft_errors.len(),
+        ops_replayed = replay_report.ops_replayed,
+        replay_errors = replay_report.replay_errors.len(),
         "recovery completed"
     );
 
@@ -186,5 +218,8 @@ pub async fn recover_at_boot(
         drafts_already_flushed,
         duration_ms,
         draft_errors,
+        ops_replayed: replay_report.ops_replayed,
+        ops_skipped_idempotent: replay_report.ops_skipped_idempotent,
+        replay_errors: replay_report.replay_errors,
     })
 }

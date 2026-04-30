@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT materialized_through_seq as \"seq!: i64\" FROM materializer_apply_cursor WHERE id = 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "735a706358b92c444506563bfacd0166660761dc6c74e9a672d19d9b45637ff2"
+}
