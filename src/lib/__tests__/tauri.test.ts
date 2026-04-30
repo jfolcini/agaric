@@ -38,6 +38,8 @@ import {
   fetchLinkMetadata,
   flushDraft,
   getBacklinks,
+  getBatchAttachmentCounts,
+  getBatchAttachments,
   getBatchProperties,
   getBlock,
   getBlockHistory,
@@ -2197,6 +2199,66 @@ describe('listAttachments', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('list_attachments', { blockId: 'BLK001' })
     expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getBatchAttachmentCounts
+// ---------------------------------------------------------------------------
+
+describe('getBatchAttachmentCounts', () => {
+  it('invokes get_batch_attachment_counts with blockIds', async () => {
+    const expected = { BLK001: 2, BLK002: 0 }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await getBatchAttachmentCounts(['BLK001', 'BLK002'])
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_batch_attachment_counts', {
+      blockIds: ['BLK001', 'BLK002'],
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
+    await expect(getBatchAttachmentCounts(['BLK001'])).rejects.toThrow('db error')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getBatchAttachments
+// ---------------------------------------------------------------------------
+
+describe('getBatchAttachments', () => {
+  it('invokes list_attachments_batch with blockIds', async () => {
+    const expected = {
+      BLK001: [
+        {
+          id: 'ATT1',
+          block_id: 'BLK001',
+          filename: 'photo.png',
+          mime_type: 'image/png',
+          size_bytes: 1024,
+          fs_path: '/tmp/photo.png',
+          created_at: '2025-01-15T00:00:00Z',
+        },
+      ],
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await getBatchAttachments(['BLK001'])
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_attachments_batch', {
+      blockIds: ['BLK001'],
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
+    await expect(getBatchAttachments(['BLK001'])).rejects.toThrow('db error')
   })
 })
 
