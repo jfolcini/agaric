@@ -18,13 +18,13 @@ import { Trash2 } from 'lucide-react'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
+import { useAttachmentCount } from '../hooks/useAttachmentCount'
 import { type BlockActions, useBlockActions } from '../hooks/useBlockActions'
+import { useBlockContextMenu } from '../hooks/useBlockContextMenu'
 import { type BlockResolvers, useBlockResolvers } from '../hooks/useBlockResolvers'
 import { useBlockSwipeActions } from '../hooks/useBlockSwipeActions'
 import { useBlockTouchLongPress } from '../hooks/useBlockTouchLongPress'
-import { logger } from '../lib/logger'
-import type { BlockRow } from '../lib/tauri'
-import { listAttachments, listBlocks, listPropertyDefs } from '../lib/tauri'
+import { usePropertyDefForEdit } from '../hooks/usePropertyDefForEdit'
 import { cn } from '../lib/utils'
 import { AttachmentList } from './AttachmentList'
 import { BlockContextMenu } from './BlockContextMenu'
@@ -240,40 +240,28 @@ function SortableBlockInner({
     id: blockId,
   })
 
-  // ── Context menu state ───────────────────────────────────────────
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; linkUrl?: string } | null>(
-    null,
-  )
-  const [editingProp, setEditingProp] = useState<{ key: string; value: string } | null>(null)
-  const [editingKey, setEditingKey] = useState<{ oldKey: string; value: string } | null>(null)
-  const [selectOptions, setSelectOptions] = useState<string[] | null>(null)
-  const [isRefProp, setIsRefProp] = useState(false)
-  const [refPages, setRefPages] = useState<BlockRow[]>([])
-  const [refSearch, setRefSearch] = useState('')
+  // ── Context menu + property-edit state ───────────────────────────
+  const {
+    contextMenu,
+    openContextMenu,
+    closeContextMenu,
+    editingProp,
+    setEditingProp,
+    editingKey,
+    setEditingKey,
+  } = useBlockContextMenu()
+  const { selectOptions, isRefProp, refPages, refSearch, setRefSearch } =
+    usePropertyDefForEdit(editingProp)
   const blockRef = useRef<HTMLDivElement>(null)
 
   // ── Attachment state ─────────────────────────────────────────────
-  const [attachmentCount, setAttachmentCount] = useState(0)
+  const attachmentCount = useAttachmentCount(blockId)
   const [showAttachments, setShowAttachments] = useState(false)
-
-  useEffect(() => {
-    let stale = false
-    listAttachments(blockId)
-      .then((rows) => {
-        if (!stale) setAttachmentCount(rows.length)
-      })
-      .catch((err) => {
-        logger.warn('SortableBlock', 'attachment count failed', undefined, err)
-      })
-    return () => {
-      stale = true
-    }
-  }, [blockId])
 
   const handleToggleAttachments = useCallback(() => setShowAttachments((prev) => !prev), [])
   const handleEditKey = useCallback(
     (keyInfo: { oldKey: string; value: string }) => setEditingKey(keyInfo),
-    [],
+    [setEditingKey],
   )
 
   const filteredProperties = useMemo(
@@ -288,14 +276,6 @@ function SortableBlockInner({
   // Keep a ref in sync with isDragging so the long-press setTimeout closure
   // can read the current value without capturing a stale boolean.
   const isDraggingRef = useRef(false)
-
-  const openContextMenu = useCallback((x: number, y: number, linkUrl?: string) => {
-    setContextMenu(linkUrl ? { x, y, linkUrl } : { x, y })
-  }, [])
-
-  const closeContextMenu = useCallback(() => {
-    setContextMenu(null)
-  }, [])
 
   const { handleTouchStart, handleTouchEnd, handleTouchMove, handleContextMenu, clearLongPress } =
     useBlockTouchLongPress({ openContextMenu, isDraggingRef })
@@ -321,63 +301,6 @@ function SortableBlockInner({
       clearLongPress()
     }
   }, [isDragging, clearLongPress])
-
-  // ── Load property definitions for select-type / ref-type detection ──
-  useEffect(() => {
-    if (!editingProp) {
-      setSelectOptions(null)
-      setIsRefProp(false)
-      setRefPages([])
-      setRefSearch('')
-      return
-    }
-    let stale = false
-    listPropertyDefs()
-      .then((defs) => {
-        if (stale) return
-        const def = defs.find((d) => d.key === editingProp.key)
-        if (def?.value_type === 'select' && def.options) {
-          try {
-            setSelectOptions(JSON.parse(def.options) as string[])
-          } catch (err) {
-            logger.warn(
-              'SortableBlock',
-              'failed to parse select options',
-              {
-                key: def.key,
-                options: def.options,
-              },
-              err,
-            )
-            setSelectOptions(null)
-          }
-          setIsRefProp(false)
-        } else if (def?.value_type === 'ref') {
-          setIsRefProp(true)
-          setSelectOptions(null)
-          listBlocks({ blockType: 'page' })
-            .then((res) => {
-              if (!stale) setRefPages(res.items)
-            })
-            .catch((err) => {
-              logger.warn('SortableBlock', 'ref page resolution failed', undefined, err)
-              if (!stale) setRefPages([])
-            })
-        } else {
-          setSelectOptions(null)
-          setIsRefProp(false)
-        }
-      })
-      .catch((err) => {
-        logger.warn('SortableBlock', 'property def resolution failed', undefined, err)
-        if (stale) return
-        setSelectOptions(null)
-        setIsRefProp(false)
-      })
-    return () => {
-      stale = true
-    }
-  }, [editingProp])
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
