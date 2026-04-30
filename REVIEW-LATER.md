@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-22 open items — 22 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 20 backend Medium findings closed + 24 MAINT closed (some partially) across sessions 549-582 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-582): MAINT-131 fully reduced to residual cleanup; MAINT-162 reduced to 1 component remaining (StaticBlock); **3 schema-integrity migrations landed in session 582** (M-30 partial UNIQUE on attachments.fs_path, M-93 ON DELETE CASCADE FK on block_drafts.block_id, M-90 is_space property tightened to `select` type); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
+22 open items — 22 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 20 backend Medium findings closed + 24 MAINT closed (some partially) across sessions 549-583 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-583): MAINT-131 fully reduced to residual cleanup; MAINT-162 reduced to 1 component remaining (StaticBlock); **3 schema-integrity migrations landed in session 582** (M-30 partial UNIQUE on attachments.fs_path, M-93 ON DELETE CASCADE FK on block_drafts.block_id, M-90 is_space property tightened to `select` type); **session 583: H-9b deny-list redaction architecture landed (dormant pending H-9b-activation log-format switch); H-9c effectively closed (preview UI + confirmation gate already shipped)**; **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
 
-Previously resolved: 841+ items across 549 sessions (per SESSION-LOG.md unique session count; latest is session 582).
+Previously resolved: 843+ items across 550 sessions (per SESSION-LOG.md unique session count; latest is session 583).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1036,37 +1036,18 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ---
 
-## HIGH findings (3)
+## HIGH findings (1)
 
-### H-9 — Bug-report redaction allow-list misses GCal email, peer device IDs, and any other PII (parent — split into H-9b, H-9c after H-9a shipped)
-- **Domain:** Commands / System
-- **Location:** `src-tauri/src/commands/bug_report.rs`
-- **What:** Redaction now scrubs `$HOME` + local `device_id` + GCal email + peer device IDs + a generic email regex (H-9a shipped). The remaining work is the architectural shift to a deny-list (H-9b) and the user-facing preview UI (H-9c).
-- **Why it matters:** H-9a closed the immediate user-visible leak vectors. H-9b makes the redaction posture future-proof; H-9c adds defense-in-depth UI.
-- **Cost:** L (combined) — split into H-9b (M, generic redaction architecture), H-9c (M, preview UI). Both can be scheduled separately.
-- **Pass-1 source:** 05-commands-system / F5
-
-### H-9b — Bug-report: replace allow-list with deny-list-of-tokens architecture
-- **Domain:** Commands / System
-- **Location:** `src-tauri/src/commands/bug_report.rs`
-- **What:** Refactor the redact pipeline from "scrub these specific values" to "include only these specific token classes" (e.g. ULIDs, op_log seqs, error type names, file:line refs, well-known tracing field keys). Anything outside the safe-token set is replaced with `[REDACTED]`. Conservative-by-default: a property value that doesn't fit a known type gets redacted.
-- **Why it matters:** Makes the redaction posture future-proof — every new field added to a log line is redacted by default rather than leaked by default.
-- **Cost:** M
-- **Risk:** Medium (false positives can make logs hard to read; need careful tuning of the safe-token set)
-- **Impact:** High
-- **Recommendation:** Build on top of H-9a. Use the existing `tracing` JSON output as the input format; the safe-token set lives in a single constant array in `bug_report.rs`. Add a property test that no value outside the safe set survives the pipeline.
-- **Status:** Open. Should land after H-9a (which covers the immediate regression).
-
-### H-9c — Bug-report: "are you sure" UI showing the redacted preview before submit
-- **Domain:** Frontend / Commands
-- **Location:** `src/components/BugReportDialog.tsx`; `src-tauri/src/commands/bug_report.rs` (preview command)
-- **What:** Before the report ZIP is finalized for upload (or download to disk), show the user the redacted contents in a scrollable diff-style preview with a "Submit" button gated on the user's confirmation. Also expose a checkbox "I have reviewed the redacted output" required to enable Submit.
-- **Why it matters:** Defense-in-depth. Even with H-9a + H-9b, the user is the last line of defense for "did this leak my company email, my client name, my password I accidentally typed into a note?". The preview surfaces what's actually being sent.
-- **Cost:** M
-- **Risk:** Low (additive UI, no data path change)
-- **Impact:** High (user trust in the bug-report feature)
-- **Recommendation:** Tauri command `bug_report_preview()` returns the same redacted bundle as the existing submit, but does not upload. The dialog renders it via the existing `ScrollArea` + diff viewer primitives. Cross-references UX-277 (`BugReportDialog` polish — adding "no log-content preview before submit" was already filed there at S cost; this finding promotes it to H-9c with a richer scope).
-- **Status:** Open. Independent of H-9a / H-9b. May supersede the "no log-content preview" item in UX-277 — when H-9c lands, drop the preview bullet from UX-277.
+### H-9b-activation — Switch tracing on-disk format to JSON to activate the H-9b deny-list pipeline
+- **Domain:** Commands / System (logging)
+- **Location:** `src-tauri/src/lib.rs:525-527` (file appender layer); `src-tauri/Cargo.toml:107` (`tracing-subscriber` features)
+- **What:** Session 583 landed the deny-list-of-tokens redaction architecture in `bug_report.rs` (regex array + STABLE_MESSAGES whitelist + property tests, see commit log) but the deny-list is **dormant**: `tracing_subscriber::fmt::layer()` currently emits human-readable text format on disk, so every `agaric.log` line takes the H-9a allow-list fallback rather than the new JSON-aware deny-list. To activate H-9b's "conservative-by-default" privacy gain: (1) add `"json"` to `tracing-subscriber` features in `Cargo.toml`; (2) append `.json()` to the file appender layer in `lib.rs:525`; (3) update `is_error_or_warn_line` in `bug_report.rs` to also detect JSON-shaped levels (`"level":"ERROR"` / `"level":"WARN"`) — current implementation tolerates both formats but a focused detector is cleaner.
+- **Why it matters:** Without the format switch, H-9b's privacy improvement does not engage on actual user logs. The user-visible bug-report content is still scrubbed by H-9a's allow-list (which catches `$HOME` + `device_id` + GCal email + peer device IDs + emails), so there's no regression — just no upgrade either.
+- **Cost:** S — three small wiring changes; no architectural decision left.
+- **Risk:** Medium — JSON file-format change makes `agaric.log` less human-readable at the file level (developers need `jq` or a structured-log viewer to read it directly). Bug-report bundle output is still readable post-redaction (verified by H-9b reviewer).
+- **Impact:** High once activated; zero until activated.
+- **Recommendation:** Land as a focused 1-commit change once the "less-human-readable agaric.log" tradeoff is acceptable. Pair with a one-line developer-docs note explaining how to view the file (`tail -f agaric.log | jq` or similar).
+- **Status:** Open. Spun off from H-9b in session 583 because the deny-list architecture and the format-switch decision are independently reviewable.
 
 ## MEDIUM findings (37 — expanded)
 

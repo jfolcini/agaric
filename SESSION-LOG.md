@@ -1,5 +1,57 @@
 # Session Log
 
+## Session 583 — 1-subagent + orchestrator batch: H-9b deny-list redaction architecture + H-9c closure (2026-04-30)
+
+**1 substantial backend security/privacy refactor landed via 1 build subagent + 1 technical-review subagent.** The build subagent replaced the bug-report's allow-list redaction with a deny-list-of-tokens pipeline (regex-based safe-token set + curated STABLE_MESSAGES whitelist + property tests). Orchestrator separately confirmed H-9c was effectively done (preview + confirmation checkbox already shipped in `BugReportDialog.tsx`) and removed it from REVIEW-LATER.
+
+**Drift discovered + spun off as a follow-up:** Tracing currently emits human-readable text format on disk, not JSON, so the new deny-list pipeline is **fully implemented and tested but dormant** until the file appender is switched to `.json()`. The build subagent deliberately did not change the format (cross-cutting UX concern affecting `agaric.log` readability for developers). Activation work is tracked as a new HIGH entry **H-9b-activation** so the format-switch decision can be reviewed independently.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 22 → 22 unchanged (H-9b/H-9c are Backend Code Review High items, not FEAT/MAINT/PERF/PUB).
+- **Backend Code Review HIGH count:** 3 → 1 (H-9 parent removed; H-9b closed architecturally; H-9c removed; new H-9b-activation added with smaller scope = S cost).
+- **Previously-resolved counter:** 841+ → 843+ across 549 → 550 sessions.
+
+**Items closed:**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| **H-9b — Deny-list-of-tokens redaction architecture** (subagent A) | `src-tauri/src/commands/bug_report.rs` only (+826/–27 lines). **Three new constants** as the single tuning surface: (a) `SAFE_TOKEN_PATTERNS` — 14 regex patterns covering ULIDs (Crockford base32 26-char), op_log seqs (1-19 digits), AppError variants (`AppError::*`), Rust paths with mandatory `::`, file:line[:col] refs across `src/` and `src-tauri/`, ISO timestamps, ISO dates, booleans (`true`/`false`/`null`), log levels (uppercase + lowercase), hex digests at 8/16/32/40/64 sizes (avoids 20-digit phone-shape false positives), and snake_case identifiers requiring at least one `_` or digit (blocks bare names like `alice`); (b) `SAFE_LITERALS` — exact-match safe strings (tracing targets `agaric`/`frontend`/`bug_report`/`gcal`/`mcp`/`sync`/`test`, OS/arch values from `tauri-plugin-os`); (c) `STABLE_MESSAGES` — ~60 curated diagnostic strings harvested from `tracing::warn!`/`error!`/`info!` static-message sites across the codebase, allowing those messages through verbatim while everything else collapses to `[REDACTED]`. **New private pipeline:** `redact_json_line` (short-circuits on first byte `{`, parses + walks recursively up to 32 levels deep, redacts non-safe leaf string values, preserves keys), `apply_allow_list` (extracted H-9a logic kept as defense-in-depth fallback for non-JSON lines), `cap_line_length` (UTF-8-safe truncation), `is_safe_token` (combines `SAFE_LITERALS` + `SAFE_TOKEN_REGEXES`). **Public function signatures unchanged:** `redact_line(&str, &RedactionContext) -> String` and `redact_log(&str, &RedactionContext) -> String` are now dispatchers (try JSON deny-list → fall back to allow-list → cap line length). 13 new tests including 2 `proptest` property tests (PII shapes redacted; safe tokens preserved). 50/50 bug_report tests pass (37 baseline + 13 new). **Drift:** the deny-list is currently dormant — every line takes the H-9a fallback because tracing emits text format, not JSON. Spun off as **H-9b-activation** (new HIGH entry, S cost — 3 small wiring changes: `Cargo.toml` feature, `lib.rs` appender, `is_error_or_warn_line` detector). Reviewer (agent_id 07aed626) APPROVED WITH NITS, recommended landing as-is and tracking activation separately. — Subagent agent_id 8f2e3b9d (build) + agent_id 07aed626 (review) |
+| **H-9c — Bug-report preview UI + confirmation gate** (orchestrator audit) | No code changes. Audit confirmed the BugReportDialog already implements both H-9c contracts: (a) **Redacted preview** (`src/components/BugReportDialog.tsx:8-12`): the dialog renders a markdown body preview + log-file list, plus a per-file preview-on-click sub-dialog showing the redacted contents (calls `readLogsForReport(redact)`); (b) **Confirmation checkbox required for Submit** (`src/components/BugReportDialog.tsx:435-460, 480`): the primary "Open in GitHub" button is `disabled={!confirmed || ...}`. **The H-9c entry's "dedicated `bug_report_preview()` IPC" recommendation is an architectural cleanup, not a safety improvement** — the existing 2-IPC approach (`readLogsForReport` + `collectBugReportMetadata`) already gives the user verbatim-redacted bytes to review before submit. Per AGENTS.md "Simplicity First — Nothing speculative" and PROMPT.md "don't gold-plate", the IPC consolidation does not warrant its own tracker. Removed H-9c entirely from REVIEW-LATER per the file's own rule on resolved items. — Orchestrator |
+| **H-9 parent entry removed** (orchestrator) | Redundant after H-9c removal + H-9b closure. The parent entry's "remaining work is H-9b and H-9c" is no longer true; H-9b's outstanding work moved to H-9b-activation. — Orchestrator |
+| **H-9b-activation — NEW HIGH entry** (orchestrator) | Activation prerequisite for H-9b's privacy gain to engage. S cost. 3 small wiring changes. Risk Medium because the JSON file-format switch makes `agaric.log` less human-readable for developers (need `jq` to read directly). Documented as a focused 1-commit follow-up that can land once the readability tradeoff is acceptable. — Orchestrator |
+
+**Process notes:**
+
+- **Decision to spin off the format switch:** The H-9b subagent's brief framed the input as "tracing JSON output" (implicitly assuming JSON format). Subagent discovered text-format-on-disk during investigation and chose to (a) implement the deny-list correctly for JSON input, (b) keep the H-9a allow-list as a defense-in-depth fallback for non-JSON lines, (c) flag the format-switch as an independent decision. Orchestrator agreed with the reviewer's option (a) "land as-is + add follow-up" verdict — keeping the architecture and the format switch as two reviewable commits is cleaner than bundling them.
+- **1 prek-driven nit fix** (orchestrator): `cargo fmt` flagged 4 cosmetic alignment issues in the new code (line continuations in `unwrap_or_else`, comment indentation in test blocks, multi-line argument formatting in `assert!` macros). All auto-fixed via `cargo fmt`. Re-ran prek clean.
+- **Reviewer findings** (agent_id 07aed626):
+  - VERDICT: APPROVE WITH NITS
+  - Confirmed all 14 regex patterns are correct.
+  - Confirmed the H-9a fallback path is preserved and all 37 pre-existing redaction tests pass.
+  - Confirmed the property tests are rigorous (5 PII shape classes + 6 safe-token classes).
+  - Confirmed all ~60 STABLE_MESSAGES are real static literals at their tracing call sites (no `format!`-interpolated false positives).
+  - Confirmed no architectural violations (no new crates beyond pre-existing `proptest`, no new feature flags, no new module structure).
+  - Confirmed backward compatibility (public function signatures unchanged, single internal caller — `bug_report.rs` itself).
+  - Recommendation on the format-switch question: **option (a)** — land H-9b as-is + new REVIEW-LATER entry for activation. Reasoning: clean commit boundary, deny-list architecture is proven, dormant code is acceptable when the architecture is sound and tests are comprehensive.
+- **Nits raised by reviewer (deferred per "don't gold-plate"):** snake_case pattern (`^[a-z][a-z0-9_]*[_0-9][a-z0-9_]*$`) could match user-typed identifiers like `john_smith` (plausible if a username has an underscore + lowercase) — currently handled by the safe-token whitelist being applied at the FIELD VALUE level rather than per-token within a sentence; not a security blocker.
+- **No `cargo sqlx prepare`** needed (no SQL changes). **No `bindings.ts` regeneration** (no IPC type changes; `redact_log` and `redact_line` are not IPC-exposed).
+- **No FEATURE-MAP.md update needed** — internal redaction-pipeline refactor only, no user-facing surface change.
+
+**Files touched (this session's batch):**
+
+- Backend modified (1): `src-tauri/src/commands/bug_report.rs` (+826/–27 — deny-list pipeline + 13 new tests).
+- Docs: `REVIEW-LATER.md` (H-9 parent + H-9c entries deleted; H-9b entry replaced with H-9b-activation; HIGH count 3 → 1; summary line + previously-resolved counter bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after 1 cargo fmt autofix on the new code). `cargo nextest run bug_report` → 50/50 pass.
+
+- bug_report tests: 50/50 (37 baseline H-9a + 13 new H-9b including 2 proptests).
+- Cargo: full nextest run, fmt, clippy, deny, machete all green.
+
+**Commit:** `1b9d9e4` — `feat(security): H-9b — bug-report deny-list redaction architecture (dormant; activation tracked in H-9b-activation)`. (Docs commit follows separately.)
+
+---
+
 ## Session 582 — 3-subagent batch: schema-integrity migrations M-30 + M-93 + M-90 (2026-04-30)
 
 **3 disjoint backend Medium findings closed in one PROMPT.md batch with 3 parallel build subagents (one per migration) + 1 technical-review subagent over the whole batch.** Each migration is a defensive guard against a class of corruption: M-30 prevents two attachment rows from pointing at the same on-disk file; M-93 prevents drafts from outliving their blocks; M-90 tightens the `is_space` property type so writes get validated by the existing `select`-type infrastructure rather than relying on convention. **User explicitly approved the schema migrations** before launch (per AGENTS.md "Architectural Stability"). Three migrations land sequentially as `0037`, `0038`, `0039`.
