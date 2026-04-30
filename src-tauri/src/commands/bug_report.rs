@@ -28,6 +28,271 @@ use tauri::Manager;
 use crate::error::AppError;
 use crate::log_dir_for_app_data;
 
+// =====================================================================
+// REDACTION POLICY (H-9b)
+// =====================================================================
+//
+// Bug-report redaction is **deny-by-default at the field-value level**.
+// Anything that does not match a member of [`SAFE_TOKEN_PATTERNS`] is
+// replaced with `[REDACTED]`. This is the inverse of H-9a, which scrubbed
+// SPECIFIC values (`$HOME`, `device_id`, GCal email, peer IDs) and let
+// everything else through.
+//
+// **Pipeline** (per [`redact_line`]):
+//   1. If the line parses as JSON (i.e. structured `tracing` JSON output),
+//      walk the parsed tree and replace every leaf string VALUE that
+//      doesn't match a safe-token pattern with `[REDACTED]`. Field KEYS
+//      are preserved verbatim — the schema of a log line is not PII.
+//   2. The `message` field gets one extra exception: if it appears in
+//      [`STABLE_MESSAGES`] it is kept verbatim. Free-text messages that
+//      don't match a stable string OR a safe-token shape collapse to
+//      `[REDACTED]`. (Per-word tokenization makes log bundles
+//      unreadable without bringing privacy benefit.)
+//   3. If the line does NOT parse as JSON (older rolled
+//      `agaric.log.YYYY-MM-DD` files written before tracing switched to
+//      structured output, or any non-JSON tail handed to redact_log),
+//      fall back to the legacy H-9a allow-list ([`apply_allow_list`]):
+//      replace `$HOME`, `device_id`, GCal email, peer-device IDs, and
+//      any email-shaped substring. This branch is documented as a
+//      defense-in-depth fallback rather than the primary path.
+//
+// **Drift watch:** the on-disk format produced by `tracing-subscriber`
+// in `lib.rs::run` is currently the human-readable text format
+// (`fmt::layer().with_writer(non_blocking).with_ansi(false)`), NOT JSON.
+// That means today every line takes the H-9a fallback branch. The
+// deny-list architecture is fully implemented and tested; it activates
+// automatically once the file appender is switched to `.json()` (a
+// follow-up bookkeeping change tracked in REVIEW-LATER under H-9b).
+//
+// **Tuning:** to widen what survives the pipeline, add a regex to
+// [`SAFE_TOKEN_PATTERNS`] or a string to [`STABLE_MESSAGES`]. **Never**
+// loosen the patterns to accommodate noisy log sites — the deny-list is
+// the safety contract; tracing call sites should use stable, scrub-able
+// shapes (e.g. `error = %e`, `id = %ulid`) whose values fit a safe-token
+// class.
+// =====================================================================
+
+/// Safe-token regex set: a value is preserved verbatim if-and-only-if it
+/// matches AT LEAST ONE pattern below — OR appears in [`SAFE_LITERALS`].
+/// Anything else is `[REDACTED]`.
+///
+/// Edit this list — and only this list — when tuning what survives the
+/// deny-list. Each entry is anchored with `^…$` so a longer string that
+/// merely CONTAINS a safe shape still gets redacted (defense against
+/// "ULID embedded in a sentence" leaks).
+///
+/// Patterns deliberately exclude bare lowercase identifiers
+/// (`^[a-z]+$`) so first-name-shaped strings like `alice` or `bob` do
+/// not slip through as safe tokens. Multi-segment Rust paths, hex
+/// digests, ULIDs, and integers are all distinguishable from prose by
+/// the presence of digits / `::` / fixed length, so each pattern below
+/// has at least one such discriminator.
+const SAFE_TOKEN_PATTERNS: &[&str] = &[
+    // Empty string — common (optional fields default to "").
+    r"^$",
+    // ULID: 26-char Crockford base32 (no I/L/O/U), uppercase. The on-the-
+    // wire id format used throughout the op log.
+    r"^[0-9A-HJKMNP-TV-Z]{26}$",
+    // op_log seq / line number / byte count / any small unsigned integer.
+    // 19 digits caps the value at u64::MAX so a 20-digit phone-number-
+    // shaped string is NOT a safe token.
+    r"^-?[0-9]{1,19}$",
+    // AppError variant name (e.g. `AppError::NotFound`). The codebase
+    // logs these as `error = %e` where `Display` for `AppError` resolves
+    // to the variant's debug-ish form.
+    r"^AppError::[A-Z][a-zA-Z0-9_]*$",
+    // Rust path / module / type name with AT LEAST ONE `::` separator.
+    // Covers `target` / `module` field values like
+    // `agaric::commands::bug_report` and fully-qualified type names like
+    // `crate::error::AppError`. The mandatory `::` blocks bare lowercase
+    // words (e.g. `alice`) from masquerading as module paths.
+    r"^[a-z_][a-z0-9_]*(::[a-zA-Z_][a-zA-Z0-9_]*)+$",
+    // file:line[:col] ref. Covers Rust + TS + SQL source paths anchored
+    // to `src/` or `src-tauri/`. Line/col are bounded at 7 digits so
+    // a numeric blob doesn't sneak through as a fake location. Underscore
+    // is included in the path char class so `bug_report.rs` and migration
+    // names like `0001_initial.sql` round-trip.
+    r"^src(?:-tauri)?/[A-Za-z0-9_./-]+\.(rs|ts|tsx|sql|toml|json|yaml|md)(:\d{1,7}(:\d{1,7})?)?$",
+    // ISO-8601-Z timestamp produced by `tracing` JSON layer.
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$",
+    // ISO-8601 date (no time component).
+    r"^\d{4}-\d{2}-\d{2}$",
+    // Well-known boolean / null literals (JSON values serialised as
+    // strings — rare but not impossible).
+    r"^(true|false|null)$",
+    // Log-level literals, both upper-case (tracing JSON layer) and
+    // lower-case (some upstream libs).
+    r"^(INFO|WARN|ERROR|DEBUG|TRACE|info|warn|error|debug|trace)$",
+    // Hex digest at common cryptographic sizes — short-hash (8/16),
+    // md5 (32), sha1 (40), and sha256 / blake3 (64). Restricting to
+    // these exact lengths avoids false positives from medium-length
+    // numeric blobs (e.g. a 20-digit phone-shaped string would have
+    // matched a `{8,64}` range). Pure-digit strings of these specific
+    // lengths are extremely unlikely to be PII (no real-world
+    // identifier has exactly 8/16/32/40/64 digits without separators).
+    r"^[0-9a-fA-F]{8}$",
+    r"^[0-9a-fA-F]{16}$",
+    r"^[0-9a-fA-F]{32}$",
+    r"^[0-9a-fA-F]{40}$",
+    r"^[0-9a-fA-F]{64}$",
+    // Snake_case identifier with at least one `_` or digit (covers
+    // tracing targets like `bug_report` and field-key identifiers like
+    // `tls13`). Pure alphabetic words (`alice`, `bob`) are NOT matched
+    // because the `[_0-9]` requirement forces at least one separator
+    // or digit.
+    r"^[a-z][a-z0-9_]*[_0-9][a-z0-9_]*$",
+];
+
+/// Specific literal strings that are always safe (not user data, not
+/// PII). Checked before the regex set; cheaper than a regex for the
+/// hot-path of well-known short tokens.
+///
+/// Add only short, stable, repo-controlled values here — never user
+/// input. OS / arch tokens come from `tauri-plugin-os::platform()` /
+/// `arch()` and are a closed set; tracing targets come from the
+/// codebase's own `target: "…"` literals.
+const SAFE_LITERALS: &[&str] = &[
+    // Tracing targets used in `tracing::*!(target: "…", …)` sites that
+    // are single-segment (don't match the Rust path regex).
+    "agaric",
+    "frontend",
+    "bug_report",
+    "gcal",
+    "mcp",
+    "sync",
+    "test",
+    // OS values (`tauri_plugin_os::platform()`).
+    "linux",
+    "macos",
+    "windows",
+    "android",
+    "ios",
+    "freebsd",
+    "openbsd",
+    "netbsd",
+    "dragonfly",
+    "solaris",
+    // Arch values (`tauri_plugin_os::arch()`).
+    "x86",
+    "x86_64",
+    "i686",
+    "arm",
+    "armv7",
+    "armv8",
+    "aarch64",
+    "arm64",
+    "wasm32",
+    "riscv64",
+    "powerpc64",
+    "mips",
+    "mips64",
+    "s390x",
+];
+
+/// Compiled forms of [`SAFE_TOKEN_PATTERNS`]. Built once on first use.
+static SAFE_TOKEN_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    SAFE_TOKEN_PATTERNS
+        .iter()
+        .map(|p| {
+            Regex::new(p).unwrap_or_else(|e| panic!("SAFE_TOKEN_PATTERNS[{p}] must compile: {e}"))
+        })
+        .collect()
+});
+
+/// Diagnostic strings used at `tracing::warn!` / `tracing::error!` /
+/// `tracing::info!` sites that are stable across releases and carry no
+/// PII. When a JSON log line's `message` field matches one of these
+/// verbatim, it is preserved through the deny-list.
+///
+/// Add new entries here when an existing static `tracing::*!("…")` site
+/// would otherwise lose critical diagnostic context to `[REDACTED]`. Do
+/// NOT add formatted / interpolated messages — only stable string
+/// literals from `tracing::*!` macros (the `"…"` final argument).
+const STABLE_MESSAGES: &[&str] = &[
+    // lib.rs — boot lifecycle.
+    "log directory initialized",
+    "running database migrations",
+    "database migrations complete",
+    "TLS cert loaded",
+    "boot count query failed; treating as 0",
+    "PANIC",
+    "failed to run Tauri application",
+    "failed to bootstrap spaces — aborting boot",
+    "failed to clean up stale link metadata",
+    "cleaned up stale link metadata entries",
+    "FTS index empty — scheduling rebuild",
+    "failed to enqueue FTS rebuild at boot",
+    "failed to enqueue block_tag_refs rebuild at boot",
+    "failed to enqueue projected agenda cache rebuild at boot",
+    "failed to enqueue page_id rebuild at boot",
+    // sync_daemon — protocol lifecycle.
+    "incoming sync connection received, starting responder session",
+    "SyncDaemon started successfully",
+    "SyncDaemon started, mDNS announced",
+    "SyncDaemon shut down cleanly",
+    "Failed to start SyncDaemon",
+    "Sync will work via manual IP entry only",
+    "rejecting sync with self (remote_id matches local device_id)",
+    "rejecting sync from unpaired device",
+    "responder locked peer for sync",
+    "responder sync ended in non-complete state",
+    "responder file transfer failed (non-fatal)",
+    "responder sync session failed",
+    "could not determine app_data_dir, skipping file transfer",
+    "discovered new peer via mDNS",
+    "debounced-change peer task panicked",
+    "mDNS announce failed (peer discovery disabled)",
+    "mDNS browse failed (peer discovery disabled)",
+    "mDNS shutdown error",
+    "mDNS initialization failed (peer discovery disabled)",
+    "peer has no addresses, skipping sync",
+    "failed to save peer address",
+    "sync session failed",
+    "initiator file transfer failed (non-fatal)",
+    // materializer — queue lifecycle.
+    "Materializer::set_app_data_dir called twice — ignoring later set",
+    "background queue full, dropping task",
+    "boot-time retry queue sweep failed",
+    "periodic retry queue sweep failed",
+    "materializer retry queue sweep",
+    "rebuild failed for fts_blocks cache",
+    "error processing materializer task",
+    // merge — conflict resolution.
+    "merge completed — clean merge applied",
+    "merge completed — conflict copy created",
+    "creating conflict copy",
+    "property conflict resolved via LWW",
+    "text merge completed",
+    // snapshot / compaction.
+    "compaction starting",
+    "compaction: no eligible ops, nothing to do",
+    // commands / surface.
+    "internal error suppressed during sanitization",
+    // mcp.
+    "connector task exited",
+    "MCP connection ended with error",
+    "already bound",
+    // bug_report itself (so its own warn lines round-trip).
+    "L-52: skipping log file with invalid UTF-8 in name",
+    "L-52: skipping log entry — not a regular file (symlink/dir/socket?)",
+    "L-52: skipping log file — read_capped_file failed (permission denied or io error?)",
+    "failed to fetch oauth_account_email for redaction; skipping GCal email scrub",
+    "failed to fetch peer_refs for redaction; skipping peer-device-id scrub",
+];
+
+/// `true` iff `s` is a safe token: either a literal in [`SAFE_LITERALS`]
+/// or a match for one of the [`SAFE_TOKEN_PATTERNS`] regexes.
+///
+/// Used by the JSON deny-list pipeline ([`redact_json_value`]) to decide
+/// per leaf string value whether to keep the literal or replace it with
+/// `[REDACTED]`.
+fn is_safe_token(s: &str) -> bool {
+    if SAFE_LITERALS.contains(&s) {
+        return true;
+    }
+    SAFE_TOKEN_REGEXES.iter().any(|re| re.is_match(s))
+}
+
 /// H-9a — generic email regex applied AFTER the specific GCal-email scrub
 /// so a known account still carries the precise `[REDACTED:GCAL_EMAIL]`
 /// marker while stray emails in error messages, tracing fields, or third-
@@ -37,6 +302,10 @@ use crate::log_dir_for_app_data;
 /// log scrubbers; deliberately conservative so common cases (Gmail, work
 /// addresses, mailing lists) are caught without trying to be RFC 5322
 /// compliant. Compiled once via [`LazyLock`] — the regex is hot-path.
+///
+/// H-9b: still consulted on the unstructured-fallback branch as defense-
+/// in-depth. JSON-format lines route through the deny-list pipeline,
+/// which subsumes this check (free-text values are redacted wholesale).
 static EMAIL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
         .expect("EMAIL_REGEX is a compile-time constant; regex must parse")
@@ -301,24 +570,90 @@ struct RedactionContext<'a> {
     peer_device_ids: &'a [String],
 }
 
-/// Redact a single line by, in order:
-///  1. Replacing `$HOME` prefixes (and any absolute path beginning with `/`
-///     except bracketed log-fmt tokens) with `~` when `ctx.home` is given.
-///  2. Blanking any occurrence of `ctx.device_id` with `[REDACTED_DEVICE_ID]`.
-///  3. **H-9a:** Replacing the user's GCal account email (if known) with
-///     `[REDACTED:GCAL_EMAIL]`.
-///  4. **H-9a:** Replacing every known peer device ID (from `peer_refs`)
-///     with `[REDACTED:PEER_DEVICE_ID]`.
-///  5. **H-9a:** Catch-all email regex → `[EMAIL]`. Applied AFTER the
-///     specific GCal-email scrub so the known account keeps its precise
-///     marker; this fold catches stray emails in error messages, tracing
-///     fields, and third-party log lines that the specific scrubs miss.
-///  6. Truncating the result to [`MAX_LINE_BYTES`] chars.
+/// H-9b — JSON deny-list pipeline. Returns `Some(redacted_line)` if
+/// `line` parses as a JSON object; returns `None` to signal the caller
+/// should take the H-9a allow-list fallback (text-format / older rolled
+/// files).
 ///
-/// All three new scrubs are additive — a default-constructed
-/// [`RedactionContext`] is a noop, preserving the previous semantics
-/// for callers that have not yet been updated.
-fn redact_line(line: &str, ctx: &RedactionContext<'_>) -> String {
+/// Bytes-of-`{` test runs first so the cost of routing every text-format
+/// line through `serde_json::from_str` is bounded — the parser short-
+/// circuits on the very first byte.
+fn redact_json_line(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    // `tracing-subscriber`'s JSON layer emits one `{ … }` object per line.
+    // Anything else (text format, rolled YYYY-MM-DD logs, blank lines,
+    // truncation markers) takes the fallback branch.
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+    let mut value: serde_json::Value = serde_json::from_str(trimmed).ok()?;
+    redact_json_value(&mut value, /*depth=*/ 0, /*key=*/ None);
+    serde_json::to_string(&value).ok()
+}
+
+/// Recursively walk a JSON value and replace every leaf string VALUE
+/// that is not a safe token with `[REDACTED]`. Numbers, booleans, and
+/// `null` are inherently safe (never PII shapes) and pass through
+/// untouched. Object keys are NEVER redacted — the schema of a log
+/// line is part of the structural skeleton the user reads to follow
+/// the flow of events.
+///
+/// `key` carries the parent object key when descending into a value so
+/// the `message` exception ([`STABLE_MESSAGES`]) can fire on the right
+/// field.
+fn redact_json_value(value: &mut serde_json::Value, depth: usize, key: Option<&str>) {
+    // Bound recursion — pathological deeply-nested JSON would otherwise
+    // stack-overflow. 32 levels is well above any realistic tracing
+    // payload (timestamp + level + target + fields + spans rarely
+    // exceeds 4 levels).
+    if depth > 32 {
+        *value = serde_json::Value::String("[REDACTED]".into());
+        return;
+    }
+    match value {
+        serde_json::Value::String(s) => {
+            // The `message` field gets the stable-message whitelist
+            // exception in addition to the safe-token check.
+            let is_message = key == Some("message");
+            if is_safe_token(s) || (is_message && STABLE_MESSAGES.contains(&s.as_str())) {
+                // keep verbatim
+            } else {
+                *s = "[REDACTED]".into();
+            }
+        }
+        serde_json::Value::Number(_) | serde_json::Value::Bool(_) | serde_json::Value::Null => {
+            // Inherently safe shapes — never PII patterns.
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                // Arrays do not propagate a key — each element's
+                // redaction is independent of the parent.
+                redact_json_value(v, depth + 1, None);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (k, v) in map.iter_mut() {
+                redact_json_value(v, depth + 1, Some(k.as_str()));
+            }
+        }
+    }
+}
+
+/// H-9a fallback: legacy allow-list scrubs for non-JSON lines.
+///
+/// Replaces specific known-bad values (`$HOME`, `device_id`, GCal email,
+/// peer device IDs) and falls back to a generic email regex. This branch
+/// runs for:
+///
+/// * Older rolled `agaric.log.YYYY-MM-DD` files written before the
+///   `tracing-subscriber` file appender switches to `.json()` output.
+/// * Truncation marker lines (`…[truncated N bytes of older content]`).
+/// * Any non-JSON tail accidentally appended to a log file.
+///
+/// **NOT** the primary path. The deny-list pipeline (`redact_json_line`)
+/// is the safety contract going forward; this function is preserved as
+/// defense-in-depth so the H-9a guarantees are not lost on legacy input.
+fn apply_allow_list(line: &str, ctx: &RedactionContext<'_>) -> String {
     let mut out = line.to_string();
     if let Some(home) = ctx.home {
         if !home.is_empty() {
@@ -351,21 +686,58 @@ fn redact_line(line: &str, ctx: &RedactionContext<'_>) -> String {
     if EMAIL_REGEX.is_match(&out) {
         out = EMAIL_REGEX.replace_all(&out, "[EMAIL]").into_owned();
     }
-    if out.len() > MAX_LINE_BYTES {
-        let extra = out.len() - MAX_LINE_BYTES;
-        // Keep the first MAX_LINE_BYTES bytes — split on a char boundary to
-        // avoid producing invalid UTF-8 when the cut lands inside a codepoint.
-        let mut cut = MAX_LINE_BYTES;
-        while !out.is_char_boundary(cut) && cut > 0 {
-            cut -= 1;
-        }
-        out.truncate(cut);
-        out.push_str(&format!("…[truncated {extra} chars]"));
-    }
     out
 }
 
+/// Apply the per-line length cap from [`MAX_LINE_BYTES`] with UTF-8
+/// safety. Returns the input unchanged when its byte length is at or
+/// below the cap — no allocation in the common case.
+fn cap_line_length(out: String) -> String {
+    if out.len() <= MAX_LINE_BYTES {
+        return out;
+    }
+    let extra = out.len() - MAX_LINE_BYTES;
+    let mut out = out;
+    // Keep the first MAX_LINE_BYTES bytes — split on a char boundary to
+    // avoid producing invalid UTF-8 when the cut lands inside a codepoint.
+    let mut cut = MAX_LINE_BYTES;
+    while !out.is_char_boundary(cut) && cut > 0 {
+        cut -= 1;
+    }
+    out.truncate(cut);
+    out.push_str(&format!("…[truncated {extra} chars]"));
+    out
+}
+
+/// Redact a single log line via the H-9b deny-list pipeline.
+///
+/// 1. **JSON path:** if `line` parses as a JSON object (the structured
+///    `tracing` JSON layer's per-line emission), every leaf string VALUE
+///    that doesn't match a [`SAFE_TOKEN_PATTERNS`] regex (or appear in
+///    [`SAFE_LITERALS`]) is replaced with `[REDACTED]`. The `message`
+///    field gets the [`STABLE_MESSAGES`] whitelist exception. Field keys
+///    are preserved verbatim.
+/// 2. **Fallback path:** if `line` is not JSON (older rolled files, the
+///    truncation marker line, non-JSON test fixtures), apply the legacy
+///    H-9a allow-list ([`apply_allow_list`]) as defense-in-depth so the
+///    H-9a guarantees are not lost on legacy input.
+/// 3. **Length cap:** the result is truncated to [`MAX_LINE_BYTES`] with
+///    a `…[truncated N chars]` marker on overflow.
+///
+/// Public signature unchanged from H-9a: callers (`redact_log`, the
+/// in-file unit tests) keep working without edit.
+fn redact_line(line: &str, ctx: &RedactionContext<'_>) -> String {
+    if let Some(redacted) = redact_json_line(line) {
+        return cap_line_length(redacted);
+    }
+    cap_line_length(apply_allow_list(line, ctx))
+}
+
 /// Apply line-by-line redaction to an entire log file's contents.
+///
+/// H-9b: each line is dispatched independently — a bundle can mix JSON
+/// (today's log, after the format switch) and text (older rolled files)
+/// without confusing the pipeline.
 fn redact_log(contents: &str, ctx: &RedactionContext<'_>) -> String {
     let mut out = String::with_capacity(contents.len());
     for line in contents.split_inclusive('\n') {
@@ -1427,6 +1799,433 @@ mod tests {
         assert_eq!(
             out, line,
             "line with no PII must pass through unchanged, got: {out}"
+        );
+    }
+
+    // -- H-9b deny-list pipeline -----------------------------------------
+    //
+    // The tests below exercise the JSON deny-list path. They feed
+    // structured `tracing` JSON-shape lines and assert per-token
+    // behaviour (safe tokens preserved, everything else redacted, the
+    // `message` whitelist exception). The H-9a allow-list tests above
+    // exercise the fallback path on text-format input.
+
+    /// H-9b — `is_safe_token` accepts every documented token class.
+    /// One positive sample per [`SAFE_TOKEN_PATTERNS`] entry.
+    #[test]
+    fn h9b_is_safe_token_accepts_each_class() {
+        // ULID
+        assert!(is_safe_token("01HZQK7M5N6PQRSTVWXYZABCDE"));
+        // Op_log seq / integer
+        assert!(is_safe_token("0"));
+        assert!(is_safe_token("1234567890"));
+        assert!(is_safe_token("-42"));
+        // AppError variant
+        assert!(is_safe_token("AppError::NotFound"));
+        assert!(is_safe_token("AppError::Database"));
+        // Rust path
+        assert!(is_safe_token("agaric::commands::bug_report"));
+        assert!(is_safe_token("crate::error::AppError"));
+        // file:line:col
+        assert!(is_safe_token("src-tauri/src/lib.rs:42:7"));
+        assert!(is_safe_token("src/components/Foo.tsx:10"));
+        assert!(is_safe_token("src-tauri/migrations/0001_initial.sql"));
+        // ISO-Z timestamp
+        assert!(is_safe_token("2026-04-28T10:23:45.123456Z"));
+        // ISO date
+        assert!(is_safe_token("2025-01-15"));
+        // Bool / null
+        assert!(is_safe_token("true"));
+        assert!(is_safe_token("false"));
+        assert!(is_safe_token("null"));
+        // Levels
+        assert!(is_safe_token("INFO"));
+        assert!(is_safe_token("ERROR"));
+        // Hex digest at common crypto sizes (8/16/32/40/64).
+        assert!(is_safe_token("deadbeef")); // 8 — short hash
+        assert!(is_safe_token("0123456789abcdef")); // 16
+        assert!(is_safe_token("0123456789abcdef0123456789abcdef")); // 32 — md5
+        assert!(is_safe_token("0123456789abcdef0123456789abcdef01234567")); // 40 — sha1
+        assert!(is_safe_token(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        )); // 64 — sha256/blake3
+            // Snake_case identifier with digit/underscore
+        assert!(is_safe_token("bug_report"));
+        assert!(is_safe_token("tls13"));
+        // Empty
+        assert!(is_safe_token(""));
+        // SAFE_LITERALS
+        assert!(is_safe_token("agaric"));
+        assert!(is_safe_token("linux"));
+        assert!(is_safe_token("x86_64"));
+    }
+
+    /// H-9b — `is_safe_token` rejects PII-shaped strings, free text,
+    /// and any value that doesn't match a documented token class.
+    #[test]
+    fn h9b_is_safe_token_rejects_pii_shapes() {
+        // Bare lowercase first names (ALICE/BOB/etc. as single words).
+        assert!(!is_safe_token("alice"));
+        assert!(!is_safe_token("bob"));
+        assert!(!is_safe_token("charlie"));
+        // Email — handled by EMAIL_REGEX in fallback, but in the JSON
+        // deny-list path the whole string fails the safe-token test.
+        assert!(!is_safe_token("alice@example.com"));
+        // URL.
+        assert!(!is_safe_token("https://example.com/private/path"));
+        // Phone-shaped (12+ digits with formatting OR pure digits over
+        // 19 characters — both should fail).
+        assert!(!is_safe_token("555-123-4567"));
+        assert!(!is_safe_token("(555) 123-4567"));
+        assert!(!is_safe_token("12345678901234567890")); // 20 digits — over u64
+                                                         // Sentence / free text.
+        assert!(!is_safe_token("the quick brown fox"));
+        assert!(!is_safe_token("an error occurred"));
+        // Path with $HOME shape.
+        assert!(!is_safe_token("/home/alice/notes.db"));
+        // Base32-shaped but wrong length (not a ULID).
+        assert!(!is_safe_token("01HZQK7M5N")); // too short
+        assert!(!is_safe_token("01HZQK7M5N6PQRSTVWXYZABCDEFG")); // too long
+                                                                 // ULID with disallowed Crockford char (I/L/O/U).
+        assert!(!is_safe_token("01HZQK7M5N6PQRSTVWXYZABCDI")); // ends in I
+                                                               // CamelCase only — not a Rust path.
+        assert!(!is_safe_token("FooBar"));
+        // file ref outside src/.
+        assert!(!is_safe_token("/etc/passwd:42"));
+        assert!(!is_safe_token("foo.rs:42"));
+    }
+
+    /// H-9b — happy path: a JSON line whose values are ALL safe tokens
+    /// must round-trip through `redact_line` with every value preserved.
+    #[test]
+    fn h9b_redact_line_json_preserves_safe_tokens() {
+        let line = r#"{"timestamp":"2026-04-28T10:23:45.123456Z","level":"INFO","fields":{"message":"compaction starting","seq":42},"target":"agaric::snapshot::create"}"#;
+        let out = redact_line(line, &RedactionContext::default());
+        assert!(
+            out.contains(r#""timestamp":"2026-04-28T10:23:45.123456Z""#),
+            "ISO timestamp must survive, got: {out}"
+        );
+        assert!(
+            out.contains(r#""level":"INFO""#),
+            "level must survive: {out}"
+        );
+        assert!(
+            out.contains(r#""target":"agaric::snapshot::create""#),
+            "Rust path target must survive: {out}"
+        );
+        assert!(
+            out.contains(r#""message":"compaction starting""#),
+            "stable message must survive verbatim: {out}"
+        );
+        assert!(
+            out.contains(r#""seq":42"#),
+            "JSON number must survive: {out}"
+        );
+        assert!(
+            !out.contains("[REDACTED]"),
+            "no value should be redacted, got: {out}"
+        );
+    }
+
+    /// H-9b — non-safe values are redacted at the field-VALUE level.
+    /// The structural skeleton (keys, levels, target) is preserved.
+    #[test]
+    fn h9b_redact_line_json_redacts_unsafe_values() {
+        let line = r#"{"timestamp":"2026-04-28T10:23:45Z","level":"WARN","fields":{"message":"the user typed something private","note":"alice's secret notes"},"target":"agaric::frontend"}"#;
+        let out = redact_line(line, &RedactionContext::default());
+        // Skeleton preserved.
+        assert!(out.contains(r#""level":"WARN""#));
+        assert!(out.contains(r#""target":"agaric::frontend""#));
+        // Free-text message redacted (not in STABLE_MESSAGES).
+        assert!(
+            !out.contains("the user typed"),
+            "free-text message must NOT survive: {out}"
+        );
+        assert!(
+            !out.contains("alice's secret"),
+            "free-text field value must NOT survive: {out}"
+        );
+        assert!(
+            out.contains(r#""message":"[REDACTED]""#),
+            "message redaction marker must be present: {out}"
+        );
+        assert!(
+            out.contains(r#""note":"[REDACTED]""#),
+            "note redaction marker must be present: {out}"
+        );
+    }
+
+    /// H-9b — the `message` field gets the `STABLE_MESSAGES` whitelist
+    /// exception. A literal stable diagnostic survives; a non-stable
+    /// message in the same field DOES NOT.
+    #[test]
+    fn h9b_redact_line_json_message_whitelist_exception() {
+        // Whitelisted message survives.
+        let stable = r#"{"timestamp":"2026-04-28T10:23:45Z","level":"WARN","fields":{"message":"failed to bootstrap spaces — aborting boot"},"target":"agaric::lib"}"#;
+        let out = redact_line(stable, &RedactionContext::default());
+        assert!(
+            out.contains("failed to bootstrap spaces"),
+            "STABLE_MESSAGES entry must survive: {out}"
+        );
+        assert!(
+            !out.contains("[REDACTED]"),
+            "no redaction for whitelisted message: {out}"
+        );
+
+        // Non-whitelisted message redacted.
+        let custom = r#"{"timestamp":"2026-04-28T10:23:45Z","level":"WARN","fields":{"message":"unique never-before-seen diagnostic from 2099"},"target":"agaric::lib"}"#;
+        let out = redact_line(custom, &RedactionContext::default());
+        assert!(
+            !out.contains("never-before-seen"),
+            "non-whitelisted message must be redacted: {out}"
+        );
+        assert!(
+            out.contains(r#""message":"[REDACTED]""#),
+            "message replaced by [REDACTED]: {out}"
+        );
+    }
+
+    /// H-9b — JSON numbers, booleans, and null are inherently safe and
+    /// pass through unchanged. They are not user-typed strings and
+    /// therefore not PII-shape vectors.
+    #[test]
+    fn h9b_redact_line_json_primitives_preserved() {
+        let line = r#"{"timestamp":"2026-04-28T10:23:45Z","level":"INFO","fields":{"message":"compaction starting","count":1234567890,"ok":true,"hint":null,"ratio":-3}}"#;
+        let out = redact_line(line, &RedactionContext::default());
+        assert!(out.contains(r#""count":1234567890"#));
+        assert!(out.contains(r#""ok":true"#));
+        assert!(out.contains(r#""hint":null"#));
+        assert!(out.contains(r#""ratio":-3"#));
+    }
+
+    /// H-9b — nested objects + arrays are walked recursively. A safe
+    /// token deep in the tree survives; a non-safe sibling is redacted
+    /// independently.
+    #[test]
+    fn h9b_redact_line_json_recursive() {
+        let line = r#"{"timestamp":"2026-04-28T10:23:45Z","level":"INFO","fields":{"message":"compaction starting"},"target":"agaric::lib","spans":[{"name":"agaric::sync","peer":"01HZQK7M5N6PQRSTVWXYZABCDE","note":"some private text"}]}"#;
+        let out = redact_line(line, &RedactionContext::default());
+        // ULID inside spans[].peer must survive.
+        assert!(
+            out.contains("01HZQK7M5N6PQRSTVWXYZABCDE"),
+            "ULID in nested array must survive: {out}"
+        );
+        // Multi-segment Rust path inside spans[].name must survive.
+        assert!(
+            out.contains(r#""name":"agaric::sync""#),
+            "Rust path in nested array must survive: {out}"
+        );
+        // Free-text sibling must be redacted.
+        assert!(
+            !out.contains("some private text"),
+            "free-text in nested array must be redacted: {out}"
+        );
+        assert!(
+            out.contains(r#""note":"[REDACTED]""#),
+            "redaction marker in nested array: {out}"
+        );
+    }
+
+    /// H-9b — the JSON `fields` object's keys are ALWAYS preserved
+    /// verbatim. Field key NAMES are part of the structural skeleton
+    /// the user reads to follow the flow of events; they are not PII.
+    #[test]
+    fn h9b_redact_line_json_keys_never_redacted() {
+        let line = r#"{"timestamp":"2026-04-28T10:23:45Z","level":"INFO","fields":{"message":"compaction starting","weird_field_name_users_dont_typically_use":"alice"},"target":"agaric::lib"}"#;
+        let out = redact_line(line, &RedactionContext::default());
+        // The unusual KEY is preserved.
+        assert!(
+            out.contains("weird_field_name_users_dont_typically_use"),
+            "field keys are never redacted: {out}"
+        );
+        // The bare-word VALUE `alice` IS redacted (fails safe-token).
+        assert!(
+            !out.contains(r#""alice""#),
+            "bare first-name value must be redacted: {out}"
+        );
+    }
+
+    /// H-9b — non-JSON input (text format, blank lines, truncation
+    /// markers) takes the H-9a allow-list fallback. This matches the
+    /// pre-H-9b behaviour exactly so older rolled `agaric.log.YYYY-MM-DD`
+    /// files do not regress.
+    #[test]
+    fn h9b_redact_line_non_json_takes_allowlist_fallback() {
+        // Truncation marker line — must pass through the cap helper
+        // unchanged (no JSON parse, no allow-list match).
+        let marker = "…[truncated 1024 bytes of older content]";
+        let out = redact_line(marker, &RedactionContext::default());
+        assert_eq!(out, marker, "truncation marker must round-trip: {out}");
+
+        // Text-format line with $HOME — H-9a fallback scrubs to `~`.
+        let line = "2025-01-01 INFO path=/home/alice/code/agaric/notes.db";
+        let out = redact_line(
+            line,
+            &RedactionContext {
+                home: Some("/home/alice"),
+                ..Default::default()
+            },
+        );
+        assert!(
+            !out.contains("/home/alice"),
+            "H-9a `$HOME` scrub must run on text fallback: {out}"
+        );
+        assert!(out.contains("~"), "tilde replacement: {out}");
+    }
+
+    /// H-9b — property test: random alphanumeric / PII-shaped strings
+    /// fed into a JSON log line's free-text fields collapse to
+    /// `[REDACTED]`. Verifies the safety contract: no value outside the
+    /// safe-token set survives.
+    ///
+    /// `proptest` is a workspace dev-dep (per `src-tauri/Cargo.toml`)
+    /// so this is a true property test, not just a hardcoded sweep.
+    #[test]
+    fn h9b_property_pii_shapes_are_redacted() {
+        use proptest::prelude::*;
+        let mut runner = proptest::test_runner::TestRunner::default();
+
+        // PII-shaped string strategy. Each shape carries at least one
+        // character class that no [`SAFE_TOKEN_PATTERNS`] entry allows
+        // (`@`, embedded hyphen between digits, `://`, internal space),
+        // so collisions with the safe-token set are impossible by
+        // construction. Bare-letter shapes (e.g. `alice`) are
+        // deliberately omitted because some short literals like `linux`
+        // / `arm64` are in SAFE_LITERALS — narrow letter strategies
+        // would generate false-positive PII collisions.
+        let pii = prop_oneof![
+            // Email shape (contains `@`).
+            r"[a-z]{3,8}@[a-z]{3,8}\.(com|org|net)",
+            // Phone shape with separators (hyphen between digit groups
+            // — never matches integer safe-token).
+            r"\d{3}-\d{3}-\d{4}",
+            // URL shape (contains `://`).
+            r"https://[a-z]{3,10}\.com/[a-z]{3,15}",
+            // Sentence shape (contains spaces — no safe-token allows
+            // internal whitespace).
+            r"[a-z]{3,8} [a-z]{3,8} [a-z]{3,8}",
+            // Free-form note shape (mixed letters + spaces + apostrophe).
+            r"my [a-z]{3,8} note about [a-z]{3,8}",
+        ];
+
+        runner
+            .run(&pii, |sample| {
+                // Embed the sample as a free-text VALUE in a JSON line.
+                // The `secret` key is never in STABLE_MESSAGES; the
+                // value must redact.
+                let escaped = sample.replace('\\', "\\\\").replace('"', "\\\"");
+                let line = format!(
+                    r#"{{"timestamp":"2026-04-28T10:23:45Z","level":"WARN","fields":{{"message":"compaction starting","secret":"{escaped}"}},"target":"agaric::test"}}"#
+                );
+                let out = redact_line(&line, &RedactionContext::default());
+                prop_assert!(
+                    !out.contains(&sample),
+                    "PII-shaped sample {sample:?} must NOT survive in {out:?}"
+                );
+                prop_assert!(
+                    out.contains(r#""secret":"[REDACTED]""#),
+                    "redaction marker missing for sample {sample:?}: got {out:?}"
+                );
+                Ok(())
+            })
+            .expect("property must hold for every PII-shape input");
+    }
+
+    /// H-9b — property test: known-safe tokens fed as field values are
+    /// preserved verbatim by the deny-list pipeline.
+    #[test]
+    fn h9b_property_safe_tokens_preserved() {
+        use proptest::prelude::*;
+        let mut runner = proptest::test_runner::TestRunner::default();
+
+        // Safe-token strategy: random samples from each documented
+        // token class.
+        let safe = prop_oneof![
+            // ULID (Crockford base32, 26 chars).
+            r"[0-9A-HJKMNP-TV-Z]{26}",
+            // Integer ≤ u64 (1–19 digits).
+            r"[1-9][0-9]{0,18}",
+            // AppError variant.
+            r"AppError::[A-Z][a-zA-Z]{2,12}",
+            // file:line ref. `[a-z_]{3,10}` covers basenames with
+            // underscores (e.g. `bug_report.rs`).
+            r"src-tauri/src/[a-z_]{3,10}\.rs:[1-9][0-9]{0,4}",
+            // Hex digest at standard crypto sizes (8 = short-hash,
+            // 16 = u64-hex, 32 = md5, 40 = sha1, 64 = sha256/blake3).
+            r"[0-9a-f]{8}",
+            r"[0-9a-f]{16}",
+            r"[0-9a-f]{32}",
+            r"[0-9a-f]{40}",
+            r"[0-9a-f]{64}",
+        ];
+
+        runner
+            .run(&safe, |sample| {
+                let escaped = sample.replace('\\', "\\\\").replace('"', "\\\"");
+                let line = format!(
+                    r#"{{"timestamp":"2026-04-28T10:23:45Z","level":"INFO","fields":{{"message":"compaction starting","token":"{escaped}"}},"target":"agaric::test"}}"#
+                );
+                let out = redact_line(&line, &RedactionContext::default());
+                prop_assert!(
+                    out.contains(&sample),
+                    "safe sample {sample:?} must survive in {out:?}"
+                );
+                prop_assert!(
+                    !out.contains(r#""token":"[REDACTED]""#),
+                    "safe token wrongly redacted: sample {sample:?}, got {out:?}"
+                );
+                Ok(())
+            })
+            .expect("property must hold for every safe-token input");
+    }
+
+    /// H-9b — `redact_log` mixes JSON and text-format lines in one
+    /// bundle without confusing the dispatcher. Today's `agaric.log`
+    /// (post-format-switch JSON) and yesterday's rolled file (text
+    /// format) appear in the same bundle for a 7-day-window export.
+    #[test]
+    fn h9b_redact_log_mixed_format_dispatch() {
+        let contents = concat!(
+            r#"{"timestamp":"2026-04-28T10:23:45Z","level":"INFO","fields":{"message":"compaction starting"},"target":"agaric::lib"}"#,
+            "\n",
+            "2025-01-01 INFO [agaric] path=/home/alice/notes.db\n",
+        );
+        let ctx = RedactionContext {
+            home: Some("/home/alice"),
+            ..Default::default()
+        };
+        let out = redact_log(contents, &ctx);
+        // First line: JSON deny-list path, stable message preserved.
+        assert!(
+            out.contains("compaction starting"),
+            "JSON deny-list message preserved: {out}"
+        );
+        // Second line: text fallback with $HOME scrubbed.
+        assert!(
+            !out.contains("/home/alice"),
+            "$HOME scrub on text fallback line: {out}"
+        );
+        assert!(out.contains("~"), "tilde marker present: {out}");
+    }
+
+    /// H-9b — field VALUES that LOOK structured but contain a non-safe
+    /// substring (e.g. an email embedded in a 'note' string) are
+    /// redacted as a single unit. The deny-list does NOT do partial
+    /// substring substitution — it's a whole-value check.
+    #[test]
+    fn h9b_redact_line_json_no_partial_substring_substitution() {
+        let line = r#"{"timestamp":"2026-04-28T10:23:45Z","level":"INFO","fields":{"message":"compaction starting","note":"contact: alice@example.com please"}}"#;
+        let out = redact_line(line, &RedactionContext::default());
+        // The whole `note` value is replaced (not just the email
+        // substring). This is the SAFER posture: any embedded PII
+        // inside a free-text wrapper still vanishes.
+        assert!(
+            !out.contains("alice@example.com"),
+            "embedded email must not survive: {out}"
+        );
+        assert!(
+            out.contains(r#""note":"[REDACTED]""#),
+            "whole-value redaction (not substring): {out}"
         );
     }
 
