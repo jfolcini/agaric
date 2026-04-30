@@ -347,7 +347,12 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         viewportRef={listRef}
         className="page-browser-list max-h-[calc(100dvh-200px)]"
         viewportProps={{
-          role: 'listbox',
+          // MAINT-162 — ARIA grid pattern for the page list. The
+          // viewport mixes flat-page rows, section headers, and
+          // namespace-tree rows under one container; `role="grid"`
+          // permits this heterogeneous mix where `role="listbox"`
+          // would have required every child to be `role="option"`.
+          role: 'grid',
           tabIndex: 0,
           'aria-label': hasStarred ? t('pageBrowser.pageListGrouped') : t('pageBrowser.pageList'),
           // Section presence flags exposed for tests / styling hooks.

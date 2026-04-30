@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { commands } from './bindings'
 import { logger } from './logger'
 
 export type {
@@ -59,6 +60,16 @@ export interface ProjectedAgendaEntry {
 // Command wrappers — type-safe Tauri invoke layer
 // ---------------------------------------------------------------------------
 
+/**
+ * Unwrap a `commands.*` result, throwing on error to preserve the
+ * reject-based semantics of the legacy `invoke()` wrappers. Internal
+ * helper for the staged migration to `bindings.ts`.
+ */
+function unwrap<T>(result: { status: 'ok'; data: T } | { status: 'error'; error: unknown }): T {
+  if (result.status === 'ok') return result.data
+  throw result.error
+}
+
 /** Create a new block. Returns the created block with its generated ID.
  *
  * BUG-1 / H-3a — when `blockType === 'page'`, `spaceId` is REQUIRED.
@@ -72,40 +83,45 @@ export interface ProjectedAgendaEntry {
  *
  * Other block types (`content`, `tag`) ignore `spaceId`.
  */
-export function createBlock(params: {
+export async function createBlock(params: {
   blockType: string
   content: string
   parentId?: string | undefined
   position?: number | undefined
   spaceId?: string | undefined
 }): Promise<BlockRow> {
-  return invoke('create_block', {
-    blockType: params.blockType,
-    content: params.content,
-    parentId: params.parentId ?? null,
-    position: params.position ?? null,
-    spaceId: params.spaceId ?? null,
-  })
+  return unwrap(
+    await commands.createBlock(
+      params.blockType,
+      params.content,
+      params.parentId ?? null,
+      params.position ?? null,
+      params.spaceId ?? null,
+    ),
+  )
 }
 
 /** Edit a block's text content. */
-export function editBlock(blockId: string, toText: string): Promise<BlockRow> {
-  return invoke('edit_block', { blockId, toText })
+export async function editBlock(blockId: string, toText: string): Promise<BlockRow> {
+  return unwrap(await commands.editBlock(blockId, toText))
 }
 
 /** Soft-delete a block (cascade to descendants). */
-export function deleteBlock(blockId: string): Promise<DeleteResponse> {
-  return invoke('delete_block', { blockId })
+export async function deleteBlock(blockId: string): Promise<DeleteResponse> {
+  return unwrap(await commands.deleteBlock(blockId))
 }
 
 /** Restore a soft-deleted block using its `deleted_at` timestamp as ref. */
-export function restoreBlock(blockId: string, deletedAtRef: string): Promise<RestoreResponse> {
-  return invoke('restore_block', { blockId, deletedAtRef })
+export async function restoreBlock(
+  blockId: string,
+  deletedAtRef: string,
+): Promise<RestoreResponse> {
+  return unwrap(await commands.restoreBlock(blockId, deletedAtRef))
 }
 
 /** Permanently purge a block and its descendants. Irreversible. */
-export function purgeBlock(blockId: string): Promise<PurgeResponse> {
-  return invoke('purge_block', { blockId })
+export async function purgeBlock(blockId: string): Promise<PurgeResponse> {
+  return unwrap(await commands.purgeBlock(blockId))
 }
 
 export interface BulkTrashResponse {
@@ -205,8 +221,8 @@ export function listProjectedAgenda(opts: {
 }
 
 /** Fetch a single block by ID. */
-export function getBlock(blockId: string): Promise<BlockRow> {
-  return invoke('get_block', { blockId })
+export async function getBlock(blockId: string): Promise<BlockRow> {
+  return unwrap(await commands.getBlock(blockId))
 }
 
 /** Resolved metadata for a block — lightweight alternative to full BlockRow. */
@@ -236,43 +252,41 @@ export interface ResolvedBlock {
  * `Option<String>` → `String`. Mirrors the optional `spaceId` shape
  * used by `listBlocks` / `searchBlocks`.
  */
-export function batchResolve(
+export async function batchResolve(
   ids: string[],
   spaceId?: string | undefined,
 ): Promise<ResolvedBlock[]> {
-  return invoke('batch_resolve', { ids, spaceId: spaceId ?? null })
+  return unwrap(await commands.batchResolve(ids, spaceId ?? null))
 }
 
 /** Move a block to a new parent and/or position. */
-export function moveBlock(
+export async function moveBlock(
   blockId: string,
   newParentId: string | null,
   newPosition: number,
 ): Promise<MoveResponse> {
-  return invoke('move_block', { blockId, newParentId, newPosition })
+  return unwrap(await commands.moveBlock(blockId, newParentId, newPosition))
 }
 
 /** Associate a tag with a block. */
-export function addTag(blockId: string, tagId: string): Promise<TagResponse> {
-  return invoke('add_tag', { blockId, tagId })
+export async function addTag(blockId: string, tagId: string): Promise<TagResponse> {
+  return unwrap(await commands.addTag(blockId, tagId))
 }
 
 /** Remove a tag association from a block. */
-export function removeTag(blockId: string, tagId: string): Promise<TagResponse> {
-  return invoke('remove_tag', { blockId, tagId })
+export async function removeTag(blockId: string, tagId: string): Promise<TagResponse> {
+  return unwrap(await commands.removeTag(blockId, tagId))
 }
 
 /** List blocks that link to the given block (backlinks), paginated. */
-export function getBacklinks(params: {
+export async function getBacklinks(params: {
   blockId: string
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<PageResponse<BlockRow>> {
-  return invoke('get_backlinks', {
-    blockId: params.blockId,
-    cursor: params.cursor ?? null,
-    limit: params.limit ?? null,
-  })
+  return unwrap(
+    await commands.getBacklinks(params.blockId, params.cursor ?? null, params.limit ?? null),
+  )
 }
 
 /** List op-log history for a block, paginated (newest first). */

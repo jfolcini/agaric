@@ -793,9 +793,12 @@ describe('PageBrowser', () => {
 
       expect(await screen.findByText('First page')).toBeInTheDocument()
       expect(screen.getByText('Second page')).toBeInTheDocument()
-      // Should use flat list items (option role inside listbox)
-      const listbox = screen.getByRole('listbox')
-      const listItems = within(listbox).getAllByRole('option')
+      // Should use flat list items (row role inside grid; tree-page
+      // wrappers are absent when no namespaces exist).
+      const grid = screen.getByRole('grid')
+      const listItems = within(grid)
+        .getAllByRole('row')
+        .filter((r) => r.hasAttribute('data-page-item'))
       expect(listItems).toHaveLength(2)
     })
 
@@ -1309,7 +1312,9 @@ describe('PageBrowser', () => {
 
       await screen.findByText('Apple')
 
-      const listItems = within(screen.getByRole('listbox')).getAllByRole('option')
+      const listItems = within(screen.getByRole('grid'))
+        .getAllByRole('row')
+        .filter((r) => r.hasAttribute('data-page-item'))
       const titles = listItems.map(
         (li) => li.querySelector('.page-browser-item-title')?.textContent,
       )
@@ -1335,7 +1340,9 @@ describe('PageBrowser', () => {
       const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
       await user.selectOptions(sortSelect, 'created')
 
-      const listItems = within(screen.getByRole('listbox')).getAllByRole('option')
+      const listItems = within(screen.getByRole('grid'))
+        .getAllByRole('row')
+        .filter((r) => r.hasAttribute('data-page-item'))
       const titles = listItems.map(
         (li) => li.querySelector('.page-browser-item-title')?.textContent,
       )
@@ -1365,7 +1372,9 @@ describe('PageBrowser', () => {
       const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
       await user.selectOptions(sortSelect, 'recent')
 
-      const listItems = within(screen.getByRole('listbox')).getAllByRole('option')
+      const listItems = within(screen.getByRole('grid'))
+        .getAllByRole('row')
+        .filter((r) => r.hasAttribute('data-page-item'))
       const titles = listItems.map(
         (li) => li.querySelector('.page-browser-item-title')?.textContent,
       )
@@ -1496,8 +1505,9 @@ describe('PageBrowser', () => {
 
       // Initially flat — no Starred header.
       expect(screen.queryByText('Starred')).not.toBeInTheDocument()
-      let titles = within(screen.getByRole('listbox'))
-        .getAllByRole('option')
+      let titles = within(screen.getByRole('grid'))
+        .getAllByRole('row')
+        .filter((r) => r.hasAttribute('data-page-item'))
         .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
       expect(titles).toEqual(['Apple', 'Banana', 'Cherry'])
 
@@ -1511,9 +1521,10 @@ describe('PageBrowser', () => {
       expect(screen.getByText('Starred')).toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
 
-      // Cherry is now first in the page-only listbox.
-      titles = within(screen.getByRole('listbox'))
-        .getAllByRole('option')
+      // Cherry is now first in the page-only grid.
+      titles = within(screen.getByRole('grid'))
+        .getAllByRole('row')
+        .filter((r) => r.hasAttribute('data-page-item'))
         .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
       expect(titles).toEqual(['Cherry', 'Apple', 'Banana'])
 
@@ -1542,8 +1553,9 @@ describe('PageBrowser', () => {
 
       // Default sort is alphabetical. Starred set = {Cherry, Banana};
       // Other = {Apple, Durian}. Within each group: alphabetical.
-      const titles = within(screen.getByRole('listbox'))
-        .getAllByRole('option')
+      const titles = within(screen.getByRole('grid'))
+        .getAllByRole('row')
+        .filter((r) => r.hasAttribute('data-page-item'))
         .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
       expect(titles).toEqual(['Banana', 'Cherry', 'Apple', 'Durian'])
     })
@@ -1570,8 +1582,9 @@ describe('PageBrowser', () => {
 
       // Starred (newest-first): NewStar, OldStar
       // Other (newest-first):   NewestUnstar, MidUnstar
-      const titles = within(screen.getByRole('listbox'))
-        .getAllByRole('option')
+      const titles = within(screen.getByRole('grid'))
+        .getAllByRole('row')
+        .filter((r) => r.hasAttribute('data-page-item'))
         .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
       expect(titles).toEqual(['NewStar', 'OldStar', 'NewestUnstar', 'MidUnstar'])
     })
@@ -1602,8 +1615,9 @@ describe('PageBrowser', () => {
 
       // Starred = {Apple, Banana} — Apple has a recent visit, Banana does not
       // (alphabetical fallback). Other = {Cherry, Durian} — Cherry recent, Durian not.
-      const titles = within(screen.getByRole('listbox'))
-        .getAllByRole('option')
+      const titles = within(screen.getByRole('grid'))
+        .getAllByRole('row')
+        .filter((r) => r.hasAttribute('data-page-item'))
         .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
       expect(titles).toEqual(['Apple', 'Banana', 'Cherry', 'Durian'])
     })
@@ -1628,8 +1642,9 @@ describe('PageBrowser', () => {
       await user.click(within(bananaRow).getByRole('button', { name: /star page/i }))
 
       expect(screen.getByText('Starred')).toBeInTheDocument()
-      let titles = within(screen.getByRole('listbox'))
-        .getAllByRole('option')
+      let titles = within(screen.getByRole('grid'))
+        .getAllByRole('row')
+        .filter((r) => r.hasAttribute('data-page-item'))
         .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
       expect(titles).toEqual(['Banana', 'Apple', 'Cherry'])
 
@@ -1639,8 +1654,9 @@ describe('PageBrowser', () => {
       await user.click(within(bananaRowAgain).getByRole('button', { name: /unstar page/i }))
 
       expect(screen.queryByText('Starred')).not.toBeInTheDocument()
-      titles = within(screen.getByRole('listbox'))
-        .getAllByRole('option')
+      titles = within(screen.getByRole('grid'))
+        .getAllByRole('row')
+        .filter((r) => r.hasAttribute('data-page-item'))
         .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
       expect(titles).toEqual(['Apple', 'Banana', 'Cherry'])
     })
@@ -1772,7 +1788,10 @@ describe('PageBrowser', () => {
         '[data-page-section="starred"]',
       ) as HTMLElement | null
       expect(starredGroup).not.toBeNull()
-      expect(starredGroup).toHaveAttribute('role', 'group')
+      // Under MAINT-162's grid flip the section header is a row inside
+      // the page-list grid (its single gridcell child carries the
+      // visible label and the icon).
+      expect(starredGroup).toHaveAttribute('role', 'row')
       // Accessible name is "Starred, 2 pages" (sr-only span).
       expect(starredGroup).toHaveAccessibleName('Starred, 2 pages')
 
@@ -1797,8 +1816,8 @@ describe('PageBrowser', () => {
       render(<PageBrowser />)
       await screen.findByText('Apple')
 
-      const listbox = screen.getByRole('listbox')
-      expect(listbox).toHaveAttribute('aria-label', 'Page list, grouped by starred')
+      const grid = screen.getByRole('grid')
+      expect(grid).toHaveAttribute('aria-label', 'Page list, grouped by starred')
     })
 
     it('FEAT-12: viewport aria-label stays plain when no starred pages', async () => {
@@ -1814,8 +1833,8 @@ describe('PageBrowser', () => {
       render(<PageBrowser />)
       await screen.findByText('Apple')
 
-      const listbox = screen.getByRole('listbox')
-      expect(listbox).toHaveAttribute('aria-label', 'Page list')
+      const grid = screen.getByRole('grid')
+      expect(grid).toHaveAttribute('aria-label', 'Page list')
     })
 
     it('FEAT-12: keyboard ArrowDown skips header rows (focus stays page-indexed)', async () => {
@@ -1883,13 +1902,7 @@ describe('PageBrowser', () => {
       expect(screen.getByText('Pages')).toBeInTheDocument()
 
       await waitFor(async () => {
-        const results = await axe(container, {
-          rules: {
-            // listbox+option pattern intentionally nests interactive
-            // star/select/delete buttons in each row.
-            'nested-interactive': { enabled: false },
-          },
-        })
+        const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
     })
@@ -1914,9 +1927,7 @@ describe('PageBrowser', () => {
       await user.type(searchInput, 'Apple')
 
       await waitFor(async () => {
-        const results = await axe(container, {
-          rules: { 'nested-interactive': { enabled: false } },
-        })
+        const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
     })
@@ -2130,7 +2141,7 @@ describe('PageBrowser', () => {
 
       // ArrowDown → pageIndex 2 (the `work` tree-page wrapper). The
       // wrapper carries the focus ring class but no aria-selected (it
-      // isn't a listbox option). Verify via the focused-index ring.
+      // isn't a single selectable cell). Verify via the focused-index ring.
       fireEvent.keyDown(document, { key: 'ArrowDown' })
       const treeWrapper = document.querySelector(
         '[data-page-tree-row][data-page-index="2"]',
@@ -2186,17 +2197,7 @@ describe('PageBrowser', () => {
       expect(screen.getByText('Pages')).toBeInTheDocument()
 
       await waitFor(async () => {
-        const results = await axe(container, {
-          rules: {
-            // listbox+option pattern intentionally nests interactive
-            // chevron / star / delete buttons in each row.
-            'nested-interactive': { enabled: false },
-            // The `Pages` section renders `PageTreeItem` (button rows)
-            // inside the listbox viewport for namespace roots — same
-            // pattern as the pre-FEAT-14 tree-mode path.
-            'aria-required-children': { enabled: false },
-          },
-        })
+        const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
     })
@@ -2218,12 +2219,7 @@ describe('PageBrowser', () => {
       await screen.findByText('Starred Page')
 
       await waitFor(async () => {
-        const results = await axe(container, {
-          rules: {
-            // listbox+option pattern intentionally nests interactive star/delete buttons
-            'nested-interactive': { enabled: false },
-          },
-        })
+        const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
     })
@@ -2240,10 +2236,10 @@ describe('PageBrowser', () => {
 
       await screen.findByText('A page')
 
-      // The listbox lives on the ScrollArea viewport.
+      // The page-list grid lives on the ScrollArea viewport (MAINT-162).
       const viewport = container.querySelector('[data-slot="scroll-area-viewport"]')
       expect(viewport).toBeInTheDocument()
-      expect(viewport?.getAttribute('role')).toBe('listbox')
+      expect(viewport?.getAttribute('role')).toBe('grid')
 
       // No bare overflow-y-auto anywhere.
       const anyOverflowY = container.querySelector('.overflow-y-auto')
@@ -2404,7 +2400,7 @@ describe('PageBrowser', () => {
       expect(screen.getByTestId('search-input-clear')).toBeInTheDocument()
 
       // Scope the a11y audit to the SearchInput wrapper containing the
-      // visible clear button. The surrounding page-list uses `role="option"`
+      // visible clear button. The surrounding page-list uses `role="row"`
       // rows containing nested buttons (star / select / delete) which
       // pre-dates this migration and is orthogonal to the SearchInput
       // clear-button affordance under test here. axe cold-load under

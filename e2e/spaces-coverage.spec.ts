@@ -28,7 +28,8 @@ import { expect, test, waitForBoot } from './helpers'
 /** Open the Pages view via the sidebar nav button. */
 async function openPagesView(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'Pages', exact: true }).click()
-  await expect(page.getByRole('listbox')).toBeVisible()
+  // MAINT-162 — the page list is now an ARIA grid (was listbox).
+  await expect(page.getByRole('grid')).toBeVisible()
 }
 
 /** Open the Templates view via the sidebar nav button. */
@@ -68,8 +69,18 @@ test.describe('BUG-1 — page creation routes through create_page_in_space', () 
 
     // Both onboarding pages must show up in the active space's PageBrowser.
     await openPagesView(page)
-    await expect(page.getByRole('option', { name: /Getting Started/ }).first()).toBeVisible()
-    await expect(page.getByRole('option', { name: /Quick Tips/ }).first()).toBeVisible()
+    await expect(
+      page
+        .locator('[data-page-item]')
+        .filter({ hasText: /Getting Started/ })
+        .first(),
+    ).toBeVisible()
+    await expect(
+      page
+        .locator('[data-page-item]')
+        .filter({ hasText: /Quick Tips/ })
+        .first(),
+    ).toBeVisible()
   })
 
   test('Journal "Add block to today" page lands in the active space PageBrowser list', async ({
@@ -92,8 +103,13 @@ test.describe('BUG-1 — page creation routes through create_page_in_space', () 
 
     // Open Pages — today's journal page must appear in the list.
     await openPagesView(page)
-    // Match by exact date string in the page-list option name.
-    await expect(page.getByRole('option', { name: new RegExp(todayStr) }).first()).toBeVisible()
+    // Match by exact date string in the page-list row content.
+    await expect(
+      page
+        .locator('[data-page-item]')
+        .filter({ hasText: new RegExp(todayStr) })
+        .first(),
+    ).toBeVisible()
   })
 
   test('Template created via Templates view lands in the active space PageBrowser list', async ({
@@ -117,6 +133,11 @@ test.describe('BUG-1 — page creation routes through create_page_in_space', () 
     // (BUG-1 regression net: pre-fix, this assertion failed because the
     // template page was unscoped and the scoped `list_blocks` skipped it).
     await openPagesView(page)
-    await expect(page.getByRole('option', { name: /Project Brief Template/ }).first()).toBeVisible()
+    await expect(
+      page
+        .locator('[data-page-item]')
+        .filter({ hasText: /Project Brief Template/ })
+        .first(),
+    ).toBeVisible()
   })
 })

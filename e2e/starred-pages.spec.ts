@@ -30,8 +30,10 @@ import { expect, test, waitForBoot } from './helpers'
 
 async function openPagesView(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'Pages', exact: true }).click()
-  // Wait for the listbox to render.
-  await expect(page.getByRole('listbox')).toBeVisible()
+  // Wait for the page-list grid to render (MAINT-162 — flipped from
+  // `role="listbox"` so the mixed-mode flat/tree rows have a uniform
+  // ARIA contract).
+  await expect(page.getByRole('grid')).toBeVisible()
 }
 
 test.describe('FEAT-12 + FEAT-14 — PageBrowser unified Starred + Pages model', () => {
@@ -52,8 +54,8 @@ test.describe('FEAT-12 + FEAT-14 — PageBrowser unified Starred + Pages model',
     // The `Pages` section renders all flat seeded pages.
     await expect(page.locator('[data-page-section="pages"]')).toBeVisible()
     // The viewport's accessible name reflects the non-grouped state.
-    const listbox = page.getByRole('listbox')
-    await expect(listbox).toHaveAttribute('aria-label', 'Page list')
+    const grid = page.getByRole('grid')
+    await expect(grid).toHaveAttribute('aria-label', 'Page list')
   })
 
   test('starring a page surfaces the Starred header and moves the row to the top', async ({
@@ -70,13 +72,13 @@ test.describe('FEAT-12 + FEAT-14 — PageBrowser unified Starred + Pages model',
     // Pages header is also visible (non-starred remain).
     await expect(page.locator('[data-page-section="pages"]')).toBeVisible()
 
-    // Quick Notes is now the first option in the listbox.
-    const firstOption = page.getByRole('option').first()
-    await expect(firstOption).toContainText('Quick Notes')
-    await expect(firstOption).toHaveAttribute('data-starred', 'true')
+    // Quick Notes is now the first page row in the grid.
+    const firstPageRow = page.locator('[data-page-item]').first()
+    await expect(firstPageRow).toContainText('Quick Notes')
+    await expect(firstPageRow).toHaveAttribute('data-starred', 'true')
 
     // Viewport aria-label reflects the grouped state.
-    await expect(page.getByRole('listbox')).toHaveAttribute(
+    await expect(page.getByRole('grid')).toHaveAttribute(
       'aria-label',
       'Page list, grouped by starred',
     )
@@ -87,7 +89,7 @@ test.describe('FEAT-12 + FEAT-14 — PageBrowser unified Starred + Pages model',
 
     // Star "Projects".
     await page.locator('[data-page-item]:has-text("Projects") .star-toggle').click()
-    await expect(page.getByRole('option').first()).toContainText('Projects')
+    await expect(page.locator('[data-page-item]').first()).toContainText('Projects')
 
     // Inspect localStorage directly — the persistence contract.
     const stored = await page.evaluate(() => window.localStorage.getItem('starred-pages'))
@@ -99,7 +101,7 @@ test.describe('FEAT-12 + FEAT-14 — PageBrowser unified Starred + Pages model',
     await page.reload()
     await openPagesView(page)
     await expect(page.locator('[data-page-section="starred"]')).toBeVisible()
-    await expect(page.getByRole('option').first()).toContainText('Projects')
+    await expect(page.locator('[data-page-item]').first()).toContainText('Projects')
   })
 
   test('starring a second page respects the active sort within the group', async ({ page }) => {
@@ -110,9 +112,9 @@ test.describe('FEAT-12 + FEAT-14 — PageBrowser unified Starred + Pages model',
     await page.locator('[data-page-item]:has-text("Quick Notes") .star-toggle').click()
     await page.locator('[data-page-item]:has-text("Meetings") .star-toggle').click()
 
-    const options = page.getByRole('option')
-    await expect(options.nth(0)).toContainText('Meetings')
-    await expect(options.nth(1)).toContainText('Quick Notes')
+    const pageRows = page.locator('[data-page-item]')
+    await expect(pageRows.nth(0)).toContainText('Meetings')
+    await expect(pageRows.nth(1)).toContainText('Quick Notes')
   })
 
   test('unstarring drops the page back into Pages', async ({ page }) => {
@@ -149,8 +151,8 @@ test.describe('FEAT-12 + FEAT-14 — PageBrowser unified Starred + Pages model',
 
     await expect(page.locator('[data-page-section="starred"]')).toHaveCount(0)
     await expect(page.locator('[data-page-section="pages"]')).toBeVisible()
-    await expect(page.getByRole('option')).toHaveCount(1)
-    await expect(page.getByRole('option').first()).toContainText('Projects')
+    await expect(page.locator('[data-page-item]')).toHaveCount(1)
+    await expect(page.locator('[data-page-item]').first()).toContainText('Projects')
   })
 
   test('FEAT-14: namespaced pages and starred pages coexist in the unified layout', async ({
