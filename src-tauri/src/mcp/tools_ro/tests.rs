@@ -809,8 +809,13 @@ async fn get_agenda_happy_path() {
         )
         .await
         .expect("happy path");
-    let arr = result.as_array().expect("agenda array");
-    assert_eq!(arr.len(), 0, "empty DB has zero agenda entries");
+    // M-25: `get_agenda` now returns a `PageResponse` shape rather
+    // than a flat array. The empty DB has zero entries, so `items`
+    // is the empty array and `has_more` is false.
+    let items = result["items"].as_array().expect("agenda items array");
+    assert_eq!(items.len(), 0, "empty DB has zero agenda entries");
+    assert_eq!(result["has_more"], false);
+    assert!(result["next_cursor"].is_null());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1571,7 +1576,8 @@ async fn snapshot_get_agenda_response_shape() {
         .await
         .unwrap();
     insta::assert_yaml_snapshot!("tool_response_get_agenda", result, {
-        "[].block.id" => "[ULID]",
+        // M-25: response is now `PageResponse { items, next_cursor, has_more }`
+        ".items[].block.id" => "[ULID]",
     });
 }
 

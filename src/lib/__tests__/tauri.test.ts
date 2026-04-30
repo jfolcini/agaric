@@ -2055,20 +2055,25 @@ describe('trashDescendantCounts', () => {
 
 describe('listProjectedAgenda', () => {
   it('invokes list_projected_agenda with all parameters', async () => {
-    const expected = [
-      {
-        block: {
-          id: 'BLK1',
-          block_type: 'task',
-          content: 'recurring',
-          parent_id: null,
-          position: null,
-          deleted_at: null,
+    // M-25: response is now a cursor-paginated `PageResponse`.
+    const expected = {
+      items: [
+        {
+          block: {
+            id: 'BLK1',
+            block_type: 'task',
+            content: 'recurring',
+            parent_id: null,
+            position: null,
+            deleted_at: null,
+          },
+          projected_date: '2025-02-01',
+          source: 'due_date',
         },
-        projected_date: '2025-02-01',
-        source: 'due_date',
-      },
-    ]
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
     mockedInvoke.mockResolvedValueOnce(expected)
 
     const result = await listProjectedAgenda({
@@ -2081,20 +2086,40 @@ describe('listProjectedAgenda', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('list_projected_agenda', {
       startDate: '2025-01-15',
       endDate: '2025-02-15',
+      cursor: null,
       limit: 50,
     })
     expect(result).toEqual(expected)
   })
 
-  it('defaults optional limit to null', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
+  it('defaults optional cursor and limit to null', async () => {
+    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
 
     await listProjectedAgenda({ startDate: '2025-01-15', endDate: '2025-02-15' })
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_projected_agenda', {
       startDate: '2025-01-15',
       endDate: '2025-02-15',
+      cursor: null,
       limit: null,
+    })
+  })
+
+  it('forwards an explicit cursor for page-2 fetches (M-25)', async () => {
+    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+
+    await listProjectedAgenda({
+      startDate: '2025-01-15',
+      endDate: '2025-02-15',
+      cursor: 'OPAQUE_CURSOR',
+      limit: 25,
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('list_projected_agenda', {
+      startDate: '2025-01-15',
+      endDate: '2025-02-15',
+      cursor: 'OPAQUE_CURSOR',
+      limit: 25,
     })
   })
 })

@@ -389,9 +389,14 @@ export function useDuePanelData({
     }
 
     setProjectedLoading(true)
+    // M-25: `listProjectedAgenda` is cursor-paginated. The Due panel only
+    // needs today's projected entries, which fit comfortably under the
+    // limit, so this hook is first-page-only by design — `next_cursor`
+    // and `has_more` are intentionally ignored.
     listProjectedAgenda({ startDate: date, endDate: date, limit: 20 })
-      .then((entries) => {
+      .then((response) => {
         if (!stale) {
+          const entries = response.items
           // Update cache
           projectedCache.set(cacheKey, { entries, timestamp: Date.now() })
           // Filter out empty-content projected entries (UX-129)

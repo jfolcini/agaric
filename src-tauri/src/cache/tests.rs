@@ -2752,13 +2752,19 @@ async fn projected_agenda_cache_oracle_matches_on_the_fly() {
     .unwrap();
 
     // Step 3: Compute on-the-fly for the same range
-    let on_the_fly =
-        crate::commands::list_projected_agenda_inner(&pool, start.clone(), end.clone(), Some(500))
-            .await
-            .unwrap();
+    let on_the_fly = crate::commands::list_projected_agenda_inner(
+        &pool,
+        start.clone(),
+        end.clone(),
+        None,
+        Some(500),
+    )
+    .await
+    .unwrap();
 
     // Convert on-the-fly results to comparable tuples, sorted
     let mut on_the_fly_tuples: Vec<(String, String, String)> = on_the_fly
+        .items
         .iter()
         .map(|e| {
             (

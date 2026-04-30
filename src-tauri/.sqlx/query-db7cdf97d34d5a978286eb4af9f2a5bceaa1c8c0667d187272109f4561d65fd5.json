@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE materializer_apply_cursor SET materialized_through_seq = ?, updated_at = ? WHERE id = 1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "db7cdf97d34d5a978286eb4af9f2a5bceaa1c8c0667d187272109f4561d65fd5"
+}

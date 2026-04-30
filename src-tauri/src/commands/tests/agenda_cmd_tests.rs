@@ -848,9 +848,10 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
     let end = (today + chrono::Duration::days(28))
         .format("%Y-%m-%d")
         .to_string();
-    let entries = list_projected_agenda_inner(&pool, start, end, None)
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None)
         .await
-        .unwrap();
+        .unwrap()
+        .items;
 
     assert!(
         entries.len() >= 3,
@@ -969,9 +970,10 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
     let end = (today + chrono::Duration::days(60))
         .format("%Y-%m-%d")
         .to_string();
-    let entries = list_projected_agenda_inner(&pool, start, end, None)
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None)
         .await
-        .unwrap();
+        .unwrap()
+        .items;
 
     assert_eq!(
         entries.len(),
@@ -1091,9 +1093,10 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
     let range_start = chrono::NaiveDate::from_ymd_opt(2026, 4, 7).unwrap();
     let range_end = chrono::NaiveDate::from_ymd_opt(2026, 4, 30).unwrap();
     let entries =
-        list_projected_agenda_on_the_fly(&pool, range_start, range_end, 200, pinned_today)
+        list_projected_agenda_on_the_fly(&pool, range_start, range_end, 200, pinned_today, None)
             .await
-            .unwrap();
+            .unwrap()
+            .items;
 
     assert_eq!(
         entries.len(),
@@ -1150,9 +1153,10 @@ async fn projected_agenda_skips_done_blocks() {
     mat.flush_background().await.unwrap();
 
     let entries =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-05-04".into(), None)
+        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-05-04".into(), None, None)
             .await
-            .unwrap();
+            .unwrap()
+            .items;
 
     // The original block is DONE, but set_todo_state may have created a new
     // TODO sibling with repeat. Filter to only entries from our block.
@@ -1171,7 +1175,8 @@ async fn projected_agenda_validates_date_range() {
 
     // Invalid date format
     let result =
-        list_projected_agenda_inner(&pool, "not-a-date".into(), "2026-04-30".into(), None).await;
+        list_projected_agenda_inner(&pool, "not-a-date".into(), "2026-04-30".into(), None, None)
+            .await;
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "should reject invalid date"
@@ -1179,7 +1184,8 @@ async fn projected_agenda_validates_date_range() {
 
     // Start > end
     let result =
-        list_projected_agenda_inner(&pool, "2026-05-01".into(), "2026-04-01".into(), None).await;
+        list_projected_agenda_inner(&pool, "2026-05-01".into(), "2026-04-01".into(), None, None)
+            .await;
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "should reject start > end"
@@ -1191,9 +1197,10 @@ async fn projected_agenda_empty_when_no_repeating_blocks() {
     let (pool, _dir) = test_pool().await;
 
     let entries =
-        list_projected_agenda_inner(&pool, "2026-04-01".into(), "2026-04-30".into(), None)
+        list_projected_agenda_inner(&pool, "2026-04-01".into(), "2026-04-30".into(), None, None)
             .await
-            .unwrap();
+            .unwrap()
+            .items;
 
     assert!(
         entries.is_empty(),
@@ -1254,9 +1261,10 @@ async fn projected_agenda_dot_plus_mode_projects_from_today() {
         .format("%Y-%m-%d")
         .to_string();
 
-    let entries = list_projected_agenda_inner(&pool, start, end, None)
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None)
         .await
-        .unwrap();
+        .unwrap()
+        .items;
 
     // .+ mode shifts from today, so first projection should be ~today+7d
     assert!(!entries.is_empty(), ".+ mode should produce projections");
@@ -1327,9 +1335,10 @@ async fn projected_agenda_plus_plus_mode_catches_up_to_today() {
         .format("%Y-%m-%d")
         .to_string();
 
-    let entries = list_projected_agenda_inner(&pool, start, end, None)
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None)
         .await
-        .unwrap();
+        .unwrap()
+        .items;
 
     // ++ mode should produce dates on the original Monday cadence
     // First projection should be the next Monday after today (from 2025-01-06 cadence)
@@ -1400,9 +1409,10 @@ async fn projected_agenda_both_date_columns_produce_separate_entries() {
     mat.flush_background().await.unwrap();
 
     let entries =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-20".into(), None)
+        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-20".into(), None, None)
             .await
-            .unwrap();
+            .unwrap()
+            .items;
 
     // Should have entries from both due_date and scheduled_date
     let due_entries: Vec<_> = entries.iter().filter(|e| e.source == "due_date").collect();
@@ -1497,9 +1507,10 @@ async fn projected_agenda_exhausted_count_returns_zero() {
     mat.flush_background().await.unwrap();
 
     let entries =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-30".into(), None)
+        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-30".into(), None, None)
             .await
-            .unwrap();
+            .unwrap()
+            .items;
 
     let from_block: Vec<_> = entries.iter().filter(|e| e.block.id == resp.id).collect();
     assert!(
@@ -1555,10 +1566,16 @@ async fn projected_agenda_limit_caps_results() {
     mat.flush_background().await.unwrap();
 
     // Request 365 days of daily projections but limit to 5
-    let entries =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2027-04-06".into(), Some(5))
-            .await
-            .unwrap();
+    let entries = list_projected_agenda_inner(
+        &pool,
+        "2026-04-07".into(),
+        "2027-04-06".into(),
+        None,
+        Some(5),
+    )
+    .await
+    .unwrap()
+    .items;
 
     assert_eq!(entries.len(), 5, "limit should cap results to 5");
 
@@ -1653,9 +1670,10 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
     // for the repeating task.  With the template filter, nothing should
     // come back.
     let entries =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-14".into(), None)
+        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-14".into(), None, None)
             .await
-            .unwrap();
+            .unwrap()
+            .items;
     assert_eq!(
         entries.len(),
         0,
@@ -1669,9 +1687,10 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         .await
         .unwrap();
     let entries_on_fly =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-14".into(), None)
+        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-14".into(), None, None)
             .await
-            .unwrap();
+            .unwrap()
+            .items;
     assert_eq!(
         entries_on_fly.len(),
         0,
@@ -1753,9 +1772,10 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
 
     // Sanity: with the template property set, the task is filtered out.
     let filtered =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-10".into(), None)
+        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-10".into(), None, None)
             .await
-            .unwrap();
+            .unwrap()
+            .items;
     assert_eq!(filtered.len(), 0);
 
     // Remove the template property and the task must re-enter the
@@ -1771,9 +1791,10 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         .unwrap();
 
     let entries =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-10".into(), None)
+        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-10".into(), None, None)
             .await
-            .unwrap();
+            .unwrap()
+            .items;
     assert_eq!(
         entries.len(),
         4,
@@ -1953,6 +1974,190 @@ async fn list_undated_tasks_pagination() {
         !page2.has_more,
         "second page should indicate no more results"
     );
+
+    mat.shutdown();
+}
+
+// ======================================================================
+// M-25 — list_projected_agenda cursor pagination
+// ======================================================================
+//
+// Pre-M-25 the inner returned a flat `Vec<ProjectedAgendaEntry>` clamped
+// to 500 entries with no escape hatch — entries beyond the cap were
+// silently dropped. M-25 changes the return type to a cursor-paginated
+// `PageResponse` so callers can page past the cap, matching AGENTS.md
+// invariant #3.
+//
+// Both tests seed >limit entries via repeating tasks projected over a
+// long range, then assert (a) the first page's `next_cursor`/`has_more`
+// flags are populated and (b) walking via successive cursor calls
+// returns every entry exactly once with no overlap and no skips.
+
+/// Helper: seed a single repeating block with a daily cadence anchored
+/// before `today` so the on-the-fly fallback projects every day in the
+/// requested range. Returns the block id.
+async fn seed_daily_repeating_block(
+    pool: &sqlx::SqlitePool,
+    mat: &Materializer,
+    label: &str,
+    days_before_today: i64,
+) -> String {
+    let resp = create_block_inner(
+        pool,
+        DEV,
+        mat,
+        "content".into(),
+        format!("M25 {label}"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let today = chrono::Local::now().date_naive();
+    let due = (today - chrono::Duration::days(days_before_today))
+        .format("%Y-%m-%d")
+        .to_string();
+    set_due_date_inner(pool, DEV, mat, resp.id.clone(), Some(due))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_property_inner(
+        pool,
+        DEV,
+        mat,
+        resp.id.clone(),
+        "repeat".into(),
+        Some("daily".into()),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_todo_state_inner(pool, DEV, mat, resp.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    resp.id
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_projected_agenda_returns_next_cursor_when_capped_m25() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Seed one daily-repeating block. Over 30 days that yields 30
+    // projected entries — well above the limit of 5 we'll request.
+    let _id = seed_daily_repeating_block(&pool, &mat, "capped", 1).await;
+
+    let today = chrono::Local::now().date_naive();
+    let start = today.format("%Y-%m-%d").to_string();
+    let end = (today + chrono::Duration::days(30))
+        .format("%Y-%m-%d")
+        .to_string();
+
+    let page1 = list_projected_agenda_inner(&pool, start, end, None, Some(5))
+        .await
+        .unwrap();
+    assert_eq!(
+        page1.items.len(),
+        5,
+        "first page should contain exactly the requested 5 entries (got {})",
+        page1.items.len()
+    );
+    assert!(
+        page1.has_more,
+        "has_more must be true when more entries remain past the page cap (M-25)"
+    );
+    assert!(
+        page1.next_cursor.is_some(),
+        "next_cursor must be populated when has_more is true so callers can page (M-25)"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_projected_agenda_walks_pages_correctly_m25() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Seed one daily-repeating block whose due_date is one day before
+    // today. The default-mode loop shifts BEFORE the in-range check, so
+    // anchoring at today-1 makes today the first projection — across a
+    // 9-day inclusive range [today, today+8] the cadence yields exactly
+    // 9 entries. With limit=4 that becomes three pages: [4, 4, 1].
+    let _id = seed_daily_repeating_block(&pool, &mat, "walk", 1).await;
+
+    let today = chrono::Local::now().date_naive();
+    let start = today.format("%Y-%m-%d").to_string();
+    let end = (today + chrono::Duration::days(8))
+        .format("%Y-%m-%d")
+        .to_string();
+    let page_size = 4;
+
+    let mut walked: Vec<(String, String, String)> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut iterations = 0;
+    loop {
+        iterations += 1;
+        assert!(iterations < 10, "pagination must terminate (loop guard)");
+        let page =
+            list_projected_agenda_inner(&pool, start.clone(), end.clone(), cursor, Some(page_size))
+                .await
+                .unwrap();
+        for entry in &page.items {
+            walked.push((
+                entry.projected_date.clone(),
+                entry.block.id.clone(),
+                entry.source.clone(),
+            ));
+        }
+        if !page.has_more {
+            assert!(
+                page.next_cursor.is_none(),
+                "final page must not carry a next_cursor"
+            );
+            break;
+        }
+        cursor = page.next_cursor;
+        assert!(cursor.is_some(), "intermediate page must have next_cursor");
+    }
+
+    assert_eq!(
+        walked.len(),
+        9,
+        "walking all pages must yield exactly 9 entries (one daily projection per day in the inclusive 9-day range), got {}",
+        walked.len()
+    );
+
+    // Strictly increasing on (projected_date, block_id) — same composite
+    // keyset that the cursor encodes.
+    for window in walked.windows(2) {
+        let (a_date, a_id, _) = &window[0];
+        let (b_date, b_id, _) = &window[1];
+        assert!(
+            (a_date.as_str(), a_id.as_str()) < (b_date.as_str(), b_id.as_str()),
+            "pagination must yield strictly-increasing (date, block_id); \
+             saw ({a_date}, {a_id}) → ({b_date}, {b_id})"
+        );
+    }
+
+    // No duplicates across pages — every (date, id, source) appears once.
+    let mut seen = std::collections::HashSet::new();
+    for entry in &walked {
+        assert!(
+            seen.insert(entry.clone()),
+            "duplicate entry across pages: {entry:?}"
+        );
+    }
 
     mat.shutdown();
 }

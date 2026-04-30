@@ -205,14 +205,25 @@ export async function listUndatedTasks(params?: {
   return unwrap(await commands.listUndatedTasks(params?.cursor ?? null, params?.limit ?? null))
 }
 
-/** List projected future occurrences of repeating tasks for a date range. */
+/**
+ * List projected future occurrences of repeating tasks for a date range.
+ *
+ * Cursor-paginated (M-25). Pass `cursor: response.next_cursor` to fetch
+ * the next page; `has_more = false` indicates the final page.
+ */
 export async function listProjectedAgenda(opts: {
   startDate: string
   endDate: string
+  cursor?: string | undefined
   limit?: number | undefined
-}): Promise<ProjectedAgendaEntry[]> {
+}): Promise<PageResponse<ProjectedAgendaEntry>> {
   return unwrap(
-    await commands.listProjectedAgenda(opts.startDate, opts.endDate, opts.limit ?? null),
+    await commands.listProjectedAgenda(
+      opts.startDate,
+      opts.endDate,
+      opts.cursor ?? null,
+      opts.limit ?? null,
+    ),
   )
 }
 

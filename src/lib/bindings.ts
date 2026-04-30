@@ -199,8 +199,11 @@ export const commands = {
 	/**
 	 *  Tauri command: list projected future occurrences of repeating tasks.
 	 *  Delegates to [`list_projected_agenda_inner`].
+	 *
+	 *  Cursor-paginated (M-25) — pass `cursor = next_cursor` from the previous
+	 *  response to fetch the next page.
 	 */
-	listProjectedAgenda: (startDate: string, endDate: string, limit: number | null) => typedError<ProjectedAgendaEntry[], AppErrorSchema>(__TAURI_INVOKE("list_projected_agenda", { startDate, endDate, limit })),
+	listProjectedAgenda: (startDate: string, endDate: string, cursor: string | null, limit: number | null) => typedError<PageResponse<ProjectedAgendaEntry>, AppErrorSchema>(__TAURI_INVOKE("list_projected_agenda", { startDate, endDate, cursor, limit })),
 	// Tauri command: list undated tasks. Delegates to [`list_undated_tasks_inner`].
 	listUndatedTasks: (cursor: string | null, limit: number | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_undated_tasks", { cursor, limit })),
 	/**

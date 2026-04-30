@@ -91,7 +91,7 @@ beforeEach(() => {
   clearProjectedCache()
   mockedListBlocks.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
-  mockedListProjectedAgenda.mockResolvedValue([])
+  mockedListProjectedAgenda.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
   useNavigationStore.setState({
     currentView: 'journal',
@@ -674,7 +674,7 @@ describe('DuePanel', () => {
   it('returns null when all data sources return empty', async () => {
     // All data sources return empty
     mockedListBlocks.mockResolvedValue(emptyResponse)
-    mockedListProjectedAgenda.mockResolvedValue([])
+    mockedListProjectedAgenda.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
     mockedQueryByProperty.mockResolvedValue(emptyResponse)
 
     const { container } = render(<DuePanel date="2025-06-15" />)
@@ -695,21 +695,25 @@ describe('DuePanel', () => {
   describe('projected entries', () => {
     it('renders projected entries section when projections exist', async () => {
       mockedListBlocks.mockResolvedValue(emptyResponse)
-      mockedListProjectedAgenda.mockResolvedValue([
-        {
-          block: makeBlock({
-            id: 'PROJ1',
-            content: 'Projected task',
-            parent_id: 'PAGE1',
-            page_id: 'PAGE1',
-            todo_state: 'TODO',
-            priority: '2',
-            due_date: '2026-04-13',
-          }),
-          projected_date: '2026-04-13',
-          source: 'due_date',
-        },
-      ])
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'PROJ1',
+              content: 'Projected task',
+              parent_id: 'PAGE1',
+              page_id: 'PAGE1',
+              todo_state: 'TODO',
+              priority: '2',
+              due_date: '2026-04-13',
+            }),
+            projected_date: '2026-04-13',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
 
       render(<DuePanel date="2026-04-13" />)
 
@@ -722,7 +726,7 @@ describe('DuePanel', () => {
 
     it('does not render projected section when no projections', async () => {
       mockedListBlocks.mockResolvedValue(emptyResponse)
-      mockedListProjectedAgenda.mockResolvedValue([])
+      mockedListProjectedAgenda.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
 
       render(<DuePanel date="2026-04-13" />)
 
@@ -736,30 +740,34 @@ describe('DuePanel', () => {
     // entries as real tasks due today.
     it('renders a per-entry "Projected" badge for each projected entry', async () => {
       mockedListBlocks.mockResolvedValue(emptyResponse)
-      mockedListProjectedAgenda.mockResolvedValue([
-        {
-          block: makeBlock({
-            id: 'PROJ_BADGE_1',
-            content: 'First projected',
-            parent_id: null,
-            todo_state: 'TODO',
-            due_date: '2026-04-13',
-          }),
-          projected_date: '2026-04-13',
-          source: 'due_date',
-        },
-        {
-          block: makeBlock({
-            id: 'PROJ_BADGE_2',
-            content: 'Second projected',
-            parent_id: null,
-            todo_state: 'TODO',
-            due_date: '2026-04-13',
-          }),
-          projected_date: '2026-04-13',
-          source: 'due_date',
-        },
-      ])
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'PROJ_BADGE_1',
+              content: 'First projected',
+              parent_id: null,
+              todo_state: 'TODO',
+              due_date: '2026-04-13',
+            }),
+            projected_date: '2026-04-13',
+            source: 'due_date',
+          },
+          {
+            block: makeBlock({
+              id: 'PROJ_BADGE_2',
+              content: 'Second projected',
+              parent_id: null,
+              todo_state: 'TODO',
+              due_date: '2026-04-13',
+            }),
+            projected_date: '2026-04-13',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
 
       render(<DuePanel date="2026-04-13" />)
 
@@ -778,19 +786,23 @@ describe('DuePanel', () => {
     it('sets title attribute on truncated projected content', async () => {
       const longContent = 'A very long projected task content that will be truncated visually'
       mockedListBlocks.mockResolvedValue(emptyResponse)
-      mockedListProjectedAgenda.mockResolvedValue([
-        {
-          block: makeBlock({
-            id: 'PROJ_TITLE',
-            content: longContent,
-            parent_id: null,
-            todo_state: 'TODO',
-            due_date: '2026-04-13',
-          }),
-          projected_date: '2026-04-13',
-          source: 'due_date',
-        },
-      ])
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'PROJ_TITLE',
+              content: longContent,
+              parent_id: null,
+              todo_state: 'TODO',
+              due_date: '2026-04-13',
+            }),
+            projected_date: '2026-04-13',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
 
       render(<DuePanel date="2026-04-13" />)
 
@@ -803,20 +815,24 @@ describe('DuePanel', () => {
     it('projected entry navigates to parent page on click', async () => {
       const onNavigate = vi.fn()
       mockedListBlocks.mockResolvedValue(emptyResponse)
-      mockedListProjectedAgenda.mockResolvedValue([
-        {
-          block: makeBlock({
-            id: 'PROJ2',
-            content: 'Navigate me',
-            parent_id: 'PAGE2',
-            page_id: 'PAGE2',
-            todo_state: 'TODO',
-            due_date: '2026-04-20',
-          }),
-          projected_date: '2026-04-20',
-          source: 'due_date',
-        },
-      ])
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'PROJ2',
+              content: 'Navigate me',
+              parent_id: 'PAGE2',
+              page_id: 'PAGE2',
+              todo_state: 'TODO',
+              due_date: '2026-04-20',
+            }),
+            projected_date: '2026-04-20',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
       mockedBatchResolve.mockResolvedValue([
         { id: 'PAGE2', title: 'My Page', block_type: 'page', deleted: false },
       ])
@@ -832,20 +848,24 @@ describe('DuePanel', () => {
 
     it('projected entries show priority badge when priority is set', async () => {
       mockedListBlocks.mockResolvedValue(emptyResponse)
-      mockedListProjectedAgenda.mockResolvedValue([
-        {
-          block: makeBlock({
-            id: 'PROJ3',
-            content: 'Priority task',
-            parent_id: null,
-            todo_state: 'TODO',
-            priority: '1',
-            due_date: '2026-04-27',
-          }),
-          projected_date: '2026-04-27',
-          source: 'due_date',
-        },
-      ])
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'PROJ3',
+              content: 'Priority task',
+              parent_id: null,
+              todo_state: 'TODO',
+              priority: '1',
+              due_date: '2026-04-27',
+            }),
+            projected_date: '2026-04-27',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
 
       render(<DuePanel date="2026-04-27" />)
 
@@ -854,19 +874,23 @@ describe('DuePanel', () => {
 
     it('has no a11y violations with projected entries', async () => {
       mockedListBlocks.mockResolvedValue(emptyResponse)
-      mockedListProjectedAgenda.mockResolvedValue([
-        {
-          block: makeBlock({
-            id: 'AXE1',
-            content: 'Axe test task',
-            parent_id: null,
-            todo_state: 'TODO',
-            due_date: '2026-04-13',
-          }),
-          projected_date: '2026-04-13',
-          source: 'due_date',
-        },
-      ])
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'AXE1',
+              content: 'Axe test task',
+              parent_id: null,
+              todo_state: 'TODO',
+              due_date: '2026-04-13',
+            }),
+            projected_date: '2026-04-13',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
 
       const { container } = render(<DuePanel date="2026-04-13" />)
 
@@ -900,20 +924,24 @@ describe('DuePanel', () => {
         next_cursor: null,
         has_more: false,
       })
-      mockedListProjectedAgenda.mockResolvedValue([
-        {
-          block: makeBlock({
-            id: 'PROJ_KB',
-            content: 'Projected nav target',
-            parent_id: 'PAGE2',
-            page_id: 'PAGE2',
-            todo_state: 'TODO',
-            due_date: '2026-04-13',
-          }),
-          projected_date: '2026-04-13',
-          source: 'due_date',
-        },
-      ])
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'PROJ_KB',
+              content: 'Projected nav target',
+              parent_id: 'PAGE2',
+              page_id: 'PAGE2',
+              todo_state: 'TODO',
+              due_date: '2026-04-13',
+            }),
+            projected_date: '2026-04-13',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
       mockedBatchResolve.mockResolvedValue([
         { id: 'PAGE2', title: 'Projected Page', block_type: 'page', deleted: false },
       ])
@@ -944,20 +972,24 @@ describe('DuePanel', () => {
 
     it('focused projected entry receives focus ring class', async () => {
       mockedListBlocks.mockResolvedValue(emptyResponse)
-      mockedListProjectedAgenda.mockResolvedValue([
-        {
-          block: makeBlock({
-            id: 'PROJ_FOCUS',
-            content: 'Focus target',
-            parent_id: 'PAGE_F',
-            page_id: 'PAGE_F',
-            todo_state: 'TODO',
-            due_date: '2026-04-13',
-          }),
-          projected_date: '2026-04-13',
-          source: 'due_date',
-        },
-      ])
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'PROJ_FOCUS',
+              content: 'Focus target',
+              parent_id: 'PAGE_F',
+              page_id: 'PAGE_F',
+              todo_state: 'TODO',
+              due_date: '2026-04-13',
+            }),
+            projected_date: '2026-04-13',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
 
       render(<DuePanel date="2026-04-13" />)
       await screen.findByText(/Focus target/)
@@ -975,20 +1007,24 @@ describe('DuePanel', () => {
         has_more: false,
       })
       // Projected entry also references B1
-      mockedListProjectedAgenda.mockResolvedValue([
-        {
-          block: makeBlock({
-            id: 'B1',
-            content: 'Real block',
-            parent_id: 'PAGE1',
-            page_id: 'PAGE1',
-            todo_state: 'TODO',
-            due_date: '2025-06-15',
-          }),
-          projected_date: '2025-06-15',
-          source: 'due_date',
-        },
-      ])
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'B1',
+              content: 'Real block',
+              parent_id: 'PAGE1',
+              page_id: 'PAGE1',
+              todo_state: 'TODO',
+              due_date: '2025-06-15',
+            }),
+            projected_date: '2025-06-15',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
 
       render(<DuePanel date="2025-06-15" />)
 
@@ -1286,20 +1322,24 @@ describe('DuePanel', () => {
 
     it('batchResolve rejection after listProjectedAgenda shows toast error', async () => {
       mockedListBlocks.mockResolvedValueOnce(emptyResponse)
-      mockedListProjectedAgenda.mockResolvedValueOnce([
-        {
-          block: makeBlock({
-            id: 'PROJ1',
-            content: 'Projected task',
-            parent_id: 'PAGE2',
-            page_id: 'PAGE2',
-            todo_state: 'TODO',
-            due_date: '2025-06-15',
-          }),
-          projected_date: '2025-06-15',
-          source: 'due_date',
-        },
-      ])
+      mockedListProjectedAgenda.mockResolvedValueOnce({
+        items: [
+          {
+            block: makeBlock({
+              id: 'PROJ1',
+              content: 'Projected task',
+              parent_id: 'PAGE2',
+              page_id: 'PAGE2',
+              todo_state: 'TODO',
+              due_date: '2025-06-15',
+            }),
+            projected_date: '2025-06-15',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
       // listBlocks returns empty so no batchResolve is triggered from that path.
       // The only batchResolve call comes from the projected entries path.
       mockedBatchResolve.mockRejectedValueOnce(new Error('resolve projected failure'))

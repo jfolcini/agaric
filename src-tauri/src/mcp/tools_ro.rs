@@ -176,6 +176,8 @@ struct GetAgendaArgs {
     start_date: String,
     end_date: String,
     #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
     limit: Option<i64>,
 }
 
@@ -494,6 +496,10 @@ fn tool_desc_get_agenda() -> ToolDescription {
             "properties": {
                 "start_date": { "type": "string", "description": "Inclusive YYYY-MM-DD lower bound." },
                 "end_date":   { "type": "string", "description": "Inclusive YYYY-MM-DD upper bound." },
+                "cursor": {
+                    "type": "string",
+                    "description": "Opaque cursor returned by a previous response's `next_cursor` to fetch the next page (M-25)."
+                },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
@@ -650,7 +656,9 @@ async fn handle_list_property_defs(pool: &SqlitePool, args: Value) -> Result<Val
 async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetAgendaArgs = parse_args(TOOL_GET_AGENDA, args)?;
     let limit = validate_limit(TOOL_GET_AGENDA, args.limit, AGENDA_RESULT_CAP)?;
-    let resp = list_projected_agenda_inner(pool, args.start_date, args.end_date, limit).await?;
+    let resp =
+        list_projected_agenda_inner(pool, args.start_date, args.end_date, args.cursor, limit)
+            .await?;
     to_tool_result(&resp)
 }
 
