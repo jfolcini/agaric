@@ -35,6 +35,7 @@ import { useNavigationStore } from '../stores/navigation'
 import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
+import { useTabsStore } from '../stores/tabs'
 import { useUndoStore } from '../stores/undo'
 import { PageAliasSection } from './PageAliasSection'
 import { PageHeaderMenu } from './PageHeaderMenu'
@@ -117,7 +118,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
             try {
               const pageBlock = await getBlock(pageId)
               if (pageBlock?.content) {
-                useNavigationStore.getState().replacePage(pageId, pageBlock.content)
+                useTabsStore.getState().replacePage(pageId, pageBlock.content)
                 useResolveStore.getState().set(pageId, pageBlock.content, false)
               }
             } catch (err) {
@@ -307,7 +308,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   }, [])
 
   const handleOpenInNewTab = useCallback(() => {
-    useNavigationStore.getState().openInNewTab(pageId, editableTitle || title)
+    useTabsStore.getState().openInNewTab(pageId, editableTitle || title)
     setKebabOpen(false)
   }, [pageId, editableTitle, title])
 
@@ -381,7 +382,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       try {
         await editBlock(pageId, newTitle)
         useUndoStore.getState().onNewAction(pageId)
-        useNavigationStore.getState().replacePage(pageId, newTitle)
+        useTabsStore.getState().replacePage(pageId, newTitle)
         useResolveStore.getState().set(pageId, newTitle, false)
         announce(t('announce.pageRenamed'))
       } catch (err) {

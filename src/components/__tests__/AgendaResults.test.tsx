@@ -66,7 +66,8 @@ vi.mock('@/components/ui/button', () => ({
 }))
 
 import { makeBlock as _makeBlock } from '../../__tests__/fixtures'
-import { selectPageStack, useNavigationStore } from '../../stores/navigation'
+import { useNavigationStore } from '../../stores/navigation'
+import { selectPageStack, useTabsStore } from '../../stores/tabs'
 import { AgendaResults, type AgendaResultsProps } from '../AgendaResults'
 
 /** Shared factory + domain defaults for AgendaResults tests. */
@@ -102,9 +103,11 @@ describe('AgendaResults', () => {
     mockBatchResolve.mockResolvedValue([])
     useNavigationStore.setState({
       currentView: 'journal',
+      selectedBlockId: null,
+    })
+    useTabsStore.setState({
       tabs: [{ id: '0', pageStack: [], label: '' }],
       activeTabIndex: 0,
-      selectedBlockId: null,
     })
   })
 
@@ -553,9 +556,9 @@ describe('AgendaResults', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(selectPageStack(navState)).toHaveLength(1)
-    expect(selectPageStack(navState)[0]?.pageId).toBe('PAGE1')
-    expect(selectPageStack(navState)[0]?.title).toBe('My Project Page')
+    expect(selectPageStack(useTabsStore.getState())).toHaveLength(1)
+    expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('PAGE1')
+    expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('My Project Page')
   })
 
   // 15. Dependency indicator renders in metadata when block has blocked_by property

@@ -18,7 +18,7 @@ import { useTranslation } from 'react-i18next'
 import { useGraphSimulation } from '@/hooks/useGraphSimulation'
 import { applyGraphFilters, type GraphFilter } from '@/lib/graph-filters'
 import { listTagsByPrefix } from '@/lib/tauri'
-import { useNavigationStore } from '@/stores/navigation'
+import { useTabsStore } from '@/stores/tabs'
 import { logger } from '../lib/logger'
 import { EmptyState } from './EmptyState'
 import { GraphFilterBar } from './GraphFilterBar'
@@ -59,7 +59,7 @@ export function clearGraphCache(): void {
 
 export function GraphView(): React.ReactElement {
   const { t } = useTranslation()
-  const navigateToPage = useNavigationStore((s) => s.navigateToPage)
+  const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const svgRef = useRef<SVGSVGElement>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

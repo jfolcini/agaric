@@ -9,16 +9,19 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import { selectPageStack, useNavigationStore } from '../../stores/navigation'
+import { useNavigationStore } from '../../stores/navigation'
+import { selectPageStack, useTabsStore } from '../../stores/tabs'
 import { PageLink } from '../PageLink'
 
 beforeEach(() => {
   vi.clearAllMocks()
   useNavigationStore.setState({
     currentView: 'journal',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
 })
 
@@ -45,7 +48,7 @@ describe('PageLink', () => {
     await user.click(screen.getByRole('link', { name: 'My Page' }))
 
     const state = useNavigationStore.getState()
-    const pageStack = selectPageStack(state)
+    const pageStack = selectPageStack(useTabsStore.getState())
     expect(state.currentView).toBe('page-editor')
     expect(pageStack).toEqual([{ pageId: 'P1', title: 'My Page' }])
   })
@@ -58,7 +61,7 @@ describe('PageLink', () => {
     await user.keyboard('{Enter}')
 
     const state = useNavigationStore.getState()
-    const pageStack = selectPageStack(state)
+    const pageStack = selectPageStack(useTabsStore.getState())
     expect(state.currentView).toBe('page-editor')
     expect(pageStack).toEqual([{ pageId: 'P1', title: 'My Page' }])
   })
@@ -71,7 +74,7 @@ describe('PageLink', () => {
     await user.keyboard(' ')
 
     const state = useNavigationStore.getState()
-    const pageStack = selectPageStack(state)
+    const pageStack = selectPageStack(useTabsStore.getState())
     expect(state.currentView).toBe('page-editor')
     expect(pageStack).toEqual([{ pageId: 'P1', title: 'My Page' }])
   })

@@ -6,7 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { makeBlock } from '../../__tests__/fixtures'
 import { buildFilters, parseQueryExpression } from '../../lib/query-utils'
-import { selectPageStack, useNavigationStore } from '../../stores/navigation'
+import { useNavigationStore } from '../../stores/navigation'
+import { selectPageStack, useTabsStore } from '../../stores/tabs'
 import { detectColumns, QueryResult } from '../QueryResult'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
@@ -44,9 +45,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   useNavigationStore.setState({
     currentView: 'journal',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
 })
 
@@ -514,9 +517,9 @@ describe('QueryResult', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(selectPageStack(navState)).toHaveLength(1)
-    expect(selectPageStack(navState)[0]?.pageId).toBe('P1')
-    expect(selectPageStack(navState)[0]?.title).toBe('Resolved Page')
+    expect(selectPageStack(useTabsStore.getState())).toHaveLength(1)
+    expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('P1')
+    expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('Resolved Page')
   })
 })
 

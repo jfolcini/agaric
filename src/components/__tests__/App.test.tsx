@@ -25,11 +25,12 @@ import { __resetPriorityLevelsForTests, getPriorityLevels } from '../../lib/prio
 import { setWindowTitle } from '../../lib/tauri'
 import { useBootStore } from '../../stores/boot'
 import { useJournalStore } from '../../stores/journal'
-import { selectPageStack, useNavigationStore } from '../../stores/navigation'
+import { useNavigationStore } from '../../stores/navigation'
 import { useRecentPagesStore } from '../../stores/recent-pages'
 import { keyFor, useResolveStore } from '../../stores/resolve'
 import { useSpaceStore } from '../../stores/space'
 import { useSyncStore } from '../../stores/sync'
+import { selectPageStack, useTabsStore } from '../../stores/tabs'
 
 // FEAT-3p10 — partial mock: replace `setWindowTitle` with a vitest spy
 // so we can assert the App-level effect calls it with
@@ -108,11 +109,13 @@ beforeEach(() => {
   // the per-space selector fall-back.
   useNavigationStore.setState({
     currentView: 'journal',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
     tabsBySpace: {},
     activeTabIndexBySpace: {},
-    selectedBlockId: null,
   })
 
   // FEAT-9: reset the recent-pages MRU so RecentPagesStrip tests are isolated.
@@ -408,6 +411,9 @@ describe('App', () => {
     // Navigate to page-editor via the navigation store
     useNavigationStore.setState({
       currentView: 'page-editor',
+      selectedBlockId: null,
+    })
+    useTabsStore.setState({
       tabs: [
         {
           id: '0',
@@ -416,7 +422,6 @@ describe('App', () => {
         },
       ],
       activeTabIndex: 0,
-      selectedBlockId: null,
     })
 
     render(<App />)
@@ -481,7 +486,7 @@ describe('App', () => {
     await waitFor(() => {
       const state = useNavigationStore.getState()
       expect(state.currentView).toBe('page-editor')
-      expect(selectPageStack(state)).toContainEqual(
+      expect(selectPageStack(useTabsStore.getState())).toContainEqual(
         expect.objectContaining({ pageId: 'NEW_PAGE_ID_00000000000000', title: 'Untitled' }),
       )
     })
@@ -740,9 +745,11 @@ describe('App', () => {
     it('Alt+Arrow does nothing when not on journal view', async () => {
       useNavigationStore.setState({
         currentView: 'pages',
+        selectedBlockId: null,
+      })
+      useTabsStore.setState({
         tabs: [{ id: '0', pageStack: [], label: '' }],
         activeTabIndex: 0,
-        selectedBlockId: null,
       })
       const startDate = new Date(2025, 5, 15)
       useJournalStore.setState({ mode: 'daily', currentDate: startDate })
@@ -1358,9 +1365,11 @@ describe('App', () => {
     it('shows Today button in pages view', async () => {
       useNavigationStore.setState({
         currentView: 'pages',
+        selectedBlockId: null,
+      })
+      useTabsStore.setState({
         tabs: [{ id: '0', pageStack: [], label: '' }],
         activeTabIndex: 0,
-        selectedBlockId: null,
       })
       render(<App />)
       await waitFor(() => {
@@ -1371,9 +1380,11 @@ describe('App', () => {
     it('shows calendar button in pages view', async () => {
       useNavigationStore.setState({
         currentView: 'pages',
+        selectedBlockId: null,
+      })
+      useTabsStore.setState({
         tabs: [{ id: '0', pageStack: [], label: '' }],
         activeTabIndex: 0,
-        selectedBlockId: null,
       })
       render(<App />)
       await waitFor(() => {
@@ -1384,9 +1395,11 @@ describe('App', () => {
     it('clicking Today in non-journal view navigates to journal daily', async () => {
       useNavigationStore.setState({
         currentView: 'pages',
+        selectedBlockId: null,
+      })
+      useTabsStore.setState({
         tabs: [{ id: '0', pageStack: [], label: '' }],
         activeTabIndex: 0,
-        selectedBlockId: null,
       })
       const user = userEvent.setup()
       render(<App />)
@@ -1406,9 +1419,11 @@ describe('App', () => {
     it('shows Today button in trash view', async () => {
       useNavigationStore.setState({
         currentView: 'trash',
+        selectedBlockId: null,
+      })
+      useTabsStore.setState({
         tabs: [{ id: '0', pageStack: [], label: '' }],
         activeTabIndex: 0,
-        selectedBlockId: null,
       })
       render(<App />)
       await waitFor(() => {
@@ -1667,7 +1682,7 @@ describe('App', () => {
 
       // Navigation should NOT have changed
       expect(useNavigationStore.getState().currentView).toBe('journal')
-      expect(selectPageStack(useNavigationStore.getState())).toHaveLength(0)
+      expect(selectPageStack(useTabsStore.getState())).toHaveLength(0)
     })
 
     it('New Page sidebar button shows error toast when creation fails', async () => {
@@ -1696,7 +1711,7 @@ describe('App', () => {
 
       // Navigation should NOT have changed
       expect(useNavigationStore.getState().currentView).toBe('journal')
-      expect(selectPageStack(useNavigationStore.getState())).toHaveLength(0)
+      expect(selectPageStack(useTabsStore.getState())).toHaveLength(0)
     })
 
     it('logs warning when listDrafts fails during boot recovery', async () => {
@@ -1844,13 +1859,15 @@ describe('App', () => {
       it(`TabBar is visible at shell level while currentView === "${view}"`, async () => {
         useNavigationStore.setState({
           currentView: view,
+          selectedBlockId: null,
+        })
+        useTabsStore.setState({
           tabs: [
             { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
             { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
             { id: '2', pageStack: [{ pageId: 'P3', title: 'Page 3' }], label: 'Page 3' },
           ],
           activeTabIndex: 0,
-          selectedBlockId: null,
         })
 
         render(<App />)
@@ -1868,6 +1885,9 @@ describe('App', () => {
     it('TabBar is visible at shell level while currentView === "page-editor"', async () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+        selectedBlockId: null,
+      })
+      useTabsStore.setState({
         tabs: [
           {
             id: '0',
@@ -1881,7 +1901,6 @@ describe('App', () => {
           },
         ],
         activeTabIndex: 0,
-        selectedBlockId: null,
       })
 
       render(<App />)
@@ -1901,9 +1920,11 @@ describe('App', () => {
       const mockedToastError = vi.mocked(toast.error)
       useNavigationStore.setState({
         currentView: 'journal',
+        selectedBlockId: null,
+      })
+      useTabsStore.setState({
         tabs: [{ id: '0', pageStack: [], label: '' }],
         activeTabIndex: 0,
-        selectedBlockId: null,
       })
 
       render(<App />)
@@ -1922,6 +1943,9 @@ describe('App', () => {
       const mockedToastError = vi.mocked(toast.error)
       useNavigationStore.setState({
         currentView: 'journal',
+        selectedBlockId: null,
+      })
+      useTabsStore.setState({
         tabs: [
           {
             id: '0',
@@ -1930,7 +1954,6 @@ describe('App', () => {
           },
         ],
         activeTabIndex: 0,
-        selectedBlockId: null,
       })
 
       render(<App />)
@@ -1942,7 +1965,7 @@ describe('App', () => {
 
       await waitFor(() => {
         // A new tab was opened (original + new = 2).
-        expect(useNavigationStore.getState().tabs).toHaveLength(2)
+        expect(useTabsStore.getState().tabs).toHaveLength(2)
       })
       expect(mockedToastError).not.toHaveBeenCalledWith(t('tabs.openInNewTabEmpty'))
     })
@@ -1981,12 +2004,14 @@ describe('App', () => {
     it('mounts after TabBar when both are visible', async () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+        selectedBlockId: null,
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'A', title: 'Alpha' }], label: 'Alpha' },
           { id: '1', pageStack: [{ pageId: 'B', title: 'Bravo' }], label: 'Bravo' },
         ],
         activeTabIndex: 0,
-        selectedBlockId: null,
       })
       useRecentPagesStore.setState({
         recentPages: [

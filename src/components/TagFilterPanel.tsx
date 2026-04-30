@@ -23,7 +23,7 @@ import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, getBlock, listTagsByPrefix, queryByTags } from '../lib/tauri'
-import { useNavigationStore } from '../stores/navigation'
+import { useTabsStore } from '../stores/tabs'
 import { PageLink } from './PageLink'
 import { ResultCard } from './ResultCard'
 
@@ -58,7 +58,7 @@ export function TagFilterPanel(): React.ReactElement {
   const [selectedTags, setSelectedTags] = useState<SelectedTag[]>([])
   const [mode, setMode] = useState<'and' | 'or' | 'not'>('and')
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
-  const navigateToPage = useNavigationStore((s) => s.navigateToPage)
+  const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const resultsListRef = useRef<HTMLDivElement>(null)
   const matchingTagsRef = useRef<HTMLDivElement>(null)
 

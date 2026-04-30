@@ -18,8 +18,9 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import { selectPageStack, useNavigationStore } from '../../stores/navigation'
+import { useNavigationStore } from '../../stores/navigation'
 import { useSpaceStore } from '../../stores/space'
+import { selectPageStack, useTabsStore } from '../../stores/tabs'
 import { TemplatesView } from '../TemplatesView'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -64,9 +65,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   useNavigationStore.setState({
     currentView: 'templates',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
   // BUG-1 / H-3b — TemplatesView routes page creation through
   // `createPageInSpace`, which reads `useSpaceStore.getState().currentSpaceId`.
@@ -238,7 +241,9 @@ describe('TemplatesView', () => {
 
     const state = useNavigationStore.getState()
     expect(state.currentView).toBe('page-editor')
-    expect(selectPageStack(state)).toEqual([{ pageId: 'T1', title: 'Meeting Notes' }])
+    expect(selectPageStack(useTabsStore.getState())).toEqual([
+      { pageId: 'T1', title: 'Meeting Notes' },
+    ])
   })
 
   it('removes template status on X click', async () => {

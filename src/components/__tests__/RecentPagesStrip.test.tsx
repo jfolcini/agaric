@@ -19,6 +19,7 @@ import { axe } from 'vitest-axe'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { useNavigationStore } from '../../stores/navigation'
 import { useRecentPagesStore } from '../../stores/recent-pages'
+import { useTabsStore } from '../../stores/tabs'
 import { RecentPagesStrip } from '../RecentPagesStrip'
 
 vi.mock('../../hooks/useIsMobile', () => ({
@@ -30,18 +31,22 @@ const mockedUseIsMobile = vi.mocked(useIsMobile)
 function seedTab(pageId: string, title: string) {
   useNavigationStore.setState({
     currentView: 'page-editor',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [{ pageId, title }], label: title }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
 }
 
 function clearActiveTab() {
   useNavigationStore.setState({
     currentView: 'journal',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
 }
 
@@ -117,7 +122,7 @@ describe('RecentPagesStrip', () => {
   it('click navigates to the page', async () => {
     const user = userEvent.setup()
     const navigateSpy = vi.fn()
-    useNavigationStore.setState({ navigateToPage: navigateSpy })
+    useTabsStore.setState({ navigateToPage: navigateSpy })
 
     useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
 
@@ -133,7 +138,7 @@ describe('RecentPagesStrip', () => {
   it('ctrl+click opens in a new tab', () => {
     const navigateSpy = vi.fn()
     const openInNewTabSpy = vi.fn()
-    useNavigationStore.setState({
+    useTabsStore.setState({
       navigateToPage: navigateSpy,
       openInNewTab: openInNewTabSpy,
     })
@@ -153,7 +158,7 @@ describe('RecentPagesStrip', () => {
   it('cmd+click opens in a new tab (macOS)', () => {
     const navigateSpy = vi.fn()
     const openInNewTabSpy = vi.fn()
-    useNavigationStore.setState({
+    useTabsStore.setState({
       navigateToPage: navigateSpy,
       openInNewTab: openInNewTabSpy,
     })
@@ -173,7 +178,7 @@ describe('RecentPagesStrip', () => {
   it('middle-click opens in a new tab', () => {
     const navigateSpy = vi.fn()
     const openInNewTabSpy = vi.fn()
-    useNavigationStore.setState({
+    useTabsStore.setState({
       navigateToPage: navigateSpy,
       openInNewTab: openInNewTabSpy,
     })
@@ -317,7 +322,7 @@ describe('RecentPagesStrip', () => {
     it('Enter on a focused chip calls navigateToPage with the right pageRef', async () => {
       const user = userEvent.setup()
       const navigateSpy = vi.fn()
-      useNavigationStore.setState({ navigateToPage: navigateSpy })
+      useTabsStore.setState({ navigateToPage: navigateSpy })
 
       const { recordVisit } = useRecentPagesStore.getState()
       // MRU order after: [Bravo, Alpha] — chip 0 is Bravo, chip 1 is Alpha.
@@ -346,7 +351,7 @@ describe('RecentPagesStrip', () => {
     it('Space on a focused chip calls navigateToPage with the right pageRef', async () => {
       const user = userEvent.setup()
       const navigateSpy = vi.fn()
-      useNavigationStore.setState({ navigateToPage: navigateSpy })
+      useTabsStore.setState({ navigateToPage: navigateSpy })
 
       const { recordVisit } = useRecentPagesStore.getState()
       recordVisit({ pageId: 'A', title: 'Alpha' })

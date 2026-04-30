@@ -24,8 +24,8 @@ import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import { createPageInSpace, deleteProperty, queryByProperty, setProperty } from '../lib/tauri'
 import { loadTemplatePagesWithPreview } from '../lib/template-utils'
-import { useNavigationStore } from '../stores/navigation'
 import { useSpaceStore } from '../stores/space'
+import { useTabsStore } from '../stores/tabs'
 import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
 
@@ -117,7 +117,7 @@ export function TemplatesView(): React.ReactElement {
   )
 
   const handleNavigate = useCallback((id: string, content: string) => {
-    useNavigationStore.getState().navigateToPage(id, content)
+    useTabsStore.getState().navigateToPage(id, content)
   }, [])
 
   // UX-248 — Unicode-aware fold.

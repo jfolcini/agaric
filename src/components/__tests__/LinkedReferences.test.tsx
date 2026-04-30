@@ -28,6 +28,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { useNavigationStore } from '../../stores/navigation'
+import { useTabsStore } from '../../stores/tabs'
 import type { LinkedReferencesProps } from '../LinkedReferences'
 import { LinkedReferences } from '../LinkedReferences'
 import { TooltipProvider } from '../ui/tooltip'
@@ -155,9 +156,11 @@ beforeEach(() => {
   mockNavigateToPage.mockClear()
   useNavigationStore.setState({
     currentView: 'journal',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
 })
 

@@ -24,12 +24,8 @@ import { lazy, type ReactElement, Suspense, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useItemCount } from '../hooks/useItemCount'
 import { getConflicts, listBlocks } from '../lib/tauri'
-import {
-  type PageEntry,
-  selectPageStack,
-  useNavigationStore,
-  type View,
-} from '../stores/navigation'
+import { useNavigationStore, type View } from '../stores/navigation'
+import { type PageEntry, selectPageStack, useTabsStore } from '../stores/tabs'
 import { FeatureErrorBoundary } from './FeatureErrorBoundary'
 import { JournalPage } from './JournalPage'
 import { LoadingSkeleton } from './LoadingSkeleton'
@@ -72,7 +68,7 @@ const TrashView = lazy(() => import('./TrashView').then((m) => ({ default: m.Tra
 export function useHeaderLabel(): string {
   const { t } = useTranslation()
   const currentView = useNavigationStore((s) => s.currentView)
-  const pageStack = useNavigationStore(selectPageStack)
+  const pageStack = useTabsStore(selectPageStack)
   // page-editor has its own editable title — don't duplicate it in the header
   if (currentView === 'page-editor' && pageStack.length > 0) {
     return ''

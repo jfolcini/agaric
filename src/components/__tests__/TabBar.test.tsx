@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '../../lib/i18n'
-import { resetTabIdCounter, selectPageStack, useNavigationStore } from '../../stores/navigation'
+import { useNavigationStore } from '../../stores/navigation'
+import { resetTabIdCounter, selectPageStack, useTabsStore } from '../../stores/tabs'
 import { TabBar } from '../TabBar'
 
 // `useIsMobile` is mocked so each test can pin the viewport-state boolean
@@ -22,9 +23,11 @@ function resetStore() {
   resetTabIdCounter()
   useNavigationStore.setState({
     currentView: 'page-editor',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
 }
 
@@ -46,6 +49,8 @@ describe('TabBar', () => {
     it('renders tab bar when multiple tabs are open', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -65,6 +70,8 @@ describe('TabBar', () => {
     it('displays tab labels', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'My Notes' }], label: 'My Notes' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Project' }], label: 'Project' },
@@ -81,6 +88,8 @@ describe('TabBar', () => {
     it('displays "Untitled" for tabs with empty labels', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [], label: '' },
           { id: '1', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
@@ -96,6 +105,8 @@ describe('TabBar', () => {
     it('marks the active tab with aria-selected=true', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -118,6 +129,8 @@ describe('TabBar', () => {
     it('clicking a tab switches to it', async () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -130,14 +143,15 @@ describe('TabBar', () => {
 
       await user.click(screen.getByText('Page 1'))
 
-      const state = useNavigationStore.getState()
-      expect(state.activeTabIndex).toBe(0)
-      expect(selectPageStack(state)).toEqual([{ pageId: 'P1', title: 'Page 1' }])
+      expect(useTabsStore.getState().activeTabIndex).toBe(0)
+      expect(selectPageStack(useTabsStore.getState())).toEqual([{ pageId: 'P1', title: 'Page 1' }])
     })
 
     it('clicking close icon removes the tab', async () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -152,14 +166,15 @@ describe('TabBar', () => {
       const closeIcons = container.querySelectorAll('[data-tab-close]')
       await user.click(closeIcons[1] as HTMLElement)
 
-      const state = useNavigationStore.getState()
-      expect(state.tabs).toHaveLength(1)
-      expect(state.tabs[0]?.label).toBe('Page 1')
+      expect(useTabsStore.getState().tabs).toHaveLength(1)
+      expect(useTabsStore.getState().tabs[0]?.label).toBe('Page 1')
     })
 
     it('pressing Delete key on a tab closes it', async () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -175,14 +190,15 @@ describe('TabBar', () => {
       ;(tabs[1] as HTMLElement).focus()
       await user.keyboard('{Delete}')
 
-      const state = useNavigationStore.getState()
-      expect(state.tabs).toHaveLength(1)
-      expect(state.tabs[0]?.label).toBe('Page 1')
+      expect(useTabsStore.getState().tabs).toHaveLength(1)
+      expect(useTabsStore.getState().tabs[0]?.label).toBe('Page 1')
     })
 
     it('close icon on inactive tab does not switch to it', async () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -198,9 +214,9 @@ describe('TabBar', () => {
       await user.click(closeIcons[0] as HTMLElement)
 
       // Should not switch — tab 0 closed, active should still be the remaining tab
-      const state = useNavigationStore.getState()
-      expect(state.tabs).toHaveLength(1)
-      expect(state.tabs[0]?.label).toBe('Page 2')
+
+      expect(useTabsStore.getState().tabs).toHaveLength(1)
+      expect(useTabsStore.getState().tabs[0]?.label).toBe('Page 2')
     })
   })
 
@@ -216,6 +232,8 @@ describe('TabBar', () => {
       ]
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs,
         activeTabIndex,
       })
@@ -228,7 +246,7 @@ describe('TabBar', () => {
       const tabs = screen.getAllByRole('tab')
       fireEvent.keyDown(tabs[0] as HTMLElement, { key: 'ArrowRight' })
 
-      expect(useNavigationStore.getState().activeTabIndex).toBe(1)
+      expect(useTabsStore.getState().activeTabIndex).toBe(1)
     })
 
     it('ArrowLeft switches to previous tab', () => {
@@ -238,7 +256,7 @@ describe('TabBar', () => {
       const tabs = screen.getAllByRole('tab')
       fireEvent.keyDown(tabs[2] as HTMLElement, { key: 'ArrowLeft' })
 
-      expect(useNavigationStore.getState().activeTabIndex).toBe(1)
+      expect(useTabsStore.getState().activeTabIndex).toBe(1)
     })
 
     it('ArrowRight wraps from last to first', () => {
@@ -248,7 +266,7 @@ describe('TabBar', () => {
       const tabs = screen.getAllByRole('tab')
       fireEvent.keyDown(tabs[2] as HTMLElement, { key: 'ArrowRight' })
 
-      expect(useNavigationStore.getState().activeTabIndex).toBe(0)
+      expect(useTabsStore.getState().activeTabIndex).toBe(0)
     })
 
     it('ArrowLeft wraps from first to last', () => {
@@ -258,7 +276,7 @@ describe('TabBar', () => {
       const tabs = screen.getAllByRole('tab')
       fireEvent.keyDown(tabs[0] as HTMLElement, { key: 'ArrowLeft' })
 
-      expect(useNavigationStore.getState().activeTabIndex).toBe(2)
+      expect(useTabsStore.getState().activeTabIndex).toBe(2)
     })
 
     it('Home goes to first tab', () => {
@@ -268,7 +286,7 @@ describe('TabBar', () => {
       const tabs = screen.getAllByRole('tab')
       fireEvent.keyDown(tabs[2] as HTMLElement, { key: 'Home' })
 
-      expect(useNavigationStore.getState().activeTabIndex).toBe(0)
+      expect(useTabsStore.getState().activeTabIndex).toBe(0)
     })
 
     it('End goes to last tab', () => {
@@ -278,7 +296,7 @@ describe('TabBar', () => {
       const tabs = screen.getAllByRole('tab')
       fireEvent.keyDown(tabs[0] as HTMLElement, { key: 'End' })
 
-      expect(useNavigationStore.getState().activeTabIndex).toBe(2)
+      expect(useTabsStore.getState().activeTabIndex).toBe(2)
     })
   })
 
@@ -289,6 +307,8 @@ describe('TabBar', () => {
     it('has no a11y violations with multiple tabs', async () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -305,6 +325,8 @@ describe('TabBar', () => {
     it('has tablist role on the container', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -320,6 +342,8 @@ describe('TabBar', () => {
     it('has tab role on each tab element', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -336,6 +360,8 @@ describe('TabBar', () => {
     it('close icons are present in each tab', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -353,6 +379,8 @@ describe('TabBar', () => {
     it('renders inside a horizontal ScrollArea (UX-226)', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -385,6 +413,8 @@ describe('TabBar', () => {
     function setupThreeTabs() {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -424,6 +454,8 @@ describe('TabBar', () => {
     function setupThreeTabs(currentView: 'page-editor' | 'journal' | 'pages' = 'page-editor') {
       useNavigationStore.setState({
         currentView,
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -450,6 +482,8 @@ describe('TabBar', () => {
     it('single-tab autohide still applies in a non-editor view', () => {
       useNavigationStore.setState({
         currentView: 'journal',
+      })
+      useTabsStore.setState({
         tabs: [{ id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' }],
         activeTabIndex: 0,
       })
@@ -462,6 +496,8 @@ describe('TabBar', () => {
       mockedUseIsMobile.mockReturnValue(true)
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: Array.from({ length: 5 }, (_, i) => ({
           id: String(i),
           pageStack: [{ pageId: `P${i}`, title: `Page ${i}` }],
@@ -505,7 +541,7 @@ describe('TabBar', () => {
       await user.click(screen.getByText('Page 2'))
 
       const state = useNavigationStore.getState()
-      expect(state.activeTabIndex).toBe(1)
+      expect(useTabsStore.getState().activeTabIndex).toBe(1)
       expect(state.currentView).toBe('page-editor')
     })
   })
@@ -517,6 +553,8 @@ describe('TabBar', () => {
     function setupThreeTabs(activeTabIndex = 1) {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -556,7 +594,7 @@ describe('TabBar', () => {
       // Pick the 3rd row (index 2 → "Page 3").
       await user.click(items[2] as HTMLElement)
 
-      expect(useNavigationStore.getState().activeTabIndex).toBe(2)
+      expect(useTabsStore.getState().activeTabIndex).toBe(2)
       // Menu has dismissed.
       await waitForMenuClosed()
     })
@@ -577,15 +615,17 @@ describe('TabBar', () => {
 
       // closeTab(1) removed "Page 2" — 2 tabs remain, menu is still present,
       // and the remaining rows are re-rendered.
-      const state = useNavigationStore.getState()
-      expect(state.tabs).toHaveLength(2)
-      expect(state.tabs.map((t) => t.label)).toEqual(['Page 1', 'Page 3'])
+
+      expect(useTabsStore.getState().tabs).toHaveLength(2)
+      expect(useTabsStore.getState().tabs.map((t) => t.label)).toEqual(['Page 1', 'Page 3'])
       expect(screen.getByRole('menu')).toBeInTheDocument()
     })
 
     it('clicking the active tab from a non-editor view does not open the dropdown (flips view instead)', async () => {
       useNavigationStore.setState({
         currentView: 'journal',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -622,6 +662,8 @@ describe('TabBar', () => {
     function setupActiveInEditor() {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -672,6 +714,8 @@ describe('TabBar', () => {
     it('active tab in page-editor view has aria-label hinting the tab switcher', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -691,6 +735,8 @@ describe('TabBar', () => {
     it('active tab aria-label falls back to "Untitled" title for empty labels', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [], label: '' },
           { id: '1', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
@@ -710,6 +756,8 @@ describe('TabBar', () => {
     it('inactive tabs do not set aria-label (accessible name falls back to visible text)', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -727,6 +775,8 @@ describe('TabBar', () => {
     it('active tab in a non-editor view (journal) does not set aria-label', () => {
       useNavigationStore.setState({
         currentView: 'journal',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -745,6 +795,8 @@ describe('TabBar', () => {
     it('Radix aria-haspopup and aria-expanded are preserved on the active tab in page-editor', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -769,6 +821,8 @@ describe('TabBar', () => {
     function setupThreeTabs(activeTabIndex = 1) {
       useNavigationStore.setState({
         currentView: 'page-editor',
+      })
+      useTabsStore.setState({
         tabs: [
           { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
@@ -902,9 +956,8 @@ describe('TabBar', () => {
       await user.keyboard('{ArrowDown}')
       await user.keyboard('{Enter}')
 
-      const state = useNavigationStore.getState()
-      expect(state.tabs).toHaveLength(2)
-      expect(state.tabs.map((tab) => tab.label)).toEqual(['Page 2', 'Page 3'])
+      expect(useTabsStore.getState().tabs).toHaveLength(2)
+      expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual(['Page 2', 'Page 3'])
       // Menu is still open after the close — user can keep pruning.
       expect(screen.getByRole('menu')).toBeInTheDocument()
     })
@@ -935,9 +988,8 @@ describe('TabBar', () => {
       // Close index 2 → "Page 3"
       await user.click(closeItems[2] as HTMLElement)
 
-      const state = useNavigationStore.getState()
-      expect(state.tabs).toHaveLength(2)
-      expect(state.tabs.map((tab) => tab.label)).toEqual(['Page 1', 'Page 2'])
+      expect(useTabsStore.getState().tabs).toHaveLength(2)
+      expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual(['Page 1', 'Page 2'])
     })
   })
 })

@@ -9,9 +9,9 @@
  */
 
 import { useCallback, useRef } from 'react'
-import { useNavigationStore } from '../stores/navigation'
 import { keyFor, useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
+import { useTabsStore } from '../stores/tabs'
 
 export interface RichContentCallbacks {
   resolveBlockTitle: (id: string) => string | undefined
@@ -86,7 +86,7 @@ export function useTagClickHandler(): (tagId: string) => void {
   // Subscribe to version so the ref stays fresh for the stable callback below.
   useResolveStore((s) => s.version)
   const cache = useResolveStore((s) => s.cache)
-  const navigateToPage = useNavigationStore((s) => s.navigateToPage)
+  const navigateToPage = useTabsStore((s) => s.navigateToPage)
 
   const cacheRef = useRef(cache)
   cacheRef.current = cache

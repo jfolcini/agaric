@@ -14,6 +14,7 @@ import type { Mock } from 'vitest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useNavigationStore } from '../../stores/navigation'
 import { useResolveStore } from '../../stores/resolve'
+import { useTabsStore } from '../../stores/tabs'
 import { useRichContentCallbacks, useTagClickHandler } from '../useRichContentCallbacks'
 
 beforeEach(() => {
@@ -127,9 +128,11 @@ describe('useTagClickHandler', () => {
     navigateToPage = vi.fn() as typeof navigateToPage
     useNavigationStore.setState({
       currentView: 'journal',
+      selectedBlockId: null,
+    })
+    useTabsStore.setState({
       tabs: [{ id: '0', pageStack: [], label: '' }],
       activeTabIndex: 0,
-      selectedBlockId: null,
       navigateToPage,
     })
   })

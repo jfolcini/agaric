@@ -134,6 +134,7 @@ import { useBlockStore } from '../../stores/blocks'
 import { useJournalStore } from '../../stores/journal'
 import { useNavigationStore } from '../../stores/navigation'
 import { useSpaceStore } from '../../stores/space'
+import { useTabsStore } from '../../stores/tabs'
 import {
   GlobalDateControls,
   JournalControls,
@@ -3273,9 +3274,11 @@ describe('JournalPage', () => {
       it('hides Today when on journal view + daily mode + today', () => {
         useNavigationStore.setState({
           currentView: 'journal',
+          selectedBlockId: null,
+        })
+        useTabsStore.setState({
           tabs: [{ id: '0', pageStack: [], label: '' }],
           activeTabIndex: 0,
-          selectedBlockId: null,
         })
         useJournalStore.setState({
           mode: 'daily',
@@ -3292,9 +3295,11 @@ describe('JournalPage', () => {
       it('shows Today when on journal view + daily mode + non-today date', () => {
         useNavigationStore.setState({
           currentView: 'journal',
+          selectedBlockId: null,
+        })
+        useTabsStore.setState({
           tabs: [{ id: '0', pageStack: [], label: '' }],
           activeTabIndex: 0,
-          selectedBlockId: null,
         })
         useJournalStore.setState({
           mode: 'daily',
@@ -3311,9 +3316,11 @@ describe('JournalPage', () => {
       it('hides Agenda when on journal view + agenda mode', () => {
         useNavigationStore.setState({
           currentView: 'journal',
+          selectedBlockId: null,
+        })
+        useTabsStore.setState({
           tabs: [{ id: '0', pageStack: [], label: '' }],
           activeTabIndex: 0,
-          selectedBlockId: null,
         })
         useJournalStore.setState({
           mode: 'agenda',
@@ -3330,9 +3337,11 @@ describe('JournalPage', () => {
       it('shows Agenda when not on journal view', () => {
         useNavigationStore.setState({
           currentView: 'pages',
+          selectedBlockId: null,
+        })
+        useTabsStore.setState({
           tabs: [{ id: '0', pageStack: [], label: '' }],
           activeTabIndex: 0,
-          selectedBlockId: null,
         })
         useJournalStore.setState({
           mode: 'agenda',
@@ -3349,9 +3358,11 @@ describe('JournalPage', () => {
       it('renders Today, Agenda, Calendar in that DOM order when all three are visible', () => {
         useNavigationStore.setState({
           currentView: 'pages',
+          selectedBlockId: null,
+        })
+        useTabsStore.setState({
           tabs: [{ id: '0', pageStack: [], label: '' }],
           activeTabIndex: 0,
-          selectedBlockId: null,
         })
         useJournalStore.setState({
           mode: 'daily',

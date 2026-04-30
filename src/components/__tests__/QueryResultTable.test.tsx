@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { makeBlock } from '../../__tests__/fixtures'
 import { useNavigationStore } from '../../stores/navigation'
+import { useTabsStore } from '../../stores/tabs'
 import type { TableColumn } from '../QueryResultTable'
 import { QueryResultTable } from '../QueryResultTable'
 
@@ -18,9 +19,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   useNavigationStore.setState({
     currentView: 'journal',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
 })
 

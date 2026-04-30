@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useJournalStore } from '../../stores/journal'
 import { useNavigationStore } from '../../stores/navigation'
 import { useSpaceStore } from '../../stores/space'
+import { useTabsStore } from '../../stores/tabs'
 import { useAppKeyboardShortcuts } from '../useAppKeyboardShortcuts'
 
 vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
@@ -37,11 +38,13 @@ beforeEach(() => {
 
   useNavigationStore.setState({
     currentView: 'journal',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
     tabsBySpace: {},
     activeTabIndexBySpace: {},
-    selectedBlockId: null,
   })
 
   useSpaceStore.setState({
@@ -216,7 +219,7 @@ describe('useAppKeyboardShortcuts — tab shortcuts', () => {
       { id: 't0', pageStack: [{ pageId: 'P_A', title: 'A' }], label: 'A' },
       { id: 't1', pageStack: [{ pageId: 'P_B', title: 'B' }], label: 'B' },
     ]
-    useNavigationStore.setState({
+    useTabsStore.setState({
       tabs,
       activeTabIndex: 0,
       tabsBySpace: { SPACE_PERSONAL: tabs },
@@ -231,7 +234,7 @@ describe('useAppKeyboardShortcuts — tab shortcuts', () => {
 
     fireEvent.keyDown(window, { key: 'Tab', ctrlKey: true })
 
-    expect(useNavigationStore.getState().activeTabIndex).toBe(1)
+    expect(useTabsStore.getState().activeTabIndex).toBe(1)
   })
 
   it('does NOT fire on mobile (TabBar is hidden)', () => {
@@ -241,7 +244,7 @@ describe('useAppKeyboardShortcuts — tab shortcuts', () => {
 
     fireEvent.keyDown(window, { key: 'Tab', ctrlKey: true })
 
-    expect(useNavigationStore.getState().activeTabIndex).toBe(0)
+    expect(useTabsStore.getState().activeTabIndex).toBe(0)
   })
 })
 
