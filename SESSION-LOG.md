@@ -1,5 +1,47 @@
 # Session Log
 
+## Session 563 — Close 1 frontend-cleanup item (MAINT-127 keyboard-config.ts split into 4 files) (2026-04-30)
+
+**1 MAINT item partial-closed in one PROMPT.md batch with 1 build subagent + 1 review subagent.** Theme: continued the smaller-batch shape from sessions 559-562. Single subagent for a clean, mechanical god-file split. Initial plan considered pairing with PropertyRowEditor or HistoryView decomposition, but inspection showed both were design-heavy (shared state, prop chains) — keyboard-config was the only candidate with a truly mechanical split, so it became a single-item batch.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 23 → 23 (MAINT-127 row remains because 2 of 4 god-files are still in scope after this session — `navigation.ts` and `useGraphSimulation.ts` — but the row's content was trimmed from "3 of 4" → "2 of 4 god-files").
+- **Previously-resolved counter:** 808+ → 809+ across 529 → 530 sessions.
+
+**Items closed (1 sub-item — MAINT-127 partial):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-127 (keyboard-config.ts portion only — 2nd of 4 god-files closed) | `src/lib/keyboard-config.ts` (740L → 21L barrel) + new `src/lib/keyboard-config/{catalog,tiptap,match,storage}.ts` (547 + 22 + 100 + 91 = 760L across 4 files) — Subagent 98e53b66 | **Pure data + functions split into 4 sub-files by concern.** `catalog.ts` owns `ShortcutBinding` interface + `DEFAULT_SHORTCUTS` array (the bulk of the file). `tiptap.ts` owns `configKeyToTipTap`. `match.ts` owns `matchesShortcutBinding` + 3 private helpers (`normalizeKey`, `matchesSingleBinding`, `isSymbolKey`). `storage.ts` owns localStorage-backed CRUD (`STORAGE_KEY` const + `getCustomOverrides`, `getShortcutKeys`, `getCurrentShortcuts`, `setCustomShortcut`, `resetShortcut`, `resetAllShortcuts`, `findConflicts`). The original `keyboard-config.ts` became a 21-line barrel that re-exports the 11 public symbols by name (NOT `export *`) for an auditable public surface. **Critical constraint preserved:** all 17 consumer files import from the barrel path (`../lib/keyboard-config` or `@/lib/keyboard-config`) and were NOT modified — `git diff --stat` shows zero consumer file edits. Dependency graph is acyclic (catalog → ∅, tiptap → ∅, storage → catalog + logger, match → storage). 108 existing keyboard-config tests pass through the barrel unchanged. Reviewer (`97ff71d3`) APPROVED with no required changes (2 nice-to-have suggestions for future: split the 1078L test file matching the 4 sub-files; relocate the test file to `src/lib/keyboard-config/__tests__/` for symmetry — both deferred). |
+
+**Process notes:**
+
+- **Single-subagent batch worked cleanly.** Pure data-file split + barrel re-export is the ideal mechanical-refactor shape: no behavior change, no consumer churn, no design decisions. Subagent finished in one shot with no drift.
+- **Initial plan rejected 2 candidate items after inspection:**
+  1. **PropertyRowEditor.tsx (MAINT-128)** — biome-ignore at L91 explicitly justifies the existing shape ("splitting the JSX into sub-components would push state + callbacks through prop chains for marginal benefit"). Inspecting the body confirmed: 5 typed editors share `localValue`, date hook state, select-options state (3 fields), ref-picker state (4 fields), and 10+ callbacks. The MAINT-128 description's "biome-ignore goes away" claim was overly optimistic — splitting would likely re-create exactly the prop-chain problem the biome-ignore was acknowledging. Skipped.
+  2. **navigation.ts → tabs.ts (MAINT-127)** — inspecting the store revealed `currentView` (sidebar view) is interleaved with the tab engine in many actions (`navigateToPage` reads/writes both). Splitting would require cross-store action coordination, not a clean move. AGENTS.md "Architectural Stability" section says new Zustand stores need user approval, and this would effectively split one store into two coordinating stores — beyond mechanical refactor scope. Skipped.
+- **Architectural pattern verified:** `src/lib/keyboard-config/` directory pattern matches existing `src/lib/i18n/` (14 namespace files, also a barrel) and `src/lib/tauri-mock/`. Reviewer noted the test file location (`src/lib/__tests__/keyboard-config.test.ts`) is slightly mis-located now (implementation moved into a subdir, test stayed at the parent), but the barrel preserves the import path so the test passes unchanged — relocation deferred as a nice-to-have.
+- **No `cargo sqlx prepare`** needed — no SQL changes.
+- **No FEATURE-MAP.md update needed** — pure refactor; user-facing surface unchanged.
+
+**Files touched (this session's batch):**
+
+- Frontend new (4): `src/lib/keyboard-config/catalog.ts`, `src/lib/keyboard-config/tiptap.ts`, `src/lib/keyboard-config/match.ts`, `src/lib/keyboard-config/storage.ts`.
+- Frontend modified (1): `src/lib/keyboard-config.ts` (740L → 21L barrel).
+- Tests modified: 0 (existing 1078L `keyboard-config.test.ts` passes unchanged via the barrel).
+- Consumer files modified: 0 (all 17 callsites preserved through the barrel).
+- Docs: `REVIEW-LATER.md` (MAINT-127 row trimmed; appendix detail updated to reflect 2 god-files remaining). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- Keyboard-config tests via barrel: `npx vitest run src/lib/__tests__/keyboard-config` → **108/108 passed**.
+- Sample consumer tests: `npx vitest run src/components/__tests__/{PageHeader,TrashView,KeyboardShortcuts,KeyboardSettingsTab}` → **226/226 passed** (5 files).
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome on the 5 modified files: 0 warnings.
+
+---
+
 ## Session 562 — Close 2 frontend-cleanup items (MAINT-130(b), MAINT-127 page-blocks portion) (2026-04-30)
 
 **2 MAINT items closed in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent.** Theme: continued the smaller-batch shape from sessions 559-561. Both items are clean refactors with non-overlapping files; subagents ran fully in parallel with no orchestrator-direct work needed.
