@@ -4749,3 +4749,109 @@ fn is_valid_iso_date_delegates_to_validate_date_format_i_commandscrud_8() {
         );
     }
 }
+
+// ─── M-90: `is_space` tightened from `text` to `select` with options=["true"] ───
+//
+// Migration 0039_is_space_select_type.sql changes the seeded
+// `is_space` property definition from `value_type = 'text'` (no
+// options enforcement) to `value_type = 'select'` with
+// `options = '["true"]'`. The BUG-20 options-membership guard in
+// `set_property_in_tx` then rejects any write whose `value_text` is
+// not literally `"true"`, catching drift from the "absent property =
+// not a space" convention at the write layer.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_is_space_to_true_succeeds_m90() {
+    // Happy path: `set_property` with `key='is_space'`, `value='true'`
+    // must succeed under the new `select`-typed definition. This is the
+    // sole value production code (`ensure_is_space_property`,
+    // `create_space_inner`) ever writes.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "m90 happy".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "is_space".into(),
+        Some("true".into()),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let is_space = props
+        .iter()
+        .find(|p| p.key == "is_space")
+        .expect("is_space property must be persisted");
+    assert_eq!(
+        is_space.value_text.as_deref(),
+        Some("true"),
+        "is_space value_text must be 'true'"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_is_space_to_invalid_value_returns_error_m90() {
+    // Error path: any value other than `"true"` (the sole entry in
+    // `options = '["true"]'`) must be rejected by the BUG-20
+    // options-membership check inside `set_property_in_tx`. This is
+    // the regression guard that keeps the new `select` value_type
+    // honest — without it the migration is just a label change.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "m90 reject".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let result = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "is_space".into(),
+        Some("nope".into()),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("nope") && msg.contains("allowed options")),
+        "setting is_space to 'nope' must return Validation with options message, got: {result:?}"
+    );
+
+    mat.shutdown();
+}

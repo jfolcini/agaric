@@ -3445,6 +3445,209 @@ async fn add_attachment_returns_io_error_when_file_missing_on_disk() {
     mat.shutdown();
 }
 
+/// M-30: a second `add_attachment_inner` for the same `fs_path` (with the
+/// underlying file present on disk and a different `attachment_id` /
+/// `block_id`) must surface as `AppError::Database` — the partial unique
+/// index `idx_attachments_fs_path_unique` (migration 0037) trips the
+/// SQLite UNIQUE-constraint check inside the IMMEDIATE transaction, which
+/// `sqlx` reports as `sqlx::Error::Database` and our `From` impl wraps as
+/// `AppError::Database`. Pre-fix, the second insert silently succeeded
+/// and produced two rows pointing at the same file; once
+/// `delete_attachment` actually unlinks (C-3a/b), that would let one
+/// row's delete clobber the other row's content.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_duplicate_fs_path_returns_error_m30() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Two distinct blocks so the test exercises the *cross-block*
+    // collision case (M-30 explicitly calls out "different attachment_id,
+    // even different block_id"). If a same-block re-add were the only
+    // case, it might be argued the frontend should dedupe; the schema
+    // guard has to cover the cross-block case too.
+    let block_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block a".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let block_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block b".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    let rel_path = "attachments/m30_dup.png";
+    let bytes: Vec<u8> = vec![0u8; 16];
+    std::fs::write(app_data_dir.join(rel_path), &bytes).unwrap();
+
+    // First insert: succeeds normally.
+    add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_a.id.clone(),
+        "m30_dup.png".into(),
+        "image/png".into(),
+        16,
+        rel_path.into(),
+    )
+    .await
+    .expect("first add_attachment must succeed");
+
+    // Second insert against the same `fs_path`: must fail with
+    // AppError::Database because the partial unique index trips.
+    let result = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_b.id.clone(),
+        "m30_dup.png".into(),
+        "image/png".into(),
+        16,
+        rel_path.into(),
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Database(_))),
+        "M-30: duplicate fs_path must surface as AppError::Database, got: {result:?}"
+    );
+
+    // Schema guarantee: only one row exists for this fs_path. The
+    // failed second insert rolled back inside the IMMEDIATE tx.
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE fs_path = ?")
+        .bind(rel_path)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 1,
+        "M-30: only the first add must have produced a row at this fs_path"
+    );
+
+    mat.shutdown();
+}
+
+/// M-30: the partial unique index excludes soft-deleted rows
+/// (`WHERE deleted_at IS NULL`). A tombstone row at a given `fs_path`
+/// must NOT block a fresh `add_attachment_inner` at the same path —
+/// otherwise a user who deletes a file and re-adds it would be locked
+/// out forever. Today's `delete_attachment_inner` hard-deletes (the
+/// `deleted_at` column is dead code per the M-28 audit), so the only
+/// way to materialise a tombstone is by direct SQL. This test is
+/// therefore phrased as a schema-level guarantee on the partial index,
+/// not as a workflow assertion against the command path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_after_soft_delete_can_reuse_fs_path_m30() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "soft-delete reuse".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    let rel_path = "attachments/m30_reuse.png";
+    let bytes: Vec<u8> = vec![0u8; 8];
+    std::fs::write(app_data_dir.join(rel_path), &bytes).unwrap();
+
+    // First add via the normal path.
+    let first = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "m30_reuse.png".into(),
+        "image/png".into(),
+        8,
+        rel_path.into(),
+    )
+    .await
+    .expect("first add_attachment must succeed");
+
+    // Simulate a soft-delete by stamping `deleted_at` directly. Today
+    // no production path writes this column, but the partial unique
+    // index is designed to be forward-compatible with a future
+    // soft-delete code path.
+    sqlx::query("UPDATE attachments SET deleted_at = ? WHERE id = ?")
+        .bind("2025-01-02T00:00:00Z")
+        .bind(&first.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Second add at the same `fs_path` — must succeed because the
+    // first row is now outside the partial index's predicate.
+    let second = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "m30_reuse.png".into(),
+        "image/png".into(),
+        8,
+        rel_path.into(),
+    )
+    .await
+    .expect("M-30: re-adding a fs_path after soft-delete must succeed");
+
+    assert_ne!(
+        first.id, second.id,
+        "second add must produce a fresh attachment_id"
+    );
+
+    // One tombstone + one live row at the same fs_path.
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE fs_path = ?")
+        .bind(rel_path)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        total, 2,
+        "tombstone row and fresh row must coexist at the same fs_path"
+    );
+    let live: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM attachments WHERE fs_path = ? AND deleted_at IS NULL",
+    )
+    .bind(rel_path)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        live, 1,
+        "exactly one non-soft-deleted row may exist at a given fs_path"
+    );
+
+    mat.shutdown();
+}
+
 // ======================================================================
 // Draft autosave commands (F-17)
 // ======================================================================
@@ -3509,6 +3712,17 @@ async fn save_and_flush_draft() {
 async fn delete_draft_removes_entry() {
     let (pool, _dir) = test_pool().await;
 
+    // M-93 / migration 0038: seed the parent block so save_draft satisfies
+    // the FK from block_drafts.block_id to blocks(id).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'content', '', NULL, 0)",
+    )
+    .bind("01HZ000000000000000000DRF02")
+    .execute(&pool)
+    .await
+    .unwrap();
+
     // Save a draft
     draft::save_draft(&pool, "01HZ000000000000000000DRF02", "to be deleted")
         .await
@@ -3545,6 +3759,20 @@ async fn list_drafts_returns_all_drafts() {
     // Start with no drafts
     let result = list_drafts_inner(&pool).await.unwrap();
     assert!(result.is_empty(), "should start with zero drafts");
+
+    // Seed parent blocks so save_draft satisfies the M-93 FK
+    // (`block_drafts.block_id REFERENCES blocks(id) ON DELETE CASCADE`,
+    // migration 0038).
+    for id in ["01HZ000000000000000000DRF03", "01HZ000000000000000000DRF04"] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
 
     // Save two drafts
     draft::save_draft(&pool, "01HZ000000000000000000DRF03", "content one")

@@ -214,34 +214,17 @@ mod tests_h12 {
     }
 
     // -- H-12a: target block missing entirely ------------------------------
-
-    #[tokio::test]
-    async fn flush_draft_drops_draft_when_target_missing() {
-        let (pool, _dir) = test_pool().await;
-
-        // Save a draft pointing at a block_id that has no row in `blocks`.
-        draft::save_draft(&pool, MISSING_BLOCK, "orphan content")
-            .await
-            .unwrap();
-        assert!(draft_exists(&pool, MISSING_BLOCK).await);
-
-        // Flush must return Ok(()) and silently drop the orphan draft.
-        flush_draft_inner(&pool, DEVICE, MISSING_BLOCK.to_owned())
-            .await
-            .expect("flush should swallow orphan-target case");
-
-        // No edit_block op was appended.
-        assert_eq!(
-            count_edit_block_ops(&pool, MISSING_BLOCK).await,
-            0,
-            "no edit_block op must be written for an orphan target",
-        );
-        // The draft row was deleted.
-        assert!(
-            !draft_exists(&pool, MISSING_BLOCK).await,
-            "orphan draft must be deleted",
-        );
-    }
+    //
+    // The "target block has no row in `blocks` at all" case is now
+    // unreachable: migration 0038 (M-93) added a FOREIGN KEY from
+    // `block_drafts.block_id` to `blocks(id)` ON DELETE CASCADE, so any
+    // attempt to seed an orphan draft fails with `SQLITE_CONSTRAINT_FOREIGNKEY`
+    // up front. The `flush_draft_inner` H-12a guard ("target block missing
+    // or soft-deleted; dropped orphan draft") is therefore now load-bearing
+    // only for the soft-deleted-target branch (covered by
+    // `flush_draft_drops_draft_when_target_soft_deleted` below). The
+    // schema-level invariant itself is asserted by
+    // `cannot_save_draft_for_nonexistent_block_m93` further down.
 
     // -- H-12a: target block soft-deleted -----------------------------------
 
@@ -315,6 +298,73 @@ mod tests_h12 {
             count_edit_block_ops(&pool, LIVE_BLOCK).await,
             0,
             "no edit_block op must be appended on oversized rejection",
+        );
+    }
+
+    // -- M-93: schema invariant — block_drafts FK to blocks(id) ------------
+    //
+    // These two tests lock down the migration 0038 invariant: a draft can
+    // only exist for an existing `blocks(id)`, and hard-deleting the block
+    // cascades the draft away atomically. They bypass the public command
+    // API on purpose — we are testing the schema, not the Rust layer.
+
+    /// Hard-deleting a block must cascade-delete its draft via the FK
+    /// (`ON DELETE CASCADE`). Before migration 0038 the draft would have
+    /// outlived the block and surfaced as orphan noise during recovery.
+    #[tokio::test]
+    async fn hard_delete_block_cascades_to_block_drafts_m93() {
+        let (pool, _dir) = test_pool().await;
+        insert_live_block(&pool, LIVE_BLOCK).await;
+        draft::save_draft(&pool, LIVE_BLOCK, "draft body")
+            .await
+            .unwrap();
+        assert!(draft_exists(&pool, LIVE_BLOCK).await, "draft seeded");
+
+        // Hard-delete the parent block. There is no public command that
+        // bypasses the soft-delete tombstone for a single block id (purge
+        // operates on the whole soft-deleted set), so we issue the DELETE
+        // directly — what matters is that the FK fires, regardless of the
+        // call site.
+        sqlx::query("DELETE FROM blocks WHERE id = ?")
+            .bind(LIVE_BLOCK)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_drafts WHERE block_id = ?")
+            .bind(LIVE_BLOCK)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "M-93: hard-deleting a block must cascade to block_drafts (FK ON DELETE CASCADE)",
+        );
+    }
+
+    /// Inserting a draft for a `block_id` that has no row in `blocks`
+    /// must fail with a FOREIGN KEY constraint violation. This is the
+    /// schema-level guarantee that orphan drafts can no longer be
+    /// created — only existing-block drafts are valid.
+    #[tokio::test]
+    async fn cannot_save_draft_for_nonexistent_block_m93() {
+        let (pool, _dir) = test_pool().await;
+
+        // No row in `blocks` for MISSING_BLOCK. Direct INSERT — bypasses
+        // any application-layer check; we are exercising the FK itself.
+        let err = sqlx::query(
+            "INSERT INTO block_drafts (block_id, content, updated_at) \
+             VALUES (?, 'orphan content', '2025-01-01T00:00:00Z')",
+        )
+        .bind(MISSING_BLOCK)
+        .execute(&pool)
+        .await
+        .expect_err("insert without parent block must violate FK");
+
+        let msg = format!("{err}");
+        assert!(
+            msg.to_lowercase().contains("foreign key"),
+            "expected FOREIGN KEY violation, got: {msg}",
         );
     }
 

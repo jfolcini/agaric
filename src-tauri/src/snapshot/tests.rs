@@ -504,6 +504,22 @@ async fn apply_snapshot_drops_drafts_observably_m66() {
     .unwrap();
     let snap_data = snap_row.data;
 
+    // M-93 / migration 0038: `block_drafts.block_id` now has a FK to
+    // `blocks(id) ON DELETE CASCADE`. Seed parent rows for each draft
+    // before staging them — the drafts themselves are still wiped
+    // unconditionally by `apply_snapshot`, which is what this test
+    // exercises.
+    for id in ["draft-A", "draft-B", "draft-C"] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
     // Seed THREE drafts that will be silently dropped without M-66.
     // Mix block_ids so the sample_ids vector has > 1 entry (proves
     // the LIMIT 8 sample read works for non-trivial cases).
