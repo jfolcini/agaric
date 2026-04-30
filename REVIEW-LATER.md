@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-23 open items — 23 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 17 backend Medium findings closed + 23 MAINT closed (some partially) across sessions 549-579 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-579): MAINT-131 fully reduced to residual cleanup; MAINT-162 reduced to 1 component remaining (StaticBlock); **MAINT-125 progress: 67 of ~78 wrappers migrated (~86%)**; **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
+22 open items — 22 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 17 backend Medium findings closed + 24 MAINT closed (some partially) across sessions 549-580 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-580): MAINT-131 fully reduced to residual cleanup; MAINT-162 reduced to 1 component remaining (StaticBlock); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
 
-Previously resolved: 835+ items across 546 sessions (per SESSION-LOG.md unique session count; latest is session 579).
+Previously resolved: 836+ items across 547 sessions (per SESSION-LOG.md unique session count; latest is session 580).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -36,7 +36,6 @@ Previously resolved: 835+ items across 546 sessions (per SESSION-LOG.md unique s
 | MAINT-111 | MAINT | Spike `rmcp` (official Rust MCP SDK) vs the hand-rolled JSON-RPC 2.0 dispatch in `mcp/server.rs` (~492 LOC of framing + `make_success` / `make_error` / `parse_request` / method-dispatch boilerplate); keep existing `ToolRegistry` + activity-feed if the adapter stays thin | M |
 | MAINT-113 | MAINT | `ConflictFreeBlockId` newtype to lift invariant #9 (`is_conflict = 0` + `depth < 100` in every recursive CTE over `blocks`) into the type system — 220 `is_conflict = 0` SQL occurrences across 70 files. LOW-priority refactor for elegance, not correctness; the convention + review + documented invariant are already working. Do NOT do on a deadline. | L |
 | MAINT-124 | MAINT | Collapse `src/App.tsx` — 1444L baseline → 1139L (576 useAppKeyboardShortcuts) → 907L (577 AppSidebar) → 872L (578 useAppDialogs) → **515L** (579 ViewDispatcher + boot/lifecycle: `<ViewDispatcher>` to `src/components/ViewDispatcher.tsx` 260L + 20 tests, `useAppBootRecovery()` to `src/hooks/useAppBootRecovery.ts` 93L + 5 tests, `useAppSpaceLifecycle()` to `src/hooks/useAppSpaceLifecycle.ts` 74L + 7 tests, –357L from App.tsx). **0 extractions remaining**; 15L over the ≤500L stretch goal but residual is irreducible orchestrator glue (FEAT-12 quick-capture global hotkey explicitly out of scope, prop wiring, JSX shell, imports). Closing this row would require either reverting the "FEAT-12 stays in App.tsx" decision OR a substantial restructure of the prop-passing pattern — neither warranted for –15L. **Effectively closed; keep row open as an architectural watchpoint** so future App.tsx edits don't regress past 600L without a fresh extraction. | S–M |
-| MAINT-125 | MAINT | `src/lib/tauri.ts` hand-writes `invoke('<str>', ...)` wrappers for commands already typed by `src/lib/bindings.ts`. Migration in progress — **67 of ~78 wrappers migrated (~86%)** via `unwrap` helper across 5 batches (sessions 574, 576, 577, 578, 579). Batch-5 (session 579, 12 peer-ref / pairing-sync / drafts wrappers): `listPeerRefs`, `getPeerRef`, `deletePeerRef`, `updatePeerName`, `setPeerAddress`, `getDeviceId`, `startPairing`, `confirmPairing`, `cancelPairing`, `startSync`, `cancelSync`, `listDrafts`. Sync/pairing cluster fully closed; drafts cluster fully closed (3 prior + 1 in batch-5). ~11 wrappers still on raw `invoke`, clustered as: attachments (5: `listAttachments`, `getBatchAttachmentCounts`, `listAttachmentsBatch`, `addAttachment`, `deleteAttachment`), diagnostics/bug-report (3: `logFrontend`, `getLogDir`, `collectBugReportMetadata`/`readLogsForReport`), compaction (2: `getCompactionStatus`, `compactOpLogCmd`), link-metadata (2: `fetchLinkMetadata`, `getLinkMetadata`), markdown-import (1: `importMarkdown`). All mechanical. Public surface of `tauri.ts` unchanged. Pairs with MAINT-123 (typed `HANDLERS`). | M |
 | MAINT-127 | MAINT | God-file decomposition (libs + stores) — 1 of 4 god-files remaining after sessions 562 (`page-blocks.ts`), 563 (`keyboard-config.ts`), and 570 (`useGraphSimulation.ts` 716L → 111L thin orchestrator + 5 extracted files). `src/stores/navigation.ts` (543L) — tab engine + sidebar view interleaved; splitting requires cross-store coordination, NOT a clean move. **Blocked pending design discussion:** the navigation store mixes `currentView` (sidebar view) with the tab engine in many actions (`navigateToPage`, `goBack`, `switchTab` read+write both). Splitting would require either (a) a new Zustand `tabs.ts` store coordinating with `navigation.ts` via subscribers, or (b) lifting `currentView` setting INTO tab actions (still 2 stores, just inverted). Both options need AGENTS.md "Architectural Stability" approval (new Zustand store / new coordination pattern). | M |
 | MAINT-128 | MAINT | God-component decomposition batch — 1 of 9 components remaining after sessions 566-571. Remaining: `PropertyRowEditor.tsx` (539L — dispatch by `def.value_type`; deletes the `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` at L85; **rejected in session 563 inspection as design-heavy** — 5 typed editors share `localValue`, date hook state, select-options state (3 fields), ref-picker state (4 fields), 10+ callbacks; splitting would re-create the prop-chain problem the biome-ignore acknowledges). Closing this row requires a design discussion: either accept the existing `biome-ignore` permanently, or split each typed editor into its own component AND lift the shared state UP to a containing hook (substantial refactor). **Stretch-target gaps for partially-closed components:** SettingsView gap to ≤150L closes via `useSettingsTab` hook for localStorage+URL persistence (~50L drop); SortableBlock gap to ≤250L closes via JSX extraction `<SortableBlockBody>`; HistoryView gap to ≤250L closes via `useHistoryEntries` data-loading hook (~30L drop); ConflictList gap to ≤450L closes via 3 additional extractions (`useConflictDeviceNames`, `useConflictActions`, `<ConflictFilterBar>`); TrashView is at the firm ≤450L target (≤350L stretch deferred — would require collapsing 6 IPC handlers into a single-use hook); PageBrowser gap to ≤300L is irreducible orchestrator glue (~127L); BlockTree gap to ≤500L closes via 3-4 additional extractions but `handleFlush` is tightly coupled to `splitBlock`/`edit`/undo store; AddFilterRow at 290L (component body ~90L; remaining ~200L is module-level `build*Filter` helpers + `buildFilterForCategory` switch — could be moved to `categories/builders.ts` to shrink to ~120L but explicitly out of scope for that batch). All deferred. | L |
 | MAINT-131 | MAINT | Block-surface Tauri coupling — residual cleanup after the major batching + hook-wrap work. **Done across sessions 572, 575, 576:** (a) SortableBlock badge-count batch IPC (572); (b) StaticBlock full-list batch IPC + cache-invalidation contract (575); (c) `useBlockReschedule` (setDueDate/setScheduledDate) + `useLinkMetadata` (fetchLinkMetadata) hooks wired into BlockListItem, RescheduleDropZone, DateChipEditor, BlockPropertyDrawer, LinkEditPopover (576). Residual: 3 components (`EditableBlock`, `BlockPropertyEditor`, `ImageResizeToolbar`) were never touched and may still import `lib/tauri` directly; 3 of the touched components still import single non-date IPCs from `lib/tauri` (BlockListItem + RescheduleDropZone use `getBlock`; BlockPropertyDrawer uses `getProperties`/`listPropertyDefs`/`setProperty`). These could close via further hook wraps but each is a small isolated cleanup that pairs with feature work in those components. | S |
@@ -739,26 +738,6 @@ Target App.tsx ≤500 lines: boot gate, dialog mounts, the 4 extracted pieces, a
 **Risk:** Medium — the file is load-bearing. Migrate incrementally, one extraction per commit, running the existing App.test suite and e2e shortcut tests between each.
 **Impact:** L — biggest single-file cognitive-load reduction in the codebase.
 
-### MAINT-125 — Migrate `src/lib/tauri.ts` to delegate to `bindings.ts` `commands.*`
-
-**What:** `src/lib/tauri.ts` (1276L) hand-writes `invoke('<str>', { ... })` wrappers for every backend command. `src/lib/bindings.ts` (873L) is auto-generated by Tauri Specta (`@ts-nocheck` + Tauri Specta banner verified) and exports `commands.*` with fully typed signatures. Three spot-checks:
-
-| Wrapper | `tauri.ts` site | `bindings.ts` site |
-|---|---|---|
-| `editBlock` | L92-94: `return invoke('edit_block', { blockId, toText })` | L17: `editBlock: (blockId, toText) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("edit_block", { blockId, toText }))` |
-| `deleteBlock` | L97-99 | L19 |
-| `batchResolve` | L243 | L54 |
-
-Same IPC command name, two wrappers. The compiler cannot verify `tauri.ts`'s command strings against `bindings.ts`. Every new backend command is added twice; command renames drift silently. Combined with the `HANDLERS` stringly-typed keys (MAINT-123), there is no end-to-end compile-time contract.
-
-**Fix:** Stage migration — one PR per ~10 wrappers that replaces the raw `invoke('x', …)` body with `await commands.x(...)` (plus any shape translation needed). The public surface of `tauri.ts` stays identical; consumers don't change. Once all wrappers delegate, `tauri.ts` may become a very thin remapping layer or be deleted entirely if its consumers migrate to import `commands.*` directly.
-
-Pair with MAINT-123 — both land as "typed end-to-end IPC contract" epic.
-
-**Cost:** L (~80 wrappers × a few minutes each = 8h+ spread across multiple PRs).
-**Risk:** Low-to-medium — surface is stable, but need to verify each wrapper's arg shape matches bindings (some wrappers reshape args).
-**Impact:** M — kills the largest duplication source in `src/lib/` AND unlocks compile-time coverage for mock-drift (MAINT-123).
-
 ### MAINT-127 — God-file decomposition (libs + stores + hooks)
 
 **What:** 2 of 4 originally-listed god-files remain. **Session 562 closed `page-blocks.ts` → `block-tree-ops.ts`** (dropping the store from 718L → 591L; the `planSplit` / `computeIndentedBlocks` / `findPrevSiblingAt` / `midpointPosition` quartet plus 2 module-private dependencies + `SplitPlan` type now live at `src/lib/block-tree-ops.ts` with 33 tests). **Session 563 closed `keyboard-config.ts`** (740L → 21L barrel + new `src/lib/keyboard-config/{catalog,tiptap,match,storage}.ts` sub-files; 17 consumer files unchanged because the barrel preserves the `'../lib/keyboard-config'` import path). Remaining files:
@@ -1005,7 +984,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 ### Top-priority items (Impact ÷ Cost)
 
 1. **C-2b** — Boot-time op-log replay path for unmaterialized ops; op_log diverges from materialized state with no automatic remediation (<ref_file file="/home/javier/dev/agaric/src-tauri/src/materializer/consumer.rs" />). C-2a (divergence detection) shipped — divergence is now visible via `fg_apply_dropped` in `StatusInfo`; C-2b remains as the actual replay path. **Schema migration approval required**.
-2. **H-17** — `recurrence::handle_recurrence` reads counters BEFORE `BEGIN IMMEDIATE` (TOCTOU); two clicks on a recurring task can duplicate or skip the next-occurrence sibling (<ref_file file="/home/javier/dev/agaric/src-tauri/src/recurrence/handle.rs" />).
 
 ### Findings by Domain × Severity
 
@@ -1040,13 +1018,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 6. **Doc / code drift across AGENTS.md, ARCHITECTURE.md, and REVIEW-LATER.md.** AppError variants (11 vs 12 with Gcal); `find_lca` 10000-iter cap claim has no implementation; FTS tokenizer doc says unicode61 but code uses trigram; ARCHITECTURE.md §15 says DB/IO/JSON errors are sanitized but 5 command files skip the helper; REVIEW-LATER PERF-20 site count wrong; ARCHITECTURE.md doesn't mention MCP at all.
 7. **Sync hash chain identity is non-cryptographic.** Per `compute_op_hash`, the digest covers `device_id|seq|parent_seqs|op_type|payload` but **not** `prev_hash`. Pass 2 downgraded "data integrity" framing — within the single-user threat model the chain is a deterministic fingerprint, not a Merkle commitment. Filed as a documentation gap.
 8. **OAuth & filesystem secret hygiene is good but not perfect.** SecretString redaction tested, keychain-only storage; minor leakage paths exist via classify_refresh_error formatting upstream Display, JWT id_token signature unverified, and partial token leakage on serde error. Bug-report redaction allow-list only catches `$HOME` + local `device_id` — leaks GCal email, peer device IDs.
-
-### Quick wins (Cost = S, Impact ≥ Medium, Risk ≤ Medium)
-
-| ID | Title | Why |
-|---|---|---|
-| **H-17** | `recurrence::handle_recurrence` reads counters before BEGIN IMMEDIATE (TOCTOU) | Two clicks duplicate next-occurrence sibling |
-| **M-23** | `flush_draft_inner` reads `prev_edit` outside the flush transaction | Conflict-detection asymmetry vs `edit_block_inner` |
 
 ---
 
@@ -1268,18 +1239,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F23
 - **Status:** Open
 
-### L-133 — `space` ref-property invariant relies on bootstrap migration but never re-runs
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/spaces/bootstrap.rs:39-86, 92-110`
-- **What:** `is_bootstrap_complete` returns `true` as soon as both seed-space blocks exist with `is_space='true'`, after which `pages_without_space` never runs again. Pages that land in DB without a `space` property after bootstrap (cf. H-3 — JournalPage / TemplatesView creating unscoped pages, plus any peer-synced legacy CreateBlock op) stay unscoped forever — invisible to space-scoped list queries.
-- **Why it matters:** Combined with the H-3 leak, this is the mechanism by which the FEAT-3 invariant decays: every new daily-journal page enters DB unscoped and never gets a `space` property. The bootstrap test (`bootstrap_skips_pages_that_already_have_space_property`) only pins that bootstrap is conservative — there is no follow-up sweep.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** Fix H-3/H-4 first (frontend stops creating unscoped pages). Then either (a) extend the bootstrap fast-path to also assert `pages_without_space()` is empty (surfaces drift loudly with a boot-fatal error) or (b) add a periodic background sweep that assigns orphans to the user's "current" space (or Personal as fallback). Prefer (a) — option (b) obscures bugs.
-- **Pass-1 source:** 10/F26
-- **Status:** Open
-
 ## LOW findings (7 — expanded)
 
 > Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
@@ -1351,20 +1310,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### Search & Links
-
-### MCP
-
-### L-118 — TOCTOU race on rapid `mcp_set_enabled` toggling
-- **Domain:** MCP
-- **Location:** `src-tauri/src/commands/mcp.rs:212-244` (`mcp_set_enabled`, in particular the `lc.is_running()` read at line 232); `src-tauri/src/mcp/mod.rs:275-296` (`bind_socket` already-bound probe).
-- **What:** `mcp_set_enabled(true)` reads `lc.is_running()` without a lock and conditionally calls `spawn_mcp_ro_task`. A second concurrent `mcp_set_enabled(true)` may also see `task_running == false` (because the first spawn has not yet reached `bind_socket`) and double-spawn. The second `bind_socket` then detects the live socket via the `UnixStream::connect` probe and returns `AppError::InvalidOperation("already bound")`, logged at warn.
-- **Why it matters:** Pure cosmetic: the worst observable artifact is a single warn line. Local-only deployment makes accidental rapid toggles vanishingly rare.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Leave as-is per Pass 2's "leave-as-is" finding; the warn log is sufficient diagnostic. If a clean fix is desired, add a `spawning: AtomicBool` on `McpLifecycle` and gate the spawn with `compare_exchange`.
-- **Pass-1 source:** 09/F11
-- **Status:** Open
 
 ### GCal / Spaces / Drafts
 
