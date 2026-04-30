@@ -1,5 +1,52 @@
 # Session Log
 
+## Session 577 — 2-subagent batch: MAINT-124 `<AppSidebar>` extraction + MAINT-125 batch-3 (2026-04-30)
+
+**2 disjoint MAINT items each made substantial progress in one PROMPT.md batch with 2 parallel build subagents (no review subagent — pure JSX move + mechanical wrapper migrations, both well-covered by existing tests).** Subagent A extracted the sidebar tree from `App.tsx` into a new `<AppSidebar>` component (–227L from App.tsx); Subagent B migrated 15 more `tauri.ts` wrappers (trash/tags/properties/property-defs/listUnlinkedReferences) bringing cumulative MAINT-125 progress to 41 of ~80 wrappers (~51%).
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 23 → 23 (both MAINT rows STAY — neither fully closed). MAINT-124: 1134L → 907L App.tsx (–227L this session; –537L cumulative since 1444L baseline). MAINT-125: 41 of ~80 migrated (~51%).
+- **Previously-resolved counter:** 829+ → 831+ across 543 → 544 sessions (2 partial closures in one session counted as 1 session bump).
+
+**Items closed (2 partial closures):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-124 `<AppSidebar>` extraction | New: `src/components/AppSidebar.tsx` (284L — owns the `<Sidebar collapsible="icon">` JSX, including header / branded space-switcher rail, primary nav menu, footer with new-page/sync/theme/shortcuts buttons, plus the sidebar-internal `CollapseButton` and `syncDotClass` helper); `src/components/nav-items.ts` (45L — shared `NAV_ITEMS` constant + `NavItem` interface, lifted out of App.tsx so both `useHeaderLabel` and the new `AppSidebar` can import without a circular dep); `src/components/__tests__/AppSidebar.test.tsx` (147L, 7 smoke tests covering renders-without-crashing, branding visibility, onSelectView click, aria-current=page on active item, conflict-badge gating, footer action callbacks, axe-no-violations). `src/App.tsx`: **1134L → 907L (–227L, ~20% reduction)**. Removed: 18 lucide-react icon imports + 12 unused `Sidebar*` UI primitive re-exports + `useSidebar` + `formatRelativeTime` + `SpaceAccentBadge` + `SpaceStatusChip` + `SpaceSwitcher`. Added: `import { AppSidebar }` + `import { NAV_ITEMS }` + a single `<AppSidebar … />` invocation. **Pure JSX move — no state migration.** All cross-cutting state (currentView, syncState, syncPeers, conflictCount, trashCount, etc.) stays in App.tsx and is passed via props. Only `t` from `useTranslation()` moved into the new component. App.test.tsx: 113/113 unchanged. **Drift caught + fixed:** the prompt cited `App.tsx:854-1089` (~235L) but the actual `<Sidebar>...</Sidebar>` element was L864–L1020 (157L); the L854-1089 range covered more than just the sidebar (skip link + `<SidebarProvider>` + `<SidebarInset>` shell). Subagent extracted ONLY the `<Sidebar>` element, leaving the shell wrappers in App.tsx — accurate per "the sidebar tree" framing of the description. Subagent updated MAINT-124's REVIEW-LATER row inline to reflect the actual delta (1134 → 907L, "AppShell" reframed as the completed "<AppSidebar>" extraction). 2 extractions remain: `useAppDialogs()` (4 dialog open-states + their handlers + `BUG_REPORT_EVENT` / `CLOSE_ALL_OVERLAYS_EVENT` listeners) and `<ViewDispatcher>` (promote the existing `ViewRouter` function to its own file along with `useHeaderLabel`/`useConflictCount`/`useTrashCount`/`ViewFallback`/`PageSelectHandler`). — Subagent 3c5a473c |
+| MAINT-125 batch-3 (15 trash/tags/properties/property-defs wrappers) | `src/lib/tauri.ts` only. Migrated to `unwrap(await commands.X(...))`: **Trash cluster (3):** `restoreAllDeleted`, `purgeAllDeleted`, `trashDescendantCounts`. **Tag cluster (2):** `listTagsByPrefix`, `listTagsForBlock`. **Property cluster (4):** `setProperty`, `deleteProperty`, `getProperties`, `getBatchProperties`. **Backlinks remainder (1):** `listUnlinkedReferences`. **Property-def cluster (5):** `listPropertyKeys`, `createPropertyDef`, `listPropertyDefs`, `updatePropertyDefOptions`, `deletePropertyDef`. **Skipped from suggested-targets list (deferred to future batches):** sync IPCs (`startPairing`, `confirmPairing`, etc.), drafts IPCs (`saveDraft`/etc.), compaction IPCs, bug-report IPCs, `createPageInSpace`. **Drift caught:** GCal IPCs (`getGcalStatus`, `forceGcalResync`, etc.) are NOT present in `tauri.ts` as wrappers — components invoke them directly via raw `invoke('get_gcal_status')`. Migrating those call-sites is out of scope for MAINT-125 (which is about consolidating `tauri.ts` wrappers, not extending wrapper coverage). 159/159 tauri.test.ts tests pass; 326/326 consumer tests pass across `useTrashDescendantCounts`, `useBlockPropertiesBatch`, `usePropertySave`, `useBlockTags`, `usePropertyDefForEdit`, `UnlinkedReferences`, `TrashView`, `PropertiesView`, `BlockPropertyEditor`, `PropertyRowEditor`, `PagePropertyTable`. **Cumulative MAINT-125 progress: 41 of ~80 wrappers migrated** (~51%; was 26 from sessions 574+576). — Subagent ca95c4fb |
+
+**Process notes:**
+
+- **2 parallel build subagents touching disjoint files.** Subagent A owned `src/App.tsx` + `src/components/AppSidebar.tsx` + `src/components/nav-items.ts` + `src/components/__tests__/AppSidebar.test.tsx`. Subagent B owned `src/lib/tauri.ts` only. Both succeeded on first attempt; no merge conflicts.
+- **No review subagent.** Pure JSX move + mechanical wrapper migrations, both well-covered by existing tests. The orchestrator validated end-to-end via prek.
+- **2 prek-driven nit fixes** (orchestrator):
+  1. **biome auto-format** flagged whitespace/wrap diffs in 4 files (App.tsx, AppSidebar.tsx, nav-items.ts, AppSidebar.test.tsx, tauri.ts). Fixed via `npx biome format --write`.
+  2. **biome check `assist/source/organizeImports`** flagged App.tsx imports as unsorted (after the unused-import removals during the AppSidebar extraction). Fixed via `npx biome check --write src/App.tsx`.
+- **Drift discovered (subagents flagged):**
+  - MAINT-124 description's `App.tsx:854-1089` range covered MORE than just the sidebar; the actual `<Sidebar>...</Sidebar>` was L864-L1020. Subagent updated REVIEW-LATER inline.
+  - MAINT-124 description's "1139L" was actually 1134L at start (stable count drift since session 576).
+  - MAINT-125 description's "GCal IPCs" entry in the suggested-targets was wrong — those IPCs aren't in `tauri.ts` as wrappers (components invoke directly).
+  - `BulkTrashResponse` and `PropertyRow` are duplicated between `tauri.ts` (hand-written interfaces) and `bindings.ts` (generated types). Structural typing accepts the duplication; logged as a future cleanup target.
+- **Subagent A (MAINT-124) modified REVIEW-LATER.md** during its work — that's intentional drift-correction (the row reflected stale line numbers). Orchestrator preserved the subagent's edits + added the MAINT-125 batch-3 row update + summary counter bump.
+- **No `cargo sqlx prepare`** needed (no SQL changes). **No backend changes.** **No new IPC commands.** **No `bindings.ts` regeneration.**
+- **No FEATURE-MAP.md update needed** — both items are internal refactors; user-facing surface unchanged.
+
+**Files touched (this session's batch):**
+
+- Frontend new (3): `src/components/AppSidebar.tsx`, `src/components/nav-items.ts`, `src/components/__tests__/AppSidebar.test.tsx`.
+- Frontend modified (2): `src/App.tsx` (1134L → 907L), `src/lib/tauri.ts` (15 wrappers migrated).
+- Docs: `REVIEW-LATER.md` (MAINT-124 row updated by subagent A reflecting the actual sidebar extraction; orchestrator added MAINT-125 batch-3 row update + summary counter bump and trimmed the long history line). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after 2 nit fixes).
+
+- MAINT-124: App.test.tsx → 113/113 (unchanged); AppSidebar.test.tsx → 7/7 new.
+- MAINT-125: tauri.test.ts → 159/159; cluster of 11 consumer test files → 326/326.
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome: clean (after auto-format + organizeImports).
+
+---
+
 ## Session 576 — 3-subagent batch: MAINT-131 hook wraps + MAINT-125 batch-2 + MAINT-124 useAppKeyboardShortcuts (2026-04-30)
 
 **3 disjoint MAINT items each made substantial progress in one PROMPT.md batch with 3 parallel build subagents (no review subagent — all changes are mechanical/well-tested).** Each subagent owned a disjoint file set: Subagent A migrated date/link-metadata IPCs into hooks (5 components), Subagent B migrated 15 more `tauri.ts` wrappers to `commands.*`, Subagent C extracted the keyboard-shortcuts cluster from App.tsx (305L removed).
