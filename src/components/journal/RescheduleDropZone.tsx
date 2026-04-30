@@ -37,7 +37,8 @@ import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
-import { getBlock, setDueDate, setScheduledDate } from '../../lib/tauri'
+import { useBlockReschedule } from '../../hooks/useBlockReschedule'
+import { getBlock } from '../../lib/tauri'
 
 interface RescheduleDropZoneProps {
   dateStr: string
@@ -55,6 +56,7 @@ export function RescheduleDropZone({
 }: RescheduleDropZoneProps): React.ReactElement {
   const { t } = useTranslation()
   const [isOver, setIsOver] = useState(false)
+  const { setDueDate, setScheduledDate } = useBlockReschedule()
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (e.dataTransfer.types.includes(RESCHEDULE_DRAG_TYPE)) {
@@ -108,7 +110,7 @@ export function RescheduleDropZone({
         announce(t('announce.rescheduleFailed'))
       }
     },
-    [dateStr, t],
+    [dateStr, setDueDate, setScheduledDate, t],
   )
 
   return (

@@ -54,7 +54,7 @@ src/
 │   ├── page-blocks.test.ts
 │   ├── navigation.test.ts
 │   └── undo.test.ts
-├── hooks/__tests__/              # Hook tests — 70 files
+├── hooks/__tests__/              # Hook tests — 90 files
 │   ├── useViewportObserver.test.ts
 │   ├── useBlockCollapse.test.ts
 │   ├── useBlockZoom.test.ts

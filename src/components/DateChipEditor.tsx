@@ -19,8 +19,8 @@ import { Input } from '@/components/ui/input'
 import { announce } from '@/lib/announcer'
 import { formatDate } from '@/lib/date-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import { setDueDate, setScheduledDate } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
+import { useBlockReschedule } from '../hooks/useBlockReschedule'
 import { useDateInput } from '../hooks/useDateInput'
 
 export type DateType = 'due' | 'scheduled'
@@ -43,6 +43,7 @@ export function DateChipEditor({
   onSuccess,
 }: DateChipEditorProps): React.ReactElement {
   const { t } = useTranslation()
+  const { setDueDate, setScheduledDate } = useBlockReschedule()
 
   // Date input hook (M-29) — manages input state + NL preview
   const { dateInput, datePreview, handleChange } = useDateInput()
@@ -72,7 +73,7 @@ export function DateChipEditor({
         announce(t('announce.rescheduleFailed'))
       }
     },
-    [blockId, dateType, onSuccess, t],
+    [blockId, dateType, onSuccess, setDueDate, setScheduledDate, t],
   )
 
   const handleQuickOption = useCallback(

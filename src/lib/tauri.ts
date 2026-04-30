@@ -163,7 +163,7 @@ export function trashDescendantCounts(rootIds: string[]): Promise<Record<string,
  * default) leaves the result set unscoped, matching the pre-FEAT-3
  * behaviour so existing callsites stay green.
  */
-export function listBlocks(params?: {
+export async function listBlocks(params?: {
   parentId?: string | undefined
   blockType?: string | undefined
   tagId?: string | undefined
@@ -184,40 +184,37 @@ export function listBlocks(params?: {
         source: params?.agendaSource ?? null,
       }
     : null
-  return invoke('list_blocks', {
-    parentId: params?.parentId ?? null,
-    blockType: params?.blockType ?? null,
-    tagId: params?.tagId ?? null,
-    showDeleted: params?.showDeleted ?? null,
-    agenda,
-    cursor: params?.cursor ?? null,
-    limit: params?.limit ?? null,
-    spaceId: params?.spaceId ?? null,
-  })
+  return unwrap(
+    await commands.listBlocks(
+      params?.parentId ?? null,
+      params?.blockType ?? null,
+      params?.tagId ?? null,
+      params?.showDeleted ?? null,
+      agenda,
+      params?.cursor ?? null,
+      params?.limit ?? null,
+      params?.spaceId ?? null,
+    ),
+  )
 }
 
 /** List undated tasks (tasks with todo_state but no due/scheduled date). */
-export function listUndatedTasks(params?: {
+export async function listUndatedTasks(params?: {
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<PageResponse<BlockRow>> {
-  return invoke('list_undated_tasks', {
-    cursor: params?.cursor ?? null,
-    limit: params?.limit ?? null,
-  })
+  return unwrap(await commands.listUndatedTasks(params?.cursor ?? null, params?.limit ?? null))
 }
 
 /** List projected future occurrences of repeating tasks for a date range. */
-export function listProjectedAgenda(opts: {
+export async function listProjectedAgenda(opts: {
   startDate: string
   endDate: string
   limit?: number | undefined
 }): Promise<ProjectedAgendaEntry[]> {
-  return invoke('list_projected_agenda', {
-    startDate: opts.startDate,
-    endDate: opts.endDate,
-    limit: opts.limit ?? null,
-  })
+  return unwrap(
+    await commands.listProjectedAgenda(opts.startDate, opts.endDate, opts.limit ?? null),
+  )
 }
 
 /** Fetch a single block by ID. */
@@ -319,7 +316,7 @@ export function getConflicts(params?: {
  * whose owning page carries `space = <spaceId>`. `undefined` means
  * unscoped (pre-FEAT-3 behaviour).
  */
-export function searchBlocks(params?: {
+export async function searchBlocks(params?: {
   query: string
   parentId?: string | undefined
   tagIds?: string[] | undefined
@@ -327,14 +324,16 @@ export function searchBlocks(params?: {
   limit?: number | undefined
   spaceId?: string | undefined
 }): Promise<PageResponse<BlockRow>> {
-  return invoke('search_blocks', {
-    query: params?.query ?? '',
-    parentId: params?.parentId ?? null,
-    tagIds: params?.tagIds ?? null,
-    cursor: params?.cursor ?? null,
-    limit: params?.limit ?? null,
-    spaceId: params?.spaceId ?? null,
-  })
+  return unwrap(
+    await commands.searchBlocks(
+      params?.query ?? '',
+      params?.cursor ?? null,
+      params?.limit ?? null,
+      params?.parentId ?? null,
+      params?.tagIds ?? null,
+      params?.spaceId ?? null,
+    ),
+  )
 }
 
 /** Get materializer queue status and metrics. */
@@ -343,7 +342,7 @@ export function getStatus(): Promise<StatusInfo> {
 }
 
 /** Query blocks by boolean tag expression (AND/OR mode), paginated. */
-export function queryByTags(params: {
+export async function queryByTags(params: {
   tagIds: string[]
   prefixes: string[]
   mode: string // 'and' | 'or'
@@ -351,14 +350,16 @@ export function queryByTags(params: {
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<PageResponse<BlockRow>> {
-  return invoke('query_by_tags', {
-    tagIds: params.tagIds,
-    prefixes: params.prefixes,
-    mode: params.mode,
-    includeInherited: params.includeInherited ?? null,
-    cursor: params.cursor ?? null,
-    limit: params.limit ?? null,
-  })
+  return unwrap(
+    await commands.queryByTags(
+      params.tagIds,
+      params.prefixes,
+      params.mode,
+      params.includeInherited ?? null,
+      params.cursor ?? null,
+      params.limit ?? null,
+    ),
+  )
 }
 
 /** List tags whose name starts with the given prefix (autocomplete). */
@@ -427,15 +428,17 @@ export function getBatchProperties(blockIds: string[]): Promise<Record<string, P
 // ---------------------------------------------------------------------------
 
 /** Batch-count agenda items per date. Returns a map of date -> count. */
-export function countAgendaBatch(params: { dates: string[] }): Promise<Record<string, number>> {
-  return invoke('count_agenda_batch', { dates: params.dates })
+export async function countAgendaBatch(params: {
+  dates: string[]
+}): Promise<Record<string, number>> {
+  return unwrap(await commands.countAgendaBatch(params.dates))
 }
 
 /** Batch-count agenda items per (date, source). Returns nested map: date -> source -> count. */
-export function countAgendaBatchBySource(params: {
+export async function countAgendaBatchBySource(params: {
   dates: string[]
 }): Promise<Record<string, Record<string, number>>> {
-  return invoke('count_agenda_batch_by_source', { dates: params.dates })
+  return unwrap(await commands.countAgendaBatchBySource(params.dates))
 }
 
 /** Batch-count backlinks per target page. Returns a map of pageId -> count. */
@@ -493,10 +496,10 @@ export function listPageHistory(params: {
 }
 
 /** List all page-to-page links for graph visualization. */
-export function listPageLinks(): Promise<
+export async function listPageLinks(): Promise<
   Array<{ source_id: string; target_id: string; ref_count: number }>
 > {
-  return invoke('list_page_links')
+  return unwrap(await commands.listPageLinks())
 }
 
 /** Revert a batch of operations (by device_id + seq pairs). */
@@ -520,7 +523,7 @@ export function restorePageToOp(params: {
 }
 
 /** Query blocks by property key and optional value, with cursor pagination. */
-export function queryByProperty(params: {
+export async function queryByProperty(params: {
   key: string
   valueText?: string | undefined
   valueDate?: string | undefined
@@ -528,14 +531,16 @@ export function queryByProperty(params: {
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<PageResponse<BlockRow>> {
-  return invoke('query_by_property', {
-    key: params.key,
-    valueText: params.valueText ?? null,
-    valueDate: params.valueDate ?? null,
-    operator: params.operator ?? null,
-    cursor: params.cursor ?? null,
-    limit: params.limit ?? null,
-  })
+  return unwrap(
+    await commands.queryByProperty(
+      params.key,
+      params.valueText ?? null,
+      params.valueDate ?? null,
+      params.operator ?? null,
+      params.cursor ?? null,
+      params.limit ?? null,
+    ),
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -591,37 +596,41 @@ export function computeEditDiff(params: {
 // ---------------------------------------------------------------------------
 
 /** Query backlinks with composable filters, sort, and pagination. */
-export function queryBacklinksFiltered(params: {
+export async function queryBacklinksFiltered(params: {
   blockId: string
   filters?: BacklinkFilter[] | undefined
   sort?: BacklinkSort | undefined
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<BacklinkQueryResponse> {
-  return invoke('query_backlinks_filtered', {
-    blockId: params.blockId,
-    filters: params.filters ?? null,
-    sort: params.sort ?? null,
-    cursor: params.cursor ?? null,
-    limit: params.limit ?? null,
-  })
+  return unwrap(
+    await commands.queryBacklinksFiltered(
+      params.blockId,
+      params.filters ?? null,
+      params.sort ?? null,
+      params.cursor ?? null,
+      params.limit ?? null,
+    ),
+  )
 }
 
 /** Query backlinks grouped by source page, with filters and pagination. */
-export function listBacklinksGrouped(params: {
+export async function listBacklinksGrouped(params: {
   blockId: string
   filters?: BacklinkFilter[] | undefined
   sort?: BacklinkSort | undefined
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<GroupedBacklinkResponse> {
-  return invoke('list_backlinks_grouped', {
-    blockId: params.blockId,
-    filters: params.filters ?? null,
-    sort: params.sort ?? null,
-    cursor: params.cursor ?? null,
-    limit: params.limit ?? null,
-  })
+  return unwrap(
+    await commands.listBacklinksGrouped(
+      params.blockId,
+      params.filters ?? null,
+      params.sort ?? null,
+      params.cursor ?? null,
+      params.limit ?? null,
+    ),
+  )
 }
 
 /** Query unlinked references grouped by source page, with filters, sort, and pagination. */
@@ -784,18 +793,18 @@ export function cancelSync(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /** Set the complete list of aliases for a page (replaces existing). */
-export function setPageAliases(pageId: string, aliases: string[]): Promise<string[]> {
-  return invoke('set_page_aliases', { pageId, aliases })
+export async function setPageAliases(pageId: string, aliases: string[]): Promise<string[]> {
+  return unwrap(await commands.setPageAliases(pageId, aliases))
 }
 
 /** Get all aliases for a page. */
-export function getPageAliases(pageId: string): Promise<string[]> {
-  return invoke('get_page_aliases', { pageId })
+export async function getPageAliases(pageId: string): Promise<string[]> {
+  return unwrap(await commands.getPageAliases(pageId))
 }
 
 /** Resolve a page by one of its aliases. Returns page ID + title, or null. */
-export function resolvePageByAlias(alias: string): Promise<[string, string | null] | null> {
-  return invoke('resolve_page_by_alias', { alias })
+export async function resolvePageByAlias(alias: string): Promise<[string, string | null] | null> {
+  return unwrap(await commands.resolvePageByAlias(alias))
 }
 
 // ---------------------------------------------------------------------------
@@ -803,8 +812,8 @@ export function resolvePageByAlias(alias: string): Promise<[string, string | nul
 // ---------------------------------------------------------------------------
 
 /** Export a page as Markdown with human-readable tag/page references. */
-export function exportPageMarkdown(pageId: string): Promise<string> {
-  return invoke('export_page_markdown', { pageId })
+export async function exportPageMarkdown(pageId: string): Promise<string> {
+  return unwrap(await commands.exportPageMarkdown(pageId))
 }
 
 // ---------------------------------------------------------------------------

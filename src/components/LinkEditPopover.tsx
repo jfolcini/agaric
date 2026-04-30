@@ -13,8 +13,8 @@ import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { logger } from '@/lib/logger'
-import { fetchLinkMetadata } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
+import { useLinkMetadata } from '../hooks/useLinkMetadata'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
@@ -86,6 +86,7 @@ export function LinkEditPopover({
   const [url, setUrl] = useState(initialUrl)
   const [label, setLabel] = useState(initialLabel)
   const [urlError, setUrlError] = useState<string | null>(null)
+  const { fetch: fetchMeta } = useLinkMetadata()
 
   const handleApply = useCallback(() => {
     const trimmedUrl = url.trim()
@@ -137,11 +138,11 @@ export function LinkEditPopover({
       editor.view.dispatch(editor.state.tr.removeStoredMark(linkMarkType))
     }
     // Fire-and-forget: prefetch metadata for the applied URL (UX-165)
-    fetchLinkMetadata(normalized).catch((err: unknown) => {
+    fetchMeta(normalized).catch((err: unknown) => {
       logger.warn('LinkEditPopover', 'link metadata prefetch failed', { url: normalized }, err)
     })
     onClose()
-  }, [editor, url, label, initialLabel, isEditing, onClose, t, savedSelection])
+  }, [editor, url, label, initialLabel, isEditing, onClose, fetchMeta, t, savedSelection])
 
   const handleRemove = useCallback(() => {
     editor.chain().focus().unsetLink().run()

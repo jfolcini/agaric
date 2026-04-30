@@ -1,5 +1,60 @@
 # Session Log
 
+## Session 576 — 3-subagent batch: MAINT-131 hook wraps + MAINT-125 batch-2 + MAINT-124 useAppKeyboardShortcuts (2026-04-30)
+
+**3 disjoint MAINT items each made substantial progress in one PROMPT.md batch with 3 parallel build subagents (no review subagent — all changes are mechanical/well-tested).** Each subagent owned a disjoint file set: Subagent A migrated date/link-metadata IPCs into hooks (5 components), Subagent B migrated 15 more `tauri.ts` wrappers to `commands.*`, Subagent C extracted the keyboard-shortcuts cluster from App.tsx (305L removed).
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 23 → 23 (all 3 MAINT rows STAY — none fully closed; MAINT-131 reduced to residual cleanup, MAINT-125 to ~54 wrappers remaining, MAINT-124 to 3 extractions remaining).
+- **Previously-resolved counter:** 826+ → 829+ across 542 → 543 sessions (3 partial closures in one session counted as 1 session bump).
+
+**Items closed (3 partial closures):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-131 useBlockReschedule + useLinkMetadata hook wraps | New hooks: `src/hooks/useBlockReschedule.ts` (wraps `setDueDate`/`setScheduledDate` from `lib/tauri`; logs+rethrows on failure); `src/hooks/useLinkMetadata.ts` (wraps `fetchLinkMetadata`; logs+rethrows). New tests: `src/hooks/__tests__/useBlockReschedule.test.tsx` (6 tests: happy path with string + null clear, error path with `logger.warn` + re-throw, for both `setDueDate` and `setScheduledDate`); `src/hooks/__tests__/useLinkMetadata.test.tsx` (2 tests: happy path + error path). 5 components updated to use the new hooks: `BlockListItem.tsx` (line 19 + 91 + 135), `journal/RescheduleDropZone.tsx` (line 40 + 59 + 113), `DateChipEditor.tsx` (line 23 + 46 + 76; lib/tauri import dropped entirely), `BlockPropertyDrawer.tsx` (line 33 + 59 + dep arrays at L157/L188; kept `Cmd` aliases at call sites L140/142/170/172 unchanged), `LinkEditPopover.tsx` (line 17 + 89 + 141 + 145; kept fire-and-forget `.catch(...)` block per existing test contract at L434). All 5 components have NO direct `setDueDate`/`setScheduledDate`/`fetchLinkMetadata` imports anymore. **Drift caught + preserved:** `LinkEditPopover.tsx` uses fire-and-forget `fetchLinkMetadata(...).catch(...)` instead of `await` — preserved verbatim because reverting to await would block the popover-close path on a network round-trip and break a pinned test. **Residual `lib/tauri` imports remaining (out of scope, not in MAINT-131's `Open` line):** `BlockListItem.tsx` still imports `getBlock`; `RescheduleDropZone.tsx` still imports `getBlock`; `BlockPropertyDrawer.tsx` still imports `getProperties`/`listPropertyDefs`/`setProperty`. 188/180 vitest tests pass (+8 new). — Subagent bfc2cf63 |
+| MAINT-125 batch-2 (15 list/agenda/property/page-meta wrappers) | `src/lib/tauri.ts` only. Migrated to `unwrap(await commands.X(...))`: `listBlocks` (preserves the `agenda: AgendaQuery` struct reshape from flat `agendaDate`/`agendaDateRange`/`agendaSource` kwargs), `listUndatedTasks`, `listProjectedAgenda`, `searchBlocks`, `queryByTags`, `queryByProperty`, `countAgendaBatch`, `countAgendaBatchBySource`, `listPageLinks`, `queryBacklinksFiltered`, `listBacklinksGrouped`, `setPageAliases`, `getPageAliases`, `resolvePageByAlias`, `exportPageMarkdown`. **Drift caught:** `countAgendaBatchBySource` binding signature is `(dates)` not `(dates, source, spaceId)` as the prompt suggested — migrated against the actual binding. `listPageLinks` binding takes 0 args. `searchBlocks` binding's positional order differs from the wrapper's flat-object key order (binding: `query,cursor,limit,parentId,tagIds,spaceId`; wrapper kwargs: `query,parentId,tagIds,cursor,limit,spaceId`) — IPC payload identical, tests pass. **Skipped:** `getPage` (doesn't exist; pages use `getBlock`); `createPage` (doesn't exist; entry point is `createPageInSpace`, deferred to next batch). 159/159 tauri.test.ts tests pass; 132/132 SearchPanel/AgendaResults/UnlinkedReferences tests pass; 290/290 PageAliasSection/DonePanel/DuePanel/GraphView/TagFilterPanel/JournalPage tests pass. **Cumulative MAINT-125 progress: 26 of ~80 wrappers migrated** (was 11 from session 574, now 11+15). — Subagent b2cfcc5b |
+| MAINT-124 useAppKeyboardShortcuts() extraction | New: `src/hooks/useAppKeyboardShortcuts.ts` (374L) — owns all 5 keyboard-shortcut effects (journal Alt+Arrow/Alt+T at document level, global focusSearch/createNewPage/gotoConflicts at window level, space Ctrl+1..9 digit hotkeys, close-overlays Esc → CLOSE_ALL_OVERLAYS_EVENT, tab openInNewTab/closeActiveTab/prev/nextTab) — and the helpers (`isTypingInField`, `JOURNAL_SHIFT_PREV/NEXT`, `JOURNAL_SHORTCUTS`, `TAB_SHORTCUTS`) that were tightly coupled and used nowhere else. Hook signature: `useAppKeyboardShortcuts({ t, isMobile })`. **Design choice:** kept all 5 effects as SEPARATE `useEffect` blocks inside the hook rather than merging into one consolidated listener — the journal effect listens at `document` while the others listen at `window`, and merging would change propagation semantics. New tests: `src/hooks/__tests__/useAppKeyboardShortcuts.test.ts` (338L, 19 tests covering each category, modifier discipline, auto-repeat short-circuit, INPUT/contentEditable gating, currentView gating, isMobile gating, cleanup-on-unmount). `src/App.tsx`: **1444L → 1139L (–305L, ~21% reduction)**, useEffect count 17 → 11. Removed unused imports: date-fns shifters, `matchesShortcutBinding`, `JournalMode`, `useJournalStore`, `selectActiveTabIndexForSpace`, `selectTabsForSpace`. App.test.tsx: 113/113 tests pass unchanged. **Drift caught + flagged:** the MAINT-124 description's specific shortcut keys (Cmd+K palette, Cmd+/ search, Cmd+S save, "j/k navigation", "Ctrl+Shift+S switch space") don't exist in the codebase — the actual bindings are `Ctrl+F` for focusSearch, `Ctrl+N` for createNewPage, `Alt+C` for gotoConflicts, `Alt+ArrowLeft/Right` + `Alt+T` for journal nav, `Ctrl+1..9` for direct space switching. Hook delegates to `matchesShortcutBinding(...)` so it remains correct under user rebinding (BUG-18). **Out of scope (kept in App.tsx):** FEAT-12 quick-capture global hotkey (storage event + Tauri OS-level `registerGlobalShortcut`) and CLOSE_ALL_OVERLAYS_EVENT bridge — these aren't in-app `keydown` effects. **Future work:** 3 extractions remain (`useAppDialogs` for modal/dialog state, `<ViewDispatcher>` for currentView routing, `<AppShell>` for the sidebar tree at L854-1089). Target ≤500L overall (1139L now → ≤500L target requires the remaining 3 extractions). — Subagent a18dd50e |
+
+**Process notes:**
+
+- **3 parallel build subagents touching disjoint files.** Subagent A owned `src/hooks/useBlockReschedule*` + `src/hooks/useLinkMetadata*` + 5 component files. Subagent B owned `src/lib/tauri.ts` only. Subagent C owned `src/App.tsx` + `src/hooks/useAppKeyboardShortcuts*`. All 3 succeeded on first attempt; no merge conflicts.
+- **No review subagent.** All 3 changes are mechanical (hook wraps, command wrapper migration, behavior-preserving extraction) and well-covered by existing test suites. The orchestrator validated end-to-end via prek.
+- **2 prek-driven nit fixes** (orchestrator):
+  1. **biome auto-format** flagged App.tsx import order after the unused-import removals (single-line collapse for the navigation imports). Fixed via `npx biome format --write`.
+  2. **AGENTS.md test-count drift hook** flagged `src/hooks/__tests__/` file count drifted from 70 to 88 (26% off, threshold ±25%). Updated `src/__tests__/AGENTS.md:57` to "90 files" (round-number bracket) — rule passes.
+- **Drift discovered (subagents flagged):**
+  - MAINT-124 description's specific shortcut keys don't match the codebase (no Cmd+K, no Cmd+S, no "j/k") — hook implementation correct because it delegates via `matchesShortcutBinding`.
+  - MAINT-124 description's "20+ effects" was actually 17 (slight overcount).
+  - MAINT-124 description's App.tsx line count (1436L) was actually 1444L.
+  - MAINT-125 prompt's `countAgendaBatchBySource(dates, source, spaceId)` signature was wrong; binding is `(dates)` only.
+  - MAINT-131 prompt's `await fetchMeta(url)` example didn't match the live fire-and-forget pattern; subagent preserved fire-and-forget per the existing test contract.
+- **No `cargo sqlx prepare`** needed (no SQL changes). **No backend changes.** **No new IPC commands.** **No `bindings.ts` regeneration.**
+- **No FEATURE-MAP.md update needed** — all 3 items are internal refactors; user-facing surface unchanged.
+
+**Files touched (this session's batch):**
+
+- Frontend new (6):
+  - `src/hooks/useBlockReschedule.ts`, `src/hooks/__tests__/useBlockReschedule.test.tsx`
+  - `src/hooks/useLinkMetadata.ts`, `src/hooks/__tests__/useLinkMetadata.test.tsx`
+  - `src/hooks/useAppKeyboardShortcuts.ts`, `src/hooks/__tests__/useAppKeyboardShortcuts.test.ts`
+- Frontend modified (7):
+  - `src/lib/tauri.ts` (15 wrappers migrated)
+  - `src/App.tsx` (305L removed, useAppKeyboardShortcuts call added)
+  - `src/components/BlockListItem.tsx`, `src/components/journal/RescheduleDropZone.tsx`, `src/components/DateChipEditor.tsx`, `src/components/BlockPropertyDrawer.tsx`, `src/components/LinkEditPopover.tsx`
+- Docs: `REVIEW-LATER.md` (3 row updates: MAINT-131 → residual cleanup, MAINT-125 → 26/80 progress, MAINT-124 → 1444→1139L, 3 extractions remaining; summary counter bumped). `src/__tests__/AGENTS.md` (hooks test-count: 70 → 90). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after 2 nit fixes). Targeted runs:
+
+- MAINT-131: `npx vitest run` on the 7 affected suites → **188/180 passed** (+8 new hook tests; existing component tests unchanged at 188).
+- MAINT-125: tauri.test.ts → 159/159; SearchPanel/AgendaResults/UnlinkedReferences → 132/132; PageAliasSection/DonePanel/DuePanel/GraphView/TagFilterPanel/JournalPage → 290/290.
+- MAINT-124: App.test.tsx → 113/113 (unchanged); useAppKeyboardShortcuts → 19/19 new.
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome: clean (after auto-format).
+
+---
+
 ## Session 575 — Close MAINT-131 StaticBlock half (full-list batch IPC + cache invalidation contract) (2026-04-30)
 
 **MAINT-131 substantial close in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent + 1 orchestrator nit-fix.** Closed the StaticBlock per-row IPC half of MAINT-131 — the per-block `useBlockAttachments(blockId) → listAttachments(blockId)` IPC fired by every StaticBlock row (50 IPCs/page) is replaced with a single batched `list_attachments_batch(block_ids)` IPC mounted at the BlockTree level via a new `useBatchAttachments` context provider. The provider exposes a `{ get, loading, invalidate }` API; `useBlockAttachments.handleAdd/handleDelete` calls `invalidate(blockId)` after each mutation to keep StaticBlock's batch-derived view consistent with AttachmentList drawer mutations. **Both per-block IPC halves of MAINT-131 are now batched** (sessions 572 + 575); only the `useBlockReschedule` + `useLinkMetadata` hook wraps remain (MAINT-131 downgraded M → S).

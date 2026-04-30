@@ -16,12 +16,13 @@ import { memo, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { useBlockReschedule } from '../hooks/useBlockReschedule'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { announce } from '../lib/announcer'
 import { formatDate } from '../lib/date-utils'
 import { logger } from '../lib/logger'
 import { reportIpcError } from '../lib/report-ipc-error'
-import { getBlock, setDueDate, setScheduledDate } from '../lib/tauri'
+import { getBlock } from '../lib/tauri'
 import { PageLink } from './PageLink'
 import { renderRichContent } from './RichContentRenderer'
 import { Calendar } from './ui/calendar'
@@ -87,6 +88,7 @@ function BlockListItemInner({
   const callbacks = useRichContentCallbacks()
   const onTagClick = useTagClickHandler()
   const [popoverOpen, setPopoverOpen] = useState(false)
+  const { setDueDate, setScheduledDate } = useBlockReschedule()
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: callbacks are stable (ref-backed) — only content drives the rendered output
   const richContent = useMemo(
@@ -130,7 +132,7 @@ function BlockListItemInner({
         announce(t('announce.rescheduleFailed'))
       }
     },
-    [blockId, onReschedule, t],
+    [blockId, onReschedule, setDueDate, setScheduledDate, t],
   )
 
   return (
