@@ -1,5 +1,54 @@
 # Session Log
 
+## Session 585 — 1-subagent + orchestrator batch: M-3 AGENTS.md fix + MAINT-162 StaticBlock role flip (2026-04-30)
+
+**2 user-approved items closed in one batch.** User explicitly approved 4 items (M-3, C-2b, MAINT-127, MAINT-162) in bulk; this session does the 2 smallest (M-3 trivial, MAINT-162 well-scoped frontend a11y refactor). C-2b (op-log replay schema migration) and MAINT-127 (navigation.ts split) reserved for sessions 586 and 587.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 22 → **21** (MAINT-162 fully closed and removed by subagent).
+- **Backend Code Review MEDIUM count:** dropped by 1 (M-3 removed).
+- **Previously-resolved counter:** 844+ → 846+ across 551 → 552 sessions.
+
+**Items closed:**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| **M-3 — AGENTS.md AppError variant count** (orchestrator) | `AGENTS.md:174` only. 1-line edit: `(11 variants: ...)` → `(12 variants: ..., Gcal)`. Required explicit user approval per AGENTS.md self-rule "No changes to this file without explicit user approval. Ever." User granted approval in session-585 multi-select. Verified the listed 12 variants match the actual `AppError` enum in `src-tauri/src/error.rs:101-141`: `Database`, `Migration`, `Io`, `Json`, `Ulid`, `NotFound`, `InvalidOperation`, `Channel`, `Snapshot`, `Validation`, `NonReversible`, `Gcal(#[from] GcalErrorKind)`. `ARCHITECTURE.md:613` "REPEAT (11 variants)" was confirmed unrelated (refers to repeat-rule slash commands, not AppError) and left untouched. M-3 entry removed entirely from REVIEW-LATER per the file's own rule. — Orchestrator |
+| **MAINT-162 — `StaticBlock` role flip + 7 axe overrides removed** (subagent A) | `src/components/StaticBlock.tsx` (–~50L: deleted `handleOuterKeyDown` callback + removed `role="button"` / `tabIndex={0}` / `aria-label` / `onKeyDown` / `focus-visible:ring-*` from BOTH render paths — the query-block path and the normal-content path); `src/components/__tests__/StaticBlock.test.tsx` (substantially rewritten — all 7 `nested-interactive: false` axe-rule overrides removed at the cited lines; old TEST-4c "role=button div focus model" describe block deleted; replaced with new MAINT-162 "passive-container outer wrapper" describe block with structural assertions; 4 new tests added: `staticblock_outer_div_has_no_role_after_maint162`, `staticblock_axe_clean_after_maint162`, "outer wrapper is a plain div", "outer wrapper is not in the tab order"); `src/lib/i18n/block.ts` (–1 orphan key `block.editLabel: 'Edit block'` since the wrapper no longer carries the aria-label). **Preserved handlers + rationale documented inline:** `handleOuterClick` mounts the roving editor + handles Ctrl/Shift+click multi-select (mouse-only entry, by design); `handleQueryBlockClickCapture` forwards bare-card clicks for `{{query}}` blocks while yielding to inner button/link targets. **Keyboard accessibility loss documented in inline comment:** the wrapper's keyboard activation paths (Enter/Space/Ctrl+Enter/Shift+Enter on the block as a whole) are gone; keyboard users now navigate via tab → inner chips/buttons (each chip has its own `role="link"` + `tabIndex={0}` + `onKeyDown` in `RichContentRenderer.tsx`, unchanged). 562 tests pass across 4 files (StaticBlock 104, SortableBlock 188, BlockTree 209, EditableBlock 61 bonus). — Subagent agent_id 4a6854bb (build) |
+
+**Process notes:**
+
+- **No review subagent for MAINT-162.** The change is well-scoped + the subagent's report is thorough and self-aware (explicitly notes the keyboard-accessibility tradeoff and lists which handlers were preserved + why). The user approved the design call ("remove role=button, treat as passive container") in advance, which is the only place a review would have changed direction. Skipping the review per "don't gold-plate" + no UX uncertainty remaining.
+- **2 prek-driven biome fixes** (orchestrator):
+  - **Unused suppression** at `StaticBlock.tsx:218`: the `biome-ignore lint/a11y/useKeyWithClickEvents` on the query-block path was unused because the query-block wrapper has only `onClickCapture` (not bare `onClick`), so biome's a11y rule didn't fire. Removed the suppression — a clean wrapper passes biome cleanly.
+  - **`noStaticElementInteractions`** firing on the normal-content path's bare `<div onClick={handleOuterClick}>` (no role, no tabIndex). Added a second `biome-ignore` for that rule next to the existing `useKeyWithClickEvents` one, both with rationale referencing the MAINT-162 inline comment block above. Initial draft of the comment used the literal substring "biome-ignores" inside the rationale, which biome's parser tried to interpret as a malformed directive ("Failed to parse category 's'"). Rephrased to "a11y suppressions" to avoid the parser collision. Re-ran prek clean.
+  - 1 format nit on the test file (`render(<X.../>)` collapsed onto one line) auto-fixed by `npx biome check --write`.
+- **Subagent scope creep (acceptable):** subagent edited `REVIEW-LATER.md` directly to remove the MAINT-162 row + detail block + decrement the open-item count. Orchestrator had this on the todo list but the subagent's edit was correct and saved a follow-up step. Orchestrator separately removed the M-3 entry.
+- **No `cargo sqlx prepare`** (no SQL changes). **No `bindings.ts` regeneration** (no IPC type changes).
+- **Closes the entire MAINT-162 family.** The 6 components from sessions 573-574 (HistoryView, ConflictList, TrashView, TagFilterPanel, PageBrowser) all flipped to `role="grid"`/`row`/`gridcell`; StaticBlock — the only one that wasn't a true list-row — flips to a passive container. Cumulative axe-rule overrides removed across all 6 components: 21 (14 from sessions 573-574 + 7 here).
+
+**Files touched (this session's batch):**
+
+- Backend: 0 files (M-3 was a docs-only edit).
+- Frontend modified (4): `AGENTS.md` (1-line variant count fix), `src/components/StaticBlock.tsx` (–~50L production code), `src/components/__tests__/StaticBlock.test.tsx` (substantially rewritten, +4 new tests), `src/lib/i18n/block.ts` (–1 orphan key).
+- Docs: `REVIEW-LATER.md` (M-3 + MAINT-162 entries deleted; open count 22 → 21; summary line + previously-resolved counter bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after 2 biome autofix rounds: 1 unused-suppression removal, 1 missing-suppression add for `noStaticElementInteractions`).
+
+- StaticBlock tests: 104/104 (all 7 axe overrides removed; 4 new MAINT-162 tests added).
+- SortableBlock tests: 188/188 unchanged.
+- BlockTree tests: 209/209 unchanged.
+- EditableBlock tests: 61/61 unchanged.
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Cargo: full nextest run, fmt, clippy, deny, machete all green.
+
+**Commit:** `f257f5b` — `fix: 1-subagent + orch batch — M-3 AGENTS.md AppError variant count + MAINT-162 StaticBlock role flip`. (Docs commit follows separately.)
+
+**Remaining user-approved batch:** C-2b (Session 586 — op-log replay schema migration), MAINT-127 (Session 587 — navigation.ts split). Both are substantially larger and warrant their own session.
+
+---
+
 ## Session 584 — orchestrator-only batch: H-9b-activation — switch agaric.log to JSON format (2026-04-30)
 
 **Tiny focused commit activating the dormant H-9b deny-list pipeline that landed in session 583.** Done as orchestrator work (no subagent) because the change is small (3 files, ~50L code) and the design decision was already made in session 583. The privacy gain promised by H-9b's deny-list now actually engages on `agaric.log`.
