@@ -75,13 +75,6 @@ vi.mock('lucide-react', () => ({
   XIcon: (props: Record<string, unknown>) => <svg data-testid="x-icon" {...props} />,
 }))
 
-// Mock starred-pages
-vi.mock('../../lib/starred-pages', () => ({
-  isStarred: vi.fn(() => false),
-  toggleStarred: vi.fn(),
-  getStarredPages: vi.fn(() => []),
-}))
-
 // Mock announcer (UX-282) — track screen-reader announcements per outcome
 vi.mock('../../lib/announcer', () => ({
   announce: vi.fn(),
@@ -89,15 +82,16 @@ vi.mock('../../lib/announcer', () => ({
 
 import { toast } from 'sonner'
 import { announce } from '../../lib/announcer'
-import { isStarred, toggleStarred } from '../../lib/starred-pages'
 
 const mockedToastError = vi.mocked(toast.error)
-const mockedIsStarred = vi.mocked(isStarred)
-const mockedToggleStarred = vi.mocked(toggleStarred)
 const mockedAnnounce = vi.mocked(announce)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // PageHeader subscribes to starred state via `useStarredPages`,
+  // which reads/writes `localStorage['starred-pages']` directly.
+  // Clear the key so each test starts from an unstarred baseline.
+  localStorage.removeItem('starred-pages')
   pageStore = createPageBlockStore('PAGE_1')
   useNavigationStore.setState({
     currentView: 'page-editor',
@@ -1533,11 +1527,15 @@ describe('PageHeader star button (UX-156)', () => {
     const starBtn = screen.getByRole('button', { name: /star this page/i })
     await user.click(starBtn)
 
-    expect(mockedToggleStarred).toHaveBeenCalledWith('PAGE_1')
+    // `useStarredPages` writes the canonical JSON-array shape under
+    // the `starred-pages` localStorage key.
+    expect(JSON.parse(localStorage.getItem('starred-pages') ?? '[]')).toContain('PAGE_1')
   })
 
   it('shows filled star when page is starred', () => {
-    mockedIsStarred.mockReturnValue(true)
+    // Pre-seed the persisted starred list so the hook reads the page
+    // as starred on mount.
+    localStorage.setItem('starred-pages', JSON.stringify(['PAGE_1']))
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 

@@ -32,12 +32,12 @@ import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { buildPageTree, type PageTreeNode } from '@/lib/page-tree'
 import { getRecentPages } from '@/lib/recent-pages'
-import { getStarredPages, isStarred, toggleStarred } from '@/lib/starred-pages'
 import { cn } from '@/lib/utils'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePageDelete } from '../hooks/usePageDelete'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
+import { useStarredPages } from '../hooks/useStarredPages'
 import type { BlockRow } from '../lib/tauri'
 import { createPageInSpace, listBlocks, resolvePageByAlias } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
@@ -70,8 +70,8 @@ type SortOption = 'alphabetical' | 'recent' | 'created'
  *
  * A starred page that also has `/` in its title appears twice: once as
  * a `page` row inside `Starred` (full `work/foo` title) and once nested
- * inside its `tree-page` root inside `Pages`. Both copies share the
- * same `starredRevision` source and update together on star toggle.
+ * inside its `tree-page` root inside `Pages`. Both copies subscribe to
+ * the same `useStarredPages` hook state and update together on toggle.
  */
 type PageBrowserRow =
   | { kind: 'header'; section: 'starred' | 'pages'; count: number }
@@ -146,8 +146,8 @@ function buildMultiPageBranch(
   filteredPagesUnsorted: BlockRow[],
   sortPages: (input: BlockRow[]) => BlockRow[],
   sortOption: SortOption,
+  starredSet: ReadonlySet<string>,
 ): GroupedRowsResult {
-  const starredSet = new Set(getStarredPages())
   const starredFiltered: BlockRow[] = []
   // Pages section input. A page enters here when:
   //   - it is non-starred (always), OR
@@ -355,7 +355,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [newPageName, setNewPageName] = useState('')
   const [filterText, setFilterText] = useState('')
   const [sortOption, setSortOption] = useState<SortOption>(readSortPreference)
-  const [starredRevision, setStarredRevision] = useState(0)
+  const { starredIds, isStarred, toggle: toggleStar } = useStarredPages()
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
   const [aliasMatchId, setAliasMatchId] = useState<string | null>(null)
   // Stable id base for section header `aria-labelledby` wiring. Two
@@ -469,11 +469,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     writeSortPreference(value)
   }, [])
 
-  const handleToggleStar = useCallback((pageId: string) => {
-    toggleStarred(pageId)
-    setStarredRevision((r) => r + 1)
-  }, [])
-
   /**
    * Sort an array of pages in place by the active sort option.
    * Same comparator the legacy single-list sort used — extracted so we
@@ -540,8 +535,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
    * inside `Pages`. Each row counts independently for keyboard nav
    * (`pageIndexToRowIndex` walks duplicates), so arrow-down through a
    * starred-and-namespaced duplicate naturally walks past the same
-   * page twice. Star toggle from either copy bumps `starredRevision`
-   * and updates both rows immediately.
+   * page twice. Star toggle from either copy updates `starredIds` via
+   * `useStarredPages` and both rows refresh immediately.
    *
    * Sentinel header rows are interleaved only at render time. The
    * single-page-vault branch is preserved (1 page → no chrome at all).
@@ -558,16 +553,13 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const isSinglePageVault = pages.length <= 1 && !hasAnyNamespacedPage
 
   const { filteredPages, groupedRows, pageIndexToRowIndex, hasStarred, hasPages } = useMemo(() => {
-    // Subscribe to starred revisions so toggleStar bumps re-run this
-    // memo and pages move between sections immediately. Bare
-    // reference is intentional — `getStarredPages()` is read inside
-    // `buildMultiPageBranch` from localStorage, which biome can't
-    // trace; this expression keeps the dep surface honest.
-    starredRevision
+    // `starredIds` is sourced from `useStarredPages()` and changes
+    // whenever a star toggle happens (in this view or another mounted
+    // hook instance), so pages move between sections immediately.
     return isSinglePageVault
       ? buildSinglePageBranch(filteredPagesUnsorted, sortPages)
-      : buildMultiPageBranch(filteredPagesUnsorted, sortPages, sortOption)
-  }, [isSinglePageVault, filteredPagesUnsorted, sortPages, sortOption, starredRevision])
+      : buildMultiPageBranch(filteredPagesUnsorted, sortPages, sortOption, starredIds)
+  }, [isSinglePageVault, filteredPagesUnsorted, sortPages, sortOption, starredIds])
 
   const virtualItemCount = groupedRows.length
 
@@ -772,7 +764,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           data-starred={pageStarred}
           onClick={(e) => {
             e.stopPropagation()
-            handleToggleStar(page.id)
+            toggleStar(page.id)
           }}
         >
           <Star className="h-3.5 w-3.5" fill={pageStarred ? 'currentColor' : 'none'} />

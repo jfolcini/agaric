@@ -18,8 +18,8 @@ import { writeText } from '@/lib/clipboard'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { useBlockTags } from '../hooks/useBlockTags'
+import { useStarredPages } from '../hooks/useStarredPages'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
-import { isStarred, toggleStarred } from '../lib/starred-pages'
 import {
   deleteBlock,
   deleteProperty,
@@ -55,18 +55,17 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const pageStore = usePageBlockStoreApi()
 
   // --- Star / favourite ---
-  // biome-ignore lint/correctness/noUnusedVariables: revision counter triggers re-render on toggle
-  const [starredRevision, setStarredRevision] = useState(0)
+  // `useStarredPages` owns the localStorage shape and broadcasts
+  // changes via a `starred-pages-changed` window event so this header
+  // and any mounted `PageBrowser` instance stay in sync without the
+  // legacy `starredRevision` re-render counter.
+  const { isStarred, toggle: toggleStar } = useStarredPages()
 
   const handleToggleStar = useCallback(() => {
-    toggleStarred(pageId)
-    setStarredRevision((r) => r + 1)
-  }, [pageId])
+    toggleStar(pageId)
+  }, [pageId, toggleStar])
 
-  const starred = (() => {
-    starredRevision
-    return isStarred(pageId)
-  })()
+  const starred = isStarred(pageId)
 
   // --- Breadcrumb navigation for namespaced pages ---
   const navigateToNamespace = useCallback(() => {
