@@ -40,16 +40,12 @@ import { cn } from '@/lib/utils'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import {
-  selectActiveTabIndexForSpace,
-  selectTabsForSpace,
-  useNavigationStore,
-} from '../stores/navigation'
-import {
   type PageRef,
   selectRecentPagesForSpace,
   useRecentPagesStore,
 } from '../stores/recent-pages'
 import { useSpaceStore } from '../stores/space'
+import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '../stores/tabs'
 
 export function RecentPagesStrip(): React.ReactElement | null {
   const { t } = useTranslation()
@@ -62,7 +58,7 @@ export function RecentPagesStrip(): React.ReactElement | null {
   // Derive the currently-open pageId from the active tab's stack top so we
   // can exclude it from the strip. `undefined` when no tab or no stack —
   // in that case we render every recent page (nothing to exclude).
-  const activePageId = useNavigationStore((s) => {
+  const activePageId = useTabsStore((s) => {
     const tabs = selectTabsForSpace(s, currentSpaceId)
     const idx = selectActiveTabIndexForSpace(s, currentSpaceId)
     const active = tabs[idx]
@@ -71,8 +67,8 @@ export function RecentPagesStrip(): React.ReactElement | null {
       : undefined
   })
 
-  const navigateToPage = useNavigationStore((s) => s.navigateToPage)
-  const openInNewTab = useNavigationStore((s) => s.openInNewTab)
+  const navigateToPage = useTabsStore((s) => s.navigateToPage)
+  const openInNewTab = useTabsStore((s) => s.openInNewTab)
 
   const visible = recentPages.filter((p) => p.pageId !== activePageId)
 

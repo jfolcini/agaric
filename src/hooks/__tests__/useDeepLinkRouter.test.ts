@@ -36,8 +36,18 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('@/stores/navigation', () => ({
   useNavigationStore: {
     getState: vi.fn(() => ({
-      navigateToPage: mockNavigateToPage,
       setView: mockSetView,
+    })),
+  },
+}))
+
+// MAINT-127: navigateToPage moved from useNavigationStore to useTabsStore.
+// The deep-link hook was updated to call `useTabsStore.getState().navigateToPage(...)`
+// — mock that path here so the existing test assertions still observe the spy.
+vi.mock('@/stores/tabs', () => ({
+  useTabsStore: {
+    getState: vi.fn(() => ({
+      navigateToPage: mockNavigateToPage,
     })),
   },
 }))

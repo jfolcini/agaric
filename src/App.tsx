@@ -46,10 +46,11 @@ import {
 } from './lib/tauri'
 import { setSettingsTabInUrl } from './lib/url-state'
 import { cn } from './lib/utils'
-import { selectPageStack, useNavigationStore } from './stores/navigation'
+import { useNavigationStore } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
 import { useSpaceStore } from './stores/space'
 import { useSyncStore } from './stores/sync'
+import { selectPageStack, useTabsStore } from './stores/tabs'
 
 // `KeyboardShortcuts` and `WelcomeModal` are top-level overlays mounted
 // outside the view dispatcher; the rest of the lazy-loaded view chunks
@@ -66,9 +67,9 @@ function App() {
   const { t } = useTranslation()
   const currentView = useNavigationStore((s) => s.currentView)
   const setView = useNavigationStore((s) => s.setView)
-  const navigateToPage = useNavigationStore((s) => s.navigateToPage)
-  const goBack = useNavigationStore((s) => s.goBack)
-  const pageStack = useNavigationStore(selectPageStack)
+  const navigateToPage = useTabsStore((s) => s.navigateToPage)
+  const goBack = useTabsStore((s) => s.goBack)
+  const pageStack = useTabsStore(selectPageStack)
   const headerLabel = useHeaderLabel()
   const conflictCount = useConflictCount()
   const trashCount = useTrashCount()

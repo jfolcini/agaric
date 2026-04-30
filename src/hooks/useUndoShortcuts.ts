@@ -9,8 +9,9 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { selectPageStack, useNavigationStore } from '@/stores/navigation'
+import { useNavigationStore } from '@/stores/navigation'
 import { pageBlockRegistry } from '@/stores/page-blocks'
+import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 import { announce } from '../lib/announcer'
 import { getBlock } from '../lib/tauri'
@@ -22,7 +23,7 @@ async function refreshAfterUndoRedo(pageId: string): Promise<void> {
   try {
     const pageBlock = await getBlock(pageId)
     if (pageBlock?.content) {
-      useNavigationStore.getState().replacePage(pageId, pageBlock.content)
+      useTabsStore.getState().replacePage(pageId, pageBlock.content)
       useResolveStore.getState().set(pageId, pageBlock.content, false)
     }
   } catch {
@@ -51,9 +52,9 @@ export function useUndoShortcuts(): void {
         return
       }
 
-      const state = useNavigationStore.getState()
-      const pageStack = selectPageStack(state)
-      if (state.currentView !== 'page-editor' || pageStack.length === 0) return
+      const navState = useNavigationStore.getState()
+      const pageStack = selectPageStack(useTabsStore.getState())
+      if (navState.currentView !== 'page-editor' || pageStack.length === 0) return
 
       const pageId = pageStack[pageStack.length - 1]?.pageId as string
 

@@ -105,6 +105,7 @@ import { toast } from 'sonner'
 import { useBlockStore } from '../../stores/blocks'
 import { useNavigationStore } from '../../stores/navigation'
 import { pageBlockRegistry } from '../../stores/page-blocks'
+import { useTabsStore } from '../../stores/tabs'
 import { useUndoStore } from '../../stores/undo'
 import { PageEditor } from '../PageEditor'
 
@@ -148,9 +149,11 @@ beforeEach(() => {
   useUndoStore.setState({ pages: new Map() })
   useNavigationStore.setState({
     currentView: 'page-editor',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'My Page' }], label: 'My Page' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
 })
 

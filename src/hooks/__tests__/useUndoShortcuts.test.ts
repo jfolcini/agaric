@@ -56,6 +56,13 @@ vi.mock('@/stores/navigation', () => ({
   useNavigationStore: {
     getState: vi.fn(() => ({
       currentView: 'page-editor',
+    })),
+  },
+}))
+
+vi.mock('@/stores/tabs', () => ({
+  useTabsStore: {
+    getState: vi.fn(() => ({
       tabs: [
         { id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'Test Page' }], label: 'Test Page' },
       ],
@@ -92,6 +99,7 @@ import { toast } from 'sonner'
 import { useNavigationStore } from '@/stores/navigation'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 import { announce } from '../../lib/announcer'
 
@@ -99,6 +107,7 @@ const mockedToast = vi.mocked(toast)
 const mockedToastError = vi.mocked(toast.error)
 const mockedAnnounce = vi.mocked(announce)
 const mockedNavGetState = vi.mocked(useNavigationStore.getState)
+const mockedTabsGetState = vi.mocked(useTabsStore.getState)
 const mockedUndoGetState = vi.mocked(useUndoStore.getState)
 
 // -- Minimal renderHook (matches project pattern) -----------------------------
@@ -146,10 +155,12 @@ beforeEach(() => {
   // Reset default mock return values
   mockedNavGetState.mockReturnValue({
     currentView: 'page-editor',
+  } as unknown as ReturnType<typeof useNavigationStore.getState>)
+  mockedTabsGetState.mockReturnValue({
     tabs: [{ id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'Test Page' }], label: 'Test Page' }],
     activeTabIndex: 0,
     replacePage: mockReplacePage,
-  } as unknown as ReturnType<typeof useNavigationStore.getState>)
+  } as unknown as ReturnType<typeof useTabsStore.getState>)
 
   mockedUndoGetState.mockReturnValue({
     undo: mockUndo,
@@ -192,10 +203,12 @@ describe('useUndoShortcuts', () => {
   it('does NOT fire when currentView is not page-editor', () => {
     mockedNavGetState.mockReturnValue({
       currentView: 'journal',
+    } as unknown as ReturnType<typeof useNavigationStore.getState>)
+    mockedTabsGetState.mockReturnValue({
       tabs: [{ id: '0', pageStack: [], label: '' }],
       activeTabIndex: 0,
       replacePage: mockReplacePage,
-    } as unknown as ReturnType<typeof useNavigationStore.getState>)
+    } as unknown as ReturnType<typeof useTabsStore.getState>)
 
     const { unmount } = renderHook(() => useUndoShortcuts())
 
@@ -211,10 +224,12 @@ describe('useUndoShortcuts', () => {
   it('does NOT fire when pageStack is empty', () => {
     mockedNavGetState.mockReturnValue({
       currentView: 'page-editor',
+    } as unknown as ReturnType<typeof useNavigationStore.getState>)
+    mockedTabsGetState.mockReturnValue({
       tabs: [{ id: '0', pageStack: [], label: '' }],
       activeTabIndex: 0,
       replacePage: mockReplacePage,
-    } as unknown as ReturnType<typeof useNavigationStore.getState>)
+    } as unknown as ReturnType<typeof useTabsStore.getState>)
 
     const { unmount } = renderHook(() => useUndoShortcuts())
 
@@ -339,6 +354,8 @@ describe('useUndoShortcuts', () => {
   it('uses the last page in the stack for pageId', () => {
     mockedNavGetState.mockReturnValue({
       currentView: 'page-editor',
+    } as unknown as ReturnType<typeof useNavigationStore.getState>)
+    mockedTabsGetState.mockReturnValue({
       tabs: [
         {
           id: '0',
@@ -352,7 +369,7 @@ describe('useUndoShortcuts', () => {
       ],
       activeTabIndex: 0,
       replacePage: mockReplacePage,
-    } as unknown as ReturnType<typeof useNavigationStore.getState>)
+    } as unknown as ReturnType<typeof useTabsStore.getState>)
 
     const { unmount } = renderHook(() => useUndoShortcuts())
 

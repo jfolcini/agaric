@@ -23,8 +23,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { addRecentPage } from '../../lib/recent-pages'
-import { selectPageStack, useNavigationStore } from '../../stores/navigation'
+import { useNavigationStore } from '../../stores/navigation'
 import { useSpaceStore } from '../../stores/space'
+import { selectPageStack, useTabsStore } from '../../stores/tabs'
 import { SearchPanel } from '../SearchPanel'
 
 // UX-153: Mock resolvePageByAlias separately so alias-resolution calls
@@ -62,9 +63,11 @@ beforeEach(() => {
   vi.mocked(resolvePageByAlias).mockResolvedValue(null)
   useNavigationStore.setState({
     currentView: 'search',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
   // FEAT-3 Phase 2 — SearchPanel now gates on `useSpaceStore.isReady`
   // and passes `currentSpaceId` to `searchBlocks`. Seed the store so
@@ -482,8 +485,8 @@ describe('SearchPanel', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(selectPageStack(navState)[0]?.pageId).toBe('PARENT1')
-    expect(selectPageStack(navState)[0]?.title).toBe('Parent Page Title')
+    expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('PARENT1')
+    expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('Parent Page Title')
     expect(navState.selectedBlockId).toBe('CHILD1')
   })
 
@@ -518,8 +521,8 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       const navState = useNavigationStore.getState()
       expect(navState.currentView).toBe('page-editor')
-      expect(selectPageStack(navState)[0]?.pageId).toBe('PAGE1')
-      expect(selectPageStack(navState)[0]?.title).toBe('My Page')
+      expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('PAGE1')
+      expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('My Page')
       expect(navState.selectedBlockId).toBeNull()
     })
   })
@@ -555,7 +558,7 @@ describe('SearchPanel', () => {
     // Navigation should not have changed
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('search')
-    expect(selectPageStack(navState)).toHaveLength(0)
+    expect(selectPageStack(useTabsStore.getState())).toHaveLength(0)
   })
 
   it('shows toast when parent lookup fails on result click', async () => {
@@ -930,8 +933,8 @@ describe('SearchPanel', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(selectPageStack(navState)[0]?.pageId).toBe('P1')
-    expect(selectPageStack(navState)[0]?.title).toBe('Page One')
+    expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('P1')
+    expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('Page One')
   })
 
   it('updates recent pages in localStorage when clicking a search result (page type)', async () => {
@@ -1124,9 +1127,9 @@ describe('SearchPanel', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(selectPageStack(navState)).toHaveLength(1)
-    expect(selectPageStack(navState)[0]?.pageId).toBe('PARENT1')
-    expect(selectPageStack(navState)[0]?.title).toBe('Breadcrumb Page')
+    expect(selectPageStack(useTabsStore.getState())).toHaveLength(1)
+    expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('PARENT1')
+    expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('Breadcrumb Page')
   })
 
   // =========================================================================
@@ -1228,7 +1231,7 @@ describe('SearchPanel', () => {
       await waitFor(() => {
         const navState = useNavigationStore.getState()
         expect(navState.currentView).toBe('page-editor')
-        expect(selectPageStack(navState)[0]?.pageId).toBe('PARENT1')
+        expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('PARENT1')
       })
     })
 

@@ -57,7 +57,7 @@ import {
   listPeerRefs,
   restoreBlock,
 } from '../lib/tauri'
-import { useNavigationStore } from '../stores/navigation'
+import { useTabsStore } from '../stores/tabs'
 import { ConflictBatchToolbar } from './ConflictBatchToolbar'
 import { type ConflictBatchAction, ConflictBatchDialog } from './ConflictList/ConflictBatchDialog'
 import { ConflictDiscardDialog } from './ConflictList/ConflictDiscardDialog'
@@ -111,7 +111,7 @@ export function ConflictList(): React.ReactElement {
     filteredBlocks,
   } = useConflictFilters({ blocks, deviceNames })
 
-  const navigateToPage = useNavigationStore((s) => s.navigateToPage)
+  const navigateToPage = useTabsStore((s) => s.navigateToPage)
 
   // Fetch original blocks for comparison when new conflict blocks arrive
   useEffect(() => {

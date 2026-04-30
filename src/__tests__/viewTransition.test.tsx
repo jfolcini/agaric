@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from '../App'
 import { useBootStore } from '../stores/boot'
 import { useNavigationStore } from '../stores/navigation'
+import { useTabsStore } from '../stores/tabs'
 
 vi.mock('../lib/announcer', () => ({
   announce: vi.fn(),
@@ -41,9 +42,11 @@ beforeEach(() => {
   useBootStore.setState({ state: 'ready', error: null })
   useNavigationStore.setState({
     currentView: 'journal',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
   mockedInvoke.mockResolvedValue(emptyPage)
 })

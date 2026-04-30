@@ -28,6 +28,7 @@ import {
 } from '../../stores/page-blocks'
 import { useResolveStore } from '../../stores/resolve'
 import { useSpaceStore } from '../../stores/space'
+import { useTabsStore } from '../../stores/tabs'
 import { useUndoStore } from '../../stores/undo'
 import { PageHeader } from '../PageHeader'
 import { TooltipProvider } from '../ui/tooltip'
@@ -95,9 +96,11 @@ beforeEach(() => {
   pageStore = createPageBlockStore('PAGE_1')
   useNavigationStore.setState({
     currentView: 'page-editor',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'My Page' }], label: 'My Page' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
   useResolveStore.setState({ cache: new Map(), pagesList: [], version: 0, _preloaded: false })
   useUndoStore.setState({ pages: new Map() })

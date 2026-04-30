@@ -32,7 +32,8 @@ import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { emptyPage, makeConflict } from '../../__tests__/fixtures'
 import { announce } from '../../lib/announcer'
-import { selectPageStack, useNavigationStore } from '../../stores/navigation'
+import { useNavigationStore } from '../../stores/navigation'
+import { selectPageStack, useTabsStore } from '../../stores/tabs'
 import { ConflictList } from '../ConflictList'
 import { renderRichContent } from '../RichContentRenderer'
 
@@ -1216,7 +1217,9 @@ describe('ConflictList', () => {
     // Should have navigated to the original block's page
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(selectPageStack(navState)).toContainEqual(expect.objectContaining({ pageId: 'ORIG001' }))
+    expect(selectPageStack(useTabsStore.getState())).toContainEqual(
+      expect.objectContaining({ pageId: 'ORIG001' }),
+    )
   })
 
   // --- #298 Aria-labels on Keep/Discard buttons ---
@@ -1273,10 +1276,12 @@ describe('ConflictList', () => {
   it('navigates with block content as title (#651 C-1)', async () => {
     // Reset navigation store to avoid state from prior tests
     useNavigationStore.setState({
-      tabs: [{ id: '0', pageStack: [], label: '' }],
-      activeTabIndex: 0,
       currentView: 'pages',
       selectedBlockId: null,
+    })
+    useTabsStore.setState({
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
     })
     const user = userEvent.setup()
     const conflict = makeConflict({ id: 'C1', content: 'my block content' })
@@ -1292,7 +1297,7 @@ describe('ConflictList', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(selectPageStack(navState)).toContainEqual(
+    expect(selectPageStack(useTabsStore.getState())).toContainEqual(
       expect.objectContaining({ pageId: 'ORIG001', title: 'my block content' }),
     )
   })

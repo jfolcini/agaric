@@ -17,6 +17,7 @@ import { axe } from 'vitest-axe'
 import { __resetCalendarPageDatesForTests } from '../../hooks/useCalendarPageDates'
 import { useJournalStore } from '../../stores/journal'
 import { useNavigationStore } from '../../stores/navigation'
+import { useTabsStore } from '../../stores/tabs'
 import { GlobalDateControls } from '../GlobalDateControls'
 
 // Mock the Calendar component used by JournalCalendarDropdown.
@@ -47,9 +48,11 @@ beforeEach(() => {
   })
   useNavigationStore.setState({
     currentView: 'pages',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
   mockedInvoke.mockResolvedValue(emptyPage)
 })
@@ -105,9 +108,11 @@ describe('GlobalDateControls', () => {
   it('Agenda button is hidden (not in DOM) when on journal agenda view (UX-236)', () => {
     useNavigationStore.setState({
       currentView: 'journal',
+      selectedBlockId: null,
+    })
+    useTabsStore.setState({
       tabs: [{ id: '0', pageStack: [], label: '' }],
       activeTabIndex: 0,
-      selectedBlockId: null,
     })
     useJournalStore.setState({
       mode: 'agenda',
@@ -126,9 +131,11 @@ describe('GlobalDateControls', () => {
   it('Agenda button does NOT have aria-current when not on agenda view', () => {
     useNavigationStore.setState({
       currentView: 'journal',
+      selectedBlockId: null,
+    })
+    useTabsStore.setState({
       tabs: [{ id: '0', pageStack: [], label: '' }],
       activeTabIndex: 0,
-      selectedBlockId: null,
     })
     useJournalStore.setState({
       mode: 'daily',
@@ -146,9 +153,11 @@ describe('GlobalDateControls', () => {
   it('Agenda button does NOT have aria-current when on agenda mode but different view', () => {
     useNavigationStore.setState({
       currentView: 'pages',
+      selectedBlockId: null,
+    })
+    useTabsStore.setState({
       tabs: [{ id: '0', pageStack: [], label: '' }],
       activeTabIndex: 0,
-      selectedBlockId: null,
     })
     useJournalStore.setState({
       mode: 'agenda',

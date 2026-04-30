@@ -41,8 +41,8 @@ import {
   resolvePageByAlias,
   searchBlocks,
 } from '../lib/tauri'
-import { useNavigationStore } from '../stores/navigation'
 import { useSpaceStore } from '../stores/space'
+import { useTabsStore } from '../stores/tabs'
 import { EmptyState } from './EmptyState'
 import { PageLink } from './PageLink'
 import { ResultCard } from './ResultCard'
@@ -73,7 +73,7 @@ export function SearchPanel(): React.ReactElement {
   const [loadingResultId, setLoadingResultId] = useState<string | null>(null)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
   const [recentPages, setRecentPages] = useState<RecentPage[]>([])
-  const navigateToPage = useNavigationStore((s) => s.navigateToPage)
+  const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const [aliasMatch, setAliasMatch] = useState<BlockRow | null>(null)
   const [aliasQuery, setAliasQuery] = useState<string>('')
 

@@ -33,6 +33,7 @@ import { useEffect } from 'react'
 import { logger } from '@/lib/logger'
 import { getCurrentDeepLink } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
+import { useTabsStore } from '@/stores/tabs'
 import { useTauriEventListener } from './useTauriEventListener'
 
 /** Backend `deeplink:navigate-to-block` / `deeplink:navigate-to-page` payload. */
@@ -95,7 +96,7 @@ export function handleNavigatePayload(payload: unknown, eventName: string): void
   // navigation lands.  The page-editor view re-resolves the title on
   // mount.
   try {
-    useNavigationStore.getState().navigateToPage(payload.id, '')
+    useTabsStore.getState().navigateToPage(payload.id, '')
   } catch (err) {
     logger.warn('deeplink', `${eventName} navigateToPage threw`, undefined, err)
   }

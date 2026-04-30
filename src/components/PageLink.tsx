@@ -10,7 +10,7 @@
 
 import type React from 'react'
 import { cn } from '@/lib/utils'
-import { useNavigationStore } from '@/stores/navigation'
+import { useTabsStore } from '@/stores/tabs'
 
 export interface PageLinkProps {
   /** The page ID to navigate to. */
@@ -29,7 +29,7 @@ export function PageLink({
   className,
   children,
 }: PageLinkProps): React.ReactElement {
-  const navigateToPage = useNavigationStore((s) => s.navigateToPage)
+  const navigateToPage = useTabsStore((s) => s.navigateToPage)
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation()

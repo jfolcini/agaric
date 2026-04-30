@@ -5,6 +5,7 @@ import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { makeBlock } from '../../__tests__/fixtures'
 import { useNavigationStore } from '../../stores/navigation'
+import { useTabsStore } from '../../stores/tabs'
 import { QueryResultList } from '../QueryResultList'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
@@ -13,9 +14,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   useNavigationStore.setState({
     currentView: 'journal',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
 })
 

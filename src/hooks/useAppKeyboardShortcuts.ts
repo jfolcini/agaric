@@ -42,13 +42,10 @@ import { logger } from '../lib/logger'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../lib/overlay-events'
 import { createPageInSpace } from '../lib/tauri'
 import { type JournalMode, useJournalStore } from '../stores/journal'
-import {
-  selectActiveTabIndexForSpace,
-  selectTabsForSpace,
-  useNavigationStore,
-} from '../stores/navigation'
+import { useNavigationStore } from '../stores/navigation'
 import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
+import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '../stores/tabs'
 
 // ---------------------------------------------------------------------------
 // Helpers and dispatch tables (moved verbatim from App.tsx so the hook owns
@@ -117,8 +114,8 @@ const JOURNAL_SHORTCUTS: ReadonlyArray<JournalShortcut> = [
 interface TabShortcut {
   /** Shortcut id routed through `matchesShortcutBinding`. */
   readonly binding: string
-  /** Runs the action against the current navigation store snapshot. */
-  readonly run: (state: ReturnType<typeof useNavigationStore.getState>) => void
+  /** Runs the action against the current tabs store snapshot. */
+  readonly run: (state: ReturnType<typeof useTabsStore.getState>) => void
 }
 
 /**
@@ -254,7 +251,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
         createPageInSpace({ content: 'Untitled', spaceId: currentSpaceId })
           .then((newId) => {
             useResolveStore.getState().set(newId, 'Untitled', false)
-            useNavigationStore.getState().navigateToPage(newId, 'Untitled')
+            useTabsStore.getState().navigateToPage(newId, 'Untitled')
             announce(t('announce.newPageCreated'))
           })
           .catch((err: unknown) => {
@@ -340,7 +337,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
       // doesn't spin through every tab on each frame.
       if (e.repeat) return
       if (isMobile) return
-      const state = useNavigationStore.getState()
+      const state = useTabsStore.getState()
 
       const shortcut = TAB_SHORTCUTS.find((s) => matchesShortcutBinding(e, s.binding))
       if (!shortcut) return

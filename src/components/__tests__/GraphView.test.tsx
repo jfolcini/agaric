@@ -23,6 +23,7 @@ import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { logger } from '../../lib/logger'
 import { useNavigationStore } from '../../stores/navigation'
+import { useTabsStore } from '../../stores/tabs'
 import { clearGraphCache, GraphView } from '../GraphView'
 
 vi.mock('../../lib/logger', () => ({
@@ -200,9 +201,11 @@ beforeEach(() => {
   vi.stubGlobal('Worker', MockWorker)
   useNavigationStore.setState({
     currentView: 'graph',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
 })
 
@@ -278,9 +281,11 @@ describe('GraphView', () => {
     const navigateToPage = vi.fn()
     useNavigationStore.setState({
       currentView: 'graph',
+      selectedBlockId: null,
+    })
+    useTabsStore.setState({
       tabs: [{ id: '0', pageStack: [], label: '' }],
       activeTabIndex: 0,
-      selectedBlockId: null,
       navigateToPage,
     })
 
@@ -334,7 +339,7 @@ describe('GraphView', () => {
     expect(drag).toHaveBeenCalledTimes(1)
 
     // navigateToPage from navigation store is set up correctly
-    expect(useNavigationStore.getState().navigateToPage).toBe(navigateToPage)
+    expect(useTabsStore.getState().navigateToPage).toBe(navigateToPage)
   })
 
   it('shows error state on fetch failure', async () => {
@@ -406,9 +411,11 @@ describe('GraphView', () => {
     const navigateToPage = vi.fn()
     useNavigationStore.setState({
       currentView: 'graph',
+      selectedBlockId: null,
+    })
+    useTabsStore.setState({
       tabs: [{ id: '0', pageStack: [], label: '' }],
       activeTabIndex: 0,
-      selectedBlockId: null,
       navigateToPage,
     })
 
@@ -435,7 +442,7 @@ describe('GraphView', () => {
       expect(screen.getByTestId('graph-view')).toBeInTheDocument()
     })
 
-    expect(useNavigationStore.getState().navigateToPage).toBe(navigateToPage)
+    expect(useTabsStore.getState().navigateToPage).toBe(navigateToPage)
   })
 
   it('filters edges where source or target nodes do not exist', async () => {
@@ -699,9 +706,11 @@ describe('GraphView', () => {
       const navigateToPage = vi.fn()
       useNavigationStore.setState({
         currentView: 'graph',
+        selectedBlockId: null,
+      })
+      useTabsStore.setState({
         tabs: [{ id: '0', pageStack: [], label: '' }],
         activeTabIndex: 0,
-        selectedBlockId: null,
         navigateToPage,
       })
 

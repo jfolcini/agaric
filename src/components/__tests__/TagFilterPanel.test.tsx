@@ -21,7 +21,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { makeBlock } from '../../__tests__/fixtures'
-import { selectPageStack, useNavigationStore } from '../../stores/navigation'
+import { useNavigationStore } from '../../stores/navigation'
+import { selectPageStack, useTabsStore } from '../../stores/tabs'
 import { TagFilterPanel } from '../TagFilterPanel'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -66,9 +67,11 @@ beforeEach(() => {
   user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
   useNavigationStore.setState({
     currentView: 'search',
+    selectedBlockId: null,
+  })
+  useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    selectedBlockId: null,
   })
 })
 
@@ -573,8 +576,8 @@ describe('TagFilterPanel', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(selectPageStack(navState)[0]?.pageId).toBe('PARENT1')
-    expect(selectPageStack(navState)[0]?.title).toBe('Parent Page')
+    expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('PARENT1')
+    expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('Parent Page')
     expect(navState.selectedBlockId).toBe('CHILD1')
   })
 
@@ -613,8 +616,8 @@ describe('TagFilterPanel', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(selectPageStack(navState)[0]?.pageId).toBe('PAGE1')
-    expect(selectPageStack(navState)[0]?.title).toBe('My Tagged Page')
+    expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('PAGE1')
+    expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('My Tagged Page')
     expect(navState.selectedBlockId).toBeNull()
   })
 
