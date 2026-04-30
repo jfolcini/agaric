@@ -30,16 +30,11 @@ import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
+import { useBlockReschedule } from '../hooks/useBlockReschedule'
 import { useDateInput } from '../hooks/useDateInput'
 import { usePropertySave } from '../hooks/usePropertySave'
 import type { PropertyDefinition, PropertyRow as PropertyRowData } from '../lib/tauri'
-import {
-  getProperties,
-  listPropertyDefs,
-  setDueDate as setDueDateCmd,
-  setProperty,
-  setScheduledDate as setScheduledDateCmd,
-} from '../lib/tauri'
+import { getProperties, listPropertyDefs, setProperty } from '../lib/tauri'
 import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
 import { AddPropertyPopover } from './AddPropertyPopover'
 import { BuiltinDateFields } from './BuiltinDateFields'
@@ -61,6 +56,7 @@ export function BlockPropertyDrawer({
   const [loading, setLoading] = useState(true)
   const [properties, setProperties] = useState<PropertyRowData[]>([])
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
+  const { setDueDate: setDueDateCmd, setScheduledDate: setScheduledDateCmd } = useBlockReschedule()
 
   // Subscribe to built-in date fields from the block store so the drawer
   // updates reactively when dates are set via toolbar (H-12).
@@ -158,7 +154,7 @@ export function BlockPropertyDrawer({
         toast.error(t('property.saveFailed'))
       }
     },
-    [blockId, t, pageStore.setState],
+    [blockId, setDueDateCmd, setScheduledDateCmd, t, pageStore.setState],
   )
 
   // Update a built-in date field
@@ -189,7 +185,7 @@ export function BlockPropertyDrawer({
         toast.error(t('property.saveFailed'))
       }
     },
-    [blockId, t, pageStore.setState],
+    [blockId, setDueDateCmd, setScheduledDateCmd, t, pageStore.setState],
   )
 
   const hasBuiltinDates = dueDate !== null || scheduledDate !== null
