@@ -135,6 +135,13 @@ async function applyContentEdit(
 ): Promise<void> {
   try {
     await editBlock(ctx.blockId, newContent)
+    // MAINT-116: heading/callout/numbered-list/divider slash commands
+    // must clear the redo stack just like every other content-edit
+    // mutation in `pageStore.edit()`. Pre-fix this was missing, so a
+    // user could `Cmd+Z` past a slash command and `Cmd+Shift+Z` would
+    // resurrect the wrong content. Mirror the `pageStore.edit()`
+    // contract (`page-blocks.ts:392`) by calling `notifyUndo` here.
+    notifyUndo(ctx.rootParentId)
     ctx.pageStore.setState((state) => ({
       blocks: state.blocks.map((b) => (b.id === ctx.blockId ? { ...b, content: newContent } : b)),
     }))

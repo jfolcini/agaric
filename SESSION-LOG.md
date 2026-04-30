@@ -1,5 +1,57 @@
 # Session Log
 
+## Session 560 — Close 2 items (MAINT-116, MAINT-130(a)) — small batch with drift-discovery in MAINT-130(a) (2026-04-30)
+
+**2 MAINT items closed in one PROMPT.md batch with 1 build subagent + 1 orchestrator-direct item + 1 review subagent.** Theme: continued the smaller-batch shape from session 559 to avoid silent-fails. Subagent did MAINT-130(a) (well-scoped: 1 new component + tests). Orchestrator did MAINT-116 directly (the bug fix had silent-failed twice in prior sessions).
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 26 → 24 (net -2: closed MAINT-116 entirely; closed MAINT-130(a) — MAINT-130 row remains with 2 deferred sub-items (b)/(c)).
+- **Previously-resolved counter:** 803+ → 805+ across 526 → 527 sessions.
+
+**Items closed (2):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-116 | `src/hooks/useBlockSlashCommands.ts` + `src/hooks/__tests__/useBlockSlashCommands.test.ts` — orchestrator-direct | **Single-line fix for the redo-stack-uncleared bug in `applyContentEdit`.** Pre-fix: `applyContentEdit` (used by heading/callout/numbered-list/divider slash commands) called `editBlock` (IPC) + `pageStore.setState(...)` directly without firing `notifyUndo(ctx.rootParentId)` afterwards. Result: after one of these slash commands, the redo stack stayed uncleared and `Cmd+Shift+Z` would resurrect the wrong (pre-slash-command) content. Post-fix: added `notifyUndo(ctx.rootParentId)` between the IPC and the setState (matches the order in `pageStore.edit()` at `page-blocks.ts:392`). 3 new regression tests in the existing `useBlockSlashCommands undo notifications` describe block, one per slash-command family that routes through `applyContentEdit` (heading via `'h1'`; callout via `'callout-info'`; numbered-list via `'numbered-list'`); divider intentionally NOT tested as a 4th case because the contract is identical and divider has no content to edit (just replaces with `'---'`). 45 useBlockSlashCommands tests pass (42 existing + 3 new). **The "8-copy collapse" portion of the original MAINT-116 description (a generic `setBlockProperty` action absorbing the 8 sites of `setState + notifyUndo + revert` boilerplate) was deliberately NOT attempted** — inspection found the 8 sites have **3 distinct shapes** (optimistic-before-IPC + revert; IPC-then-setState + no revert; fire-and-forget), not 8 verbatim copies. A single abstraction would have to absorb all 3, and prior subagent attempts at this scope silently failed twice (Sessions 555+557). Per AGENTS.md "Surgical Changes" guidance, the orchestrator scoped to the user-visible bug only. Reviewer (`a60fdc93`) confirmed the 3-shapes claim is accurate and approved the surgical-only approach. |
+| MAINT-130(a) | `src/components/ConfirmDestructiveAction.tsx` (new, 125L) + `src/components/__tests__/ConfirmDestructiveAction.test.tsx` (new, 16 tests) + `src/components/PairingDialog.tsx` (-13/+11) — Subagent e75a4937 | **`<ConfirmDestructiveAction>` wrapper extracted (Radix AlertDialog + i18n-key API + async-aware auto-close).** **Substantial drift discovered during scoping** — the original MAINT-130(a) entry was based on outdated assumptions: (1) `ConfirmDialog.tsx` was claimed to be "bespoke" but is actually already a Radix AlertDialog wrapper; (2) `AgentAccessSettingsTab` + `DeviceManagement` were claimed to "have NO confirmation (that is itself a bug)" but both already have confirmations via `agent-access/McpStatusSection.tsx` + `UnpairConfirmDialog.tsx`; (3) `GoogleCalendarSettingsTab` has a 3-way dialog (cancel + keep + delete calendar) that doesn't fit a binary destructive wrapper; (4) `PairingDialog` has 2 confirmation flows. **Scoped result:** new `ConfirmDestructiveAction` component sits alongside the existing `ConfirmDialog` as a complementary primitive — i18n-key API (vs ConfirmDialog's pre-translated strings) + async-aware auto-close on success (vs ConfirmDialog's sync `onAction` + manual `setOpen(false)`). PairingDialog's close-guard (UX-263, async `cancelPairing` + `setError` toast on rejection) migrated to the new wrapper as the canonical example callsite. The other 3 dialogs (AgentAccess via McpStatusSection, DeviceManagement via UnpairConfirmDialog, the unpair flow inside PairingDialog) keep using `ConfirmDialog` because their flows are sync; the GCal 3-way dialog stays as a documented exception. 16 new component tests covering: render via i18n keys, async auto-close, rejection swallowing (verified via `process.on('unhandledRejection')` spy), Cancel/Esc, initial-focus-on-Cancel (Radix default), reflex-Enter prevention (UX-259), `values` interpolation, `data-testid` hooks, both-buttons-disabled-while-pending, axe a11y. All 5 affected component tests pass (16 + 42 + 32 + 55 + 44 = 189). Reviewer (`a60fdc93`) approved the scoped-down result and the coexistence rationale. |
+
+**MAINT-118 (still open from prior sessions):** intentionally not retried this session. The kitchen-sink frontend refactor (33-prop interface refactor + new contexts + ~40 consumer migration sites) silent-failed in Session 558 and remains open. Likely needs orchestrator-direct execution OR explicit scope reduction (e.g., create the contexts + hooks only, defer the full consumer migration) before retry.
+
+**Drift discovered (MAINT-130(a) only):**
+
+The original description for MAINT-130(a) was incorrect on multiple points:
+
+- `ConfirmDialog.tsx` is NOT bespoke — already wraps Radix AlertDialog (lines 21-30).
+- `AgentAccessSettingsTab` HAS a confirmation via `agent-access/McpStatusSection.tsx` lines 185-198.
+- `DeviceManagement` HAS a confirmation via `UnpairConfirmDialog.tsx` lines 28-40 (which wraps ConfirmDialog).
+- `GoogleCalendarSettingsTab.tsx` lines 559-586 is a 3-way dialog (cancel + keep + delete), not a binary destructive flow.
+
+These corrections forced a much narrower migration than the original prompt anticipated. The build subagent flagged each drift case explicitly, the orchestrator validated via a review subagent, and the trimmed REVIEW-LATER.md MAINT-130 entry now documents the corrected state for future work.
+
+**Files touched (this session's batch):**
+
+- Frontend new (2): `src/components/ConfirmDestructiveAction.tsx`, `src/components/__tests__/ConfirmDestructiveAction.test.tsx`.
+- Frontend modified (3): `src/components/PairingDialog.tsx`, `src/hooks/useBlockSlashCommands.ts`, `src/hooks/__tests__/useBlockSlashCommands.test.ts`.
+- Docs: `REVIEW-LATER.md` (1 row removed for MAINT-116; MAINT-130 row trimmed to 2 deferred sub-items; MAINT-116 detail section removed; MAINT-130 detail rewritten with the (a)-closed note + corrected codebase state for the remaining (b)/(c)). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- MAINT-116: `npx vitest run src/hooks/__tests__/useBlockSlashCommands.test.ts` → **45/45 passed** (3 new MAINT-116 regression tests + 42 existing).
+- MAINT-130(a): `npx vitest run src/components/__tests__/{ConfirmDestructiveAction,PairingDialog,GoogleCalendarSettingsTab,AgentAccessSettingsTab,DeviceManagement}.test.tsx` → **189/189 passed** (16 + 42 + 32 + 55 + 44).
+
+**Process notes:**
+
+- **Smaller batch shape continued from session 559** (1 subagent + 1 orchestrator-direct + 1 review subagent). The pattern works: subagent took the well-scoped new-component task; orchestrator took the bug-fix that silent-failed twice as a subagent in prior sessions. Net wall-clock ~1 hour total.
+- **Drift discovery is the headline of this session.** The MAINT-130(a) description was based on outdated codebase state (`ConfirmDialog` was bespoke at filing time, then refactored later; `McpStatusSection` and `UnpairConfirmDialog` were extracted later as separate confirmation owners). The build subagent caught all 4 drift cases explicitly, the review subagent validated each, and the trimmed REVIEW-LATER entry now reflects reality. This kind of drift between filing time and execution time is expected for older items; the protocol of "subagent surfaces drift, orchestrator validates via reviewer, REVIEW-LATER entry corrected at close" is working.
+- **MAINT-116 deferred-portion rationale:** the "8-copy collapse" claim oversimplified — 3 distinct shapes (optimistic-before, IPC-then-setState, fire-and-forget) means a single abstraction would have to absorb all 3, which oversimplifies and reduces clarity. Per AGENTS.md "Simplicity First" + "Surgical Changes", the surgical fix (1-line addition of `notifyUndo`) was reviewer-approved as the right approach. The "8 copies" framing was incorrect; closing MAINT-116 entirely (rather than carrying forward a fictional follow-up) is the honest disposition.
+- **1 review subagent APPROVED both items** (`a60fdc93`). One MINOR nit: divider slash command not separately tested in MAINT-116 — orchestrator added a comment block above the 3 new tests explaining why (divider routes through the same `applyContentEdit` helper with identical redo-stack semantics; the 3 family tests pin the contract transitively).
+- **No `cargo sqlx prepare`** needed — no SQL changes.
+- **No `cargo test -- specta_tests --ignored`** rerun needed — no public type changes.
+- **No FEATURE-MAP.md update needed** — `ConfirmDestructiveAction` is a new internal component but doesn't change the user-facing feature inventory; MAINT-116 fix is purely a behavior correction.
+
+---
+
 ## Session 559 — Frontend cleanup batch — close 3 items (MAINT-130 partial 12-of-15, MAINT-159, MAINT-164) (2026-04-30)
 
 **3 MAINT items effectively closed in one PROMPT.md batch with 1 build subagent + 2 orchestrator-direct items + 1 review subagent.** Theme: deliberately smaller batch focused on de-risked frontend cleanup + an injectable-clock test fix. Pivoted away from large multi-file frontend refactors after 3 consecutive silent-fails (Sessions 555/557/558) on items like MAINT-118 — orchestrator did the small/safe items directly, subagent took the kitchen-sink MAINT-130 batch with explicit OUT-OF-SCOPE carve-outs to keep its scope manageable.

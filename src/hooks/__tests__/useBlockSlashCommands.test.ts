@@ -479,6 +479,50 @@ describe('useBlockSlashCommands undo notifications', () => {
 
     expect(onNewActionSpy).not.toHaveBeenCalled()
   })
+
+  // MAINT-116 regression: pre-fix, applyContentEdit (used by heading /
+  // callout / numbered-list / divider slash commands) reached `pageStore`
+  // directly without firing notifyUndo, so the redo stack stayed
+  // uncleared and Cmd+Shift+Z after a heading slash command would
+  // resurrect the wrong content. Each of these slash commands routes
+  // through the same applyContentEdit helper; one assertion per command
+  // family pins the contract. Divider is intentionally NOT tested
+  // separately — it also routes through applyContentEdit with identical
+  // redo-stack semantics, but its handler replaces the entire content
+  // with '---' rather than editing it, so the contract proven by the 3
+  // tests below applies transitively to divider.
+  it('MAINT-116: heading slash command calls onNewAction (clears redo stack)', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'h1', label: 'Heading 1' })
+    })
+
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+  })
+
+  it('MAINT-116: callout slash command calls onNewAction (clears redo stack)', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'callout-info', label: 'Info callout' })
+    })
+
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+  })
+
+  it('MAINT-116: numbered-list slash command calls onNewAction (clears redo stack)', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'numbered-list', label: 'Numbered list' })
+    })
+
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+  })
 })
 
 describe('useBlockSlashCommands handleSlashCommand stability (#MAINT-10)', () => {

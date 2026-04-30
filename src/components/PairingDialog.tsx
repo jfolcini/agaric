@@ -29,7 +29,7 @@ import {
   startPairing,
 } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
-import { ConfirmDialog } from './ConfirmDialog'
+import { ConfirmDestructiveAction } from './ConfirmDestructiveAction'
 import { PairingEntryForm } from './PairingEntryForm'
 import { PairingPeersList } from './PairingPeersList'
 import { PairingQrDisplay } from './PairingQrDisplay'
@@ -538,20 +538,18 @@ export function PairingDialog({
       />
 
       {/* UX-263: Mid-pair close guard. Cancelling a pairing in flight is
-          destructive (the in-flight handshake is dropped), so the action
-          variant is destructive and the cancel option keeps the dialog open. */}
-      <ConfirmDialog
+          destructive (the in-flight handshake is dropped). Migrated to
+          ConfirmDestructiveAction (MAINT-130a) — the wrapper auto-closes
+          via onOpenChange(false) on confirm-handler success, so the
+          inline `setConfirmCloseOpen(false)` call is no longer needed. */}
+      <ConfirmDestructiveAction
         open={confirmCloseOpen}
         onOpenChange={setConfirmCloseOpen}
-        title={t('pairing.confirmCloseTitle')}
-        description={t('pairing.confirmCloseDescription')}
-        cancelLabel={t('pairing.confirmCloseKeep')}
-        actionLabel={t('pairing.confirmCloseAction')}
-        actionVariant="destructive"
-        onAction={() => {
-          setConfirmCloseOpen(false)
-          handleCancel()
-        }}
+        titleKey="pairing.confirmCloseTitle"
+        descriptionKey="pairing.confirmCloseDescription"
+        cancelKey="pairing.confirmCloseKeep"
+        confirmKey="pairing.confirmCloseAction"
+        onConfirm={handleCancel}
         className="pairing-close-confirm"
       />
     </>
