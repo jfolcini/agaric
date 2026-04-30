@@ -18,7 +18,11 @@ export function useTrashDescendantCounts(blocks: BlockRow[]): Record<string, num
 
   useEffect(() => {
     if (rootIds.length === 0) {
-      setCounts({})
+      // Reuse the previous reference when already empty — `setCounts({})`
+      // would emit a fresh object every effect run and, if the caller ever
+      // passes an unstable empty `blocks` array, drive an infinite render
+      // loop (the new state shape would re-trigger the consumer's memos).
+      setCounts((prev) => (Object.keys(prev).length === 0 ? prev : {}))
       return
     }
     let cancelled = false
