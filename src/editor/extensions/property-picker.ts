@@ -12,10 +12,8 @@
 import type { Editor } from '@tiptap/core'
 import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
-import { Suggestion } from '@tiptap/suggestion'
-import { logger } from '../../lib/logger'
 import type { PickerItem } from '../SuggestionList'
-import { createSuggestionRenderer } from '../suggestion-renderer'
+import { createPickerPlugin } from './picker-plugin'
 
 export const propertyPickerPluginKey = new PluginKey('propertyPicker')
 
@@ -39,19 +37,14 @@ export const PropertyPicker = Extension.create<PropertyPickerOptions>({
   addProseMirrorPlugins() {
     const extensionOptions = this.options
     return [
-      Suggestion({
-        editor: this.editor,
+      createPickerPlugin({
+        loggerComponent: 'PropertyPicker',
+        displayName: 'Properties',
         pluginKey: propertyPickerPluginKey,
         char: '::',
         allowedPrefixes: null,
-        items: async ({ query }) => {
-          try {
-            return await extensionOptions.items(query)
-          } catch (err) {
-            logger.warn('PropertyPicker', 'items callback failed, returning empty', { query }, err)
-            return []
-          }
-        },
+        editor: this.editor,
+        items: (query) => extensionOptions.items(query),
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
           // Replace the :: trigger + query with `key:: `
@@ -59,7 +52,6 @@ export const PropertyPicker = Extension.create<PropertyPickerOptions>({
           // Notify parent to create the property
           extensionOptions.onSelect?.(item, editor)
         },
-        render: () => createSuggestionRenderer('Properties', propertyPickerPluginKey),
       }),
     ]
   },

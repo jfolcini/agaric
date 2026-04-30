@@ -1,5 +1,47 @@
 # Session Log
 
+## Session 565 — Close 2 paired editor items (MAINT-165 + MAINT-130(c) sub-task 3) (2026-04-30)
+
+**2 MAINT items closed in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent.** Theme: paired the new MAINT-165 (opened during session 564 review as a latent ref-plumbing drift in 4 sibling pickers) with the deferred MAINT-130(c) sub-task 3 (`createPickerPlugin` factory). REVIEW-LATER explicitly recommended pairing them — both touch the picker subsystem. Files were disjoint though (use-roving-editor.ts vs the 5 picker extension files), so 2 parallel subagents ran without coordination overhead.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 25 → 23 (closed MAINT-165 entirely; closed MAINT-130(c) sub-task 3 — MAINT-130 row removed entirely since all 17 original sub-items are now done; session 564 reported 24 but actual table count was 25 — bookkeeping drift, fixed in this session's summary).
+- **Previously-resolved counter:** 810+ → 812+ across 531 → 532 sessions.
+
+**Items closed (2):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-165 (entire) | `src/editor/use-roving-editor.ts` (+12, -4 — 4 new ref pairs grouped after `searchBlockRefsRef` at lines 282-289; 4 picker `items: <callback>` rewrites at lines 333, 341, 352, 356 to `items: (q) => <callback>Ref.current(q)`) + `src/editor/__tests__/use-roving-editor.test.ts` (+128 lines for 4 freshness tests) — Subagent e5350e22 | **Applied the wrapper-closure ref-plumbing pattern to 4 sibling pickers** that had the same fragile-API-contract shape as BlockRefPicker did before session 564. AtTagPicker (`searchTags`), BlockLinkPicker (`searchPages`), SlashCommand (`searchSlashCommands`), and PropertyPicker (`searchPropertyKeys`) each got a paired `useRef + assign` declaration mirroring `searchBlockRefsRef` at lines 280-281, plus the `items: (q) => <ref>.current(q)` wrapper at the configure call. **Defensive change** — all production callers use `useCallback([])` so this wasn't observable as a bug, but the API contract is now consistent for future caller patterns. 4 new freshness tests mirror the existing `searchBlockRefs callback is read fresh at call time` test, each verifying that a re-render with a new callback is picked up via the ref. 52 use-roving-editor tests + 209 BlockTree tests = 261/261 pass. Reviewer (`f9f25539`) APPROVED with no required changes. |
+| MAINT-130(c) sub-task 3 | `src/editor/extensions/picker-plugin.ts` (NEW, 68L — `PickerPluginConfig` interface + `createPickerPlugin(cfg)` helper) + `src/editor/__tests__/picker-plugin.test.ts` (NEW, 228L, 13 tests) + 5 picker extension files refactored (`at-tag-picker.ts` -7, `block-link-picker.ts` -7, `block-ref-picker.ts` -6, `slash-command.ts` -5, `property-picker.ts` -8 = -33 LOC across pickers; +68 helper = +35 net production code) — Subagent 5d8c06ff | **Factored out `createPickerPlugin(cfg)` to capture the shared `Suggestion(...)` plugin shell across all 5 pickers.** The helper owns the items-try-catch + `logger.warn` wrapping + default `createSuggestionRenderer` wiring; per-picker variation flows through the cfg (loggerComponent, displayName, pluginKey, char, allowSpaces, allowedPrefixes, command, render override). **Critical drift surfaced by subagent:** (1) PropertyPicker's actual char is `'::'`, not `':'` (the brief was wrong); (2) TipTap's actual `allowSpaces` default is `false`, not `true` — SlashCommand and PropertyPicker rely on this; helper uses conditional-spread (`...(cfg.allowSpaces !== undefined ? { allowSpaces: cfg.allowSpaces } : {})`) to preserve byte-equivalent behavior; (3) SlashCommand has a custom render with auto-execute timer (BUG-33 + lifecycle breadcrumbs) — helper grew an optional `render?` field that SlashCommand uses; the other 4 pickers use the default. **Each picker's external API is unchanged** — `addInputRules`, `addCommands`, options interface, and `declare module '@tiptap/core'` augmentation all stay; only `addProseMirrorPlugins()` body refactored. 13 new helper tests + 95 existing picker tests (15+26+26+9+19) + 209 BlockTree tests = 317/317 pass. **Drift on LOC estimate:** REVIEW-LATER predicted ~250-350 LOC reduction; actual is +35 net (helper costs more than per-picker boilerplate saved). Value is logical-duplication removal (single owner of items-wrapping + renderer wiring), not LOC. |
+
+**Process notes:**
+
+- **2 parallel build subagents on file-disjoint surfaces** — no worktrees needed, no merge coordination. Both succeeded on first attempt.
+- **Surgical drift-corrections by both subagents:**
+  1. **MAINT-165 subagent** — used `useRef(searchTags)` (the destructured local with default `() => []` already applied) instead of the brief's suggested `useRef(options.searchTags ?? ...)`; cleaner because the destructure default is already in scope. Documented in subagent output.
+  2. **MAINT-130(c) sub-task 3 subagent** — flagged 3 spec drifts before implementation: PropertyPicker char `::`, TipTap default for `allowSpaces`, SlashCommand custom render. Each handled correctly via conditional-spread + optional `render` override. Documented in subagent output and in helper JSDoc.
+- **Reviewer verified the integration:** the data flow `searchTagsRef.current(query) → extensionOptions.items(query) → cfg.items(query) → wrapped items in createPickerPlugin → Suggestion plugin` works end-to-end with all layers using lazy lookup. No stale closures anywhere.
+- **No `cargo sqlx prepare`** needed — no SQL changes.
+- **No FEATURE-MAP.md update needed** — internal editor refactor; user-visible picker behavior unchanged.
+
+**Files touched (this session's batch):**
+
+- Frontend new (2): `src/editor/extensions/picker-plugin.ts`, `src/editor/__tests__/picker-plugin.test.ts`.
+- Frontend modified (6): `src/editor/use-roving-editor.ts`, plus 5 picker extension files (`at-tag-picker.ts`, `block-link-picker.ts`, `block-ref-picker.ts`, `slash-command.ts`, `property-picker.ts`).
+- Test files modified (1): `src/editor/__tests__/use-roving-editor.test.ts` (+4 freshness tests).
+- Docs: `REVIEW-LATER.md` (MAINT-130 row removed entirely; MAINT-165 row removed; appendix MAINT-130 detail removed). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- MAINT-165 + MAINT-130(c)#3 combined: `npx vitest run src/editor/__tests__` → **875/875 passed** across 21 files.
+- BlockTree integration: `npx vitest run src/components/__tests__/BlockTree` → **209/209 passed**.
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome: `npx biome check src/editor/extensions/ src/editor/__tests__/` → 0 errors.
+
+---
+
 ## Session 564 — Close 1 frontend item (MAINT-130(c) sub-tasks 1+2 — BlockRefPicker capability gap + ref-plumbing fix) (2026-04-30)
 
 **1 MAINT sub-item closed in one PROMPT.md batch with 1 build subagent + 1 review subagent.** Theme: continued the smaller-batch shape from sessions 559-563. Single subagent for a focused user-visible fix + 1-line correctness fix. Sub-task 3 of MAINT-130(c) (`createPickerPlugin` factory across 5 pickers) explicitly deferred. Reviewer flagged a parallel ref-plumbing drift in 4 sibling pickers that is latent (not currently observable because all production callers use `useCallback([])`); logged as a new follow-up `MAINT-165` rather than extending this batch's scope.
