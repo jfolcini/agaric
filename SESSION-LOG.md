@@ -1,5 +1,51 @@
 # Session Log
 
+## Session 580 — 2-subagent batch: L-118 regression tests + MAINT-125 batch-6 (closure) + 4 stale entries removed (2026-04-30)
+
+**2 parallel build subagents + 2 parallel technical-review subagents + significant orchestrator follow-up work.** The plan was a 3-subagent batch (L-132 + L-118 + MAINT-125 batch-6) but **BUILD A (L-132) hung in exploration/compile** for >15 minutes without modifying `lease.rs`; orchestrator decoupled the session and shipped what was ready. **BUILD B (L-118)** discovered the bug was already fixed by **L-46** (commit `61b68c7`'s `McpToggleGate`) — the work shifted to adding 2 regression tests that lock down the gate invariant. **BUILD C (MAINT-125 batch-6)** migrated the 14 remaining raw `invoke('...')` wrappers; orchestrator picked up the 4 typed `invoke<T>(...)` residuals (`listSpaces`, `createPageInSpace`, `createSpace`, `quickCaptureBlock` — all already typed in `bindings.ts`) per reviewer flag, dropped the unused `invoke` import, and closed MAINT-125 to **78/78 (100%)**. Orchestrator also swept 4 stale entries from REVIEW-LATER.md (L-118, L-133, H-17, M-23 — all confirmed already-fixed by an audit subagent before the build subagents launched).
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 23 → **22** (MAINT-125 fully closed and removed). Cumulative MAINT closures in the file: 23 → 24.
+- **Backend Code Review section:** 4 stale ID blocks deleted (L-118, L-133, H-17, M-23). The "Top-priority items" / "Quick wins" mini-tables were also pruned of H-17 / M-23 references.
+- **Previously-resolved counter:** 835+ → 836+ across 546 → 547 sessions.
+
+**Items closed (1 full closure + 1 architectural-note + 4 stale removals):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| **MAINT-125 — fully closed (78/78 wrappers, 100%)** | `src/lib/tauri.ts` + `src/lib/__tests__/tauri.test.ts`. **Build subagent C migrated 14 raw `invoke('...')` wrappers**: attachments (5: `listAttachments`, `getBatchAttachmentCounts`, `getBatchAttachments` (binding `listAttachmentsBatch`), `addAttachment`, `deleteAttachment`), diagnostics/bug-report (4: `logFrontend`, `getLogDir`, `collectBugReportMetadata`, `readLogsForReport`), compaction (2: `getCompactionStatus`, `compactOpLog` (binding `compactOpLogCmd`)), link-metadata (2: `fetchLinkMetadata`, `getLinkMetadata`), markdown-import (1: `importMarkdown`). Added 4 new tauri.test.ts tests for the previously-untested `getBatchAttachmentCounts` + `getBatchAttachments` wrappers (159→163). **Orchestrator migrated the 4 typed `invoke<T>(...)` residuals** that the build subagent flagged as out-of-scope: `listSpaces`, `createPageInSpace`, `createSpace`, `quickCaptureBlock` — all 4 already typed in `bindings.ts`, no signature widening, public API unchanged. **Dropped the now-unused `invoke` import** at L1. Final state: `grep -cE "invoke\(\|invoke<" src/lib/tauri.ts` → 0 actual call sites (2 docstring matches remain). All 8957 vitest tests pass; `npx tsc -b --noEmit` 0 errors. 4 consumer test files spot-checked (`space.test.ts`, `App.test.tsx`, `SpaceManageDialog.test.tsx`, `SpaceSwitcher.test.tsx`) → 164/164. — Subagent cf… + agent_id e903c1d5 (review) + orchestrator follow-up |
+| L-118 — already fixed by L-46 (`61b68c7`); 2 regression tests added | `src-tauri/src/commands/mcp.rs:983-1088`. Build subagent B's investigation found the cited TOCTOU site is now inside the `McpToggleGate` (`tokio::sync::Mutex<()>`) acquired at `mcp.rs:341-342` — the gate serialises the entire enable/disable transition (marker write → `is_running()` check → `spawn_mcp_ro_task`), which is a stronger guarantee than the originally-proposed `AtomicBool::compare_exchange`. Two new tests lock down this invariant: (a) `concurrent_enables_under_gate_spawn_exactly_once_l118` (8 concurrent tasks each acquire gate + try to spawn; assert spawn_count == 1) and (b) `rapid_alternating_toggles_under_gate_settle_to_last_l118` (alternating T/F toggles; assert final marker state matches last call + observed-changes count matches). Reviewer agent_id 2122468c verified both tests would deterministically FAIL if the gate were removed (real regression coverage, not mock stubs). Test placement: existing `#[cfg(test)] mod tests` block at `mcp.rs:522`, alongside the original L-46 tests. RW gate has its own independent `McpRwToggleGate` — not in scope for L-118. 246/246 mcp tests pass. — Subagent agent_id a826cf26 (build) + agent_id 2122468c (review) |
+| 4 stale Backend Code Review entries removed | `REVIEW-LATER.md` only. **Pre-batch audit (subagent agent_id 44df12c5)** verified each against the actual codebase: **L-118** (TOCTOU on `mcp_set_enabled`) — already covered by L-46's `McpToggleGate` (entry was filed against post-fix line numbers). **L-133** (`pages_without_space` doesn't re-run after bootstrap) — `src-tauri/src/spaces/bootstrap.rs:88-95` was split (BUG-1 / L-133 inline comment) so the backfill now runs on EVERY boot. **H-17** (`recurrence::handle_recurrence` reads counters before BEGIN IMMEDIATE) — `src-tauri/src/recurrence/compute.rs:49` opens `BEGIN IMMEDIATE` up front + atomic-under-concurrent-done test at L614. **M-23** (`flush_draft_inner` reads `prev_edit` outside flush tx) — `src-tauri/src/commands/drafts.rs:84` does the prev_edit lookup INSIDE the same `BEGIN IMMEDIATE` via `find_prev_edit_in_tx(&mut tx, …)`. All 4 entries deleted entirely (block + table-row + mini-table cross-references) per the file's own rule "When an item is resolved, remove it entirely. Do NOT record the removal anywhere in this file." — Orchestrator |
+
+**Process notes:**
+
+- **Decoupling decision:** BUILD A was launched as a background subagent with the standard "fix L-132" prompt but never modified `lease.rs` after >15 minutes. Per PROMPT.md "the orchestrator should not idle" the orchestrator did not block waiting on it indefinitely; instead committed the ready B+C+orch work as Session 580 and is leaving BUILD A's eventual output (if it produces one) for either inclusion in a Session 581 commit or for replacement. **Lesson logged for future sessions:** when a Rust subagent stalls without emitting tool calls, kill + re-launch is preferable to indefinite waiting. Considered killing here but the agent_id remained alive and might still produce useful output; chose the lower-risk path of continuing without it.
+- **Orchestrator split work (substantial):** Beyond the standard "review the build subagents" pattern, orchestrator did:
+  - The pre-build staleness audit (delegated to subagent agent_id 44df12c5).
+  - The 4 typed `invoke<T>(...)` residual migrations after BUILD C's reviewer flagged them as in-scope (4 wrappers + dropping the `invoke` import + verifying tsc + 164 consumer tests).
+  - The L-118 / L-133 / H-17 / M-23 stale-entry deletions (build subagent B's REVIEW-LATER edit kept a "strikethrough + Resolved note" pattern that violated the file's own rule; orchestrator deleted the L-118 block entirely + cleaned up summary-table cross-references).
+- **1 prek-driven re-run** (orchestrator):
+  - First commit attempt failed on `vitest` flaky test in `BacklinkFilterBuilder.test.tsx` ("Unable to find role=button name=Review"). The standalone prek run before commit had passed clean; the test passes 71/71 in isolation. Retried commit immediately and it passed. **No code change required** — flaky test, pre-existing condition unrelated to this batch.
+- **No `cargo sqlx prepare`** needed (BUILD B added tests but no new SQL macros). **No `bindings.ts` regeneration** (BUILD C's wrappers and the orchestrator's residuals all use existing typed bindings).
+- **No FEATURE-MAP.md update needed** — refactor + test additions only, no user-facing surface change.
+
+**Files touched (this session's batch):**
+
+- Backend modified (1): `src-tauri/src/commands/mcp.rs` (+2 regression tests, ~118L).
+- Frontend modified (2): `src/lib/tauri.ts` (18 wrappers migrated total: 14 raw + 4 typed; `invoke` import removed), `src/lib/__tests__/tauri.test.ts` (+4 tests, 159→163).
+- Docs: `REVIEW-LATER.md` (MAINT-125 row + detail block deleted; 4 stale Backend Code Review entries deleted; "Top-priority items" / "Quick wins" mini-tables pruned; summary counters bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after 1 retry due to a vitest flake unrelated to this batch).
+
+- L-118 regression: mcp.rs 246/246 pass (244 baseline + 2 new).
+- MAINT-125 closure: tauri.test.ts 163/163 (159 baseline + 4 new); broader vitest 8957/8957; 4 consumer files spot-checked 164/164; tsc 0 errors.
+- Cargo: full nextest run, fmt, clippy, deny, machete all green.
+
+**Commit:** `dcedebe` — `refactor: 2-subagent batch — L-118 regression tests + MAINT-125 closure (18 wrappers)`. (Docs commit follows separately.)
+
+---
+
 ## Session 579 — 2-subagent batch: MAINT-124 `<ViewDispatcher>` + boot/lifecycle hooks + MAINT-125 batch-5 (2026-04-30)
 
 **2 disjoint MAINT items each made substantial progress in one PROMPT.md batch with 2 parallel build subagents + 2 parallel technical-review subagents.** Subagent A pulled the inline `ViewRouter` switch + `useHeaderLabel` / `useConflictCount` / `useTrashCount` helper hooks + `ViewFallback` + `PageSelectHandler` type out of `App.tsx` into a dedicated `<ViewDispatcher>` module, and ALSO extracted two useEffect clusters into `useAppBootRecovery()` (orphan-draft flush + priority-levels hydration on boot) and `useAppSpaceLifecycle()` (preload, cross-space link enforcement, accent + window-title visual identity); Subagent B migrated 12 more `tauri.ts` wrappers (peer-ref CRUD + pairing/sync flow + `listDrafts`) bringing cumulative MAINT-125 progress to 67 of ~78 wrappers (~86%). The combined extractions overshot the predicted "after ViewDispatcher" estimate of ~730-740L because the boot/lifecycle sub-batch was rolled in: App.tsx ended at **515L** (–357L this session, –929L cumulative since 1444L baseline, ~64% reduction). 15L over the ≤500L stretch goal but the residual is irreducible orchestrator glue (FEAT-12 quick-capture global hotkey explicitly out of scope, prop wiring, JSX shell, imports).
