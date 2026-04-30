@@ -1,5 +1,60 @@
 # Session Log
 
+## Session 587 — 1-subagent batch: MAINT-127 navigation.ts split (2026-04-30)
+
+**Final item in the user-approved 4-item batch closed.** Build subagent split the 543L `src/stores/navigation.ts` god-store into a slim view+block store (`navigation.ts` 116L) and a new tab-engine store (`tabs.ts` 480L) with cross-store coordination via direct `useNavigationStore.getState().setView(...)` calls from tab actions when they imply a view change. 52 consumer files migrated (9 view-only stay on `useNavigationStore`, 8 tabs-only switched to `useTabsStore`, 35 use both). 8959/8959 frontend tests pass.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 21 → **20** (MAINT-127 row + detail block deleted).
+- **Cumulative MAINT closures:** 25 → 26.
+- **Previously-resolved counter:** 847+ → 848+ across 553 → 554 sessions.
+
+**Item closed:**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| **MAINT-127 — `navigation.ts` god-store split** (subagent A) | `src/stores/navigation.ts` 543L → **116L** (drop of 427L; keeps `currentView`, `selectedBlockId`, `setView`, `setSelectedBlockId`, `clearSelection`; persists at `'agaric:navigation'` v1→v2 with migrate function that strips legacy tab fields). NEW: `src/stores/tabs.ts` 480L (owns `tabs`, `activeTabIndex`, `tabsBySpace`, `activeTabIndexBySpace`, `navigateToPage`, `goBack`, `replacePage`, `replacePageWithoutBack`, `openInNewTab`, `closeTab`, `switchTab`; selectors `selectPageStack`, `selectTabsForSpace`, `selectActiveTabIndexForSpace`; persists at `'agaric:tabs'` v1; FEAT-3 `createSpaceSubscriber` moved here since it owns the per-space tab flush/pull logic and still clears `useNavigationStore`'s `selectedBlockId` on space switch). **Cross-store asymmetry:** tab actions call `useNavigationStore.getState().setView('page-editor')` (or `'pages'`) when they imply a view change; navigation store actions never reference tabs. Single-direction coupling documented in `tabs.ts`'s rustdoc. **52 consumer files migrated:** 9 view-only kept on `useNavigationStore` (`smoke.test.ts`, `useJournalStore.test.ts`, `journal.ts`, `recent-pages.ts`, `DailyView.tsx`, `DailyView.test.tsx`, `PageEditor.tsx`, `GlobalDateControls.tsx`, `KeyboardShortcuts.tsx`); 8 tabs-only switched to `useTabsStore` (`PageLink.tsx`, `RecentPagesStrip.tsx`, `GraphView.tsx`, `SearchPanel.tsx`, `TemplatesView.tsx`, `ConflictList.tsx`, `TagFilterPanel.tsx`, `useRichContentCallbacks.ts`); 35 use both (`App.tsx`, `TabBar.tsx`, `PageHeader.tsx`, `ViewDispatcher.tsx`, `useUndoShortcuts.ts`, `useDeepLinkRouter.ts`, `useAppKeyboardShortcuts.ts`, plus 28 component/hook tests that scaffold both `currentView` and `tabs`). 5 new tests in `src/stores/__tests__/navigation.test.ts` (3 cross-store coordination + 2 persistence-key split). 8959/8959 vitest pass; `npx tsc -b --noEmit` clean. — Subagent agent_id e65f884e |
+
+**Persist migration strategy chosen:** simpler option (bump `agaric:navigation` v1→v2 + migrate fn that strips tab fields; let `agaric:tabs` start fresh on first post-split boot). **One-time UX cost:** returning users will lose persisted tabs on first launch after this commit lands (single empty tab restored). `currentView` and per-space data survive intact. Documented inline in both stores' persist headers + flagged here in the session log so the user can decide whether to ship a release note.
+
+**Process notes:**
+
+- **No review subagent.** The work is well-scoped, the build subagent's report is thorough (drift findings + per-consumer migration table), and `npx vitest run` 8959/8959 + `npx tsc -b --noEmit` clean is strong objective evidence. Skipping a review per "don't gold-plate" given the strong test signal.
+- **1 prek-driven biome autofix** (orchestrator): biome `organizeImports` + `format` flagged 5 issues across `src/components/__tests__/JournalPage.test.tsx`, `src/components/__tests__/RecentPagesStrip.test.tsx`, and `src/stores/__tests__/navigation.test.ts` — import sort order (the new `useTabsStore` line was inserted at the end of imports rather than alphabetically positioned) + 4 minor format nits (object literals in `setState({...})`, multi-line array assertions, multi-line import for >5 named imports). All auto-fixed via `npx biome check --write src/`. Re-ran prek clean.
+- **Drift findings the build subagent flagged (read-only, not fixed):**
+  - **(1) `src/__tests__/AGENTS.md` line 102** references `pageStack` as if it were a real navigation-store field. `pageStack` was always derived (via `selectPageStack`); pre-existing stale doc, flagged.
+  - **(2) Tests using `vi.mock('@/stores/navigation', ...)` now also need `vi.mock('@/stores/tabs', ...)`.** Two such tests exist (`useDeepLinkRouter.test.ts`, `useUndoShortcuts.test.ts`) — both updated. The pattern is duplicative but stable.
+  - **(3) `useUndoShortcuts.ts` reads from both stores on the same keydown event.** The two `getState()` reads aren't snapshot-consistent if a tab action interleaves. No observable race today; flagged for future hardening if it ever matters.
+  - **(4) No legacy `useNavigationStore.setState((prev) => ...)` callbacks reference tab fields after the migration** — the only such callsite was in `navigation.test.ts` and was migrated to `useTabsStore.setState((prev) => ...)`.
+- **No `cargo sqlx prepare`** (no SQL changes). **No `bindings.ts` regeneration** (no IPC type changes). **No backend changes whatsoever** — pure frontend store split.
+- **No FEATURE-MAP.md update needed** — internal store refactor; no user-facing surface change beyond the one-time persist UX cost (lose tabs once on first post-split boot).
+
+**Files touched (this session's batch):**
+
+- Frontend new (1): `src/stores/tabs.ts` (480L).
+- Frontend modified (42): `src/stores/navigation.ts` (rewrite, –427L), `src/App.tsx`, `src/components/TabBar.tsx`, `src/components/RecentPagesStrip.tsx`, `src/components/PageLink.tsx`, `src/components/GraphView.tsx`, `src/components/SearchPanel.tsx`, `src/components/TemplatesView.tsx`, `src/components/ConflictList.tsx`, `src/components/TagFilterPanel.tsx`, `src/components/PageHeader.tsx`, `src/components/ViewDispatcher.tsx`, `src/hooks/useRichContentCallbacks.ts`, `src/hooks/useUndoShortcuts.ts`, `src/hooks/useDeepLinkRouter.ts`, `src/hooks/useAppKeyboardShortcuts.ts`, plus 26 component/hook test files.
+- Docs: `REVIEW-LATER.md` (MAINT-127 row + detail block deleted; open count 21 → 20; previously-resolved counter bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after 1 biome autofix round). `npx vitest run` (full frontend suite) → **8959/8959 pass**. `npx tsc -b --noEmit` → clean.
+
+- Stores tests: 318/318 (10 files).
+- App + TabBar tests: 163/163.
+- Full vitest: 8959/8959 across 364 files.
+- TypeScript: 0 errors.
+- Cargo: full nextest run, fmt, clippy, deny, machete all green.
+
+**Commit:** `03d8ab3` — `refactor(stores): MAINT-127 — split navigation.ts (543L) into navigation.ts (116L) + tabs.ts (480L)`. (Docs commit follows separately.)
+
+**User-approved batch (sessions 585-587) is now complete:**
+- Session 585: M-3 (1-line AGENTS.md fix) + MAINT-162 (StaticBlock role flip)
+- Session 586: C-2b (op-log replay schema + boot replay)
+- Session 587: MAINT-127 (navigation.ts split)
+
+All 4 explicitly approved items closed. The remaining open backlog has no autonomous-doable substantial items left without further user input.
+
+---
+
 ## Session 586 — 1-subagent batch: C-2b op-log replay schema + boot replay (2026-04-30)
 
 **The last CRITICAL backend code review finding closed.** Build subagent landed `materializer_apply_cursor` schema migration + atomic cursor advance inside the foreground apply tx + a new `recovery::replay_unmaterialized_ops` module + integration into `recover_at_boot` as a new step 2 (between pending-snapshot delete and draft recovery). 8 new tests verify cursor monotonicity, batch atomicity, replay walking, idempotency, and crash-resumption.
