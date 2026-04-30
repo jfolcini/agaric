@@ -13,10 +13,9 @@
 
 import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
-import { Suggestion } from '@tiptap/suggestion'
 import { logger } from '../../lib/logger'
 import type { PickerItem } from '../SuggestionList'
-import { createSuggestionRenderer } from '../suggestion-renderer'
+import { createPickerPlugin } from './picker-plugin'
 
 export const blockRefPickerPluginKey = new PluginKey('blockRefPicker')
 
@@ -158,26 +157,21 @@ export const BlockRefPicker = Extension.create<BlockRefPickerOptions>({
   },
 
   addProseMirrorPlugins() {
+    const extensionOptions = this.options
     return [
-      Suggestion({
-        editor: this.editor,
+      createPickerPlugin({
+        loggerComponent: 'BlockRefPicker',
+        displayName: 'Block references',
         pluginKey: blockRefPickerPluginKey,
         char: '((',
         allowSpaces: true,
         allowedPrefixes: null,
-        items: async ({ query }) => {
-          try {
-            return await this.options.items(query)
-          } catch (err) {
-            logger.warn('BlockRefPicker', 'items callback failed, returning empty', { query }, err)
-            return []
-          }
-        },
+        editor: this.editor,
+        items: (query) => extensionOptions.items(query),
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
           editor.chain().focus().deleteRange(range).insertBlockRef(item.id).insertContent(' ').run()
         },
-        render: () => createSuggestionRenderer('Block references', blockRefPickerPluginKey),
       }),
     ]
   },

@@ -11,10 +11,9 @@
 
 import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
-import { Suggestion } from '@tiptap/suggestion'
 import { logger } from '../../lib/logger'
 import type { PickerItem } from '../SuggestionList'
-import { createSuggestionRenderer } from '../suggestion-renderer'
+import { createPickerPlugin } from './picker-plugin'
 
 export const blockLinkPickerPluginKey = new PluginKey('blockLinkPicker')
 
@@ -178,20 +177,15 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
   addProseMirrorPlugins() {
     const extensionOptions = this.options
     return [
-      Suggestion({
-        editor: this.editor,
+      createPickerPlugin({
+        loggerComponent: 'BlockLinkPicker',
+        displayName: 'Block links',
         pluginKey: blockLinkPickerPluginKey,
         char: '[[',
         allowedPrefixes: null,
         allowSpaces: true,
-        items: async ({ query }) => {
-          try {
-            return await this.options.items(query)
-          } catch (err) {
-            logger.warn('BlockLinkPicker', 'items callback failed, returning empty', { query }, err)
-            return []
-          }
-        },
+        editor: this.editor,
+        items: (query) => extensionOptions.items(query),
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
           if (item.isCreate && extensionOptions.onCreate) {
@@ -224,7 +218,6 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
               .run()
           }
         },
-        render: () => createSuggestionRenderer('Block links', blockLinkPickerPluginKey),
       }),
     ]
   },

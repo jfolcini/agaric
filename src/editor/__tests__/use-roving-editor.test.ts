@@ -701,4 +701,132 @@ describe('useRovingEditor integration (renderHook)', () => {
     result.current.editor?.destroy()
     unmountHook()
   })
+
+  // MAINT-165 — Pattern-C ref plumbing for the remaining 4 picker callbacks
+  // (searchTags, searchPages, searchSlashCommands, searchPropertyKeys).
+  // Mirrors the searchBlockRefs test above: re-render with a fresh callback,
+  // invoke the configured items option directly, and verify the new callback
+  // fires (i.e. the closure dereferences .current at call time).
+
+  it('searchTags callback is read fresh at call time (no stale closure)', async () => {
+    const fn1 = vi.fn().mockResolvedValue([{ id: 'T1', label: 'one' }])
+    const fn2 = vi.fn().mockResolvedValue([{ id: 'T2', label: 'two' }])
+
+    const {
+      result,
+      rerender,
+      unmount: unmountHook,
+    } = renderHook(
+      ({ searchTags }: { searchTags: typeof fn1 }) => useRovingEditor({ searchTags }),
+      { initialProps: { searchTags: fn1 } },
+    )
+    await waitFor(() => expect(result.current.editor).not.toBeNull())
+
+    rerender({ searchTags: fn2 })
+
+    const ext = (result.current.editor as Editor).extensionManager.extensions.find(
+      (e) => e.name === 'atTagPicker',
+    )
+    expect(ext).toBeDefined()
+    const items = ext?.options.items as (q: string) => Promise<unknown>
+    await items('hello')
+
+    expect(fn2).toHaveBeenCalledWith('hello')
+    expect(fn1).not.toHaveBeenCalled()
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  it('searchPages callback is read fresh at call time (no stale closure)', async () => {
+    const fn1 = vi.fn().mockResolvedValue([{ id: 'P1', label: 'one' }])
+    const fn2 = vi.fn().mockResolvedValue([{ id: 'P2', label: 'two' }])
+
+    const {
+      result,
+      rerender,
+      unmount: unmountHook,
+    } = renderHook(
+      ({ searchPages }: { searchPages: typeof fn1 }) => useRovingEditor({ searchPages }),
+      { initialProps: { searchPages: fn1 } },
+    )
+    await waitFor(() => expect(result.current.editor).not.toBeNull())
+
+    rerender({ searchPages: fn2 })
+
+    const ext = (result.current.editor as Editor).extensionManager.extensions.find(
+      (e) => e.name === 'blockLinkPicker',
+    )
+    expect(ext).toBeDefined()
+    const items = ext?.options.items as (q: string) => Promise<unknown>
+    await items('hello')
+
+    expect(fn2).toHaveBeenCalledWith('hello')
+    expect(fn1).not.toHaveBeenCalled()
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  it('searchSlashCommands callback is read fresh at call time (no stale closure)', async () => {
+    const fn1 = vi.fn().mockResolvedValue([{ id: 'S1', label: 'one' }])
+    const fn2 = vi.fn().mockResolvedValue([{ id: 'S2', label: 'two' }])
+
+    const {
+      result,
+      rerender,
+      unmount: unmountHook,
+    } = renderHook(
+      ({ searchSlashCommands }: { searchSlashCommands: typeof fn1 }) =>
+        useRovingEditor({ searchSlashCommands }),
+      { initialProps: { searchSlashCommands: fn1 } },
+    )
+    await waitFor(() => expect(result.current.editor).not.toBeNull())
+
+    rerender({ searchSlashCommands: fn2 })
+
+    const ext = (result.current.editor as Editor).extensionManager.extensions.find(
+      (e) => e.name === 'slashCommand',
+    )
+    expect(ext).toBeDefined()
+    const items = ext?.options.items as (q: string) => Promise<unknown>
+    await items('hello')
+
+    expect(fn2).toHaveBeenCalledWith('hello')
+    expect(fn1).not.toHaveBeenCalled()
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  it('searchPropertyKeys callback is read fresh at call time (no stale closure)', async () => {
+    const fn1 = vi.fn().mockResolvedValue([{ id: 'K1', label: 'one' }])
+    const fn2 = vi.fn().mockResolvedValue([{ id: 'K2', label: 'two' }])
+
+    const {
+      result,
+      rerender,
+      unmount: unmountHook,
+    } = renderHook(
+      ({ searchPropertyKeys }: { searchPropertyKeys: typeof fn1 }) =>
+        useRovingEditor({ searchPropertyKeys }),
+      { initialProps: { searchPropertyKeys: fn1 } },
+    )
+    await waitFor(() => expect(result.current.editor).not.toBeNull())
+
+    rerender({ searchPropertyKeys: fn2 })
+
+    const ext = (result.current.editor as Editor).extensionManager.extensions.find(
+      (e) => e.name === 'propertyPicker',
+    )
+    expect(ext).toBeDefined()
+    const items = ext?.options.items as (q: string) => Promise<unknown>
+    await items('hello')
+
+    expect(fn2).toHaveBeenCalledWith('hello')
+    expect(fn1).not.toHaveBeenCalled()
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
 })

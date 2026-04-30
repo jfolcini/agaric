@@ -10,10 +10,9 @@
 
 import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
-import { Suggestion } from '@tiptap/suggestion'
 import { logger } from '../../lib/logger'
 import type { PickerItem } from '../SuggestionList'
-import { createSuggestionRenderer } from '../suggestion-renderer'
+import { createPickerPlugin } from './picker-plugin'
 
 export const atTagPickerPluginKey = new PluginKey('atTagPicker')
 
@@ -94,8 +93,9 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
   addProseMirrorPlugins() {
     const extensionOptions = this.options
     return [
-      Suggestion({
-        editor: this.editor,
+      createPickerPlugin({
+        loggerComponent: 'AtTagPicker',
+        displayName: 'Tags',
         pluginKey: atTagPickerPluginKey,
         char: '@',
         // Only open the tag picker when `@` is preceded by whitespace or is
@@ -112,14 +112,8 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
         // (rare) case where a hard break precedes `@`.
         allowedPrefixes: [' ', '\u00A0', '\n'],
         allowSpaces: true,
-        items: async ({ query }) => {
-          try {
-            return await this.options.items(query)
-          } catch (err) {
-            logger.warn('AtTagPicker', 'items callback failed, returning empty', { query }, err)
-            return []
-          }
-        },
+        editor: this.editor,
+        items: (query) => extensionOptions.items(query),
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
           if (item.isCreate && extensionOptions.onCreate) {
@@ -141,7 +135,6 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
             editor.chain().focus().deleteRange(range).insertTagRef(item.id).insertContent(' ').run()
           }
         },
-        render: () => createSuggestionRenderer('Tags', atTagPickerPluginKey),
       }),
     ]
   },

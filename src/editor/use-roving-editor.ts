@@ -279,6 +279,14 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   onCheckboxRef.current = onCheckbox
   const searchBlockRefsRef = useRef(options.searchBlockRefs ?? (async () => [] as PickerItem[]))
   searchBlockRefsRef.current = options.searchBlockRefs ?? (async () => [] as PickerItem[])
+  const searchTagsRef = useRef(searchTags)
+  searchTagsRef.current = searchTags
+  const searchPagesRef = useRef(searchPages)
+  searchPagesRef.current = searchPages
+  const searchSlashCommandsRef = useRef(searchSlashCommands)
+  searchSlashCommandsRef.current = searchSlashCommands
+  const searchPropertyKeysRef = useRef(searchPropertyKeys)
+  searchPropertyKeysRef.current = searchPropertyKeys
 
   const editor = useEditor({
     extensions: [
@@ -322,7 +330,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         resolveStatus: (id: string) => resolveBlockStatusRef.current?.(id) ?? 'active',
       }),
       AtTagPicker.configure({
-        items: searchTags,
+        items: (query: string) => searchTagsRef.current(query),
         onCreate: (name: string) => {
           const fn = onCreateTagRef.current
           if (!fn) return Promise.reject(new Error('onCreateTag not provided'))
@@ -330,7 +338,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         },
       }),
       BlockLinkPicker.configure({
-        items: searchPages,
+        items: (query: string) => searchPagesRef.current(query),
         onCreate: (label: string) => {
           const fn = onCreatePageRef.current
           if (!fn) return Promise.reject(new Error('onCreatePage not provided'))
@@ -341,11 +349,11 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         items: (query: string) => searchBlockRefsRef.current(query),
       }),
       SlashCommand.configure({
-        items: searchSlashCommands,
+        items: (query: string) => searchSlashCommandsRef.current(query),
         onCommand: (item: PickerItem) => onSlashCommandRef.current?.(item),
       }),
       PropertyPicker.configure({
-        items: searchPropertyKeys,
+        items: (query: string) => searchPropertyKeysRef.current(query),
         onSelect: (item: PickerItem) => onPropertySelectRef.current?.(item),
       }),
       CheckboxInputRule.configure({

@@ -12,10 +12,10 @@ import type { Editor } from '@tiptap/core'
 import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion'
-import { Suggestion } from '@tiptap/suggestion'
 import { logger } from '../../lib/logger'
 import type { PickerItem } from '../SuggestionList'
 import { createSuggestionRenderer } from '../suggestion-renderer'
+import { createPickerPlugin } from './picker-plugin'
 
 export const slashCommandPluginKey = new PluginKey('slashCommand')
 
@@ -42,19 +42,14 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
   addProseMirrorPlugins() {
     const extensionOptions = this.options
     return [
-      Suggestion({
-        editor: this.editor,
+      createPickerPlugin({
+        loggerComponent: 'SlashCommand',
+        displayName: 'Slash commands',
         pluginKey: slashCommandPluginKey,
         char: '/',
         allowedPrefixes: null,
-        items: async ({ query }) => {
-          try {
-            return await extensionOptions.items(query)
-          } catch (err) {
-            logger.warn('SlashCommand', 'items callback failed, returning empty', { query }, err)
-            return []
-          }
-        },
+        editor: this.editor,
+        items: (query) => extensionOptions.items(query),
         command: ({ editor, range, props }) => {
           editor.chain().focus().deleteRange(range).run()
           extensionOptions.onCommand(props as PickerItem, editor)
