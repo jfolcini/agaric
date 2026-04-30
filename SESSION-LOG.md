@@ -1,5 +1,51 @@
 # Session Log
 
+## Session 574 — MAINT-125 batch-1 (11 block-domain wrappers via `unwrap` helper) + MAINT-162 PageBrowser grid flip (5 of 6 components closed) (2026-04-30)
+
+**2 disjoint MAINT items closed in one PROMPT.md batch with 2 parallel build subagents (no review subagent — both tasks are mechanical with strong test coverage).** Made first concrete progress on REVIEW-LATER MAINT-125 by migrating 11 block-domain wrappers in `src/lib/tauri.ts` from raw `invoke('cmd', { args })` calls to `commands.cmd(...)` from the auto-generated `src/lib/bindings.ts` (via a new internal `unwrap` helper that throws on `status: 'error'` to preserve the existing reject-based public API). And closed MAINT-162's PageBrowser grid flip (the FEAT-14 mixed-mode case with the hard `aria-required-children` violation) — only StaticBlock remains in MAINT-162.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 23 → 23 (both MAINT-125 and MAINT-162 STAY — neither fully closed). MAINT-125 cost downgraded from **L → M** (11 of ~80 wrappers done). MAINT-162 reduced from 2 → 1 components remaining.
+- **Previously-resolved counter:** 824+ → 825+ across 540 → 541 sessions.
+
+**Items closed (1 partial-batch each for MAINT-125 and MAINT-162):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-125 batch-1 (11 block-domain wrappers) | `src/lib/tauri.ts` (1 import added: `import { commands } from './bindings'`; 1 internal helper added: `unwrap<T>(result)` that throws on error status; 11 wrappers converted from `function foo() { return invoke('cmd', { args }) }` to `async function foo() { return unwrap(await commands.cmd(args)) }`). Wrappers migrated: `createBlock`, `editBlock`, `deleteBlock`, `restoreBlock`, `purgeBlock`, `getBlock`, `batchResolve`, `moveBlock`, `addTag`, `removeTag`, `getBacklinks`. Public function signatures unchanged across the migration; consumers don't update. **Skipped:** `listBlocks` (non-trivial AgendaQuery shape that bundles 3 top-level fields into a struct — separate batch). 577 tests across `tauri.test.ts`, `BlockTree`, `SortableBlock` test suites pass unchanged (tests mock `@tauri-apps/api/core::invoke`, which `commands.*` calls under the hood). — Subagent 86e3b4f1 |
+| MAINT-162 PageBrowser grid flip | `src/components/PageBrowser.tsx` (1 line: `viewportProps.role: 'listbox'` → `'grid'` + 4-line MAINT-162 comment); `src/components/PageBrowser/PageBrowserRowRenderer.tsx` (3 row renderers updated: HeaderRow `role="group"` → `role="row"` with 1 inner gridcell; PageRow `role="option"` → `role="row"` with 2 inner gridcells (content + actions); TreePageRow added `role="row"` wrapper + 1 inner gridcell — 5 new `<div role="gridcell">` wrappers total + biome-ignore comments matching session 573's pattern); `src/components/__tests__/PageBrowser.test.tsx` (5 axe-rule overrides removed at L1890/1918/2193/2197/2224 — including the FEAT-14 hard `aria-required-children` violation; 13 `getByRole('listbox')` → `getByRole('grid')` updates; 9 `getAllByRole('option')` → `getAllByRole('row').filter(r => r.hasAttribute('data-page-item'))` to scope away from section headers + tree-page wrappers; the sort `<select>`'s `getAllByRole('option')` left unchanged because that's a Radix Select dropdown distinct from the page list; 2 stale comments updated). 92/92 PageBrowser tests pass. **E2E updates (concurrent scope):** `e2e/starred-pages.spec.ts` and `e2e/spaces-coverage.spec.ts` directly query `role="listbox"` / `role="option"` on the PageBrowser viewport — both updated to `role="grid"` / `[data-page-item]` locator-style assertions to keep the e2e matrix green (~8 sites updated across the two files). — Subagent 100fcc4b |
+
+**Process notes:**
+
+- **2 parallel build subagents (no review subagent).** Each subagent owned a disjoint file set (Subagent A: `src/lib/tauri.ts` only; Subagent B: PageBrowser cluster + e2e specs). All builds succeeded on the first attempt. The orchestrator skipped a review subagent because both tasks are mechanical (wrapper-rewrite + role-flip) and well-covered by existing test suites.
+- **Decision rationale on PageBrowser's section headers:** Subagent 100fcc4b chose `role="row"` over `role="rowgroup"` or keeping `role="group"` because (a) `rowgroup` requires nested `role="row"` children, but section headers in PageBrowser are flat sentinels in the virtualizer (no actual wrapper rows), (b) `role="group"` would be unusual semantics inside a grid, (c) `role="row"` matches the session-573 pattern where every direct grid child is a row. Each header gets a single inner `<div role="gridcell">` carrying the visible label + count.
+- **`unwrap` helper rationale:** `bindings.ts`'s `commands.*` returns `Promise<{ status: 'ok'; data: T } | { status: 'error'; error: AppErrorSchema }>` (a Result-like wrapper from `typedError`). The existing `tauri.ts` wrappers REJECT on backend errors (returning `Promise<T>` and letting `invoke`'s rejection propagate). `unwrap` re-throws the `error` field on `status: 'error'` to preserve that public API across the migration.
+- **Drift discovered + fixed (PageBrowser):** the e2e specs (`starred-pages.spec.ts`, `spaces-coverage.spec.ts`) directly query `role="listbox"` / `role="option"` on the PageBrowser viewport. The MAINT-162 description didn't flag these as part of the PageBrowser scope. Subagent 100fcc4b updated both files concurrently (~8 sites) so the e2e matrix stays green. Worth noting in MAINT-162's description for future flips.
+- **Drift caught (PageBrowser test stale comments):** L2144 ("isn't a listbox option" → "isn't a single selectable cell") and L2403 (`role="option"` → `role="row"`) had stale comments referencing the old contract. Subagent updated both inline.
+- **Biome auto-format pass needed:** prek's `biome check` flagged 3 wrapped `await commands.X(...)` calls in `tauri.ts` that biome wants to compress to single-line. `npx biome format --write` fixed 2 files; re-run prek passed.
+- **No `cargo sqlx prepare`** needed (no SQL changes). **No backend changes.** **No new IPC commands.** **No `bindings.ts` regeneration** (read-only consumer in this batch).
+- **No FEATURE-MAP.md update needed** — both items are internal refactors; user-facing surface unchanged.
+
+**Files touched (this session's batch):**
+
+- Frontend modified (4 files):
+  - `src/lib/tauri.ts` (1 import + 1 internal helper + 11 wrappers migrated)
+  - `src/components/PageBrowser.tsx` (1 role flip + comment)
+  - `src/components/PageBrowser/PageBrowserRowRenderer.tsx` (3 row renderers updated, 5 gridcell wrappers added)
+  - `src/components/__tests__/PageBrowser.test.tsx` (5 suppression removals + 22 role-query updates + 2 stale comment updates)
+- E2E modified (2 files): `e2e/starred-pages.spec.ts`, `e2e/spaces-coverage.spec.ts` (~8 sites total).
+- Docs: `REVIEW-LATER.md` (MAINT-125 + MAINT-162 row trims + summary counter). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after biome auto-format). Targeted runs:
+
+- `tauri.ts` regression: 577 tests across `tauri.test.ts` + `BlockTree.test.tsx` + `SortableBlock.test.tsx` (4 test files) → all passed.
+- PageBrowser regression: 92/92 passed.
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome: clean.
+
+---
+
 ## Session 573 — Close MAINT-162 ARIA grid flips for HistoryView + ConflictList + TrashView + TagFilterPanel (4 of 6 components) (2026-04-30)
 
 **MAINT-162 partial close in one PROMPT.md batch with 4 parallel build subagents + orchestrator nit-fix sweep (no review subagent).** Closed the listbox→grid role flips for 4 of 6 components in MAINT-162: `HistoryView` (HistoryListView + HistoryListItem), `ConflictList` (ConflictList + ConflictListItem), `TrashView` (TrashListView + TrashRowItem), and `TagFilterPanel`. Removed 9 `nested-interactive` axe suppressions (1 + 2 + 4 + 2). Pattern established: `<div role="grid">` outer + `<div role="row">` inner + `<div role="gridcell">` content/actions wrappers, with `// biome-ignore lint/a11y/useSemanticElements` and `// biome-ignore lint/a11y/useFocusableInteractive` comments. Remaining MAINT-162 work: `PageBrowser` (FEAT-14 mixed-mode `aria-required-children` violation) + `StaticBlock` (`role="button"` outer is the underlying smell — not a true list-row).
