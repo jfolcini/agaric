@@ -2222,6 +2222,35 @@ describe('get_batch_attachment_counts', () => {
   })
 })
 
+describe('list_attachments_batch', () => {
+  it('returns an empty record when no attachments exist', () => {
+    const result = invoke('list_attachments_batch', { blockIds: [SEED_IDS.BLOCK_GS_1] })
+    expect(result).toEqual({})
+  })
+
+  it('returns full attachment lists per block after add_attachment', () => {
+    invoke('add_attachment', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      filename: 'a.png',
+      mimeType: 'image/png',
+      sizeBytes: 100,
+      fsPath: '/tmp/a.png',
+    })
+    invoke('add_attachment', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      filename: 'b.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 200,
+      fsPath: '/tmp/b.pdf',
+    })
+    const result = invoke('list_attachments_batch', {
+      blockIds: [SEED_IDS.BLOCK_GS_1, SEED_IDS.BLOCK_GS_2],
+    }) as Record<string, unknown[]>
+    expect(result[SEED_IDS.BLOCK_GS_1]).toHaveLength(2)
+    expect(result[SEED_IDS.BLOCK_GS_2]).toBeUndefined()
+  })
+})
+
 describe('add_attachment', () => {
   it('returns attachment with expected shape', () => {
     const result = invoke('add_attachment', {

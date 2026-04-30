@@ -216,6 +216,8 @@ export const commands = {
 	listAttachments: (blockId: string) => typedError<AttachmentRow[], AppErrorSchema>(__TAURI_INVOKE("list_attachments", { blockId })),
 	// Tauri command: batch-fetch attachment counts. Delegates to [`get_batch_attachment_counts_inner`].
 	getBatchAttachmentCounts: (blockIds: string[]) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("get_batch_attachment_counts", { blockIds })),
+	// Tauri command: batch-fetch full attachment lists. Delegates to [`list_attachments_batch_inner`].
+	listAttachmentsBatch: (blockIds: string[]) => typedError<{ [key in string]: AttachmentRow[] }, AppErrorSchema>(__TAURI_INVOKE("list_attachments_batch", { blockIds })),
 	// Tauri command: list all page-to-page links for graph visualization.
 	listPageLinks: () => typedError<PageLink[], AppErrorSchema>(__TAURI_INVOKE("list_page_links")),
 	// Tauri command: save a draft for a block. Delegates to [`draft::save_draft`].

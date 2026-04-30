@@ -840,6 +840,21 @@ export function getBatchAttachmentCounts(blockIds: string[]): Promise<Record<str
   return invoke('get_batch_attachment_counts', { blockIds })
 }
 
+/**
+ * Batch-fetch full attachment lists for many blocks in one IPC.
+ *
+ * Returns a record mapping block_id → AttachmentRow[]. Block IDs absent
+ * from the record have either 0 attachments or are not in the database;
+ * callers should default missing keys to `[]`.
+ *
+ * MAINT-131 StaticBlock half — replaces N per-block `listAttachments`
+ * IPCs for inline-image-render decisions in `StaticBlock` with a single
+ * batched query mounted at the BlockTree level.
+ */
+export function getBatchAttachments(blockIds: string[]): Promise<Record<string, AttachmentRow[]>> {
+  return invoke('list_attachments_batch', { blockIds })
+}
+
 /** Add an attachment to a block. */
 export function addAttachment(params: {
   blockId: string
