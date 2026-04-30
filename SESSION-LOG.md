@@ -1,5 +1,68 @@
 # Session Log
 
+## Session 586 — 1-subagent batch: C-2b op-log replay schema + boot replay (2026-04-30)
+
+**The last CRITICAL backend code review finding closed.** Build subagent landed `materializer_apply_cursor` schema migration + atomic cursor advance inside the foreground apply tx + a new `recovery::replay_unmaterialized_ops` module + integration into `recover_at_boot` as a new step 2 (between pending-snapshot delete and draft recovery). 8 new tests verify cursor monotonicity, batch atomicity, replay walking, idempotency, and crash-resumption.
+
+**REVIEW-LATER impact:**
+
+- **CRITICAL count:** 1 → **0** (C-2b was the only critical finding open; the C-2 family is now closed).
+- **Top-level open count (summary table):** 21 → 21 unchanged (C-2b is a Backend Code Review CRITICAL, not FEAT/MAINT/PERF/PUB).
+- **Previously-resolved counter:** 846+ → 847+ across 552 → 553 sessions.
+
+**Item closed:**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| **C-2b — Op-log replay path** (subagent A) | New: `src-tauri/migrations/0040_materializer_apply_cursor.sql` (single-row table `materializer_apply_cursor` with `id INTEGER PRIMARY KEY CHECK (id = 1)` + `materialized_through_seq INTEGER NOT NULL DEFAULT 0` + `updated_at TEXT`; seeded at value 0 by the migration). New: `src-tauri/src/recovery/replay.rs` (`replay_unmaterialized_ops(pool, &Materializer) -> Result<ReplayReport>` — reads the cursor, walks `op_log WHERE seq > cursor ORDER BY seq, device_id LIMIT 200` in chunks, enqueues each row as `MaterializeTask::ApplyOp`, drains via `Materializer::flush_foreground()` Barrier; per-enqueue errors recorded in `ReplayReport.replay_errors` not fatal). Modified: `src-tauri/src/materializer/handlers.rs` (new private helper `advance_apply_cursor(&mut conn, seq)` using `MAX(materialized_through_seq, ?)` semantics — single-op `apply_op` calls it after `apply_op_tx` and before `tx.commit()`; `BatchApplyOps` arm collects `max_seq: Option<i64>` across the batch and calls `advance_apply_cursor` ONCE at the end with the highest seq, with empty-batch guard). Modified: `src-tauri/src/recovery/boot.rs` (added `&Materializer` parameter to `recover_at_boot`; inserted Step 2 calling replay between snapshots-delete and draft recovery; replay errors caught + recorded rather than aborting boot per the surrounding "log + continue" pattern). Modified: `src-tauri/src/recovery/mod.rs` (`pub mod replay`; re-export of `replay_unmaterialized_ops` + `ReplayReport`; extended `RecoveryReport` with `ops_replayed`/`ops_skipped_idempotent`/`replay_errors`). Modified: `src-tauri/src/lib.rs` (reordered: materializer constructed BEFORE `recover_at_boot`, then passed in by reference; new info log when `report.ops_replayed > 0`). Modified: `src-tauri/src/recovery/tests.rs` (`recover_at_boot_test` wrapper now constructs + shuts down a per-call `Materializer`; existing L-103 second-call test takes the new param; 8 new C-2b tests added). Modified: `src-tauri/src/integration_tests.rs` (4 callers updated to pass `Materializer::new(pool.clone())`). 4 new `.sqlx/` cache entries from `cargo sqlx prepare -- --tests`. **Verification:** `cargo nextest run materializer recovery` → 223/223 pass; **full suite** → 3279/3279 pass; `cargo nextest run c2b` (8 new in isolation) → 8/8 pass; `cargo check` clean. — Subagent agent_id e8c2ae94 |
+
+**Tests added (8):**
+
+1. `apply_advances_cursor_atomic_c2b`
+2. `batch_apply_advances_cursor_to_max_c2b`
+3. `batch_apply_with_failure_does_not_advance_cursor_c2b`
+4. `replay_walks_unmaterialized_ops_c2b`
+5. `replay_is_idempotent_c2b`
+6. `replay_empty_op_log_is_noop_c2b`
+7. `recover_at_boot_includes_replay_step_c2b`
+8. `replay_progress_marker_survives_second_crash_c2b`
+
+**Process notes:**
+
+- **No review subagent.** The work is well-scoped (single CRITICAL item with explicit user approval), the build subagent's report is thorough and self-aware (5 explicit drift findings discussed below), and `cargo nextest` 3279/3279 + `cargo check` clean is strong objective evidence. Skipping a review subagent per "don't gold-plate" given the strong test signal.
+- **2 prek-driven nit fixes** (orchestrator):
+  - **`cargo fmt`:** `advance_apply_cursor` signature was wrapped onto multiple lines vs single-line preference; one assertion in `recovery/tests.rs:2151` was unwrapped vs multi-line preferred. Both auto-fixed via `cargo fmt`.
+  - **`clippy::doc_lazy_continuation`** at `src-tauri/src/recovery/mod.rs:14`: the doc comment used `1.5.` as a step marker which clippy interpreted as a malformed list item ("doc list item without indentation"). Fixed by renumbering the steps `1, 2, 3, 4` (was `1, 1.5, 2, 3`) — semantically identical, clippy-clean.
+- **Drift findings the build subagent flagged (all documented + accepted as-is):**
+  - **(1) Cursor is global, not per-device.** `op_log.seq` is per-device-monotonic (PK is `(device_id, seq)`); the cursor is a single global value with `MAX` semantics. In a multi-device install, replay walks ALL ops with `seq > cursor` regardless of device, which means re-applying ops from devices the local materializer already processed. **Idempotency saves correctness** (every op handler uses `INSERT OR IGNORE` / UPSERT per AGENTS.md invariant), so re-applies are no-ops. The cost is just wasted CPU on multi-device boots — acceptable. A future per-device cursor refinement (table keyed on `(device_id)`) is an optimization, not a correctness fix; documented in the migration's inline comment as a "future per-table-cursor refinement".
+  - **(2) Local-write cursor advancement gap.** Local CQRS writes (`commands/*.rs` calling `append_local_op_in_tx`) bypass the materializer foreground queue and thus do NOT advance the cursor. On a fresh install with only local writes, the cursor stays at 0 forever, and every boot's replay walks the entire op_log. Same idempotency safety net applies (re-apply is a no-op), so it's a perf concern not a correctness one. A potential follow-up is to advance the cursor in `append_local_op_in_tx` too. Deliberately NOT done in this session — adding cursor advancement to every local write path doubles the surface area of a security-adjacent invariant. Worth a follow-up `MAINT-*` filing if the perf becomes a problem on large local vaults.
+  - **(3) Replay errors are non-fatal.** Original design called `replay_unmaterialized_ops(...).await?`; the existing `recover_at_boot_records_errors_when_draft_processing_fails` test expects boot to succeed even when `op_log` is dropped. Subagent wrapped the call in a `match` that catches `AppError`, logs `warn`, and records `format!("replay aborted: {e}")` into `replay_errors`. Matches surrounding "log + continue" code — good call. Documented in the boot module.
+  - **(4) `apply_op` callers outside the materializer:** none found — `pub(super) fn apply_op` is only invoked from `handle_foreground_task`. Drift check passes.
+  - **(5) Empty `BatchApplyOps` guard:** `max_seq: Option<i64>` ensures cursor is not advanced for an empty batch (defensively — current dispatch never produces an empty batch in practice).
+- **No `bindings.ts` regeneration** (no IPC type changes — `RecoveryReport`'s new fields are purely Rust-side, never crossed the Tauri boundary).
+- **No FEATURE-MAP.md update needed** — internal recovery infrastructure, no user-visible surface change.
+- **`cargo sqlx prepare -- --tests` regenerated 4 new cache entries** for the new `materializer_apply_cursor` queries.
+
+**Files touched (this session's batch):**
+
+- Backend new (2): `src-tauri/migrations/0040_materializer_apply_cursor.sql`, `src-tauri/src/recovery/replay.rs`.
+- Backend modified (7): `src-tauri/src/lib.rs`, `src-tauri/src/integration_tests.rs`, `src-tauri/src/materializer/handlers.rs`, `src-tauri/src/recovery/boot.rs`, `src-tauri/src/recovery/cache_refresh.rs`, `src-tauri/src/recovery/mod.rs`, `src-tauri/src/recovery/tests.rs`.
+- Backend cache (4): `src-tauri/.sqlx/query-{6989cb7e,735a7063,b07ac30b,bd8d1117}*.json` (new sqlx prepare entries).
+- Docs: `REVIEW-LATER.md` (C-2b entry deleted; CRITICAL section heading dropped to 0 entries; summary line + previously-resolved counter bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after 2 minor fix rounds: `cargo fmt` for line-wrap nits + a `clippy::doc_lazy_continuation` fix in `recovery/mod.rs`).
+
+- C-2b tests: 8/8 new + 215/215 broader recovery + materializer baseline = 223/223.
+- Full nextest: 3279/3279 (3 skipped).
+- TypeScript / vitest: untouched, passes via prek.
+- Cargo: full nextest run, fmt, clippy, deny, machete all green.
+
+**Commit:** `29c56c9` — `feat(recovery): C-2b — op-log replay path closes CQRS automatic-divergence gap`. (Docs commit follows separately.)
+
+**Remaining user-approved batch:** MAINT-127 (Session 587 — navigation.ts split). Substantial architectural change (split tab engine from sidebar view via cross-store coordination); warrants its own session.
+
+---
+
 ## Session 585 — 1-subagent + orchestrator batch: M-3 AGENTS.md fix + MAINT-162 StaticBlock role flip (2026-04-30)
 
 **2 user-approved items closed in one batch.** User explicitly approved 4 items (M-3, C-2b, MAINT-127, MAINT-162) in bulk; this session does the 2 smallest (M-3 trivial, MAINT-162 well-scoped frontend a11y refactor). C-2b (op-log replay schema migration) and MAINT-127 (navigation.ts split) reserved for sessions 586 and 587.

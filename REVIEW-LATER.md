@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-21 open items — 21 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 20 backend Medium findings closed + 24 MAINT closed (some partially) across sessions 549-584 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-584): MAINT-131 fully reduced to residual cleanup; **3 schema-integrity migrations landed in session 582** (M-30 partial UNIQUE on attachments.fs_path, M-93 ON DELETE CASCADE FK on block_drafts.block_id, M-90 is_space property tightened to `select` type); **H-9 family closed across sessions 583-584** (H-9b deny-list redaction architecture + H-9b-activation log-format switch + H-9c preview UI confirmed shipped); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
+21 open items — 21 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 21 backend Medium findings closed + 25 MAINT closed (some partially) across sessions 549-586 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-586): MAINT-131 fully reduced to residual cleanup; **3 schema-integrity migrations landed in session 582** (M-30 partial UNIQUE on attachments.fs_path, M-93 ON DELETE CASCADE FK on block_drafts.block_id, M-90 is_space property tightened to `select` type); **H-9 family closed across sessions 583-584** (H-9b deny-list redaction architecture + H-9b-activation log-format switch + H-9c preview UI confirmed shipped); **MAINT-162 closed in 585** (StaticBlock role flip + 21 axe overrides removed cumulatively); **C-2b closed in 586** (op-log replay schema + cursor + boot integration + 8 tests — last CRITICAL backend code review finding); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
 
-Previously resolved: 844+ items across 551 sessions (per SESSION-LOG.md unique session count; latest is session 584).
+Previously resolved: 847+ items across 553 sessions (per SESSION-LOG.md unique session count; latest is session 586).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1003,21 +1003,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 6. **Doc / code drift across AGENTS.md, ARCHITECTURE.md, and REVIEW-LATER.md.** AppError variants (11 vs 12 with Gcal); `find_lca` 10000-iter cap claim has no implementation; FTS tokenizer doc says unicode61 but code uses trigram; ARCHITECTURE.md §15 says DB/IO/JSON errors are sanitized but 5 command files skip the helper; REVIEW-LATER PERF-20 site count wrong; ARCHITECTURE.md doesn't mention MCP at all.
 7. **Sync hash chain identity is non-cryptographic.** Per `compute_op_hash`, the digest covers `device_id|seq|parent_seqs|op_type|payload` but **not** `prev_hash`. Pass 2 downgraded "data integrity" framing — within the single-user threat model the chain is a deterministic fingerprint, not a Merkle commitment. Filed as a documentation gap.
 8. **OAuth & filesystem secret hygiene is good but not perfect.** SecretString redaction tested, keychain-only storage; minor leakage paths exist via classify_refresh_error formatting upstream Display, JWT id_token signature unverified, and partial token leakage on serde error. Bug-report redaction allow-list only catches `$HOME` + local `device_id` — leaks GCal email, peer device IDs.
-
----
-
-## CRITICAL findings (1)
-
-### C-2b — Boot-time op-log replay path for unmaterialized ops
-- **Domain:** Materializer / Recovery
-- **Location:** `src-tauri/src/recovery/boot.rs:43-126`; `src-tauri/src/materializer/coordinator.rs`
-- **What:** On boot, identify ops whose materialized state is missing or stale (e.g., compare `op_log` max-seq vs each derived table's high-water mark) and re-enqueue them through the materializer foreground queue. Idempotent: every existing op handler is already idempotent or trivially convertible (the materializer ALREADY uses `INSERT OR IGNORE` / UPSERT on the convergence path).
-- **Why it matters:** This is the actual fix for the C-2 family of findings: foreground `ApplyOp` / `BatchApplyOps` failures only bump `fg_errors` + `fg_apply_dropped` and the task is dropped after a single 100ms in-memory retry — there is no persistent retry queue (`RetryKind::from_task` excludes both task types) and no boot-time op-log replay path (`recover_at_boot` only handles drafts and pending snapshots). With C-2b in place, op log truly is the source of truth: even after a crash mid-apply or a transient FK contention drop, the next boot reconciles automatically. C-2a (divergence detection — `fg_apply_dropped` metric + warn line) shipped, so the divergence rate is now observable in `StatusInfo`.
-- **Cost:** M–L
-- **Risk:** Medium (idempotency must be verified end-to-end across every op handler; replay needs progress markers so a partial replay survives a second crash)
-- **Impact:** High (closes the last automatic-divergence gap in CQRS)
-- **Recommendation:** Build on the existing `recover_at_boot` infrastructure. Each derived table tracks a "materialized through seq N" cursor; the replay walks `op_log WHERE seq > cursor`. Add an integration test that injects ApplyOp failure mid-batch, restarts the pool, and asserts state convergence post-replay. **Schema migration required** (per-table cursor tracking) — needs explicit user approval before implementing per AGENTS.md "Architectural Stability".
-- **Status:** Open. No dependencies (C-2a shipped). Schema migration approval required.
 
 ---
 
