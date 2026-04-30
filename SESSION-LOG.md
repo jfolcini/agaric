@@ -1,5 +1,50 @@
 # Session Log
 
+## Session 569 — Close MAINT-128 BlockTree + MAINT-167 + 1-line latent-bug fix in useTrashDescendantCounts (2026-04-30)
+
+**3 outcomes in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent + 1 orchestrator-direct fix.** Closed the BlockTree decomposition (3rd-largest MAINT-128 sub-row at 938L); closed MAINT-167 entirely (the 15 unit tests for the 3 TrashView beyond-spec hooks flagged in session 568); and applied a defensive 1-line fix for a latent infinite-render bug in `useTrashDescendantCounts` that the MAINT-167 subagent discovered while writing tests.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 24 → 23 (closed MAINT-167 entirely; MAINT-128 row STAYS — 2 of 9 god-components remain in scope: PropertyRowEditor, AddFilterRow).
+- **Previously-resolved counter:** 818+ → 820+ across 535 → 536 sessions.
+
+**Items closed (1 row + 1 sub-row + 1 latent-bug fix):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-128 BlockTree decomposition | `src/components/BlockTree.tsx` (938L → 776L, -162L; ≤500L stretch deferred per "irreducible orchestrator glue") + 3 new hooks under `src/hooks/`: `useBlockLinkResolve.ts` (112L), `useBlockPropertiesBatch.ts` (56L), `useBlockNavigateToLink.ts` (124L) + 3 hook test files (20 new tests: 8 useBlockLinkResolve + 6 useBlockPropertiesBatch + 6 useBlockNavigateToLink) — Subagent ad01cdeb | **Extracted 3 hooks per the MAINT-128 description.** `useBlockLinkResolve(blocks)` owns `ULID_LINK_RE` + `collectUncachedLinkIds` + the `[[ULID]]` scanning effect with FEAT-3p7 space scoping preserved. `useBlockPropertiesBatch(blocks)` owns `blockProperties` state + `getBatchProperties` IPC + module-level `BUILTIN_PROPERTY_KEYS` filter. `useBlockNavigateToLink({...})` owns the 60-line `handleNavigate` callback **and the `handleNavigateRef` indirection** — hook is called BEFORE `useRovingEditor` so the returned `handleNavigateRef` can be wired into `onNavigate`. The hook reads `rovingEditorRef.current` and `handleFlushRef.current` lazily via refs hoisted to BlockTree (avoids circular dependency). **Drift surfaced:** description claimed file was 899L, actual was 938L (line-number references L240-243 / L336 / L401 / L424 / L539-597 were stale); subagent worked from current line numbers. **Drift surfaced (intentional scoping):** description said "hoist the 4 *Ref indirections" but only `handleNavigateRef` was hoisted (the other 4 — `handleBeforeCollapseRef`, `handleSlashCommandRef`, `handleCheckboxRef`, `handlePropertySelectRef` — would require modifying already-extracted hooks like `useBlockCollapse` / `useBlockSlashCommands`, which is broader scope). 209 BlockTree tests + 188 SortableBlock tests pass unchanged. BlockActionsProvider/BlockResolversProvider wrapping (session 561 MAINT-118) preserved verbatim. Reviewer (`2c9d3252`) APPROVED WITH NITS (false claim about missing `useBlockNavigateToLink` test file — file exists with 6 tests; counted manually). |
+| MAINT-167 — TrashView beyond-spec hook unit tests (FULLY CLOSED) | 3 new test files: `src/hooks/__tests__/useTrashListShortcuts.test.ts` (5 tests: Shift+R, Shift+Delete, Space, Ctrl+A, Escape), `useTrashBreadcrumbs.test.ts` (5 tests: null parent, resolution, missing parent fallback, in-flight cancellation, rejection logger.warn), `useTrashDescendantCounts.test.ts` (5 tests: empty blocks, populated counts, refetch, cancellation, rejection) — Subagent 9fbc338e | **15 new unit tests addressing the SHOULD-FIX raised by the session-568 review subagent.** All 3 test files follow the canonical mock pattern (`vi.mock('../../lib/tauri', ...)` + `vi.mocked(...)`) + use shared `makeBlock` fixture + cancellation-deferred-promise pattern from `useTauriEventListener.test.ts`. **Latent-bug discovery:** subagent hit an OOM from infinite render loop while writing the empty-blocks test for `useTrashDescendantCounts` — `setCounts({})` creates a new {} reference per effect run, looping if caller passes unstable empty `blocks`. Test stabilized via `const empty: BlockRow[] = []` hoisted outside renderHook callback (with explicit comment); orchestrator applied a 1-line defensive fix to the hook source (see below). 15/15 pass + 76 existing TrashView tests unchanged. |
+| Latent infinite-render bug fix in `useTrashDescendantCounts.ts` | `src/hooks/useTrashDescendantCounts.ts` (1-line change at L21) — orchestrator-direct | **`setCounts({})` → `setCounts((prev) => Object.keys(prev).length === 0 ? prev : {})`.** The empty-rootIds branch now reuses the previous reference when already empty, preventing the infinite-loop scenario the MAINT-167 subagent discovered. In production this was latent (TrashView memoizes `filteredBlocks` from `useTrashFilter`) but defensive against future callers passing unstable empty arrays. 81 combined TrashView + useTrashDescendantCounts tests pass with the fix. |
+
+**Process notes:**
+
+- **2 file-disjoint parallel subagents + 1 orchestrator-direct fix.** BlockTree only modifies `src/components/BlockTree.tsx` + new `src/hooks/useBlock*.ts`. MAINT-167 only adds `src/hooks/__tests__/useTrash*.test.ts(x)`. Zero overlap.
+- **MAINT-167 subagent latent-bug discovery is the highlight** — writing unit tests for a hook found a silent render-loop scenario that integration tests masked (because production caller memoizes the input). Defense-in-depth value of dedicated unit tests confirmed.
+- **Reviewer false-positive caught:** review subagent claimed `useBlockNavigateToLink.test.tsx` was missing, but it exists with 6 tests (verified via `ls + grep -c "^\s*it("`). Reviewer's "MUST FIX" was incorrect. Logged for awareness but not actioned.
+- **Biome auto-fix:** prek formatted `useTrashListShortcuts.test.ts` (1-line array-literal collapse). Mechanical, no semantic change.
+- **No `cargo sqlx prepare`** needed — no SQL changes.
+- **No FEATURE-MAP.md update needed** — internal decomposition + tests; user-facing surface unchanged.
+
+**Files touched (this session's batch):**
+
+- Frontend new (6): `src/hooks/{useBlockLinkResolve,useBlockPropertiesBatch,useBlockNavigateToLink}.ts`.
+- Frontend modified (2): `src/components/BlockTree.tsx`, `src/hooks/useTrashDescendantCounts.ts` (1-line fix).
+- New test files (6): `src/hooks/__tests__/{useBlockLinkResolve,useBlockPropertiesBatch,useBlockNavigateToLink,useTrashListShortcuts,useTrashBreadcrumbs,useTrashDescendantCounts}.test.{ts,tsx}` (35 new tests total: 8 + 6 + 6 + 5 + 5 + 5).
+- Existing tests modified: 0 (209 BlockTree + 188 SortableBlock + 76 TrashView tests pass unchanged).
+- Docs: `REVIEW-LATER.md` (MAINT-128 row trimmed to 2 components; MAINT-167 row removed). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- BlockTree batch: `npx vitest run src/components/__tests__/BlockTree src/components/__tests__/SortableBlock` → **397/397 passed** (209 + 188).
+- New BlockTree-extraction hook tests: **20/20 passed** (8 + 6 + 6).
+- MAINT-167 batch: `npx vitest run src/hooks/__tests__/useTrash{ListShortcuts,Breadcrumbs,DescendantCounts}` → **15/15 passed**.
+- TrashView regression: `npx vitest run src/components/__tests__/TrashView src/hooks/__tests__/useTrashDescendantCounts` → **81/81 passed** with the latent-bug fix applied.
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome: clean (after auto-format).
+
+---
+
 ## Session 568 — MAINT-128 partial — close 2 more god-component decompositions (TrashView + PageBrowser) (2026-04-30)
 
 **2 MAINT-128 sub-rows partial-closed in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent.** Theme: continued the MAINT-128 work from sessions 566-567. Picked TrashView and PageBrowser — both have well-scoped extraction targets in their MAINT-128 row descriptions. PageBrowser is the LARGEST god-component in the table at 956L; TrashView is the 3rd largest at 788L.
