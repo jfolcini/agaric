@@ -1,5 +1,44 @@
 # Session Log
 
+## Session 584 — orchestrator-only batch: H-9b-activation — switch agaric.log to JSON format (2026-04-30)
+
+**Tiny focused commit activating the dormant H-9b deny-list pipeline that landed in session 583.** Done as orchestrator work (no subagent) because the change is small (3 files, ~50L code) and the design decision was already made in session 583. The privacy gain promised by H-9b's deny-list now actually engages on `agaric.log`.
+
+**REVIEW-LATER impact:**
+
+- **Backend Code Review HIGH count:** 1 → 0 (H-9b-activation removed; the entire H-9 family is now closed).
+- **Top-level open count (summary table):** 22 → 22 unchanged.
+- **Previously-resolved counter:** 843+ → 844+ across 550 → 551 sessions.
+
+**Item closed:**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| **H-9b-activation — Switch tracing on-disk format to JSON** (orchestrator) | 3 files modified, 4 with Cargo.lock churn. (a) `src-tauri/Cargo.toml`: added `"json"` to `tracing-subscriber` features (was `["env-filter"]`, now `["env-filter", "json"]`). Pulls in 1 new transitive dep `tracing-serde 0.2.0` (no policy concerns). (b) `src-tauri/src/lib.rs:521-540`: appended `.json()` to the FILE appender layer ONLY — kept the stderr layer in human-readable text format for live dev debugging (`cargo tauri dev` output unchanged). Added an inline comment block explaining the policy + the `tail -f agaric.log \| jq` viewing recipe for developers. (c) `src-tauri/src/commands/bug_report.rs`: `is_error_or_warn_line` now detects BOTH text-format (` ERROR ` / ` WARN ` in first 40 bytes — preserves L-40 false-positive guard) AND JSON-format (`"level":"ERROR"`, `"level":"WARN"`, plus single-space variants for defensive cross-formatter compatibility, in first 80 bytes). Added 2 new regression tests (`is_error_or_warn_line_matches_json_levels_h9b_activation` and `is_error_or_warn_line_rejects_json_body_match_h9b_activation`) verifying the JSON-format detection works AND that JSON INFO/DEBUG lines whose body mentions ERROR/WARN are NOT misclassified. 52/52 bug_report tests pass (50 baseline + 2 new). The H-9b deny-list pipeline (regex array + STABLE_MESSAGES whitelist + property tests from session 583) now engages on every line of `agaric.log` — H-9a allow-list still runs as defense-in-depth fallback for any non-JSON line (legacy fixtures, edge cases). — Orchestrator |
+
+**Process notes:**
+
+- **Single-pass implementation:** all 3 wiring changes landed in one orchestrator pass; no subagent + reviewer cycle (the change is too small + mechanical to benefit from delegation).
+- **1 design refinement during implementation:** initial draft used a single 80-byte prefix for both text and JSON detection; this would have broken the existing `is_error_or_warn_line_rejects_body_match` test (which contains `ERROR` at byte ~50 of an INFO line, deliberately past the 40-byte text-format window). Fixed by splitting the prefix into TWO windows: 40-byte for text-format level detection (preserves L-40 guard), 80-byte for JSON-format level detection (where the level appears at byte ~44–58). Both windows are read-only, no allocation overhead.
+- **Developer ergonomics tradeoff (per H-9b-activation entry):** `agaric.log` is now JSON-per-line. Reading the file directly without `jq` is harder. Inline comment in `lib.rs` documents the recommended viewer commands (`tail -f agaric.log | jq` or any structured-log viewer). Live dev output (cargo tauri dev stderr) is unchanged — that's still text format.
+- **No `cargo sqlx prepare`** (no SQL changes). **No `bindings.ts` regeneration** (no IPC changes).
+- **Cargo.lock churn:** `tracing-serde 0.2.0` added as a transitive dep of the new `"json"` feature. No version bumps elsewhere.
+- **Closes the entire H-9 family.** H-9a shipped earlier; H-9b architecture landed in session 583; H-9b-activation lands here in session 584; H-9c was already shipped (preview UI + confirmation gate in `BugReportDialog.tsx`, confirmed in session 583's audit). Bug-report redaction is now: (i) deny-list-by-default for structured JSON content, (ii) allow-list fallback for non-JSON lines, (iii) user-visible preview before submit, (iv) "I have reviewed" confirmation checkbox required to enable Submit. Defense-in-depth in 4 layers.
+
+**Files touched (this session's batch):**
+
+- Backend modified (4): `src-tauri/Cargo.toml` (+1 char added to features array), `src-tauri/Cargo.lock` (transitive `tracing-serde` add), `src-tauri/src/lib.rs` (+10/–1 — JSON file layer + 9-line comment block), `src-tauri/src/commands/bug_report.rs` (+~50/–10 — extended `is_error_or_warn_line` + 2 new tests + updated rustdoc).
+- Docs: `REVIEW-LATER.md` (H-9b-activation entry + entire HIGH section deleted; summary line + counters bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. `cargo nextest run bug_report` → 52/52.
+
+- bug_report tests: 52/52 (50 baseline + 2 new H-9b-activation tests).
+- Cargo: full nextest run, fmt, clippy, deny, machete all green.
+
+**Commit:** `9fb2666` — `feat(security): H-9b-activation — switch agaric.log to JSON format so deny-list redaction engages`. (Docs commit follows separately.)
+
+---
+
 ## Session 583 — 1-subagent + orchestrator batch: H-9b deny-list redaction architecture + H-9c closure (2026-04-30)
 
 **1 substantial backend security/privacy refactor landed via 1 build subagent + 1 technical-review subagent.** The build subagent replaced the bug-report's allow-list redaction with a deny-list-of-tokens pipeline (regex-based safe-token set + curated STABLE_MESSAGES whitelist + property tests). Orchestrator separately confirmed H-9c was effectively done (preview + confirmation checkbox already shipped in `BugReportDialog.tsx`) and removed it from REVIEW-LATER.
