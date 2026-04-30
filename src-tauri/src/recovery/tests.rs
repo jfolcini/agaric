@@ -251,37 +251,14 @@ async fn recovery_with_no_drafts_returns_empty_report() {
     assert!(report.duration_ms < 5000); // sanity: < 5 s
 }
 
-#[tokio::test]
-async fn recovery_when_op_log_is_empty_draft_for_never_created_block() {
-    let (pool, _dir) = test_pool().await;
-    let device_id = "dev-1";
-    let block_id = "block-phantom";
-
-    // Draft exists but the block was never created in the blocks table.
-    // F07: recovery now skips drafts for blocks not in the blocks table.
-    save_draft(&pool, block_id, "ghost content").await.unwrap();
-
-    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
-
-    // Should NOT recover — block doesn't exist (F07).
-    // F07 returns Ok(false) which the caller counts as 'already flushed'
-    // (block is gone = nothing to recover, same bucket as already-flushed).
-    assert!(report.drafts_recovered.is_empty());
-    assert_eq!(report.drafts_already_flushed, 1);
-    assert!(report.draft_errors.is_empty());
-
-    // No synthetic op should be created
-    let count: i64 =
-        sqlx::query_scalar!("SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(count, 0, "no op for nonexistent block");
-
-    // Draft row should still be cleaned up
-    let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
-    assert!(drafts.is_empty());
-}
+// `recovery_when_op_log_is_empty_draft_for_never_created_block` was deleted
+// in M-93 / migration 0038: `block_drafts.block_id` now has a FK to
+// `blocks(id) ON DELETE CASCADE`, so the "draft exists for a block id with
+// no `blocks` row" precondition is schema-impossible. The recovery F07
+// orphan-skip code path remains load-bearing for the *soft-deleted* branch
+// — covered by `draft_for_soft_deleted_block_is_skipped_and_cleaned_up`
+// below — and the FK invariant itself is asserted by
+// `commands::drafts::tests_h12::cannot_save_draft_for_nonexistent_block_m93`.
 
 // === 4. prev_edit linkage ===
 
@@ -859,39 +836,11 @@ async fn draft_for_soft_deleted_block_is_skipped_and_cleaned_up() {
     assert_eq!(op_count, 0, "no synthetic op for soft-deleted block");
 }
 
-#[tokio::test]
-async fn draft_for_nonexistent_block_is_skipped_and_cleaned_up() {
-    let (pool, _dir) = test_pool().await;
-    let device_id = "dev-1";
-    let block_id = "block-does-not-exist";
-
-    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
-        .bind(block_id)
-        .bind("orphaned draft")
-        .bind(FAR_FUTURE)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
-
-    assert!(
-        report.drafts_recovered.is_empty(),
-        "draft for nonexistent block must not be recovered"
-    );
-    let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
-    assert!(
-        drafts.is_empty(),
-        "draft row must be deleted for nonexistent blocks"
-    );
-
-    let op_count: i64 =
-        sqlx::query_scalar!("SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(op_count, 0, "no synthetic op for nonexistent block");
-}
+// `draft_for_nonexistent_block_is_skipped_and_cleaned_up` was deleted in
+// M-93 / migration 0038 — the FK `block_drafts.block_id REFERENCES blocks(id)
+// ON DELETE CASCADE` prevents any orphan-draft state from being staged.
+// See note above `recovery_when_op_log_is_empty_draft_for_never_created_block`
+// (deleted at the same time) for the full rationale.
 
 // === 10b. Edge cases: parent chain validation (F08) ===
 
@@ -1722,9 +1671,16 @@ async fn perf26_block_id_index_exists() {
 /// L-104: SQLite caps bind parameters at `MAX_SQL_PARAMS` (999). A multi-
 /// thousand-block paste crash can leave > 999 rows in `block_drafts`; the
 /// boot-recovery batch query must chunk the IN clause or it fails with
-/// "too many SQL variables". This test seeds ~1100 drafts (no corresponding
-/// `blocks` rows, so they all land in the F07 "already flushed" bucket) and
-/// asserts `recover_at_boot` returns Ok and processes every draft.
+/// "too many SQL variables". This test seeds ~1100 drafts and asserts
+/// `recover_at_boot` returns Ok and processes every draft.
+///
+/// M-93 / migration 0038 added a FK from `block_drafts.block_id` to
+/// `blocks(id) ON DELETE CASCADE`, so each draft now needs a real
+/// parent block — the historical "no `blocks` rows so everything lands
+/// in the F07 already-flushed bucket" shape can't be staged anymore.
+/// The drafts are unflushed (FAR_FUTURE timestamps would over-complicate
+/// per-draft recovery), so they end up in the recovered bucket; the
+/// chunking guarantee under test is unchanged.
 #[tokio::test]
 async fn recover_at_boot_handles_more_than_999_drafts() {
     let (pool, _dir) = test_pool().await;
@@ -1734,6 +1690,7 @@ async fn recover_at_boot_handles_more_than_999_drafts() {
         // Use a wide block_id namespace so chunk boundaries (999, 998 per
         // chunk depending on MAX_SQL_PARAMS - 1) don't collide.
         let bid = format!("blk-{i:05}");
+        insert_test_block(&pool, &bid, "x").await;
         save_draft(&pool, &bid, "x").await.unwrap();
     }
 
@@ -1746,9 +1703,10 @@ async fn recover_at_boot_handles_more_than_999_drafts() {
 
     let report = recover_at_boot_test(&pool, "dev-1").await.unwrap();
 
-    // No blocks rows exist, so every draft is classified F07 "already
-    // flushed". The exact bucketing isn't the point — what matters is that
-    // the batch IN-clause query did not blow up with SQLITE_TOOBIG.
+    // What matters is that the batch IN-clause query did not blow up
+    // with SQLITE_TOOBIG. Whether each draft lands in the "recovered"
+    // or "already_flushed" bucket depends on op_log content; the sum
+    // of the two must equal N.
     assert!(
         report.draft_errors.is_empty(),
         "no per-draft errors expected, got: {:?}",

@@ -28,8 +28,8 @@ expression: result
   value_type: select
 - created_at: "[TIMESTAMP]"
   key: is_space
-  options: ~
-  value_type: text
+  options: "[\"true\"]"
+  value_type: select
 - created_at: "[TIMESTAMP]"
   key: location
   options: ~

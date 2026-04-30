@@ -16,11 +16,34 @@ const CONTENT_V1: &str = "draft version 1";
 const CONTENT_V2: &str = "draft version 2";
 
 /// Create a fresh SQLite pool with migrations applied (temp directory).
+///
+/// Seeds `BLOCK_A` and `BLOCK_B` into the `blocks` table so that the
+/// FK introduced by migration 0038 (M-93,
+/// `block_drafts.block_id REFERENCES blocks(id) ON DELETE CASCADE`)
+/// is satisfied for every `save_draft(.., BLOCK_A | BLOCK_B, ..)` call
+/// in this module. Tests that need additional ad-hoc block ids must
+/// insert them via [`seed_block`] before saving the draft.
 async fn test_pool() -> (SqlitePool, TempDir) {
     let dir = TempDir::new().unwrap();
     let db_path: PathBuf = dir.path().join("test.db");
     let pool = init_pool(&db_path).await.unwrap();
+    for id in [BLOCK_A, BLOCK_B] {
+        seed_block(&pool, id).await;
+    }
     (pool, dir)
+}
+
+/// Insert a stub `blocks` row so a draft can be saved for `block_id`
+/// without violating the M-93 FK. Idempotent (`INSERT OR IGNORE`).
+async fn seed_block(pool: &SqlitePool, block_id: &str) {
+    sqlx::query(
+        "INSERT OR IGNORE INTO blocks (id, block_type, content, position) \
+         VALUES (?, 'content', '', 0)",
+    )
+    .bind(block_id)
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 // ── save_draft ──────────────────────────────────────────────────────
@@ -78,6 +101,7 @@ async fn save_draft_preserves_unicode_content() {
     ];
 
     for &(block_id, content) in cases {
+        seed_block(&pool, block_id).await;
         save_draft(&pool, block_id, content).await.unwrap();
         let d = get_draft(&pool, block_id).await.unwrap().unwrap();
         assert_eq!(
@@ -524,25 +548,23 @@ async fn flush_draft_when_delete_draft_fails_after_op_commit() {
 
 // ── sweep_orphan_drafts (L-135) ─────────────────────────────────────
 
-/// Seed three drafts:
+/// Seed two drafts:
 ///   * `BLOCK_A` — backed by a live block row (must survive the sweep)
 ///   * a soft-deleted block id — draft must be removed
-///   * a nonexistent block id — draft must be removed
 ///
-/// `block_drafts.block_id` has no FK (M-93), so the sweep is purely SQL-based.
+/// Migration 0038 (M-93) added a FK from `block_drafts.block_id` to
+/// `blocks(id) ON DELETE CASCADE`, so the historical "phantom block id
+/// with no `blocks` row" case is now schema-impossible — `save_draft`
+/// fails with `SQLITE_CONSTRAINT_FOREIGNKEY` before sweep can run.
+/// `sweep_orphan_drafts` therefore remains load-bearing only for the
+/// soft-deleted branch (FK references the row, not its `deleted_at`
+/// column).
 #[tokio::test]
 async fn sweep_orphan_drafts_deletes_drafts_for_missing_blocks() {
     let (pool, _dir) = test_pool().await;
 
-    // 1. Live block — draft should survive.
-    sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'content', ?, 0)",
-    )
-    .bind(BLOCK_A)
-    .bind("live block")
-    .execute(&pool)
-    .await
-    .unwrap();
+    // 1. Live block — draft should survive (BLOCK_A is auto-seeded by
+    //    `test_pool`).
     save_draft(&pool, BLOCK_A, "live draft").await.unwrap();
 
     // 2. Soft-deleted block — draft should be swept.
@@ -560,17 +582,11 @@ async fn sweep_orphan_drafts_deletes_drafts_for_missing_blocks() {
         .await
         .unwrap();
 
-    // 3. Nonexistent block id — draft should be swept.
-    let phantom = "01HZ00000000000000000PHANTM";
-    save_draft(&pool, phantom, "draft for phantom block")
-        .await
-        .unwrap();
-
-    assert_eq!(draft_count(&pool).await.unwrap(), 3, "3 drafts seeded");
+    assert_eq!(draft_count(&pool).await.unwrap(), 2, "2 drafts seeded");
 
     let removed = sweep_orphan_drafts(&pool).await.unwrap();
 
-    assert_eq!(removed, 2, "soft-deleted + phantom drafts must be swept");
+    assert_eq!(removed, 1, "soft-deleted draft must be swept");
     assert_eq!(
         draft_count(&pool).await.unwrap(),
         1,
@@ -585,24 +601,13 @@ async fn sweep_orphan_drafts_deletes_drafts_for_missing_blocks() {
         get_draft(&pool, soft_deleted).await.unwrap().is_none(),
         "draft for soft-deleted block must be gone"
     );
-    assert!(
-        get_draft(&pool, phantom).await.unwrap().is_none(),
-        "draft for phantom block must be gone"
-    );
 }
 
 #[tokio::test]
 async fn sweep_orphan_drafts_returns_zero_when_all_drafts_are_live() {
     let (pool, _dir) = test_pool().await;
 
-    sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'content', ?, 0)",
-    )
-    .bind(BLOCK_A)
-    .bind("live block")
-    .execute(&pool)
-    .await
-    .unwrap();
+    // BLOCK_A is auto-seeded by `test_pool` (M-93 FK).
     save_draft(&pool, BLOCK_A, "live draft").await.unwrap();
 
     let removed = sweep_orphan_drafts(&pool).await.unwrap();
@@ -636,6 +641,7 @@ async fn block_id_with_like_wildcards() {
     ];
 
     for &bid in &ids_with_wildcards {
+        seed_block(&pool, bid).await;
         save_draft(&pool, bid, &format!("content for {bid}"))
             .await
             .unwrap();
@@ -696,6 +702,7 @@ async fn content_containing_json_like_strings() {
 
     for (i, content) in json_like_contents.iter().enumerate() {
         let bid = format!("01HZ000000000000000000JSON{i:02}");
+        seed_block(&pool, &bid).await;
         save_draft(&pool, &bid, content).await.unwrap();
 
         let d = get_draft(&pool, &bid)
