@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-22 open items — 22 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 17 backend Medium findings closed + 24 MAINT closed (some partially) across sessions 549-580 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-580): MAINT-131 fully reduced to residual cleanup; MAINT-162 reduced to 1 component remaining (StaticBlock); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
+22 open items — 22 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 17 backend Medium findings closed + 24 MAINT closed (some partially) across sessions 549-581 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-581): MAINT-131 fully reduced to residual cleanup; MAINT-162 reduced to 1 component remaining (StaticBlock); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
 
-Previously resolved: 836+ items across 547 sessions (per SESSION-LOG.md unique session count; latest is session 580).
+Previously resolved: 838+ items across 548 sessions (per SESSION-LOG.md unique session count; latest is session 581).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1285,18 +1285,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Sync
 
-### L-65 — mDNS `enable_addr_auto()` announces on every interface
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_net/websocket.rs:43-66` (`announce`)
-- **What:** `service_info = …enable_addr_auto();` lets `mdns-sd` enumerate every routable interface for announcements. On a multi-homed device (laptop docked at home + tethered to phone hotspot + on a guest WiFi) the announcement leaks the device IP to networks the user might not intend.
-- **Why it matters:** Not an "adversary" issue — but the user may not want their phone advertising on every coffee shop's network. UX/privacy choice, not hardening.
-- **Cost:** M (interface filtering policy is OS-specific)
-- **Risk:** Medium
-- **Impact:** Low
-- **Recommendation:** Defer to user approval — this is a UX choice. Possible directions: (a) restrict to `IFF_PRIVATE`-flagged interfaces, (b) expose a setting "announce on this network only", (c) accept current behaviour and document it. Do not change without user input.
-- **Pass-1 source:** 06/F37
-- **Status:** Open
-
 ### L-67 — Snapshot receiver allocates a single `Vec<u8>` of up to 256 MB
 - **Domain:** Sync
 - **Location:** `src-tauri/src/sync_daemon/snapshot_transfer.rs:372-405`; cap at `:285-300` (`MAX_SNAPSHOT_SIZE`)
@@ -1310,20 +1298,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### Search & Links
-
-### GCal / Spaces / Drafts
-
-### L-132 — `claim_lease` does 4 round-trips, could be 2
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/gcal_push/lease.rs:140-218`
-- **What:** Inside one `BEGIN IMMEDIATE` tx, `claim_lease` does 2 single-key SELECTs (`push_lease_device_id`, `push_lease_expires_at`) and then 2 single-key UPDATEs. Could be one batched SELECT (`WHERE key IN (...)`) and one batched UPDATE (`SET value = CASE key WHEN ... END WHERE key IN (...)`).
-- **Why it matters:** Lease cycle runs at `LEASE_RENEW_INTERVAL_SECS = 60s` once C-1 is fixed. Per-cycle cost is negligible; flagged for completeness.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Defer until profiling shows it matters. If the connector ever drops to a sub-second cycle, batch the reads and writes.
-- **Pass-1 source:** 10/F25
-- **Status:** Open
 
 ---
 
