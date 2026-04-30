@@ -705,33 +705,33 @@ export interface PeerRefRow {
 }
 
 /** List all known peer references. */
-export function listPeerRefs(): Promise<PeerRefRow[]> {
-  return invoke('list_peer_refs')
+export async function listPeerRefs(): Promise<PeerRefRow[]> {
+  return unwrap(await commands.listPeerRefs())
 }
 
 /** Fetch a single peer reference by ID, or null if not found. */
-export function getPeerRef(peerId: string): Promise<PeerRefRow | null> {
-  return invoke('get_peer_ref', { peerId })
+export async function getPeerRef(peerId: string): Promise<PeerRefRow | null> {
+  return unwrap(await commands.getPeerRef(peerId))
 }
 
 /** Delete a peer reference by ID. */
-export function deletePeerRef(peerId: string): Promise<void> {
-  return invoke('delete_peer_ref', { peerId })
+export async function deletePeerRef(peerId: string): Promise<void> {
+  unwrap(await commands.deletePeerRef(peerId))
 }
 
 /** Update the display name for a paired peer. Pass null to clear. */
-export function updatePeerName(peerId: string, deviceName: string | null): Promise<void> {
-  return invoke('update_peer_name', { peerId, deviceName })
+export async function updatePeerName(peerId: string, deviceName: string | null): Promise<void> {
+  unwrap(await commands.updatePeerName(peerId, deviceName))
 }
 
 /** Manually set a peer's network address (host:port) for direct connection. */
-export function setPeerAddress(peerId: string, address: string): Promise<void> {
-  return invoke('set_peer_address', { peerId, address })
+export async function setPeerAddress(peerId: string, address: string): Promise<void> {
+  unwrap(await commands.setPeerAddress(peerId, address))
 }
 
 /** Get the local device ID. */
-export function getDeviceId(): Promise<string> {
-  return invoke('get_device_id')
+export async function getDeviceId(): Promise<string> {
+  return unwrap(await commands.getDeviceId())
 }
 
 // ---------------------------------------------------------------------------
@@ -753,32 +753,32 @@ export interface SyncSessionInfo {
 }
 
 /** Start the pairing flow — returns a passphrase, QR SVG, and listener port. */
-export function startPairing(): Promise<{
+export async function startPairing(): Promise<{
   passphrase: string
   qr_svg: string
   port: number
 }> {
-  return invoke('start_pairing')
+  return unwrap(await commands.startPairing())
 }
 
 /** Confirm a pairing with the given passphrase and remote device ID. */
-export function confirmPairing(passphrase: string, remoteDeviceId: string): Promise<void> {
-  return invoke('confirm_pairing', { passphrase, remoteDeviceId })
+export async function confirmPairing(passphrase: string, remoteDeviceId: string): Promise<void> {
+  unwrap(await commands.confirmPairing(passphrase, remoteDeviceId))
 }
 
 /** Cancel an in-progress pairing. */
-export function cancelPairing(): Promise<void> {
-  return invoke('cancel_pairing')
+export async function cancelPairing(): Promise<void> {
+  unwrap(await commands.cancelPairing())
 }
 
 /** Start a sync session with a known peer. */
-export function startSync(peerId: string): Promise<SyncSessionInfo> {
-  return invoke('start_sync', { peerId })
+export async function startSync(peerId: string): Promise<SyncSessionInfo> {
+  return unwrap(await commands.startSync(peerId))
 }
 
 /** Cancel an in-progress sync session. */
-export function cancelSync(): Promise<void> {
-  return invoke('cancel_sync')
+export async function cancelSync(): Promise<void> {
+  unwrap(await commands.cancelSync())
 }
 
 // ---------------------------------------------------------------------------
@@ -904,22 +904,22 @@ export function importMarkdown(
 
 /** Save (upsert) a draft for a block. Called every ~2s during active typing. */
 export async function saveDraft(blockId: string, content: string): Promise<void> {
-  await invoke('save_draft', { blockId, content })
+  unwrap(await commands.saveDraft(blockId, content))
 }
 
 /** Flush a draft: write an edit_block op and delete the draft row. Called on blur/unmount. */
 export async function flushDraft(blockId: string): Promise<void> {
-  await invoke('flush_draft', { blockId })
+  unwrap(await commands.flushDraft(blockId))
 }
 
 /** Delete a draft for a block (e.g. after a successful normal save). */
 export async function deleteDraft(blockId: string): Promise<void> {
-  await invoke('delete_draft', { blockId })
+  unwrap(await commands.deleteDraft(blockId))
 }
 
 /** List all drafts, ordered by updated_at ascending. */
-export function listDrafts(): Promise<Draft[]> {
-  return invoke('list_drafts')
+export async function listDrafts(): Promise<Draft[]> {
+  return unwrap(await commands.listDrafts())
 }
 
 // ---------------------------------------------------------------------------

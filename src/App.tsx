@@ -4,23 +4,27 @@ import { toast } from 'sonner'
 import { AppSidebar } from './components/AppSidebar'
 import { BootGate } from './components/BootGate'
 import { BugReportDialog } from './components/BugReportDialog'
-import { FeatureErrorBoundary } from './components/FeatureErrorBoundary'
-import { GlobalDateControls, JournalControls, JournalPage } from './components/JournalPage'
-import { LoadingSkeleton } from './components/LoadingSkeleton'
+import { GlobalDateControls, JournalControls } from './components/JournalPage'
 import { NoPeersDialog } from './components/NoPeersDialog'
-import { NAV_ITEMS } from './components/nav-items'
 import { QuickCaptureDialog } from './components/QuickCaptureDialog'
 import { RecentPagesStrip } from './components/RecentPagesStrip'
 import { TabBar } from './components/TabBar'
 import { ScrollArea } from './components/ui/scroll-area'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
+import {
+  useConflictCount,
+  useHeaderLabel,
+  useTrashCount,
+  ViewDispatcher,
+} from './components/ViewDispatcher'
 import { ViewHeaderOutletProvider, ViewHeaderOutletSlot } from './components/ViewHeaderOutlet'
+import { useAppBootRecovery } from './hooks/useAppBootRecovery'
 import { useAppDialogs } from './hooks/useAppDialogs'
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
+import { useAppSpaceLifecycle } from './hooks/useAppSpaceLifecycle'
 import { useDeepLinkRouter } from './hooks/useDeepLinkRouter'
 import { useIsMobile } from './hooks/useIsMobile'
-import { useItemCount } from './hooks/useItemCount'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
 import { usePrimaryFocusRegistry } from './hooks/usePrimaryFocus'
 import { useScrollRestore } from './hooks/useScrollRestore'
@@ -30,277 +34,33 @@ import { useTheme } from './hooks/useTheme'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
 import { announce } from './lib/announcer'
 import { logger } from './lib/logger'
-import { setPriorityLevels } from './lib/priority-levels'
 import {
   loadQuickCaptureShortcut,
   QUICK_CAPTURE_SHORTCUT_STORAGE_KEY,
 } from './lib/quick-capture-shortcut'
 import {
   createPageInSpace,
-  flushDraft,
-  getConflicts,
-  listBlocks,
-  listDrafts,
   listPeerRefs,
-  listPropertyDefs,
   registerGlobalShortcut,
-  setWindowTitle,
   unregisterGlobalShortcut,
 } from './lib/tauri'
 import { setSettingsTabInUrl } from './lib/url-state'
 import { cn } from './lib/utils'
-import { type PageEntry, selectPageStack, useNavigationStore, type View } from './stores/navigation'
+import { selectPageStack, useNavigationStore } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
 import { useSpaceStore } from './stores/space'
 import { useSyncStore } from './stores/sync'
 
-// ---------------------------------------------------------------------------
-// Lazy-loaded views — PERF-24
-// ---------------------------------------------------------------------------
-//
-// Only the journal (default view) and the sidebar/header shell are in the
-// entry chunk. Every other top-level view is split into its own chunk and
-// loaded on demand. Keeps the initial parse budget small — especially on
-// Android / low-end hardware — without touching page-editor UX (the user
-// always clicks _into_ a page, giving us a natural Suspense moment).
-//
-// Each lazy() import automatically becomes its own Rollup chunk. The
-// Suspense fallback uses `LoadingSkeleton` (the shared primitive) so the
-// transient state matches the rest of the app visually.
-const ConflictList = lazy(() =>
-  import('./components/ConflictList').then((m) => ({ default: m.ConflictList })),
-)
-const GraphView = lazy(() =>
-  import('./components/GraphView').then((m) => ({ default: m.GraphView })),
-)
-const HistoryView = lazy(() =>
-  import('./components/HistoryView').then((m) => ({ default: m.HistoryView })),
-)
+// `KeyboardShortcuts` and `WelcomeModal` are top-level overlays mounted
+// outside the view dispatcher; the rest of the lazy-loaded view chunks
+// (PERF-24) and the shared `<ViewFallback>` Suspense skeleton live in
+// `./components/ViewDispatcher` (MAINT-124 step 4).
 const KeyboardShortcuts = lazy(() =>
   import('./components/KeyboardShortcuts').then((m) => ({ default: m.KeyboardShortcuts })),
-)
-const PageBrowser = lazy(() =>
-  import('./components/PageBrowser').then((m) => ({ default: m.PageBrowser })),
-)
-const PageEditor = lazy(() =>
-  import('./components/PageEditor').then((m) => ({ default: m.PageEditor })),
-)
-const PropertiesView = lazy(() =>
-  import('./components/PropertiesView').then((m) => ({ default: m.PropertiesView })),
-)
-const SearchPanel = lazy(() =>
-  import('./components/SearchPanel').then((m) => ({ default: m.SearchPanel })),
-)
-const SettingsView = lazy(() =>
-  import('./components/SettingsView').then((m) => ({ default: m.SettingsView })),
-)
-const StatusPanel = lazy(() =>
-  import('./components/StatusPanel').then((m) => ({ default: m.StatusPanel })),
-)
-const TagFilterPanel = lazy(() =>
-  import('./components/TagFilterPanel').then((m) => ({ default: m.TagFilterPanel })),
-)
-const TagList = lazy(() => import('./components/TagList').then((m) => ({ default: m.TagList })))
-const TemplatesView = lazy(() =>
-  import('./components/TemplatesView').then((m) => ({ default: m.TemplatesView })),
-)
-const TrashView = lazy(() =>
-  import('./components/TrashView').then((m) => ({ default: m.TrashView })),
 )
 const WelcomeModal = lazy(() =>
   import('./components/WelcomeModal').then((m) => ({ default: m.WelcomeModal })),
 )
-
-/** Resolve the header label from the current navigation state. */
-function useHeaderLabel(): string {
-  const { t } = useTranslation()
-  const currentView = useNavigationStore((s) => s.currentView)
-  const pageStack = useNavigationStore(selectPageStack)
-  // page-editor has its own editable title — don't duplicate it in the header
-  if (currentView === 'page-editor' && pageStack.length > 0) {
-    return ''
-  }
-  const item = NAV_ITEMS.find((item) => item.id === currentView)
-  return item ? t(item.labelKey) : ''
-}
-
-/** Returns the number of unresolved conflicts. Polls every 30 s and on focus. */
-function useConflictCount(): number {
-  const currentView = useNavigationStore((s) => s.currentView)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view changes (user may have resolved conflicts)
-  const queryFn = useCallback(() => getConflicts({ limit: 100 }), [currentView])
-  return useItemCount(queryFn, 30_000)
-}
-
-/** Returns the number of trashed items. Polls every 30 s and on focus. */
-function useTrashCount(): number {
-  const currentView = useNavigationStore((s) => s.currentView)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view changes (user may have restored items)
-  const queryFn = useCallback(() => listBlocks({ showDeleted: true, limit: 100 }), [currentView])
-  return useItemCount(queryFn, 30_000)
-}
-
-/** Signature used by views that want to open another page. */
-type PageSelectHandler = (pageId: string, title?: string, blockId?: string) => void
-
-interface ViewRouterProps {
-  currentView: View
-  activePage: PageEntry | null
-  onPageSelect: PageSelectHandler
-  onBack: () => void
-  navigateToPage: (pageId: string, title: string, blockId?: string) => void
-}
-
-/**
- * Shared Suspense fallback for lazy-loaded views. Matches the visual
- * language of other loading states (skeleton rows). `aria-busy` tells
- * assistive tech the region is mid-load.
- */
-function ViewFallback() {
-  return (
-    <div className="space-y-2" aria-busy="true" role="status" data-testid="view-fallback">
-      <LoadingSkeleton count={4} height="h-6" />
-    </div>
-  )
-}
-
-/**
- * Renders the main view body based on `currentView`. Extracted from `App`
- * so the parent component stays well under the cognitive-complexity budget
- * (MAINT-52). Each branch is a `FeatureErrorBoundary` so a crashed view
- * never unmounts the shell. Non-journal views are lazy-loaded (PERF-24);
- * the nested `Suspense` boundary shows a skeleton until the chunk arrives.
- */
-function ViewRouter({
-  currentView,
-  activePage,
-  onPageSelect,
-  onBack,
-  navigateToPage,
-}: ViewRouterProps): React.ReactElement | null {
-  switch (currentView) {
-    case 'journal':
-      return (
-        <FeatureErrorBoundary name="Journal">
-          <JournalPage onNavigateToPage={onPageSelect} />
-        </FeatureErrorBoundary>
-      )
-    case 'search':
-      return (
-        <FeatureErrorBoundary name="Search">
-          <Suspense fallback={<ViewFallback />}>
-            <SearchPanel />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    case 'pages':
-      return (
-        <FeatureErrorBoundary name="Pages">
-          <Suspense fallback={<ViewFallback />}>
-            <PageBrowser onPageSelect={onPageSelect} />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    case 'tags':
-      return (
-        <FeatureErrorBoundary name="Tags">
-          <Suspense fallback={<ViewFallback />}>
-            <div className="space-y-8">
-              <TagList onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
-              <div className="flex items-center gap-4">
-                <div className="flex-1 border-t border-border" />
-                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Filter
-                </span>
-                <div className="flex-1 border-t border-border" />
-              </div>
-              <TagFilterPanel />
-            </div>
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    case 'trash':
-      return (
-        <FeatureErrorBoundary name="Trash">
-          <Suspense fallback={<ViewFallback />}>
-            <TrashView />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    case 'properties':
-      return (
-        <FeatureErrorBoundary name="Properties">
-          <Suspense fallback={<ViewFallback />}>
-            <PropertiesView />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    case 'settings':
-      return (
-        <FeatureErrorBoundary name="Settings">
-          <Suspense fallback={<ViewFallback />}>
-            <SettingsView />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    case 'status':
-      return (
-        <FeatureErrorBoundary name="Status">
-          <Suspense fallback={<ViewFallback />}>
-            <StatusPanel />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    case 'conflicts':
-      return (
-        <FeatureErrorBoundary name="Conflicts">
-          <Suspense fallback={<ViewFallback />}>
-            <ConflictList />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    case 'history':
-      return (
-        <FeatureErrorBoundary name="History">
-          <Suspense fallback={<ViewFallback />}>
-            <HistoryView />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    case 'templates':
-      return (
-        <FeatureErrorBoundary name="Templates">
-          <Suspense fallback={<ViewFallback />}>
-            <TemplatesView />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    case 'graph':
-      return (
-        <FeatureErrorBoundary name="Graph">
-          <Suspense fallback={<ViewFallback />}>
-            <GraphView />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    case 'page-editor':
-      if (!activePage) return null
-      return (
-        <FeatureErrorBoundary name="PageEditor">
-          <Suspense fallback={<ViewFallback />}>
-            <PageEditor
-              pageId={activePage.pageId}
-              title={activePage.title}
-              onBack={onBack}
-              onNavigateToPage={onPageSelect}
-            />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    default:
-      return null
-  }
-}
 
 function App() {
   const { t } = useTranslation()
@@ -369,135 +129,18 @@ function App() {
     }
   }, [])
 
-  // Preload the resolve cache (pages + tags) once on app boot, and
-  // again whenever the active space changes (FEAT-3p7). Boot races
-  // between this effect and `refreshAvailableSpaces()` are fine — the
-  // first pass may run with `currentSpaceId == null` (preload skips the
-  // space filter, populates the global cache), and a second pass runs
-  // once the space store hydrates. Either way the cache lands keyed by
-  // the eventual current space.
-  useEffect(() => {
-    useResolveStore.getState().preload(currentSpaceId ?? undefined)
-  }, [currentSpaceId])
+  // ── MAINT-124 step 4 (stretch): space-driven side-effects ─────────
+  // Resolve-cache preload (FEAT-3p7), cross-space link enforcement
+  // (FEAT-3p7) and visual identity (FEAT-3p10) — all driven by
+  // `currentSpaceId` / `availableSpaces` — live in a single hook so
+  // App.tsx no longer carries the inline `useEffect` clusters.
+  useAppSpaceLifecycle()
 
-  // FEAT-3p7 — Cross-space link enforcement: on space switch, flush
-  // BOTH the short-query pages list AND every cache entry keyed under
-  // the previous space. Without the cache flush, a chip whose ULID
-  // belongs to the previous space would still resolve to its title
-  // and silently navigate the user across the space boundary on click
-  // (the locked-in policy is no live links between spaces, ever).
-  //
-  // Order matters: we read `prevSpaceIdRef.current` BEFORE touching
-  // anything so we know which prefix to flush, then update the ref so
-  // the next switch sees the now-current space as the next "previous".
-  // Keeping this in its own effect (separate from the visual-identity
-  // effect below) keeps the two concerns decoupled.
-  const prevSpaceIdRef = useRef<string | null>(currentSpaceId)
-  useEffect(() => {
-    const prev = prevSpaceIdRef.current
-    if (prev != null && prev !== currentSpaceId) {
-      useResolveStore.getState().clearAllForSpace(prev)
-    }
-    useResolveStore.getState().clearPagesList()
-    prevSpaceIdRef.current = currentSpaceId
-  }, [currentSpaceId])
-
-  // FEAT-3p10 — visual identity. On every space change:
-  //   1. Update the `--accent-current` CSS variable on
-  //      `document.documentElement` so the SpaceSwitcher trigger,
-  //      SpaceStatusChip, and SpaceAccentBadge re-tint to the active
-  //      space's accent color.
-  //   2. Re-stamp the OS window title as `"<SpaceName> · Agaric"` so
-  //      the user gets a glance-able cue from the taskbar / window
-  //      menu / notification centre.
-  //
-  // Kept in its own effect (not folded into the `clearPagesList`
-  // effect above) so the two concerns stay decoupled — FEAT-3p7 is
-  // separately extending the resolve cache effect, and merging the
-  // two would couple their lifecycles.
-  //
-  // `setWindowTitle` is a no-op in non-Tauri runtimes (vitest jsdom,
-  // storybook); the dynamic-import / try-catch lives in the wrapper.
-  useEffect(() => {
-    const accentToken = useSpaceStore.getState().getCurrentAccent()
-    document.documentElement.style.setProperty('--accent-current', `var(--${accentToken})`)
-
-    const activeSpace = availableSpaces.find((s) => s.id === currentSpaceId) ?? null
-    const titleText =
-      activeSpace != null && activeSpace.name !== ''
-        ? `${activeSpace.name} \u00b7 Agaric`
-        : 'Agaric'
-    void setWindowTitle(titleText)
-  }, [currentSpaceId, availableSpaces])
-
-  // ── Boot recovery: flush orphaned drafts from previous crash ──────
-  useEffect(() => {
-    listDrafts()
-      .then((drafts) => {
-        for (const draft of drafts) {
-          flushDraft(draft.block_id).catch((err: unknown) => {
-            logger.warn(
-              'App',
-              'Failed to flush orphaned draft during boot recovery',
-              {
-                blockId: draft.block_id,
-              },
-              err,
-            )
-          })
-        }
-        if (drafts.length > 0) {
-          logger.info('boot', `Recovered ${drafts.length} unsaved draft(s)`)
-        }
-      })
-      .catch((err: unknown) => {
-        logger.warn('App', 'Failed to list drafts during boot recovery', undefined, err)
-      })
-  }, [])
-
-  // ── Load user-configured priority levels (UX-201b) ────────────────
-  // The `priority` property definition's `options` JSON is the source of
-  // truth for the active level set. Parse defensively — malformed JSON
-  // or a missing definition leaves the default `['1','2','3']` levels in
-  // place.
-  useEffect(() => {
-    listPropertyDefs()
-      .then((defs) => {
-        if (!Array.isArray(defs)) return
-        const priorityDef = defs.find((d) => d.key === 'priority')
-        if (!priorityDef) return
-        if (priorityDef.options == null) return
-        let parsed: unknown
-        try {
-          parsed = JSON.parse(priorityDef.options)
-        } catch (err) {
-          logger.warn(
-            'App',
-            'priority property definition has invalid JSON options',
-            { options: priorityDef.options },
-            err,
-          )
-          return
-        }
-        if (!Array.isArray(parsed)) {
-          logger.warn('App', 'priority property options is not an array', {
-            options: priorityDef.options,
-          })
-          return
-        }
-        const levels = parsed.filter((v): v is string => typeof v === 'string')
-        if (levels.length === 0) return
-        setPriorityLevels(levels)
-      })
-      .catch((err: unknown) => {
-        logger.warn(
-          'App',
-          'Failed to load property definitions for priority levels',
-          undefined,
-          err,
-        )
-      })
-  }, [])
+  // ── MAINT-124 step 4 (stretch): mount-only IPC hydration ──────────
+  // Boot recovery (orphan-draft flush) and the UX-201b priority-levels
+  // hydrate the global state from Tauri once at app start. Both are
+  // empty-deps effects with no React state coupling.
+  useAppBootRecovery()
 
   // ── Focus main content when view changes ──────────────────────────
   // Each view can register its preferred primary-focus element (search
@@ -816,7 +459,7 @@ function App() {
                 )}
                 data-testid="view-transition-wrapper"
               >
-                <ViewRouter
+                <ViewDispatcher
                   currentView={currentView}
                   activePage={activePage ?? null}
                   onPageSelect={handlePageSelect}
