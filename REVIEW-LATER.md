@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-22 open items — 22 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 20 backend Medium findings closed + 24 MAINT closed (some partially) across sessions 549-583 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-583): MAINT-131 fully reduced to residual cleanup; MAINT-162 reduced to 1 component remaining (StaticBlock); **3 schema-integrity migrations landed in session 582** (M-30 partial UNIQUE on attachments.fs_path, M-93 ON DELETE CASCADE FK on block_drafts.block_id, M-90 is_space property tightened to `select` type); **session 583: H-9b deny-list redaction architecture landed (dormant pending H-9b-activation log-format switch); H-9c effectively closed (preview UI + confirmation gate already shipped)**; **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
+22 open items — 22 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 20 backend Medium findings closed + 24 MAINT closed (some partially) across sessions 549-584 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-584): MAINT-131 fully reduced to residual cleanup; MAINT-162 reduced to 1 component remaining (StaticBlock); **3 schema-integrity migrations landed in session 582** (M-30 partial UNIQUE on attachments.fs_path, M-93 ON DELETE CASCADE FK on block_drafts.block_id, M-90 is_space property tightened to `select` type); **H-9 family closed across sessions 583-584** (H-9b deny-list redaction architecture + H-9b-activation log-format switch + H-9c preview UI confirmed shipped); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
 
-Previously resolved: 843+ items across 550 sessions (per SESSION-LOG.md unique session count; latest is session 583).
+Previously resolved: 844+ items across 551 sessions (per SESSION-LOG.md unique session count; latest is session 584).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1035,19 +1035,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open. No dependencies (C-2a shipped). Schema migration approval required.
 
 ---
-
-## HIGH findings (1)
-
-### H-9b-activation — Switch tracing on-disk format to JSON to activate the H-9b deny-list pipeline
-- **Domain:** Commands / System (logging)
-- **Location:** `src-tauri/src/lib.rs:525-527` (file appender layer); `src-tauri/Cargo.toml:107` (`tracing-subscriber` features)
-- **What:** Session 583 landed the deny-list-of-tokens redaction architecture in `bug_report.rs` (regex array + STABLE_MESSAGES whitelist + property tests, see commit log) but the deny-list is **dormant**: `tracing_subscriber::fmt::layer()` currently emits human-readable text format on disk, so every `agaric.log` line takes the H-9a allow-list fallback rather than the new JSON-aware deny-list. To activate H-9b's "conservative-by-default" privacy gain: (1) add `"json"` to `tracing-subscriber` features in `Cargo.toml`; (2) append `.json()` to the file appender layer in `lib.rs:525`; (3) update `is_error_or_warn_line` in `bug_report.rs` to also detect JSON-shaped levels (`"level":"ERROR"` / `"level":"WARN"`) — current implementation tolerates both formats but a focused detector is cleaner.
-- **Why it matters:** Without the format switch, H-9b's privacy improvement does not engage on actual user logs. The user-visible bug-report content is still scrubbed by H-9a's allow-list (which catches `$HOME` + `device_id` + GCal email + peer device IDs + emails), so there's no regression — just no upgrade either.
-- **Cost:** S — three small wiring changes; no architectural decision left.
-- **Risk:** Medium — JSON file-format change makes `agaric.log` less human-readable at the file level (developers need `jq` or a structured-log viewer to read it directly). Bug-report bundle output is still readable post-redaction (verified by H-9b reviewer).
-- **Impact:** High once activated; zero until activated.
-- **Recommendation:** Land as a focused 1-commit change once the "less-human-readable agaric.log" tradeoff is acceptable. Pair with a one-line developer-docs note explaining how to view the file (`tail -f agaric.log | jq` or similar).
-- **Status:** Open. Spun off from H-9b in session 583 because the deny-list architecture and the format-switch decision are independently reviewable.
 
 ## MEDIUM findings (37 — expanded)
 
