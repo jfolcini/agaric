@@ -326,8 +326,9 @@ async fn mixed_operations_produce_consistent_op_log_and_block_state() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn recovery_on_empty_database_is_noop() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
-    let report = recovery::recover_at_boot(&pool, DEV).await.unwrap();
+    let report = recovery::recover_at_boot(&pool, DEV, &mat).await.unwrap();
 
     assert_eq!(report.pending_snapshots_deleted, 0, "no pending snapshots");
     assert!(report.drafts_recovered.is_empty(), "no drafts to recover");
@@ -345,6 +346,7 @@ async fn recovery_on_empty_database_is_noop() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn recovery_flushes_unflushed_draft_as_edit_op() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     // F07: recovery now checks that the block exists before recovering a draft
     sqlx::query(
@@ -364,7 +366,7 @@ async fn recovery_flushes_unflushed_draft_as_edit_op() {
         .await
         .unwrap();
 
-    let report = recovery::recover_at_boot(&pool, DEV).await.unwrap();
+    let report = recovery::recover_at_boot(&pool, DEV, &mat).await.unwrap();
 
     assert_eq!(
         report.drafts_recovered,
@@ -399,6 +401,7 @@ async fn recovery_flushes_unflushed_draft_as_edit_op() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn recovery_skips_already_flushed_draft_without_duplicate() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     // F07: recovery now checks that the block exists before recovering a draft
     sqlx::query(
@@ -431,7 +434,7 @@ async fn recovery_skips_already_flushed_draft_without_duplicate() {
         .unwrap()
         .len();
 
-    let report = recovery::recover_at_boot(&pool, DEV).await.unwrap();
+    let report = recovery::recover_at_boot(&pool, DEV, &mat).await.unwrap();
 
     assert!(report.drafts_recovered.is_empty(), "no new recovery needed");
     assert_eq!(
@@ -480,7 +483,7 @@ async fn recovery_unflushed_draft_with_prior_edit_includes_prev_edit() {
         .unwrap()
         .len();
 
-    let report = recovery::recover_at_boot(&pool, DEV).await.unwrap();
+    let report = recovery::recover_at_boot(&pool, DEV, &mat).await.unwrap();
 
     assert_eq!(report.drafts_recovered.len(), 1, "one draft recovered");
     assert_eq!(report.drafts_recovered[0], block.id);

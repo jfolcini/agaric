@@ -52,6 +52,11 @@ pub(super) async fn handle_foreground_task(
             // rolled back would send the connector chasing a ghost.
             let mut tx = pool.begin().await?;
             let mut pending_events: Vec<DeferredNotification> = Vec::new();
+            // C-2b: track the highest seq across the batch so we can
+            // advance the apply cursor exactly once before commit. An
+            // empty batch leaves `max_seq` at None so the cursor is not
+            // touched (the MAX query is skipped entirely).
+            let mut max_seq: Option<i64> = None;
             // M-10: `records` is `&Arc<Vec<OpRecord>>`; `.iter()` derefs
             // through `Arc -> Vec` to yield `&OpRecord` without copying.
             for record in records.iter() {
@@ -67,12 +72,19 @@ pub(super) async fn handle_foreground_task(
                     // tx is dropped here, which rolls back automatically
                     return Err(e);
                 }
+                max_seq = Some(max_seq.map_or(record.seq, |prev| prev.max(record.seq)));
                 if gcal_handle.get().is_some() {
                     pending_events.push(DeferredNotification {
                         record: (*record).clone(),
                         snapshot,
                     });
                 }
+            }
+            // C-2b: advance the cursor to the highest seq in the batch
+            // inside the same tx so `apply + cursor` are atomic. Empty
+            // batches skip the update entirely (no seq to record).
+            if let Some(seq) = max_seq {
+                advance_apply_cursor(&mut tx, seq).await?;
             }
             tx.commit().await?;
             notify_gcal_for_events(gcal_handle, pending_events);
@@ -113,6 +125,10 @@ pub(super) async fn apply_op(
     let mut tx = pool.begin().await?;
     let snapshot = snapshot_for_op(&mut tx, record).await?;
     apply_op_tx(&mut tx, record).await?;
+    // C-2b: advance the cursor in the same tx so `apply + cursor` are
+    // atomic. A crash between the apply and the commit rolls both back
+    // together; the cursor never points ahead of materialised state.
+    advance_apply_cursor(&mut tx, record.seq).await?;
     tx.commit().await?;
     notify_gcal_for_events(
         gcal_handle,
@@ -121,6 +137,28 @@ pub(super) async fn apply_op(
             snapshot,
         }],
     );
+    Ok(())
+}
+
+/// C-2b: advance the materializer apply cursor inside the apply tx so
+/// `apply + cursor` are atomic. The cursor is monotonic (`MAX`), so
+/// out-of-order replay attempts (or mixed-direction batches) are no-ops.
+///
+/// The single-row table is seeded by migration `0040`; this UPDATE
+/// always targets `id = 1`. The MAX semantics guarantee that
+/// re-applying an already-applied op is a no-op for the cursor.
+async fn advance_apply_cursor(conn: &mut sqlx::SqliteConnection, seq: i64) -> Result<(), AppError> {
+    let updated_at = crate::now_rfc3339();
+    sqlx::query!(
+        "UPDATE materializer_apply_cursor \
+         SET materialized_through_seq = MAX(materialized_through_seq, ?), \
+             updated_at = ? \
+         WHERE id = 1",
+        seq,
+        updated_at,
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 

@@ -11,11 +11,17 @@
 //!
 //! 1. Deletes any `log_snapshots` rows with `status = 'pending'` (incomplete
 //!    snapshots from a prior crash).
-//! 2. Walks `block_drafts` and, for each row, checks whether a corresponding
+//! 2. **C-2b — boot-time op-log replay.** Walks
+//!    `op_log WHERE seq > materializer_apply_cursor.materialized_through_seq`
+//!    and re-enqueues each row through the materializer foreground queue
+//!    so any ops dropped by a mid-flight crash or `fg_apply_dropped`
+//!    event get re-applied. Drains the foreground queue via a Barrier
+//!    before continuing so step 3 sees a fully-applied state.
+//! 3. Walks `block_drafts` and, for each row, checks whether a corresponding
 //!    `edit_block` or `create_block` op already exists in `op_log` after the
 //!    draft's `updated_at` timestamp. If not, the draft was never flushed and a
 //!    synthetic `edit_block` op is created to recover it.
-//! 3. All draft rows are deleted regardless of whether they were recovered or
+//! 4. All draft rows are deleted regardless of whether they were recovered or
 //!    already flushed.
 //!
 //! If recovery of an individual draft fails, the error is captured in
@@ -28,12 +34,14 @@ use serde::{Deserialize, Serialize};
 mod boot;
 mod cache_refresh;
 mod draft_recovery;
+pub mod replay;
 #[cfg(test)]
 mod tests;
 
 pub use boot::recover_at_boot;
 pub use cache_refresh::refresh_caches_for_recovered_drafts;
 pub use draft_recovery::find_prev_edit;
+pub use replay::{replay_unmaterialized_ops, ReplayReport};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,4 +61,13 @@ pub struct RecoveryReport {
     /// Non-fatal errors encountered while recovering individual drafts.
     /// Each entry is `"block_id: error message"`.
     pub draft_errors: Vec<String>,
+    /// C-2b: number of ops re-enqueued through the materializer foreground
+    /// queue at boot. Includes ops that were already idempotently applied
+    /// — see `ReplayReport::ops_replayed` for the details.
+    pub ops_replayed: u64,
+    /// C-2b: ops the replay pass skipped without enqueuing (reserved for
+    /// future per-record idempotency detection). Always 0 today.
+    pub ops_skipped_idempotent: u64,
+    /// C-2b: non-fatal errors encountered during replay enqueue.
+    pub replay_errors: Vec<String>,
 }

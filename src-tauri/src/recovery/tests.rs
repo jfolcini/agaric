@@ -2,6 +2,7 @@ use super::*;
 use crate::db::init_pool;
 use crate::draft::save_draft;
 use crate::error::AppError;
+use crate::materializer::Materializer;
 use crate::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
 use crate::op_log::{append_local_op, append_local_op_at};
 use crate::ulid::BlockId;
@@ -16,12 +17,21 @@ use tempfile::TempDir;
 /// this wrapper everywhere a test would call `recover_at_boot` directly
 /// — the explicit "second-call returns Err" test calls the production
 /// function directly to exercise the unguarded path.
+///
+/// C-2b: the wrapper builds a per-call `Materializer` against the same
+/// pool so the replay step inside `recover_at_boot` has a real
+/// foreground queue to drain. Tests that don't need to inspect the
+/// replay path get the same observable behaviour as before — a fresh
+/// pool's op log is empty, so replay is a no-op.
 async fn recover_at_boot_test(
     pool: &SqlitePool,
     device_id: &str,
 ) -> Result<RecoveryReport, AppError> {
     super::boot::reset_recovery_guard();
-    recover_at_boot(pool, device_id).await
+    let materializer = Materializer::new(pool.clone());
+    let result = recover_at_boot(pool, device_id, &materializer).await;
+    materializer.shutdown();
+    result
 }
 
 // -- Test fixture constants --
@@ -507,12 +517,14 @@ async fn recover_at_boot_returns_err_on_second_call_without_reset() {
     // Reset BEFORE — neighbour tests may have left the guard tripped.
     super::boot::reset_recovery_guard();
 
+    let materializer = Materializer::new(pool.clone());
+
     // First call: succeeds.
-    let r1 = recover_at_boot(&pool, device_id).await;
+    let r1 = recover_at_boot(&pool, device_id, &materializer).await;
     assert!(r1.is_ok(), "first call must succeed; got {r1:?}");
 
     // Second call without reset: must return InvalidOperation.
-    let r2 = recover_at_boot(&pool, device_id).await;
+    let r2 = recover_at_boot(&pool, device_id, &materializer).await;
     match r2 {
         Err(AppError::InvalidOperation(msg)) => {
             assert!(
@@ -522,6 +534,8 @@ async fn recover_at_boot_returns_err_on_second_call_without_reset() {
         }
         other => panic!("expected InvalidOperation, got {other:?}"),
     }
+
+    materializer.shutdown();
 
     // Reset AFTER so this test does not perturb the global state for
     // any test that runs in the same process (under cargo test, not
@@ -1724,4 +1738,433 @@ async fn recover_at_boot_handles_more_than_999_drafts() {
         .await
         .unwrap();
     assert_eq!(remaining, 0, "all drafts must be cleaned up");
+}
+
+// =====================================================================
+// C-2b — boot-time op-log replay path for unmaterialized ops
+// =====================================================================
+//
+// These tests cover three layers:
+//
+//  1. The cursor advance happens atomically with the apply
+//     (`advance_apply_cursor` is called inside the same tx as
+//     `apply_op_tx`).
+//  2. The `replay_unmaterialized_ops` walk re-enqueues every op past
+//     the cursor and the cursor moves to the highest applied seq.
+//  3. The full `recover_at_boot` path includes replay + draft recovery
+//     in the right order.
+
+use crate::materializer::MaterializeTask;
+use crate::op_log::OpRecord;
+use crate::recovery::replay::replay_unmaterialized_ops;
+use std::sync::Arc as StdArc;
+
+/// Read the cursor's `materialized_through_seq` for assertions.
+async fn read_cursor(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar!(
+        r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#,
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Force-set the cursor to a specific value (test-only helper).
+async fn set_cursor(pool: &SqlitePool, seq: i64) {
+    let now = crate::now_rfc3339();
+    sqlx::query!(
+        "UPDATE materializer_apply_cursor SET materialized_through_seq = ?, updated_at = ? WHERE id = 1",
+        seq,
+        now,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// C-2b — single-op apply: cursor goes from 0 to record.seq.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_advances_cursor_atomic_c2b() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Append the op WITHOUT materialising — the materializer foreground
+    // queue is the only path that should advance the cursor.
+    let record = append_local_op(
+        &pool,
+        "dev-c2b",
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("CURSOR_BLK_1"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "cursor-test".into(),
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(read_cursor(&pool).await, 0, "cursor starts at 0");
+
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(record.clone())))
+        .await
+        .unwrap();
+    mat.flush_foreground().await.unwrap();
+
+    assert_eq!(
+        read_cursor(&pool).await,
+        record.seq,
+        "single apply must advance cursor to record.seq",
+    );
+    mat.shutdown();
+}
+
+/// C-2b — batch apply: cursor advances to the highest seq in the batch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_apply_advances_cursor_to_max_c2b() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let mut records = Vec::new();
+    for i in 1..=5 {
+        let r = append_local_op(
+            &pool,
+            "dev-c2b-batch",
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id(&format!("BATCH_BLK_{i}")),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(i),
+                content: format!("batch-{i}"),
+            }),
+        )
+        .await
+        .unwrap();
+        records.push(r);
+    }
+    let max_seq = records.iter().map(|r| r.seq).max().unwrap();
+    assert_eq!(max_seq, 5, "5 sequential appends produce seqs 1..=5");
+    assert_eq!(read_cursor(&pool).await, 0, "cursor starts at 0");
+
+    mat.enqueue_foreground(MaterializeTask::BatchApplyOps(StdArc::new(records)))
+        .await
+        .unwrap();
+    mat.flush_foreground().await.unwrap();
+
+    assert_eq!(
+        read_cursor(&pool).await,
+        max_seq,
+        "batch apply must advance cursor to max(seq) in the batch",
+    );
+    mat.shutdown();
+}
+
+/// C-2b — a batch where one op fails rolls back the cursor advance.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_apply_with_failure_does_not_advance_cursor_c2b() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Pre-set the cursor to a known sentinel so we can detect any
+    // accidental advance even on a partial-rollback path.
+    set_cursor(&pool, 7).await;
+
+    // Two real ops, then a malformed third op: the third's `apply_op_tx`
+    // returns `Err` because `serde_json::from_str::<CreateBlockPayload>`
+    // fails on `{}` (missing required fields). The whole batch is rolled
+    // back, including the cursor advance for the prior two ops.
+    let ok1 = append_local_op(
+        &pool,
+        "dev-c2b-fail",
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("FAIL_BLK_1"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "ok1".into(),
+        }),
+    )
+    .await
+    .unwrap();
+    let ok2 = append_local_op(
+        &pool,
+        "dev-c2b-fail",
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("FAIL_BLK_2"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(2),
+            content: "ok2".into(),
+        }),
+    )
+    .await
+    .unwrap();
+    let bad = OpRecord {
+        device_id: "dev-c2b-fail".into(),
+        seq: 100,
+        parent_seqs: None,
+        hash: "0000000000000000000000000000000000000000000000000000000000000000".into(),
+        op_type: "create_block".into(),
+        payload: "{}".into(),
+        created_at: "2026-04-30T00:00:00Z".into(),
+        block_id: None,
+    };
+
+    mat.enqueue_foreground(MaterializeTask::BatchApplyOps(StdArc::new(vec![
+        ok1, ok2, bad,
+    ])))
+    .await
+    .unwrap();
+    mat.flush_foreground().await.unwrap();
+
+    assert_eq!(
+        read_cursor(&pool).await,
+        7,
+        "failed batch must NOT advance the cursor (tx rolled back)",
+    );
+    mat.shutdown();
+}
+
+/// C-2b — replay walks every op past the cursor and applies each one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_walks_unmaterialized_ops_c2b() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let device_id = "dev-c2b-replay";
+
+    // Seed 10 CreateBlock ops in op_log with no primary-state apply.
+    for i in 1..=10 {
+        append_local_op(
+            &pool,
+            device_id,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id(&format!("REPLAY_BLK_{i:02}")),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(i),
+                content: format!("replay-{i}"),
+            }),
+        )
+        .await
+        .unwrap();
+    }
+    set_cursor(&pool, 5).await;
+
+    let report = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+
+    assert_eq!(
+        report.ops_replayed, 5,
+        "exactly seqs 6..=10 should have been re-enqueued",
+    );
+    assert!(
+        report.replay_errors.is_empty(),
+        "replay should have no errors: {:?}",
+        report.replay_errors,
+    );
+    assert_eq!(
+        read_cursor(&pool).await,
+        10,
+        "cursor must advance to the highest applied seq",
+    );
+    // State sanity: blocks 6..=10 must exist (5 ops were applied).
+    // Blocks 1..=5 weren't enqueued for replay so they are absent.
+    let visible: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(visible, 5, "blocks 6..=10 should be materialised");
+    mat.shutdown();
+}
+
+/// C-2b — running replay twice in succession is idempotent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_is_idempotent_c2b() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let device_id = "dev-c2b-idem";
+
+    // Seed 3 ops, then run replay twice; the second run is a no-op.
+    for i in 1..=3 {
+        append_local_op(
+            &pool,
+            device_id,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id(&format!("IDEM_BLK_{i}")),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(i),
+                content: format!("idem-{i}"),
+            }),
+        )
+        .await
+        .unwrap();
+    }
+
+    let r1 = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+    assert_eq!(r1.ops_replayed, 3, "first replay applies 3 ops");
+    assert_eq!(read_cursor(&pool).await, 3);
+
+    let r2 = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+    assert_eq!(
+        r2.ops_replayed, 0,
+        "second replay should re-enqueue nothing — cursor already at max",
+    );
+    assert_eq!(
+        read_cursor(&pool).await,
+        3,
+        "cursor must be unchanged across a second idempotent replay",
+    );
+    mat.shutdown();
+}
+
+/// C-2b — replay against a fresh DB (no ops past the cursor) is a no-op.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_empty_op_log_is_noop_c2b() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let report = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+
+    assert_eq!(report.ops_replayed, 0, "empty op_log → no replay");
+    assert!(report.replay_errors.is_empty());
+    assert_eq!(read_cursor(&pool).await, 0, "cursor stays at initial 0");
+    mat.shutdown();
+}
+
+/// C-2b — `recover_at_boot` runs replay (step 1.5) before draft
+/// recovery (step 2). After the call, replayed ops are applied AND the
+/// draft recovery has run.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn recover_at_boot_includes_replay_step_c2b() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-c2b-boot";
+
+    // Seed 5 unmaterialized create_block ops.
+    let mut block_ids: Vec<String> = Vec::new();
+    for i in 1..=5 {
+        let bid = format!("BOOT_BLK_{i}");
+        append_local_op(
+            &pool,
+            device_id,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id(&bid),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(i),
+                content: format!("boot-{i}"),
+            }),
+        )
+        .await
+        .unwrap();
+        block_ids.push(bid);
+    }
+
+    // Add a draft for a block that exists in `blocks` (we must insert
+    // it manually because replay applies via the materializer queue,
+    // and the draft path requires the row to exist before flushing).
+    // The id must be alphanumeric per the draft-recovery debug_assert.
+    let draft_block_id = "BOOTDRAFTBLK";
+    insert_test_block(&pool, draft_block_id, "old draft target").await;
+    save_draft(&pool, draft_block_id, "draft content")
+        .await
+        .unwrap();
+
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
+
+    assert_eq!(
+        report.ops_replayed, 5,
+        "all 5 seeded ops should be replayed",
+    );
+    assert!(
+        report.replay_errors.is_empty(),
+        "replay must not error: {:?}",
+        report.replay_errors,
+    );
+    assert_eq!(
+        report.drafts_recovered,
+        vec![draft_block_id.to_string()],
+        "draft recovery still runs after replay",
+    );
+
+    // Blocks created by the replayed ops must be visible.
+    for bid in &block_ids {
+        let exists: Option<String> = sqlx::query_scalar("SELECT id FROM blocks WHERE id = ?")
+            .bind(bid)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(exists.is_some(), "replayed block {bid} must exist");
+    }
+    assert_eq!(
+        read_cursor(&pool).await,
+        5,
+        "cursor must advance to highest replayed seq",
+    );
+}
+
+/// C-2b — a "second crash" mid-replay must not double-apply ops on the
+/// next boot. Simulated by running replay, dropping the materializer,
+/// then running replay again on the same DB.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_progress_marker_survives_second_crash_c2b() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-c2b-crash";
+
+    for i in 1..=10 {
+        append_local_op(
+            &pool,
+            device_id,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id(&format!("CRASH_BLK_{i:02}")),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(i),
+                content: format!("crash-{i}"),
+            }),
+        )
+        .await
+        .unwrap();
+    }
+
+    // First "boot": run replay, then simulate a crash by shutting
+    // down + dropping the materializer.
+    {
+        let mat = Materializer::new(pool.clone());
+        let r = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+        assert_eq!(r.ops_replayed, 10);
+        assert_eq!(read_cursor(&pool).await, 10);
+        mat.shutdown();
+    }
+
+    let blocks_first: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(blocks_first, 10);
+
+    // Second "boot": fresh materializer, fresh replay invocation. The
+    // cursor was persisted to disk so this run sees zero work.
+    {
+        let mat = Materializer::new(pool.clone());
+        let r = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+        assert_eq!(
+            r.ops_replayed, 0,
+            "cursor at 10 means second-boot replay is a no-op",
+        );
+        assert_eq!(
+            read_cursor(&pool).await,
+            10,
+            "cursor preserved across boots"
+        );
+        mat.shutdown();
+    }
+
+    let blocks_second: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        blocks_second, blocks_first,
+        "no double-apply: block count must be unchanged across the second replay",
+    );
 }

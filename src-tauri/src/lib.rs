@@ -576,33 +576,6 @@ pub fn run() {
             let sync_cert = sync_cert::get_or_create_sync_cert(&cert_path, &device_id)?;
             tracing::info!(cert_hash = %sync_cert.cert_hash, "TLS cert loaded");
 
-            // Run crash recovery before anything else
-            // Recovery needs write access
-            let report = tauri::async_runtime::block_on(recovery::recover_at_boot(
-                &pools.write,
-                &device_id,
-            ))?;
-            if !report.drafts_recovered.is_empty() {
-                tracing::info!(
-                    count = report.drafts_recovered.len(),
-                    "recovered unflushed drafts"
-                );
-            }
-
-            // UX-165: Clean up stale link metadata entries (> 30 days old, non-auth).
-            match tauri::async_runtime::block_on(
-                crate::link_metadata::cleanup_stale(&pools.write, 30),
-            ) {
-                Ok(deleted) => {
-                    if deleted > 0 {
-                        tracing::info!(deleted, "cleaned up stale link metadata entries");
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "failed to clean up stale link metadata");
-                }
-            }
-
             // Create materializer — bg cache rebuilds read from read pool, write to write pool (P-8)
             //
             // PERF-24: wire up the app-lifecycle hooks so the metrics-
@@ -610,6 +583,16 @@ pub fn run() {
             // the app is backgrounded on mobile. The same hooks are
             // later passed into the sync daemon below so its periodic
             // resync tick short-circuits when backgrounded.
+            //
+            // C-2b: the materializer is constructed BEFORE
+            // `recover_at_boot` so the boot-time op-log replay path
+            // (`recovery::replay_unmaterialized_ops`) can drive
+            // `ApplyOp` tasks through the foreground queue. Earlier
+            // versions of this file constructed the materializer after
+            // recovery; that ordering is incompatible with the C-2b
+            // replay step (which must run before draft recovery so
+            // synthetic edit_block ops do not interleave with replayed
+            // real ops).
             let lifecycle = LifecycleHooks::new();
             let materializer = Materializer::with_read_pool_and_lifecycle(
                 pools.write.clone(),
@@ -627,6 +610,41 @@ pub fn run() {
             // function is implemented but dormant until a scheduler
             // hooks it.
             materializer.set_app_data_dir(app_data_dir.clone());
+
+            // Run crash recovery before anything else
+            // Recovery needs write access
+            let report = tauri::async_runtime::block_on(recovery::recover_at_boot(
+                &pools.write,
+                &device_id,
+                &materializer,
+            ))?;
+            if !report.drafts_recovered.is_empty() {
+                tracing::info!(
+                    count = report.drafts_recovered.len(),
+                    "recovered unflushed drafts"
+                );
+            }
+            if report.ops_replayed > 0 || !report.replay_errors.is_empty() {
+                tracing::info!(
+                    ops_replayed = report.ops_replayed,
+                    replay_errors = report.replay_errors.len(),
+                    "C-2b: replayed unmaterialized ops at boot"
+                );
+            }
+
+            // UX-165: Clean up stale link metadata entries (> 30 days old, non-auth).
+            match tauri::async_runtime::block_on(
+                crate::link_metadata::cleanup_stale(&pools.write, 30),
+            ) {
+                Ok(deleted) => {
+                    if deleted > 0 {
+                        tracing::info!(deleted, "cleaned up stale link metadata entries");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to clean up stale link metadata");
+                }
+            }
 
             // M-3: Rebuild FTS index at boot if the table is empty (post-migration 0006).
             let fts_count: i64 = log_or_zero(
