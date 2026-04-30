@@ -25,7 +25,7 @@ import { useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkGroup, BlockRow } from '../lib/tauri'
 import { CollapsibleGroupList } from './CollapsibleGroupList'
-import { renderRichContent } from './StaticBlock'
+import { renderRichContent } from './RichContentRenderer'
 
 export interface BacklinkGroupRendererProps {
   groups: BacklinkGroup[]

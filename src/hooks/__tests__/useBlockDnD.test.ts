@@ -42,7 +42,7 @@ vi.mock('../../components/SortableBlock', () => ({
   INDENT_WIDTH: 24,
 }))
 
-vi.mock('../use-mobile', () => ({
+vi.mock('../useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
 }))
 
@@ -60,8 +60,8 @@ vi.mock('@/lib/logger', () => ({
 import { makeBlock } from '../../__tests__/fixtures'
 import type { Projection } from '../../lib/tree-utils'
 import { computePosition, getDragDescendants, getProjection } from '../../lib/tree-utils'
-import { useIsMobile } from '../use-mobile'
 import { useBlockDnD } from '../useBlockDnD'
+import { useIsMobile } from '../useIsMobile'
 
 const mockedGetDragDescendants = vi.mocked(getDragDescendants)
 const mockedGetProjection = vi.mocked(getProjection)

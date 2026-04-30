@@ -10,23 +10,29 @@
 //
 // ─── Scope ──────────────────────────────────────────────────────────
 //
-// HARD-NARROWED to top-level component files (`src/components/*.tsx`)
-// for the first activation. Subdirectory components
-// (`src/components/agent-access/`, `src/components/journal/`,
-// `src/components/block-tree/`, `src/components/ui/`) are intentionally
-// out of scope:
+// MAINT-159: walks `src/components/**/*.tsx` recursively. Subdirectory
+// components (`src/components/agent-access/`, `src/components/journal/`,
+// `src/components/block-tree/`, `src/components/backlink-filter/`,
+// future `src/components/settings/` from MAINT-128) are now in scope
+// alongside top-level files.
 //
-//   - axe-presence (the sibling MAINT-99 hook) uses the same
-//     top-level-only scope, so the two hooks line up cleanly.
-//   - Subdirectory components frequently route their tests through
-//     the parent component's test file (e.g. ActivityFeed.tsx is
-//     covered by AgentAccessSettingsTab.test.tsx, not a sibling file
-//     of the same basename). A simple `<basename>.test.tsx` lookup
-//     would false-flag these as missing rejection coverage.
-//   - Broadening the hook later is a one-line change once those
-//     subdirs grow their own `__tests__/` siblings (FOLLOW-UP).
+// `src/components/ui/` (Radix-wrapped primitives) is excluded because
+// none of those components call `invoke` directly — they're stateless
+// presentational wrappers. The recursive walk applies a callsIpc()
+// filter, so any `ui/` file that DID start calling IPC would still get
+// flagged.
 //
-// Hooks/stores are also out of scope — this hook only catches direct
+// Test-file resolution for a component at `src/components/<sub>/Foo.tsx`:
+//   1. `src/components/<sub>/__tests__/Foo.test.tsx`  (sibling test dir)
+//   2. `src/components/__tests__/Foo.test.tsx`        (top-level fallback)
+//   3. If neither exists, the file is recorded under `skippedNoTest`
+//      (visibility-only, does not fail the hook). This handles the
+//      historical pattern where subdirectory components are covered
+//      by a parent component's test file (e.g. `ActivityFeed.tsx`
+//      tested via `AgentAccessSettingsTab.test.tsx`) — neither test
+//      lookup hits, so we don't false-flag it.
+//
+// Hooks/stores are still out of scope — this hook only catches direct
 // IPC callers in the component layer (the most-trafficked surface for
 // FEAT-3-class regressions where a missing error toast leaks past
 // review).
@@ -92,16 +98,48 @@ if (!fs.existsSync(COMPONENTS_DIR) || !fs.existsSync(TESTS_DIR)) {
 // ─── helpers ────────────────────────────────────────────────────────
 
 /**
- * Return the list of top-level `*.tsx` files in `src/components/` (no
- * recursion into subdirectories). Helper modules with `.helpers.tsx`
- * or pure-`.ts` siblings are out of scope (they don't render UI and
- * their IPC calls are tested at the consumer level).
+ * MAINT-159: walk `src/components/**` recursively for `*.tsx` files
+ * (excluding `*.test.tsx`, `__tests__/`, and the `ui/` subdir which
+ * holds stateless Radix primitives that never call `invoke`). Helper
+ * modules with `.helpers.tsx` or pure-`.ts` siblings are out of
+ * scope (they don't render UI and their IPC calls are tested at the
+ * consumer level).
  */
-function listTopLevelComponents() {
-  return fs
-    .readdirSync(COMPONENTS_DIR, { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith('.tsx') && !e.name.endsWith('.test.tsx'))
-    .map((e) => path.join(COMPONENTS_DIR, e.name))
+function listAllComponents() {
+  const out = []
+  const visit = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (entry.name === '__tests__' || entry.name === 'ui') continue
+        visit(full)
+      } else if (
+        entry.isFile() &&
+        entry.name.endsWith('.tsx') &&
+        !entry.name.endsWith('.test.tsx')
+      ) {
+        out.push(full)
+      }
+    }
+  }
+  visit(COMPONENTS_DIR)
+  return out
+}
+
+/**
+ * Resolve the candidate test file for a component, preferring a
+ * sibling `__tests__/` (per MAINT-128 split convention) and falling
+ * back to the top-level `src/components/__tests__/`. Returns `null`
+ * if neither exists.
+ */
+function resolveTestPath(componentPath) {
+  const baseName = path.basename(componentPath, '.tsx')
+  const siblingDir = path.join(path.dirname(componentPath), '__tests__')
+  const siblingTest = path.join(siblingDir, `${baseName}.test.tsx`)
+  if (fs.existsSync(siblingTest)) return siblingTest
+  const topLevelTest = path.join(TESTS_DIR, `${baseName}.test.tsx`)
+  if (fs.existsSync(topLevelTest)) return topLevelTest
+  return null
 }
 
 /**
@@ -150,18 +188,18 @@ const violations = []
 const checked = []
 const skippedNoTest = []
 
-for (const componentPath of listTopLevelComponents()) {
+for (const componentPath of listAllComponents()) {
   const src = fs.readFileSync(componentPath, 'utf8')
   if (!callsIpc(src)) continue
 
-  const baseName = path.basename(componentPath, '.tsx')
-  const testPath = path.join(TESTS_DIR, `${baseName}.test.tsx`)
+  const testPath = resolveTestPath(componentPath)
 
-  if (!fs.existsSync(testPath)) {
-    // Top-level component with IPC use but no sibling test file.
-    // This is a missing-test concern (out of scope for this hook;
-    // axe-presence-style coverage would flag it on the test side).
-    // We record it for visibility but don't fail.
+  if (testPath === null) {
+    // IPC-calling component with no sibling/top-level test file.
+    // Subdirectory components are often covered by a parent's test
+    // file (different basename) — that case lands here and is recorded
+    // for visibility without failing the hook. Top-level components
+    // genuinely missing tests also land here.
     skippedNoTest.push(path.relative(ROOT, componentPath))
     continue
   }
@@ -173,7 +211,7 @@ for (const componentPath of listTopLevelComponents()) {
       test: path.relative(ROOT, testPath),
     })
   } else {
-    checked.push(baseName)
+    checked.push(path.relative(COMPONENTS_DIR, componentPath))
   }
 }
 
@@ -203,7 +241,7 @@ if (skippedNoTest.length > 0 && process.env.CHECK_IPC_VERBOSE === '1') {
 }
 
 console.log(
-  `OK: ${checked.length} top-level component(s) with IPC use have rejection coverage` +
+  `OK: ${checked.length} component(s) with IPC use have rejection coverage` +
     (skippedNoTest.length > 0
       ? ` (${skippedNoTest.length} missing tests, see verbose output)`
       : ''),

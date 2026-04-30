@@ -15,7 +15,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { truncateId } from '@/lib/format'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import type { BlockRow } from '../lib/tauri'
-import { renderRichContent } from './StaticBlock'
+import { renderRichContent } from './RichContentRenderer'
 
 export interface ConflictTypeRendererProps {
   conflictType: 'Text' | 'Property' | 'Move'

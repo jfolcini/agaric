@@ -20,14 +20,6 @@ export function priorityLabel(priority: string): string {
   return `P${priority}`
 }
 
-/**
- * Legacy lookup table for the default three levels. Prefer
- * `priorityLabel(priority)` for new code — it handles arbitrary
- * user-configured levels (UX-201b), whereas this record only covers
- * `'1' | '2' | '3'`.
- */
-export const PRIORITY_DISPLAY: Record<string, string> = { '1': 'P1', '2': 'P2', '3': 'P3' }
-
 // Re-exported from date-utils so existing call sites + tests that import these
 // names from BlockInlineControls keep working after MAINT-94 / MAINT-129
 // deduplication.

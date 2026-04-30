@@ -60,6 +60,7 @@ export interface ConflictListItemProps {
   original: BlockRow | undefined
   isExpanded: boolean
   isSelected: boolean
+  isFocused: boolean
   deviceName: string | undefined
   onToggleExpanded: (id: string) => void
   onToggleSelected: (id: string) => void
@@ -73,6 +74,7 @@ export function ConflictListItem({
   original,
   isExpanded,
   isSelected,
+  isFocused,
   deviceName,
   onToggleExpanded,
   onToggleSelected,
@@ -93,6 +95,11 @@ export function ConflictListItem({
 
   return (
     <li
+      id={`conflict-${block.id}`}
+      // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: parent <ul> uses role="listbox", so children must be role="option" per WAI-ARIA APG. The original imperative useEffect bypassed this rule by setting role at runtime; the MAINT-130 refactor declares it on JSX directly. `tabIndex={-1}` keeps the row programmatically focusable (managed by useListKeyboardNavigation via aria-activedescendant) without inserting it into tab order.
+      role="option"
+      aria-selected={isFocused}
+      tabIndex={-1}
       className="conflict-item flex items-start justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50 active:bg-accent/70"
       data-testid="conflict-item"
     >

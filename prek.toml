@@ -172,13 +172,16 @@ language = "system"
 pass_filenames = false
 files = "(AGENTS\\.md$|\\.test\\.(ts|tsx)$|\\.spec\\.ts$|^src-tauri/src/.*\\.rs$)"
 
-# ipc-error-path-coverage: every top-level `src/components/*.tsx` that
-# imports from `@/lib/tauri` (or pulls `invoke` directly from
-# `@tauri-apps/api/core`) must have at least one error-path test in its
-# sibling `src/components/__tests__/<name>.test.tsx`. Catches the
-# silent-`.catch` / missing-toast class of regression that AGENTS.md:198
-# is aimed at. Hard half of MAINT-99 (narrowed to top-level components;
-# subdirs deferred — see script header for the FOLLOW-UP).
+# ipc-error-path-coverage: every `src/components/**/*.tsx` (recursive,
+# excluding `ui/` and `__tests__/`) that imports from `@/lib/tauri` (or
+# pulls `invoke` directly from `@tauri-apps/api/core`) must have at
+# least one error-path test in either its sibling `__tests__/<name>.test.tsx`
+# or the top-level `src/components/__tests__/<name>.test.tsx` fallback.
+# Catches the silent-`.catch` / missing-toast class of regression that
+# AGENTS.md:198 is aimed at. Hard half of MAINT-99; recursive walk
+# closed by MAINT-159 (the `files` regex below is intentionally broad —
+# the `ui/` and `__tests__/` exclusions live in the script's
+# `listAllComponents()` walk, not in the regex).
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -187,7 +190,7 @@ name = "IPC error-path coverage"
 entry = "node scripts/check-ipc-error-path.mjs"
 language = "system"
 pass_filenames = false
-files = "^src/components/([^/]+\\.tsx|__tests__/[^/]+\\.test\\.tsx)$"
+files = "^src/components/.*\\.tsx$"
 
 # snapshot-redaction: scan every `*.snap` file under `src/` and
 # `src-tauri/` for unredacted ULIDs (26-char Crockford base32),

@@ -48,10 +48,10 @@ vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
   isRegistered: mockShortcutIsRegistered,
 }))
 
-// FEAT-12: mock the use-mobile hook so the desktop / mobile branches
+// FEAT-12: mock the useIsMobile hook so the desktop / mobile branches
 // of the QuickCaptureRow are deterministic in jsdom.
 const mockUseIsMobile = vi.fn(() => false)
-vi.mock('../../hooks/use-mobile', () => ({
+vi.mock('../../hooks/useIsMobile', () => ({
   useIsMobile: () => mockUseIsMobile(),
 }))
 

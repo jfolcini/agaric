@@ -26,12 +26,13 @@ import { t } from '@/lib/i18n'
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
+import { getTaskStates } from '../../lib/filter-dimension-metadata'
 import type {
   AgendaFilter,
   AgendaFilterBuilderProps,
   AgendaSortGroupControlsProps,
 } from '../AgendaFilterBuilder'
-import { AgendaFilterBuilder, AgendaSortGroupControls, getTaskStates } from '../AgendaFilterBuilder'
+import { AgendaFilterBuilder, AgendaSortGroupControls } from '../AgendaFilterBuilder'
 
 const defaultProps: AgendaFilterBuilderProps = {
   filters: [],

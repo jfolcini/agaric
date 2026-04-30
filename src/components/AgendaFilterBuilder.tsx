@@ -25,14 +25,6 @@ import { ChoiceValuePicker } from './ChoiceValuePicker'
 import { PropertyValuePicker } from './PropertyValuePicker'
 import { TagValuePicker } from './TagValuePicker'
 
-// Re-export all previously public symbols for backward compat
-export type { AgendaFilterDimension } from '../lib/filter-dimension-metadata'
-export {
-  ALL_DIMENSIONS,
-  DIMENSION_OPTIONS,
-  dimensionLabel,
-  getTaskStates,
-} from '../lib/filter-dimension-metadata'
 export type { AgendaSortGroupControlsProps } from './AgendaSortGroupControls'
 export { AgendaSortGroupControls } from './AgendaSortGroupControls'
 

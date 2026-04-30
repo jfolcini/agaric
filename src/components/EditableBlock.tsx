@@ -25,9 +25,6 @@ import { type PageBlockState, usePageBlockStore } from '../stores/page-blocks'
 import { FormattingToolbar } from './FormattingToolbar'
 import { StaticBlock } from './StaticBlock'
 
-// Re-export for backwards compatibility — consumers may import from EditableBlock
-export { EDITOR_PORTAL_SELECTORS } from '@/hooks/useEditorBlur'
-
 /**
  * Unmount the roving editor from the given block and persist its content.
  * Uses `shouldSplitOnBlur` to decide between split and edit.
@@ -294,4 +291,3 @@ function EditableBlockInner({
 
 export const EditableBlock = React.memo(EditableBlockInner)
 EditableBlock.displayName = 'EditableBlock'
-;('EditableBlock')

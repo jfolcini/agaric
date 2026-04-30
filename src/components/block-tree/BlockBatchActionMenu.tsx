@@ -1,5 +1,5 @@
 /**
- * BlockContextMenu — batch operations toolbar for multi-selected blocks.
+ * BlockBatchActionMenu — batch operations toolbar for multi-selected blocks.
  *
  * Renders a sticky toolbar when blocks are selected with:
  *   - Count of selected blocks
@@ -7,7 +7,9 @@
  *   - Delete button with confirmation dialog
  *   - Clear selection button
  *
- * Extracted from BlockTree.tsx for file organization (F-22).
+ * Extracted from BlockTree.tsx for file organization (F-22). Renamed from
+ * `BlockContextMenu` to disambiguate from the floating long-press / right-click
+ * menu in `src/components/BlockContextMenu.tsx`.
  */
 
 import { Trash2, X } from 'lucide-react'
@@ -25,7 +27,7 @@ import {
 } from '../ui/alert-dialog'
 import { Button } from '../ui/button'
 
-interface BlockContextMenuProps {
+interface BlockBatchActionMenuProps {
   selectedBlockIds: string[]
   batchInProgress: boolean
   batchDeleteConfirm: boolean
@@ -35,7 +37,7 @@ interface BlockContextMenuProps {
   onClearSelection: () => void
 }
 
-export function BlockContextMenu({
+export function BlockBatchActionMenu({
   selectedBlockIds,
   batchInProgress,
   batchDeleteConfirm,
@@ -43,7 +45,7 @@ export function BlockContextMenu({
   onBatchDelete,
   onSetBatchDeleteConfirm,
   onClearSelection,
-}: BlockContextMenuProps): React.ReactElement | null {
+}: BlockBatchActionMenuProps): React.ReactElement | null {
   const { t } = useTranslation()
   if (selectedBlockIds.length === 0) return null
 

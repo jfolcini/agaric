@@ -16,7 +16,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { App } from '../../App'
-import { useIsMobile } from '../../hooks/use-mobile'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { announce } from '../../lib/announcer'
 import { t } from '../../lib/i18n'
 import { logger } from '../../lib/logger'
@@ -45,7 +45,7 @@ vi.mock('../../lib/tauri', async (importActual) => {
 
 // FEAT-9: controllable mobile mock so we can flip the breakpoint per-test
 // without fiddling with window.innerWidth + matchMedia polyfills.
-vi.mock('../../hooks/use-mobile', () => ({
+vi.mock('../../hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
 }))
 

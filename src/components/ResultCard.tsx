@@ -16,7 +16,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import type { BlockRow } from '../lib/tauri'
-import { renderRichContent } from './StaticBlock'
+import { renderRichContent } from './RichContentRenderer'
 
 export interface ResultCardProps {
   block: BlockRow

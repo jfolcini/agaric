@@ -5,7 +5,7 @@
  * and edit options for select-type properties.
  */
 
-import { Lock, Plus, Search, Settings2, Trash2, X } from 'lucide-react'
+import { Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ListItem } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { SearchInput } from '@/components/ui/search-input'
 import {
   Select,
   SelectContent,
@@ -157,24 +158,14 @@ export function PropertyDefinitionsList(): React.ReactElement {
           className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
           aria-hidden="true"
         />
-        <Input
+        <SearchInput
           value={searchFilter}
           onChange={(e) => setSearchFilter(e.target.value)}
           placeholder={t('propertiesView.search')}
           aria-label={t('propertiesView.search')}
-          className="pl-8 pr-8"
+          className="pl-8"
+          clearAriaLabelKey="propertiesView.clearSearch"
         />
-        {searchFilter && (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            aria-label={t('propertiesView.clearSearch')}
-            onClick={() => setSearchFilter('')}
-          >
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        )}
       </div>
 
       {/* Create form */}

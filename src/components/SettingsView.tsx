@@ -27,7 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { useIsMobile } from '@/hooks/use-mobile'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { type ThemePreference, useTheme } from '@/hooks/useTheme'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import { logger } from '@/lib/logger'

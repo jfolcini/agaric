@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 import type { DiffSpan } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
-import { renderRichContent } from './StaticBlock'
+import { renderRichContent } from './RichContentRenderer'
 
 interface DiffDisplayProps {
   spans: DiffSpan[]

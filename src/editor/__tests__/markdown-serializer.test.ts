@@ -33,7 +33,7 @@ import {
   tableRow,
   tagRef,
   text,
-} from '../types'
+} from './builders'
 
 /** Create a text node with a link mark (and optional additional marks). */
 function linked(t: string, href: string, extraMarks?: TextNode['marks']): TextNode {

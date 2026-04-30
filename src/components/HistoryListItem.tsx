@@ -33,7 +33,7 @@ import { getPayloadRawContent, getPropertyPayload } from '../lib/history-utils'
 import { formatPropertyName } from '../lib/property-utils'
 import type { DiffSpan, HistoryEntry } from '../lib/tauri'
 import { DiffDisplay } from './DiffDisplay'
-import { renderRichContent } from './StaticBlock'
+import { renderRichContent } from './RichContentRenderer'
 
 // ---------------------------------------------------------------------------
 // Badge colour mapping

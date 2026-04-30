@@ -18,13 +18,6 @@ import { QueryBuilderModal } from './QueryBuilderModal'
 import { QueryResultList } from './QueryResultList'
 import { QueryResultTable } from './QueryResultTable'
 
-export type { SortDirection } from '../hooks/useQuerySorting'
-// Re-export sorting utilities for backward compat
-export { compareValues } from '../hooks/useQuerySorting'
-export type { PropertyFilter } from '../lib/query-utils'
-// Re-export extracted utilities so existing consumers don't break
-export { buildFilters, OPERATOR_SYMBOLS, parseQueryExpression } from '../lib/query-utils'
-
 /** Column definition for table mode. */
 interface TableColumn {
   key: string

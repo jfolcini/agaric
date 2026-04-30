@@ -16,7 +16,8 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import { EDITOR_PORTAL_SELECTORS, EditableBlock } from '../EditableBlock'
+import { EDITOR_PORTAL_SELECTORS } from '../../hooks/useEditorBlur'
+import { EditableBlock } from '../EditableBlock'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 

@@ -33,7 +33,7 @@ vi.mock('../../lib/tauri', () => ({
   setScheduledDate: vi.fn(),
 }))
 
-vi.mock('../StaticBlock', () => ({
+vi.mock('../RichContentRenderer', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
 }))
 

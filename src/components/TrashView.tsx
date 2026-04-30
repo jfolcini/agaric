@@ -43,7 +43,7 @@ import {
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
-import { renderRichContent } from './StaticBlock'
+import { renderRichContent } from './RichContentRenderer'
 
 export function TrashView(): React.ReactElement {
   const { t } = useTranslation()

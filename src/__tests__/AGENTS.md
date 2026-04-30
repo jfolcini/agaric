@@ -613,7 +613,7 @@ RTL `cleanup()` is registered manually in `afterEach` since vitest globals are d
 
 22. **Draft autosave race condition** — `saveDraft()` and `discardDraft()` can race when a user blurs the editor during an autosave cycle. Use a version counter: `saveDraft` captures the version before the async call; if the version has incremented (meaning `discardDraft` was called), the save is silently dropped.
 
-23. **EDITOR_PORTAL_SELECTORS must include all overlays** — When adding new overlay elements that appear "inside" the editor area (context menus, pickers, date pickers), their container class/selector must be added to `EDITOR_PORTAL_SELECTORS` in `EditableBlock.tsx`. Otherwise, clicking the overlay triggers `handleBlur`, saving/splitting content prematurely.
+23. **EDITOR_PORTAL_SELECTORS must include all overlays** — When adding new overlay elements that appear "inside" the editor area (context menus, pickers, date pickers), their container class/selector must be added to `EDITOR_PORTAL_SELECTORS` in `src/hooks/useEditorBlur.ts`. Otherwise, clicking the overlay triggers `handleBlur`, saving/splitting content prematurely.
 
 24. **Radix Dialog vs AlertDialog for user input** — Use `Dialog` (not `AlertDialog`) when the modal needs user input (text fields, selects). `AlertDialog` traps focus in a way that makes `autoFocus` on input fields unreliable. `ConfirmDialog` uses `AlertDialog` (confirm/cancel only); input modals use `Dialog`.
 

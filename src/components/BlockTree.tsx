@@ -60,7 +60,7 @@ import { BlockHistorySheet } from './BlockHistorySheet'
 import { BlockListRenderer } from './BlockListRenderer'
 import { BlockPropertyDrawerSheet } from './BlockPropertyDrawerSheet'
 import { BlockZoomBar } from './BlockZoomBar'
-import { BlockContextMenu } from './block-tree/BlockContextMenu'
+import { BlockBatchActionMenu } from './block-tree/BlockBatchActionMenu'
 import { BlockDatePicker } from './block-tree/BlockDatePicker'
 import { BlockDndOverlay } from './block-tree/BlockDndOverlay'
 import { TemplatePicker } from './block-tree/TemplatePicker'
@@ -799,7 +799,7 @@ export function BlockTree({
         onNavigate={handleZoomIn}
         onZoomToRoot={zoomToRoot}
       />
-      <BlockContextMenu
+      <BlockBatchActionMenu
         selectedBlockIds={selectedBlockIds}
         batchInProgress={batchInProgress}
         batchDeleteConfirm={batchDeleteConfirm}

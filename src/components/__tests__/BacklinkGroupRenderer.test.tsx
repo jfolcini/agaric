@@ -20,7 +20,7 @@ import { axe } from 'vitest-axe'
 import { makeBlock } from '../../__tests__/fixtures'
 import type { BacklinkGroup, BlockRow } from '../../lib/tauri'
 import { BacklinkGroupRenderer } from '../BacklinkGroupRenderer'
-import { renderRichContent } from '../StaticBlock'
+import { renderRichContent } from '../RichContentRenderer'
 
 vi.mock('../PageLink', () => ({
   PageLink: ({
@@ -43,7 +43,7 @@ vi.mock('../PageLink', () => ({
   ),
 }))
 
-vi.mock('../StaticBlock', () => ({
+vi.mock('../RichContentRenderer', () => ({
   renderRichContent: vi.fn((content: string, _options?: unknown) => content),
 }))
 
