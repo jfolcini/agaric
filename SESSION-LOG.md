@@ -1,5 +1,54 @@
 # Session Log
 
+## Session 575 — Close MAINT-131 StaticBlock half (full-list batch IPC + cache invalidation contract) (2026-04-30)
+
+**MAINT-131 substantial close in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent + 1 orchestrator nit-fix.** Closed the StaticBlock per-row IPC half of MAINT-131 — the per-block `useBlockAttachments(blockId) → listAttachments(blockId)` IPC fired by every StaticBlock row (50 IPCs/page) is replaced with a single batched `list_attachments_batch(block_ids)` IPC mounted at the BlockTree level via a new `useBatchAttachments` context provider. The provider exposes a `{ get, loading, invalidate }` API; `useBlockAttachments.handleAdd/handleDelete` calls `invalidate(blockId)` after each mutation to keep StaticBlock's batch-derived view consistent with AttachmentList drawer mutations. **Both per-block IPC halves of MAINT-131 are now batched** (sessions 572 + 575); only the `useBlockReschedule` + `useLinkMetadata` hook wraps remain (MAINT-131 downgraded M → S).
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 23 → 23 (MAINT-131 row STAYS — both batch IPC halves done; remaining: 2 hook wraps).
+- **Previously-resolved counter:** 825+ → 826+ across 541 → 542 sessions.
+
+**Items closed (1 sub-row of MAINT-131):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-131 StaticBlock full-list batch IPC + cache invalidation | Backend: `src-tauri/src/commands/attachments.rs` (+70L: `list_attachments_batch_inner` (40L) + Tauri `#[tauri::command]` wrapper (12L)); `src-tauri/src/commands/mod.rs` (3 re-export blocks updated); `src-tauri/src/lib.rs` (+1L: `agaric_commands!` macro entry). Frontend new (2): `src/hooks/useBatchAttachments.tsx` (~115L: provider + hook with `{ get, loading, invalidate }` API; mirrors `useBatchAttachmentCounts.tsx` shape but returns a value object instead of a bare Map); `src/hooks/__tests__/useBatchAttachments.test.tsx` (~307L, 8 tests covering all required edge cases). Frontend modified: `src/lib/tauri.ts` (+16L `getBatchAttachments` wrapper); `src/components/BlockTree.tsx` (+1 import + provider wrap inside `BatchAttachmentCountsProvider` with the same `allBlockIds` slice); `src/components/StaticBlock.tsx` (replaced `useBlockAttachments(blockId)` with `useBatchAttachments()?.get(blockId) ?? []` + `loading` fallback; removed `useBlockAttachments` import); `src/hooks/useBlockAttachments.ts` (+invalidate calls in `handleAddAttachment` and `handleDeleteAttachment` — order: local setState first for instant feedback, then `invalidate(blockId)` triggers batch refetch); `src/components/__tests__/StaticBlock.test.tsx` (mock rewrite from `useBlockAttachments` to `useBatchAttachments`, 10 sites updated, test count unchanged at 134). Tauri-mock: `src/lib/tauri-mock/handlers.ts` (+15L `list_attachments_batch` handler) + `src/lib/__tests__/tauri-mock.test.ts` (+30L, 2 mock-handler tests). **Tests:** 5 new Rust tests in `block_cmd_tests.rs` (`returns_full_lists_per_block`, `empty_input_returns_empty_map`, `unknown_ids_omitted`, `filters_by_block_id`, `attachment_row_shape_matches_list_attachments`) + 8 new frontend hook tests + 2 tauri-mock tests = **15 new tests total**. **Cache invalidation contract:** `useBatchAttachments.invalidate(blockId)` bumps an internal `invalidationToken` counter that's in the `useEffect` deps → the effect re-runs and refetches the entire batch. The `_blockId` arg is currently UNUSED (reserved for a future surgical-update API). The `let stale = true` cleanup pattern handles overlapping fetches (older fetch's resolution discarded). **Outside-provider safety:** `useBatchAttachments()` returns `null`, so `?.invalidate(...)` from `useBlockAttachments` is a no-op when the AttachmentList drawer mounts standalone. — Subagents 47d35114 (Rust), ae014eb2 (Frontend); reviewer 9a12ebb4 (APPROVE) |
+
+**Process notes:**
+
+- **2 parallel build subagents + 1 review subagent + 1 orchestrator nit-fix.** Both build subagents succeeded on the first attempt. The review subagent's only nit was a confusing variable name (`counts` storing `Map<string, AttachmentRow[]>` — full lists, not counts). Orchestrator renamed to `attachmentsByBlock` for clarity.
+- **Race condition analysis (cache invalidation):** the reviewer walked through:
+  1. User clicks "add attachment" → `addAttachment` IPC → success
+  2. `setAttachments((prev) => [...prev, row])` (sync, schedules re-render)
+  3. `batchProvider?.invalidate(blockId)` → bumps `invalidationToken` from N to N+1 (sync)
+  4. React batches: re-renders with new local state + new token
+  5. Effect re-runs with new token, fetches batch
+  6. If user immediately clicks "delete" before the batch refetch resolves: the second invalidate triggers token N+1 → N+2 → effect re-runs again. The older fetch's `stale = true` cleanup prevents a setState-after-unmount race.
+- **Drift discovered + fixed (orchestrator nit):** subagent's initial implementation used a `useRef(blockIds)` to avoid stale-closure issues, then read `blockIdsRef.current` inside the effect. This caused biome's `useExhaustiveDependencies` rule to fire with "MORE deps than necessary" — because `stableKey` and `invalidationToken` weren't read inside the effect body. Orchestrator simplified to read `blockIds` directly inside the effect (the deps `stableKey + invalidationToken` ensure the effect re-runs with the freshest `blockIds` from the surrounding render). Removed the unused `useRef` import and the `blockIdsRef` line. Moved the `// biome-ignore lint/correctness/useExhaustiveDependencies` comment ABOVE the `useEffect(...)` line (where biome looks for it).
+- **One transient prek vitest flake** on `SearchPanel.test.tsx > navigates to parent page when block has parent_id (UX-176)` — passed in standalone re-run. Same flake as sessions 572/573.
+- **Drift discovered (subagent flagged):** the subagent used `tokio::time::sleep(Duration::from_millis(5))` between two `add_attachment_inner` calls in the first Rust test to ensure deterministic `created_at` ordering (millisecond precision in `now_rfc3339()`). Worth noting in the test-conventions documentation if not already there.
+- **`cargo sqlx prepare`** ran cleanly; new query hash `query-3286dbbd1ed8b20f8c80c3deb6249c0c9d3fed3bd44f956f76ad695eb756a12b.json` committed.
+- **`bindings.ts` regeneration** by Rust subagent's `cargo test -- specta_tests --ignored` produced cosmetic whitespace re-formatting in pre-existing JSDoc comments — not from this session's code changes (specta artifact).
+- **No FEATURE-MAP.md update needed** — internal perf optimization for an existing feature (attachments).
+
+**Files touched (this session's batch):**
+
+- Backend new: 0.
+- Backend modified: `src-tauri/src/commands/attachments.rs`, `src-tauri/src/commands/mod.rs`, `src-tauri/src/lib.rs`, `src-tauri/src/commands/tests/block_cmd_tests.rs`, `src-tauri/.sqlx/query-3286dbbd…json` (new sqlx cache entry).
+- Frontend new (2): `src/hooks/useBatchAttachments.tsx`, `src/hooks/__tests__/useBatchAttachments.test.tsx`.
+- Frontend modified (7): `src/lib/tauri.ts`, `src/lib/tauri-mock/handlers.ts`, `src/lib/__tests__/tauri-mock.test.ts`, `src/lib/bindings.ts` (auto-regen), `src/components/BlockTree.tsx`, `src/components/StaticBlock.tsx`, `src/hooks/useBlockAttachments.ts`, `src/components/__tests__/StaticBlock.test.tsx`.
+- Docs: `REVIEW-LATER.md` (MAINT-131 row collapsed: detail section rewritten with both batch IPCs marked done; only 2 hook wraps remaining; cost downgraded M → S). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after orchestrator nit-fix + biome auto-format pass).
+
+- Rust: `cargo nextest run --lib block_cmd_tests::list_attachments_batch` → **5/5 passed**. Existing `list_attachments` (3) and `get_batch_attachment_counts` (4) tests still pass. `cargo nextest run --workspace` → **3245 passed** (1 unrelated `sync_files` flake retried green).
+- Frontend: `npx vitest run src/hooks/__tests__/useBatchAttachments` → **8/8 passed**. StaticBlock regression: 134/134. BlockTree regression: 209/209. AttachmentList regression: 36/36. useBlockAttachments regression: 15/15. SortableBlock regression: 209/209. tauri-mock: 215/215. **Combined: 5 files, 554 tests passed.**
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome: clean.
+
+---
+
 ## Session 574 — MAINT-125 batch-1 (11 block-domain wrappers via `unwrap` helper) + MAINT-162 PageBrowser grid flip (5 of 6 components closed) (2026-04-30)
 
 **2 disjoint MAINT items closed in one PROMPT.md batch with 2 parallel build subagents (no review subagent — both tasks are mechanical with strong test coverage).** Made first concrete progress on REVIEW-LATER MAINT-125 by migrating 11 block-domain wrappers in `src/lib/tauri.ts` from raw `invoke('cmd', { args })` calls to `commands.cmd(...)` from the auto-generated `src/lib/bindings.ts` (via a new internal `unwrap` helper that throws on `status: 'error'` to preserve the existing reject-based public API). And closed MAINT-162's PageBrowser grid flip (the FEAT-14 mixed-mode case with the hard `aria-required-children` violation) — only StaticBlock remains in MAINT-162.

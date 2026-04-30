@@ -11,7 +11,7 @@
 import type React from 'react'
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useBlockAttachments } from '../hooks/useBlockAttachments'
+import { useBatchAttachments } from '../hooks/useBatchAttachments'
 import { useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { logger } from '../lib/logger'
 import { openUrl } from '../lib/open-url'
@@ -95,7 +95,15 @@ function StaticBlockInner({
     [content],
   )
 
-  const { attachments, loading: attachmentsLoading } = useBlockAttachments(blockId)
+  // MAINT-131 StaticBlock half: read from the BatchAttachmentsProvider
+  // mounted at the BlockTree level so we don't fire one
+  // `listAttachments` IPC per static block on every page render. Outside
+  // a provider (e.g. unit tests, isolated rendering) the hook returns
+  // `null` and we fall back to "no attachments" — matches the previous
+  // pre-fetch state of `useBlockAttachments`.
+  const batchAttachments = useBatchAttachments()
+  const attachments = batchAttachments?.get(blockId) ?? []
+  const attachmentsLoading = batchAttachments?.loading ?? false
 
   // PDF viewer dialog state
   const [pdfViewerOpen, setPdfViewerOpen] = useState(false)

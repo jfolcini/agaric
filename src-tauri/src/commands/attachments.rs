@@ -343,6 +343,63 @@ pub async fn get_batch_attachment_counts_inner(
         .collect())
 }
 
+/// Batch-fetch full attachment lists for many blocks in one query.
+///
+/// Returns a `HashMap<block_id, Vec<AttachmentRow>>` where missing block IDs
+/// (those with no attachments OR not present in the database) are simply
+/// absent from the map. Frontend callers should default missing keys to `[]`.
+///
+/// Uses `json_each()` so the full ID list is passed as a single JSON-encoded
+/// bind parameter — no dynamic SQL construction. Mirrors the pattern used in
+/// `get_batch_attachment_counts_inner` and `commands/blocks/queries.rs::batch_resolve_inner`.
+///
+/// Empty `block_ids` returns an empty map (not an error). This matches the
+/// frontend pattern where a page with no blocks should not fail.
+///
+/// MAINT-131 StaticBlock half — replaces N per-block `list_attachments` IPCs
+/// with a single batched query mounted at the BlockTree level.
+///
+/// # Errors
+///
+/// - [`AppError::Database`] — on query failure
+#[instrument(skip(pool, block_ids), err)]
+pub async fn list_attachments_batch_inner(
+    pool: &SqlitePool,
+    block_ids: Vec<String>,
+) -> Result<std::collections::HashMap<String, Vec<AttachmentRow>>, AppError> {
+    if block_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let ids_json = serde_json::to_string(&block_ids)?;
+
+    // Fetch ALL attachments for the given block IDs in one query, then group
+    // by block_id in Rust. Same column order as `list_attachments_inner` so
+    // the per-row shape is identical.
+    let rows = sqlx::query_as!(
+        AttachmentRow,
+        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at \
+         FROM attachments \
+         WHERE block_id IN (SELECT value FROM json_each(?)) \
+         ORDER BY block_id, created_at",
+        ids_json
+    )
+    .fetch_all(pool)
+    .await?;
+
+    // Group by block_id. Sorted-by-block_id input means the Rust grouping
+    // step is O(n) without a HashMap-of-Vec build — but a HashMap is the
+    // natural return type for the frontend. Use Entry::or_insert_with(Vec::new)
+    // and push.
+    let mut grouped: std::collections::HashMap<String, Vec<AttachmentRow>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        grouped.entry(row.block_id.clone()).or_default().push(row);
+    }
+
+    Ok(grouped)
+}
+
 /// Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
@@ -426,6 +483,19 @@ pub async fn get_batch_attachment_counts(
     block_ids: Vec<String>,
 ) -> Result<std::collections::HashMap<String, u32>, AppError> {
     get_batch_attachment_counts_inner(&pool.0, block_ids)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: batch-fetch full attachment lists. Delegates to [`list_attachments_batch_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_attachments_batch(
+    pool: State<'_, ReadPool>,
+    block_ids: Vec<String>,
+) -> Result<std::collections::HashMap<String, Vec<AttachmentRow>>, AppError> {
+    list_attachments_batch_inner(&pool.0, block_ids)
         .await
         .map_err(sanitize_internal_error)
 }

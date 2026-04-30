@@ -1258,6 +1258,22 @@ export const HANDLERS: Record<string, Handler> = {
     return counts
   },
 
+  // MAINT-131 StaticBlock half: full-list batch to replace per-block
+  // list_attachments IPCs in StaticBlock inline-image-render decisions.
+  list_attachments_batch: (args) => {
+    const a = args as Record<string, unknown>
+    const blockIds = (a['blockIds'] as string[]) ?? []
+    const result: Record<string, unknown[]> = {}
+    for (const att of attachments.values()) {
+      const bid = att['block_id'] as string
+      if (blockIds.includes(bid)) {
+        result[bid] = result[bid] ?? []
+        result[bid].push(att)
+      }
+    }
+    return result
+  },
+
   add_attachment: (args) => {
     const a = args as Record<string, unknown>
     const row = {

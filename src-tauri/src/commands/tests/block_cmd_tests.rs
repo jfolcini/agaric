@@ -3033,6 +3033,303 @@ async fn get_batch_attachment_counts_filters_by_block_id() {
     mat.shutdown();
 }
 
+// ======================================================================
+// list_attachments_batch (MAINT-131)
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_attachments_batch_returns_full_lists_per_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Three blocks: A (2 attachments), B (1 attachment), C (0 attachments).
+    let block_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block a".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let block_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block b".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    let block_c = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block c".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    std::fs::write(app_data_dir.join("attachments/a1.png"), vec![0u8; 10]).unwrap();
+    std::fs::write(app_data_dir.join("attachments/a2.pdf"), vec![0u8; 20]).unwrap();
+    std::fs::write(app_data_dir.join("attachments/b1.txt"), vec![0u8; 5]).unwrap();
+
+    add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_a.id.clone(),
+        "a1.png".into(),
+        "image/png".into(),
+        10,
+        "attachments/a1.png".into(),
+    )
+    .await
+    .unwrap();
+    // `now_rfc3339()` resolves to millisecond precision; sleep so the two
+    // block_a attachments get strictly increasing `created_at` values and
+    // the ORDER BY-driven assertion below is deterministic.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_a.id.clone(),
+        "a2.pdf".into(),
+        "application/pdf".into(),
+        20,
+        "attachments/a2.pdf".into(),
+    )
+    .await
+    .unwrap();
+    add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_b.id.clone(),
+        "b1.txt".into(),
+        "text/plain".into(),
+        5,
+        "attachments/b1.txt".into(),
+    )
+    .await
+    .unwrap();
+
+    let grouped = list_attachments_batch_inner(
+        &pool,
+        vec![block_a.id.clone(), block_b.id.clone(), block_c.id.clone()],
+    )
+    .await
+    .unwrap();
+
+    let a_rows = grouped.get(&block_a.id).expect("block_a must be present");
+    assert_eq!(a_rows.len(), 2, "block_a should have 2 attachments");
+    assert_eq!(
+        a_rows[0].filename, "a1.png",
+        "block_a's first attachment (by created_at) should be a1.png"
+    );
+    assert_eq!(a_rows[0].mime_type, "image/png");
+    assert_eq!(
+        a_rows[1].filename, "a2.pdf",
+        "block_a's second attachment (by created_at) should be a2.pdf"
+    );
+    assert_eq!(a_rows[1].mime_type, "application/pdf");
+
+    let b_rows = grouped.get(&block_b.id).expect("block_b must be present");
+    assert_eq!(b_rows.len(), 1, "block_b should have 1 attachment");
+    assert_eq!(b_rows[0].filename, "b1.txt");
+    assert_eq!(b_rows[0].mime_type, "text/plain");
+
+    assert!(
+        !grouped.contains_key(&block_c.id),
+        "block_c (no attachments) must be absent from the map, not present with an empty Vec"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_attachments_batch_empty_input_returns_empty_map() {
+    let (pool, _dir) = test_pool().await;
+
+    let grouped = list_attachments_batch_inner(&pool, vec![]).await.unwrap();
+    assert!(
+        grouped.is_empty(),
+        "empty input must return an empty map (not an error)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_attachments_batch_unknown_ids_omitted() {
+    let (pool, _dir) = test_pool().await;
+
+    let grouped = list_attachments_batch_inner(&pool, vec!["NONEXISTENT_ULID_01HZ".into()])
+        .await
+        .unwrap();
+    assert!(
+        grouped.is_empty(),
+        "unknown block IDs must be silently omitted from the result map"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_attachments_batch_filters_by_block_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block a".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let block_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block b".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    std::fs::write(app_data_dir.join("attachments/a1.png"), vec![0u8; 10]).unwrap();
+    std::fs::write(app_data_dir.join("attachments/b1.txt"), vec![0u8; 5]).unwrap();
+
+    add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_a.id.clone(),
+        "a1.png".into(),
+        "image/png".into(),
+        10,
+        "attachments/a1.png".into(),
+    )
+    .await
+    .unwrap();
+    add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_b.id.clone(),
+        "b1.txt".into(),
+        "text/plain".into(),
+        5,
+        "attachments/b1.txt".into(),
+    )
+    .await
+    .unwrap();
+
+    // Only ask about block_a — block_b's row must be filtered out by the IN clause.
+    let grouped = list_attachments_batch_inner(&pool, vec![block_a.id.clone()])
+        .await
+        .unwrap();
+
+    let a_rows = grouped.get(&block_a.id).expect("block_a must be present");
+    assert_eq!(a_rows.len(), 1, "block_a should have 1 attachment");
+    assert_eq!(a_rows[0].filename, "a1.png");
+    assert!(
+        !grouped.contains_key(&block_b.id),
+        "block_b must not appear when only block_a was requested"
+    );
+    assert_eq!(
+        grouped.len(),
+        1,
+        "result map must contain exactly the one queried block"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_attachments_batch_attachment_row_shape_matches_list_attachments() {
+    // Pins the contract that the batch IPC returns identical per-row shape
+    // to the single-block IPC. Frontend code that previously read a row
+    // from `list_attachments` must be able to read the same row from
+    // `list_attachments_batch` without any field mapping.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "shape block".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    std::fs::write(app_data_dir.join("attachments/shape.png"), vec![0u8; 7]).unwrap();
+
+    add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "shape.png".into(),
+        "image/png".into(),
+        7,
+        "attachments/shape.png".into(),
+    )
+    .await
+    .unwrap();
+
+    let single = list_attachments_inner(&pool, block.id.clone())
+        .await
+        .unwrap();
+    let batch = list_attachments_batch_inner(&pool, vec![block.id.clone()])
+        .await
+        .unwrap();
+
+    assert_eq!(single.len(), 1, "single-block IPC should return 1 row");
+    let batch_rows = batch
+        .get(&block.id)
+        .expect("block must be present in batch");
+    assert_eq!(batch_rows.len(), 1, "batch IPC should return 1 row");
+
+    let s = &single[0];
+    let b = &batch_rows[0];
+    assert_eq!(s.id, b.id, "id must match");
+    assert_eq!(s.block_id, b.block_id, "block_id must match");
+    assert_eq!(s.mime_type, b.mime_type, "mime_type must match");
+    assert_eq!(s.filename, b.filename, "filename must match");
+    assert_eq!(s.size_bytes, b.size_bytes, "size_bytes must match");
+    assert_eq!(s.fs_path, b.fs_path, "fs_path must match");
+    assert_eq!(s.created_at, b.created_at, "created_at must match");
+
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_attachments_returns_rows_with_deleted_at_set() {
     // M-28: `attachments.deleted_at` is dead code — no production path ever

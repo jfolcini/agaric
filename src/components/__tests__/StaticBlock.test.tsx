@@ -32,8 +32,10 @@ vi.mock('@tauri-apps/api/core', () => ({
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${encodeURIComponent(path)}`),
 }))
 
-vi.mock('../../hooks/useBlockAttachments', () => ({
-  useBlockAttachments: vi.fn(),
+// MAINT-131: StaticBlock now reads attachments from the
+// BatchAttachmentsProvider context instead of `useBlockAttachments`.
+vi.mock('../../hooks/useBatchAttachments', () => ({
+  useBatchAttachments: vi.fn(),
 }))
 
 vi.mock('../../editor/markdown-serializer', async (importOriginal) => {
@@ -51,8 +53,21 @@ vi.mock('../../lib/tauri', async (importOriginal) => {
 })
 
 // Lazy-import after mocks are hoisted so we get the mocked version.
-const { useBlockAttachments } = await import('../../hooks/useBlockAttachments')
-const mockedUseBlockAttachments = vi.mocked(useBlockAttachments)
+const { useBatchAttachments } = await import('../../hooks/useBatchAttachments')
+const mockedUseBatchAttachments = vi.mocked(useBatchAttachments)
+
+/**
+ * Convenience: build a mock return for `useBatchAttachments` that maps
+ * the test-only block id `'B1'` to the supplied attachment list. All
+ * other ids return undefined (matches the "block not in cache" path).
+ */
+function mockBatchAttachments(attachments: AttachmentRow[], options: { loading?: boolean } = {}) {
+  mockedUseBatchAttachments.mockReturnValue({
+    get: (id: string) => (id === 'B1' ? attachments : undefined),
+    loading: options.loading ?? false,
+    invalidate: vi.fn(),
+  })
+}
 
 const { parse } = await import('../../editor/markdown-serializer')
 const mockedParse = vi.mocked(parse)
@@ -85,12 +100,7 @@ describe('StaticBlock', () => {
     // Restore default behavior for mocked tauri functions
     mockedGetProperties.mockResolvedValue([])
     mockedSetProperty.mockResolvedValue({} as never)
-    mockedUseBlockAttachments.mockReturnValue({
-      attachments: [],
-      loading: false,
-      handleAddAttachment: vi.fn(),
-      handleDeleteAttachment: vi.fn(),
-    })
+    mockBatchAttachments([])
     delete (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__']
   })
 
@@ -859,12 +869,7 @@ describe('StaticBlock', () => {
 
     it('renders image attachment as <img> when Tauri is available', () => {
       ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
-      mockedUseBlockAttachments.mockReturnValue({
-        attachments: [makeAttachment()],
-        loading: false,
-        handleAddAttachment: vi.fn(),
-        handleDeleteAttachment: vi.fn(),
-      })
+      mockBatchAttachments([makeAttachment()])
 
       const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
@@ -879,20 +884,15 @@ describe('StaticBlock', () => {
     })
 
     it('renders non-image attachment as file chip', () => {
-      mockedUseBlockAttachments.mockReturnValue({
-        attachments: [
-          makeAttachment({
-            id: 'att-2',
-            filename: 'document.pdf',
-            mime_type: 'application/pdf',
-            size_bytes: 2048,
-            fs_path: '/path/to/document.pdf',
-          }),
-        ],
-        loading: false,
-        handleAddAttachment: vi.fn(),
-        handleDeleteAttachment: vi.fn(),
-      })
+      mockBatchAttachments([
+        makeAttachment({
+          id: 'att-2',
+          filename: 'document.pdf',
+          mime_type: 'application/pdf',
+          size_bytes: 2048,
+          fs_path: '/path/to/document.pdf',
+        }),
+      ])
 
       render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
@@ -909,12 +909,7 @@ describe('StaticBlock', () => {
     })
 
     it('shows nothing when attachments are loading', () => {
-      mockedUseBlockAttachments.mockReturnValue({
-        attachments: [],
-        loading: true,
-        handleAddAttachment: vi.fn(),
-        handleDeleteAttachment: vi.fn(),
-      })
+      mockBatchAttachments([], { loading: true })
 
       const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
@@ -923,26 +918,21 @@ describe('StaticBlock', () => {
 
     it('handles multiple attachments (mix of images and files)', () => {
       ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
-      mockedUseBlockAttachments.mockReturnValue({
-        attachments: [
-          makeAttachment({ id: 'att-1', filename: 'photo.png', mime_type: 'image/png' }),
-          makeAttachment({
-            id: 'att-2',
-            filename: 'notes.txt',
-            mime_type: 'text/plain',
-            size_bytes: 512,
-          }),
-          makeAttachment({
-            id: 'att-3',
-            filename: 'archive.zip',
-            mime_type: 'application/zip',
-            size_bytes: 1048576,
-          }),
-        ],
-        loading: false,
-        handleAddAttachment: vi.fn(),
-        handleDeleteAttachment: vi.fn(),
-      })
+      mockBatchAttachments([
+        makeAttachment({ id: 'att-1', filename: 'photo.png', mime_type: 'image/png' }),
+        makeAttachment({
+          id: 'att-2',
+          filename: 'notes.txt',
+          mime_type: 'text/plain',
+          size_bytes: 512,
+        }),
+        makeAttachment({
+          id: 'att-3',
+          filename: 'archive.zip',
+          mime_type: 'application/zip',
+          size_bytes: 1048576,
+        }),
+      ])
 
       const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
@@ -960,12 +950,7 @@ describe('StaticBlock', () => {
 
     it('does not render image when Tauri is not available', () => {
       // __TAURI_INTERNALS__ is not set (cleaned up by beforeEach)
-      mockedUseBlockAttachments.mockReturnValue({
-        attachments: [makeAttachment()],
-        loading: false,
-        handleAddAttachment: vi.fn(),
-        handleDeleteAttachment: vi.fn(),
-      })
+      mockBatchAttachments([makeAttachment()])
 
       const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
@@ -974,19 +959,14 @@ describe('StaticBlock', () => {
     })
 
     it('renders text chip for text/plain attachment with FileText icon', () => {
-      mockedUseBlockAttachments.mockReturnValue({
-        attachments: [
-          makeAttachment({
-            id: 'att-txt',
-            filename: 'readme.txt',
-            mime_type: 'text/plain',
-            size_bytes: 256,
-          }),
-        ],
-        loading: false,
-        handleAddAttachment: vi.fn(),
-        handleDeleteAttachment: vi.fn(),
-      })
+      mockBatchAttachments([
+        makeAttachment({
+          id: 'att-txt',
+          filename: 'readme.txt',
+          mime_type: 'text/plain',
+          size_bytes: 256,
+        }),
+      ])
 
       render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
@@ -995,19 +975,14 @@ describe('StaticBlock', () => {
     })
 
     it('has no a11y violations with attachments', async () => {
-      mockedUseBlockAttachments.mockReturnValue({
-        attachments: [
-          makeAttachment({
-            id: 'att-pdf',
-            filename: 'report.pdf',
-            mime_type: 'application/pdf',
-            size_bytes: 2048,
-          }),
-        ],
-        loading: false,
-        handleAddAttachment: vi.fn(),
-        handleDeleteAttachment: vi.fn(),
-      })
+      mockBatchAttachments([
+        makeAttachment({
+          id: 'att-pdf',
+          filename: 'report.pdf',
+          mime_type: 'application/pdf',
+          size_bytes: 2048,
+        }),
+      ])
 
       const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
@@ -1017,12 +992,7 @@ describe('StaticBlock', () => {
 
     it('has no a11y violations with image attachment (Tauri available)', async () => {
       ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
-      mockedUseBlockAttachments.mockReturnValue({
-        attachments: [makeAttachment()],
-        loading: false,
-        handleAddAttachment: vi.fn(),
-        handleDeleteAttachment: vi.fn(),
-      })
+      mockBatchAttachments([makeAttachment()])
 
       const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
@@ -1049,12 +1019,7 @@ describe('StaticBlock', () => {
 
     function renderWithImage(props: Partial<Parameters<typeof StaticBlock>[0]> = {}) {
       ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
-      mockedUseBlockAttachments.mockReturnValue({
-        attachments: [makeAttachment()],
-        loading: false,
-        handleAddAttachment: vi.fn(),
-        handleDeleteAttachment: vi.fn(),
-      })
+      mockBatchAttachments([makeAttachment()])
       return render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} {...props} />)
     }
 
@@ -1098,12 +1063,7 @@ describe('StaticBlock', () => {
 
     it('applies stored width from properties', async () => {
       ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
-      mockedUseBlockAttachments.mockReturnValue({
-        attachments: [makeAttachment()],
-        loading: false,
-        handleAddAttachment: vi.fn(),
-        handleDeleteAttachment: vi.fn(),
-      })
+      mockBatchAttachments([makeAttachment()])
       // getProperties returns image_width = '50'
       mockedGetProperties.mockResolvedValueOnce([
         {
