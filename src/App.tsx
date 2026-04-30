@@ -16,6 +16,7 @@ import { ScrollArea } from './components/ui/scroll-area'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
 import { ViewHeaderOutletProvider, ViewHeaderOutletSlot } from './components/ViewHeaderOutlet'
+import { useAppDialogs } from './hooks/useAppDialogs'
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
 import { useDeepLinkRouter } from './hooks/useDeepLinkRouter'
 import { useIsMobile } from './hooks/useIsMobile'
@@ -28,9 +29,7 @@ import { useSyncTrigger } from './hooks/useSyncTrigger'
 import { useTheme } from './hooks/useTheme'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
 import { announce } from './lib/announcer'
-import { BUG_REPORT_EVENT, type BugReportEventDetail } from './lib/bug-report-events'
 import { logger } from './lib/logger'
-import { CLOSE_ALL_OVERLAYS_EVENT } from './lib/overlay-events'
 import { setPriorityLevels } from './lib/priority-levels'
 import {
   loadQuickCaptureShortcut,
@@ -330,30 +329,28 @@ function App() {
   const { syncing, syncAll } = useSyncTrigger()
   const isOnline = useOnlineStatus()
   const isMobile = useIsMobile()
-  const [shortcutsOpen, setShortcutsOpen] = useState(false)
-  // UX-279: top-level BugReportDialog mount that listens for the
-  // `BUG_REPORT_EVENT` global event from `FeatureErrorBoundary`. The
-  // section-level boundary can't open the dialog directly because it lives
-  // inside the crashed subtree — a global event lets it bubble to the
-  // shell without prop-drilling.
-  const [bugReportOpen, setBugReportOpen] = useState<boolean>(false)
-  const [bugReportPrefill, setBugReportPrefill] = useState<BugReportEventDetail | null>(null)
-  // FEAT-12: quick-capture dialog open state. Driven by the global
-  // shortcut handler registered below; the dialog itself is mounted
-  // unconditionally so we don't need a Suspense fallback for it.
-  const [quickCaptureOpen, setQuickCaptureOpen] = useState<boolean>(false)
+  // MAINT-124 step 3: shell-level dialog state (4 dialogs + their
+  // event listeners) lives in `useAppDialogs`. The dialog JSX stays in
+  // this file — the hook only owns the open/closed booleans, the
+  // bug-report prefill payload, and the `BUG_REPORT_EVENT` /
+  // `CLOSE_ALL_OVERLAYS_EVENT` listeners that drive them.
+  const {
+    bugReportOpen,
+    setBugReportOpen,
+    bugReportPrefill,
+    setBugReportPrefill,
+    quickCaptureOpen,
+    setQuickCaptureOpen,
+    showNoPeersDialog,
+    setShowNoPeersDialog,
+    shortcutsOpen,
+    setShortcutsOpen,
+  } = useAppDialogs()
   // FEAT-12: lift the chord into state so the registration effect
   // re-runs when SettingsView changes it. Lazy-init from localStorage
   // so we don't read on every render. The storage-event listener
   // below feeds new chords into this state.
   const [quickCaptureChord, setQuickCaptureChord] = useState<string>(loadQuickCaptureShortcut)
-  // BUG-2: gate the sidebar Sync click on a paired-peers check. When
-  // there are zero peers we open this dialog instead of forwarding to
-  // `syncAll()` (which would silently short-circuit at the
-  // `peers.length === 0` branch and leave the user with no signpost
-  // to the pairing flow). The dialog opens via local state only — no
-  // store, no IPC event — because this is a single use site.
-  const [showNoPeersDialog, setShowNoPeersDialog] = useState<boolean>(false)
   const mainContentRef = useRef<HTMLDivElement | null>(null)
 
   // The main content scroller is a `ScrollArea`; `mainContentRef` points at
@@ -521,22 +518,6 @@ function App() {
     return () => cancelAnimationFrame(id)
   }, [currentView])
 
-  // ── Bug-report event listener (UX-279) ────────────────────────────
-  // FeatureErrorBoundary dispatches `BUG_REPORT_EVENT` from its "Report
-  // bug" button. The boundary is inside the crashed subtree and can't
-  // open a dialog itself, so the App shell mounts a top-level
-  // BugReportDialog and opens it here with the event detail pre-filled.
-  useEffect(() => {
-    function handleReportBug(e: Event) {
-      const detail = (e as CustomEvent<BugReportEventDetail>).detail
-      if (detail == null) return
-      setBugReportPrefill(detail)
-      setBugReportOpen(true)
-    }
-    window.addEventListener(BUG_REPORT_EVENT, handleReportBug)
-    return () => window.removeEventListener(BUG_REPORT_EVENT, handleReportBug)
-  }, [])
-
   // ── Op-level undo/redo shortcuts (Ctrl+Z / Ctrl+Y) ─────────────────
   useUndoShortcuts()
 
@@ -555,9 +536,9 @@ function App() {
   // ── App-level keyboard shortcuts (MAINT-124 step 1) ────────────────
   // All five in-app keydown listeners (journal, global, space,
   // close-overlays, tab) live inside `useAppKeyboardShortcuts`. The
-  // FEAT-12 OS-level chord (`registerGlobalShortcut`) and the
-  // CLOSE_ALL_OVERLAYS_EVENT bridge below stay here because they listen
-  // for events other than `keydown`.
+  // FEAT-12 OS-level chord (`registerGlobalShortcut`) below stays here
+  // because it interacts with Tauri APIs and the local
+  // `quickCaptureChord` state.
   useAppKeyboardShortcuts({ t, isMobile })
 
   // ── FEAT-12: register the quick-capture global hotkey ─────────────
@@ -641,19 +622,7 @@ function App() {
         )
       })
     }
-  }, [quickCaptureChord])
-
-  // ── Close the shortcuts sheet when "close all overlays" fires ───────
-  // UX-228: the sheet is Radix-managed and already closes when Escape is
-  // pressed *inside* it, but if focus has drifted elsewhere the global
-  // handler above is what dismisses it.
-  useEffect(() => {
-    function handleClose() {
-      setShortcutsOpen(false)
-    }
-    window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, handleClose)
-    return () => window.removeEventListener(CLOSE_ALL_OVERLAYS_EVENT, handleClose)
-  }, [])
+  }, [quickCaptureChord, setQuickCaptureOpen])
 
   const handleNewPage = useCallback(async () => {
     // FEAT-3 Phase 2 — route through the atomic `createPageInSpace`
@@ -715,7 +684,7 @@ function App() {
       return
     }
     void syncAll()
-  }, [syncAll])
+  }, [syncAll, setShowNoPeersDialog])
 
   // BUG-2: CTA handler for the NoPeersDialog. Pre-selects the Sync tab
   // via the `?settings=sync` URL param mechanism (UX-276) — SettingsView
@@ -725,7 +694,7 @@ function App() {
     setShowNoPeersDialog(false)
     setSettingsTabInUrl('sync')
     setView('settings')
-  }, [setView])
+  }, [setView, setShowNoPeersDialog])
 
   const activePage = pageStack.length > 0 ? pageStack[pageStack.length - 1] : null
 
