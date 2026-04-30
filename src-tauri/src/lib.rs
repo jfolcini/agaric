@@ -133,6 +133,7 @@ macro_rules! agaric_commands {
             $crate::commands::add_attachment,
             $crate::commands::delete_attachment,
             $crate::commands::list_attachments,
+            $crate::commands::get_batch_attachment_counts,
             // Graph visualization (F-33)
             $crate::commands::list_page_links,
             // Draft autosave (F-17)

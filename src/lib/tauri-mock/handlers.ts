@@ -1242,6 +1242,22 @@ export const HANDLERS: Record<string, Handler> = {
     return [...attachments.values()].filter((att) => att['block_id'] === blockId)
   },
 
+  // MAINT-131: batch counts to replace per-block list_attachments IPCs in
+  // SortableBlock badge rendering. Mirrors the json_each-backed batch
+  // pattern in `commands/blocks/queries.rs::batch_resolve_inner`.
+  get_batch_attachment_counts: (args) => {
+    const a = args as Record<string, unknown>
+    const blockIds = (a['blockIds'] as string[]) ?? []
+    const counts: Record<string, number> = {}
+    for (const att of attachments.values()) {
+      const bid = att['block_id'] as string
+      if (blockIds.includes(bid)) {
+        counts[bid] = (counts[bid] ?? 0) + 1
+      }
+    }
+    return counts
+  },
+
   add_attachment: (args) => {
     const a = args as Record<string, unknown>
     const row = {

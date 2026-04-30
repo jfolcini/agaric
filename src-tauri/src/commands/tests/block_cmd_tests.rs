@@ -2809,6 +2809,230 @@ async fn list_attachments_returns_for_block() {
     mat.shutdown();
 }
 
+// ======================================================================
+// get_batch_attachment_counts (MAINT-131)
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_batch_attachment_counts_returns_counts_per_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Three blocks: A (2 attachments), B (1 attachment), C (0 attachments).
+    let block_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block a".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let block_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block b".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    let block_c = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block c".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    std::fs::write(app_data_dir.join("attachments/a1.png"), vec![0u8; 10]).unwrap();
+    std::fs::write(app_data_dir.join("attachments/a2.pdf"), vec![0u8; 20]).unwrap();
+    std::fs::write(app_data_dir.join("attachments/b1.txt"), vec![0u8; 5]).unwrap();
+
+    add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_a.id.clone(),
+        "a1.png".into(),
+        "image/png".into(),
+        10,
+        "attachments/a1.png".into(),
+    )
+    .await
+    .unwrap();
+    add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_a.id.clone(),
+        "a2.pdf".into(),
+        "application/pdf".into(),
+        20,
+        "attachments/a2.pdf".into(),
+    )
+    .await
+    .unwrap();
+    add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_b.id.clone(),
+        "b1.txt".into(),
+        "text/plain".into(),
+        5,
+        "attachments/b1.txt".into(),
+    )
+    .await
+    .unwrap();
+
+    let counts = get_batch_attachment_counts_inner(
+        &pool,
+        vec![block_a.id.clone(), block_b.id.clone(), block_c.id.clone()],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        counts.get(&block_a.id),
+        Some(&2_u32),
+        "block_a should have 2 attachments"
+    );
+    assert_eq!(
+        counts.get(&block_b.id),
+        Some(&1_u32),
+        "block_b should have 1 attachment"
+    );
+    assert!(
+        !counts.contains_key(&block_c.id),
+        "block_c (no attachments) must be absent from the map, not present with count 0"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_batch_attachment_counts_empty_input_returns_empty_map() {
+    let (pool, _dir) = test_pool().await;
+
+    let counts = get_batch_attachment_counts_inner(&pool, vec![])
+        .await
+        .unwrap();
+    assert!(
+        counts.is_empty(),
+        "empty input must return an empty map (not an error)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_batch_attachment_counts_unknown_ids_omitted() {
+    let (pool, _dir) = test_pool().await;
+
+    let counts = get_batch_attachment_counts_inner(&pool, vec!["NONEXISTENT_ULID_01HZ".into()])
+        .await
+        .unwrap();
+    assert!(
+        counts.is_empty(),
+        "unknown block IDs must be silently omitted from the result map"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_batch_attachment_counts_filters_by_block_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block a".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let block_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block b".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    std::fs::write(app_data_dir.join("attachments/a1.png"), vec![0u8; 10]).unwrap();
+    std::fs::write(app_data_dir.join("attachments/b1.txt"), vec![0u8; 5]).unwrap();
+
+    add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_a.id.clone(),
+        "a1.png".into(),
+        "image/png".into(),
+        10,
+        "attachments/a1.png".into(),
+    )
+    .await
+    .unwrap();
+    add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block_b.id.clone(),
+        "b1.txt".into(),
+        "text/plain".into(),
+        5,
+        "attachments/b1.txt".into(),
+    )
+    .await
+    .unwrap();
+
+    // Only ask about block_a — block_b's row must be filtered out by the IN clause.
+    let counts = get_batch_attachment_counts_inner(&pool, vec![block_a.id.clone()])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        counts.get(&block_a.id),
+        Some(&1_u32),
+        "block_a should have 1 attachment"
+    );
+    assert!(
+        !counts.contains_key(&block_b.id),
+        "block_b must not appear when only block_a was requested"
+    );
+    assert_eq!(
+        counts.len(),
+        1,
+        "result map must contain exactly the one queried block"
+    );
+
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_attachments_returns_rows_with_deleted_at_set() {
     // M-28: `attachments.deleted_at` is dead code — no production path ever

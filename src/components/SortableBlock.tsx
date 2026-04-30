@@ -18,7 +18,7 @@ import { Trash2 } from 'lucide-react'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
-import { useAttachmentCount } from '../hooks/useAttachmentCount'
+import { useBatchAttachmentCounts } from '../hooks/useBatchAttachmentCounts'
 import { type BlockActions, useBlockActions } from '../hooks/useBlockActions'
 import { useBlockContextMenu } from '../hooks/useBlockContextMenu'
 import { type BlockResolvers, useBlockResolvers } from '../hooks/useBlockResolvers'
@@ -255,7 +255,11 @@ function SortableBlockInner({
   const blockRef = useRef<HTMLDivElement>(null)
 
   // ── Attachment state ─────────────────────────────────────────────
-  const attachmentCount = useAttachmentCount(blockId)
+  // MAINT-131: read from BatchAttachmentCountsProvider (one IPC per page
+  // mount). Outside a provider the hook returns null and the count
+  // defaults to 0 — matches the previous "no rows yet" rendering.
+  const batchCounts = useBatchAttachmentCounts()
+  const attachmentCount = batchCounts?.get(blockId) ?? 0
   const [showAttachments, setShowAttachments] = useState(false)
 
   const handleToggleAttachments = useCallback(() => setShowAttachments((prev) => !prev), [])

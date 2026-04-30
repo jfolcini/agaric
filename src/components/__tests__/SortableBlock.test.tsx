@@ -159,16 +159,17 @@ vi.mock('../BlockContextMenu', () => ({
   ),
 }))
 
-// Mock tauri setProperty, listPropertyDefs, listBlocks, and listAttachments
+// Mock tauri setProperty, listPropertyDefs, listBlocks
+// MAINT-131: SortableBlock no longer calls listAttachments — the badge count
+// now flows from BatchAttachmentCountsProvider. Tests render SortableBlock
+// without a provider, so attachmentCount falls back to 0 (no paperclip).
 const mockSetProperty = vi.fn().mockResolvedValue({})
 const mockListPropertyDefs = vi.fn().mockResolvedValue([])
 const mockListBlocks = vi.fn().mockResolvedValue({ items: [], next_cursor: null, has_more: false })
-const mockListAttachments = vi.fn().mockResolvedValue([])
 vi.mock('../../lib/tauri', () => ({
   setProperty: (...args: unknown[]) => mockSetProperty(...args),
   listPropertyDefs: (...args: unknown[]) => mockListPropertyDefs(...args),
   listBlocks: (...args: unknown[]) => mockListBlocks(...args),
-  listAttachments: (...args: unknown[]) => mockListAttachments(...args),
 }))
 
 // Mock sonner toast
@@ -3999,9 +4000,11 @@ describe('SortableBlock error paths', () => {
     mockUseSortable.mockReturnValue(makeSortable())
   })
 
-  it('listAttachments rejection keeps attachmentCount at 0 and renders without crashing', async () => {
-    mockListAttachments.mockRejectedValueOnce(new Error('disk read failed'))
-
+  // MAINT-131: SortableBlock no longer fires `listAttachments` directly.
+  // Without a `BatchAttachmentCountsProvider` the count falls back to 0,
+  // so the paperclip and attachment list never render. The IPC-failure
+  // path is now exercised by useBatchAttachmentCounts.test.tsx.
+  it('renders without paperclip when no batch attachment provider wraps the block', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_ERR_1"
@@ -4011,18 +4014,8 @@ describe('SortableBlock error paths', () => {
       />,
     )
 
-    // Wait for the rejected promise to settle
-    await waitFor(() => {
-      expect(mockListAttachments).toHaveBeenCalledWith('BLOCK_ERR_1')
-    })
-
-    // Component still renders normally
     expect(screen.getByTestId('editable-block-BLOCK_ERR_1')).toBeInTheDocument()
-
-    // No paperclip icon — attachment count stayed at 0
     expect(screen.queryByTestId('paperclip-icon')).not.toBeInTheDocument()
-
-    // No attachment list rendered
     expect(container.querySelector('[data-testid^="attachment-list-"]')).not.toBeInTheDocument()
   })
 
@@ -4100,9 +4093,12 @@ describe('SortableBlock error paths', () => {
     expect(screen.getByText('No pages found')).toBeInTheDocument()
   })
 
-  it('listAttachments rejection does not affect other component functionality', async () => {
+  // MAINT-131: replaces the previous `listAttachments rejection does not
+  // affect other component functionality` test. Without a batch provider
+  // the attachment count is 0 (no paperclip); todo/priority/due-date all
+  // continue to render normally.
+  it('todo, priority and due-date all render when no batch attachment provider wraps the block', async () => {
     const user = userEvent.setup()
-    mockListAttachments.mockRejectedValueOnce(new Error('ENOENT'))
     const onToggleTodo = vi.fn()
 
     const { container } = render(
@@ -4117,10 +4113,6 @@ describe('SortableBlock error paths', () => {
         dueDate="2026-12-25"
       />,
     )
-
-    await waitFor(() => {
-      expect(mockListAttachments).toHaveBeenCalled()
-    })
 
     // Task marker still works
     const marker = screen.getByRole('button', { name: /task: todo/i })
