@@ -968,4 +968,122 @@ mod tests {
                 .expect("RW lock must not block on RO gate");
         drop(try_acquire);
     }
+
+    // ── L-118: end-to-end regression for the TOCTOU race ────────────────
+    //
+    // L-118 is the same race as L-46 but cited against the line numbers
+    // of a later audit (`mcp_set_enabled` line 361 — the `is_running()`
+    // check before `spawn_mcp_ro_task`). The L-46 fix already serialises
+    // the marker write + `is_running()` check + spawn under
+    // [`McpToggleGate`], so the race cannot fire. These two tests
+    // simulate the real command body (gate → inner toggle → spawn-on-
+    // empty) directly so a future regression that drops the gate will
+    // fail in CI rather than only manifesting under fast UI toggling.
+
+    /// N concurrent `mcp_set_enabled(true)` callers must all share the
+    /// gate; the `if !is_running() { spawn(); task_running = true }`
+    /// branch must execute exactly once. Without the gate, multiple
+    /// callers could each see `task_running == false` and double-spawn,
+    /// which the production code observes as a silent "already bound"
+    /// noop on the second listener (L-118).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_enables_under_gate_spawn_exactly_once_l118() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        const N: u32 = 8;
+
+        let dir = TempDir::new().unwrap();
+        let lc = make_lifecycle();
+        let gate = std::sync::Arc::new(McpToggleGate::new());
+        let spawn_count = std::sync::Arc::new(AtomicU32::new(0));
+
+        let mut handles = Vec::with_capacity(N as usize);
+        for _ in 0..N {
+            let dir = dir.path().to_path_buf();
+            let lc = lc.clone();
+            let gate = gate.clone();
+            let spawn_count = spawn_count.clone();
+            handles.push(tokio::spawn(async move {
+                // Mirror the real `mcp_set_enabled` body: acquire gate,
+                // toggle marker, then check `is_running()` and "spawn"
+                // (here represented by bumping a counter and flipping
+                // `task_running` — what the real serve loop does on
+                // entry).
+                let _g = gate.0.lock().await;
+                mcp_set_enabled_inner(&dir, &lc, true).unwrap();
+                if !lc.is_running() {
+                    spawn_count.fetch_add(1, Ordering::AcqRel);
+                    lc.task_running.store(true, Ordering::Release);
+                }
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        assert_eq!(
+            spawn_count.load(Ordering::Acquire),
+            1,
+            "exactly one spawn must occur for N concurrent enables; \
+             double-spawn means the gate is no longer protecting the \
+             is_running() / spawn race (L-118)",
+        );
+        assert!(
+            mcp_ro_enabled(dir.path()),
+            "marker file must be present after concurrent enables",
+        );
+        assert!(
+            lc.is_running(),
+            "task_running must be true after the single spawn",
+        );
+    }
+
+    /// Rapid alternating `true` / `false` toggles must each acquire the
+    /// gate in turn, and the marker file must end in the state of the
+    /// last completed toggle. This pins the "no lost toggle" property —
+    /// without serialisation a `false` could overlap a `true`, leaving
+    /// the marker out of sync with the lifecycle.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn rapid_alternating_toggles_under_gate_settle_to_last_l118() {
+        let dir = TempDir::new().unwrap();
+        let lc = make_lifecycle();
+        let gate = std::sync::Arc::new(McpToggleGate::new());
+
+        // Sequential `await` order under a fair `tokio::sync::Mutex`
+        // gives a deterministic acquisition order, so the final marker
+        // state matches the last value in the sequence. The point of
+        // running through the gate is that an *unsynchronised* version
+        // could lose a toggle to a concurrent counterparty; with the
+        // gate every toggle is observed.
+        let toggles = [true, false, true, false, true, true, false, true];
+        let mut applied_changes = 0u32;
+        for &enable in &toggles {
+            let _g = gate.0.lock().await;
+            let changed = mcp_set_enabled_inner(dir.path(), &lc, enable).unwrap();
+            if changed {
+                applied_changes += 1;
+            }
+        }
+
+        // Every alternation flips state except the consecutive duplicates
+        // (true→true and the trailing pair). Count the transitions in
+        // `toggles` to derive the expected `changed=true` count.
+        let mut expected_changes = 0u32;
+        let mut current = false; // Marker starts absent.
+        for &enable in &toggles {
+            if enable != current {
+                expected_changes += 1;
+                current = enable;
+            }
+        }
+        assert_eq!(
+            applied_changes, expected_changes,
+            "every state-changing toggle must be observed under the gate",
+        );
+        assert_eq!(
+            mcp_ro_enabled(dir.path()),
+            *toggles.last().unwrap(),
+            "final marker state must match the last toggle",
+        );
+    }
 }

@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core'
 import { commands } from './bindings'
 import { logger } from './logger'
 
@@ -824,8 +823,8 @@ export interface AttachmentRow {
 }
 
 /** List all attachments for a block. */
-export function listAttachments(blockId: string): Promise<AttachmentRow[]> {
-  return invoke('list_attachments', { blockId })
+export async function listAttachments(blockId: string): Promise<AttachmentRow[]> {
+  return unwrap(await commands.listAttachments(blockId))
 }
 
 /**
@@ -838,8 +837,10 @@ export function listAttachments(blockId: string): Promise<AttachmentRow[]> {
  * MAINT-131 — replaces N per-block `listAttachments` IPCs for badge
  * counts in `SortableBlock` with a single batched query.
  */
-export function getBatchAttachmentCounts(blockIds: string[]): Promise<Record<string, number>> {
-  return invoke('get_batch_attachment_counts', { blockIds })
+export async function getBatchAttachmentCounts(
+  blockIds: string[],
+): Promise<Record<string, number>> {
+  return unwrap(await commands.getBatchAttachmentCounts(blockIds))
 }
 
 /**
@@ -853,30 +854,34 @@ export function getBatchAttachmentCounts(blockIds: string[]): Promise<Record<str
  * IPCs for inline-image-render decisions in `StaticBlock` with a single
  * batched query mounted at the BlockTree level.
  */
-export function getBatchAttachments(blockIds: string[]): Promise<Record<string, AttachmentRow[]>> {
-  return invoke('list_attachments_batch', { blockIds })
+export async function getBatchAttachments(
+  blockIds: string[],
+): Promise<Record<string, AttachmentRow[]>> {
+  return unwrap(await commands.listAttachmentsBatch(blockIds))
 }
 
 /** Add an attachment to a block. */
-export function addAttachment(params: {
+export async function addAttachment(params: {
   blockId: string
   filename: string
   mimeType: string
   sizeBytes: number
   fsPath: string
 }): Promise<AttachmentRow> {
-  return invoke('add_attachment', {
-    blockId: params.blockId,
-    filename: params.filename,
-    mimeType: params.mimeType,
-    sizeBytes: params.sizeBytes,
-    fsPath: params.fsPath,
-  })
+  return unwrap(
+    await commands.addAttachment(
+      params.blockId,
+      params.filename,
+      params.mimeType,
+      params.sizeBytes,
+      params.fsPath,
+    ),
+  )
 }
 
 /** Delete an attachment by ID. */
-export function deleteAttachment(attachmentId: string): Promise<void> {
-  return invoke('delete_attachment', { attachmentId })
+export async function deleteAttachment(attachmentId: string): Promise<void> {
+  unwrap(await commands.deleteAttachment(attachmentId))
 }
 
 // ---------------------------------------------------------------------------
@@ -891,11 +896,11 @@ export interface ImportResult {
 }
 
 /** Import a Logseq/Markdown file. Creates a page from the filename and blocks from content. */
-export function importMarkdown(
+export async function importMarkdown(
   content: string,
   filename?: string | undefined,
 ): Promise<ImportResult> {
-  return invoke('import_markdown', { content, filename: filename ?? null })
+  return unwrap(await commands.importMarkdown(content, filename ?? null))
 }
 
 // ---------------------------------------------------------------------------
@@ -935,19 +940,21 @@ export async function logFrontend(
   context?: string | null,
   data?: string | null,
 ): Promise<void> {
-  await invoke('log_frontend', {
-    level,
-    module,
-    message,
-    stack: stack ?? null,
-    context: context ?? null,
-    data: data ?? null,
-  })
+  unwrap(
+    await commands.logFrontend(
+      level,
+      module,
+      message,
+      stack ?? null,
+      context ?? null,
+      data ?? null,
+    ),
+  )
 }
 
 /** Return the path to the logs directory. */
-export function getLogDir(): Promise<string> {
-  return invoke('get_log_dir') as Promise<string>
+export async function getLogDir(): Promise<string> {
+  return unwrap(await commands.getLogDir())
 }
 
 // ---------------------------------------------------------------------------
@@ -967,13 +974,13 @@ export interface CompactionResult {
 }
 
 /** Get current op log compaction status and stats. */
-export function getCompactionStatus(): Promise<CompactionStatus> {
-  return invoke('get_compaction_status')
+export async function getCompactionStatus(): Promise<CompactionStatus> {
+  return unwrap(await commands.getCompactionStatus())
 }
 
 /** Compact the op log by removing ops older than retentionDays. */
-export function compactOpLog(retentionDays: number): Promise<CompactionResult> {
-  return invoke('compact_op_log_cmd', { retentionDays })
+export async function compactOpLog(retentionDays: number): Promise<CompactionResult> {
+  return unwrap(await commands.compactOpLogCmd(retentionDays))
 }
 
 // ---------------------------------------------------------------------------
@@ -990,13 +997,13 @@ export interface LinkMetadata {
 }
 
 /** Fetch and cache link metadata (triggers HTTP fetch if not cached). */
-export function fetchLinkMetadata(url: string): Promise<LinkMetadata> {
-  return invoke('fetch_link_metadata', { url })
+export async function fetchLinkMetadata(url: string): Promise<LinkMetadata> {
+  return unwrap(await commands.fetchLinkMetadata(url))
 }
 
 /** Get cached link metadata (no network fetch). */
-export function getLinkMetadata(url: string): Promise<LinkMetadata | null> {
-  return invoke('get_link_metadata', { url })
+export async function getLinkMetadata(url: string): Promise<LinkMetadata | null> {
+  return unwrap(await commands.getLinkMetadata(url))
 }
 
 // ---------------------------------------------------------------------------
@@ -1020,8 +1027,8 @@ export interface LogFileEntry {
  * Gather app version, OS/arch, device ID and a tail of recent error/warn
  * lines from today's log for pre-filling a bug report.
  */
-export function collectBugReportMetadata(): Promise<BugReport> {
-  return invoke('collect_bug_report_metadata')
+export async function collectBugReportMetadata(): Promise<BugReport> {
+  return unwrap(await commands.collectBugReportMetadata())
 }
 
 /**
@@ -1029,8 +1036,8 @@ export function collectBugReportMetadata(): Promise<BugReport> {
  * home paths are replaced with `~`, the device ID is blanked, and long
  * lines are truncated.
  */
-export function readLogsForReport(redact: boolean): Promise<LogFileEntry[]> {
-  return invoke('read_logs_for_report', { redact })
+export async function readLogsForReport(redact: boolean): Promise<LogFileEntry[]> {
+  return unwrap(await commands.readLogsForReport(redact))
 }
 
 // ---------------------------------------------------------------------------
@@ -1041,8 +1048,8 @@ export function readLogsForReport(redact: boolean): Promise<LogFileEntry[]> {
  * List every space (id + display name) alphabetical by name. Used by the
  * sidebar `SpaceSwitcher` + the Zustand `useSpaceStore`.
  */
-export function listSpaces(): Promise<SpaceRow[]> {
-  return invoke<SpaceRow[]>('list_spaces')
+export async function listSpaces(): Promise<SpaceRow[]> {
+  return unwrap(await commands.listSpaces())
 }
 
 /**
@@ -1059,16 +1066,14 @@ export function listSpaces(): Promise<SpaceRow[]> {
  *
  * Returns the new page's ULID.
  */
-export function createPageInSpace(params: {
+export async function createPageInSpace(params: {
   parentId?: string | null | undefined
   content: string
   spaceId: string
 }): Promise<string> {
-  return invoke<string>('create_page_in_space', {
-    parentId: params.parentId ?? null,
-    content: params.content,
-    spaceId: params.spaceId,
-  })
+  return unwrap(
+    await commands.createPageInSpace(params.parentId ?? null, params.content, params.spaceId),
+  )
 }
 
 /**
@@ -1087,14 +1092,11 @@ export function createPageInSpace(params: {
  *
  * Returns the new space's ULID.
  */
-export function createSpace(params: {
+export async function createSpace(params: {
   name: string
   accentColor?: string | null | undefined
 }): Promise<string> {
-  return invoke<string>('create_space', {
-    name: params.name,
-    accentColor: params.accentColor ?? null,
-  })
+  return unwrap(await commands.createSpace(params.name, params.accentColor ?? null))
 }
 
 // ---------------------------------------------------------------------------
@@ -1133,8 +1135,8 @@ function isMobilePlatform(): boolean {
  * page belongs to a space, so two devices in different spaces capture
  * into their own daily notes without colliding.
  */
-export function quickCaptureBlock(content: string, spaceId: string): Promise<BlockRow> {
-  return invoke<BlockRow>('quick_capture_block', { content, spaceId })
+export async function quickCaptureBlock(content: string, spaceId: string): Promise<BlockRow> {
+  return unwrap(await commands.quickCaptureBlock(content, spaceId))
 }
 
 /**
