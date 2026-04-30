@@ -49,10 +49,11 @@ export function TrashRowItem({
 }: TrashRowItemProps): React.ReactElement {
   const { t } = useTranslation()
   return (
+    // biome-ignore lint/a11y/useSemanticElements: ARIA grid row for trash list — no semantic HTML equivalent for nested-action rows
     <div
       key={block.id}
       id={`trash-item-${block.id}`}
-      role="option"
+      role="row"
       aria-selected={isSelected}
       data-trash-item
       className={cn(
@@ -70,7 +71,9 @@ export function TrashRowItem({
       }}
       tabIndex={isFocused ? 0 : -1}
     >
-      <div className="trash-item-content flex min-w-0 items-center gap-3 flex-wrap">
+      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
+      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner controls */}
+      <div role="gridcell" className="trash-item-content flex min-w-0 items-center gap-3 flex-wrap">
         <input
           type="checkbox"
           checked={isSelected}
@@ -119,8 +122,10 @@ export function TrashRowItem({
           )}
         </div>
       </div>
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation container prevents button clicks from toggling row selection */}
+      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
+      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner action buttons */}
       <div
+        role="gridcell"
         className="trash-item-actions flex items-center gap-2"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}

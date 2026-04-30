@@ -88,7 +88,8 @@ function defaultProps(overrides: Partial<HistoryListItemProps> = {}): HistoryLis
 
 function renderInListbox(props: HistoryListItemProps) {
   return render(
-    <div role="listbox" aria-label="History entries">
+    // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern test fixture matches the production HistoryListView
+    <div role="grid" aria-label="History entries">
       <HistoryListItem {...props} />
     </div>,
   )
@@ -426,10 +427,10 @@ describe('HistoryListItem', () => {
 
   // -- ARIA ------------------------------------------------------------------
 
-  it('has role=option and aria-selected', () => {
+  it('has role=row and aria-selected', () => {
     renderInListbox(defaultProps({ isSelected: true }))
 
-    const item = screen.getByRole('option')
+    const item = screen.getByRole('row')
     expect(item).toHaveAttribute('aria-selected', 'true')
   })
 
@@ -441,7 +442,7 @@ describe('HistoryListItem', () => {
       }),
     )
 
-    const item = screen.getByRole('option')
+    const item = screen.getByRole('row')
     expect(item).toHaveAttribute('aria-disabled', 'true')
   })
 
@@ -459,10 +460,9 @@ describe('HistoryListItem', () => {
 
   // -- a11y ------------------------------------------------------------------
 
-  // Note: axe tests disable nested-interactive rule because the
-  // role="option" items intentionally contain checkbox and button controls.
-  // This matches the existing HistoryView pattern and is a known trade-off.
-  const axeOpts = { rules: { 'nested-interactive': { enabled: false } } }
+  // role="row" inside role="grid" permits nested interactive widgets
+  // (checkbox + buttons) per the WAI-ARIA APG Grid pattern, so axe runs
+  // with no rule overrides.
 
   it('has no a11y violations for a selected edit_block item', async () => {
     const { container } = renderInListbox(
@@ -473,7 +473,7 @@ describe('HistoryListItem', () => {
     )
 
     await waitFor(async () => {
-      const results = await axe(container, axeOpts)
+      const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
   })
@@ -487,7 +487,7 @@ describe('HistoryListItem', () => {
     )
 
     await waitFor(async () => {
-      const results = await axe(container, axeOpts)
+      const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
   })
@@ -507,7 +507,7 @@ describe('HistoryListItem', () => {
     )
 
     await waitFor(async () => {
-      const results = await axe(container, axeOpts)
+      const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
   })

@@ -426,10 +426,6 @@ describe('ConflictList', () => {
     })
   })
 
-  // Note: axe tests disable nested-interactive rule because the
-  // role="option" items intentionally contain checkbox and button controls.
-  // This matches the existing HistoryView pattern and is a known trade-off.
-  // See HistoryListItem.test.tsx for rationale.
   it('has no a11y violations with items', async () => {
     const page = {
       items: [makeConflict({ id: 'C1', content: 'accessible conflict' })],
@@ -444,7 +440,6 @@ describe('ConflictList', () => {
       const results = await axe(document.body, {
         rules: {
           region: { enabled: false },
-          'nested-interactive': { enabled: false },
         },
       })
       expect(results).toHaveNoViolations()
@@ -2084,7 +2079,6 @@ describe('ConflictList', () => {
       const results = await axe(document.body, {
         rules: {
           region: { enabled: false },
-          'nested-interactive': { enabled: false },
         },
       })
       expect(results).toHaveNoViolations()
@@ -2272,7 +2266,7 @@ describe('ConflictList', () => {
     expect(actionsContainer?.className).toContain('flex-wrap')
   })
 
-  it('conflict list container has role="listbox" and items have role="option"', async () => {
+  it('conflict list container has role="grid" and items have role="row"', async () => {
     const page = {
       items: [
         makeConflict({ id: 'C1', content: 'conflict one' }),
@@ -2287,22 +2281,18 @@ describe('ConflictList', () => {
 
     await screen.findByText('conflict one')
 
-    // Parent container should have role="listbox"
-    const list = screen.getByRole('listbox', { name: 'Conflict list' })
+    // Parent container should have role="grid"
+    const list = screen.getByRole('grid', { name: 'Conflict list' })
     expect(list).toBeInTheDocument()
     expect(list.className).toContain('conflict-items')
 
-    // Each conflict item should have role="option" (set via useEffect).
-    // Under full-suite parallel load, the useEffect that assigns role/aria
-    // attributes has not always run when the findByText above resolves
-    // (React 19 microtask timing — TEST-3 flake). Use findAllByRole so
-    // the query retries until the effect flushes.
-    //
-    // UX-265: scope the lookup to the listbox so native <option> elements
-    // inside the new filter <select>s don't pollute the result.
-    const options = await within(list).findAllByRole('option')
-    expect(options).toHaveLength(2)
-    for (const item of options) {
+    // Each conflict item should have role="row".
+    // Under full-suite parallel load, items may not be in the tree when the
+    // findByText above resolves (React 19 microtask timing — TEST-3 flake).
+    // Use findAllByRole so the query retries until items render.
+    const rows = await within(list).findAllByRole('row')
+    expect(rows).toHaveLength(2)
+    for (const item of rows) {
       expect(item.className).toContain('conflict-item')
     }
   })
@@ -2326,18 +2316,18 @@ describe('ConflictList', () => {
 
     await screen.findByText('conflict 1')
 
-    const listbox = screen.getByRole('listbox', { name: 'Conflict list' })
-    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C1')
+    const grid = screen.getByRole('grid', { name: 'Conflict list' })
+    expect(grid.getAttribute('aria-activedescendant')).toBe('conflict-C1')
 
-    // Focus the listbox and press ArrowDown
-    listbox.focus()
+    // Focus the grid and press ArrowDown
+    grid.focus()
     await user.keyboard('{ArrowDown}')
 
-    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C2')
+    expect(grid.getAttribute('aria-activedescendant')).toBe('conflict-C2')
 
     await user.keyboard('{ArrowDown}')
 
-    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C3')
+    expect(grid.getAttribute('aria-activedescendant')).toBe('conflict-C3')
   })
 
   it('ArrowUp moves focus to the previous conflict item', async () => {
@@ -2357,16 +2347,16 @@ describe('ConflictList', () => {
 
     await screen.findByText('conflict 1')
 
-    const listbox = screen.getByRole('listbox', { name: 'Conflict list' })
+    const grid = screen.getByRole('grid', { name: 'Conflict list' })
 
     // Focus and move down twice, then back up
-    listbox.focus()
+    grid.focus()
     await user.keyboard('{ArrowDown}')
     await user.keyboard('{ArrowDown}')
-    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C3')
+    expect(grid.getAttribute('aria-activedescendant')).toBe('conflict-C3')
 
     await user.keyboard('{ArrowUp}')
-    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C2')
+    expect(grid.getAttribute('aria-activedescendant')).toBe('conflict-C2')
   })
 
   it('ArrowDown wraps to the first item at the end of the list', async () => {
@@ -2385,15 +2375,15 @@ describe('ConflictList', () => {
 
     await screen.findByText('conflict 1')
 
-    const listbox = screen.getByRole('listbox', { name: 'Conflict list' })
+    const grid = screen.getByRole('grid', { name: 'Conflict list' })
 
-    listbox.focus()
+    grid.focus()
     await user.keyboard('{ArrowDown}')
-    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C2')
+    expect(grid.getAttribute('aria-activedescendant')).toBe('conflict-C2')
 
     // Wrap around
     await user.keyboard('{ArrowDown}')
-    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C1')
+    expect(grid.getAttribute('aria-activedescendant')).toBe('conflict-C1')
   })
 
   it('Home/End keys jump to first/last item', async () => {
@@ -2413,14 +2403,14 @@ describe('ConflictList', () => {
 
     await screen.findByText('conflict 1')
 
-    const listbox = screen.getByRole('listbox', { name: 'Conflict list' })
+    const grid = screen.getByRole('grid', { name: 'Conflict list' })
 
-    listbox.focus()
+    grid.focus()
     await user.keyboard('{End}')
-    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C3')
+    expect(grid.getAttribute('aria-activedescendant')).toBe('conflict-C3')
 
     await user.keyboard('{Home}')
-    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C1')
+    expect(grid.getAttribute('aria-activedescendant')).toBe('conflict-C1')
   })
 
   it('Enter key on focused item toggles expand/collapse', async () => {
@@ -2438,8 +2428,8 @@ describe('ConflictList', () => {
     // Initially truncated
     expect(container.querySelector('.conflict-original')?.className).toContain('truncate')
 
-    const listbox = screen.getByRole('listbox', { name: 'Conflict list' })
-    listbox.focus()
+    const grid = screen.getByRole('grid', { name: 'Conflict list' })
+    grid.focus()
     await user.keyboard('{Enter}')
 
     // After Enter, should be expanded
@@ -2464,24 +2454,20 @@ describe('ConflictList', () => {
 
     await screen.findByText('conflict 1')
 
-    // findAllByRole, not getAllByRole: role="option" is set by a useEffect in
-    // ConflictList items (see ConflictList.tsx), and under React 19 microtask
-    // timing the effect may not have run when findByText('conflict 1')
-    // resolves. Matches the TEST-3 fix applied to the listbox-role test.
-    //
-    // UX-265: scope to the listbox so the new filter <select>s' <option>
-    // children don't appear in the result set.
-    const listbox = screen.getByRole('listbox', { name: 'Conflict list' })
-    const options = await within(listbox).findAllByRole('option')
-    expect(options[0]?.getAttribute('aria-selected')).toBe('true')
-    expect(options[1]?.getAttribute('aria-selected')).toBe('false')
+    // findAllByRole, not getAllByRole: items render asynchronously after the
+    // initial findByText resolves under React 19 microtask timing. Matches
+    // the TEST-3 fix applied to the grid-role test above.
+    const grid = screen.getByRole('grid', { name: 'Conflict list' })
+    const rows = await within(grid).findAllByRole('row')
+    expect(rows[0]?.getAttribute('aria-selected')).toBe('true')
+    expect(rows[1]?.getAttribute('aria-selected')).toBe('false')
 
-    listbox.focus()
+    grid.focus()
     await user.keyboard('{ArrowDown}')
 
     await waitFor(() => {
-      expect(options[0]?.getAttribute('aria-selected')).toBe('false')
-      expect(options[1]?.getAttribute('aria-selected')).toBe('true')
+      expect(rows[0]?.getAttribute('aria-selected')).toBe('false')
+      expect(rows[1]?.getAttribute('aria-selected')).toBe('true')
     })
   })
 
@@ -2628,7 +2614,7 @@ describe('ConflictList', () => {
   })
 
   // --- UX-210: i18n aria-label ---
-  it('listbox aria-label resolves via t() (UX-210)', async () => {
+  it('grid aria-label resolves via t() (UX-210)', async () => {
     const page = {
       items: [makeConflict({ id: 'C1', content: 'i18n test' })],
       next_cursor: null,
@@ -2639,8 +2625,8 @@ describe('ConflictList', () => {
     render(<ConflictList />)
     await screen.findByText('i18n test')
 
-    const listbox = screen.getByRole('listbox', { name: t('conflicts.listLabel') })
-    expect(listbox).toBeInTheDocument()
+    const grid = screen.getByRole('grid', { name: t('conflicts.listLabel') })
+    expect(grid).toBeInTheDocument()
   })
 
   // UX-259: destructive batch dialogs must not confirm on a reflex Enter.

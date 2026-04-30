@@ -217,10 +217,11 @@ export function HistoryListItem({
   const { t } = useTranslation()
 
   return (
+    // biome-ignore lint/a11y/useSemanticElements: ARIA grid row for history list — no semantic HTML equivalent for nested-action rows
     <div
       data-history-item
       data-testid={`history-item-${index}`}
-      role="option"
+      role="row"
       aria-selected={isSelected}
       className={cn(
         'history-item flex flex-col gap-2 rounded-lg border p-4 cursor-pointer transition-colors',
@@ -238,7 +239,9 @@ export function HistoryListItem({
       tabIndex={isFocused ? 0 : -1}
       aria-disabled={isNonReversible || undefined}
     >
-      <div className="flex items-center gap-3 w-full">
+      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
+      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner controls */}
+      <div role="gridcell" className="flex items-center gap-3 w-full">
         {/* Checkbox.
             UX-275 sub-fix 5: keep both row-click and checkbox-click as active
             selection paths (matches the existing test contract), but surface
@@ -326,8 +329,10 @@ export function HistoryListItem({
         )}
       </div>
       {isExpanded && diffSpans != null && (
-        // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation prevents parent row selection when clicking diff
+        // biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern
+        // biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner controls
         <div
+          role="gridcell"
           className="diff-container mt-2 w-full"
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => e.stopPropagation()}

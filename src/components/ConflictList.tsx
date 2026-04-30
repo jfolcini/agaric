@@ -535,10 +535,11 @@ export function ConflictList(): React.ReactElement {
         </ViewHeader>
       )}
 
+      {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern for conflict list — no semantic HTML equivalent for non-tabular interactive grid */}
       <div
         className="conflict-items space-y-2 list-none p-0"
         tabIndex={0}
-        role="listbox"
+        role="grid"
         aria-label={t('conflicts.listLabel')}
         aria-activedescendant={
           filteredBlocks[focusedIndex] ? `conflict-${filteredBlocks[focusedIndex].id}` : undefined

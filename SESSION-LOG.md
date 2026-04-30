@@ -1,5 +1,69 @@
 # Session Log
 
+## Session 573 — Close MAINT-162 ARIA grid flips for HistoryView + ConflictList + TrashView + TagFilterPanel (4 of 6 components) (2026-04-30)
+
+**MAINT-162 partial close in one PROMPT.md batch with 4 parallel build subagents + orchestrator nit-fix sweep (no review subagent).** Closed the listbox→grid role flips for 4 of 6 components in MAINT-162: `HistoryView` (HistoryListView + HistoryListItem), `ConflictList` (ConflictList + ConflictListItem), `TrashView` (TrashListView + TrashRowItem), and `TagFilterPanel`. Removed 9 `nested-interactive` axe suppressions (1 + 2 + 4 + 2). Pattern established: `<div role="grid">` outer + `<div role="row">` inner + `<div role="gridcell">` content/actions wrappers, with `// biome-ignore lint/a11y/useSemanticElements` and `// biome-ignore lint/a11y/useFocusableInteractive` comments. Remaining MAINT-162 work: `PageBrowser` (FEAT-14 mixed-mode `aria-required-children` violation) + `StaticBlock` (`role="button"` outer is the underlying smell — not a true list-row).
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 23 → 23 (MAINT-162 row STAYS — 4 of 6 components closed; remaining: PageBrowser + StaticBlock).
+- **Previously-resolved counter:** 823+ → 824+ across 539 → 540 sessions.
+
+**Items closed (4 sub-rows of MAINT-162):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-162 HistoryView grid flip | `src/components/HistoryListView.tsx` (1 line: `role="listbox"` → `role="grid"` + biome-ignore comment); `src/components/HistoryListItem.tsx` (4 changes: `role="option"` → `role="row"` + 2 `<div role="gridcell">` wrappers added — main content + diff container); `src/components/__tests__/HistoryListItem.test.tsx` (~9 changes: role-name updates in `getByRole` calls + removal of 1 `nested-interactive` suppression at L465 + removal of 3 `axeOpts` arguments); `src/components/__tests__/HistoryView.test.tsx` no changes (uses `data-testid` selectors, role-agnostic). 152/152 tests pass. — Subagent 45e363b1 |
+| MAINT-162 ConflictList grid flip | `src/components/ConflictList.tsx` (1 line: `role="listbox"` → `role="grid"` + biome-ignore); `src/components/ConflictListItem.tsx` (~15 lines: `<li role="option">` → `<div role="row">` + 3 `<div role="gridcell">` wrappers — checkbox label, expand button, action buttons; class redistribution to preserve layout; dropped now-unnecessary `biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole`); `src/components/__tests__/ConflictList.test.tsx` (~25 lines: 10+ `getByRole`/`findAllByRole` updates from `'listbox'`/`'option'` → `'grid'`/`'row'`, 6 variable renames `listbox` → `grid`, 2 test-name updates, 2 `nested-interactive` suppression removals at L447/2087); `src/components/__tests__/ConflictListItem.test.tsx` (4 fixture updates `role="listbox"` → `role="grid"` + orchestrator added 4 `// biome-ignore lint/a11y/useSemanticElements` comments + removed 4 dead `nested-interactive` suppressions at L655/674/696/718 + simplified the obsolete comment block at L649-652). 134/134 tests pass. — Subagent f80e477e |
+| MAINT-162 TrashView grid flip | `src/components/TrashView/TrashListView.tsx` (1 line: `role="listbox"` → `role="grid"` + biome-ignore); `src/components/TrashView/TrashRowItem.tsx` (3 changes: `role="option"` → `role="row"` + 2 `<div role="gridcell">` wrappers — content + actions; orchestrator removed dead `noStaticElementInteractions` suppression on the actions cell since `role="gridcell"` makes it interactive); `src/components/__tests__/TrashView.test.tsx` (4 `nested-interactive` suppression removals at L851/873/1018/1088, 1 obsolete comment block removal — no `getByRole` updates needed because the test file used `data-testid` selectors throughout). 76/76 tests pass. — Subagent 9ba77537 |
+| MAINT-162 TagFilterPanel grid flip | `src/components/TagFilterPanel.tsx` (~12 lines: 2 `role="listbox"` → `role="grid"` (matching tags + results), 2 `role="option"` → `role="row"`, 4 `<span>`/`<div role="gridcell">` wrappers added — both list flipped because neither implements the WAI-ARIA Combobox pattern (no `role="combobox"` on `SearchInput`, no `aria-controls`/`aria-expanded`)); `src/components/__tests__/TagFilterPanel.test.tsx` (2 `nested-interactive` suppression removals at L919/952, no role assertion updates needed — file used 36 `getByRole('button'/'link')` queries, none for `'listbox'`/`'option'`). 37/37 tests pass. — Subagent 030bbc37 |
+
+**Process notes:**
+
+- **4 parallel build subagents (no review subagent).** Each subagent owned a disjoint component cluster (production component(s) + matching test file(s)). All 4 builds succeeded on the first attempt. The `PageBrowser` (FEAT-14 mixed-mode) and `StaticBlock` (`role="button"` outer smell) components were intentionally **excluded** from this batch because they need design review.
+- **All 4 subagents independently flagged the same drift:** the orchestrator's "minimum behavior-preserving change is just flipping the role attributes" claim was incorrect. Removing `nested-interactive` suppressions revealed `aria-required-children` violations on `role="row"` (rows must contain at least one `gridcell`-class child). Each subagent added 2-4 `<div role="gridcell">` wrappers (within the explicit 5-line cap allowance). The `MonthlyView.tsx` was the prior precedent.
+- **Orchestrator nit-fix sweep (substantial — required several rounds of biome iteration):**
+  1. **Biome `useSemanticElements` rule** flagged every `role="grid"`/`role="row"`/`role="gridcell"` site in 7 files (production + tests). Added `// biome-ignore lint/a11y/useSemanticElements` comments above each. Pattern matches `src/components/journal/MonthlyView.tsx` precedent. Justification: these are non-tabular interactive grids per WAI-ARIA APG — `<table>`/`<tr>`/`<td>` are inappropriate.
+  2. **Biome `useFocusableInteractive` rule** also fires on `role="row"` and `role="gridcell"` because they're "interactive" roles per the spec. Added `// biome-ignore lint/a11y/useFocusableInteractive` comments alongside, with justification "gridcell focus is delegated to inner controls / Button / action buttons".
+  3. **JSX comment syntax bug:** initial sed replacement on `ConflictListItem.test.tsx` used `{/* biome-ignore */}` JSX comment syntax inside a `render(<div ...>)` call. JSX comments only work *inside* JSX, not as siblings of the JSX tree being rendered. Fixed by switching to `// biome-ignore` line comments above the `<div>` opening tag.
+  4. **Dead suppressions:** the original orchestrator-mandated `noStaticElementInteractions` suppressions on the actions cells in `TrashRowItem.tsx` and `HistoryListItem.tsx` became dead config after the `role="gridcell"` flip (gridcell is interactive, so the static-element rule doesn't apply). Biome flagged these as `suppressions/unused` warnings. Removed both.
+  5. **ConflictListItem.test.tsx dead suppressions discovered by subagent f80e477e** but NOT removed by the subagent (orchestrator's prompt only explicitly listed 2 ConflictList suppressions to remove). Orchestrator removed the 4 dead `nested-interactive` overrides at L655/674/696/718 in the post-batch nit sweep.
+- **One transient prek vitest flake** on `TagFilterPanel.test.tsx > handles batchResolve failure gracefully` (same flake as session 572). Re-ran prek, passed. Not caused by this batch.
+- **Drift discovered (subagents flagged):**
+  - **All 4 subagents:** the role-flip-only approach is insufficient — `aria-required-children` rule requires `gridcell` children on `role="row"`. Each row needs 2-4 `<div role="gridcell">` wrappers.
+  - **f80e477e:** the `aria-multiselectable` attribute mentioned in the spec for ConflictList isn't actually present (multi-select is exposed via per-row `aria-selected`).
+  - **f80e477e:** the L287-300 `setAttribute('role','option')` anti-pattern in MAINT-128's description doesn't exist in the current `ConflictList.tsx` (already removed by MAINT-130 refactor). The `biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole` at the old location was the lingering reference.
+  - **9ba77537:** the prompt instruction "If you find sub-components like `TrashListRow.tsx`" was wrong — actual file is `TrashRowItem.tsx`.
+  - **030bbc37:** TagFilterPanel's two listboxes are NOT a "typeahead vs results" pair — neither implements the Combobox pattern. Both legitimately needed to flip; the prompt's hedging "If ONE of the two listboxes is a typeahead/combobox dropdown … flip ONLY the latter" was unnecessary for this file.
+- **No `cargo sqlx prepare`** needed (no SQL changes). **No backend changes.** **No new IPC commands.**
+- **No FEATURE-MAP.md update needed** — internal a11y refactor; user-facing surface unchanged (the keyboard model stays explicit via existing `onKeyDown` handlers, role-agnostic).
+
+**Files touched (this session's batch):**
+
+- Frontend modified (12 files):
+  - `src/components/HistoryListView.tsx`, `src/components/HistoryListItem.tsx`
+  - `src/components/ConflictList.tsx`, `src/components/ConflictListItem.tsx`
+  - `src/components/TrashView/TrashListView.tsx`, `src/components/TrashView/TrashRowItem.tsx`
+  - `src/components/TagFilterPanel.tsx`
+  - `src/components/__tests__/HistoryListItem.test.tsx`
+  - `src/components/__tests__/ConflictList.test.tsx`, `src/components/__tests__/ConflictListItem.test.tsx`
+  - `src/components/__tests__/TrashView.test.tsx`
+  - `src/components/__tests__/TagFilterPanel.test.tsx`
+- Docs: `REVIEW-LATER.md` (MAINT-162 row trimmed: 6 → 2 components; description rewritten with "Done in batch" + "Drift caught + fixed" notes). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after the orchestrator nit-fix sweep). Targeted runs:
+
+- HistoryListItem regression: 97/97 passed.
+- HistoryView regression: 55/55 passed.
+- ConflictList regression: 98/98 passed.
+- ConflictListItem regression: 36/36 passed.
+- TrashView regression: 76/76 passed.
+- TagFilterPanel regression: 37/37 passed. **Total across the 6 modified test suites: 399/399 passed.**
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome: clean.
+
+---
+
 ## Session 572 — Close MAINT-131 SortableBlock badge-count batch IPC (doubled-IPC-per-block-row partial fix; SortableBlock half) (2026-04-30)
 
 **MAINT-131 partial close in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent + 3 prek-driven nit fixes.** Closed the SortableBlock badge-count half of MAINT-131 — the per-block `useAttachmentCount(blockId) → listAttachments(blockId)` IPC fired by every SortableBlock row is replaced with a single batched `get_batch_attachment_counts(block_ids)` IPC mounted at the BlockTree level via `useBatchAttachmentCounts` context provider. At 50 blocks/page this drops 50 IPCs to 1. The StaticBlock per-block `useBlockAttachments` IPC (full attachment list, used for inline-image-render decisions) remains open as a separate sub-item.

@@ -913,11 +913,7 @@ describe('TagFilterPanel', () => {
     ) as HTMLButtonElement | null
     expect(clearButton).not.toBeNull()
 
-    // a11y — rule that affects unrelated results list is disabled in the
-    // existing a11y test above; mirror that here.
-    const axeResults = await axe(container, {
-      rules: { 'nested-interactive': { enabled: false } },
-    })
+    const axeResults = await axe(container)
     expect(axeResults).toHaveNoViolations()
 
     await user.click(clearButton as HTMLButtonElement)
@@ -947,11 +943,7 @@ describe('TagFilterPanel', () => {
       expect(findTagSpan(/work \(5\)/)).toBeInTheDocument()
     })
 
-    const results = await axe(container, {
-      rules: {
-        'nested-interactive': { enabled: false },
-      },
-    })
+    const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
 

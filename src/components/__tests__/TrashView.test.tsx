@@ -846,11 +846,7 @@ describe('TrashView', () => {
     await screen.findByText('accessible item')
 
     await waitFor(async () => {
-      const results = await axe(document.body, {
-        rules: {
-          'nested-interactive': { enabled: false },
-        },
-      })
+      const results = await axe(document.body)
       expect(results).toHaveNoViolations()
     })
   })
@@ -868,11 +864,7 @@ describe('TrashView', () => {
     await user.click(checkbox)
 
     await waitFor(async () => {
-      const results = await axe(document.body, {
-        rules: {
-          'nested-interactive': { enabled: false },
-        },
-      })
+      const results = await axe(document.body)
       expect(results).toHaveNoViolations()
     })
   })
@@ -1011,12 +1003,7 @@ describe('TrashView', () => {
     expect(clearButton).not.toBeNull()
 
     // a11y on the filtered state including the visible clear button.
-    // The existing TrashView a11y tests disable `nested-interactive` because
-    // trash item rows are role="option" with nested interactive controls —
-    // unrelated to the SearchInput clear button.
-    const axeResults = await axe(container, {
-      rules: { 'nested-interactive': { enabled: false } },
-    })
+    const axeResults = await axe(container)
     expect(axeResults).toHaveNoViolations()
 
     await user.click(clearButton as HTMLButtonElement)
@@ -1083,11 +1070,7 @@ describe('TrashView', () => {
     await user.type(input, 'apple')
 
     await waitFor(async () => {
-      const results = await axe(document.body, {
-        rules: {
-          'nested-interactive': { enabled: false },
-        },
-      })
+      const results = await axe(document.body)
       expect(results).toHaveNoViolations()
     })
   })
