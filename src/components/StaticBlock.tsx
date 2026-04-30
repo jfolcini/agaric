@@ -157,35 +157,12 @@ function StaticBlockInner({
     setPdfViewerOpen(true)
   }, [])
 
-  // Keyboard handler for the outer role="button" div: a native <button> fires
-  // its onClick on Enter *and* Space automatically, but a div with role="button"
-  // does not — it only fires on mouse click. We replicate that native behaviour
-  // manually here.
-  //
-  // The `e.target === e.currentTarget` guard prevents the outer focus handler
-  // from hijacking Enter/Space when focus is on a nested real <button>
-  // (QueryResult's chevron toggle, edit-query pencil, etc). A keydown on an
-  // inner button bubbles up; without this guard Enter on the chevron would
-  // both toggle the chevron AND refocus the whole block into the editor.
-  const handleOuterKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLDivElement>) => {
-      if (e.target !== e.currentTarget) return
-      if (e.key !== 'Enter' && e.key !== ' ') return
-      // preventDefault is load-bearing for Space (suppresses page scroll on a
-      // role=button) and harmless for Enter (the block isn't inside a form,
-      // so there's nothing to submit).
-      e.preventDefault()
-      if ((e.ctrlKey || e.metaKey) && onSelect) {
-        onSelect(blockId, 'toggle')
-      } else if (e.shiftKey && onSelect) {
-        onSelect(blockId, 'range')
-      } else {
-        onFocus(blockId)
-      }
-    },
-    [blockId, onFocus, onSelect],
-  )
-
+  // MAINT-162: the outer wrapper is a passive container — no role, no
+  // tabIndex, no keyboard handler. Inner controls (rich-content link/tag
+  // chips, attachment buttons, QueryResult chevron) keep their own focus
+  // and keyboard handling. Click on a non-interactive area still focuses
+  // the block via handleOuterClick / handleQueryBlockClickCapture so the
+  // roving editor can mount.
   const handleOuterClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       if ((e.ctrlKey || e.metaKey) && onSelect) {
@@ -235,16 +212,14 @@ function StaticBlockInner({
   if (content?.startsWith('{{query ') && content.endsWith('}}')) {
     const expression = content.slice(8, -2).trim()
     return (
-      // biome-ignore lint/a11y/useSemanticElements: outer must be a div so inner QueryResult <button>s (chevron, edit pencil) are valid HTML — nested <button> is invalid DOM. See TEST-4c.
+      // MAINT-162: passive container — no role/tabIndex; the inner subtree
+      // owns keyboard + focus. Click capture forwards bare-card clicks to
+      // onFocus while yielding to inner button/link targets.
       <div
-        role="button"
-        tabIndex={0}
-        className="block-static w-full min-h-[1.75rem] rounded-md text-left text-sm focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden [@media(pointer:coarse)]:min-h-[2.75rem]"
+        className="block-static w-full min-h-[1.75rem] rounded-md text-left text-sm [@media(pointer:coarse)]:min-h-[2.75rem]"
         data-testid="block-static"
         data-block-id={blockId}
-        aria-label={t('block.editLabel')}
         onClickCapture={handleQueryBlockClickCapture}
-        onKeyDown={handleOuterKeyDown}
       >
         <QueryResult
           expression={expression}
@@ -258,19 +233,24 @@ function StaticBlockInner({
 
   return (
     <>
-      {/* biome-ignore lint/a11y/useSemanticElements: outer must be a div so nested interactive children (QueryResult buttons, attachment open buttons) are valid HTML — native <button> cannot contain a <button> descendant. Keyboard semantics are replicated via handleOuterKeyDown. See TEST-4c. */}
+      {/* MAINT-162: passive container — no role/tabIndex/aria-label/onKeyDown.
+          The wrapper accepts mouse clicks (which mount the roving TipTap
+          editor via onFocus) but is not in the tab order. Inner rich-content
+          chips (block-link, tag-ref, external-link) and any attachment
+          buttons retain their own role/tabIndex/keyboard handling. The two
+          a11y suppressions below are the cost of a passive surface that
+          converts pointer clicks into editor-mount via onFocus: keyboard
+          users reach the same outcome by tabbing to an inner chip/button. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: passive container — see MAINT-162 comment above. */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: keyboard activation routes through inner focusable controls — see MAINT-162 comment above. */}
       <div
-        role="button"
-        tabIndex={0}
         className={cn(
-          'block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 text-left text-sm transition-colors hover:bg-accent/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden [@media(pointer:coarse)]:min-h-[2.75rem]',
+          'block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 text-left text-sm transition-colors hover:bg-accent/50 [@media(pointer:coarse)]:min-h-[2.75rem]',
           isSelected && 'ring-2 ring-primary/50 bg-primary/5',
         )}
         data-testid="block-static"
         data-block-id={blockId}
-        aria-label={t('block.editLabel')}
         onClick={handleOuterClick}
-        onKeyDown={handleOuterKeyDown}
       >
         {richContent ?? (
           <span className="block-placeholder text-muted-foreground italic">

@@ -121,12 +121,12 @@ describe('StaticBlock', () => {
     expect(button?.classList.contains('min-h-[1.75rem]')).toBe(true)
   })
 
-  it('calls onFocus when the block button is clicked', async () => {
+  it('calls onFocus when the block wrapper is clicked', async () => {
     const onFocus = vi.fn()
     const user = userEvent.setup()
     render(<StaticBlock blockId="B1" content="Click me" onFocus={onFocus} />)
 
-    await user.click(screen.getByRole('button'))
+    await user.click(screen.getByTestId('block-static'))
     expect(onFocus).toHaveBeenCalledWith('B1')
   })
 
@@ -362,13 +362,10 @@ describe('StaticBlock', () => {
         resolveTagName={() => '#MyTag'}
       />,
     )
-    // UX-249: clickable tag/link chips (role="link", tabIndex=0) inside
-    // StaticBlock's role="button" wrapper deliberately create nested-
-    // interactive DOM — a pre-existing structural trade-off also flagged
-    // by QueryResult nesting. Disable the rule for this audit.
-    const results = await axe(container, {
-      rules: { 'nested-interactive': { enabled: false } },
-    })
+    // MAINT-162: outer wrapper no longer has role="button", so the inner
+    // role="link" chips are no longer "nested" inside an interactive element.
+    // Audit runs without rule overrides.
+    const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
 
@@ -442,13 +439,9 @@ describe('StaticBlock', () => {
         onFocus={vi.fn()}
       />,
     )
-    // UX-249: external link spans are focusable inside StaticBlock's
-    // role="button" wrapper (tabIndex=0 when interactive), creating
-    // nested-interactive DOM — same structural trade-off as the token
-    // content audit above.
-    const results = await axe(container, {
-      rules: { 'nested-interactive': { enabled: false } },
-    })
+    // MAINT-162: outer wrapper is a passive container so the inner
+    // role="link" external-link span is not a nested-interactive violation.
+    const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
 
@@ -671,129 +664,79 @@ describe('StaticBlock', () => {
     })
   })
 
-  // -- ARIA attributes --------------------------------------------------------
-
-  describe('ARIA attributes', () => {
-    it('has aria-label="Edit block" on the button', () => {
-      render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
-      const button = screen.getByRole('button', { name: 'Edit block' })
-      expect(button).toBeInTheDocument()
-    })
-  })
-
-  // -- TEST-4c: role="button" div (non-nested interactive elements) -----------
+  // -- MAINT-162: passive-container outer wrapper -----------------------------
   //
-  // StaticBlock's outer element is a <div role="button"> rather than a native
-  // <button> so it can contain nested interactive children (QueryResult's
-  // chevron toggle and edit-query pencil) without producing invalid HTML
-  // ("<button> cannot be a descendant of <button>").
+  // After MAINT-162, StaticBlock's outer element is a plain <div> with no
+  // role, no tabIndex, and no keyboard handler. It is NOT in the tab order
+  // and is NOT exposed as a button to assistive tech. Clicking the wrapper
+  // still mounts the roving TipTap editor (via onFocus), and the inner
+  // subtree retains its own focusable controls (rich-content link/tag chips,
+  // QueryResult chevron + edit pencil, attachment buttons).
 
-  describe('TEST-4c: role="button" div focus model', () => {
-    it('outer focusable element is a <div>, not a <button>', () => {
+  describe('MAINT-162: passive-container outer wrapper', () => {
+    it('outer wrapper is a plain <div> with no role and no tabindex', () => {
       render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
-      const outer = screen.getByRole('button', { name: 'Edit block' })
+      const outer = screen.getByTestId('block-static')
       expect(outer.tagName).toBe('DIV')
-      expect(outer.getAttribute('role')).toBe('button')
-      expect(outer.getAttribute('tabindex')).toBe('0')
+      expect(outer.getAttribute('role')).toBeNull()
+      expect(outer.getAttribute('tabindex')).toBeNull()
+      expect(outer.getAttribute('aria-label')).toBeNull()
+    })
+
+    it('staticblock_outer_div_has_no_role_after_maint162', () => {
+      render(<StaticBlock blockId="B1" content="Hello world" onFocus={vi.fn()} />)
+      // Contract: the wrapper is no longer a button; AT must not see it as one.
+      expect(screen.getByTestId('block-static')?.getAttribute('role')).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Edit block' })).toBeNull()
+    })
+
+    it('staticblock_axe_clean_after_maint162', async () => {
+      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+      // No rule overrides — the passive container should pass axe cleanly.
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+
+    it('outer wrapper is not in the tab order', async () => {
+      const user = userEvent.setup()
+      render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+      const outer = screen.getByTestId('block-static')
+
+      await user.tab()
+      // Without tabIndex={0}, the wrapper itself is never the active element.
+      expect(outer).not.toHaveFocus()
     })
 
     it('outer element has no nested <button> descendants for plain content', () => {
       const { container } = render(
         <StaticBlock blockId="B1" content="Hello world" onFocus={vi.fn()} />,
       )
-      const outer = screen.getByRole('button', { name: 'Edit block' })
-      // The outer itself is a div — any nested <button> is a nesting violation.
+      const outer = screen.getByTestId('block-static')
+      // The outer itself is a plain div — any nested <button> is a structural
+      // smell (the original reason the wrapper was a div instead of a button).
       expect(outer.tagName).toBe('DIV')
       const nestedButtons = outer.querySelectorAll('button')
       expect(nestedButtons.length).toBe(0)
-      // Full-container sanity check: no element is both a <button> element AND
-      // a descendant of another <button> element.
+      // Full-container sanity check: no element is both a <button> element
+      // AND a descendant of another <button> element.
       const allButtons = container.querySelectorAll('button')
       for (const btn of allButtons) {
         expect(btn.parentElement?.closest('button')).toBeNull()
       }
     })
 
-    it('pressing Enter on the outer element calls onFocus', async () => {
-      const onFocus = vi.fn()
-      const user = userEvent.setup()
-      render(<StaticBlock blockId="B1" content="Hello" onFocus={onFocus} />)
-
-      const outer = screen.getByRole('button', { name: 'Edit block' })
-      outer.focus()
-      expect(outer).toHaveFocus()
-
-      await user.keyboard('{Enter}')
-      expect(onFocus).toHaveBeenCalledWith('B1')
-      expect(onFocus).toHaveBeenCalledTimes(1)
-    })
-
-    it('pressing Space on the outer element calls onFocus and prevents default', () => {
-      const onFocus = vi.fn()
-      render(<StaticBlock blockId="B1" content="Hello" onFocus={onFocus} />)
-
-      const outer = screen.getByRole('button', { name: 'Edit block' })
-      const event = fireEvent.keyDown(outer, { key: ' ', code: 'Space' })
-      // fireEvent.keyDown returns true if event was not canceled; we expect
-      // preventDefault to have fired (page should not scroll on Space).
-      expect(event).toBe(false)
-      expect(onFocus).toHaveBeenCalledWith('B1')
-    })
-
-    it('Ctrl+Enter on the outer element triggers onSelect toggle (not onFocus)', async () => {
-      const onFocus = vi.fn()
-      const onSelect = vi.fn()
-      const user = userEvent.setup()
-      render(<StaticBlock blockId="B1" content="Hello" onFocus={onFocus} onSelect={onSelect} />)
-
-      const outer = screen.getByRole('button', { name: 'Edit block' })
-      outer.focus()
-      await user.keyboard('{Control>}{Enter}{/Control}')
-      expect(onSelect).toHaveBeenCalledWith('B1', 'toggle')
-      expect(onFocus).not.toHaveBeenCalled()
-    })
-
-    it('Shift+Enter on the outer element triggers onSelect range (not onFocus)', async () => {
-      const onFocus = vi.fn()
-      const onSelect = vi.fn()
-      const user = userEvent.setup()
-      render(<StaticBlock blockId="B1" content="Hello" onFocus={onFocus} onSelect={onSelect} />)
-
-      const outer = screen.getByRole('button', { name: 'Edit block' })
-      outer.focus()
-      await user.keyboard('{Shift>}{Enter}{/Shift}')
-      expect(onSelect).toHaveBeenCalledWith('B1', 'range')
-      expect(onFocus).not.toHaveBeenCalled()
-    })
-
-    it('keydown bubbling from a nested element does NOT trigger outer onFocus', () => {
-      // Reproduce the inner-button bubble scenario: a keydown event whose
-      // target is a descendant element must not call the outer's onFocus
-      // handler. The guard is `e.target === e.currentTarget` in handleOuterKeyDown.
-      const onFocus = vi.fn()
-      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={onFocus} />)
-      const outer = screen.getByRole('button', { name: 'Edit block' })
-
-      // Simulate a keydown targeted at an inner span (the richContent node),
-      // bubbling up to the outer div. This mirrors the QueryResult chevron
-      // button case where Enter on the inner real <button> bubbles up here.
-      const inner = outer.querySelector('span') ?? container.querySelector('span')
-      expect(inner).not.toBeNull()
-      fireEvent.keyDown(inner as Element, { key: 'Enter', bubbles: true })
-      expect(onFocus).not.toHaveBeenCalled()
-    })
-
-    it('query-block variant is also a <div role="button"> with no nested button-in-button', () => {
-      // Query blocks render QueryResult inside the outer focusable element.
-      // QueryResult renders its own real <button>s (chevron toggle). Since the
-      // outer is now a <div>, these inner <button>s are valid HTML.
+    it('query-block variant is a plain <div> with no role and no nested button-in-button', () => {
+      // QueryResult renders its own real <button>s (chevron toggle). The
+      // outer being a plain div (not a button) keeps these inner <button>s
+      // valid HTML and free of the nested-interactive a11y smell.
       const { container } = render(
         <StaticBlock blockId="B1" content="{{query type:tag expr:project}}" onFocus={vi.fn()} />,
       )
       const outer = container.querySelector('[data-testid="block-static"]')
       expect(outer).not.toBeNull()
       expect(outer?.tagName).toBe('DIV')
-      expect(outer?.getAttribute('role')).toBe('button')
+      expect(outer?.getAttribute('role')).toBeNull()
+      expect(outer?.getAttribute('tabindex')).toBeNull()
       // Sanity: any <button> in the subtree must not have another <button>
       // ancestor (no button-in-button).
       const allButtons = container.querySelectorAll('button')
@@ -842,7 +785,7 @@ describe('StaticBlock', () => {
       expect(onFocus).not.toHaveBeenCalled()
     })
 
-    it('has no a11y violations with role="button" div (plain content)', async () => {
+    it('has no a11y violations with passive-container wrapper (plain content)', async () => {
       const { container } = render(
         <StaticBlock blockId="B1" content="Plain content" onFocus={vi.fn()} />,
       )
@@ -1401,11 +1344,9 @@ describe('StaticBlock', () => {
         <StaticBlock blockId="B1" content="{{query type:tag expr:test}}" onFocus={vi.fn()} />,
       )
       await screen.findByText('Service unavailable')
-      // Disable nested-interactive: QueryResult renders a button inside
-      // StaticBlock's wrapper button — a pre-existing structural trade-off.
-      const results = await axe(container, {
-        rules: { 'nested-interactive': { enabled: false } },
-      })
+      // MAINT-162: passive-container wrapper means QueryResult's inner
+      // <button> is no longer nested inside an interactive role.
+      const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
   })
@@ -1467,7 +1408,7 @@ describe('StaticBlock', () => {
 
     it('default blockquote without callout renders normally', () => {
       render(<StaticBlock blockId="B1" content="> just a quote" onFocus={vi.fn()} />)
-      const blockquote = screen.getByRole('button').querySelector('blockquote')
+      const blockquote = screen.getByTestId('block-static').querySelector('blockquote')
       expect(blockquote).toBeInTheDocument()
       expect(blockquote).not.toHaveAttribute('data-callout-type')
       expect(screen.queryByTestId('callout-block')).not.toBeInTheDocument()
@@ -1485,9 +1426,7 @@ describe('StaticBlock', () => {
       const { container } = render(
         <StaticBlock blockId="B1" content="> [!INFO] accessible callout" onFocus={vi.fn()} />,
       )
-      const results = await axe(container, {
-        rules: { 'nested-interactive': { enabled: false } },
-      })
+      const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
   })
@@ -1530,9 +1469,7 @@ describe('StaticBlock', () => {
       const { container } = render(
         <StaticBlock blockId="B1" content={'1. first\n2. second'} onFocus={vi.fn()} />,
       )
-      const results = await axe(container, {
-        rules: { 'nested-interactive': { enabled: false } },
-      })
+      const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
   })
@@ -1564,9 +1501,7 @@ describe('StaticBlock', () => {
       const { container } = render(
         <StaticBlock blockId="B1" content={'Before\n---\nAfter'} onFocus={vi.fn()} />,
       )
-      const results = await axe(container, {
-        rules: { 'nested-interactive': { enabled: false } },
-      })
+      const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
   })
@@ -1642,9 +1577,7 @@ describe('StaticBlock', () => {
         />,
       )
 
-      const results = await axe(container, {
-        rules: { 'nested-interactive': { enabled: false } },
-      })
+      const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
   })
