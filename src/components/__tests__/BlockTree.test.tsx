@@ -124,79 +124,90 @@ vi.mock('../../hooks/useViewportObserver', () => ({
   }),
 }))
 
-// Minimal mock for SortableBlock
-vi.mock('../SortableBlock', () => ({
-  SortableBlock: (props: {
-    blockId: string
-    hasChildren?: boolean
-    isCollapsed?: boolean
-    onToggleCollapse?: (id: string) => void
-    todoState?: string | null
-    onToggleTodo?: (id: string) => void
-    priority?: string | null
-    onTogglePriority?: (id: string) => void
-    onZoomIn?: (id: string) => void
-    isSelected?: boolean
-    onSelect?: (blockId: string, mode: 'toggle' | 'range') => void
-  }) => (
-    <div
-      data-testid={`sortable-block-${props.blockId}`}
-      data-has-children={props.hasChildren ?? false}
-      data-is-collapsed={props.isCollapsed ?? false}
-      data-todo-state={props.todoState ?? ''}
-      data-priority={props.priority ?? ''}
-      data-selected={props.isSelected ? 'true' : 'false'}
-    >
-      {props.hasChildren && props.onToggleCollapse && (
-        <button
-          data-testid={`toggle-${props.blockId}`}
-          onClick={() => props.onToggleCollapse?.(props.blockId)}
-          type="button"
+// Minimal mock for SortableBlock — production SortableBlock pulls action
+// callbacks from `useBlockActions()`, so the mock does the same to mirror
+// the real component's wiring (MAINT-118).
+vi.mock('../SortableBlock', async () => {
+  const { useBlockActions } = await import('../../hooks/useBlockActions')
+  return {
+    SortableBlock: (props: {
+      blockId: string
+      hasChildren?: boolean
+      isCollapsed?: boolean
+      todoState?: string | null
+      priority?: string | null
+      isSelected?: boolean
+    }) => {
+      const actions = useBlockActions()
+      const onToggleCollapse = actions.onToggleCollapse
+      const onToggleTodo = actions.onToggleTodo
+      const onTogglePriority = actions.onTogglePriority
+      // Production SortableBlock gates onZoomIn by hasChildren before
+      // forwarding to BlockContextMenu — replicate that here so the
+      // zoom-in affordance only appears when both ingredients are wired.
+      const onZoomIn = props.hasChildren ? actions.onZoomIn : undefined
+      const onSelect = actions.onSelect
+      return (
+        <div
+          data-testid={`sortable-block-${props.blockId}`}
+          data-has-children={props.hasChildren ?? false}
+          data-is-collapsed={props.isCollapsed ?? false}
+          data-todo-state={props.todoState ?? ''}
+          data-priority={props.priority ?? ''}
+          data-selected={props.isSelected ? 'true' : 'false'}
         >
-          Toggle
-        </button>
-      )}
-      {props.onToggleTodo && (
-        <button
-          data-testid={`todo-toggle-${props.blockId}`}
-          onClick={() => props.onToggleTodo?.(props.blockId)}
-          type="button"
-        >
-          Todo
-        </button>
-      )}
-      {props.onTogglePriority && (
-        <button
-          data-testid={`priority-toggle-${props.blockId}`}
-          onClick={() => props.onTogglePriority?.(props.blockId)}
-          type="button"
-        >
-          Priority
-        </button>
-      )}
-      {props.onZoomIn && (
-        <button
-          data-testid={`zoom-in-${props.blockId}`}
-          onClick={() => props.onZoomIn?.(props.blockId)}
-          type="button"
-        >
-          Zoom In
-        </button>
-      )}
-      {props.onSelect && (
-        <button
-          data-testid={`select-${props.blockId}`}
-          onClick={() => props.onSelect?.(props.blockId, 'toggle')}
-          type="button"
-        >
-          Select
-        </button>
-      )}
-      SortableBlock
-    </div>
-  ),
-  INDENT_WIDTH: 24,
-}))
+          {props.hasChildren && onToggleCollapse && (
+            <button
+              data-testid={`toggle-${props.blockId}`}
+              onClick={() => onToggleCollapse(props.blockId)}
+              type="button"
+            >
+              Toggle
+            </button>
+          )}
+          {onToggleTodo && (
+            <button
+              data-testid={`todo-toggle-${props.blockId}`}
+              onClick={() => onToggleTodo(props.blockId)}
+              type="button"
+            >
+              Todo
+            </button>
+          )}
+          {onTogglePriority && (
+            <button
+              data-testid={`priority-toggle-${props.blockId}`}
+              onClick={() => onTogglePriority(props.blockId)}
+              type="button"
+            >
+              Priority
+            </button>
+          )}
+          {onZoomIn && (
+            <button
+              data-testid={`zoom-in-${props.blockId}`}
+              onClick={() => onZoomIn(props.blockId)}
+              type="button"
+            >
+              Zoom In
+            </button>
+          )}
+          {onSelect && (
+            <button
+              data-testid={`select-${props.blockId}`}
+              onClick={() => onSelect(props.blockId, 'toggle')}
+              type="button"
+            >
+              Select
+            </button>
+          )}
+          SortableBlock
+        </div>
+      )
+    },
+    INDENT_WIDTH: 24,
+  }
+})
 
 vi.mock('../../lib/announcer', () => ({
   announce: vi.fn(),
@@ -4900,6 +4911,34 @@ describe('BlockTree zoom-in', () => {
       expect(screen.getByTestId('sortable-block-C')).toBeInTheDocument()
       expect(screen.getByTestId('sortable-block-D')).toBeInTheDocument()
     })
+  })
+
+  it('does not render the zoom-in affordance for leaf blocks (MAINT-118)', async () => {
+    // Regression guard for the prop-drill → context migration: SortableBlock
+    // gates onZoomIn by hasChildren before forwarding it to the context
+    // menu. A leaf block must NOT expose the zoom-in button, even though
+    // BlockActionsProvider publishes the callback to every descendant.
+    const tree = [
+      makeBlock({ id: 'PARENT', content: 'Parent' }),
+      makeBlock({ id: 'CHILD', parent_id: 'PARENT', depth: 1, content: 'Child leaf' }),
+      makeBlock({ id: 'STANDALONE', content: 'Standalone leaf' }),
+    ]
+
+    pageStore.setState({ blocks: tree, loading: false })
+
+    renderBlockTree()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-PARENT')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-CHILD')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-STANDALONE')).toBeInTheDocument()
+    })
+
+    // PARENT has descendants → zoom button present.
+    expect(screen.getByTestId('zoom-in-PARENT')).toBeInTheDocument()
+    // Leaves stay off, regardless of provider wiring.
+    expect(screen.queryByTestId('zoom-in-CHILD')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('zoom-in-STANDALONE')).not.toBeInTheDocument()
   })
 
   it('breadcrumb renders when zoomed', async () => {

@@ -1,5 +1,45 @@
 # Session Log
 
+## Session 561 — Close 1 large item (MAINT-118 Phase 1) — context-backed handler bag drops 18 props from 4-component chain (2026-04-30)
+
+**1 MAINT item closed in one PROMPT.md batch with 1 orchestrator-direct execution + 1 review subagent.** Theme: finally delivered the long-deferred MAINT-118 (the 33-prop drilling chain that silent-failed 3× as a subagent across Sessions 555/557/558). The strategy that worked: orchestrator-direct, scope-narrowed to the 3-component chain only (BlockListRenderer → SortableBlockWrapper → SortableBlock + the BlockTree call site that wraps them), with backward-compatible SortableBlock props so the 4272-line existing test file didn't need a rewrite. Bonus 1 background subagent for MAINT-130(b) was canceled by user partway through; not on disk.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 25 → 24 (net −1: MAINT-118 closed entirely; session 560 reported "24" but the actual table count was 25 — bookkeeping drift, fixed in this session's summary).
+- **Previously-resolved counter:** 805+ → 806+ across 527 → 528 sessions.
+
+**Items closed (1):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-118 | `src/hooks/useBlockActions.tsx` (new, 76L) + `src/hooks/useBlockResolvers.tsx` (new, 56L) + `src/hooks/__tests__/useBlockActions.test.tsx` (new, 89L, 5 tests) + `src/hooks/__tests__/useBlockResolvers.test.tsx` (new, 78L, 3 tests) + `src/components/SortableBlock.tsx` (+76 / -34 lines, prop interface kept optional for test back-compat, body resolves prop ?? context via `mergeActions` / `mergeResolvers` helpers) + `src/components/SortableBlockWrapper.tsx` (-32 lines, dropped 18 props from interface + invocation) + `src/components/BlockListRenderer.tsx` (-26 lines, same) + `src/components/BlockTree.tsx` (+55 / -22 lines: memoised `blockActions` + `blockResolvers` bags, wrapped `<BlockListRenderer>` with `<BlockActionsProvider>` + `<BlockResolversProvider>`) + `src/components/__tests__/BlockListRenderer.test.tsx` (-19 lines, dropped stale prop entries from `makeProps()`) + `src/components/__tests__/SortableBlockWrapper.test.tsx` (-46 lines, dropped 18 props from `makeProps()` + 3 obsolete pass-through tests) + `src/components/__tests__/BlockTree.test.tsx` (+76 / -54 lines: SortableBlock mock now reads via `useBlockActions()`; new regression test "does not render the zoom-in affordance for leaf blocks" added at line 4916) — orchestrator-direct | **Created two co-equal context providers (`BlockActionsProvider` for the 14 callbacks, `BlockResolversProvider` for the 4 resolvers) and rewrote the 3-component chain to consume from them.** Resulting prop-interface deltas: BlockListRenderer −18 props (callbacks + resolvers), SortableBlockWrapper −18 props, SortableBlock keeps the 18 as OPTIONAL for test back-compat (4272-line test file untouched). The chain now drills only state/dnd/viewport props (~14 across each level) instead of state + 18 callbacks + 4 resolvers. SortableBlock body merges prop ?? context via two helper functions (`mergeActions`, `mergeResolvers`) lifted out of `SortableBlockInner` so its cognitive-complexity stays under Biome's threshold (was 17, would have been 35 with all 18 `??` inline; helpers are 14 and 4 respectively). The `onZoomIn` gating by `hasChildren` (previously in SortableBlockWrapper line 178) moved into SortableBlock just before the BlockContextMenu render. `useBlockActions()` returns `Object.freeze({})` outside a provider for stable identity; `useBlockResolvers()` returns `null` outside a provider so consumers can fall back to props (rejected the "identity defaults" alternative — would have masked test bugs). Full vitest run: **8687 / 8687 pass**. tsc clean. prek (35 hooks) clean. Reviewer (`476b4e05`) APPROVE-WITH-NITS; 3 nits addressed (BlockListRenderer.test makeProps cleanup; new "leaf block has no zoom-in affordance" regression test in BlockTree.test). |
+
+**Process notes:**
+
+- **Orchestrator-direct strategy worked.** 3 prior subagent attempts at MAINT-118 silent-failed (filed the prompt, no files modified). The orchestrator-direct path read each chain component end-to-end before designing, found that SortableBlock's existing prop interface was already all-optional (so back-compat was free), and only had to rewrite 1 of the 3 mocks (BlockTree.test's SortableBlock mock — the BlockListRenderer mock and SortableBlockWrapper mock didn't need behavioral changes). Net wall-clock ~2 hours including the prek-driven biome/tsc fix loops.
+- **Two prek-driven fix loops** during commit prep: (1) Biome `noExcessiveCognitiveComplexity` flagged SortableBlockInner at 35 (threshold 25) — fixed by extracting `mergeActions` (complexity 14) + `mergeResolvers` (complexity 4) helpers; (2) prek's tsc found 4 `exactOptionalPropertyTypes` violations not caught by `tsc -b --noEmit` locally — fixed by adding explicit `| undefined` per field in `BlockActions` interface and using a custom `ResolverPropBag = { [K in keyof BlockResolvers]?: BlockResolvers[K] | undefined }` mapped type for the resolver helper signature. Worth noting: prek's tsc seems to have stricter settings than the local default `tsc -b` invocation — future sessions should run prek's tsc check earlier or always run `prek run typescript --all-files` before considering tsc clean.
+- **MAINT-130(b) subagent was canceled by user mid-flight** (no on-disk artifacts). Dropped from this batch; remains open for a future session.
+- **Reviewer asymmetry-justification accepted:** `useBlockActions()` returns `{}` outside a provider while `useBlockResolvers()` returns `null`. Reviewer flagged it but agreed with the rationale (resolvers without a provider should NOT silently identity-resolve everything — that would change test behaviour where callers expect "not called"; actions can be empty since each callback is individually optional already).
+- **Reviewer NICE-TO-HAVE deferred:** dev-mode `console.warn` when `useBlockResolvers()` returns null and a consumer accesses a resolver. Decided not to add — adds dev-mode-only behavior that might fire in unrelated test setups; the current "returns null" + downstream `?.` is already non-noisy and TS catches misuse at compile time.
+- **No `cargo sqlx prepare`** needed — no SQL changes.
+- **No FEATURE-MAP.md update** — internal frontend refactor; user-facing feature inventory unchanged.
+
+**Files touched (this session's batch):**
+
+- Frontend new (4): `src/hooks/useBlockActions.tsx`, `src/hooks/useBlockResolvers.tsx`, `src/hooks/__tests__/useBlockActions.test.tsx`, `src/hooks/__tests__/useBlockResolvers.test.tsx`.
+- Frontend modified (4): `src/components/SortableBlock.tsx`, `src/components/SortableBlockWrapper.tsx`, `src/components/BlockListRenderer.tsx`, `src/components/BlockTree.tsx`.
+- Tests modified (3): `src/components/__tests__/BlockTree.test.tsx`, `src/components/__tests__/BlockListRenderer.test.tsx`, `src/components/__tests__/SortableBlockWrapper.test.tsx`.
+- Docs: `REVIEW-LATER.md` (1 row removed for MAINT-118; appendix detail removed). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- New contexts: `npx vitest run src/hooks/__tests__/useBlockActions src/hooks/__tests__/useBlockResolvers` → **9/9 passed** (5 + 4).
+- Chain components: `npx vitest run src/components/__tests__/{SortableBlock,SortableBlockWrapper,BlockListRenderer,BlockTree}.test.tsx` → **453/453 passed** (188 + 21 + 27 + 209, including the new leaf-block zoom-in regression test).
+- Full frontend: `npx vitest run` → **8687/8687 passed** (no regressions across 332 test files).
+
+---
+
 ## Session 560 — Close 2 items (MAINT-116, MAINT-130(a)) — small batch with drift-discovery in MAINT-130(a) (2026-04-30)
 
 **2 MAINT items closed in one PROMPT.md batch with 1 build subagent + 1 orchestrator-direct item + 1 review subagent.** Theme: continued the smaller-batch shape from session 559 to avoid silent-fails. Subagent did MAINT-130(a) (well-scoped: 1 new component + tests). Orchestrator did MAINT-116 directly (the bug fix had silent-failed twice in prior sessions).

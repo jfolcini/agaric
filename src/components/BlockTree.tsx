@@ -22,6 +22,7 @@ import { parse } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { useRovingEditor } from '../editor/use-roving-editor'
+import { type BlockActions, BlockActionsProvider } from '../hooks/useBlockActions'
 import { useBlockCollapse } from '../hooks/useBlockCollapse'
 import { useBlockDatePicker } from '../hooks/useBlockDatePicker'
 import { useBlockDnD } from '../hooks/useBlockDnD'
@@ -29,6 +30,7 @@ import { useBlockKeyboardHandlers } from '../hooks/useBlockKeyboardHandlers'
 import { useBlockMultiSelect } from '../hooks/useBlockMultiSelect'
 import { useBlockProperties } from '../hooks/useBlockProperties'
 import { useBlockResolve } from '../hooks/useBlockResolve'
+import { type BlockResolvers, BlockResolversProvider } from '../hooks/useBlockResolvers'
 import {
   searchPropertyKeys,
   searchSlashCommands,
@@ -773,6 +775,57 @@ export function BlockTree({
   // ── Active item for DragOverlay ────────────────────────────────────
   const activeBlock = dnd.activeId ? (blocks.find((b) => b.id === dnd.activeId) ?? null) : null
 
+  // ── Action / resolver bags published via context (MAINT-118) ────────
+  // Memoised so descendants only re-render when callbacks change.
+  const blockActions = useMemo<BlockActions>(
+    () => ({
+      onNavigate: handleNavigate,
+      onDelete: remove,
+      onIndent: indent,
+      onDedent: dedent,
+      onMoveUp: handleMoveUpById,
+      onMoveDown: handleMoveDownById,
+      onMerge: handleMergeById,
+      onToggleTodo: handleToggleTodo,
+      onTogglePriority: handleTogglePriority,
+      onToggleCollapse: toggleCollapse,
+      onShowHistory: handleShowHistory,
+      onShowProperties: handleShowProperties,
+      onZoomIn: handleZoomIn,
+      onSelect: handleSelect,
+    }),
+    [
+      handleNavigate,
+      remove,
+      indent,
+      dedent,
+      handleMoveUpById,
+      handleMoveDownById,
+      handleMergeById,
+      handleToggleTodo,
+      handleTogglePriority,
+      toggleCollapse,
+      handleShowHistory,
+      handleShowProperties,
+      handleZoomIn,
+      handleSelect,
+    ],
+  )
+  const blockResolvers = useMemo<BlockResolvers>(
+    () => ({
+      resolveBlockTitle: resolve.resolveBlockTitle,
+      resolveTagName: resolve.resolveTagName,
+      resolveBlockStatus: resolve.resolveBlockStatus,
+      resolveTagStatus: resolve.resolveTagStatus,
+    }),
+    [
+      resolve.resolveBlockTitle,
+      resolve.resolveTagName,
+      resolve.resolveBlockStatus,
+      resolve.resolveTagStatus,
+    ],
+  )
+
   if (loading) {
     return (
       <div
@@ -818,41 +871,27 @@ export function BlockTree({
         onDragEnd={dnd.handleDragEnd}
         onDragCancel={dnd.handleDragCancel}
       >
-        <BlockListRenderer
-          visibleItems={dnd.visibleItems}
-          blocks={blocks}
-          loading={loading}
-          rootParentId={rootParentId}
-          focusedBlockId={focusedBlockId}
-          selectedBlockIds={selectedBlockIds}
-          projected={dnd.projected}
-          activeId={dnd.activeId}
-          overId={dnd.overId}
-          viewport={viewport}
-          rovingEditor={rovingEditor}
-          onNavigate={handleNavigate}
-          onDelete={remove}
-          onIndent={indent}
-          onDedent={dedent}
-          onMoveUp={handleMoveUpById}
-          onMoveDown={handleMoveDownById}
-          onMerge={handleMergeById}
-          onToggleTodo={handleToggleTodo}
-          onTogglePriority={handleTogglePriority}
-          onToggleCollapse={toggleCollapse}
-          onShowHistory={handleShowHistory}
-          onShowProperties={handleShowProperties}
-          onZoomIn={handleZoomIn}
-          onSelect={handleSelect}
-          onContainerPointerDown={handleContainerPointerDown}
-          resolveBlockTitle={resolve.resolveBlockTitle}
-          resolveTagName={resolve.resolveTagName}
-          resolveBlockStatus={resolve.resolveBlockStatus}
-          resolveTagStatus={resolve.resolveTagStatus}
-          hasChildrenSet={hasChildrenSet}
-          collapsedIds={collapsedIds}
-          blockProperties={blockProperties}
-        />
+        <BlockActionsProvider value={blockActions}>
+          <BlockResolversProvider value={blockResolvers}>
+            <BlockListRenderer
+              visibleItems={dnd.visibleItems}
+              blocks={blocks}
+              loading={loading}
+              rootParentId={rootParentId}
+              focusedBlockId={focusedBlockId}
+              selectedBlockIds={selectedBlockIds}
+              projected={dnd.projected}
+              activeId={dnd.activeId}
+              overId={dnd.overId}
+              viewport={viewport}
+              rovingEditor={rovingEditor}
+              onContainerPointerDown={handleContainerPointerDown}
+              hasChildrenSet={hasChildrenSet}
+              collapsedIds={collapsedIds}
+              blockProperties={blockProperties}
+            />
+          </BlockResolversProvider>
+        </BlockActionsProvider>
         <BlockDndOverlay
           activeBlock={activeBlock}
           projected={dnd.projected}

@@ -6,6 +6,12 @@
  * the branching between the virtualized placeholder `<li>` and the full
  * `<li>` that renders the drop indicator and `<SortableBlock>`. No new
  * behaviour — pure render reorganisation.
+ *
+ * Per-block action callbacks and reference resolvers used to be drilled
+ * through this component verbatim. They now flow via
+ * `BlockActionsProvider` / `BlockResolversProvider` (MAINT-118), so this
+ * file no longer mentions them at all — SortableBlock reads them directly
+ * from context.
  */
 
 import type React from 'react'
@@ -42,28 +48,6 @@ export interface SortableBlockWrapperProps {
   siblingAria: { setsize: number; posinset: number } | undefined
   /** Custom block properties to render as inline chips. */
   properties: Array<{ key: string; value: string }> | undefined
-
-  // ── Block callbacks ────────────────────────────────────────────────
-  onNavigate: (id: string) => void
-  onDelete: (blockId: string) => void
-  onIndent: (blockId: string) => void
-  onDedent: (blockId: string) => void
-  onMoveUp: (blockId: string) => void
-  onMoveDown: (blockId: string) => void
-  onMerge: (blockId: string) => void
-  onToggleTodo: (blockId: string) => void
-  onTogglePriority: (blockId: string) => void
-  onToggleCollapse: (blockId: string) => void
-  onShowHistory: (blockId: string) => void
-  onShowProperties: (blockId: string) => void
-  onZoomIn: (blockId: string) => void
-  onSelect: (blockId: string, mode: 'toggle' | 'range') => void
-
-  // ── Resolve callbacks ──────────────────────────────────────────────
-  resolveBlockTitle: (id: string) => string
-  resolveTagName: (id: string) => string
-  resolveBlockStatus: (id: string) => 'active' | 'deleted'
-  resolveTagStatus: (id: string) => 'active' | 'deleted'
 }
 
 export function SortableBlockWrapper({
@@ -81,24 +65,6 @@ export function SortableBlockWrapper({
   isAnimating,
   siblingAria,
   properties,
-  onNavigate,
-  onDelete,
-  onIndent,
-  onDedent,
-  onMoveUp,
-  onMoveDown,
-  onMerge,
-  onToggleTodo,
-  onTogglePriority,
-  onToggleCollapse,
-  onShowHistory,
-  onShowProperties,
-  onZoomIn,
-  onSelect,
-  resolveBlockTitle,
-  resolveTagName,
-  resolveBlockStatus,
-  resolveTagStatus,
 }: SortableBlockWrapperProps): React.ReactElement {
   const isFocused = focusedBlockId === block.id
   // Show projected depth during drag for the active item's over target
@@ -151,33 +117,15 @@ export function SortableBlockWrapper({
         isFocused={isFocused}
         depth={block.id === activeId ? projectedDepth : block.depth}
         rovingEditor={rovingEditor}
-        onNavigate={onNavigate}
-        onDelete={onDelete}
-        resolveBlockTitle={resolveBlockTitle}
-        resolveTagName={resolveTagName}
-        resolveBlockStatus={resolveBlockStatus}
-        resolveTagStatus={resolveTagStatus}
         hasChildren={hasChildren}
         anyBlockHasChildren={anyBlockHasChildren}
         isCollapsed={isCollapsed}
-        onToggleCollapse={onToggleCollapse}
         todoState={block.todo_state ?? null}
-        onToggleTodo={onToggleTodo}
         priority={block.priority ?? null}
-        onTogglePriority={onTogglePriority}
         dueDate={block.due_date ?? null}
         scheduledDate={block.scheduled_date ?? null}
         properties={properties}
-        onIndent={onIndent}
-        onDedent={onDedent}
-        onMoveUp={onMoveUp}
-        onMoveDown={onMoveDown}
-        onMerge={onMerge}
-        onShowHistory={onShowHistory}
-        onShowProperties={onShowProperties}
-        onZoomIn={hasChildren ? onZoomIn : undefined}
         isSelected={isSelected}
-        onSelect={onSelect}
       />
     </li>
   )

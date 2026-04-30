@@ -43,7 +43,6 @@ vi.mock('@dnd-kit/core', () => ({
 import { BlockListRenderer } from '../BlockListRenderer'
 
 const noop = () => {}
-const resolveActive = () => 'active' as const
 
 /** Minimal props to render BlockListRenderer. */
 function makeProps(overrides: Partial<React.ComponentProps<typeof BlockListRenderer>> = {}) {
@@ -68,25 +67,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof BlockListRende
       unmount: vi.fn(() => null),
       activeBlockId: null,
     } as never,
-    onNavigate: noop,
-    onDelete: noop,
-    onIndent: noop,
-    onDedent: noop,
-    onMoveUp: noop,
-    onMoveDown: noop,
-    onMerge: noop,
-    onToggleTodo: noop,
-    onTogglePriority: noop,
-    onToggleCollapse: noop,
-    onShowHistory: noop,
-    onShowProperties: noop,
-    onZoomIn: noop,
-    onSelect: noop,
     onContainerPointerDown: noop,
-    resolveBlockTitle: (id: string) => id,
-    resolveTagName: (id: string) => id,
-    resolveBlockStatus: resolveActive,
-    resolveTagStatus: resolveActive,
     hasChildrenSet: new Set<string>(),
     collapsedIds: new Set<string>(),
     blockProperties: {},
