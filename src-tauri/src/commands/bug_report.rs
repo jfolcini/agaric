@@ -372,24 +372,55 @@ const RECENT_ERRORS_CAP: usize = 20;
 /// 2026-04-28T10:23:46.234567Z  WARN  agaric::sync_files: ...
 /// ```
 ///
-/// The level always appears within the first ~35 bytes (27-byte ISO-Z
-/// timestamp + a couple of separator spaces + the 4–5-char level).
-/// Bounding the substring search to the first 40 bytes prevents body
-/// content of the form `... contains ERROR somewhere in the message ...`
-/// on an INFO line from being misclassified. The previous unbounded
-/// `line.contains(" ERROR ") || line.contains(" WARN ")` produced false
-/// positives any time an INFO/DEBUG line's payload mentioned those words.
+/// Or, in JSON format (active on disk after H-9b-activation):
+///
+/// ```text
+/// {"timestamp":"2026-04-28T10:23:45.123456Z","level":"ERROR","fields":{"message":"..."},"target":"agaric::module"}
+/// ```
+///
+/// The level always appears within the first ~80 bytes (27-byte ISO-Z
+/// timestamp + JSON framing + the 4–5-char level value). Bounding the
+/// substring search to the first 80 bytes prevents body content of the
+/// form `... contains ERROR somewhere in the message ...` from being
+/// misclassified. The previous unbounded `line.contains(" ERROR ") ||
+/// line.contains(" WARN ")` produced false positives any time an
+/// INFO/DEBUG line's payload mentioned those words.
+///
+/// We accept three lexically-distinct level shapes within the prefix:
+/// (a) text-format ` ERROR ` / ` WARN ` (legacy stderr/non-JSON file
+///     fixtures + in-file unit tests; still reachable for any line that
+///     does not parse as JSON);
+/// (b) JSON-format `"level":"ERROR"` / `"level":"WARN"` (production
+///     `agaric.log` post-activation);
+/// (c) JSON-format with whitespace `"level": "ERROR"` (defensive — we do
+///     not control the JSON formatter's whitespace policy across versions).
 ///
 /// `regex` is a workspace dep (used by [`EMAIL_REGEX`] above), so a fully
 /// anchored ISO-Z regex would also work — but the prefix-bound check is
-/// cheaper, has no per-call regex overhead in this hot path (the helper
-/// is invoked per-line on the live `agaric.log` tail), and is permissive
-/// enough to also accept the `YYYY-MM-DD LEVEL ...` shape used by the
-/// in-file unit-test fixtures, avoiding churn in test data that exists
-/// purely to exercise this filter.
+/// cheaper and has no per-call regex overhead in this hot path (the helper
+/// is invoked per-line on the live `agaric.log` tail).
 fn is_error_or_warn_line(line: &str) -> bool {
-    let prefix = line.get(..40.min(line.len())).unwrap_or("");
-    prefix.contains(" ERROR ") || prefix.contains(" WARN ")
+    // Text format (stderr / non-JSON fixtures): the level always sits
+    // within the first 40 bytes (27-byte ISO-Z + separator + 4–5-char
+    // level). A body whose payload mentions the word " ERROR " is past
+    // byte 40 and therefore excluded — preserves the L-40 false-positive
+    // guard pinned by `is_error_or_warn_line_rejects_body_match`.
+    let text_prefix = line.get(..40.min(line.len())).unwrap_or("");
+    if text_prefix.contains(" ERROR ") || text_prefix.contains(" WARN ") {
+        return true;
+    }
+    // JSON format (post-H-9b-activation `agaric.log`). The `level` key
+    // appears around byte 44–58 of a typical line — outside the 40-byte
+    // window above. Use a slightly larger window. The `"level":"X"`
+    // substring is specific enough that body false-positives are
+    // negligible (a body would need to contain the exact 15-byte literal
+    // `"level":"ERROR"` early in the message). Both no-whitespace and
+    // single-space JSON shapes accepted defensively.
+    let json_prefix = line.get(..80.min(line.len())).unwrap_or("");
+    json_prefix.contains(r#""level":"ERROR""#)
+        || json_prefix.contains(r#""level":"WARN""#)
+        || json_prefix.contains(r#""level": "ERROR""#)
+        || json_prefix.contains(r#""level": "WARN""#)
 }
 
 /// Pure helper: extract up to [`RECENT_ERRORS_CAP`] most-recent `ERROR` or
@@ -1118,6 +1149,48 @@ mod tests {
     #[test]
     fn is_error_or_warn_line_handles_empty_input() {
         assert!(!is_error_or_warn_line(""));
+    }
+
+    /// H-9b-activation: the helper must also detect the JSON-format level
+    /// produced by `tracing_subscriber::fmt::layer().json()` (the production
+    /// file appender post-activation). Both no-whitespace and single-space
+    /// JSON shapes are accepted defensively.
+    #[test]
+    fn is_error_or_warn_line_matches_json_levels_h9b_activation() {
+        // No-whitespace JSON (the default tracing-subscriber JSON shape).
+        assert!(is_error_or_warn_line(
+            r#"{"timestamp":"2026-04-28T10:23:45.123456Z","level":"ERROR","fields":{"message":"failed to apply op"},"target":"agaric::commands"}"#
+        ));
+        assert!(is_error_or_warn_line(
+            r#"{"timestamp":"2026-04-28T10:23:46.234567Z","level":"WARN","fields":{"message":"stale snapshot, retrying"},"target":"agaric::sync_files"}"#
+        ));
+        // Single-space JSON shape (defensive — some formatter configs emit this).
+        assert!(is_error_or_warn_line(
+            r#"{"timestamp":"2026-04-28T10:23:45.123456Z","level": "ERROR","fields":{"message":"x"}}"#
+        ));
+        assert!(is_error_or_warn_line(
+            r#"{"timestamp":"2026-04-28T10:23:46.234567Z","level": "WARN","fields":{"message":"y"}}"#
+        ));
+    }
+
+    /// H-9b-activation: a JSON line whose level is INFO/DEBUG/TRACE must
+    /// NOT be classified as an error/warn line, even if the body
+    /// (`fields.message` or nested data) happens to contain the
+    /// substring `ERROR` or `WARN`.
+    #[test]
+    fn is_error_or_warn_line_rejects_json_body_match_h9b_activation() {
+        // INFO line whose `message` contains the word "ERROR" — must NOT match.
+        let info_with_error_in_message = r#"{"timestamp":"2026-04-28T10:23:45.123456Z","level":"INFO","fields":{"message":"completed without ERROR"},"target":"agaric::module"}"#;
+        assert!(
+            !is_error_or_warn_line(info_with_error_in_message),
+            "INFO line whose body mentions ERROR must NOT be classified as error/warn, got: {info_with_error_in_message}"
+        );
+        // DEBUG line whose `data` field mentions "WARN" — must NOT match.
+        let debug_with_warn_in_data = r#"{"timestamp":"2026-04-28T10:23:46.234567Z","level":"DEBUG","fields":{"message":"emitting WARN deprecation"},"target":"agaric::other"}"#;
+        assert!(
+            !is_error_or_warn_line(debug_with_warn_in_data),
+            "DEBUG line whose body mentions WARN must NOT be classified as error/warn, got: {debug_with_warn_in_data}"
+        );
     }
 
     // -- collect_bug_report_metadata_inner --------------------------------

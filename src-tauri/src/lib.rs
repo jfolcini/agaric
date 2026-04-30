@@ -518,11 +518,22 @@ pub fn run() {
             let env_filter = EnvFilter::try_new(&directives)
                 .unwrap_or_else(|_| EnvFilter::new("agaric=info,frontend=info"));
 
+            // H-9b-activation: the file appender emits JSON-per-line so
+            // the H-9b deny-list redaction pipeline (`bug_report::redact_line`)
+            // engages on `agaric.log` content. The stderr layer stays in the
+            // human-readable text format for live dev debugging — only the
+            // bug-report bundle (built from `agaric.log`) needs the JSON
+            // structure for safe-token-based redaction.
+            //
+            // Note: `agaric.log` is now JSON-per-line. Read it with `jq`:
+            //   tail -f agaric.log | jq
+            // or any structured-log viewer.
             tracing_subscriber::registry()
                 .with(env_filter)
                 .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
                 .with(
                     tracing_subscriber::fmt::layer()
+                        .json()
                         .with_writer(non_blocking)
                         .with_ansi(false),
                 )
