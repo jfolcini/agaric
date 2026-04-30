@@ -55,7 +55,7 @@ beforeEach(() => {
   mockInvalidationKey = 0
   mockedListBlocks.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
-  mockedListProjectedAgenda.mockResolvedValue([])
+  mockedListProjectedAgenda.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
   // TEST-31: Freeze Date only (not setTimeout/setInterval — waitFor and
   // renderHook rely on real timers). Prevents midnight-boundary flakes
@@ -186,13 +186,17 @@ describe('useDuePanelData', () => {
   })
 
   it('fetches projected entries on mount', async () => {
-    mockedListProjectedAgenda.mockResolvedValue([
-      {
-        block: makeBlock({ id: 'PROJ1', content: 'Projected task' }),
-        projected_date: '2025-06-15',
-        source: 'due_date',
-      },
-    ])
+    mockedListProjectedAgenda.mockResolvedValue({
+      items: [
+        {
+          block: makeBlock({ id: 'PROJ1', content: 'Projected task' }),
+          projected_date: '2025-06-15',
+          source: 'due_date',
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
 
     const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
 
@@ -509,18 +513,22 @@ describe('useDuePanelData', () => {
   it('projected batchResolve includes content ULIDs (B-55)', async () => {
     const ULID_REF = '01ABCDEFGHJKLMNPQRSTUVWXYZ'
 
-    mockedListProjectedAgenda.mockResolvedValue([
-      {
-        block: makeBlock({
-          id: 'PROJ1',
-          parent_id: 'PPROJ',
-          page_id: 'PPROJ',
-          content: `Projected ref [[${ULID_REF}]]`,
-        }),
-        projected_date: '2025-06-15',
-        source: 'due_date',
-      },
-    ])
+    mockedListProjectedAgenda.mockResolvedValue({
+      items: [
+        {
+          block: makeBlock({
+            id: 'PROJ1',
+            parent_id: 'PPROJ',
+            page_id: 'PPROJ',
+            content: `Projected ref [[${ULID_REF}]]`,
+          }),
+          projected_date: '2025-06-15',
+          source: 'due_date',
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
     mockedBatchResolve.mockResolvedValue([
       { id: 'PPROJ', title: 'Projected Parent', block_type: 'page', deleted: false },
       { id: ULID_REF, title: 'Ref Page', block_type: 'page', deleted: false },

@@ -1,20 +1,23 @@
 ---
-source: src/mcp/tools_ro.rs
+source: src/mcp/tools_ro/tests.rs
 expression: result
 ---
-- block:
-    block_type: content
-    conflict_type: ~
-    content: recurring
-    deleted_at: ~
-    due_date: 2099-01-03
-    id: "[ULID]"
-    is_conflict: false
-    page_id: ~
-    parent_id: ~
-    position: 1
-    priority: ~
-    scheduled_date: ~
-    todo_state: ~
-  projected_date: 2099-01-04
-  source: due_date
+has_more: false
+items:
+  - block:
+      block_type: content
+      conflict_type: ~
+      content: recurring
+      deleted_at: ~
+      due_date: 2099-01-03
+      id: "[ULID]"
+      is_conflict: false
+      page_id: ~
+      parent_id: ~
+      position: 1
+      priority: ~
+      scheduled_date: ~
+      todo_state: ~
+    projected_date: 2099-01-04
+    source: due_date
+next_cursor: ~

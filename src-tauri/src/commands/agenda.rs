@@ -9,7 +9,7 @@ use tauri::State;
 
 use crate::db::ReadPool;
 use crate::error::AppError;
-use crate::pagination::ProjectedAgendaEntry;
+use crate::pagination::{Cursor, ProjectedAgendaEntry};
 
 use super::*;
 
@@ -108,10 +108,20 @@ pub async fn count_agenda_batch_by_source_inner(
 /// Compute projected future agenda entries for repeating tasks.
 ///
 /// First tries the `projected_agenda_cache` table (populated by the background
-/// materializer). If the cache is empty, falls back to the original on-the-fly
-/// computation for first-run or pre-cache scenarios.
+/// materializer). If the cache is empty AND no `cursor` was supplied (i.e.
+/// this is the first page of a fresh request), falls back to the original
+/// on-the-fly computation for first-run or pre-cache scenarios.
 ///
-/// Returns at most `limit` entries (default 200, max 500).
+/// Returns a [`PageResponse`] of at most `limit` entries (default 200,
+/// max 500). When more pages remain, `next_cursor` is populated and
+/// `has_more` is `true` — pass `next_cursor` back as the `cursor` arg to
+/// fetch the next page (M-25, AGENTS.md invariant #3).
+///
+/// **Cursor encoding** (matches `list_agenda_range`'s H-8 convention):
+/// the cursor is keyed on `(projected_date, block_id)` — the same
+/// composite that the SQL `ORDER BY` uses — packed into
+/// `Cursor::deleted_at` (date) + `Cursor::id` (block_id) and
+/// base64-encoded JSON.
 ///
 /// MAINT-164: the on-the-fly fallback's `dot_plus` (`.+`) / `plus_plus` (`++`)
 /// repeat-mode projection is anchored to `today`. We capture `today` once
@@ -125,14 +135,27 @@ pub async fn list_projected_agenda_inner(
     pool: &SqlitePool,
     start_date: String,
     end_date: String,
+    cursor: Option<String>,
     limit: Option<i64>,
-) -> Result<Vec<ProjectedAgendaEntry>, AppError> {
+) -> Result<PageResponse<ProjectedAgendaEntry>, AppError> {
     let today = chrono::Local::now().date_naive();
     validate_date_format(&start_date)?;
     validate_date_format(&end_date)?;
 
-    // limit is clamped to [1, 500], always positive; safe to convert
-    let cap = usize::try_from(limit.unwrap_or(200).clamp(1, 500)).unwrap_or(200);
+    // Decode the optional cursor. We bypass `pagination::PageRequest::new`
+    // because that helper clamps to MAX_PAGE_SIZE=200 and this command
+    // historically clamps to 500 (kept as the per-page cap — callers now
+    // page past the cap via the cursor instead of being silently
+    // truncated; M-25).
+    let after = match cursor.as_deref() {
+        Some(s) => Some(Cursor::decode(s)?),
+        None => None,
+    };
+
+    // Per-page limit clamped to [1, 500].
+    let limit_i64 = limit.unwrap_or(200).clamp(1, 500);
+    // safe: clamp guarantees [1, 500]
+    let cap = usize::try_from(limit_i64).unwrap_or(200);
 
     // Parse date range boundaries
     let range_start = chrono::NaiveDate::parse_from_str(&start_date, "%Y-%m-%d")
@@ -146,9 +169,20 @@ pub async fn list_projected_agenda_inner(
         ));
     }
 
+    // Cursor parts for SQL bind. ?cursor_flag NULL → no cursor filter.
+    let (cursor_flag, cursor_date, cursor_id): (Option<i64>, &str, &str) = match after.as_ref() {
+        Some(c) => (
+            Some(1),
+            c.deleted_at.as_deref().unwrap_or(""),
+            c.id.as_str(),
+        ),
+        None => (None, "", ""),
+    };
+
+    // Fetch limit + 1 to detect `has_more`.
+    let fetch_limit: i64 = limit_i64 + 1;
+
     // Try cache first — a single query replaces the O(n*m) projection loop.
-    let cache_limit: i64 =
-        i64::try_from(cap).expect("invariant: cap is clamped to <= 500 and fits in i64");
     #[allow(clippy::type_complexity)]
     let cached: Vec<(
         String,
@@ -183,46 +217,81 @@ pub async fn list_projected_agenda_inner(
                SELECT 1 FROM block_properties tp
                WHERE tp.block_id = b.page_id AND tp.key = 'template'
            )
-         ORDER BY pac.projected_date ASC
-         LIMIT ?3",
+           AND (?3 IS NULL OR (pac.projected_date > ?4
+               OR (pac.projected_date = ?4 AND pac.block_id > ?5)))
+         ORDER BY pac.projected_date ASC, pac.block_id ASC
+         LIMIT ?6",
     )
     .bind(&start_date)
     .bind(&end_date)
-    .bind(cache_limit)
+    .bind(cursor_flag)
+    .bind(cursor_date)
+    .bind(cursor_id)
+    .bind(fetch_limit)
     .fetch_all(pool)
     .await?;
 
-    if !cached.is_empty() {
-        let entries: Vec<ProjectedAgendaEntry> = cached
-            .into_iter()
-            .map(|row| {
-                use crate::pagination::BlockRow;
-                ProjectedAgendaEntry {
-                    block: BlockRow {
-                        id: row.3,
-                        block_type: row.4,
-                        content: row.5,
-                        parent_id: row.6,
-                        position: row.7,
-                        deleted_at: row.8,
-                        is_conflict: row.9,
-                        conflict_type: row.10,
-                        todo_state: row.11,
-                        priority: row.12,
-                        due_date: row.13,
-                        scheduled_date: row.14,
-                        page_id: row.15,
-                    },
-                    projected_date: row.1,
-                    source: row.2,
-                }
-            })
-            .collect();
-        return Ok(entries);
+    // Fall back to on-the-fly only on a fresh first page (no cursor).
+    // Once any cursor has been issued, the materializer must be honoured —
+    // an empty cache result with a cursor means the caller paged past the
+    // last entry, NOT that the cache is unpopulated.
+    if cached.is_empty() && after.is_none() {
+        return list_projected_agenda_on_the_fly(
+            pool,
+            range_start,
+            range_end,
+            limit_i64,
+            today,
+            after.as_ref(),
+        )
+        .await;
     }
 
-    // Fallback: on-the-fly computation (first run before cache is populated).
-    list_projected_agenda_on_the_fly(pool, range_start, range_end, cap, today).await
+    let mut entries: Vec<ProjectedAgendaEntry> = cached
+        .into_iter()
+        .map(|row| {
+            use crate::pagination::BlockRow;
+            ProjectedAgendaEntry {
+                block: BlockRow {
+                    id: row.3,
+                    block_type: row.4,
+                    content: row.5,
+                    parent_id: row.6,
+                    position: row.7,
+                    deleted_at: row.8,
+                    is_conflict: row.9,
+                    conflict_type: row.10,
+                    todo_state: row.11,
+                    priority: row.12,
+                    due_date: row.13,
+                    scheduled_date: row.14,
+                    page_id: row.15,
+                },
+                projected_date: row.1,
+                source: row.2,
+            }
+        })
+        .collect();
+
+    let has_more = entries.len() > cap;
+    if has_more {
+        entries.truncate(cap);
+    }
+    let next_cursor = if has_more {
+        let last = entries.last().expect("has_more implies non-empty");
+        Some(
+            Cursor::for_id_and_deleted_at(last.block.id.clone(), Some(last.projected_date.clone()))
+                .encode()?,
+        )
+    } else {
+        None
+    };
+
+    Ok(PageResponse {
+        items: entries,
+        next_cursor,
+        has_more,
+    })
 }
 
 /// On-the-fly projection of repeating tasks (original algorithm).
@@ -234,6 +303,12 @@ pub async fn list_projected_agenda_inner(
 /// projections; it is threaded in from
 /// [`list_projected_agenda_inner_with_today`] (MAINT-164) instead of being
 /// read from `chrono::Local::now()` so tests can pin a fixed today.
+///
+/// `after` is the optional decoded cursor (M-25). When supplied, entries
+/// whose `(projected_date, block_id)` are `<= cursor` are filtered out
+/// before the page is built. The same `(date, id)` keyset that the cache
+/// path uses is honoured here so the two branches stay swappable mid-
+/// pagination if the materializer populates the cache between calls.
 ///
 /// `pub(crate)` so the MAINT-164 regression test in
 /// `commands::tests::agenda_cmd_tests` can call this path directly,
@@ -249,9 +324,14 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     pool: &SqlitePool,
     range_start: chrono::NaiveDate,
     range_end: chrono::NaiveDate,
-    cap: usize,
+    limit: i64,
     today: chrono::NaiveDate,
-) -> Result<Vec<ProjectedAgendaEntry>, AppError> {
+    after: Option<&Cursor>,
+) -> Result<PageResponse<ProjectedAgendaEntry>, AppError> {
+    // The compute below has no in-loop cap (with cursor pagination we need
+    // every entry within the date range, regardless of page size). The
+    // outer 10_000-step safety per (block × source) still bounds runaway
+    // recurrence rules, and the date range itself caps the total work.
     // Find repeating blocks: non-DONE, non-deleted, has repeat property,
     // has at least one date column.
     // LEFT JOINs fetch repeat-until / repeat-count / repeat-seq in the same
@@ -292,10 +372,6 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     let mut entries: Vec<ProjectedAgendaEntry> = Vec::new();
 
     for block in &rows {
-        if entries.len() >= cap {
-            break;
-        }
-
         // Get the repeat rule (pre-fetched via JOIN)
         let rule = match &block.repeat_rule {
             Some(r) if !r.is_empty() => r.clone(),
@@ -347,10 +423,6 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
         .collect();
 
         for (source_name, date_str) in sources {
-            if entries.len() >= cap {
-                break;
-            }
-
             let Ok(base) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
                 continue;
             };
@@ -392,7 +464,6 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
             // Pre-add it if it falls within the requested range.
             if mode == "plus_plus"
                 && projected_count < max_remaining
-                && entries.len() < cap
                 && current >= range_start
                 && current <= range_end
             {
@@ -417,7 +488,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
 
             // Safety limit to prevent infinite loops
             for _ in 0..10_000 {
-                if entries.len() >= cap || projected_count >= max_remaining {
+                if projected_count >= max_remaining {
                     break;
                 }
 
@@ -451,17 +522,46 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
         }
     }
 
-    // Sort by projected_date, then block_id for determinism
+    // Sort by (projected_date, block_id) for determinism — this matches
+    // the cache path's ORDER BY so the cursor encoding is interchangeable
+    // between branches.
     entries.sort_by(|a, b| {
         a.projected_date
             .cmp(&b.projected_date)
             .then_with(|| a.block.id.cmp(&b.block.id))
     });
 
-    // Truncate to cap after sort
-    entries.truncate(cap);
+    // Apply cursor filter: keep only entries whose (date, id) come strictly
+    // AFTER the cursor. Same keyset comparison as the SQL `WHERE` clause.
+    if let Some(cursor) = after {
+        let cursor_date = cursor.deleted_at.as_deref().unwrap_or("");
+        let cursor_id = cursor.id.as_str();
+        entries.retain(|e| {
+            (e.projected_date.as_str(), e.block.id.as_str()) > (cursor_date, cursor_id)
+        });
+    }
 
-    Ok(entries)
+    // safe: `limit` is the [1, 500]-clamped per-page cap (i64 → usize on 64-bit)
+    let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
+    let has_more = entries.len() > limit_usize;
+    if has_more {
+        entries.truncate(limit_usize);
+    }
+    let next_cursor = if has_more {
+        let last = entries.last().expect("has_more implies non-empty");
+        Some(
+            Cursor::for_id_and_deleted_at(last.block.id.clone(), Some(last.projected_date.clone()))
+                .encode()?,
+        )
+    } else {
+        None
+    };
+
+    Ok(PageResponse {
+        items: entries,
+        next_cursor,
+        has_more,
+    })
 }
 
 /// Tauri command: batch-count agenda items per date. Delegates to [`count_agenda_batch_inner`].
@@ -492,6 +592,9 @@ pub async fn count_agenda_batch_by_source(
 
 /// Tauri command: list projected future occurrences of repeating tasks.
 /// Delegates to [`list_projected_agenda_inner`].
+///
+/// Cursor-paginated (M-25) — pass `cursor = next_cursor` from the previous
+/// response to fetch the next page.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -499,9 +602,10 @@ pub async fn list_projected_agenda(
     pool: State<'_, ReadPool>,
     start_date: String,
     end_date: String,
+    cursor: Option<String>,
     limit: Option<i64>,
-) -> Result<Vec<ProjectedAgendaEntry>, AppError> {
-    list_projected_agenda_inner(&pool.0, start_date, end_date, limit)
+) -> Result<PageResponse<ProjectedAgendaEntry>, AppError> {
+    list_projected_agenda_inner(&pool.0, start_date, end_date, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }

@@ -556,14 +556,23 @@ async fn push_date(
     let date_str = date.format("%Y-%m-%d").to_string();
 
     // Fetch agenda entries for the date.
+    //
+    // M-25: `list_projected_agenda_inner` returns a cursor-paginated
+    // `PageResponse` now. The GCal push only needs the first page —
+    // `AGENDA_FETCH_LIMIT` (cap) is sized to cover any single date and
+    // anything beyond is truncated by design (a single GCal event has
+    // a fixed digest payload). If `has_more` is set, the digest still
+    // reflects the first-page subset.
     let entries = crate::commands::list_projected_agenda_inner(
         pool,
         date_str.clone(),
         date_str.clone(),
+        None,
         Some(AGENDA_FETCH_LIMIT),
     )
     .await
-    .map_err(DateFailure::Other)?;
+    .map_err(DateFailure::Other)?
+    .items;
 
     // Resolve page titles in bulk via a single json_each() query.
     let page_titles = resolve_page_titles(pool, &entries)

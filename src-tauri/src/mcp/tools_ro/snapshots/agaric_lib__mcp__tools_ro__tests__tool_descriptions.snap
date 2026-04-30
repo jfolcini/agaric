@@ -1,6 +1,6 @@
 ---
-source: src/mcp/tools_ro.rs
-assertion_line: 743
+source: src/mcp/tools_ro/tests.rs
+assertion_line: 94
 expression: wire
 ---
 - description: List all pages with cursor pagination.
@@ -112,6 +112,9 @@ expression: wire
   inputSchema:
     additionalProperties: false
     properties:
+      cursor:
+        description: "Opaque cursor returned by a previous response's `next_cursor` to fetch the next page (M-25)."
+        type: string
       end_date:
         description: Inclusive YYYY-MM-DD upper bound.
         type: string

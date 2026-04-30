@@ -216,6 +216,7 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
                             &pool,
                             "2025-07-01".into(),
                             "2025-07-07".into(),
+                            None,
                             Some(200),
                         )
                         .await
