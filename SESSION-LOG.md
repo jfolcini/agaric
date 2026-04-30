@@ -1,5 +1,49 @@
 # Session Log
 
+## Session 578 — 2-subagent batch: MAINT-124 `useAppDialogs()` extraction + MAINT-125 batch-4 (2026-04-30)
+
+**2 disjoint MAINT items each made progress in one PROMPT.md batch with 2 parallel build subagents (no review subagent — pure state-extraction + mechanical wrapper migrations, both well-covered by existing tests).** Subagent A extracted the 4 dialog states + 2 event listeners from `App.tsx` into a new `useAppDialogs()` hook (–31L from App.tsx, smaller delta than predicted because the original useStates were concise); Subagent B migrated 14 more `tauri.ts` wrappers (history/undo-redo/block-fixed-field/status/batch-count cluster) bringing cumulative MAINT-125 progress to 55 of ~80 wrappers (~69%).
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 23 → 23 (both MAINT rows STAY — neither fully closed). MAINT-124: 907L → 872L App.tsx (–35L this session — 31L net + 4L from the orchestrator's biome `useExhaustiveDependencies` autofix that added missing setter deps). MAINT-125: 55 of ~80 migrated (~69%), 33 wrappers remaining.
+- **Previously-resolved counter:** 831+ → 833+ across 544 → 545 sessions (2 partial closures in one session counted as 1 session bump).
+
+**Items closed (2 partial closures):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-124 `useAppDialogs()` extraction | New: `src/hooks/useAppDialogs.ts` (101L — 5 useState calls: `bugReportOpen`/`bugReportPrefill: BugReportEventDetail \| null` (UX-279), `quickCaptureOpen` (FEAT-12), `showNoPeersDialog` (BUG-2), `shortcutsOpen` (UX-228); 2 useEffect listeners: `BUG_REPORT_EVENT` opens dialog + stores prefill (with defensive null-detail guard), `CLOSE_ALL_OVERLAYS_EVENT` closes shortcuts only; setters typed as `React.Dispatch<React.SetStateAction<T>>` so `(prev) => ...` updaters keep working in App.tsx); `src/hooks/__tests__/useAppDialogs.test.ts` (203L, 11 tests covering initial state, each setter, BUG_REPORT_EVENT happy path + null-detail no-op, CLOSE_ALL_OVERLAYS_EVENT closes shortcuts but NOT other dialogs, cleanup on unmount). `src/App.tsx`: 903L → 872L (–31L net; –35L cumulative this session after orchestrator's biome `useExhaustiveDependencies` autofix added 4 missing setter deps). Removed 5 useState lines + 2 useEffect blocks (~26L) + `BUG_REPORT_EVENT`/`BugReportEventDetail`/`CLOSE_ALL_OVERLAYS_EVENT` imports. Added `import { useAppDialogs }` + a 12-line destructure block + 5-line comment. **Net –31L from the hook extraction; smaller than the predicted –50 to –100L because the original useStates were concise (5 state lines + 15 lines of inline comments).** App.test.tsx: 113/113 pass unchanged. **Drift caught + addressed:** the original useEffect deps for `handleSyncClick` (line ~668), the FEAT-12 quick-capture global hotkey effect (line ~577), and others omitted setters because useState setters are stable per React contract — but biome's `useExhaustiveDependencies` rule can't prove this when the setter is destructured from a hook return. Orchestrator applied biome's `--unsafe` autofix to add the missing deps; tests still pass (4 setters added to deps arrays). 1 extraction remains: `<ViewDispatcher>`. — Subagent d313ab6d |
+| MAINT-125 batch-4 (14 history/undo-redo/block-fixed-field wrappers) | `src/lib/tauri.ts` only. Migrated to `unwrap(await commands.X(...))`: **History (3):** `getBlockHistory`, `listPageHistory`, `getConflicts`. **Undo/redo (4):** `revertOps`, `restorePageToOp`, `undoPageOp`, `redoPageOp`. **Block-fixed-field setters (4):** `setTodoState`, `setPriority`, `setDueDate`, `setScheduledDate`. **Status / batch-count (3):** `getStatus`, `countBacklinksBatch`, `computeEditDiff`. **Skipped clusters (deferred to next batch):** sync/pairing IPCs (11 wrappers), drafts (4), compaction (2), bug-report/diagnostics (4), attachments (5), markdown-import (1), spaces/pages (4), link-metadata (2). **Drift (preserved):** `revertOps` keeps its public return type as `Promise<unknown>` (the binding is `Promise<UndoResult[]>` — `unknown` is a supertype, no callsite changes needed). `restorePageToOp` keeps its hand-written return interface (structurally compatible with `RestoreToOpResult`). 159/159 tauri.test.ts tests pass. 535 consumer tests pass across HistoryView/HistoryPanel/StatusPanel/ConflictList/useBlockReschedule/useHistoryDiffToggle + useBlockDatePicker/usePriorityLevels/BlockListItem/DonePanel/DuePanel. **Cumulative MAINT-125 progress: 55 of ~80 wrappers migrated (~69%; was 41 from sessions 574+576+577).** — Subagent cf7d8760 |
+
+**Process notes:**
+
+- **2 parallel build subagents touching disjoint files.** Subagent A owned `src/App.tsx` + `src/hooks/useAppDialogs.ts` + tests. Subagent B owned `src/lib/tauri.ts` only. Both succeeded on first attempt; no merge conflicts.
+- **No review subagent.** Both changes are mechanical/well-covered by existing tests; orchestrator validated end-to-end via prek.
+- **1 prek-driven nit fix** (orchestrator):
+  - **biome `useExhaustiveDependencies` rule** flagged 3 useEffect/useCallback hooks in App.tsx that destructure setters from `useAppDialogs()` but didn't include them in deps arrays. Originally these worked because useState setters are stable per React contract — but biome can't prove this when the setter comes from a hook return. Applied `npx biome check --write --unsafe src/App.tsx` to add the missing deps. Re-verified `npx tsc -b --noEmit` clean and prek green.
+- **Drift discovered (subagents flagged):**
+  - MAINT-124 description's expected delta of "–50 to –100L" was too optimistic for `useAppDialogs` — actual is –31L because the original useStates were concise.
+  - Subagent A's estimate for after the next ViewDispatcher batch: **~730-740L**. To reach the **≤500L target**, the ViewDispatcher batch should also pull out the lazy-imports block (~45L) AND/OR a fifth extraction (boot recovery / priority levels / space accent useEffect clusters, ~80L combined). REVIEW-LATER MAINT-124 row updated with this insight.
+  - MAINT-125 confirmed: GCal IPCs are NOT in `tauri.ts` as wrappers (components invoke directly). Out of scope for MAINT-125's "consolidate wrappers" goal.
+- **No `cargo sqlx prepare`** needed (no SQL changes). **No backend changes.** **No new IPC commands.** **No `bindings.ts` regeneration.**
+- **No FEATURE-MAP.md update needed** — both items are internal refactors.
+
+**Files touched (this session's batch):**
+
+- Frontend new (2): `src/hooks/useAppDialogs.ts`, `src/hooks/__tests__/useAppDialogs.test.ts`.
+- Frontend modified (2): `src/App.tsx` (903L → 872L), `src/lib/tauri.ts` (14 wrappers migrated).
+- Docs: `REVIEW-LATER.md` (MAINT-124 row updated to reflect 872L + 1 extraction remaining; MAINT-125 row updated to 55/80 + remaining cluster breakdown; summary counter bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after 1 nit fix).
+
+- MAINT-124: useAppDialogs.test.ts → 11/11 new; App.test.tsx → 113/113 unchanged; broader hook sanity → 1328/1328 across 89 hook test files.
+- MAINT-125: tauri.test.ts → 159/159; cluster of ~12 consumer test files → 535/535.
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome: clean (after `--unsafe` autofix on App.tsx for useExhaustiveDependencies).
+
+---
+
 ## Session 577 — 2-subagent batch: MAINT-124 `<AppSidebar>` extraction + MAINT-125 batch-3 (2026-04-30)
 
 **2 disjoint MAINT items each made substantial progress in one PROMPT.md batch with 2 parallel build subagents (no review subagent — pure JSX move + mechanical wrapper migrations, both well-covered by existing tests).** Subagent A extracted the sidebar tree from `App.tsx` into a new `<AppSidebar>` component (–227L from App.tsx); Subagent B migrated 15 more `tauri.ts` wrappers (trash/tags/properties/property-defs/listUnlinkedReferences) bringing cumulative MAINT-125 progress to 41 of ~80 wrappers (~51%).

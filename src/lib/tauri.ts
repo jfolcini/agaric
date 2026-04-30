@@ -287,27 +287,22 @@ export async function getBacklinks(params: {
 }
 
 /** List op-log history for a block, paginated (newest first). */
-export function getBlockHistory(params: {
+export async function getBlockHistory(params: {
   blockId: string
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<PageResponse<HistoryEntry>> {
-  return invoke('get_block_history', {
-    blockId: params.blockId,
-    cursor: params?.cursor ?? null,
-    limit: params?.limit ?? null,
-  })
+  return unwrap(
+    await commands.getBlockHistory(params.blockId, params.cursor ?? null, params.limit ?? null),
+  )
 }
 
 /** List conflict blocks, paginated. */
-export function getConflicts(params?: {
+export async function getConflicts(params?: {
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<PageResponse<BlockRow>> {
-  return invoke('get_conflicts', {
-    cursor: params?.cursor ?? null,
-    limit: params?.limit ?? null,
-  })
+  return unwrap(await commands.getConflicts(params?.cursor ?? null, params?.limit ?? null))
 }
 
 /** Full-text search across all blocks, paginated by relevance.
@@ -337,8 +332,8 @@ export async function searchBlocks(params?: {
 }
 
 /** Get materializer queue status and metrics. */
-export function getStatus(): Promise<StatusInfo> {
-  return invoke('get_status')
+export async function getStatus(): Promise<StatusInfo> {
+  return unwrap(await commands.getStatus())
 }
 
 /** Query blocks by boolean tag expression (AND/OR mode), paginated. */
@@ -443,10 +438,10 @@ export async function countAgendaBatchBySource(params: {
 }
 
 /** Batch-count backlinks per target page. Returns a map of pageId -> count. */
-export function countBacklinksBatch(params: {
+export async function countBacklinksBatch(params: {
   pageIds: string[]
 }): Promise<Record<string, number>> {
-  return invoke('count_backlinks_batch', { pageIds: params.pageIds })
+  return unwrap(await commands.countBacklinksBatch(params.pageIds))
 }
 
 // ---------------------------------------------------------------------------
@@ -454,23 +449,23 @@ export function countBacklinksBatch(params: {
 // ---------------------------------------------------------------------------
 
 /** Set or clear the todo state on a block. Pass null to clear. */
-export function setTodoState(blockId: string, state: string | null): Promise<BlockRow> {
-  return invoke('set_todo_state', { blockId, state })
+export async function setTodoState(blockId: string, state: string | null): Promise<BlockRow> {
+  return unwrap(await commands.setTodoState(blockId, state))
 }
 
 /** Set or clear the priority level on a block. Pass null to clear. */
-export function setPriority(blockId: string, level: string | null): Promise<BlockRow> {
-  return invoke('set_priority', { blockId, level })
+export async function setPriority(blockId: string, level: string | null): Promise<BlockRow> {
+  return unwrap(await commands.setPriority(blockId, level))
 }
 
 /** Set or clear the due date on a block. Pass null to clear. */
-export function setDueDate(blockId: string, date: string | null): Promise<BlockRow> {
-  return invoke('set_due_date', { blockId, date })
+export async function setDueDate(blockId: string, date: string | null): Promise<BlockRow> {
+  return unwrap(await commands.setDueDate(blockId, date))
 }
 
 /** Set or clear the scheduled date on a block. Pass null to clear. */
-export function setScheduledDate(blockId: string, date: string | null): Promise<BlockRow> {
-  return invoke('set_scheduled_date', { blockId, date })
+export async function setScheduledDate(blockId: string, date: string | null): Promise<BlockRow> {
+  return unwrap(await commands.setScheduledDate(blockId, date))
 }
 
 /** List global operation history (page-scoped), paginated (newest first).
@@ -480,20 +475,22 @@ export function setScheduledDate(blockId: string, date: string | null): Promise<
  * Pass `undefined` to disable the space filter (cross-space "All spaces"
  * mode). Ignored in per-page mode — a real ULID `pageId` is already
  * space-bound. */
-export function listPageHistory(params: {
+export async function listPageHistory(params: {
   pageId: string
   opTypeFilter?: string | undefined
   spaceId?: string | undefined
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<PageResponse<HistoryEntry>> {
-  return invoke('list_page_history', {
-    pageId: params.pageId,
-    opTypeFilter: params.opTypeFilter ?? null,
-    spaceId: params.spaceId ?? null,
-    cursor: params.cursor ?? null,
-    limit: params.limit ?? null,
-  })
+  return unwrap(
+    await commands.listPageHistory(
+      params.pageId,
+      params.opTypeFilter ?? null,
+      params.spaceId ?? null,
+      params.cursor ?? null,
+      params.limit ?? null,
+    ),
+  )
 }
 
 /** List all page-to-page links for graph visualization. */
@@ -504,23 +501,21 @@ export async function listPageLinks(): Promise<
 }
 
 /** Revert a batch of operations (by device_id + seq pairs). */
-export function revertOps(params: {
+export async function revertOps(params: {
   ops: Array<{ device_id: string; seq: number }>
 }): Promise<unknown> {
-  return invoke('revert_ops', { ops: params.ops })
+  return unwrap(await commands.revertOps(params.ops))
 }
 
 /** Restore a page to its state at a specific operation (point-in-time restore). */
-export function restorePageToOp(params: {
+export async function restorePageToOp(params: {
   pageId: string
   targetDeviceId: string
   targetSeq: number
 }): Promise<{ ops_reverted: number; non_reversible_skipped: number; results: unknown[] }> {
-  return invoke('restore_page_to_op', {
-    pageId: params.pageId,
-    targetDeviceId: params.targetDeviceId,
-    targetSeq: params.targetSeq,
-  })
+  return unwrap(
+    await commands.restorePageToOp(params.pageId, params.targetDeviceId, params.targetSeq),
+  )
 }
 
 /** Query blocks by property key and optional value, with cursor pagination. */
@@ -562,19 +557,19 @@ export interface UndoResult {
 }
 
 /** Undo the Nth most-recent undoable op on a page. */
-export function undoPageOp(params: { pageId: string; undoDepth: number }): Promise<UndoResult> {
-  return invoke('undo_page_op', {
-    pageId: params.pageId,
-    undoDepth: params.undoDepth,
-  })
+export async function undoPageOp(params: {
+  pageId: string
+  undoDepth: number
+}): Promise<UndoResult> {
+  return unwrap(await commands.undoPageOp(params.pageId, params.undoDepth))
 }
 
 /** Redo a previously undone op by reversing it again. */
-export function redoPageOp(params: { undoDeviceId: string; undoSeq: number }): Promise<UndoResult> {
-  return invoke('redo_page_op', {
-    undoDeviceId: params.undoDeviceId,
-    undoSeq: params.undoSeq,
-  })
+export async function redoPageOp(params: {
+  undoDeviceId: string
+  undoSeq: number
+}): Promise<UndoResult> {
+  return unwrap(await commands.redoPageOp(params.undoDeviceId, params.undoSeq))
 }
 
 // ---------------------------------------------------------------------------
@@ -582,14 +577,11 @@ export function redoPageOp(params: { undoDeviceId: string; undoSeq: number }): P
 // ---------------------------------------------------------------------------
 
 /** Compute a word-level diff for an edit_block history entry. Returns null for non-edit ops. */
-export function computeEditDiff(params: {
+export async function computeEditDiff(params: {
   deviceId: string
   seq: number
 }): Promise<DiffSpan[] | null> {
-  return invoke('compute_edit_diff', {
-    deviceId: params.deviceId,
-    seq: params.seq,
-  })
+  return unwrap(await commands.computeEditDiff(params.deviceId, params.seq))
 }
 
 // ---------------------------------------------------------------------------
