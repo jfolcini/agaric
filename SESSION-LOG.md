@@ -1,5 +1,52 @@
 # Session Log
 
+## Session 582 — 3-subagent batch: schema-integrity migrations M-30 + M-93 + M-90 (2026-04-30)
+
+**3 disjoint backend Medium findings closed in one PROMPT.md batch with 3 parallel build subagents (one per migration) + 1 technical-review subagent over the whole batch.** Each migration is a defensive guard against a class of corruption: M-30 prevents two attachment rows from pointing at the same on-disk file; M-93 prevents drafts from outliving their blocks; M-90 tightens the `is_space` property type so writes get validated by the existing `select`-type infrastructure rather than relying on convention. **User explicitly approved the schema migrations** before launch (per AGENTS.md "Architectural Stability"). Three migrations land sequentially as `0037`, `0038`, `0039`.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 22 → 22 unchanged (M-30/M-93/M-90 are Backend Code Review Mediums, not FEAT/MAINT/PERF/PUB).
+- **Backend Code Review section:** 3 Medium entries deleted (M-30, M-90, M-93). Backend Medium total in the file now reads "20 closed" (was 17).
+- **Previously-resolved counter:** 838+ → 841+ across 548 → 549 sessions.
+
+**Items closed:**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| **M-30 — UNIQUE on `attachments.fs_path`** (subagent A) | `src-tauri/migrations/0037_attachments_fs_path_unique.sql` (NEW, 32L). **Partial unique index** (`WHERE deleted_at IS NULL`) — soft-deleted rows are excluded so a user can delete + re-add a file at the same `fs_path` without colliding with the tombstone. `IF NOT EXISTS` makes the migration idempotent. The migration WILL FAIL on user DBs with pre-existing duplicate non-deleted `fs_path` rows; maintainer reconciles manually (acceptable for the maintainer-only repo). 2 new regression tests in `src-tauri/src/commands/tests/block_cmd_tests.rs`: `add_attachment_duplicate_fs_path_returns_error_m30` (cross-block collision returns `AppError::Database`) + `add_attachment_after_soft_delete_can_reuse_fs_path_m30` (partial-index predicate verified — soft-delete tombstone doesn't block re-insert). 23/23 attachments tests pass. **Drift flagged (NOT fixed, deliberately deferred):** materializer's `OpType::AddAttachment` handler at `src-tauri/src/materializer/handlers.rs:514-530` uses `INSERT OR IGNORE INTO attachments`, which post-M-30 silently drops a remote-origin op whose `fs_path` collides with a local non-deleted row. Reviewer judged this acceptable per the ULID-in-fs_path convention; a proper fix would require a conflict-resolution design (larger scope). — Subagent agent_id 6284d834 (build) |
+| **M-93 — `block_drafts.block_id REFERENCES blocks(id) ON DELETE CASCADE`** (subagent B) | `src-tauri/migrations/0038_block_drafts_fk_blocks.sql` (NEW, 43L). Standard SQLite recreate-table-with-FK pattern (precedent: `0019_add_ref_value_type.sql`). **Pre-cleanup `DELETE`** removes orphan drafts (`WHERE block_id NOT IN (SELECT id FROM blocks)`) before the table swap, so the migration is safe even on user DBs with pre-existing orphans. PK preserved. FK enforced immediately per AGENTS.md invariant #7 (`PRAGMA foreign_keys = ON`). 2 new regression tests in `src-tauri/src/commands/drafts.rs`: `hard_delete_block_cascades_to_block_drafts_m93` (cascade fires) + `cannot_save_draft_for_nonexistent_block_m93` (FK rejects orphan inserts). 19/19 drafts tests + 3256/3256 full suite pass. **Test scope creep (justified):** subagent had to seed parent blocks in 5 other test files where test setup pre-saved drafts without parent rows: `commands/tests/block_cmd_tests.rs` (2 tests), `draft/tests.rs` (`test_pool` helper auto-seeds + `seed_block` helper), `recovery/tests.rs` (1 test seeded, 2 tests deleted as schema-impossible with breadcrumb comments), `snapshot/tests.rs` (1 test seeded). All edits are minimal — every change adds a parent-block insert; no assertion was weakened. **Drift flagged (NOT fixed):** several existing draft-cleanup sites become idempotent-but-redundant post-FK (`flush_draft_inner` orphan-drop guard, `sweep_orphan_drafts`, `purge_descendants_table!` in `crud.rs:906`, materializer `purge_block` handler). Reviewer judged these are safe belt-and-suspenders for the soft-delete case (the FK references the row, not `deleted_at`). Sync-replay confirmed unaffected: `block_drafts` is never written by sync code (drafts are local-only per ARCHITECTURE.md). — Subagent agent_id 91a0166c (build) |
+| **M-90 — `is_space` property tightened from `text` to `select`** (subagent C) | `src-tauri/migrations/0039_is_space_select_type.sql` (NEW, 33L). `UPDATE property_definitions SET value_type = 'select', options = '["true"]' WHERE key = 'is_space'`. JSON shape `'["true"]'` matches the convention used by `todo_state`, `priority`, etc. (verified across migrations 0011, 0014, 0029, 0031). Existing `block_properties` rows are untouched — production writers (`ensure_is_space_property` in `bootstrap.rs:264-293`, `create_space_inner` in `commands/spaces.rs:336-347`) only ever set `is_space = "true"`, and a comprehensive search confirmed no path writes any other value. The existing `set_property_in_tx` BUG-20 options-membership check at `commands/blocks/crud.rs:1419-1442` now enforces the constraint at write time. 2 new regression tests in `src-tauri/src/commands/tests/property_cmd_tests.rs`: `set_is_space_to_true_succeeds_m90` (happy path) + `set_is_space_to_invalid_value_returns_error_m90` (`AppError::Validation` for any non-`"true"` value, message contains "allowed options"). 388/388 properties tests pass. **Snapshot updated:** existing `agaric_lib__mcp__tools_ro__tests__tool_response_list_property_defs.snap` updated in-place to reflect the new `is_space` shape — deterministic mechanical update, reviewer confirmed safe. — Subagent agent_id c44c78a9 (build) |
+
+**Process notes:**
+
+- **Pre-launch staleness check:** Orchestrator confirmed via direct grep that none of the cited line numbers had drifted, that the `PRAGMA foreign_keys = ON` invariant was still in effect, and that no test expected the broken behaviors as-given (none did).
+- **3 parallel build subagents touching disjoint files**, then **1 technical-review subagent over the whole batch.** Pre-assigned migration numbers (0037 / 0038 / 0039) prevented filename collisions. Each subagent owned ONE migration file + tests in ONE module. M-93's subagent legitimately had to cross into 5 other test files for FK-required seed adjustments — acknowledged in the brief and justified in the report.
+- **1 prek-driven nit fix** (orchestrator): `cargo fmt` flagged a chained `.bind().fetch_one().await.unwrap()` indentation drift in the new M-93 test (`commands/drafts.rs:331-339`); auto-fixed via `cargo fmt`. Re-ran prek clean.
+- **`cargo sqlx prepare -- --tests` was a no-op** — every new query macro added by the subagents matched a pre-existing cache entry pattern (the new tests use the same `SELECT key, value FROM gcal_settings` shape as session 581's L-132 entry, plus standard `SELECT COUNT(*)` and direct INSERTs that don't need new cache entries). The orchestrator ran `prepare` defensively anyway; it produced no diff.
+- **Reviewer drift verdicts (3 explicit decisions):**
+  - **M-30 sync-replay silent-drop:** **DEFER** — ULID-in-fs_path convention makes collisions extremely unlikely; `INSERT OR IGNORE` is idempotent for replay; a proper fix requires a conflict-resolution design (larger scope). Not added back to REVIEW-LATER as a new entry; the behavior is acceptable per the documented design assumption.
+  - **M-93 redundant draft-cleanup sites:** **LEAVE AS-IS** — the soft-delete cleanup paths (`flush_draft_inner` guard, `sweep_orphan_drafts`) are still load-bearing; the hard-delete paths are belt-and-suspenders that don't hurt. Removing risks subtle regressions for negligible gain.
+  - **M-90 snapshot file update:** **SAFE** — deterministic mechanical update, regenerated insta snapshot reflects the actual `list_property_defs` output post-migration. No regression masked.
+- **No `bindings.ts` regeneration** (no IPC type changes; `set_property` etc. are unchanged).
+- **No FEATURE-MAP.md update needed** — defensive schema guards only, no user-facing surface change.
+
+**Files touched (this session's batch):**
+
+- Backend new (3 migrations): `0037_attachments_fs_path_unique.sql`, `0038_block_drafts_fk_blocks.sql`, `0039_is_space_select_type.sql`.
+- Backend modified (7 test/source files): `src-tauri/src/commands/drafts.rs` (+2 tests, –1 deleted unreachable test), `src-tauri/src/commands/tests/block_cmd_tests.rs` (+2 M-30 tests, +seed adjustments for 2 M-93 tests), `src-tauri/src/commands/tests/property_cmd_tests.rs` (+2 M-90 tests), `src-tauri/src/draft/tests.rs` (test_pool auto-seeds + helper), `src-tauri/src/recovery/tests.rs` (–2 deleted unreachable + 1 seeded), `src-tauri/src/snapshot/tests.rs` (1 test seeded), `src-tauri/src/mcp/tools_ro/snapshots/agaric_lib__mcp__tools_ro__tests__tool_response_list_property_defs.snap` (M-90 snapshot update).
+- Docs: `REVIEW-LATER.md` (M-30, M-90, M-93 entries deleted; summary line + previously-resolved counter bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after 1 cargo fmt autofix on the new M-93 test). `cargo nextest run` full suite: 3256/3256 pass.
+
+- M-30: attachments tests 23/23; broader filter 26/26.
+- M-93: drafts tests 19/19; full suite 3256/3256.
+- M-90: properties tests 388/388 (broader filter); snapshot/MCP tests 358/358 (no other regressions from snapshot update).
+
+**Commit:** `5373911` — `feat(schema): 3-subagent batch — M-30 attachments fs_path UNIQUE + M-93 block_drafts FK + M-90 is_space type-safety`. (Docs commit follows separately.)
+
+---
+
 ## Session 581 — 1-subagent + orchestrator batch: L-65 mDNS interface filter + L-132 claim_lease batching (2026-04-30)
 
 **Smaller scope to recover from Session 580's stuck-subagent loss.** Orchestrator implemented L-132 directly (audit + previous BUILD A's task; lease.rs was small enough to handle without delegation); 1 background subagent handled L-65 (mDNS interface filtering — different file, different domain, parallel). 1 technical-review subagent reviewed L-65. Both items are LOW-severity backend code-review findings, removed from REVIEW-LATER.md per the file's own rule on full closure.
