@@ -1,113 +1,44 @@
 /**
  * HistoryView --- global operation log with multi-select for batch revert.
  *
- * Shows all history entries (op log) with filtering by op type,
- * keyboard navigation, multi-select (including shift-click range select),
- * and batch revert with confirmation dialog.
+ * Top-level orchestrator: owns data loading, filter state, dialog open
+ * states, and composes `HistoryFilterBar` + `HistorySelectionToolbar`
+ * + `HistoryListView` + the revert / restore dialogs. Selection,
+ * keyboard navigation, list rendering, and the dialog IPCs each live
+ * in their own hook / sibling component (MAINT-128).
  */
 
 import { Clock } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
-import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
-import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
-import { useListMultiSelect } from '../hooks/useListMultiSelect'
+import { useHistoryKeyboardNav } from '../hooks/useHistoryKeyboardNav'
+import { entryKey, useHistorySelection } from '../hooks/useHistorySelection'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
-import { announce } from '../lib/announcer'
-import { formatTimestamp } from '../lib/format'
-import { matchesShortcutBinding } from '../lib/keyboard-config'
+import { categorizeHistoryError, type HistoryErrorCategory } from '../lib/categorize-history-error'
 import { logger } from '../lib/logger'
-import { reportIpcError } from '../lib/report-ipc-error'
 import type { HistoryEntry } from '../lib/tauri'
-import { listPageHistory, restorePageToOp, revertOps } from '../lib/tauri'
+import { listPageHistory } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 import { CompactionCard } from './CompactionCard'
 import { EmptyState } from './EmptyState'
 import { HistoryFilterBar } from './HistoryFilterBar'
-import { HistoryListItem } from './HistoryListItem'
+import { HistoryListView } from './HistoryListView'
+import { HistoryRestoreDialog } from './HistoryRestoreDialog'
+import { HistoryRevertDialog } from './HistoryRevertDialog'
 import { HistorySelectionToolbar } from './HistorySelectionToolbar'
-import { LoadMoreButton } from './LoadMoreButton'
 import { ViewHeader } from './ViewHeader'
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Op types that cannot be reversed. */
-const NON_REVERSIBLE_OPS = new Set(['purge_block', 'delete_attachment'])
-
-/** Unique key for a history entry. */
-function entryKey(entry: HistoryEntry): string {
-  return `${entry.device_id}:${entry.seq}`
-}
-
-/**
- * UX-275 sub-fix 7: classify a load failure into a user-meaningful bucket
- * so the error banner can show actionable context instead of a generic
- * message. The detection is best-effort and falls back to `unknown`.
- *
- *  - `network` — fetch / connectivity / timeout / offline
- *  - `server`  — backend error (HTTP 5xx, sqlx, IPC reject)
- *  - `unknown` — anything else
- */
-type HistoryErrorCategory = 'network' | 'server' | 'unknown'
-
-function categorizeHistoryError(err: unknown): HistoryErrorCategory {
-  if (err == null) return 'unknown'
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
-  // Inspect HTTP-shaped errors first ({ status: 5xx } or { code: '5xx...' })
-  if (typeof err === 'object' && err != null) {
-    const obj = err as { status?: number; code?: string | number }
-    if (typeof obj.status === 'number' && obj.status >= 500 && obj.status < 600) {
-      return 'server'
-    }
-    if (typeof obj.code === 'string' && /^5\d\d/.test(obj.code)) {
-      return 'server'
-    }
-  }
-  if (
-    msg.includes('fetch') ||
-    msg.includes('network') ||
-    msg.includes('timeout') ||
-    msg.includes('offline') ||
-    msg.includes('econnrefused') ||
-    msg.includes('etimedout')
-  ) {
-    return 'network'
-  }
-  if (
-    msg.includes('500') ||
-    msg.includes('502') ||
-    msg.includes('503') ||
-    msg.includes('504') ||
-    msg.includes('internal server') ||
-    msg.includes('database') ||
-    msg.includes('sqlx')
-  ) {
-    return 'server'
-  }
-  return 'unknown'
-}
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 
 export function HistoryView(): React.ReactElement {
   const { t } = useTranslation()
-  const [reverting, setReverting] = useState(false)
   const [opTypeFilter, setOpTypeFilter] = useState<string | null>(null)
   const [confirmRevert, setConfirmRevert] = useState(false)
   const [restoreTarget, setRestoreTarget] = useState<HistoryEntry | null>(null)
   const [confirmRestore, setConfirmRestore] = useState(false)
-  const [restoring, setRestoring] = useState(false)
-  const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
   // FEAT-3 Phase 8 — current-space scoping. Default `false` ⇒ pass the
   // current space id so only ops on pages in this space are returned.
   // Toggling on drops the filter (cross-space "All spaces" mode). State
@@ -174,205 +105,58 @@ export function HistoryView(): React.ReactElement {
     setItems: setEntries,
   } = usePaginatedQuery(queryFn, { onError: t('history.loadFailed') })
 
-  // Track load-more announcements for screen readers
-  const prevLengthRef = useRef(0)
-  useEffect(() => {
-    if (entries.length > prevLengthRef.current && prevLengthRef.current > 0) {
-      setLoadMoreAnnouncement(
-        t('history.loadedMoreEntries', { count: entries.length - prevLengthRef.current }),
-      )
-    } else if (entries.length < prevLengthRef.current) {
-      setLoadMoreAnnouncement('')
-    }
-    prevLengthRef.current = entries.length
-  }, [entries.length, t])
-
-  // ── List keyboard navigation (ArrowUp/Down, j/k) ────────────────
+  // ── Selection (multi-select with shift-range) ────────────────────
   const {
-    focusedIndex,
-    setFocusedIndex,
-    handleKeyDown: navHandleKeyDown,
-  } = useListKeyboardNavigation({
-    itemCount: entries.length,
-    wrap: false,
-    vim: true,
-    homeEnd: true,
-    pageUpDown: true,
-  })
-
-  // ── Multi-select (shared hook) ────────────────────────────────────
-  const {
-    selected,
-    toggleSelection: hookToggle,
+    selectedIds,
+    toggleSelectedIndex,
     selectAll,
     clearSelection,
-    handleRowClick: hookHandleRowClick,
-  } = useListMultiSelect({
-    items: entries,
-    getItemId: entryKey,
-    filterPredicate: (entry: HistoryEntry) => !NON_REVERSIBLE_OPS.has(entry.op_type),
+    handleRowClick: selectionHandleRowClick,
+    getSelectedEntries,
+  } = useHistorySelection(entries)
+
+  // ── Keyboard navigation (Arrow / vim / Home / End / PageUp/Down) ─
+  const { focusedIndex, setFocusedIndex } = useHistoryKeyboardNav({
+    itemCount: entries.length,
+    listRef,
+    hasSelection: selectedIds.size > 0,
+    onToggleSelection: toggleSelectedIndex,
+    onSelectAll: selectAll,
+    onConfirmRevert: () => setConfirmRevert(true),
+    onClearSelection: clearSelection,
   })
 
-  // Wrapper: HistoryListItem passes index, hook expects ID
-  const handleToggleSelection = useCallback(
-    (index: number) => {
-      const entry = entries[index]
-      if (entry) hookToggle(entryKey(entry))
-    },
-    [entries, hookToggle],
-  )
-
-  // Reset selection when filter changes (entries are replaced by the hook).
-  // FEAT-3 Phase 8 — also resets when the space scope flips so a stale
-  // selection from the previous scope doesn't leak into the new one.
+  // Reset selection + focus when filter changes (entries are replaced
+  // by the paginated query). FEAT-3 Phase 8 — also resets when the
+  // space scope flips so a stale selection from the previous scope
+  // doesn't leak into the new one.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset UI state when filter changes
   useEffect(() => {
     clearSelection()
     setFocusedIndex(0)
   }, [opTypeFilter, effectiveSpaceId, setFocusedIndex, clearSelection])
 
-  // ── Revert ───────────────────────────────────────────────────────
-
-  const handleRevert = useCallback(async () => {
-    if (selected.size === 0) return
-    setReverting(true)
-    try {
-      // Collect selected entries and sort by created_at descending (newest first)
-      const selectedEntries = entries
-        .filter((e) => selected.has(entryKey(e)))
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-
-      const ops = selectedEntries.map((e) => ({
-        device_id: e.device_id,
-        seq: e.seq,
-      }))
-
-      await revertOps({ ops })
-      announce(t('announce.opsReverted', { count: ops.length }))
-      clearSelection()
-      // Reload after revert
-      setEntries([])
-      await reload()
-    } catch (err) {
-      reportIpcError('HistoryView', 'history.revertFailed', err, t, {
-        selectedCount: selected.size,
-      })
-      announce(t('announce.revertFailed'))
-    }
-    setReverting(false)
-    setConfirmRevert(false)
-  }, [selected, entries, reload, setEntries, clearSelection, t])
+  // Glue selection+focus row click together for HistoryListView.
+  const handleRowClick = useCallback(
+    (index: number, e: React.MouseEvent) => {
+      selectionHandleRowClick(index, e)
+      setFocusedIndex(index)
+    },
+    [selectionHandleRowClick, setFocusedIndex],
+  )
 
   const handleRestoreToHere = useCallback((entry: HistoryEntry) => {
     setRestoreTarget(entry)
     setConfirmRestore(true)
   }, [])
 
-  const handleConfirmRestore = useCallback(async () => {
-    if (!restoreTarget) return
-    setRestoring(true)
-    try {
-      const result = await restorePageToOp({
-        pageId: '__all__',
-        targetDeviceId: restoreTarget.device_id,
-        targetSeq: restoreTarget.seq,
-      })
-      toast.success(t('history.restoreSuccess', { count: result.ops_reverted }))
-      announce(t('announce.restoreToHereSucceeded', { count: result.ops_reverted }))
-      if (result.non_reversible_skipped > 0) {
-        toast.warning(t('history.restoreSkipped', { count: result.non_reversible_skipped }))
-      }
-      setEntries([])
-      await reload()
-    } catch (err) {
-      reportIpcError('HistoryView', 'history.restoreFailed', err, t, {
-        deviceId: restoreTarget.device_id,
-        seq: restoreTarget.seq,
-      })
-      announce(t('announce.restoreToHereFailed'))
-    }
-    setRestoring(false)
-    setConfirmRestore(false)
-    setRestoreTarget(null)
-  }, [restoreTarget, reload, setEntries, t])
-
-  // ── Keyboard navigation ──────────────────────────────────────────
-
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      const target = e.target as HTMLElement
-      if (
-        target.tagName === 'INPUT' ||
-        target.tagName === 'SELECT' ||
-        target.tagName === 'TEXTAREA'
-      )
-        return
-
-      // Delegate arrow/j/k navigation to the shared hook
-      if (navHandleKeyDown(e)) {
-        e.preventDefault()
-        return
-      }
-
-      // Space — toggle checkbox on focused item
-      if (matchesShortcutBinding(e, 'listToggleSelection') && focusedIndex >= 0) {
-        e.preventDefault()
-        handleToggleSelection(focusedIndex)
-        return
-      }
-
-      // Ctrl/Cmd+A — select all
-      if (matchesShortcutBinding(e, 'listSelectAll')) {
-        e.preventDefault()
-        selectAll()
-        return
-      }
-
-      // Enter — confirm revert
-      if (e.key === 'Enter' && selected.size > 0) {
-        e.preventDefault()
-        setConfirmRevert(true)
-        return
-      }
-
-      // Escape — clear selection
-      if (matchesShortcutBinding(e, 'listClearSelection')) {
-        e.preventDefault()
-        clearSelection()
-      }
-    }
-
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [
-    navHandleKeyDown,
-    focusedIndex,
-    handleToggleSelection,
-    selectAll,
-    selected.size,
-    clearSelection,
-  ])
-
-  // Scroll focused item into view
-  useEffect(() => {
-    if (focusedIndex < 0 || !listRef.current) return
-    const items = listRef.current.querySelectorAll('[data-history-item]')
-    const el = items[focusedIndex] as HTMLElement | undefined
-    if (el && typeof el.scrollIntoView === 'function') {
-      el.scrollIntoView({ block: 'nearest' })
-    }
-  }, [focusedIndex])
-
-  // ── Row click handler ────────────────────────────────────────────
-
-  const handleRowClick = useCallback(
-    (index: number, e: React.MouseEvent) => {
-      const entry = entries[index]
-      if (entry) hookHandleRowClick(entryKey(entry), e)
-      setFocusedIndex(index)
-    },
-    [entries, hookHandleRowClick, setFocusedIndex],
-  )
+  // Post-revert / post-restore reload — clears local pagination state
+  // and re-issues the initial query.
+  const reloadAfterMutation = useCallback(async () => {
+    clearSelection()
+    setEntries([])
+    await reload()
+  }, [clearSelection, reload, setEntries])
 
   // ── Render ───────────────────────────────────────────────────────
 
@@ -395,10 +179,10 @@ export function HistoryView(): React.ReactElement {
               batch actions (revert, clear) disappear after completion. Matches
               the ConflictList pattern and keeps the "N selected" text out of
               the DOM when nothing is selected. */}
-          {selected.size > 0 && (
+          {selectedIds.size > 0 && (
             <HistorySelectionToolbar
-              selectedCount={selected.size}
-              reverting={reverting}
+              selectedCount={selectedIds.size}
+              reverting={false}
               onRevertClick={() => setConfirmRevert(true)}
               onClearSelection={clearSelection}
             />
@@ -454,80 +238,40 @@ export function HistoryView(): React.ReactElement {
         />
       )}
 
-      {/* History list */}
-      {entries.length > 0 && (
-        <div
-          ref={listRef}
-          tabIndex={-1}
-          className="history-list space-y-2 p-0 m-0 focus:outline-none"
-          role="listbox"
-          aria-label={t('history.entriesLabel')}
-          aria-multiselectable="true"
-        >
-          {entries.map((entry, index) => {
-            const key = entryKey(entry)
-            return (
-              <HistoryListItem
-                key={key}
-                entry={entry}
-                index={index}
-                isSelected={selected.has(key)}
-                isFocused={focusedIndex === index}
-                isNonReversible={NON_REVERSIBLE_OPS.has(entry.op_type)}
-                isExpanded={expandedKeys.has(key)}
-                isLoadingDiff={loadingDiffs.has(key)}
-                diffSpans={diffCache.get(key)}
-                onRowClick={handleRowClick}
-                onToggleSelection={handleToggleSelection}
-                onToggleDiff={handleToggleDiff}
-                onRestoreToHere={handleRestoreToHere}
-              />
-            )
-          })}
-        </div>
-      )}
-
-      {/* Load more */}
-      <LoadMoreButton
+      <HistoryListView
+        entries={entries}
+        selectedIds={selectedIds}
+        focusedIndex={focusedIndex}
+        expandedKeys={expandedKeys}
+        diffCache={diffCache}
+        loadingDiffs={loadingDiffs}
+        listRef={listRef}
         hasMore={hasMore}
         loading={loading}
         onLoadMore={loadMore}
-        className="history-load-more"
+        onRowClick={handleRowClick}
+        onToggleSelection={toggleSelectedIndex}
+        onToggleDiff={handleToggleDiff}
+        onRestoreToHere={handleRestoreToHere}
       />
 
-      <output className="sr-only" aria-live="polite">
-        {loadMoreAnnouncement}
-      </output>
-
       {/* Revert confirmation dialog */}
-      <ConfirmDialog
+      <HistoryRevertDialog
         open={confirmRevert}
         onOpenChange={setConfirmRevert}
-        title={t('history.revertTitle', { count: selected.size })}
-        description={t('history.revertDescription', { count: selected.size })}
-        cancelLabel={t('history.cancelButton')}
-        actionLabel={t('history.revertButton')}
-        actionVariant="destructive"
-        onAction={handleRevert}
-        loading={reverting}
+        selectedEntries={getSelectedEntries()}
+        onSuccess={reloadAfterMutation}
       />
 
       {/* Restore-to-here confirmation dialog */}
-      <ConfirmDialog
+      <HistoryRestoreDialog
         open={confirmRestore}
         onOpenChange={(open) => {
           setConfirmRestore(open)
           if (!open) setRestoreTarget(null)
         }}
-        title={t('history.restoreToTitle', {
-          timestamp: restoreTarget ? formatTimestamp(restoreTarget.created_at, 'full') : '',
-        })}
-        description={t('history.restoreToDescription')}
-        cancelLabel={t('history.cancelButton')}
-        actionLabel={t('history.restoreButton')}
-        actionVariant="destructive"
-        onAction={handleConfirmRestore}
-        loading={restoring}
+        restoreTarget={restoreTarget}
+        onSuccess={reloadAfterMutation}
       />
     </div>
   )

@@ -17,19 +17,20 @@
  * Type-specific rendering for Text / Property / Move conflicts (#651-C2).
  * Batch resolution via multi-select + batch actions (#651-C8).
  *
- * Sub-components extracted for testability (#651-R3):
+ * Sub-components extracted for testability (#651-R3 / MAINT-128):
  *  - ConflictBatchToolbar
  *  - ConflictListItem
  *  - ConflictTypeRenderer
+ *  - ConflictKeepDialog / ConflictDiscardDialog / ConflictBatchDialog (siblings)
+ *  - useConflictFilters / useConflictSelection (hooks)
  */
 
 import { listen } from '@tauri-apps/api/event'
 import { GitMerge, RefreshCw } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -38,11 +39,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { ulidToDate } from '@/lib/format'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
+import { type DateFilter, type TypeFilter, useConflictFilters } from '../hooks/useConflictFilters'
+import { useConflictSelection } from '../hooks/useConflictSelection'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
-import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { announce } from '../lib/announcer'
 import type { BlockRow, DeleteResponse } from '../lib/tauri'
@@ -58,23 +59,14 @@ import {
 } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { ConflictBatchToolbar } from './ConflictBatchToolbar'
-import { ConflictListItem, inferConflictType } from './ConflictListItem'
+import { type ConflictBatchAction, ConflictBatchDialog } from './ConflictList/ConflictBatchDialog'
+import { ConflictDiscardDialog } from './ConflictList/ConflictDiscardDialog'
+import { ConflictKeepDialog } from './ConflictList/ConflictKeepDialog'
+import { ConflictListItem } from './ConflictListItem'
 import { EmptyState } from './EmptyState'
 import { LoadingSkeleton } from './LoadingSkeleton'
 import { LoadMoreButton } from './LoadMoreButton'
 import { ViewHeader } from './ViewHeader'
-
-/** Available conflict-type filter values, mapped to ConflictListItem's inferred types. */
-type TypeFilter = 'all' | 'Text' | 'Property' | 'Move'
-/** Available date-range filter values. UX-265 keeps the range coarse to stay in scope. */
-type DateFilter = 'all' | 'last7Days'
-/** 7 days in milliseconds — used for the "last 7 days" cutoff. */
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
-
-/** Truncate long content for dialog previews. */
-function truncatePreview(text: string, max = 120): string {
-  return text.length > max ? `${text.slice(0, max)}…` : text
-}
 
 export function ConflictList(): React.ReactElement {
   const { t } = useTranslation()
@@ -95,16 +87,10 @@ export function ConflictList(): React.ReactElement {
   const [confirmKeepBlock, setConfirmKeepBlock] = useState<BlockRow | null>(null)
   const [originals, setOriginals] = useState<Map<string, BlockRow>>(new Map())
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
-  const {
-    selected: selectedIds,
-    toggleSelection: toggleSelected,
-    selectAll,
-    clearSelection,
-  } = useListMultiSelect({
-    items: blocks,
-    getItemId: (b: BlockRow) => b.id,
+  const { selectedIds, toggleSelected, selectAll, clearSelection } = useConflictSelection({
+    blocks,
   })
-  const [batchAction, setBatchAction] = useState<'keep' | 'discard' | null>(null)
+  const [batchAction, setBatchAction] = useState<ConflictBatchAction | null>(null)
   // UX-264: progress counter shown while a batch keep/discard is iterating
   // through selected conflicts. `null` while no batch is running.
   const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(
@@ -113,38 +99,17 @@ export function ConflictList(): React.ReactElement {
   const [deviceNames, setDeviceNames] = useState<Map<string, string>>(new Map())
   const fetchedParentsRef = useRef(new Set<string>())
 
-  // UX-265 sub-fix 2 — filter bar state.
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
-  const [deviceFilter, setDeviceFilter] = useState<string>('all')
-  const [dateFilter, setDateFilter] = useState<DateFilter>('all')
-
-  // Unique device names available for the device filter dropdown.
-  const uniqueDeviceNames = useMemo(() => {
-    const set = new Set<string>()
-    for (const name of deviceNames.values()) set.add(name)
-    return [...set].sort()
-  }, [deviceNames])
-
-  // Apply filters to the conflict list. Falls back to full list when every
-  // filter is "all" (the default), so existing behaviour is preserved.
-  const filteredBlocks = useMemo(() => {
-    if (typeFilter === 'all' && deviceFilter === 'all' && dateFilter === 'all') return blocks
-    const cutoff = dateFilter === 'last7Days' ? Date.now() - SEVEN_DAYS_MS : null
-    return blocks.filter((block) => {
-      if (typeFilter !== 'all' && inferConflictType(block) !== typeFilter) return false
-      if (deviceFilter !== 'all') {
-        const name = deviceNames.get(block.id)
-        if (name !== deviceFilter) return false
-      }
-      if (cutoff != null) {
-        const ts = ulidToDate(block.id)
-        // ULIDs that don't decode to a valid date are kept (we cannot prove
-        // they are old, and dropping them would silently hide data).
-        if (ts && ts.getTime() < cutoff) return false
-      }
-      return true
-    })
-  }, [blocks, typeFilter, deviceFilter, dateFilter, deviceNames])
+  // UX-265 sub-fix 2 — filter bar state + filtered list memo.
+  const {
+    typeFilter,
+    setTypeFilter,
+    deviceFilter,
+    setDeviceFilter,
+    dateFilter,
+    setDateFilter,
+    uniqueDeviceNames,
+    filteredBlocks,
+  } = useConflictFilters({ blocks, deviceNames })
 
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
@@ -621,113 +586,31 @@ export function ConflictList(): React.ReactElement {
         className="conflict-load-more"
       />
 
-      {/* Keep confirmation dialog */}
-      <ConfirmDialog
-        open={!!confirmKeepBlock}
+      <ConflictKeepDialog
+        block={confirmKeepBlock}
+        originals={originals}
         onOpenChange={(open) => {
           if (!open) setConfirmKeepBlock(null)
         }}
-        title={t('conflict.keepIncomingTitle')}
-        description={
-          <>
-            {t('conflict.keepDescription')}
-            {confirmKeepBlock && (
-              <span className="mt-2 block space-y-1 text-xs">
-                <span className="block">
-                  <span className="font-medium">{t('conflict.currentLabel')}</span>{' '}
-                  <span className="text-muted-foreground">
-                    {truncatePreview(
-                      confirmKeepBlock.parent_id
-                        ? (originals.get(confirmKeepBlock.parent_id)?.content ??
-                            t('conflict.originalNotAvailable'))
-                        : '(no original)',
-                    )}
-                  </span>
-                </span>
-                <span className="block">
-                  <span className="font-medium">{t('conflict.incomingLabel')}</span>{' '}
-                  <span className="text-muted-foreground">
-                    {truncatePreview(confirmKeepBlock.content ?? t('conflict.emptyContent'))}
-                  </span>
-                </span>
-              </span>
-            )}
-          </>
-        }
-        cancelLabel={t('dialog.cancel')}
-        actionLabel={t('conflict.keepConfirmAction')}
-        onAction={() => {
-          if (confirmKeepBlock) handleKeep(confirmKeepBlock)
-        }}
-        actionVariant="destructive"
-        className="conflict-keep-confirm"
-        contentTestId="conflict-keep-confirm"
-        cancelTestId="conflict-keep-no"
-        actionTestId="conflict-keep-yes"
+        onConfirm={handleKeep}
       />
 
-      {/* Discard confirmation dialog */}
-      <ConfirmDialog
-        open={!!confirmDiscardId}
+      <ConflictDiscardDialog
+        blockId={confirmDiscardId}
+        blocks={blocks}
         onOpenChange={(open) => {
           if (!open) setConfirmDiscardId(null)
         }}
-        title={t('conflict.discardTitle')}
-        description={
-          <>
-            {t('conflict.discardDescription')}
-            {confirmDiscardId &&
-              (() => {
-                const discardBlock = blocks.find((b) => b.id === confirmDiscardId)
-                return discardBlock ? (
-                  <span className="mt-2 block text-xs">
-                    <span className="font-medium">Content:</span>{' '}
-                    <span className="text-muted-foreground">
-                      {truncatePreview(discardBlock.content ?? t('conflict.emptyContent'))}
-                    </span>
-                  </span>
-                ) : null
-              })()}
-          </>
-        }
-        cancelLabel={t('dialog.no')}
-        actionLabel={t('conflict.discardConfirmAction')}
-        onAction={() => {
-          if (confirmDiscardId) {
-            const discardBlock = blocks.find((b) => b.id === confirmDiscardId)
-            if (discardBlock) handleDiscard(discardBlock)
-          }
-        }}
-        actionVariant="destructive"
-        className="conflict-discard-confirm"
-        contentTestId="conflict-discard-confirm"
-        cancelTestId="conflict-discard-no"
-        actionTestId="conflict-discard-yes"
+        onConfirm={handleDiscard}
       />
 
-      {/* Batch action confirmation dialog */}
-      <ConfirmDialog
-        open={!!batchAction}
+      <ConflictBatchDialog
+        action={batchAction}
+        selectedCount={selectedIds.size}
         onOpenChange={(open) => {
           if (!open) setBatchAction(null)
         }}
-        title={
-          batchAction === 'keep'
-            ? t('conflict.keepAllSelectedTitle')
-            : t('conflict.discardAllSelectedTitle')
-        }
-        description={
-          batchAction === 'keep'
-            ? t('conflict.batchKeepDescription', { count: selectedIds.size })
-            : t('conflict.batchDiscardDescription', { count: selectedIds.size })
-        }
-        cancelLabel={t('dialog.cancel')}
-        actionLabel={
-          batchAction === 'keep' ? t('conflict.batchKeepAction') : t('conflict.batchDiscardAction')
-        }
-        actionVariant="destructive"
-        onAction={handleBatchConfirm}
-        className="conflict-batch-confirm"
+        onConfirm={handleBatchConfirm}
       />
     </div>
   )

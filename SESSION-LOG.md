@@ -1,5 +1,50 @@
 # Session Log
 
+## Session 567 — MAINT-128 partial — close 2 more god-component decompositions (HistoryView + ConflictList) (2026-04-30)
+
+**2 MAINT-128 sub-rows partial-closed in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent.** Theme: continued the MAINT-128 work from session 566. Picked HistoryView and ConflictList — both have well-scoped hook + dialog extraction targets in their MAINT-128 row descriptions.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 23 → 23 (MAINT-128 row STAYS — 5 of 9 god-components remain in scope: PageBrowser, BlockTree, TrashView, PropertyRowEditor, AddFilterRow).
+- **Previously-resolved counter:** 814+ → 816+ across 533 → 534 sessions.
+
+**Items partial-closed (2 of 9 MAINT-128 sub-rows):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-128 HistoryView decomposition | `src/components/HistoryView.tsx` (534L → 278L, -256L / -48% — **hits ≤300 target; ≤250 stretch deferred**) + 5 new files: `HistoryListView.tsx` (112L), `HistoryRevertDialog.tsx` (70L), `HistoryRestoreDialog.tsx` (81L), `useHistorySelection.ts` (86L hook), `useHistoryKeyboardNav.ts` (131L hook) + `src/lib/categorize-history-error.ts` (51L pure helper) + 2 hook test files (17 new tests: 8 useHistorySelection + 9 useHistoryKeyboardNav) — Subagent 718adcb1 | **Extracted 5 targets per the MAINT-128 description.** `useHistorySelection(entries)` wraps `useListMultiSelect` with HistoryEntry keying (`device_id:seq`) + `NON_REVERSIBLE_OPS` filter + `getSelectedEntries()` newest-first sort for the revert IPC. `useHistoryKeyboardNav` wraps `useListKeyboardNavigation` (vim/homeEnd/pageUpDown) + installs the document-level keydown listener (Space / Ctrl+A / Enter / Escape) + owns the scroll-into-view effect. `HistoryListView` is purely presentational (the load-more announcement effect moved here as a list-local concern). `HistoryRevertDialog` and `HistoryRestoreDialog` each own their respective `reverting`/`restoring` state + IPC. **Drift surfaced:** `categorizeHistoryError` (35L) extracted to `src/lib/categorize-history-error.ts` to hit the ≤300L target — outside the explicit description targets but justified by the LOC budget. **Drift surfaced:** `HistorySelectionToolbar.reverting` prop now hardcoded to `false` because the dialog owns reverting state (toolbar's reverting indicator was always invisible since the dialog overlays it; reviewer verified no test asserts on it). 55 existing HistoryView tests pass unchanged. Reviewer (`56fe5c16`) APPROVED WITH NITS (suggested 2-3 edge-case tests; not blocking). |
+| MAINT-128 ConflictList decomposition | `src/components/ConflictList.tsx` (734L → 617L, -117L / -16% — **stretch ≤450L target NOT met; gap requires further extractions out of scope**) + 5 new files under `src/components/ConflictList/` and `src/hooks/`: `ConflictKeepDialog.tsx` (75L), `ConflictDiscardDialog.tsx` (62L), `ConflictBatchDialog.tsx` (50L), `useConflictFilters.ts` (85L hook), `useConflictSelection.ts` (39L hook) + 2 hook test files (11 new tests: 6 useConflictFilters + 5 useConflictSelection) — Subagent f3c0a4e7 | **Extracted 4 targets per the MAINT-128 description (2 hooks + 3 dialogs).** `useConflictFilters` owns `typeFilter`, `deviceFilter`, `dateFilter` + `uniqueDeviceNames` + `filteredBlocks` memo. `useConflictSelection` wraps `useListMultiSelect`. The 3 dialog siblings (`ConflictKeepDialog`, `ConflictDiscardDialog`, `ConflictBatchDialog`) take target row(s) + `onOpenChange` + `onConfirm` props; open/close booleans (`confirmKeepBlock`, `confirmDiscardId`, `batchAction`) stay in `ConflictList` per task instructions. **Stretch-target ≤450L gap intentional:** the 4 explicit targets close 117L of the 284L gap; closing the rest would require additional extractions (`useConflictDeviceNames`, `useConflictActions`, `<ConflictFilterBar>`) that aren't in MAINT-128's row description. The 3 large effects (fetch originals, sync:complete listener, device info) and 3 handler functions (`handleKeep`/`handleDiscard`/`handleBatchConfirm`, ~159L combined) stay in the orchestrator because they're tightly bound to dialog-state and reload semantics. **Verified:** `setAttribute` antipattern is NOT present (already fixed in session 559). 134 existing tests (98 ConflictList + 36 ConflictListItem) pass unchanged. Reviewer APPROVED WITH NITS (suggested 2 filter-combination edge-case tests; not blocking). |
+
+**Process notes:**
+
+- **2 file-disjoint parallel subagents** — clean parallelization, no merge coordination needed. Both succeeded on first attempt.
+- **Both subagents flagged stretch-LOC targets that weren't fully reached.** HistoryView at 278L vs ≤300 target hit (≤250 stretch deferred — needs `useHistoryEntries` hook); ConflictList at 617L vs ≤450 target NOT met (gap requires 3 additional extractions out of scope). The partial wins are valuable on their own; further extractions deferred to future MAINT-128 batches.
+- **Drift discovered (subagent flagged for HistoryView):** `categorizeHistoryError` extracted as a pure helper to `src/lib/` to hit the ≤300L target — outside the explicit MAINT-128 targets but justified by the LOC budget; reviewer accepted.
+- **Drift discovered (subagent flagged for HistoryView):** `HistorySelectionToolbar.reverting` prop now hardcoded to `false` since the dialog owns the reverting state. Reviewer verified no test asserts on the toolbar's reverting indicator (it was always invisible behind the dialog overlay).
+- **Test-count drift fix in `src/__tests__/AGENTS.md`** — `hooks/__tests__` count updated from 53 → 70 (prek's `agents-md-count-tables` hook flagged the +32% drift — beyond the ±25% tolerance). Mechanical doc-count update.
+- **No `cargo sqlx prepare`** needed — no SQL changes.
+- **No FEATURE-MAP.md update needed** — internal decomposition; user-facing surface unchanged.
+
+**Files touched (this session's batch):**
+
+- Frontend new (10): `src/components/{HistoryListView,HistoryRevertDialog,HistoryRestoreDialog}.tsx` + `src/components/ConflictList/{ConflictKeepDialog,ConflictDiscardDialog,ConflictBatchDialog}.tsx` + `src/hooks/{useHistorySelection,useHistoryKeyboardNav,useConflictFilters,useConflictSelection}.ts` + `src/lib/categorize-history-error.ts`.
+- Frontend modified (2): `src/components/HistoryView.tsx`, `src/components/ConflictList.tsx`.
+- New test files (4): `src/hooks/__tests__/{useHistorySelection,useHistoryKeyboardNav,useConflictFilters,useConflictSelection}.test.{ts,tsx}` (28 new tests total: 8 + 9 + 6 + 5).
+- Existing tests modified: 0 (all 134 ConflictList + 55 HistoryView tests pass unchanged).
+- Docs: `src/__tests__/AGENTS.md` (test-count drift fix: 53 → 70). `REVIEW-LATER.md` (MAINT-128 row trimmed — HistoryView and ConflictList entries marked as partially closed). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- HistoryView batch: `npx vitest run src/components/__tests__/HistoryView` → **55/55 passed**.
+- ConflictList batch: `npx vitest run src/components/__tests__/ConflictList` → **134/134 passed** (98 + 36).
+- New hook tests: `npx vitest run src/hooks/__tests__/{useHistorySelection,useHistoryKeyboardNav,useConflictFilters,useConflictSelection}` → **28/28 passed**.
+- Smoke: `npx vitest run src/components/__tests__/App` → **113/113 passed**.
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome: clean.
+
+---
+
 ## Session 566 — MAINT-128 partial — close 2 god-component decompositions (SettingsView + SortableBlock) (2026-04-30)
 
 **2 MAINT-128 sub-rows partial-closed in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent.** Theme: tackled 2 of the 9 components in MAINT-128's table — SettingsView and SortableBlock. Both have clear extraction targets with low cross-cutting risk; chosen over PropertyRowEditor (which last session's inspection rejected as design-heavy due to shared state) and ConflictList (which has DOM-mutation cleanup tied to its split, raising risk).
