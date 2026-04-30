@@ -241,6 +241,164 @@ fn parse_service_event_returns_none_for_unknown_removed_fullname() {
     );
 }
 
+// -- 3a. L-65: mDNS interface filter ----------------------------------
+//
+// `filter_announceable_addrs` is the pure-function core of the L-65
+// fix: it shrinks the set of addresses advertised in the mDNS service
+// info from "every routable interface" (the previous
+// `enable_addr_auto()` behaviour) down to "RFC 1918 private IPv4
+// only". The tests below seed the filter with a synthetic mix of
+// addresses so the policy can be exercised without invoking the
+// host's `getifaddrs(3)`.
+
+/// L-65: loopback (`127.0.0.0/8`, `::1`) and link-local
+/// (`169.254.0.0/16`, `fe80::/10`) addresses must be dropped — they
+/// are useless to announce and `mdns-sd` would only see them if
+/// `enable_addr_auto()` were re-enabled.
+#[test]
+fn filter_announceable_addrs_drops_loopback_and_link_local() {
+    use super::websocket::filter_announceable_addrs;
+    use std::net::IpAddr;
+
+    let inputs: Vec<IpAddr> = vec![
+        "127.0.0.1".parse().unwrap(),     // IPv4 loopback
+        "::1".parse().unwrap(),           // IPv6 loopback
+        "169.254.10.42".parse().unwrap(), // IPv4 link-local
+        "fe80::1".parse().unwrap(),       // IPv6 link-local
+        "192.168.1.5".parse().unwrap(),   // RFC 1918 — should survive
+    ];
+
+    let kept = filter_announceable_addrs(inputs);
+    assert_eq!(
+        kept,
+        vec!["192.168.1.5".parse::<IpAddr>().unwrap()],
+        "L-65: only the RFC 1918 private IPv4 address should be kept; \
+         loopback and link-local must not appear in the announce set"
+    );
+}
+
+/// L-65: public IPv4 addresses (anything outside RFC 1918) must be
+/// dropped — this is the "guest WiFi / coffee-shop network" leak the
+/// fix exists to prevent.
+#[test]
+fn filter_announceable_addrs_drops_public_ipv4() {
+    use super::websocket::filter_announceable_addrs;
+    use std::net::IpAddr;
+
+    let inputs: Vec<IpAddr> = vec![
+        "8.8.8.8".parse().unwrap(),       // Google DNS — public
+        "1.1.1.1".parse().unwrap(),       // Cloudflare — public
+        "100.64.0.1".parse().unwrap(),    // CGNAT (RFC 6598, not RFC 1918)
+        "10.0.0.1".parse().unwrap(),      // RFC 1918 — should survive
+        "172.16.0.1".parse().unwrap(),    // RFC 1918 — should survive
+        "192.168.50.50".parse().unwrap(), // RFC 1918 — should survive
+    ];
+
+    let kept: std::collections::HashSet<IpAddr> =
+        filter_announceable_addrs(inputs).into_iter().collect();
+    let expected: std::collections::HashSet<IpAddr> = [
+        "10.0.0.1".parse::<IpAddr>().unwrap(),
+        "172.16.0.1".parse::<IpAddr>().unwrap(),
+        "192.168.50.50".parse::<IpAddr>().unwrap(),
+    ]
+    .into_iter()
+    .collect();
+
+    assert_eq!(
+        kept, expected,
+        "L-65: public IPv4 (incl. CGNAT) must be dropped; only RFC 1918 \
+         (10/8, 172.16/12, 192.168/16) addresses survive"
+    );
+}
+
+/// L-65: IPv6 addresses are dropped wholesale — global IPv6 unicast
+/// (`2000::/3`) routes onto cellular / VPN / ISP-tunnel interfaces
+/// that the user did not necessarily intend to advertise on, and IPv4
+/// LAN discovery is sufficient for Agaric's deployment model.
+#[test]
+fn filter_announceable_addrs_drops_all_ipv6() {
+    use super::websocket::filter_announceable_addrs;
+    use std::net::IpAddr;
+
+    let inputs: Vec<IpAddr> = vec![
+        "2001:db8::1".parse().unwrap(), // global IPv6 unicast (doc range)
+        "fc00::1".parse().unwrap(),     // IPv6 unique local (ULA)
+        "fe80::abcd".parse().unwrap(),  // IPv6 link-local
+        "::1".parse().unwrap(),         // IPv6 loopback
+    ];
+
+    let kept = filter_announceable_addrs(inputs);
+    assert!(
+        kept.is_empty(),
+        "L-65: IPv6 must be dropped wholesale, got: {kept:?}"
+    );
+}
+
+/// L-65: the announce address set must be bounded — under no
+/// circumstances should the filter pass through "every interface".
+/// This is the core invariant the fix is enforcing.
+#[test]
+fn filter_announceable_addrs_set_is_bounded() {
+    use super::websocket::filter_announceable_addrs;
+    use std::net::IpAddr;
+
+    // A multi-homed host: docked laptop + phone hotspot + guest WiFi
+    // + VPN tunnel + native IPv6. Only the LAN-style RFC 1918
+    // addresses should survive.
+    let inputs: Vec<IpAddr> = vec![
+        "127.0.0.1".parse().unwrap(),    // loopback
+        "::1".parse().unwrap(),          // loopback v6
+        "169.254.0.7".parse().unwrap(),  // link-local v4
+        "fe80::5".parse().unwrap(),      // link-local v6
+        "203.0.113.42".parse().unwrap(), // public IPv4 (TEST-NET-3)
+        "2001:db8::1".parse().unwrap(),  // public IPv6 (doc range)
+        "192.168.1.10".parse().unwrap(), // home LAN
+        "10.42.0.5".parse().unwrap(),    // tethered hotspot
+        "172.20.10.3".parse().unwrap(),  // iOS Personal Hotspot range
+    ];
+    let total = inputs.len();
+
+    let kept = filter_announceable_addrs(inputs);
+
+    assert!(
+        kept.len() < total,
+        "L-65: filter must drop at least one address; the announce set \
+         must never be the full interface list (got {} of {} kept)",
+        kept.len(),
+        total,
+    );
+    assert!(
+        !kept.is_empty(),
+        "L-65: filter should still keep RFC 1918 private IPv4 addresses; \
+         got an empty result"
+    );
+    assert!(
+        kept.iter().all(|addr| match addr {
+            IpAddr::V4(v4) => v4.is_private(),
+            IpAddr::V6(_) => false,
+        }),
+        "L-65: every surviving address must be RFC 1918 private IPv4, \
+         got: {kept:?}"
+    );
+}
+
+/// L-65: an empty interface list yields an empty announce set — the
+/// caller (`MdnsService::announce`) treats this as the trigger to
+/// fall back to `enable_addr_auto()` so peer discovery still works
+/// on hosts where `getifaddrs(3)` fails or returns nothing useful.
+#[test]
+fn filter_announceable_addrs_empty_input_yields_empty_output() {
+    use super::websocket::filter_announceable_addrs;
+    use std::net::IpAddr;
+
+    let kept = filter_announceable_addrs(Vec::<IpAddr>::new());
+    assert!(
+        kept.is_empty(),
+        "L-65: empty input must yield empty output (caller falls back \
+         to enable_addr_auto)"
+    );
+}
+
 // -- 4. DiscoveredPeer fields -----------------------------------------
 
 #[test]
