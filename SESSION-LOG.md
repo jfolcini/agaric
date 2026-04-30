@@ -1,5 +1,46 @@
 # Session Log
 
+## Session 570 — Close MAINT-127 useGraphSimulation split (716L → 111L orchestrator) + bookkeeping cleanup (2026-04-30)
+
+**1 large MAINT item closed in one PROMPT.md batch with 1 build subagent + 1 review subagent + bookkeeping cleanup.** Closed the last MECHANICAL extraction in MAINT-127 — `useGraphSimulation.ts` decomposition (716L → 111L thin orchestrator + 4 hooks + 1 pure-helpers lib). MAINT-127 now has only `navigation.ts` remaining, which is blocked pending design discussion (cross-store coordination not allowed under "no new Zustand stores without approval"). Stale MAINT-124 description corrected: the silent `.catch(() => {})` triplet at App.tsx:935-939 is already fixed (each `.catch` now calls `logger.warn` with structured context).
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 23 → 23 (MAINT-127 row stays — `navigation.ts` blocked pending design discussion).
+- **Previously-resolved counter:** 820+ → 821+ across 536 → 537 sessions.
+
+**Items closed (1 mechanical extraction + 1 bookkeeping cleanup):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-127 useGraphSimulation split | `src/hooks/useGraphSimulation.ts` (716L → **111L** thin orchestrator, -85% / -605L) + 5 new files: `src/lib/graph-sim-helpers.ts` (595L of pure d3/worker/main-thread helpers — no React imports, organized by section), `src/hooks/useGraphZoom.ts` (76L — owns `zoomBehaviorRef` + 3 zoom callbacks + `attach`), `src/hooks/useGraphRenderElements.ts` (32L — owns the render callback wiring), `src/hooks/useGraphWorkerSimulation.ts` (40L — owns `workerFailed` state + worker simulation lifecycle), `src/hooks/useGraphMainThreadSim.ts` (22L — owns the main-thread fallback simulation runner) + 4 new hook test files (22 new tests: 6 useGraphZoom + 6 useGraphRenderElements + 5 useGraphWorkerSimulation + 5 useGraphMainThreadSim) — Subagent d4b1665b | **Decomposed the largest god-file in `src/hooks/` per the MAINT-127 description's banner-comment seams.** All 9 banner sections (constants, types, SVG/d3 setup, zoom helpers, applyWorkerPositions, worker simulation, main-thread simulation, position application, hook) mapped cleanly to their new homes. The orchestrator is a thin composition: calls 4 hooks then runs a single `useEffect` orchestrating the render → zoom → simulation → ResizeObserver → cleanup lifecycle. **Public API preserved:** `UseGraphSimulationArgs`, `UseGraphSimulationResult`, and `useGraphSimulation()` signatures are byte-equivalent to HEAD; `GraphView.tsx` consumer was NOT modified. **Drift surfaced (subagent flagged for orchestrator):** 2 minor Biome auto-fixes — `useExhaustiveDependencies` flagged `edges` as redundant in the orchestrator's useEffect deps (`renderElements` already depends on `edges`); import-order alphabetical fix. Both auto-resolved during the subagent's run. **Scope expansion (subagent flagged + reviewer accepted):** `graph-sim-helpers.ts` (595L) was extracted beyond the 4-hook description, but it's a natural follow-on (pure helpers with no React; matches the precedent set by session 562's `block-tree-ops.ts` and session 563's `keyboard-config/` subdir). **Risk medium per appendix** (graph-rendering hot path): reviewer verified callback identity is stable, cleanup order preserved, deps arrays exhaustive. 12 existing useGraphSimulation tests + 35 GraphView tests pass unchanged. Reviewer (`adf44265`) APPROVED with no required changes. |
+| Bookkeeping: stale MAINT-124 silent-catch claim | `REVIEW-LATER.md` MAINT-124 row trimmed to remove the silent `.catch(() => {})` triplet portion (already fixed at `App.tsx:935-947` — each `.catch` calls `logger.warn` with structured context: `{ op: 'unminimize' }`, `{ op: 'show' }`, `{ op: 'setFocus' }`). The `w.isMinimized().catch(() => false)` at L935 is intentional (default-to-false-on-failure semantics; not a swallow). | **Documentation cleanup.** No code change. |
+
+**Process notes:**
+
+- **Single substantial subagent.** useGraphSimulation is on the perf-critical graph-rendering hot path; the subagent did exemplary work staying byte-equivalent and the reviewer confirmed.
+- **MAINT-127 is now effectively at endgame** — only `navigation.ts` remains, and it's blocked pending design discussion (the tab engine + sidebar view are interleaved in a single Zustand store; splitting requires either a new Zustand store or a 2-store coordination pattern, both needing AGENTS.md "Architectural Stability" approval).
+- **Drift discovered during planning:** the MAINT-124 description claims a silent `.catch(() => {})` triplet at App.tsx:935-939, but inspection showed the triplet is ALREADY FIXED (each `.catch` already calls `logger.warn` with structured context). Updated the MAINT-124 row to remove the stale claim.
+- **No `cargo sqlx prepare`** needed — no SQL changes.
+- **No FEATURE-MAP.md update needed** — internal frontend refactor; user-facing surface unchanged.
+
+**Files touched (this session's batch):**
+
+- Frontend new (5): `src/hooks/{useGraphZoom,useGraphRenderElements,useGraphWorkerSimulation,useGraphMainThreadSim}.ts` + `src/lib/graph-sim-helpers.ts`.
+- Frontend modified (1): `src/hooks/useGraphSimulation.ts` (716L → 111L thin orchestrator).
+- New test files (4): `src/hooks/__tests__/{useGraphZoom,useGraphRenderElements,useGraphWorkerSimulation,useGraphMainThreadSim}.test.ts` (22 new tests total).
+- Existing tests modified: 0 (12 useGraphSimulation + 35 GraphView + 11 GraphView.helpers tests pass unchanged).
+- Docs: `REVIEW-LATER.md` (MAINT-127 row trimmed; MAINT-124 silent-catch portion removed). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- New hook tests: `npx vitest run src/hooks/__tests__/{useGraphZoom,useGraphRenderElements,useGraphWorkerSimulation,useGraphMainThreadSim}` → **22/22 passed**.
+- Existing tests: `npx vitest run src/hooks/__tests__/useGraphSimulation src/components/__tests__/GraphView` → **47/47 passed** (12 + 35).
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome: clean (after subagent's 2 auto-fixes during the build).
+
+---
+
 ## Session 569 — Close MAINT-128 BlockTree + MAINT-167 + 1-line latent-bug fix in useTrashDescendantCounts (2026-04-30)
 
 **3 outcomes in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent + 1 orchestrator-direct fix.** Closed the BlockTree decomposition (3rd-largest MAINT-128 sub-row at 938L); closed MAINT-167 entirely (the 15 unit tests for the 3 TrashView beyond-spec hooks flagged in session 568); and applied a defensive 1-line fix for a latent infinite-render bug in `useTrashDescendantCounts` that the MAINT-167 subagent discovered while writing tests.
