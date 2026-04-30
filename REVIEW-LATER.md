@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-22 open items — 22 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 17 backend Medium findings closed + 24 MAINT closed (some partially) across sessions 549-581 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-581): MAINT-131 fully reduced to residual cleanup; MAINT-162 reduced to 1 component remaining (StaticBlock); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
+22 open items — 22 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 20 backend Medium findings closed + 24 MAINT closed (some partially) across sessions 549-582 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-582): MAINT-131 fully reduced to residual cleanup; MAINT-162 reduced to 1 component remaining (StaticBlock); **3 schema-integrity migrations landed in session 582** (M-30 partial UNIQUE on attachments.fs_path, M-93 ON DELETE CASCADE FK on block_drafts.block_id, M-90 is_space property tightened to `select` type); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
 
-Previously resolved: 838+ items across 548 sessions (per SESSION-LOG.md unique session count; latest is session 581).
+Previously resolved: 841+ items across 549 sessions (per SESSION-LOG.md unique session count; latest is session 582).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1121,19 +1121,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Commands (System)
 
-### M-30 — No uniqueness on `attachments.fs_path`; duplicate adds collide silently
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/attachments.rs:99-111`, `src-tauri/migrations/0001_initial.sql:43-52`
-- **What:** Two `add_attachment` calls with the same `fs_path` (different `attachment_id`, even different `block_id`) succeed and produce two rows pointing at the same file. Once F1 (`delete_attachment` actually unlinks the file) lands, deleting one row would clobber the other's content.
-- **Why it matters:** Pre-condition for any future "actually unlink the file on delete" fix to be correct. The frontend's ULID-in-path convention makes collisions unlikely in normal flow, but no schema guard enforces it.
-- **Cost:** S
-- **Risk:** Medium — if two devices independently chose identical fs_paths during sync import, a `UNIQUE` migration could fail on existing user DBs; needs a data-shape audit. Per AGENTS.md "Architectural Stability" the migration itself needs user approval.
-- **Impact:** Low
-- **Recommendation:** Add `CREATE UNIQUE INDEX idx_attachments_fs_path ON attachments(fs_path)` in a new migration, and add a `tests/data_shape` assertion that all existing rows are unique; if collisions show up in real DBs, namespace fs_path under `attachment_id` during import.
-- **Pass-1 source:** 05/F4
-- **Status:** Open
-
-
 ### M-34 — `start_pairing_inner` builds a QR with `host=0.0.0.0, port=0`
 - **Domain:** Commands (System)
 - **Location:** `src-tauri/src/commands/sync_cmds.rs:91-109` (function), `src-tauri/src/commands/sync_cmds.rs:97` (QR payload), `src-tauri/src/commands/sync_cmds.rs:107` (`port: 0`)
@@ -1201,31 +1188,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 ### GCal / Spaces / Drafts
-
-### M-90 — `is_space` typed as `text`; equality probed on the literal string `"true"`
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `migrations/0035_spaces.sql:6-7`; `src-tauri/src/spaces/bootstrap.rs:101, 169-179`; `src-tauri/src/commands/spaces.rs:48-56`
-- **What:** The `is_space` property is registered with `value_type = 'text'` and every is-space probe filters by `value_text = 'true'` (literal lowercase). `property_definitions` does not declare `options = '["true"]'`, so `set_property_in_tx`'s options-membership guard does not enforce the value. Any peer / future UI that writes `"True"`, `"yes"`, `"1"` — or uses `value_num` / `value_ref` — silently disappears from `list_spaces`.
-- **Why it matters:** A type-safe boolean flag this central to FEAT-3 deserves stricter modelling. Today the convergence invariant only holds because bootstrap is the *only* writer of `is_space`; that is fragile to extend (a future "rename space" or "promote page to space" affordance would have to remember the convention).
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either (a) change the `is_space` property type from `text` to `select` with `options = '["true", "false"]'` so `set_property_in_tx`'s options-membership guard kicks in (the current `text` type bypasses that guard — `commands/blocks/crud.rs:1190` only enforces options when `expected_type == "select"`), **or** (b) pivot the test to check non-empty truthy `value_text` in the queries. Prefer (a) for type safety. Add a test that `set_property` with `value_text='True'` is rejected once the type is changed.
-- **Pass-1 source:** 10/F12
-- **Status:** Open
-
-
-### M-93 — `block_drafts` table has no FK to `blocks`
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `migrations/0001_initial.sql:67-71`; `src-tauri/src/draft.rs`; `ARCHITECTURE.md §12 Crash Recovery`
-- **What:** `CREATE TABLE block_drafts (block_id TEXT PRIMARY KEY NOT NULL, content TEXT NOT NULL, updated_at TEXT NOT NULL)` declares no foreign key to `blocks(id)` — even though AGENTS.md sets `PRAGMA foreign_keys = ON` globally. The crash-recovery walk emits synthetic `EditBlock` ops for surviving drafts, so a draft whose block was hard-deleted produces a no-op edit for a missing target.
-- **Why it matters:** Combined with H-12 (flush_draft does not validate the target block exists) this is the channel through which orphan ops enter the append-only log on every boot. The op log is supposed to be source-of-truth and append-only; orphan edits inflate compaction and complicate forensics.
-- **Cost:** S (migration) — but **Risk Medium** because it changes drop semantics
-- **Risk:** Medium
-- **Impact:** Low
-- **Recommendation:** Add a migration `block_id REFERENCES blocks(id) ON DELETE CASCADE`. **Requires user approval** under AGENTS.md §"Architectural Stability" (new schema constraint on a shipped table). Pair with H-12's existence check so flush also short-circuits on missing/soft-deleted blocks. Document the cascade interaction with soft-deletes (drafts survive soft-delete, are wiped on hard-delete/purge).
-- **Pass-1 source:** 10/F18
-- **Status:** Open
 
 ### M-95 — `recover_calendar_gone` does not also clear `oauth_account_email`
 - **Domain:** GCal / Spaces / Drafts
