@@ -75,6 +75,13 @@ fn make_remote_record(
         op_type: op_type.to_owned(),
         payload: payload.to_owned(),
         created_at: created_at.to_owned(),
+        // `OpRecord::block_id` was added later (op_log.rs:68) for the
+        // materializer's `dispatch::enqueue_background_tasks` hot path
+        // and is `#[serde(skip, default)]` / `#[sqlx(default)]`. The
+        // bench builds synthetic records that don't need the cached
+        // shortcut — `None` matches what the column-default produces
+        // when reading an existing row that hasn't been updated.
+        block_id: None,
     }
 }
 

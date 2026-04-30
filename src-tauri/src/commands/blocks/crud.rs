@@ -157,20 +157,17 @@ pub(crate) async fn create_block_in_tx(
         // drift past the bound — `move_block_inner` already enforces the
         // same limit; the asymmetry was the loophole.
         //
-        // The recursive member filters `is_conflict = 0` and bounds
-        // `depth < 100` (invariant #9) — same shape as the depth-check CTE
-        // in `move_block_inner` (move_ops.rs).
-        let parent_depth = sqlx::query_scalar!(
-            r#"WITH RECURSIVE path(id, depth) AS (
-                 SELECT ?, 0
-                 UNION ALL
-                 SELECT b.parent_id, p.depth + 1
-                 FROM path p JOIN blocks b ON b.id = p.id
-                 WHERE b.parent_id IS NOT NULL AND b.is_conflict = 0 AND p.depth < 100
-               )
-               SELECT MAX(depth) as "depth: i64" FROM path"#,
-            pid,
-        )
+        // The shared `ancestors_cte_standard!()` macro pins invariant #9
+        // (`b.is_conflict = 0` filter + `a.depth < 100` bound). Same shape
+        // as the cycle-detection CTE in `move_block_inner` (move_ops.rs).
+        // The seed (`pid`, depth 0) plus N ancestors yields MAX(depth) = N,
+        // i.e. the parent's depth from the root — identical semantics to
+        // the previous inline `path` CTE.
+        let parent_depth = sqlx::query_scalar::<_, i64>(concat!(
+            crate::ancestors_cte_standard!(),
+            "SELECT MAX(depth) FROM ancestors",
+        ))
+        .bind(pid)
         .fetch_one(&mut **tx)
         .await?;
 

@@ -1,22 +1,25 @@
-//! Shared recursive CTE for block-descendant walks.
+//! Shared recursive CTEs for block-descendant and block-ancestor walks.
 //!
-//! Three SQL snippets that walk a block and all of its descendants via a
-//! `parent_id` chain. They are prefixes: a call site prepends one of them to
-//! its own `SELECT`/`UPDATE`/`DELETE` using `descendants` as the CTE name.
+//! Five SQL snippets that walk the `blocks` tree via the `parent_id`
+//! chain. They are CTE prefixes: a call site prepends one of them to its
+//! own `SELECT`/`UPDATE`/`DELETE` using `descendants` (downward walks)
+//! or `ancestors` (upward walks) as the CTE name.
 //!
 //! # Variants
 //!
-//! | Macro / constant              | Extra recursive filter                         | When to use                                  |
-//! |-------------------------------|------------------------------------------------|----------------------------------------------|
-//! | [`descendants_cte_standard`]  | `b.is_conflict = 0 AND d.depth < 100`          | Generic descendant lookup / restore cascade. |
-//! | [`descendants_cte_active`]    | `b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100` | Soft-delete cascade (skip already-deleted descendants). |
-//! | [`descendants_cte_purge`]     | `d.depth < 100` only                           | Physical purge (must sweep conflict copies too). |
+//! | Macro / constant              | Direction   | Extra recursive filter                                         | When to use                                  |
+//! |-------------------------------|-------------|----------------------------------------------------------------|----------------------------------------------|
+//! | [`descendants_cte_standard`]  | downward    | `b.is_conflict = 0 AND d.depth < 100`                          | Generic descendant lookup / restore cascade. |
+//! | [`descendants_cte_active`]    | downward    | `b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100` | Soft-delete cascade (skip already-deleted descendants). |
+//! | [`descendants_cte_purge`]     | downward    | `d.depth < 100` only                                           | Physical purge (must sweep conflict copies too). |
+//! | [`ancestors_cte_standard`]    | upward      | `b.is_conflict = 0 AND a.depth < 100`                          | Cycle detection / depth-limit checks on parent chains. |
+//! | [`ancestors_cte_active`]      | upward      | `b.deleted_at IS NULL AND b.is_conflict = 0 AND a.depth < 100` | Reserved for future soft-delete-aware ancestor walks (no current caller). |
 //!
 //! Every recursive CTE that walks the `blocks` tree MUST include either the
-//! `is_conflict = 0` filter (variants `standard` / `active`) or be the
-//! documented purge-only exception (variant `purge`). See invariant #9 in
-//! AGENTS.md. The `depth < 100` bound is unconditional — it prevents runaway
-//! recursion on corrupted `parent_id` chains.
+//! `is_conflict = 0` filter (variants `*_standard` / `*_active`) or be the
+//! documented purge-only exception (variant `descendants_cte_purge`). See
+//! invariant #9 in AGENTS.md. The `depth < 100` bound is unconditional —
+//! it prevents runaway recursion on corrupted `parent_id` chains.
 //!
 //! # Why both macros and constants?
 //!
@@ -29,17 +32,23 @@
 //!
 //! # Sites that still inline the CTE
 //!
-//! Three production paths use `sqlx::query!()` (compile-time checked) and
+//! Four production paths use `sqlx::query!()` (compile-time checked) and
 //! therefore cannot use these macros (sqlx's macro rejects anything other
 //! than a raw string literal). They intentionally duplicate the CTE body:
 //!
 //! * `soft_delete::trash::cascade_soft_delete` — mirrors `descendants_cte_active!()`
 //! * `soft_delete::restore::restore_block`    — mirrors `descendants_cte_standard!()`
 //! * `soft_delete::get_descendants`           — mirrors `descendants_cte_standard!()`
+//! * `commands::blocks::move_ops::move_block_inner` (combined depth-check
+//!   query at `move_ops.rs:130-153`) — defines `path` AND `descendants`
+//!   in one `WITH RECURSIVE` to compute parent-chain depth and subtree
+//!   depth in a single round trip; the macro family emits each CTE with
+//!   its own `WITH RECURSIVE` prefix and cannot be composed into one
+//!   multi-CTE `WITH` block.
 //!
 //! Keeping compile-time type safety was judged more valuable than removing
-//! the last three copies. If sqlx ever learns to accept `concat!()`, migrate
-//! those three sites too.
+//! the last four copies. If sqlx ever learns to accept `concat!()`, migrate
+//! those sites too.
 
 /// Recursive descendant CTE, standard variant.
 ///
@@ -99,6 +108,58 @@ macro_rules! descendants_cte_purge {
     };
 }
 
+/// Recursive ancestor CTE, standard variant.
+///
+/// Walks `blocks.parent_id` UPWARD from a seed id, excluding conflict
+/// copies. Mirrors [`descendants_cte_standard`] with the recursion
+/// direction inverted: each recursive step looks up the row whose `id`
+/// equals the previous step's id and emits that row's `parent_id`.
+///
+/// Caller binds the seed id to the `?` placeholder. The CTE emits the
+/// seed itself at depth 0 and then one row per ancestor (parent at 1,
+/// grandparent at 2, …). The recursive member's `b.parent_id IS NOT NULL`
+/// guard suppresses the trailing NULL row that would otherwise appear
+/// once the walk reaches a root.
+///
+/// Invariant #9: the `b.is_conflict = 0` filter prunes recursion through
+/// conflict copies — an unfiltered walk would either climb through a
+/// conflict ancestor's parent chain (causing false-positive cycle
+/// reports / inflated depth counts) or stop at it without distinguishing
+/// the two. `a.depth < 100` bounds the walk against runaway recursion on
+/// corrupted `parent_id` chains.
+#[macro_export]
+macro_rules! ancestors_cte_standard {
+    () => {
+        "WITH RECURSIVE ancestors(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.parent_id, a.depth + 1 FROM blocks b \
+             INNER JOIN ancestors a ON b.id = a.id \
+             WHERE b.parent_id IS NOT NULL AND b.is_conflict = 0 AND a.depth < 100 \
+         ) "
+    };
+}
+
+/// Recursive ancestor CTE, active-only variant.
+///
+/// Like [`ancestors_cte_standard`] but additionally skips ancestors that
+/// have `deleted_at IS NOT NULL`. Reserved for future soft-delete-aware
+/// ancestor walks; no production caller uses it today, but it's exposed
+/// for symmetry with [`descendants_cte_active`] so a fifth migration is
+/// trivial.
+#[macro_export]
+macro_rules! ancestors_cte_active {
+    () => {
+        "WITH RECURSIVE ancestors(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.parent_id, a.depth + 1 FROM blocks b \
+             INNER JOIN ancestors a ON b.id = a.id \
+             WHERE b.parent_id IS NOT NULL AND b.deleted_at IS NULL AND b.is_conflict = 0 AND a.depth < 100 \
+         ) "
+    };
+}
+
 /// String form of [`descendants_cte_standard`] for the rare `format!()` call
 /// site. Prefer `concat!(descendants_cte_standard!(), " …")` when the SQL
 /// prefix is static — it avoids the runtime format! allocation.
@@ -110,14 +171,20 @@ pub const DESCENDANTS_CTE_ACTIVE: &str = descendants_cte_active!();
 /// String form of [`descendants_cte_purge`]. See [`DESCENDANTS_CTE_STANDARD`].
 pub const DESCENDANTS_CTE_PURGE: &str = descendants_cte_purge!();
 
+/// String form of [`ancestors_cte_standard`]. See [`DESCENDANTS_CTE_STANDARD`].
+pub const ANCESTORS_CTE_STANDARD: &str = ancestors_cte_standard!();
+
+/// String form of [`ancestors_cte_active`]. See [`DESCENDANTS_CTE_STANDARD`].
+pub const ANCESTORS_CTE_ACTIVE: &str = ancestors_cte_active!();
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Smoke test: all three CTEs start with the recursive header and
-    /// end with the closing `) `.
+    /// Smoke test: all three descendant CTEs start with the recursive header
+    /// and end with the closing `) `.
     #[test]
-    fn ctes_have_well_formed_structure() {
+    fn descendant_ctes_have_well_formed_structure() {
         for cte in [
             DESCENDANTS_CTE_STANDARD,
             DESCENDANTS_CTE_ACTIVE,
@@ -138,6 +205,30 @@ mod tests {
         }
     }
 
+    /// Smoke test: both ancestor CTEs start with the recursive header and
+    /// end with the closing `) `.
+    #[test]
+    fn ancestor_ctes_have_well_formed_structure() {
+        for cte in [ANCESTORS_CTE_STANDARD, ANCESTORS_CTE_ACTIVE] {
+            assert!(
+                cte.starts_with("WITH RECURSIVE ancestors(id, depth) AS ("),
+                "CTE must start with the canonical ancestor header",
+            );
+            assert!(
+                cte.trim_end().ends_with(')'),
+                "CTE must end with the closing paren of the recursive block",
+            );
+            assert!(
+                cte.contains("a.depth < 100"),
+                "ancestor CTE must bound recursion depth to prevent runaway walks on corrupted parent_id chains",
+            );
+            assert!(
+                cte.contains("b.parent_id IS NOT NULL"),
+                "ancestor CTE must guard the recursive emit against NULL parent_id (root sentinel)",
+            );
+        }
+    }
+
     /// Invariant #9: every non-purge CTE must filter conflict copies out of
     /// the recursive member. The purge variant is the documented exception.
     #[test]
@@ -153,6 +244,14 @@ mod tests {
         assert!(
             !DESCENDANTS_CTE_PURGE.contains("is_conflict"),
             "purge CTE must NOT filter conflicts — it intentionally sweeps them",
+        );
+        assert!(
+            ANCESTORS_CTE_STANDARD.contains("b.is_conflict = 0"),
+            "standard ancestor CTE must filter conflict copies (invariant #9)",
+        );
+        assert!(
+            ANCESTORS_CTE_ACTIVE.contains("b.is_conflict = 0"),
+            "active ancestor CTE must filter conflict copies (invariant #9)",
         );
     }
 
@@ -173,6 +272,14 @@ mod tests {
             !DESCENDANTS_CTE_PURGE.contains("deleted_at"),
             "purge CTE must not reference deleted_at",
         );
+        assert!(
+            ANCESTORS_CTE_ACTIVE.contains("b.deleted_at IS NULL"),
+            "active ancestor CTE must skip already-deleted ancestors",
+        );
+        assert!(
+            !ANCESTORS_CTE_STANDARD.contains("deleted_at"),
+            "standard ancestor CTE must not reference deleted_at",
+        );
     }
 
     /// The macro and the const must agree byte-for-byte.
@@ -181,5 +288,137 @@ mod tests {
         assert_eq!(descendants_cte_standard!(), DESCENDANTS_CTE_STANDARD);
         assert_eq!(descendants_cte_active!(), DESCENDANTS_CTE_ACTIVE);
         assert_eq!(descendants_cte_purge!(), DESCENDANTS_CTE_PURGE);
+        assert_eq!(ancestors_cte_standard!(), ANCESTORS_CTE_STANDARD);
+        assert_eq!(ancestors_cte_active!(), ANCESTORS_CTE_ACTIVE);
+    }
+}
+
+/// DB-backed integration tests for the ancestor-walk macro family.
+///
+/// These tests exercise the macros against a real SQLite pool (rather
+/// than just asserting on the emitted string) so the AGENTS.md
+/// invariant #9 contract — `is_conflict = 0` filter + `depth < 100`
+/// bound — is anchored by behavioural tests, not just textual ones.
+#[cfg(test)]
+mod ancestor_db_tests {
+    use crate::db::init_pool;
+    use sqlx::SqlitePool;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path: PathBuf = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    /// Direct INSERT bypassing the command layer. `is_conflict` defaults to
+    /// 0 unless the test wants to model a conflict copy.
+    async fn insert_block(pool: &SqlitePool, id: &str, parent_id: Option<&str>, is_conflict: bool) {
+        let conflict_flag: i64 = if is_conflict { 1 } else { 0 };
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+             VALUES (?, 'content', '', ?, 1, ?)",
+        )
+        .bind(id)
+        .bind(parent_id)
+        .bind(conflict_flag)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Happy path: walk a 3-block chain ROOT → MID → LEAF and assert the
+    /// CTE returns all three rows in the expected order. Anchors the
+    /// pre-/post-migration parity for `crud.rs` and `move_ops.rs`.
+    #[tokio::test]
+    async fn ancestors_cte_standard_walks_full_chain() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "ANCROOT", None, false).await;
+        insert_block(&pool, "ANCMID", Some("ANCROOT"), false).await;
+        insert_block(&pool, "ANCLEAF", Some("ANCMID"), false).await;
+
+        let ids: Vec<String> = sqlx::query_scalar(concat!(
+            ancestors_cte_standard!(),
+            "SELECT id FROM ancestors ORDER BY depth"
+        ))
+        .bind("ANCLEAF")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            ids,
+            vec![
+                "ANCLEAF".to_string(),
+                "ANCMID".to_string(),
+                "ANCROOT".to_string()
+            ],
+            "ancestor walk must emit seed + every ancestor in depth order",
+        );
+    }
+
+    /// Negative — invariant #9 (`is_conflict = 0`):
+    /// chain ROOT → CC (conflict copy) → LEAF. The walk from LEAF must
+    /// stop at the conflict-copy parent: ROOT must NOT be reachable
+    /// because the recursive member filters out `b.is_conflict = 1`.
+    ///
+    /// The conflict-copy id itself can still appear in `ancestors`
+    /// (it's the leaf's literal parent_id), but its own ancestors must
+    /// be pruned. That mirrors the contract relied on by
+    /// `move_block_cycle_detection_ignores_conflict_copies_i_commandscrud_13`.
+    #[tokio::test]
+    async fn ancestors_cte_standard_does_not_walk_through_conflict_copies() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "CFROOT", None, false).await;
+        insert_block(&pool, "CFCC", Some("CFROOT"), true).await;
+        insert_block(&pool, "CFLEAF", Some("CFCC"), false).await;
+
+        let ids: Vec<String> = sqlx::query_scalar(concat!(
+            ancestors_cte_standard!(),
+            "SELECT id FROM ancestors ORDER BY depth"
+        ))
+        .bind("CFLEAF")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            !ids.contains(&"CFROOT".to_string()),
+            "ancestor walk must NOT continue through a conflict copy: \
+             CFROOT is reachable only by traversing the is_conflict = 1 row \
+             CFCC, which the filter must prune. Got: {ids:?}",
+        );
+    }
+
+    /// Negative — invariant #9 (`depth < 100`):
+    /// build a 150-block linear chain (A0 → A1 → … → A150) and walk
+    /// ancestors from A150. The result must be capped at 101 rows
+    /// (seed at depth 0 + 100 ancestors). Without the bound, a corrupt
+    /// `parent_id` chain could blow up SQLite's recursion budget.
+    #[tokio::test]
+    async fn ancestors_cte_standard_caps_walk_at_depth_100() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "A0", None, false).await;
+        for i in 1..=150 {
+            let id = format!("A{i}");
+            let parent = format!("A{}", i - 1);
+            insert_block(&pool, &id, Some(parent.as_str()), false).await;
+        }
+
+        let count: i64 = sqlx::query_scalar(concat!(
+            ancestors_cte_standard!(),
+            "SELECT COUNT(*) FROM ancestors"
+        ))
+        .bind("A150")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            count, 101,
+            "ancestor walk must be bounded at depth < 100 (seed + 100 ancestors), got {count}",
+        );
     }
 }

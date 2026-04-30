@@ -92,28 +92,28 @@ pub async fn move_block_inner(
             return Err(AppError::NotFound(format!("parent block '{pid}'")));
         }
 
-        // Cycle detection: walk all ancestors of the new parent using a
-        // recursive CTE. If block_id appears among the ancestors, reparenting
-        // would create a cycle (e.g. moving A under its own grandchild C in
-        // a chain A→B→C).
+        // Cycle detection: walk all ancestors of the new parent using the
+        // shared `ancestors_cte_standard!()` macro. If block_id appears
+        // among the ancestors, reparenting would create a cycle (e.g.
+        // moving A under its own grandchild C in a chain A→B→C).
         //
-        // Recursive member filters `is_conflict = 0` and bounds `depth < 100`
-        // (invariant #9). Without these, a conflict copy along the parent
-        // chain would falsely report a cycle, and a corrupted parent_id chain
-        // could run unbounded recursion. Same pattern as the depth-check CTE
-        // below.
-        let cycle = sqlx::query!(
-            r#"WITH RECURSIVE ancestors(id, depth) AS (
-                 SELECT parent_id, 0 FROM blocks WHERE id = ?
-                 UNION ALL
-                 SELECT b.parent_id, a.depth + 1 FROM blocks b
-                 INNER JOIN ancestors a ON b.id = a.id
-                 WHERE a.id IS NOT NULL AND b.is_conflict = 0 AND a.depth < 100
-             )
-             SELECT 1 as "v: i32" FROM ancestors WHERE id = ?"#,
-            pid,
-            block_id
-        )
+        // The macro pins AGENTS.md invariant #9 (`b.is_conflict = 0` filter
+        // in the recursive member + `a.depth < 100` bound). Without those,
+        // a conflict copy along the parent chain would falsely report a
+        // cycle, and a corrupted parent_id chain could run unbounded
+        // recursion.
+        //
+        // The macro seeds the CTE at `pid` itself (depth 0) rather than at
+        // `pid`'s parent_id; including `pid` in the ancestor set is harmless
+        // here because the `pid == block_id` case is rejected upfront with
+        // `AppError::InvalidOperation` (above), so the `WHERE id = ?` row
+        // match against `block_id` cannot mask that error.
+        let cycle = sqlx::query(concat!(
+            crate::ancestors_cte_standard!(),
+            "SELECT 1 FROM ancestors WHERE id = ?",
+        ))
+        .bind(pid)
+        .bind(&block_id)
         .fetch_optional(&mut **tx)
         .await?;
         if cycle.is_some() {
