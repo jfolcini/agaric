@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE gcal_settings SET value = CASE key WHEN ? THEN ? WHEN ? THEN ? ELSE value END, updated_at = ? WHERE key IN (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "3c5a779d5527e762b5d6ae92da5369d6f50cb4e58fda4b2bdadae3cc833bb454"
+}

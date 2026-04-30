@@ -148,21 +148,35 @@ pub async fn claim_lease(
     // only one writer observes the pre-image.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    // Read the current holder.  We intentionally ignore errors parsing
-    // the `expires_at` cell — a corrupt cell is treated as "stale",
-    // which the next overwrite will fix.
+    // L-132: read both lease cells in a single round-trip.  The
+    // 2-row read is identical in cost to the previous 2 single-row
+    // reads but halves the SQL chatter (and the SQLite VFS hit count
+    // matters under fsync-heavy workloads).
+    //
+    // We intentionally ignore errors parsing the `expires_at` cell —
+    // a corrupt cell is treated as "stale", which the next overwrite
+    // will fix.
     let holder_key = GcalSettingKey::PushLeaseDeviceId.as_str();
     let expires_key = GcalSettingKey::PushLeaseExpiresAt.as_str();
 
-    let holder_row = sqlx::query!("SELECT value FROM gcal_settings WHERE key = ?", holder_key,)
-        .fetch_optional(&mut *tx)
-        .await?;
-    let current_holder = holder_row.map(|r| r.value).unwrap_or_default();
+    let rows = sqlx::query!(
+        "SELECT key, value FROM gcal_settings WHERE key IN (?, ?)",
+        holder_key,
+        expires_key,
+    )
+    .fetch_all(&mut *tx)
+    .await?;
 
-    let expires_row = sqlx::query!("SELECT value FROM gcal_settings WHERE key = ?", expires_key,)
-        .fetch_optional(&mut *tx)
-        .await?;
-    let current_expires = expires_row.map(|r| r.value).and_then(|v| parse_rfc3339(&v));
+    let mut current_holder = String::new();
+    let mut current_expires_raw = String::new();
+    for row in rows {
+        match row.key.as_str() {
+            k if k == holder_key => current_holder = row.value,
+            k if k == expires_key => current_expires_raw = row.value,
+            _ => {} // unreachable given the WHERE clause but harmless
+        }
+    }
+    let current_expires = parse_rfc3339(&current_expires_raw);
 
     let is_empty = current_holder.is_empty();
     let is_self = current_holder == device_id;
@@ -174,42 +188,43 @@ pub async fn claim_lease(
         return Ok(false);
     }
 
-    // CAS succeeds — write both rows atomically.  We write the
-    // `expires_at` first, then `device_id`, so any observer that sees
-    // our device_id reads a fresh (not a stale) expiry.  SQLite
-    // serialises the writes within the tx.
+    // L-132: CAS succeeds — write both rows in a single round-trip
+    // using `CASE … WHEN … THEN …` to dispatch on the key column.
+    // SQLite serialises the column updates within the row, and the
+    // surrounding BEGIN IMMEDIATE serialises the whole tx, so any
+    // observer reads either both pre-images or both post-images —
+    // never a mix.  Round-trip count drops from 2 SELECTs + 2
+    // UPDATEs (4 round-trips inside the tx) to 1 SELECT + 1 UPDATE
+    // (2 round-trips inside the tx).
     let new_expiry = (now + ChronoDuration::seconds(LEASE_EXPIRY_SECS.cast_signed()))
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
     let updated_at = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
-    let exp_res = sqlx::query!(
-        "UPDATE gcal_settings SET value = ?, updated_at = ? WHERE key = ?",
+    let res = sqlx::query!(
+        "UPDATE gcal_settings \
+         SET value = CASE key WHEN ? THEN ? WHEN ? THEN ? ELSE value END, \
+             updated_at = ? \
+         WHERE key IN (?, ?)",
+        holder_key,
+        device_id,
+        expires_key,
         new_expiry,
         updated_at,
+        holder_key,
         expires_key,
     )
     .execute(&mut *tx)
     .await?;
-    if exp_res.rows_affected() == 0 {
-        tx.rollback().await?;
-        return Err(AppError::NotFound(format!(
-            "gcal_settings row missing for key '{expires_key}'"
-        )));
-    }
 
-    let dev_res = sqlx::query!(
-        "UPDATE gcal_settings SET value = ?, updated_at = ? WHERE key = ?",
-        device_id,
-        updated_at,
-        holder_key,
-    )
-    .execute(&mut *tx)
-    .await?;
-    if dev_res.rows_affected() == 0 {
+    // Both seeded rows must exist — the migration creates them and we
+    // never delete them.  Less than 2 rows updated is a DB corruption
+    // signal.
+    if res.rows_affected() != 2 {
         tx.rollback().await?;
         return Err(AppError::NotFound(format!(
-            "gcal_settings row missing for key '{holder_key}'"
+            "gcal_settings: expected 2 lease rows, updated {} (keys: '{holder_key}', '{expires_key}')",
+            res.rows_affected()
         )));
     }
 
@@ -447,6 +462,57 @@ mod tests {
         assert_eq!(parse_rfc3339("not a timestamp"), None);
         let valid = parse_rfc3339("2026-04-22T10:00:00Z");
         assert!(valid.is_some());
+    }
+
+    // ── L-132: batched-write atomicity ──────────────────────────────
+    //
+    // After the L-132 refactor `claim_lease` writes both lease cells
+    // in a single `UPDATE … CASE … WHEN …` round-trip.  This test
+    // asserts that on a successful claim (a) both rows reach the new
+    // values together and (b) the `updated_at` column matches across
+    // both rows — neither would hold if the batched UPDATE silently
+    // wrote only one row.
+    #[tokio::test]
+    async fn claim_writes_both_lease_rows_atomically_l132() {
+        let (pool, _dir) = test_pool().await;
+        let now = t0();
+        assert!(claim_lease(&pool, DEV_A, now).await.unwrap());
+
+        // Read both rows directly from the table — bypass
+        // `read_current_lease` so we also see `updated_at`.
+        let holder_key = GcalSettingKey::PushLeaseDeviceId.as_str();
+        let expires_key = GcalSettingKey::PushLeaseExpiresAt.as_str();
+        let rows = sqlx::query!(
+            "SELECT key, value, updated_at FROM gcal_settings WHERE key IN (?, ?)",
+            holder_key,
+            expires_key,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(rows.len(), 2, "both lease rows must exist after a claim");
+
+        let holder_row = rows
+            .iter()
+            .find(|r| r.key == holder_key)
+            .expect("holder row");
+        let expires_row = rows
+            .iter()
+            .find(|r| r.key == expires_key)
+            .expect("expires row");
+
+        assert_eq!(holder_row.value, DEV_A, "holder row updated to DEV_A");
+        assert!(
+            !expires_row.value.is_empty(),
+            "expires row updated to a non-empty timestamp"
+        );
+        assert_eq!(
+            holder_row.updated_at, expires_row.updated_at,
+            "batched UPDATE must stamp both rows with the same updated_at, \
+             got holder='{:?}' expires='{:?}'",
+            holder_row.updated_at, expires_row.updated_at
+        );
     }
 
     // ── TEST-51: concurrent claim race ─────────────────────────────

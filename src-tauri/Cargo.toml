@@ -113,6 +113,12 @@ tokio-rustls = "0.26"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 rcgen = "0.14"
 mdns-sd = "0.19"
+# L-65: enumerate local interfaces so mDNS announces only on RFC 1918
+# private IPv4 LAN interfaces (not on every routable interface, which
+# leaks the device IP onto guest WiFi / VPN / cellular). Already in the
+# build graph transitively via `mdns-sd`; promoted to a direct dep so
+# `MdnsService::announce` can use it explicitly.
+if-addrs = "0.15"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 sha2 = "0.11"
 rand = "0.10"

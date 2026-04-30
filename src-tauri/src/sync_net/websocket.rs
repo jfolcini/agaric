@@ -28,6 +28,35 @@ pub struct MdnsService {
     daemon: mdns_sd::ServiceDaemon,
 }
 
+/// L-65: filter the host's interface addresses down to the set we are
+/// willing to advertise on mDNS. Currently this is **RFC 1918 private
+/// IPv4 only** (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
+///
+/// `Ipv4Addr::is_private` already excludes loopback (`127.0.0.0/8`),
+/// link-local (`169.254.0.0/16`), public IPv4, multicast, and the
+/// unspecified address. IPv6 is dropped wholesale because the global
+/// IPv6 unicast range (`2000::/3`) routes onto cellular / VPN / ISP-
+/// tunnel interfaces the user does not necessarily intend to advertise
+/// on, and IPv4 LAN discovery is sufficient for Agaric's deployment
+/// model (single user, paired devices on a trusted home/office LAN —
+/// see AGENTS.md §"Threat Model").
+///
+/// Pure function over an iterator of `IpAddr` so the test in
+/// `sync_net::tests` can exercise the policy without invoking the
+/// host's `getifaddrs(3)`.
+pub(crate) fn filter_announceable_addrs<I>(addrs: I) -> Vec<IpAddr>
+where
+    I: IntoIterator<Item = IpAddr>,
+{
+    addrs
+        .into_iter()
+        .filter(|addr| match addr {
+            IpAddr::V4(v4) => v4.is_private(),
+            IpAddr::V6(_) => false,
+        })
+        .collect()
+}
+
 impl MdnsService {
     /// Create a new mDNS service daemon.
     pub fn new() -> Result<Self, AppError> {
@@ -40,6 +69,24 @@ impl MdnsService {
     ///
     /// Registers a `_agaric._tcp.local.` service with a TXT record
     /// containing `device_id=<id>`.  Returns the registered `ServiceInfo`.
+    ///
+    /// L-65: the announcement is restricted to RFC 1918 private IPv4
+    /// interfaces (10/8, 172.16/12, 192.168/16). The previous
+    /// `enable_addr_auto()` call let `mdns-sd` enumerate every routable
+    /// interface, which leaked the device IP onto guest WiFi / VPN /
+    /// cellular networks the user did not intend. See AGENTS.md
+    /// §"Threat Model" — this is a privacy / correctness fix, not
+    /// adversarial-peer hardening; the change only narrows the set of
+    /// addresses advertised.
+    ///
+    /// Approach (b) per the L-65 task brief: the listener binds to
+    /// `0.0.0.0:0` so we cannot pin the announcement to a single bound
+    /// IP (approach (a)); instead we enumerate `if_addrs::get_if_addrs`
+    /// and filter. If the filter yields no addresses (host has only a
+    /// public IPv4, only IPv6, only a captive portal, or the syscall
+    /// fails) we fall back to `enable_addr_auto()` so peer discovery
+    /// still works on unusual network configurations — accept the
+    /// wider announcement only when there is no narrower option.
     pub fn announce(&self, device_id: &str, port: u16) -> Result<mdns_sd::ServiceInfo, AppError> {
         let host_name = format!("{device_id}.local.");
         let instance_name = format!("{MDNS_SERVICE_NAME}_{device_id}");
@@ -47,16 +94,42 @@ impl MdnsService {
         let mut properties = HashMap::new();
         properties.insert("device_id".to_string(), device_id.to_string());
 
-        let service_info = mdns_sd::ServiceInfo::new(
-            MDNS_SERVICE_TYPE,
-            &instance_name,
-            &host_name,
-            "", // empty → the daemon will discover local IPs
-            port,
-            Some(properties),
-        )
-        .map_err(|e| sync_err(format!("service info: {e}")))?
-        .enable_addr_auto();
+        let interfaces = if_addrs::get_if_addrs().unwrap_or_else(|e| {
+            tracing::warn!(
+                error = %e,
+                "L-65: if_addrs::get_if_addrs failed; falling back to enable_addr_auto"
+            );
+            Vec::new()
+        });
+        let announceable: Vec<IpAddr> =
+            filter_announceable_addrs(interfaces.iter().map(if_addrs::Interface::ip));
+
+        let service_info = if announceable.is_empty() {
+            tracing::warn!(
+                "L-65: no RFC 1918 private IPv4 interface found; \
+                 falling back to enable_addr_auto for mDNS announce"
+            );
+            mdns_sd::ServiceInfo::new(
+                MDNS_SERVICE_TYPE,
+                &instance_name,
+                &host_name,
+                "", // empty → the daemon will discover local IPs
+                port,
+                Some(properties),
+            )
+            .map_err(|e| sync_err(format!("service info: {e}")))?
+            .enable_addr_auto()
+        } else {
+            mdns_sd::ServiceInfo::new(
+                MDNS_SERVICE_TYPE,
+                &instance_name,
+                &host_name,
+                announceable.as_slice(),
+                port,
+                Some(properties),
+            )
+            .map_err(|e| sync_err(format!("service info: {e}")))?
+        };
 
         self.daemon
             .register(service_info.clone())

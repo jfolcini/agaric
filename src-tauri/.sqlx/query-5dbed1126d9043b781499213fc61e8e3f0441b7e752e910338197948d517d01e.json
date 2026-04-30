@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT key, value, updated_at FROM gcal_settings WHERE key IN (?, ?)",
+  "describe": {
+    "columns": [
+      {
+        "name": "key",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "value",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5dbed1126d9043b781499213fc61e8e3f0441b7e752e910338197948d517d01e"
+}
