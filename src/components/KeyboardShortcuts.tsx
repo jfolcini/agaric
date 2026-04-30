@@ -21,7 +21,7 @@ import {
 import { useNavigationStore } from '@/stores/navigation'
 import { getCurrentShortcuts } from '../lib/keyboard-config'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../lib/overlay-events'
-import { modKey } from '../lib/platform'
+import { renderKeys } from '../lib/render-keyboard-shortcut'
 
 interface ShortcutDef {
   keys: string
@@ -64,28 +64,6 @@ const SYNTAX_ENTRIES: SyntaxEntry[] = [
   { syntax: '[[page]]', description: 'keyboard.syntax.pageLink' },
   { syntax: '/command', description: 'keyboard.syntax.slashCommand' },
 ]
-
-/** Render a keys string as styled <kbd> elements. Handles `+` combos and `/` alternatives. */
-function renderKeys(keys: string): React.ReactNode {
-  const alternatives = keys.split(' / ')
-  const mod = modKey()
-  return alternatives.map((alt, i) => {
-    const parts = alt.split(' + ').map((part) => (part === 'Ctrl' ? mod : part))
-    return (
-      <React.Fragment key={alt}>
-        {i > 0 && <span className="text-muted-foreground font-normal mx-1">/</span>}
-        {parts.map((part, j) => (
-          <React.Fragment key={part}>
-            {j > 0 && <span className="text-muted-foreground font-normal mx-0.5">+</span>}
-            <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold shadow-sm">
-              {part}
-            </kbd>
-          </React.Fragment>
-        ))}
-      </React.Fragment>
-    )
-  })
-}
 
 interface KeyboardShortcutsProps {
   /** Controlled open state — used by the sidebar button. */

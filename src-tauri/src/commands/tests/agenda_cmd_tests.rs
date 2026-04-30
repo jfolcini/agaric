@@ -994,6 +994,14 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
     mat.shutdown();
 }
 
+// MAINT-164: this test uses hardcoded April 2026 dates and the production
+// `list_projected_agenda_inner` reads `chrono::Local::now().date_naive()`
+// directly (`commands/agenda.rs:309`), so the assertion drifts as the
+// system clock advances past the hardcoded range. Pre-existing failure on
+// commit a59da9e (Session 557) once today moved past 2026-04-30. Re-enable
+// once the projected-agenda path takes a `today: NaiveDate` parameter
+// (or a `Clock` trait) — at that point this test should pin a fake today.
+#[ignore = "MAINT-164: real-clock dependency drifts the assertion past 2026-04-30"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn projected_agenda_respects_repeat_count_end_condition() {
     let (pool, _dir) = test_pool().await;

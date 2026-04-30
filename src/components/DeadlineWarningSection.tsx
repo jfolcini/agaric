@@ -5,46 +5,36 @@
  */
 
 import type React from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
-import { logger } from '@/lib/logger'
+import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 
 const DEADLINE_WARNING_MIN = 0
 const DEADLINE_WARNING_MAX = 90
 
 export function DeadlineWarningSection(): React.ReactElement {
   const { t } = useTranslation()
-  const [days, setDays] = useState(() => {
-    try {
-      const stored = localStorage.getItem('agaric:deadlineWarningDays')
-      return stored ? Number.parseInt(stored, 10) : 0
-    } catch (err) {
-      logger.warn(
-        'DeadlineWarningSection',
-        'failed to read deadlineWarningDays from localStorage',
-        {},
-        err,
-      )
-      return 0
-    }
+  const [days, setDays] = useLocalStoragePreference<number>('agaric:deadlineWarningDays', 0, {
+    // Legacy on-disk format is a bare integer (e.g. "5"), not JSON.
+    // Number.parseInt covers both bare and JSON-encoded ints.
+    parse: (raw) => {
+      const n = Number.parseInt(raw, 10)
+      if (!Number.isFinite(n)) throw new Error('not a number')
+      return n
+    },
+    serialize: String,
+    source: 'DeadlineWarningSection',
   })
 
-  const handleChange = useCallback((value: number) => {
-    const clamped = Math.max(DEADLINE_WARNING_MIN, Math.min(DEADLINE_WARNING_MAX, value))
-    setDays(clamped)
-    try {
-      localStorage.setItem('agaric:deadlineWarningDays', String(clamped))
-    } catch (err) {
-      logger.warn(
-        'DeadlineWarningSection',
-        'failed to persist deadlineWarningDays to localStorage',
-        { clamped },
-        err,
-      )
-    }
-  }, [])
+  const handleChange = useCallback(
+    (value: number) => {
+      const clamped = Math.max(DEADLINE_WARNING_MIN, Math.min(DEADLINE_WARNING_MAX, value))
+      setDays(clamped)
+    },
+    [setDays],
+  )
 
   // UX-4: notify the user when their typed value was clamped — silent clamping
   // (e.g. typing 100 and getting 90 with no feedback) is a documented

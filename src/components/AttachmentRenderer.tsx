@@ -1,20 +1,9 @@
-import { File, FileText, Image as ImageIcon } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatSize, getAssetUrl } from '../lib/attachment-utils'
 import { openUrl } from '../lib/open-url'
 import { ImageResizeToolbar } from './ImageResizeToolbar'
-
-/** Return the appropriate Lucide icon for a MIME type (used in attachment chips). */
-function AttachmentMimeIcon({ mimeType }: { mimeType: string }): React.ReactElement {
-  if (mimeType.startsWith('image/')) {
-    return <ImageIcon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-  }
-  if (mimeType.startsWith('text/')) {
-    return <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-  }
-  return <File className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-}
+import { MimeIcon } from './MimeIcon'
 
 export interface AttachmentRendererProps {
   blockId: string
@@ -121,7 +110,7 @@ export function AttachmentRenderer({
               }
             }}
           >
-            <AttachmentMimeIcon mimeType={att.mime_type} />
+            <MimeIcon mimeType={att.mime_type} />
             <span className="truncate max-w-[200px]">{att.filename}</span>
             <span className="shrink-0 opacity-70">{formatSize(att.size_bytes)}</span>
           </button>

@@ -38,6 +38,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { useMcpActivityFeed } from '@/hooks/useMcpActivityFeed'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
@@ -95,79 +96,108 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     void loadStatus()
   }, [loadStatus])
 
+  // MAINT-120: RO toggle. Optimistic flip; revert via the captured
+  // `previous` snapshot if the IPC rejects. On success we refetch so
+  // `active_connections` reflects the backend (disabling fires
+  // disconnect_all).
+  const { execute: executeToggleRo } = useIpcCommand<
+    { enabled: boolean; previous: McpStatus | null },
+    void
+  >({
+    call: ({ enabled }) => invoke('mcp_set_enabled', { enabled }),
+    module: 'AgentAccessSettingsTab',
+    errorLogMessage: 'failed to set MCP enabled',
+    errorLogContext: ({ enabled }) => ({ enabled }),
+    optimistic: ({ enabled }) => {
+      setStatus((s) => (s === null ? s : { ...s, enabled }))
+    },
+    revert: ({ previous }) => {
+      setStatus(previous)
+    },
+    onSuccess: (_result, { enabled }) => {
+      toast.success(enabled ? t('agentAccess.toggleOnSuccess') : t('agentAccess.toggleOffSuccess'))
+      void loadStatus()
+    },
+    onError: () => {
+      toast.error(t('agentAccess.toggleFailed'))
+    },
+  })
+
   const handleToggleRo = useCallback(
     async (nextEnabled: boolean) => {
-      // Optimistic update so the Switch reflects the intent immediately;
-      // roll back on IPC rejection.
-      const previous = status
-      setStatus((s) => (s === null ? s : { ...s, enabled: nextEnabled }))
-      try {
-        await invoke('mcp_set_enabled', { enabled: nextEnabled })
-        toast.success(
-          nextEnabled ? t('agentAccess.toggleOnSuccess') : t('agentAccess.toggleOffSuccess'),
-        )
-        // Re-fetch status so `active_connections` reflects the backend
-        // side of the toggle (disabling fires disconnect_all).
-        void loadStatus()
-      } catch (err) {
-        logger.error(
-          'AgentAccessSettingsTab',
-          'failed to set MCP enabled',
-          { enabled: nextEnabled },
-          err,
-        )
-        setStatus(previous)
-        toast.error(t('agentAccess.toggleFailed'))
-      }
+      await executeToggleRo({ enabled: nextEnabled, previous: status })
     },
-    [status, loadStatus, t],
+    [executeToggleRo, status],
   )
+
+  // MAINT-120: RW toggle. Same shape as RO but flips the RW status.
+  const { execute: executeToggleRw } = useIpcCommand<
+    { enabled: boolean; previous: McpRwStatus | null },
+    void
+  >({
+    call: ({ enabled }) => invoke('mcp_rw_set_enabled', { enabled }),
+    module: 'AgentAccessSettingsTab',
+    errorLogMessage: 'failed to set MCP RW enabled',
+    errorLogContext: ({ enabled }) => ({ enabled }),
+    optimistic: ({ enabled }) => {
+      setRwStatus((s) => (s === null ? s : { ...s, enabled }))
+    },
+    revert: ({ previous }) => {
+      setRwStatus(previous)
+    },
+    onSuccess: (_result, { enabled }) => {
+      toast.success(
+        enabled ? t('agentAccess.rwToggleOnSuccess') : t('agentAccess.rwToggleOffSuccess'),
+      )
+      void loadStatus()
+    },
+    onError: () => {
+      toast.error(t('agentAccess.toggleFailed'))
+    },
+  })
 
   const handleToggleRw = useCallback(
     async (nextEnabled: boolean) => {
-      const previous = rwStatus
-      setRwStatus((s) => (s === null ? s : { ...s, enabled: nextEnabled }))
-      try {
-        await invoke('mcp_rw_set_enabled', { enabled: nextEnabled })
-        toast.success(
-          nextEnabled ? t('agentAccess.rwToggleOnSuccess') : t('agentAccess.rwToggleOffSuccess'),
-        )
-        void loadStatus()
-      } catch (err) {
-        logger.error(
-          'AgentAccessSettingsTab',
-          'failed to set MCP RW enabled',
-          { enabled: nextEnabled },
-          err,
-        )
-        setRwStatus(previous)
-        toast.error(t('agentAccess.toggleFailed'))
-      }
+      await executeToggleRw({ enabled: nextEnabled, previous: rwStatus })
     },
-    [rwStatus, loadStatus, t],
+    [executeToggleRw, rwStatus],
   )
 
-  const handleDisconnectAll = useCallback(async () => {
-    try {
-      await invoke('mcp_disconnect_all')
+  // MAINT-120: RO kill switch — disconnect every active RO agent session.
+  const { execute: executeDisconnectAll } = useIpcCommand<void, void>({
+    call: () => invoke('mcp_disconnect_all'),
+    module: 'AgentAccessSettingsTab',
+    errorLogMessage: 'failed to disconnect all',
+    onSuccess: () => {
       toast.success(t('agentAccess.disconnectSuccess'))
       void loadStatus()
-    } catch (err) {
-      logger.error('AgentAccessSettingsTab', 'failed to disconnect all', undefined, err)
+    },
+    onError: () => {
       toast.error(t('agentAccess.disconnectFailed'))
-    }
-  }, [loadStatus, t])
+    },
+  })
 
-  const handleDisconnectAllRw = useCallback(async () => {
-    try {
-      await invoke('mcp_rw_disconnect_all')
+  const handleDisconnectAll = useCallback(async () => {
+    await executeDisconnectAll()
+  }, [executeDisconnectAll])
+
+  // MAINT-120: RW kill switch — disconnect every active RW agent session.
+  const { execute: executeDisconnectAllRw } = useIpcCommand<void, void>({
+    call: () => invoke('mcp_rw_disconnect_all'),
+    module: 'AgentAccessSettingsTab',
+    errorLogMessage: 'failed to disconnect all RW',
+    onSuccess: () => {
       toast.success(t('agentAccess.rwDisconnectSuccess'))
       void loadStatus()
-    } catch (err) {
-      logger.error('AgentAccessSettingsTab', 'failed to disconnect all RW', undefined, err)
+    },
+    onError: () => {
       toast.error(t('agentAccess.rwDisconnectFailed'))
-    }
-  }, [loadStatus, t])
+    },
+  })
+
+  const handleDisconnectAllRw = useCallback(async () => {
+    await executeDisconnectAllRw()
+  }, [executeDisconnectAllRw])
 
   const socketPath = status?.socket_path ?? ''
 

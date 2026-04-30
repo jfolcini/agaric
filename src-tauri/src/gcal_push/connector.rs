@@ -7,8 +7,8 @@
 //!   lease via [`super::lease::claim_lease`].  Without the lease we
 //!   stay idle so a sibling device does not receive phantom updates.
 //! * **First-connect calendar creation** — if `gcal_settings.calendar_id`
-//!   is still empty, call [`GcalClient::create_calendar`] once (under
-//!   lease) and persist the returned ID.
+//!   is still empty, call [`GcalApi::create_dedicated_calendar`] once
+//!   (under lease) and persist the returned ID.
 //! * **Per-date diff engine** — for each dirty date compute a digest,
 //!   hash it, compare against `gcal_agenda_event_map.last_pushed_hash`,
 //!   and `insert` / `patch` / `delete` the remote event.
@@ -27,16 +27,16 @@
 //! The connector is split into an outer loop (wired to Tokio primitives
 //! and [`Clock`]) and a set of `*_inner` helpers that take their
 //! dependencies as plain parameters.  Tests drive the helpers directly
-//! with a [`MockGcalClient`] + [`MockTokenStore`] + [`FixedClock`] — the
-//! production outer loop is not exercised in unit tests (that would
-//! require `tokio::time::pause`, which is brittle under `multi_thread`
-//! runtimes and fights the SQL-side timestamp comparisons).
+//! with a `wiremock::MockServer`-backed [`GcalApi`] + [`MockTokenStore`]
+//! + [`FixedClock`] — the production outer loop is not exercised in
+//!   unit tests (that would require `tokio::time::pause`, which is
+//!   brittle under `multi_thread` runtimes and fights the SQL-side
+//!   timestamp comparisons).
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use chrono::{DateTime, Days, NaiveDate, Utc};
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -45,7 +45,7 @@ use tokio::sync::{mpsc, Notify};
 use crate::error::{AppError, GcalErrorKind};
 use crate::pagination::ProjectedAgendaEntry;
 
-use super::api::{EventId, GcalApi};
+use super::api::{EventPatch, GcalApi};
 use super::digest::{self, DigestResult, Event, PrivacyMode};
 use super::keyring_store::{GcalEvent, GcalEventEmitter, TokenStore};
 use super::lease;
@@ -86,129 +86,39 @@ pub const MAX_WINDOW_DAYS: i64 = 90;
 pub const DEDICATED_CALENDAR_NAME: &str = "Agaric Agenda";
 
 // ---------------------------------------------------------------------------
-// GcalClient trait
+// Event → EventPatch translation
 // ---------------------------------------------------------------------------
 
-/// Seam between the connector and the underlying HTTP client.  Mirrors
-/// the subset of `GcalApi` the connector actually calls.  Tests use
-/// [`MockGcalClient`]; production wires through [`GcalApiAdapter`]
-/// which forwards to [`GcalApi`].
-#[async_trait]
-pub trait GcalClient: Send + Sync {
-    /// Create the dedicated "Agaric Agenda" calendar; return its ID.
-    async fn create_calendar(&self, token: &Token, name: &str) -> Result<String, AppError>;
-
-    /// Delete the dedicated calendar.  Used by the disconnect path.
-    async fn delete_calendar(&self, token: &Token, calendar_id: &str) -> Result<(), AppError>;
-
-    /// Insert a digest event; return the assigned event ID.
-    async fn insert_event(
-        &self,
-        token: &Token,
-        calendar_id: &str,
-        event: &Event,
-    ) -> Result<EventId, AppError>;
-
-    /// Patch an existing event (full replacement of the fields we set).
-    async fn patch_event(
-        &self,
-        token: &Token,
-        calendar_id: &str,
-        event_id: &str,
-        event: &Event,
-    ) -> Result<(), AppError>;
-
-    /// Delete an event.
-    async fn delete_event(
-        &self,
-        token: &Token,
-        calendar_id: &str,
-        event_id: &str,
-    ) -> Result<(), AppError>;
-}
-
-// ---------------------------------------------------------------------------
-// Production adapter: GcalApi → GcalClient
-// ---------------------------------------------------------------------------
-
-/// Production adapter that forwards every [`GcalClient`] call to the
-/// landed stateless [`GcalApi`].  Kept as a thin wrapper so the
-/// connector does not depend on `GcalApi` directly — tests can drop in
-/// a [`MockGcalClient`] without touching `reqwest`.
-#[derive(Clone, Debug)]
-pub struct GcalApiAdapter {
-    pub api: Arc<GcalApi>,
-}
-
-impl GcalApiAdapter {
-    #[must_use]
-    pub fn new(api: GcalApi) -> Self {
-        Self { api: Arc::new(api) }
-    }
-}
-
-#[async_trait]
-impl GcalClient for GcalApiAdapter {
-    async fn create_calendar(&self, token: &Token, name: &str) -> Result<String, AppError> {
-        self.api.create_dedicated_calendar(token, name).await
-    }
-
-    async fn delete_calendar(&self, token: &Token, calendar_id: &str) -> Result<(), AppError> {
-        self.api.delete_calendar(token, calendar_id).await
-    }
-
-    async fn insert_event(
-        &self,
-        token: &Token,
-        calendar_id: &str,
-        event: &Event,
-    ) -> Result<EventId, AppError> {
-        let resp = self.api.insert_event(token, calendar_id, event).await?;
-        Ok(resp.id)
-    }
-
-    async fn patch_event(
-        &self,
-        token: &Token,
-        calendar_id: &str,
-        event_id: &str,
-        event: &Event,
-    ) -> Result<(), AppError> {
-        let patch = super::api::EventPatch::new()
-            .with_summary(event.summary.clone())
-            .with_description(event.description.clone())
-            .with_start(
-                NaiveDate::parse_from_str(&event.start.date, "%Y-%m-%d").map_err(|e| {
-                    AppError::Validation(format!(
-                        "gcal.connector.bad_start_date: {}: {e}",
-                        event.start.date
-                    ))
-                })?,
-            )
-            .with_end(
-                NaiveDate::parse_from_str(&event.end.date, "%Y-%m-%d").map_err(|e| {
-                    AppError::Validation(format!(
-                        "gcal.connector.bad_end_date: {}: {e}",
-                        event.end.date
-                    ))
-                })?,
-            )
-            .with_transparency(event.transparency.clone());
-        let _ = self
-            .api
-            .patch_event(token, calendar_id, event_id, &patch)
-            .await?;
-        Ok(())
-    }
-
-    async fn delete_event(
-        &self,
-        token: &Token,
-        calendar_id: &str,
-        event_id: &str,
-    ) -> Result<(), AppError> {
-        self.api.delete_event(token, calendar_id, event_id).await
-    }
+/// Build an [`EventPatch`] from a digest [`Event`].  The connector has
+/// already computed a complete fresh-state event by the time we reach a
+/// PATCH; we copy every field set on `event` onto the patch so the
+/// remote replaces what we last pushed.
+///
+/// Both `start.date` and `end.date` are inclusive `YYYY-MM-DD` strings on
+/// the digest side; [`EventPatch::with_start`] / `with_end` take
+/// [`NaiveDate`], so we parse them here.  A parse failure is
+/// `AppError::Validation` so the surrounding [`classify_date_err`]
+/// shovels it into [`DateFailure::Other`] (it would mean the digest
+/// produced an invalid date, which is a programmer error).
+fn event_to_patch(event: &Event) -> Result<EventPatch, AppError> {
+    let start = NaiveDate::parse_from_str(&event.start.date, "%Y-%m-%d").map_err(|e| {
+        AppError::Validation(format!(
+            "gcal.connector.bad_start_date: {}: {e}",
+            event.start.date
+        ))
+    })?;
+    let end = NaiveDate::parse_from_str(&event.end.date, "%Y-%m-%d").map_err(|e| {
+        AppError::Validation(format!(
+            "gcal.connector.bad_end_date: {}: {e}",
+            event.end.date
+        ))
+    })?;
+    Ok(EventPatch::new()
+        .with_summary(event.summary.clone())
+        .with_description(event.description.clone())
+        .with_start(start)
+        .with_end(end)
+        .with_transparency(event.transparency.clone()))
 }
 
 // ---------------------------------------------------------------------------
@@ -504,10 +414,10 @@ fn kind_display(kind: &GcalErrorKind) -> String {
 ///   `[today, today + window_days]`; on the event-driven path it
 ///   holds the accumulated dirty set since the last flush.
 /// * `token`: the current OAuth access token.  Tests pass a dummy
-///   (the [`MockGcalClient`] ignores it).
-pub async fn run_cycle<C: GcalClient>(
+///   (the wiremock mock server ignores its contents).
+pub async fn run_cycle(
     pool: &SqlitePool,
-    client: &C,
+    api: &GcalApi,
     emitter: &Arc<dyn GcalEventEmitter>,
     device_id: &str,
     clock: &dyn Clock,
@@ -535,7 +445,10 @@ pub async fn run_cycle<C: GcalClient>(
     // failure here is returned as a HardFailure so the outer loop can
     // decide whether to retry (recoverable 5xx) or surface (403).
     let calendar_id = if settings.calendar_id.is_empty() {
-        match client.create_calendar(token, DEDICATED_CALENDAR_NAME).await {
+        match api
+            .create_dedicated_calendar(token, DEDICATED_CALENDAR_NAME)
+            .await
+        {
             Ok(id) => {
                 models::set_setting(pool, GcalSettingKey::CalendarId, &id).await?;
                 id
@@ -553,7 +466,7 @@ pub async fn run_cycle<C: GcalClient>(
     // a successful push to a sibling date.  Hard failures (401 / 403 /
     // CalendarGone) are returned to the caller for the whole cycle.
     for date in dirty {
-        match push_date(pool, client, token, &settings, &calendar_id, *date).await {
+        match push_date(pool, api, token, &settings, &calendar_id, *date).await {
             Ok(_) => {}
             Err(DateFailure::CalendarGone) => {
                 // Whole cycle has to abort — the calendar is gone.
@@ -631,10 +544,10 @@ fn classify_cycle_failure(
 
 /// Evaluate a single date: fetch agenda entries, compute digest, hash,
 /// compare, push/patch/delete.
-#[tracing::instrument(skip(pool, client, token, settings), fields(date = %date))]
-async fn push_date<C: GcalClient>(
+#[tracing::instrument(skip(pool, api, token, settings), fields(date = %date))]
+async fn push_date(
     pool: &SqlitePool,
-    client: &C,
+    api: &GcalApi,
     token: &Token,
     settings: &GcalSettingsSnapshot,
     calendar_id: &str,
@@ -674,7 +587,7 @@ async fn push_date<C: GcalClient>(
         (DigestResult::Delete, None) => Ok(()),
         // No entries + existing row → delete remote event + map row.
         (DigestResult::Delete, Some(prior)) => {
-            match client
+            match api
                 .delete_event(token, calendar_id, &prior.gcal_event_id)
                 .await
             {
@@ -691,13 +604,13 @@ async fn push_date<C: GcalClient>(
         }
         // Entries + no prior row → fresh insert.
         (DigestResult::Create(event), None) => {
-            let event_id = client
+            let response = api
                 .insert_event(token, calendar_id, &event)
                 .await
                 .map_err(|e| classify_date_err(&e))?;
             let entry = GcalAgendaEventMap {
                 date: date_str,
-                gcal_event_id: event_id,
+                gcal_event_id: response.id,
                 last_pushed_hash: fresh_hash,
                 last_pushed_at: crate::now_rfc3339(),
             };
@@ -712,11 +625,23 @@ async fn push_date<C: GcalClient>(
                 // No-op — the remote state is already in sync.
                 return Ok(());
             }
-            match client
-                .patch_event(token, calendar_id, &prior.gcal_event_id, &event)
+            // Translate the digest event into the API's `EventPatch`
+            // shape — see `event_to_patch` for the inclusive-date /
+            // optional-field handling.  A parse failure here is a
+            // programmer error (digest produced an invalid date) and
+            // surfaces as `DateFailure::Other`.
+            let patch = event_to_patch(&event).map_err(|e| classify_date_err(&e))?;
+            match api
+                .patch_event(token, calendar_id, &prior.gcal_event_id, &patch)
                 .await
             {
-                Ok(()) => {
+                Ok(_resp) => {
+                    // The `EventResponse` is intentionally unused: the
+                    // connector's per-date dedup is hash-based on the
+                    // local digest payload (`fresh_hash`), so nothing
+                    // about the remote echo would change our decision
+                    // for this date.  Awaiting it is what proves the
+                    // write succeeded; the body itself is discarded.
                     let entry = GcalAgendaEventMap {
                         date: date_str,
                         gcal_event_id: prior.gcal_event_id,
@@ -929,7 +854,7 @@ pub struct ConnectorTask {
 #[cfg(not(tarpaulin_include))]
 pub fn spawn_connector(
     pool: SqlitePool,
-    client: Arc<dyn GcalClient>,
+    api: Arc<GcalApi>,
     token_store: Arc<dyn TokenStore>,
     emitter: Arc<dyn GcalEventEmitter>,
     device_id: String,
@@ -944,7 +869,7 @@ pub fn spawn_connector(
     };
 
     let loop_pool = pool;
-    let loop_client = client;
+    let loop_api = api;
     let loop_store = token_store;
     let loop_emitter = emitter;
     let loop_force = force_sweep.clone();
@@ -954,7 +879,7 @@ pub fn spawn_connector(
         let clock = SystemClock;
         run_task_loop(
             loop_pool,
-            loop_client,
+            loop_api,
             loop_store,
             loop_emitter,
             device_id,
@@ -977,9 +902,9 @@ pub fn spawn_connector(
 /// deliberately boring — the per-cycle logic is in [`run_cycle`].
 #[cfg(not(tarpaulin_include))]
 #[allow(clippy::too_many_arguments)]
-async fn run_task_loop<C: GcalClient + ?Sized>(
+async fn run_task_loop(
     pool: SqlitePool,
-    client: Arc<C>,
+    api: Arc<GcalApi>,
     token_store: Arc<dyn TokenStore>,
     emitter: Arc<dyn GcalEventEmitter>,
     device_id: String,
@@ -988,52 +913,6 @@ async fn run_task_loop<C: GcalClient + ?Sized>(
     force_sweep: Arc<Notify>,
     shutdown: Arc<Notify>,
 ) {
-    // `run_cycle` is generic over `C: GcalClient` (Sized).  The outer
-    // task loop accepts an `Arc<dyn GcalClient>` (?Sized) coming out
-    // of `spawn_connector`, so we wrap `&C` in this thin sized adapter
-    // before each cycle dispatch.  The adapter is only ever held for
-    // the duration of a single `run_cycle` call.
-    struct ClientAdapter<'a, C: GcalClient + ?Sized> {
-        inner: &'a C,
-    }
-
-    #[async_trait]
-    impl<'a, C: GcalClient + ?Sized> GcalClient for ClientAdapter<'a, C> {
-        async fn create_calendar(&self, token: &Token, name: &str) -> Result<String, AppError> {
-            self.inner.create_calendar(token, name).await
-        }
-        async fn delete_calendar(&self, token: &Token, calendar_id: &str) -> Result<(), AppError> {
-            self.inner.delete_calendar(token, calendar_id).await
-        }
-        async fn insert_event(
-            &self,
-            token: &Token,
-            calendar_id: &str,
-            event: &Event,
-        ) -> Result<EventId, AppError> {
-            self.inner.insert_event(token, calendar_id, event).await
-        }
-        async fn patch_event(
-            &self,
-            token: &Token,
-            calendar_id: &str,
-            event_id: &str,
-            event: &Event,
-        ) -> Result<(), AppError> {
-            self.inner
-                .patch_event(token, calendar_id, event_id, event)
-                .await
-        }
-        async fn delete_event(
-            &self,
-            token: &Token,
-            calendar_id: &str,
-            event_id: &str,
-        ) -> Result<(), AppError> {
-            self.inner.delete_event(token, calendar_id, event_id).await
-        }
-    }
-
     let mut dirty: DirtySet = DirtySet::new();
     // `None` means no flush is currently armed.  Reconcile / force-sweep
     // / dirty arrivals all set this to `Now + DEBOUNCE_WINDOW`; the
@@ -1108,10 +987,9 @@ async fn run_task_loop<C: GcalClient + ?Sized>(
                         // store recovers.
                     }
                     Ok(Some(token)) => {
-                        let adapter = ClientAdapter { inner: &*client };
                         match run_cycle(
                             &pool,
-                            &adapter,
+                            &api,
                             &emitter,
                             &device_id,
                             &clock,
@@ -1155,245 +1033,19 @@ async fn run_task_loop<C: GcalClient + ?Sized>(
 // Test doubles + tests
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Test helpers — exposed pub(crate) so sibling test modules
+// (commands/gcal.rs::tests in particular) can build a `Token` without
+// having to repeat the `secrecy` plumbing.
+// ---------------------------------------------------------------------------
+
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
     use secrecy::SecretString;
-    use tokio::sync::Mutex;
 
-    /// Mock [`GcalClient`] that keeps an in-memory calendar + event
-    /// table and records every call in order.  Each op accepts an
-    /// optional error override via [`MockBehavior`].
-    #[derive(Debug)]
-    pub struct MockGcalClient {
-        pub state: Mutex<MockState>,
-    }
-
-    #[derive(Debug, Default)]
-    pub struct MockState {
-        pub calendars: HashMap<String, HashMap<String, Event>>,
-        pub next_cal_seq: u64,
-        pub next_evt_seq: u64,
-        pub calls: Vec<MockCall>,
-        pub behavior: MockBehavior,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub enum MockCall {
-        CreateCalendar {
-            name: String,
-        },
-        DeleteCalendar {
-            calendar_id: String,
-        },
-        InsertEvent {
-            calendar_id: String,
-            date: String,
-        },
-        PatchEvent {
-            calendar_id: String,
-            event_id: String,
-            date: String,
-        },
-        DeleteEvent {
-            calendar_id: String,
-            event_id: String,
-        },
-    }
-
-    /// Programmable error behaviour.  Every `..._result` field, if
-    /// non-empty, is popped from the front on each call — tests can
-    /// thus script a sequence like "fail, fail, succeed".
-    #[derive(Debug, Default)]
-    pub struct MockBehavior {
-        pub create_calendar_results: Vec<Result<(), GcalErrorKind>>,
-        pub insert_event_results: Vec<Result<(), GcalErrorKind>>,
-        pub patch_event_results: Vec<Result<(), GcalErrorKind>>,
-        pub delete_event_results: Vec<Result<(), GcalErrorKind>>,
-    }
-
-    impl MockGcalClient {
-        pub fn new() -> Self {
-            Self {
-                state: Mutex::new(MockState::default()),
-            }
-        }
-
-        pub async fn create_calendar_call_count(&self) -> usize {
-            self.state
-                .lock()
-                .await
-                .calls
-                .iter()
-                .filter(|c| matches!(c, MockCall::CreateCalendar { .. }))
-                .count()
-        }
-
-        pub async fn event_ops_for_date(&self, date: &NaiveDate) -> usize {
-            let date_str = date.format("%Y-%m-%d").to_string();
-            self.state
-                .lock()
-                .await
-                .calls
-                .iter()
-                .filter(|c| match c {
-                    MockCall::InsertEvent { date: d, .. }
-                    | MockCall::PatchEvent { date: d, .. } => d == &date_str,
-                    MockCall::DeleteEvent {
-                        calendar_id,
-                        event_id,
-                    } => {
-                        // Heuristic: event_ids are `evt_<seq>_<YYYY-MM-DD>`.
-                        let _ = calendar_id;
-                        event_id.ends_with(&date_str)
-                    }
-                    _ => false,
-                })
-                .count()
-        }
-
-        pub async fn force_next_insert_error(&self, err: GcalErrorKind) {
-            self.state
-                .lock()
-                .await
-                .behavior
-                .insert_event_results
-                .push(Err(err));
-        }
-
-        pub async fn force_next_patch_error(&self, err: GcalErrorKind) {
-            self.state
-                .lock()
-                .await
-                .behavior
-                .patch_event_results
-                .push(Err(err));
-        }
-
-        pub async fn force_next_create_calendar_error(&self, err: GcalErrorKind) {
-            self.state
-                .lock()
-                .await
-                .behavior
-                .create_calendar_results
-                .push(Err(err));
-        }
-    }
-
-    #[async_trait]
-    impl GcalClient for MockGcalClient {
-        async fn create_calendar(&self, _token: &Token, name: &str) -> Result<String, AppError> {
-            let mut state = self.state.lock().await;
-            state.calls.push(MockCall::CreateCalendar {
-                name: name.to_owned(),
-            });
-            if let Some(Err(kind)) = pop_front(&mut state.behavior.create_calendar_results) {
-                return Err(kind.into());
-            }
-            state.next_cal_seq += 1;
-            let id = format!("cal_MOCK_{}", state.next_cal_seq);
-            state.calendars.insert(id.clone(), HashMap::new());
-            Ok(id)
-        }
-
-        async fn delete_calendar(&self, _token: &Token, calendar_id: &str) -> Result<(), AppError> {
-            let mut state = self.state.lock().await;
-            state.calls.push(MockCall::DeleteCalendar {
-                calendar_id: calendar_id.to_owned(),
-            });
-            state.calendars.remove(calendar_id);
-            Ok(())
-        }
-
-        async fn insert_event(
-            &self,
-            _token: &Token,
-            calendar_id: &str,
-            event: &Event,
-        ) -> Result<EventId, AppError> {
-            let mut state = self.state.lock().await;
-            state.calls.push(MockCall::InsertEvent {
-                calendar_id: calendar_id.to_owned(),
-                date: event.start.date.clone(),
-            });
-            if let Some(Err(kind)) = pop_front(&mut state.behavior.insert_event_results) {
-                return Err(kind.into());
-            }
-            state.next_evt_seq += 1;
-            let id = format!("evt_{}_{}", state.next_evt_seq, event.start.date);
-            match state.calendars.get_mut(calendar_id) {
-                Some(cal) => {
-                    cal.insert(id.clone(), event.clone());
-                }
-                None => {
-                    return Err(GcalErrorKind::CalendarGone.into());
-                }
-            }
-            Ok(id)
-        }
-
-        async fn patch_event(
-            &self,
-            _token: &Token,
-            calendar_id: &str,
-            event_id: &str,
-            event: &Event,
-        ) -> Result<(), AppError> {
-            let mut state = self.state.lock().await;
-            state.calls.push(MockCall::PatchEvent {
-                calendar_id: calendar_id.to_owned(),
-                event_id: event_id.to_owned(),
-                date: event.start.date.clone(),
-            });
-            if let Some(Err(kind)) = pop_front(&mut state.behavior.patch_event_results) {
-                return Err(kind.into());
-            }
-            match state.calendars.get_mut(calendar_id) {
-                Some(cal) => {
-                    if cal.contains_key(event_id) {
-                        cal.insert(event_id.to_owned(), event.clone());
-                        Ok(())
-                    } else {
-                        Err(GcalErrorKind::EventGone.into())
-                    }
-                }
-                None => Err(GcalErrorKind::CalendarGone.into()),
-            }
-        }
-
-        async fn delete_event(
-            &self,
-            _token: &Token,
-            calendar_id: &str,
-            event_id: &str,
-        ) -> Result<(), AppError> {
-            let mut state = self.state.lock().await;
-            state.calls.push(MockCall::DeleteEvent {
-                calendar_id: calendar_id.to_owned(),
-                event_id: event_id.to_owned(),
-            });
-            if let Some(Err(kind)) = pop_front(&mut state.behavior.delete_event_results) {
-                return Err(kind.into());
-            }
-            match state.calendars.get_mut(calendar_id) {
-                Some(cal) => match cal.remove(event_id) {
-                    Some(_) => Ok(()),
-                    None => Err(GcalErrorKind::EventGone.into()),
-                },
-                None => Err(GcalErrorKind::CalendarGone.into()),
-            }
-        }
-    }
-
-    fn pop_front<T>(v: &mut Vec<T>) -> Option<T> {
-        if v.is_empty() {
-            None
-        } else {
-            Some(v.remove(0))
-        }
-    }
-
-    /// Build a throwaway Token for tests — the mock client ignores it.
+    /// Build a throwaway Token for tests — wiremock ignores its
+    /// contents (it just round-trips the bearer header verbatim).
     pub fn dummy_token() -> Token {
         Token {
             access: SecretString::from("mock-access".to_owned()),
@@ -1405,16 +1057,24 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod tests {
-    use super::testing::*;
+    use super::testing::dummy_token;
     use super::*;
     use crate::db::init_pool;
     use crate::gcal_push::keyring_store::{GcalEvent, RecordingEventEmitter};
     use chrono::{Duration as ChronoDuration, TimeZone};
+    use serde_json::json;
     use std::path::PathBuf;
     use tempfile::TempDir;
+    use wiremock::matchers::{body_string_contains, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const DEV_A: &str = "device-AAAAAAAAAAAAAAAAAAAAAAAAAA";
     const DEV_B: &str = "device-BBBBBBBBBBBBBBBBBBBBBBBBBB";
+
+    /// Calendar id wiremock returns from the `create_calendar` response.
+    /// Tests that need to reference the calendar id (in path matchers,
+    /// or assertions on persisted settings) use this constant.
+    const TEST_CAL_ID: &str = "cal_TEST_1";
 
     async fn test_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().unwrap();
@@ -1443,6 +1103,55 @@ mod tests {
             v >>= 5;
         }
         String::from_utf8(out.to_vec()).unwrap()
+    }
+
+    /// Build a [`GcalApi`] pointed at the given wiremock server.  Each
+    /// test owns its own server + api so the rate-limit bucket is fresh
+    /// and there's no cross-test mock interference.
+    fn make_api(server: &MockServer) -> GcalApi {
+        GcalApi::with_base_url(&server.uri()).expect("api construction must succeed")
+    }
+
+    /// Build a recording event emitter and the `Arc<dyn ...>` upcast the
+    /// connector takes.  Returns both so tests can assert on the
+    /// recorded events.
+    fn emitter_pair() -> (Arc<dyn GcalEventEmitter>, Arc<RecordingEventEmitter>) {
+        let recorder = Arc::new(RecordingEventEmitter::new());
+        let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
+        (emitter, recorder)
+    }
+
+    /// Mount a `POST /calendars` mock that returns the given calendar
+    /// id.  Returns the [`MockServer`] guard so the caller controls the
+    /// lifetime / `.expect(N)` assertion.
+    async fn mount_create_calendar(server: &MockServer, calendar_id: &str) {
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": calendar_id,
+                "summary": "Agaric Agenda",
+            })))
+            .mount(server)
+            .await;
+    }
+
+    /// Build the JSON body wiremock returns from `events.insert` /
+    /// `events.patch` mocks.  GCal stores `end.date = start.date + 1`
+    /// for an all-day event; this helper computes that shift so each
+    /// caller doesn't have to re-derive it inline.
+    fn event_response_body(event_id: &str, date: &str) -> serde_json::Value {
+        let parsed = NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap();
+        let plus_one = (parsed + chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        json!({
+            "id": event_id,
+            "summary": format!("Agaric Agenda — {date}"),
+            "description": "",
+            "start": {"date": date},
+            "end": {"date": plus_one},
+            "transparency": "transparent",
+        })
     }
 
     /// Create a page + a todo block due on `date`.  Writes directly to
@@ -1550,15 +1259,19 @@ mod tests {
             .unwrap();
     }
 
-    fn client_and_emitter() -> (
-        Arc<MockGcalClient>,
-        Arc<dyn GcalEventEmitter>,
-        Arc<RecordingEventEmitter>,
-    ) {
-        let client = Arc::new(MockGcalClient::new());
-        let recorder = Arc::new(RecordingEventEmitter::new());
-        let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
-        (client, emitter, recorder)
+    /// Count requests received by `server` whose method+path-prefix
+    /// match the given filter.  `path_prefix` is matched as a starts-with
+    /// against the request URL path so callers can ignore query strings
+    /// (the connector does not append any, but defensive).
+    async fn count_requests(server: &MockServer, http_method: &str, path_prefix: &str) -> usize {
+        let received = server
+            .received_requests()
+            .await
+            .expect("MockServer must be configured to record requests");
+        received
+            .iter()
+            .filter(|r| r.method.as_str() == http_method && r.url.path().starts_with(path_prefix))
+            .count()
     }
 
     // ── First-connect flow ─────────────────────────────────────────
@@ -1566,55 +1279,71 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn first_connect_creates_calendar_and_persists_id() {
         let (pool, _dir) = test_pool().await;
-        let (client, emitter, _rec) = client_and_emitter();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": TEST_CAL_ID,
+                "summary": "Agaric Agenda",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
         let clock = FixedClock::new(t0());
         let token = dummy_token();
 
         let dirty: DirtySet = DirtySet::new();
-        let outcome = run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &dirty)
+        let outcome = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
             .await
             .unwrap();
         assert_eq!(outcome, CycleOutcome::Ok);
-        assert_eq!(
-            client.create_calendar_call_count().await,
-            1,
-            "first-connect must call create_calendar exactly once"
-        );
         let persisted = models::get_setting(&pool, GcalSettingKey::CalendarId)
             .await
             .unwrap();
-        assert!(
-            persisted
-                .as_deref()
-                .is_some_and(|s| s.starts_with("cal_MOCK_")),
-            "calendar_id must be persisted after create_calendar, got {persisted:?}"
+        assert_eq!(
+            persisted.as_deref(),
+            Some(TEST_CAL_ID),
+            "calendar_id must be persisted after create_calendar"
         );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn push_lease_contention_blocks_second_device() {
         let (pool, _dir) = test_pool().await;
-        let (client_a, emitter_a, _rec_a) = client_and_emitter();
-        let (client_b, emitter_b, _rec_b) = client_and_emitter();
+        let server = MockServer::start().await;
+        // Only A creates the calendar; B is blocked at the lease check
+        // and never issues an HTTP call.
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": TEST_CAL_ID,
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = make_api(&server);
+        let (emitter_a, _) = emitter_pair();
+        let (emitter_b, _) = emitter_pair();
         let clock = FixedClock::new(t0());
         let token = dummy_token();
         let dirty = DirtySet::new();
 
-        // Device A claims the lease and creates the calendar.
-        let a = run_cycle(&pool, &*client_a, &emitter_a, DEV_A, &clock, &token, &dirty)
+        let a = run_cycle(&pool, &api, &emitter_a, DEV_A, &clock, &token, &dirty)
             .await
             .unwrap();
         assert_eq!(a, CycleOutcome::Ok);
-        assert_eq!(client_a.create_calendar_call_count().await, 1);
 
-        // Device B, same instant — lease already held → idle, no calendar call.
-        let b = run_cycle(&pool, &*client_b, &emitter_b, DEV_B, &clock, &token, &dirty)
+        let b = run_cycle(&pool, &api, &emitter_b, DEV_B, &clock, &token, &dirty)
             .await
             .unwrap();
         assert_eq!(b, CycleOutcome::LeaseUnavailable);
+
+        // Defensive count: only one POST /calendars hit the server.
         assert_eq!(
-            client_b.create_calendar_call_count().await,
-            0,
+            count_requests(&server, "POST", "/calendars").await,
+            1,
             "blocked device must NOT call create_calendar"
         );
     }
@@ -1622,15 +1351,27 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn after_lease_expires_second_device_takes_over() {
         let (pool, _dir) = test_pool().await;
-        let (client_a, emitter_a, _) = client_and_emitter();
-        let (client_b, emitter_b, _) = client_and_emitter();
+        let server = MockServer::start().await;
+        // Only one create_calendar should happen — A creates, then B
+        // re-uses the persisted calendar_id.
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": TEST_CAL_ID,
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = make_api(&server);
+        let (emitter_a, _) = emitter_pair();
+        let (emitter_b, _) = emitter_pair();
         let clock = FixedClock::new(t0());
         let token = dummy_token();
         let dirty = DirtySet::new();
 
         // A claims, does first-connect (creates calendar).
         assert_eq!(
-            run_cycle(&pool, &*client_a, &emitter_a, DEV_A, &clock, &token, &dirty)
+            run_cycle(&pool, &api, &emitter_a, DEV_A, &clock, &token, &dirty)
                 .await
                 .unwrap(),
             CycleOutcome::Ok
@@ -1640,7 +1381,7 @@ mod tests {
         clock.advance(ChronoDuration::seconds(
             lease::LEASE_EXPIRY_SECS.cast_signed() + 1,
         ));
-        let b = run_cycle(&pool, &*client_b, &emitter_b, DEV_B, &clock, &token, &dirty)
+        let b = run_cycle(&pool, &api, &emitter_b, DEV_B, &clock, &token, &dirty)
             .await
             .unwrap();
         assert_eq!(b, CycleOutcome::Ok);
@@ -1649,8 +1390,6 @@ mod tests {
             state.device_id, DEV_B,
             "B must hold the lease after seizure"
         );
-        // Calendar already exists — B does NOT re-create it.
-        assert_eq!(client_b.create_calendar_call_count().await, 0);
     }
 
     // ── Per-date push flow ─────────────────────────────────────────
@@ -1658,40 +1397,67 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn dirty_date_inserts_event_and_populates_map() {
         let (pool, _dir) = test_pool().await;
-        let (client, emitter, _rec) = client_and_emitter();
+        let server = MockServer::start().await;
+        let evt_id = "evt_TEST_1";
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(event_response_body(evt_id, "2026-04-22")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
         let clock = FixedClock::new(t0());
         let token = dummy_token();
 
         let date = fixed_date();
-        let (_page, _block) = seed_block_due_on(&pool, "Ship it", "2026-04-22").await;
+        seed_block_due_on(&pool, "Ship it", "2026-04-22").await;
 
         let mut dirty = DirtySet::new();
         dirty.insert(date);
 
-        let outcome = run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &dirty)
+        let outcome = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
             .await
             .unwrap();
         assert_eq!(outcome, CycleOutcome::Ok);
 
-        // Exactly one insert_event call.
-        assert_eq!(
-            client.event_ops_for_date(&date).await,
-            1,
-            "exactly one event op for the dirty date"
-        );
         // Map row populated.
         let map = models::get_event_map_for_date(&pool, "2026-04-22")
             .await
             .unwrap()
             .expect("map row must exist");
-        assert!(map.gcal_event_id.starts_with("evt_"));
-        assert!(!map.last_pushed_hash.is_empty());
+        assert_eq!(
+            map.gcal_event_id, evt_id,
+            "map row must hold the event id assigned by the server"
+        );
+        assert!(
+            !map.last_pushed_hash.is_empty(),
+            "last_pushed_hash must be populated"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn unchanged_hash_is_a_noop_on_the_second_cycle() {
         let (pool, _dir) = test_pool().await;
-        let (client, emitter, _rec) = client_and_emitter();
+        let server = MockServer::start().await;
+        let evt_id = "evt_TEST_1";
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        // `.expect(1)` is the assertion — a second POST would fail it.
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(event_response_body(evt_id, "2026-04-22")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
         let clock = FixedClock::new(t0());
         let token = dummy_token();
         let date = fixed_date();
@@ -1701,25 +1467,47 @@ mod tests {
         dirty.insert(date);
 
         // First cycle pushes.
-        run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &dirty)
+        run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
             .await
             .unwrap();
         // Second cycle with unchanged data → no extra ops.
-        run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &dirty)
+        run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
             .await
             .unwrap();
 
+        // Verify there was exactly one POST to events (mock's
+        // `.expect(1)` assertion covers this on Drop, but explicit
+        // assertion provides a clearer failure message).
         assert_eq!(
-            client.event_ops_for_date(&date).await,
+            count_requests(&server, "POST", &format!("/calendars/{TEST_CAL_ID}/events")).await,
             1,
-            "unchanged digest must not produce a second push"
+            "unchanged digest must not produce a second push",
         );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn soft_delete_last_entry_deletes_remote_event_and_map_row() {
         let (pool, _dir) = test_pool().await;
-        let (client, emitter, _rec) = client_and_emitter();
+        let server = MockServer::start().await;
+        let evt_id = "evt_TEST_1";
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(event_response_body(evt_id, "2026-04-22")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events/{evt_id}")))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
         let clock = FixedClock::new(t0());
         let token = dummy_token();
         let date = fixed_date();
@@ -1727,28 +1515,17 @@ mod tests {
 
         let mut dirty = DirtySet::new();
         dirty.insert(date);
-        run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &dirty)
+        run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
             .await
             .unwrap();
-        assert_eq!(client.event_ops_for_date(&date).await, 1);
 
         // Soft-delete the only entry for the date.
         soft_delete(&pool, &block).await;
 
         // Next cycle should delete the remote event + drop the map row.
-        run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &dirty)
+        run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
             .await
             .unwrap();
-
-        // One delete call for this date.
-        let state = client.state.lock().await;
-        let deletes = state
-            .calls
-            .iter()
-            .filter(|c| matches!(c, MockCall::DeleteEvent { .. }))
-            .count();
-        assert_eq!(deletes, 1, "exactly one delete_event call after empty day");
-        drop(state);
 
         let row = models::get_event_map_for_date(&pool, "2026-04-22")
             .await
@@ -1762,7 +1539,40 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn drag_drop_across_dates_emits_exactly_one_op_per_side() {
         let (pool, _dir) = test_pool().await;
-        let (client, emitter, _rec) = client_and_emitter();
+        let server = MockServer::start().await;
+        let evt_a = "evt_DATE_A";
+        let evt_b = "evt_DATE_B";
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        // Date A's insert (request body contains start.date 2026-04-22).
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .and(body_string_contains("\"date\":\"2026-04-22\""))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(event_response_body(evt_a, "2026-04-22")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        // Date B's insert (request body contains 2026-04-23).
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .and(body_string_contains("\"date\":\"2026-04-23\""))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(event_response_body(evt_b, "2026-04-23")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        // Date A's delete after the drag.
+        Mock::given(method("DELETE"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events/{evt_a}")))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
         let clock = FixedClock::new(t0());
         let token = dummy_token();
 
@@ -1773,36 +1583,37 @@ mod tests {
         // First cycle: insert on date A.
         let mut dirty = DirtySet::new();
         dirty.insert(date_a);
-        run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &dirty)
+        run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
             .await
             .unwrap();
-        assert_eq!(client.event_ops_for_date(&date_a).await, 1);
-        assert_eq!(client.event_ops_for_date(&date_b).await, 0);
 
         // Move the block to date B; both dates now dirty.
         move_block_due(&pool, &block, "2026-04-22", "2026-04-23").await;
         let mut dirty = DirtySet::new();
         dirty.insert(date_a);
         dirty.insert(date_b);
-        run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &dirty)
+        run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
             .await
             .unwrap();
 
-        // Date A: one additional delete op (total ops for date_a = 2).
-        // Date B: one insert.
-        let state = client.state.lock().await;
-        let a_deletes = state
-            .calls
-            .iter()
-            .filter(|c| matches!(c, MockCall::DeleteEvent { .. }))
-            .count();
-        let b_inserts = state
-            .calls
-            .iter()
-            .filter(|c| matches!(c, MockCall::InsertEvent { date, .. } if date == "2026-04-23"))
-            .count();
-        assert_eq!(a_deletes, 1, "exactly one delete for date A after drag");
-        assert_eq!(b_inserts, 1, "exactly one insert for date B after drag");
+        // Per-mock `.expect(1)` covers the assertions on drop; an
+        // explicit total-count check here makes the failure message
+        // clearer if the connector ever drifts.
+        assert_eq!(
+            count_requests(&server, "POST", &format!("/calendars/{TEST_CAL_ID}/events")).await,
+            2,
+            "exactly two inserts (one per date) must reach the server",
+        );
+        assert_eq!(
+            count_requests(
+                &server,
+                "DELETE",
+                &format!("/calendars/{TEST_CAL_ID}/events/"),
+            )
+            .await,
+            1,
+            "exactly one delete (date A's evt) must reach the server",
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1812,7 +1623,20 @@ mod tests {
         // pins that invariant: 10 `DirtyEvent`s from the hook layer
         // collapse into 1 push when the outer loop debounces them.
         let (pool, _dir) = test_pool().await;
-        let (client, emitter, _rec) = client_and_emitter();
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(event_response_body("evt_TEST_1", "2026-04-22")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
         let clock = FixedClock::new(t0());
         let token = dummy_token();
         let date = fixed_date();
@@ -1825,32 +1649,61 @@ mod tests {
             dirty.extend(DirtyEvent::single(date).affected());
         }
         assert_eq!(dirty.len(), 1, "dirty set must dedup to exactly 1 date");
-        run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &dirty)
+        run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
             .await
             .unwrap();
-        assert_eq!(
-            client.event_ops_for_date(&date).await,
-            1,
-            "coalesced flush produces exactly 1 push per affected date"
-        );
     }
 
     // ── Calendar-gone recovery ─────────────────────────────────────
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn calendar_gone_recovery_wipes_map_and_resets_id() {
+        // Production CalendarGone path: a 404 on `POST /events` is
+        // mapped to `GcalErrorKind::CalendarGone` (the calendar itself
+        // is the missing resource).  We exercise this by:
+        //   1. First cycle pushes successfully — calendar created, map
+        //      row + persisted calendar_id populated.
+        //   2. A NEW date is seeded.  Its push takes the insert branch
+        //      (no prior map row), and the events mock now returns 404,
+        //      triggering the CalendarGone recovery.
+        //
+        // The original MockGcalClient version forced CalendarGone on the
+        // PATCH path, which is not realistic — `GcalApi::patch_event`
+        // only ever returns EventGone on 404.  This is exactly the
+        // testing-via-trait drift MAINT-139 retires.
         let (pool, _dir) = test_pool().await;
-        let (client, emitter, rec) = client_and_emitter();
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        // First cycle's insert succeeds; .up_to_n_times(1) so the next
+        // POST falls through to the 404 mock below.
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(event_response_body("evt_TEST_1", "2026-04-22")),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        // Second-cycle insert → 404 (CalendarGone).
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, rec) = emitter_pair();
         let clock = FixedClock::new(t0());
         let token = dummy_token();
-        let date = fixed_date();
+        let date_1 = fixed_date();
+        let date_2 = NaiveDate::from_ymd_opt(2026, 4, 23).unwrap();
         seed_block_due_on(&pool, "Ship it", "2026-04-22").await;
 
+        // First cycle: create calendar + push date_1.
         let mut dirty = DirtySet::new();
-        dirty.insert(date);
-
-        // First cycle: create calendar + push date.
-        run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &dirty)
+        dirty.insert(date_1);
+        run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
             .await
             .unwrap();
         assert!(
@@ -1862,16 +1715,12 @@ mod tests {
             "calendar_id must be set after first push"
         );
 
-        // Force the mock to fail the next patch with CalendarGone.  The
-        // second cycle sees the new block below and diffs the digest
-        // → patches the existing event → mock returns CalendarGone.
-        client
-            .force_next_patch_error(GcalErrorKind::CalendarGone)
-            .await;
-        // Trigger a change so the digest hash flips and we try to push again.
-        let (_p2, _b2) = seed_block_due_on(&pool, "Another task", "2026-04-22").await;
-
-        let outcome = run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &dirty)
+        // Second cycle: push a new date, which takes the insert branch
+        // and gets 404 → CalendarGone → recover.
+        seed_block_due_on(&pool, "Another task", "2026-04-23").await;
+        let mut dirty_2 = DirtySet::new();
+        dirty_2.insert(date_2);
+        let outcome = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty_2)
             .await
             .unwrap();
         assert_eq!(outcome, CycleOutcome::Ok);
@@ -1887,7 +1736,6 @@ mod tests {
             "calendar_recreated event must be emitted, got {:?}",
             rec.events()
         );
-        // Entire event map wiped by recover_calendar_gone.
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM gcal_agenda_event_map")
             .fetch_one(&pool)
             .await
@@ -1903,19 +1751,21 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn unauthorized_emits_reauth_required_and_pauses() {
         let (pool, _dir) = test_pool().await;
-        let (client, emitter, rec) = client_and_emitter();
+        let server = MockServer::start().await;
+        // 401 on the create_calendar call — first-connect fails.
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+        let api = make_api(&server);
+        let (emitter, rec) = emitter_pair();
         let clock = FixedClock::new(t0());
         let token = dummy_token();
 
-        // First pass — create the calendar so the 401 happens on the
-        // second, event-level call.
-        client
-            .force_next_create_calendar_error(GcalErrorKind::Unauthorized)
-            .await;
-
         let outcome = run_cycle(
             &pool,
-            &*client,
+            &api,
             &emitter,
             DEV_A,
             &clock,
@@ -1943,7 +1793,31 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn transient_server_error_skips_that_date_not_the_whole_cycle() {
         let (pool, _dir) = test_pool().await;
-        let (client, emitter, _rec) = client_and_emitter();
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        // Date A's insert (the BTreeSet iterates in date order, A first)
+        // returns 503.  The date is skipped; the cycle continues to B.
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .and(body_string_contains("\"date\":\"2026-04-22\""))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(1)
+            .mount(&server)
+            .await;
+        // Date B's insert succeeds.
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .and(body_string_contains("\"date\":\"2026-04-23\""))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(event_response_body("evt_DATE_B", "2026-04-23")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
         let clock = FixedClock::new(t0());
         let token = dummy_token();
 
@@ -1952,27 +1826,27 @@ mod tests {
         seed_block_due_on(&pool, "On A", "2026-04-22").await;
         seed_block_due_on(&pool, "On B", "2026-04-23").await;
 
-        // Force the first insert (date A — BTreeSet is ordered) to
-        // return a 5xx — the mock pops from the front per call.
-        client
-            .force_next_insert_error(GcalErrorKind::ServerError { status: 503 })
-            .await;
-
         let mut dirty = DirtySet::new();
         dirty.insert(date_a);
         dirty.insert(date_b);
-        let outcome = run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &dirty)
+        let outcome = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
             .await
             .unwrap();
         assert_eq!(outcome, CycleOutcome::Ok);
 
-        // Date A: zero successful pushes (the error was on its insert).
-        // Date B: one insert that completed.
-        assert_eq!(
-            client.event_ops_for_date(&date_b).await,
-            1,
-            "date B must still be pushed after date A's transient 5xx"
+        // Date A: no map row (transient error); date B: map row landed.
+        assert!(
+            models::get_event_map_for_date(&pool, "2026-04-22")
+                .await
+                .unwrap()
+                .is_none(),
+            "date A must NOT have a map row after a transient 5xx",
         );
+        let map_b = models::get_event_map_for_date(&pool, "2026-04-23")
+            .await
+            .unwrap()
+            .expect("date B must have a map row");
+        assert_eq!(map_b.gcal_event_id, "evt_DATE_B");
     }
 
     // ── Midnight rollover (window advances, old dates untouched) ───
@@ -1980,7 +1854,21 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn midnight_rollover_leaves_old_tail_events_intact() {
         let (pool, _dir) = test_pool().await;
-        let (client, emitter, _rec) = client_and_emitter();
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        // Only the first cycle's insert reaches the server.
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(event_response_body("evt_OLD", "2026-04-22")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
         let clock = FixedClock::new(t0());
         let token = dummy_token();
 
@@ -1988,10 +1876,9 @@ mod tests {
         seed_block_due_on(&pool, "Old tail", "2026-04-22").await;
         let mut dirty = DirtySet::new();
         dirty.insert(old_tail);
-        run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &dirty)
+        run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
             .await
             .unwrap();
-        assert_eq!(client.event_ops_for_date(&old_tail).await, 1);
 
         // Advance the clock by 24 hours.  The old date is no longer in
         // any dirty set computed by `fill_full_window`, so the cycle
@@ -2005,25 +1892,110 @@ mod tests {
             "fill_full_window must not revisit the pre-rollover day"
         );
 
-        run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &new_dirty)
+        run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &new_dirty)
             .await
             .unwrap();
 
         // The map row for the pre-rollover day is left alone — no
-        // DeleteEvent call for its gcal_event_id.
+        // DeleteEvent call on its gcal_event_id.
         let row = models::get_event_map_for_date(&pool, "2026-04-22")
             .await
             .unwrap()
             .expect("pre-rollover map row must survive");
-        let state = client.state.lock().await;
-        let deletes_for_old_event = state
-            .calls
-            .iter()
-            .filter(|c| matches!(c, MockCall::DeleteEvent { event_id, .. } if event_id == &row.gcal_event_id))
-            .count();
+        assert_eq!(row.gcal_event_id, "evt_OLD");
         assert_eq!(
-            deletes_for_old_event, 0,
-            "midnight rollover must not retro-delete pre-window events"
+            count_requests(
+                &server,
+                "DELETE",
+                &format!("/calendars/{TEST_CAL_ID}/events/")
+            )
+            .await,
+            0,
+            "midnight rollover must not retro-delete pre-window events",
+        );
+    }
+
+    // ── MAINT-139 — patch_event return-type drift regression ───────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn patch_event_consumes_response_and_persists_new_hash() {
+        // MAINT-139 regression: previously the connector's `GcalApiAdapter`
+        // discarded the `EventResponse` from `GcalApi::patch_event` and
+        // forwarded `()` through the `GcalClient` trait.  After retiring
+        // the adapter the connector calls `GcalApi::patch_event`
+        // directly — this test pins both halves of that contract:
+        //
+        //   1. The `EventResponse` future is *awaited* (i.e. the PATCH
+        //      actually reaches the server — `.expect(1)` enforces it).
+        //   2. The connector persists the post-patch `fresh_hash` in
+        //      the map row (which only happens on a successful PATCH).
+        //   3. The map row's `gcal_event_id` is unchanged (proves we
+        //      took the patch branch, not insert).
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+        let evt_id = "evt_PATCHABLE";
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        // First-cycle insert.
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(event_response_body(evt_id, "2026-04-22")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        // Second-cycle PATCH must hit the server exactly once.
+        Mock::given(method("PATCH"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events/{evt_id}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": evt_id,
+                "summary": "Patched",
+                "description": "",
+                "start": {"date": "2026-04-22"},
+                "end": {"date": "2026-04-23"},
+                "transparency": "transparent",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+        let date = fixed_date();
+        seed_block_due_on(&pool, "Ship it", "2026-04-22").await;
+
+        let mut dirty = DirtySet::new();
+        dirty.insert(date);
+        run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
+        let pre = models::get_event_map_for_date(&pool, "2026-04-22")
+            .await
+            .unwrap()
+            .expect("map row must exist after first push");
+        assert_eq!(pre.gcal_event_id, evt_id);
+
+        // Mutate the digest by adding a sibling block on the same date —
+        // hash flips, connector takes the patch branch.
+        seed_block_due_on(&pool, "Another task", "2026-04-22").await;
+        run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
+
+        let post = models::get_event_map_for_date(&pool, "2026-04-22")
+            .await
+            .unwrap()
+            .expect("map row must still exist after patch");
+        assert_eq!(
+            post.gcal_event_id, evt_id,
+            "patch must reuse the prior event id (not reinsert)",
+        );
+        assert_ne!(
+            post.last_pushed_hash, pre.last_pushed_hash,
+            "patch must persist the post-patch fresh_hash — proof that the EventResponse \
+             future was awaited and the success branch ran",
         );
     }
 
@@ -2186,13 +2158,23 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn empty_dirty_set_still_acquires_lease_and_runs_first_connect() {
         let (pool, _dir) = test_pool().await;
-        let (client, emitter, _rec) = client_and_emitter();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": TEST_CAL_ID,
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
         let clock = FixedClock::new(t0());
         let token = dummy_token();
 
         let outcome = run_cycle(
             &pool,
-            &*client,
+            &api,
             &emitter,
             DEV_A,
             &clock,
@@ -2202,7 +2184,6 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(outcome, CycleOutcome::Ok);
-        assert_eq!(client.create_calendar_call_count().await, 1);
     }
 
     // ── REVIEW-LATER C-1 — wired task loop dispatches `run_cycle` ──
@@ -2210,9 +2191,10 @@ mod tests {
     // Smoke test: spawning the connector and pushing a `DirtyEvent`
     // through the channel must result in `run_cycle` actually running
     // (observed here as at least one `create_calendar` or
-    // `insert_event` call on the mock).  Before C-1 the loop only
-    // collected events and ticked, so the entire FEAT-5e push pipeline
-    // was dead; this test catches a regression to that state.
+    // `insert_event` request landing on the wiremock server).  Before
+    // C-1 the loop only collected events and ticked, so the entire
+    // FEAT-5e push pipeline was dead; this test catches a regression
+    // to that state.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn task_loop_dispatches_run_cycle_on_dirty_event() {
         use crate::gcal_push::keyring_store::{MockTokenStore, TokenStore};
@@ -2226,11 +2208,18 @@ mod tests {
         let _ = seed_block_due_on(&pool, "Smoke C-1", "2026-04-22").await;
         let date = NaiveDate::from_ymd_opt(2026, 4, 22).unwrap();
 
-        // Build doubles — keep an `Arc<MockGcalClient>` for assertions
-        // and pass an `Arc<dyn GcalClient>` (the production shape) into
-        // `spawn_connector`.
-        let client: Arc<MockGcalClient> = Arc::new(MockGcalClient::new());
-        let dyn_client: Arc<dyn GcalClient> = client.clone();
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(event_response_body("evt_C1", "2026-04-22")),
+            )
+            .mount(&server)
+            .await;
+
+        let api: Arc<GcalApi> = Arc::new(make_api(&server));
 
         let token_store: Arc<MockTokenStore> = Arc::new(MockTokenStore::new());
         token_store.store(&dummy_token()).await.unwrap();
@@ -2241,7 +2230,7 @@ mod tests {
 
         let task = spawn_connector(
             pool.clone(),
-            dyn_client,
+            api,
             dyn_token_store,
             dyn_emitter,
             DEV_A.to_owned(),
@@ -2253,8 +2242,7 @@ mod tests {
 
         let observed = tokio::time::timeout(StdDuration::from_millis(1500), async {
             loop {
-                let calls = client.create_calendar_call_count().await
-                    + client.event_ops_for_date(&date).await;
+                let calls = count_requests(&server, "POST", "/calendars").await;
                 if calls > 0 {
                     return calls;
                 }
@@ -2268,7 +2256,7 @@ mod tests {
         );
         assert!(
             observed > 0,
-            "expected at least one create_calendar or insert_event call",
+            "expected at least one POST /calendars (or events) request on the wiremock server",
         );
 
         // Drop the task handle so the connector's spawned future is

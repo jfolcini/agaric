@@ -3,7 +3,7 @@ import { Calendar, CalendarDays, Check, Paperclip, Repeat, X } from 'lucide-reac
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { dispatchBlockEvent } from '../lib/block-events'
-import { formatCompactDate, MONTH_SHORT } from '../lib/date-utils'
+import { dueDateColor, formatCompactDate, MONTH_SHORT } from '../lib/date-utils'
 import { priorityColor } from '../lib/priority-color'
 import { formatRepeatLabel } from '../lib/repeat-utils'
 import { cn } from '../lib/utils'
@@ -29,16 +29,9 @@ export function priorityLabel(priority: string): string {
 export const PRIORITY_DISPLAY: Record<string, string> = { '1': 'P1', '2': 'P2', '3': 'P3' }
 
 // Re-exported from date-utils so existing call sites + tests that import these
-// names from BlockInlineControls keep working after MAINT-94 deduplication.
-export { formatCompactDate, MONTH_SHORT }
-
-export function dueDateColor(dateStr: string): string {
-  const now = new Date()
-  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-  if (dateStr < todayStr) return 'bg-destructive/10 text-destructive'
-  if (dateStr === todayStr) return 'bg-status-pending text-status-pending-foreground'
-  return 'bg-muted text-muted-foreground'
-}
+// names from BlockInlineControls keep working after MAINT-94 / MAINT-129
+// deduplication.
+export { dueDateColor, formatCompactDate, MONTH_SHORT }
 
 interface DateChipProps {
   date: string

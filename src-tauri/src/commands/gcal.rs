@@ -25,7 +25,8 @@ use sqlx::SqlitePool;
 
 use super::sanitize_internal_error;
 use crate::error::AppError;
-use crate::gcal_push::connector::{GcalClient, GcalConnectorHandle};
+use crate::gcal_push::api::GcalApi;
+use crate::gcal_push::connector::GcalConnectorHandle;
 use crate::gcal_push::keyring_store::{GcalEvent, GcalEventEmitter, TokenStore};
 use crate::gcal_push::lease::{self, LeaseState};
 use crate::gcal_push::models::{self, GcalSettingKey};
@@ -181,9 +182,9 @@ pub fn force_gcal_resync_inner(handle: &GcalConnectorHandle) {
 /// emits `gcal:push_disabled`, and optionally deletes the dedicated
 /// calendar.  All steps are idempotent — the user may click disconnect
 /// multiple times without error.
-pub async fn disconnect_gcal_inner<C: GcalClient + ?Sized>(
+pub async fn disconnect_gcal_inner(
     pool: &SqlitePool,
-    client: &C,
+    api: &GcalApi,
     token_store: &Arc<dyn TokenStore>,
     emitter: &Arc<dyn GcalEventEmitter>,
     delete_calendar: bool,
@@ -221,7 +222,7 @@ pub async fn disconnect_gcal_inner<C: GcalClient + ?Sized>(
             .unwrap_or_default();
         match (token, calendar_id.as_str()) {
             (Some(tok), cid) if !cid.is_empty() => {
-                if let Err(e) = client.delete_calendar(&tok, cid).await {
+                if let Err(e) = api.delete_calendar(&tok, cid).await {
                     tracing::warn!(
                         target: "gcal",
                         error = %e,
@@ -423,9 +424,9 @@ pub struct GcalTokenStoreState(pub Arc<dyn TokenStore>);
 /// Newtype wrapping the `Arc<dyn GcalEventEmitter>`.
 pub struct GcalEventEmitterState(pub Arc<dyn GcalEventEmitter>);
 
-/// Newtype wrapping the `Arc<dyn GcalClient>` — used by
+/// Newtype wrapping the `Arc<GcalApi>` — used by
 /// [`disconnect_gcal`] to invoke `delete_calendar`.
-pub struct GcalClientState(pub Arc<dyn GcalClient>);
+pub struct GcalClientState(pub Arc<GcalApi>);
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -435,15 +436,49 @@ pub struct GcalClientState(pub Arc<dyn GcalClient>);
 mod tests {
     use super::*;
     use crate::db::init_pool;
-    use crate::gcal_push::connector::testing::{dummy_token, MockGcalClient};
+    use crate::gcal_push::connector::testing::dummy_token;
     use crate::gcal_push::keyring_store::{
         MockTokenStore, NoopEventEmitter, RecordingEventEmitter,
     };
     use std::path::PathBuf;
     use tempfile::TempDir;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const THIS_DEVICE: &str = "device-THIS";
     const OTHER_DEVICE: &str = "device-OTHER";
+
+    /// Calendar id reused across the disconnect tests when a wiremock
+    /// path matcher needs to resolve `/calendars/{id}`.
+    const TEST_CAL_ID: &str = "cal_XYZ";
+
+    /// Build a [`GcalApi`] for tests that drive `disconnect_gcal_inner`
+    /// with `delete_calendar = false` (or with `delete_calendar = true`
+    /// but expect the remote-delete branch to be skipped because the
+    /// token / calendar id is unavailable).  The base URL is parseable
+    /// but unreachable; if a test path accidentally issues an HTTP call
+    /// it will surface a transport error rather than silently passing.
+    fn make_api_no_remote() -> GcalApi {
+        GcalApi::with_base_url("http://127.0.0.1:1").expect("api construction must succeed")
+    }
+
+    /// Build a [`GcalApi`] pointed at the given wiremock server.
+    fn make_api(server: &MockServer) -> GcalApi {
+        GcalApi::with_base_url(&server.uri()).expect("api construction must succeed")
+    }
+
+    /// Count requests received by `server` whose method+path-prefix
+    /// match the given filter.  Mirrors the helper in `connector.rs`.
+    async fn count_requests(server: &MockServer, http_method: &str, path_prefix: &str) -> usize {
+        let received = server
+            .received_requests()
+            .await
+            .expect("MockServer must be configured to record requests");
+        received
+            .iter()
+            .filter(|r| r.method.as_str() == http_method && r.url.path().starts_with(path_prefix))
+            .count()
+    }
 
     async fn test_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().unwrap();
@@ -675,8 +710,10 @@ mod tests {
     async fn disconnect_without_delete_calendar_clears_tokens_only() {
         let (pool, _dir) = test_pool().await;
         let store = store_with(Some(dummy_token())).await;
-        let client = Arc::new(MockGcalClient::new());
-        let client_trait: Arc<dyn GcalClient> = client.clone();
+        // delete_calendar=false → no HTTP call should ever happen.
+        // We point the API at an unreachable base URL so an accidental
+        // call would surface as a transport error, not a silent no-op.
+        let api = make_api_no_remote();
         let recorder = Arc::new(RecordingEventEmitter::new());
         let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
 
@@ -688,7 +725,7 @@ mod tests {
             .await
             .unwrap();
 
-        disconnect_gcal_inner(&pool, client_trait.as_ref(), &store, &emitter, false)
+        disconnect_gcal_inner(&pool, &api, &store, &emitter, false)
             .await
             .unwrap();
 
@@ -714,20 +751,6 @@ mod tests {
                 .unwrap_or_default(),
             "",
         );
-        // Mock client NOT invoked for calendar delete.
-        let state = client.state.lock().await;
-        let deletes = state
-            .calls
-            .iter()
-            .filter(|c| {
-                matches!(
-                    c,
-                    crate::gcal_push::connector::testing::MockCall::DeleteCalendar { .. }
-                )
-            })
-            .count();
-        assert_eq!(deletes, 0, "delete_calendar must not be called");
-        drop(state);
         // Event emitted.
         assert!(
             recorder.events().contains(&GcalEvent::PushDisabled),
@@ -740,11 +763,18 @@ mod tests {
     async fn disconnect_with_delete_calendar_invokes_mock_delete() {
         let (pool, _dir) = test_pool().await;
         let store = store_with(Some(dummy_token())).await;
-        let client = Arc::new(MockGcalClient::new());
-        let client_trait: Arc<dyn GcalClient> = client.clone();
+        // wiremock asserts the DELETE /calendars/{id} request lands.
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}")))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = make_api(&server);
         let emitter = noop_emitter();
 
-        models::set_setting(&pool, GcalSettingKey::CalendarId, "cal_XYZ")
+        models::set_setting(&pool, GcalSettingKey::CalendarId, TEST_CAL_ID)
             .await
             .unwrap();
         // Seed a map row to verify it is wiped.
@@ -758,27 +788,19 @@ mod tests {
             .await
             .unwrap();
 
-        disconnect_gcal_inner(&pool, client_trait.as_ref(), &store, &emitter, true)
+        disconnect_gcal_inner(&pool, &api, &store, &emitter, true)
             .await
             .unwrap();
 
-        // Mock received delete_calendar.
-        let state = client.state.lock().await;
-        let deletes = state
-            .calls
-            .iter()
-            .filter(|c| {
-                matches!(
-                    c,
-                    crate::gcal_push::connector::testing::MockCall::DeleteCalendar { .. }
-                )
-            })
-            .count();
+        // Server saw exactly one DELETE /calendars/{TEST_CAL_ID}.  The
+        // `.expect(1)` mock assertion above is verified on Drop; the
+        // explicit count below produces a clearer failure message if
+        // the connector ever drifts.
         assert_eq!(
-            deletes, 1,
-            "delete_calendar must be called exactly once when delete_calendar=true"
+            count_requests(&server, "DELETE", &format!("/calendars/{TEST_CAL_ID}")).await,
+            1,
+            "delete_calendar must be called exactly once when delete_calendar=true",
         );
-        drop(state);
 
         // calendar_id cleared.
         let cal_id = models::get_setting(&pool, GcalSettingKey::CalendarId)
@@ -809,8 +831,11 @@ mod tests {
             fail_load: true,
             fail_clear: false,
         });
-        let client = Arc::new(MockGcalClient::new());
-        let client_trait: Arc<dyn GcalClient> = client.clone();
+        // The remote-delete branch is unreachable here (token load
+        // returns None → the `(Some(tok), cid)` arm fails to match),
+        // so we point the API at an unreachable URL — any accidental
+        // call would surface as a transport error.
+        let api = make_api_no_remote();
         let recorder = Arc::new(RecordingEventEmitter::new());
         let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
 
@@ -833,7 +858,7 @@ mod tests {
             .unwrap();
 
         // Disconnect must succeed even though token_store.load() errors.
-        disconnect_gcal_inner(&pool, client_trait.as_ref(), &token_store, &emitter, true)
+        disconnect_gcal_inner(&pool, &api, &token_store, &emitter, true)
             .await
             .expect(
                 "disconnect must succeed even when keyring is unavailable (M-36 regression guard)",
@@ -869,24 +894,6 @@ mod tests {
             "account_email must be cleared even after keyring load failure"
         );
 
-        // No remote delete attempted — token wasn't loadable.
-        let state = client.state.lock().await;
-        let deletes = state
-            .calls
-            .iter()
-            .filter(|c| {
-                matches!(
-                    c,
-                    crate::gcal_push::connector::testing::MockCall::DeleteCalendar { .. }
-                )
-            })
-            .count();
-        assert_eq!(
-            deletes, 0,
-            "remote delete must be skipped when token failed to load"
-        );
-        drop(state);
-
         // PushDisabled emitted — UX promise that disconnect "succeeded".
         assert!(
             recorder.events().contains(&GcalEvent::PushDisabled),
@@ -907,13 +914,18 @@ mod tests {
         // clear sequenced in front of it.
         let (pool, _dir) = test_pool().await;
         let store = store_with(Some(dummy_token())).await;
-        let client = Arc::new(MockGcalClient::new());
-        let client_trait: Arc<dyn GcalClient> = client.clone();
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}")))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        let api = make_api(&server);
         let recorder = Arc::new(RecordingEventEmitter::new());
         let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
 
         // Populate every piece of state cleared by disconnect.
-        models::set_setting(&pool, GcalSettingKey::CalendarId, "cal_XYZ")
+        models::set_setting(&pool, GcalSettingKey::CalendarId, TEST_CAL_ID)
             .await
             .unwrap();
         models::set_setting(&pool, GcalSettingKey::OauthAccountEmail, "me@example.com")
@@ -929,7 +941,7 @@ mod tests {
             .await
             .unwrap();
 
-        disconnect_gcal_inner(&pool, client_trait.as_ref(), &store, &emitter, true)
+        disconnect_gcal_inner(&pool, &api, &store, &emitter, true)
             .await
             .unwrap();
 
@@ -990,8 +1002,16 @@ mod tests {
         // empty keyring (skips remote delete) and re-runs the tx.
         let (pool, _dir) = test_pool().await;
         let store = store_with(Some(dummy_token())).await;
-        let client = Arc::new(MockGcalClient::new());
-        let client_trait: Arc<dyn GcalClient> = client.clone();
+        // The remote DELETE on the calendar happens *before* the SQL
+        // tx, so we wire wiremock for it.  The 200 response means the
+        // remote-delete branch succeeds and the tx then runs and fails.
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/calendars/cal_KEEP"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        let api = make_api(&server);
         let recorder = Arc::new(RecordingEventEmitter::new());
         let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
 
@@ -1016,7 +1036,7 @@ mod tests {
             .await
             .unwrap();
 
-        let err = disconnect_gcal_inner(&pool, client_trait.as_ref(), &store, &emitter, true)
+        let err = disconnect_gcal_inner(&pool, &api, &store, &emitter, true)
             .await
             .expect_err(
                 "disconnect must surface NotFound from the in-tx oauth_account_email update",

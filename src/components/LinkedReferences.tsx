@@ -19,6 +19,7 @@ import { logger } from '@/lib/logger'
 import { useBacklinkResolution } from '../hooks/useBacklinkResolution'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
+import { useFocusedRowEffect } from '../hooks/useFocusedRowEffect'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '../lib/tauri'
@@ -241,28 +242,14 @@ export function LinkedReferences({
 
   const focusedBlockId = flatVisibleBlocks[focusedIndex]?.id ?? null
 
-  // Reset focusedIndex when groups change
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset
-  useEffect(() => {
-    setFocusedIndex(0)
-  }, [groups, groupExpanded, setFocusedIndex])
-
-  // Scroll focused block into view and apply focus indicator
-  useEffect(() => {
-    const container = listRef.current
-    if (!container || !focusedBlockId) return
-
-    const el = container.querySelector(`[data-backlink-item="${focusedBlockId}"]`) as HTMLElement
-    if (!el) return
-
-    el.scrollIntoView({ block: 'nearest' })
-
-    // Apply focus classes
-    for (const cls of BACKLINK_FOCUS_CLASSES) el.classList.add(cls)
-    return () => {
-      for (const cls of BACKLINK_FOCUS_CLASSES) el.classList.remove(cls)
-    }
-  }, [focusedBlockId])
+  useFocusedRowEffect({
+    containerRef: listRef,
+    focusedRowId: focusedBlockId,
+    rowAttr: 'data-backlink-item',
+    focusClasses: BACKLINK_FOCUS_CLASSES,
+    setFocusedIndex,
+    resetDeps: [groups, groupExpanded, setFocusedIndex],
+  })
 
   const handleContainerKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

@@ -1,12 +1,48 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  dueDateColor,
   formatCompactDate,
+  formatDate,
   getDateRangeForFilter,
   getTodayString,
   getWeekOptions,
   isDateFormattedPage,
   MONTH_SHORT,
 } from '../date-utils'
+
+describe('formatDate (review-MAINT-129: timezone semantics regression)', () => {
+  // The MAINT-129 migration replaced an inline `padStart`-based formatter
+  // in `BlockListItem` with this date-fns-backed `formatDate`. The
+  // padStart version used local-time `Date` getters (`getFullYear()`,
+  // `getMonth()`, `getDate()`); date-fns `format(d, 'yyyy-MM-dd')` also
+  // uses local-time getters. These tests pin that invariant — if a
+  // future version of date-fns ever changed to UTC by default, every
+  // user not in UTC would see dates shift by ±1 day near midnight.
+  it('formats a Date as YYYY-MM-DD using local time getters', () => {
+    // Construct a date with a local-time intent (Date(year, month, day)
+    // is local-time per spec, regardless of the host TZ).
+    const d = new Date(2026, 3, 29) // April 29, 2026 (month is 0-indexed)
+    expect(formatDate(d)).toBe('2026-04-29')
+  })
+
+  it('does NOT shift the date by host timezone offset', () => {
+    // Build a Date that, in UTC, would be on a DIFFERENT day than the
+    // local-time Date(year, month, day) constructor produces. If formatDate
+    // ever used UTC getters, this test would fail.
+    //
+    // We pick a moment late in local-time April 29 — for hosts west of
+    // UTC the Date's UTC equivalent is April 30. For hosts east of UTC
+    // the Date's UTC equivalent is still April 29 but we still verify
+    // local-time wins.
+    const d = new Date(2026, 3, 29, 23, 30, 0) // local 11:30 PM Apr 29
+    expect(formatDate(d)).toBe('2026-04-29')
+  })
+
+  it('zero-pads single-digit months and days', () => {
+    expect(formatDate(new Date(2026, 0, 1))).toBe('2026-01-01')
+    expect(formatDate(new Date(2026, 8, 9))).toBe('2026-09-09')
+  })
+})
 
 describe('formatCompactDate', () => {
   beforeEach(() => {
@@ -139,6 +175,37 @@ describe('getTodayString', () => {
   it('returns today formatted as YYYY-MM-DD', () => {
     vi.setSystemTime(new Date(2026, 3, 10))
     expect(getTodayString()).toBe('2026-04-10')
+  })
+})
+
+describe('dueDateColor', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 3, 10)) // April 10, 2026
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('returns destructive classes for past dates', () => {
+    expect(dueDateColor('2025-12-31')).toBe('bg-destructive/10 text-destructive')
+  })
+
+  it('returns destructive classes for the day before today', () => {
+    expect(dueDateColor('2026-04-09')).toBe('bg-destructive/10 text-destructive')
+  })
+
+  it('returns status-pending classes for today', () => {
+    expect(dueDateColor('2026-04-10')).toBe('bg-status-pending text-status-pending-foreground')
+  })
+
+  it('returns muted classes for the day after today', () => {
+    expect(dueDateColor('2026-04-11')).toBe('bg-muted text-muted-foreground')
+  })
+
+  it('returns muted classes for far-future dates', () => {
+    expect(dueDateColor('2099-12-31')).toBe('bg-muted text-muted-foreground')
   })
 })
 

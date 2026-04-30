@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import type { PeerRefRow } from '../lib/tauri'
@@ -100,21 +101,47 @@ export function PairingDialog({
 
   const syncSetState = useSyncStore((s) => s.setState)
 
+  // MAINT-120: bootstrap the pairing session via the shared useIpcCommand
+  // hook. The error template literal mirrors the existing inline format
+  // so the error banner copy stays byte-equivalent.
+  const { execute: executeInit } = useIpcCommand<
+    void,
+    [{ passphrase: string; qr_svg: string; port: number }, PeerRefRow[]]
+  >({
+    call: () => Promise.all([startPairing(), listPeerRefs()]),
+    module: 'PairingDialog',
+    errorLogMessage: 'Failed to initialize pairing',
+    onSuccess: ([info, peerList]) => {
+      setPairingInfo(info)
+      setPeers(peerList)
+      setCountdown(PAIRING_TIMEOUT_SECONDS)
+    },
+    onError: (err) => {
+      setError(`Failed to start pairing: ${String(err instanceof Error ? err.message : err)}`)
+    },
+  })
+
   // init function extracted so it can be called for retry (#282)
   const init = useCallback(async () => {
     setLoading(true)
     setError(null)
-    try {
-      const [info, peerList] = await Promise.all([startPairing(), listPeerRefs()])
-      setPairingInfo(info)
-      setPeers(peerList)
-      setCountdown(PAIRING_TIMEOUT_SECONDS)
-    } catch (err) {
-      logger.error('PairingDialog', 'Failed to initialize pairing', undefined, err)
-      setError(`Failed to start pairing: ${String(err instanceof Error ? err.message : err)}`)
-    }
+    await executeInit()
     setLoading(false)
-  }, [])
+  }, [executeInit])
+
+  // MAINT-120: cleanup-side cancelPairing — fires when the dialog closes
+  // or unmounts. Logger.warn + toast.error matches the original inline
+  // shape (handleCancel uses a different logger.error-only flavor that
+  // stays inline because it has no toast).
+  const { execute: executeCancelPairingCleanup } = useIpcCommand<void, void>({
+    call: () => cancelPairing(),
+    module: 'PairingDialog',
+    errorLogMessage: 'cancelPairing on close/unmount failed',
+    logLevel: 'warn',
+    onError: () => {
+      toast.error(t('pairing.cancelFailed'))
+    },
+  })
 
   // Load pairing info and peer list when dialog opens;
   // cancel the pairing session on close/unmount to avoid leaking the listener.
@@ -136,12 +163,9 @@ export function PairingDialog({
     return () => {
       cancelled = true
       // Cancel any in-progress pairing when the dialog closes or unmounts
-      cancelPairing().catch((err) => {
-        logger.warn('PairingDialog', 'cancelPairing on close/unmount failed', undefined, err)
-        toast.error(t('pairing.cancelFailed'))
-      })
+      void executeCancelPairingCleanup()
     }
-  }, [open, init, t])
+  }, [open, init, executeCancelPairingCleanup])
 
   // Countdown timer (#294) — only re-run effect when active/inactive changes.
   // UX-263: Read the pause flag through a ref inside the interval so flipping
@@ -251,28 +275,42 @@ export function PairingDialog({
     [getWordInputs],
   )
 
-  const handlePair = useCallback(async () => {
-    const passphrase = words.join(' ').trim()
-    if (!passphrase || words.some((w) => w === '')) return
-
-    setPairLoading(true)
-    setError(null)
-    try {
+  // MAINT-120: confirm pairing with the entered passphrase + refresh the
+  // peer list. Failures in either of the two underlying calls produce
+  // the same "Pairing failed:" banner — matches existing behavior where
+  // a post-confirm `listPeerRefs()` rejection is reported under the same
+  // label. `setWords` / success toast / dialog close run only on full
+  // success via `onSuccess`.
+  const { execute: executePair } = useIpcCommand<{ passphrase: string }, void>({
+    call: async ({ passphrase }) => {
       // remoteDeviceId is derived from the passphrase in the pairing protocol
       await confirmPairing(passphrase, '')
       syncSetState('idle')
       // Refresh peer list
       const peerList = await listPeerRefs()
       setPeers(peerList)
+    },
+    module: 'PairingDialog',
+    errorLogMessage: 'Pairing failed',
+    onSuccess: () => {
       setWords(['', '', '', ''])
       toast.success(t('pairing.successMessage'))
       onOpenChange(false)
-    } catch (err) {
-      logger.error('PairingDialog', 'Pairing failed', undefined, err)
+    },
+    onError: (err) => {
       setError(`Pairing failed: ${String(err instanceof Error ? err.message : err)}`)
-    }
+    },
+  })
+
+  const handlePair = useCallback(async () => {
+    const passphrase = words.join(' ').trim()
+    if (!passphrase || words.some((w) => w === '')) return
+
+    setPairLoading(true)
+    setError(null)
+    await executePair({ passphrase })
     setPairLoading(false)
-  }, [words, syncSetState, onOpenChange, t])
+  }, [words, executePair])
 
   // #279: Space auto-advance and Enter-to-submit (uses DOM queries for focus)
   const handleWordKeyDown = useCallback(
@@ -337,16 +375,27 @@ export function PairingDialog({
     triggerRef?.current?.focus()
   }, [onOpenChange, triggerRef, handleTypingStateChange])
 
-  const handleUnpair = useCallback(async (peerId: string) => {
-    try {
-      await deletePeerRef(peerId)
+  // MAINT-120: unpair a peer device. Same template-literal error format
+  // as `handlePair` / `init` so the existing inline banner is preserved.
+  const { execute: executeUnpair } = useIpcCommand<{ peerId: string }, void>({
+    call: ({ peerId }) => deletePeerRef(peerId),
+    module: 'PairingDialog',
+    errorLogMessage: 'Failed to unpair device',
+    onSuccess: (_result, { peerId }) => {
       setPeers((prev) => prev.filter((p) => p.peer_id !== peerId))
       setUnpairPeerId(null)
-    } catch (err) {
-      logger.error('PairingDialog', 'Failed to unpair device', undefined, err)
+    },
+    onError: (err) => {
       setError(`Failed to unpair device: ${String(err instanceof Error ? err.message : err)}`)
-    }
-  }, [])
+    },
+  })
+
+  const handleUnpair = useCallback(
+    async (peerId: string) => {
+      await executeUnpair({ peerId })
+    },
+    [executeUnpair],
+  )
 
   // #294: Format countdown for display
   const isExpired = countdown !== null && countdown <= 0

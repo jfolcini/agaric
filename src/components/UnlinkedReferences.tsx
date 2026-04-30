@@ -18,6 +18,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
+import { useFocusedRowEffect } from '../hooks/useFocusedRowEffect'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '../lib/tauri'
@@ -30,6 +31,7 @@ import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 
 const UNLINKED_FOCUS_CLASSES = 'ring-2 ring-ring/50 bg-accent/30'
+const UNLINKED_FOCUS_CLASSES_ARR = UNLINKED_FOCUS_CLASSES.split(' ')
 
 export interface UnlinkedReferencesProps {
   pageId: string
@@ -240,29 +242,14 @@ export function UnlinkedReferences({
 
   const focusedBlockId = flatVisibleBlocks[focusedIndex]?.id ?? null
 
-  // Reset focusedIndex when groups change
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset
-  useEffect(() => {
-    setFocusedIndex(0)
-  }, [groups, expandedGroups, setFocusedIndex])
-
-  // Scroll focused block into view and apply focus indicator
-  useEffect(() => {
-    const container = listRef.current
-    if (!container || !focusedBlockId) return
-
-    const el = container.querySelector(`[data-backlink-item="${focusedBlockId}"]`) as HTMLElement
-    if (!el) return
-
-    el.scrollIntoView({ block: 'nearest' })
-
-    // Apply focus classes
-    const classes = UNLINKED_FOCUS_CLASSES.split(' ')
-    for (const cls of classes) el.classList.add(cls)
-    return () => {
-      for (const cls of classes) el.classList.remove(cls)
-    }
-  }, [focusedBlockId])
+  useFocusedRowEffect({
+    containerRef: listRef,
+    focusedRowId: focusedBlockId,
+    rowAttr: 'data-backlink-item',
+    focusClasses: UNLINKED_FOCUS_CLASSES_ARR,
+    setFocusedIndex,
+    resetDeps: [groups, expandedGroups, setFocusedIndex],
+  })
 
   const handleContainerKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

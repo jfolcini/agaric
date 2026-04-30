@@ -955,13 +955,13 @@ pub fn run() {
             // reconcile tick without issuing HTTP.
             //
             // The production `GcalApi::new()` call can only fail if
-            // rustls itself fails to build; downgrade that to a
-            // managed-state `GcalClientState` with a dummy client so
-            // the commands still resolve and surface the error via
-            // `last_error` on `get_gcal_status`.
-            use gcal_push::connector::{
-                spawn_connector, GcalApiAdapter, GcalClient as GcalClientTrait,
-            };
+            // `reqwest::Client::builder().build()` fails (rustls
+            // misconfig).  In that case the `?`-propagation here
+            // aborts setup with a clear error rather than silently
+            // running with a dead client; the unreachability is
+            // documented at the call site below.
+            use gcal_push::api::GcalApi;
+            use gcal_push::connector::spawn_connector;
             use gcal_push::keyring_store::{
                 KeyringTokenStore, NoopEventEmitter, TauriGcalEventEmitter, TokenStore,
             };
@@ -1010,78 +1010,11 @@ pub fn run() {
                     }
                 };
 
-            // Production API adapter.  If `GcalApi::new` fails (which
-            // it effectively cannot in practice), the adapter cannot
-            // be built — surface the error and disable push.
-            let gcal_client: std::sync::Arc<dyn GcalClientTrait> =
-                match gcal_push::api::GcalApi::new() {
-                    Ok(api) => std::sync::Arc::new(GcalApiAdapter::new(api)),
-                    Err(e) => {
-                        tracing::error!(
-                            target: "gcal",
-                            error = %e,
-                            "failed to build GcalApi — push disabled",
-                        );
-                        // Use the noop emitter as the stand-in for
-                        // the client seam — every call returns an
-                        // error, which the connector surfaces as a
-                        // HardFailure.
-                        struct DeadClient;
-                        #[async_trait::async_trait]
-                        impl GcalClientTrait for DeadClient {
-                            async fn create_calendar(
-                                &self,
-                                _t: &gcal_push::oauth::Token,
-                                _n: &str,
-                            ) -> Result<String, error::AppError> {
-                                Err(error::AppError::Validation(
-                                    "gcal.api.unavailable".to_owned(),
-                                ))
-                            }
-                            async fn delete_calendar(
-                                &self,
-                                _t: &gcal_push::oauth::Token,
-                                _c: &str,
-                            ) -> Result<(), error::AppError> {
-                                Err(error::AppError::Validation(
-                                    "gcal.api.unavailable".to_owned(),
-                                ))
-                            }
-                            async fn insert_event(
-                                &self,
-                                _t: &gcal_push::oauth::Token,
-                                _c: &str,
-                                _e: &gcal_push::digest::Event,
-                            ) -> Result<String, error::AppError> {
-                                Err(error::AppError::Validation(
-                                    "gcal.api.unavailable".to_owned(),
-                                ))
-                            }
-                            async fn patch_event(
-                                &self,
-                                _t: &gcal_push::oauth::Token,
-                                _c: &str,
-                                _e: &str,
-                                _ev: &gcal_push::digest::Event,
-                            ) -> Result<(), error::AppError> {
-                                Err(error::AppError::Validation(
-                                    "gcal.api.unavailable".to_owned(),
-                                ))
-                            }
-                            async fn delete_event(
-                                &self,
-                                _t: &gcal_push::oauth::Token,
-                                _c: &str,
-                                _e: &str,
-                            ) -> Result<(), error::AppError> {
-                                Err(error::AppError::Validation(
-                                    "gcal.api.unavailable".to_owned(),
-                                ))
-                            }
-                        }
-                        std::sync::Arc::new(DeadClient)
-                    }
-                };
+            // Production API.  `GcalApi::new` only fails on a
+            // `reqwest::Client::builder().build()` failure (rustls
+            // misconfig) — propagate via `?` so the launch fails
+            // visibly rather than silently spawning a dead connector.
+            let gcal_client: std::sync::Arc<GcalApi> = std::sync::Arc::new(GcalApi::new()?);
 
             // Silence the unused-import warning on the
             // `NoopEventEmitter` — the constant is used via
