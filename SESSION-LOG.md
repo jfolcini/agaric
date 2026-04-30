@@ -1,5 +1,45 @@
 # Session Log
 
+## Session 564 — Close 1 frontend item (MAINT-130(c) sub-tasks 1+2 — BlockRefPicker capability gap + ref-plumbing fix) (2026-04-30)
+
+**1 MAINT sub-item closed in one PROMPT.md batch with 1 build subagent + 1 review subagent.** Theme: continued the smaller-batch shape from sessions 559-563. Single subagent for a focused user-visible fix + 1-line correctness fix. Sub-task 3 of MAINT-130(c) (`createPickerPlugin` factory across 5 pickers) explicitly deferred. Reviewer flagged a parallel ref-plumbing drift in 4 sibling pickers that is latent (not currently observable because all production callers use `useCallback([])`); logged as a new follow-up `MAINT-165` rather than extending this batch's scope.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 23 → 24 (closed MAINT-130(c) sub-tasks 1+2; MAINT-130 row STAYS because sub-task 3 (`createPickerPlugin` factor) is still in scope; **opened new MAINT-165** for the parallel ref-plumbing drift = +1 row).
+- **Previously-resolved counter:** 809+ → 810+ across 530 → 531 sessions.
+
+**Items closed (1 sub-item — MAINT-130(c) partial):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-130(c) sub-tasks 1+2 (sub-task 3 deferred) | `src/editor/extensions/block-ref-picker.ts` (58L → 185L, +127L for the 3 missing hooks) + `src/editor/use-roving-editor.ts` (1-line ref-plumbing fix at line 341) + `src/editor/__tests__/block-ref-picker.test.ts` (267L → 612L, +10 new tests) + `src/editor/__tests__/use-roving-editor.test.ts` (659L → 700L, +1 new test) — Subagent c50dfba6 | **BlockRefPicker now matches BlockLinkPicker's capability shape: `Commands<ReturnType>` module augmentation + `addCommands()` (`resolveBlockRefFromSelection`) + `addInputRules()` for `((text))` auto-resolution.** Semantics: case-insensitive exact-match against `item.label` from the items callback; fall back to plain-text re-insertion on no match, multiple non-exact matches, or items-callback error (with `logger.warn`). **Explicitly NO `onCreate` path** — block refs reference arbitrary mid-content blocks with no sensible "create" target without a parent context (BlockLinkPicker.onCreate creates a new page; that doesn't translate to mid-content block refs). Documented in a code comment. **Sub-task 2 fix at `use-roving-editor.ts:341`:** changed `BlockRefPicker.configure({ items: searchBlockRefsRef.current })` to `BlockRefPicker.configure({ items: (query) => searchBlockRefsRef.current(query) })` — wrapper-closure pattern matches the existing `TagRef.configure` at lines 309-313. Reviewer (`f9f44e96`) initially returned NEEDS-CHANGES on a parallel ref-plumbing drift in 4 sibling pickers but verified-as-latent after orchestrator inspection (production callers use `useCallback([])`); logged as new MAINT-165 instead. 26 BlockRefPicker tests + 48 use-roving-editor tests + 209 BlockTree tests = **283/283 pass**. Reviewer's other findings APPROVED. |
+
+**Process notes:**
+
+- **Single-subagent batch with reviewer-driven scope decision.** Reviewer caught a parallel ref-plumbing drift in 4 sibling pickers (AtTagPicker `searchTags`, BlockLinkPicker `searchPages`, SlashCommand `searchSlashCommands`, PropertyPicker `searchPropertyKeys`) that has the same fragile-API-contract shape as the BlockRefPicker fix but is not currently observable because all production callers (`useBlockResolve.ts:244-291` etc.) wrap their search functions in `useCallback([])`. Per AGENTS.md "Surgical Changes" + Review-Later guidance, logged as new MAINT-165 rather than extending this batch's scope.
+- **Drift discovered (subagent flagged):**
+  1. The task description's claim "match its 4 sibling pickers" is inaccurate — only BlockLinkPicker has all three hooks. AtTagPicker has only `addInputRules`; PropertyPicker and SlashCommand have neither. Subagent proceeded against BlockLinkPicker as the canonical reference (as the task brief explicitly suggested).
+  2. The task description's "uses `insertBlockRef(item.id)`" wording was ambiguous — `insertBlockRef` is a node-level command at the cursor, but the input-rule pattern requires position-anchored insertion to survive the async items-callback gap. Subagent used `insertContentAt(insertPos, { type: 'block_ref', attrs: { id } })` (matches BlockLinkPicker's race-condition-safe pattern, NOT the literal command name); flagged for the orchestrator's awareness.
+- **No `cargo sqlx prepare`** needed — no SQL changes.
+- **No FEATURE-MAP.md update needed** — internal editor capability; no new user-facing IPC commands or top-level UI.
+
+**Files touched (this session's batch):**
+
+- Frontend modified (2): `src/editor/extensions/block-ref-picker.ts`, `src/editor/use-roving-editor.ts`.
+- Test files modified (2): `src/editor/__tests__/block-ref-picker.test.ts`, `src/editor/__tests__/use-roving-editor.test.ts`.
+- Docs: `REVIEW-LATER.md` (MAINT-130 row trimmed; MAINT-165 added as new entry covering the parallel ref-plumbing drift; appendix entries adjusted). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- BlockRefPicker tests: `npx vitest run src/editor/__tests__/block-ref-picker` → **26/26 passed**.
+- use-roving-editor tests: `npx vitest run src/editor/__tests__/use-roving-editor` → **48/48 passed**.
+- BlockTree integration: `npx vitest run src/components/__tests__/BlockTree` → **209/209 passed**.
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome on the 4 modified files: 0 warnings.
+
+---
+
 ## Session 563 — Close 1 frontend-cleanup item (MAINT-127 keyboard-config.ts split into 4 files) (2026-04-30)
 
 **1 MAINT item partial-closed in one PROMPT.md batch with 1 build subagent + 1 review subagent.** Theme: continued the smaller-batch shape from sessions 559-562. Single subagent for a clean, mechanical god-file split. Initial plan considered pairing with PropertyRowEditor or HistoryView decomposition, but inspection showed both were design-heavy (shared state, prop chains) — keyboard-config was the only candidate with a truly mechanical split, so it became a single-item batch.

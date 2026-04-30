@@ -656,4 +656,49 @@ describe('useRovingEditor integration (renderHook)', () => {
     result.current.editor?.destroy()
     unmountHook()
   })
+
+  // MAINT-130(c) — Pattern-C ref plumbing for searchBlockRefs.
+  //
+  // Before the fix, BlockRefPicker.configure({ items: searchBlockRefsRef.current })
+  // captured the .current value at configure time, so subsequent re-renders
+  // with a fresh searchBlockRefs callback never reached the picker. The fix
+  // wraps the read in a closure: items: (q) => searchBlockRefsRef.current(q),
+  // which dereferences .current at CALL time. This test verifies that.
+  it('searchBlockRefs callback is read fresh at call time (no stale closure)', async () => {
+    const fn1 = vi.fn().mockResolvedValue([{ id: 'B1', label: 'one' }])
+    const fn2 = vi.fn().mockResolvedValue([{ id: 'B2', label: 'two' }])
+
+    const {
+      result,
+      rerender,
+      unmount: unmountHook,
+    } = renderHook(
+      ({ searchBlockRefs }: { searchBlockRefs: typeof fn1 }) =>
+        useRovingEditor({ searchBlockRefs }),
+      { initialProps: { searchBlockRefs: fn1 } },
+    )
+    await waitFor(() => expect(result.current.editor).not.toBeNull())
+
+    // Re-render with a different callback. The ref-update at line 281 of
+    // use-roving-editor.ts will swap searchBlockRefsRef.current to fn2.
+    rerender({ searchBlockRefs: fn2 })
+
+    // Look up the BlockRefPicker extension on the live editor instance and
+    // invoke the configured items option directly — this is the same path
+    // the suggestion plugin's items wrapper takes (see block-ref-picker.ts
+    // addProseMirrorPlugins → items). If the closure reads .current at call
+    // time, fn2 is invoked; if it captured a stale reference, fn1 fires.
+    const ext = (result.current.editor as Editor).extensionManager.extensions.find(
+      (e) => e.name === 'blockRefPicker',
+    )
+    expect(ext).toBeDefined()
+    const items = ext?.options.items as (q: string) => Promise<unknown>
+    await items('hello')
+
+    expect(fn2).toHaveBeenCalledWith('hello')
+    expect(fn1).not.toHaveBeenCalled()
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
 })
