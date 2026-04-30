@@ -57,6 +57,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { i18n } from '@/lib/i18n'
@@ -673,16 +674,18 @@ export function SpaceManageDialog({
   return (
     <TooltipProvider>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent data-testid="space-manage-dialog" className="max-h-[85vh] overflow-y-auto">
+        <DialogContent data-testid="space-manage-dialog">
           <DialogHeader>
             <DialogTitle>{t('space.manageDialogTitle')}</DialogTitle>
             <DialogDescription>{t('space.manageDialogDescription')}</DialogDescription>
           </DialogHeader>
-          {onboardingVisible && <OnboardingHint onDismiss={handleDismissOnboarding} />}
-          <div data-slot="space-manage-list">{rows}</div>
-          <div className="flex justify-end pt-2">
-            <CreateSpaceForm onCreated={handleRefresh} />
-          </div>
+          <ScrollArea className="max-h-[85vh]">
+            {onboardingVisible && <OnboardingHint onDismiss={handleDismissOnboarding} />}
+            <div data-slot="space-manage-list">{rows}</div>
+            <div className="flex justify-end pt-2">
+              <CreateSpaceForm onCreated={handleRefresh} />
+            </div>
+          </ScrollArea>
         </DialogContent>
       </Dialog>
     </TooltipProvider>

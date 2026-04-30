@@ -16,12 +16,12 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import { useIsMobile } from '../../hooks/use-mobile'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { useNavigationStore } from '../../stores/navigation'
 import { useRecentPagesStore } from '../../stores/recent-pages'
 import { RecentPagesStrip } from '../RecentPagesStrip'
 
-vi.mock('../../hooks/use-mobile', () => ({
+vi.mock('../../hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
 }))
 

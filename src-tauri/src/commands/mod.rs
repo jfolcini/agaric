@@ -51,6 +51,14 @@ pub use agenda::{
     count_agenda_batch_inner, list_projected_agenda, list_projected_agenda_inner,
     list_undated_tasks, list_undated_tasks_inner,
 };
+// MAINT-164: `_on_the_fly` exposed for date-clock-pinned regression tests.
+// Tests bypass the cache (which itself reads `chrono::Local::now()` and
+// produces today-anchored rows that drift over time) and call this path
+// directly with a fixed `today`. Production callers use
+// `list_projected_agenda_inner` (above) — they do not need `_on_the_fly`,
+// so this re-export is gated on `#[cfg(test)]`.
+#[cfg(test)]
+pub(crate) use agenda::list_projected_agenda_on_the_fly;
 pub use attachments::{
     add_attachment, add_attachment_inner, delete_attachment, delete_attachment_inner,
     list_attachments, list_attachments_inner,

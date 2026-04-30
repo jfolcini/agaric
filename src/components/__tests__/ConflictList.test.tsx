@@ -34,9 +34,9 @@ import { emptyPage, makeConflict } from '../../__tests__/fixtures'
 import { announce } from '../../lib/announcer'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { ConflictList } from '../ConflictList'
-import { renderRichContent } from '../StaticBlock'
+import { renderRichContent } from '../RichContentRenderer'
 
-vi.mock('../StaticBlock', () => ({
+vi.mock('../RichContentRenderer', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
 }))
 

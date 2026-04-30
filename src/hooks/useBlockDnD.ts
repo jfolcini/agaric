@@ -30,8 +30,8 @@ import {
   type Projection,
   SENTINEL_ID,
 } from '../lib/tree-utils'
-import { useIsMobile } from './use-mobile'
 import { useAutoScrollOnDrag } from './useAutoScrollOnDrag'
+import { useIsMobile } from './useIsMobile'
 
 interface UseBlockDnDParams {
   blocks: FlatBlock[]

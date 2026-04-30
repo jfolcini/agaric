@@ -16,7 +16,7 @@ import { axe } from 'vitest-axe'
 import { makeConflict } from '../../__tests__/fixtures'
 import { ConflictTypeRenderer } from '../ConflictTypeRenderer'
 
-vi.mock('../StaticBlock', () => ({
+vi.mock('../RichContentRenderer', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
 }))
 

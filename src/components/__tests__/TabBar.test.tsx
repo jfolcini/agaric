@@ -9,11 +9,11 @@ import { TabBar } from '../TabBar'
 // `useIsMobile` is mocked so each test can pin the viewport-state boolean
 // without juggling `window.innerWidth` or matchMedia. The default (false)
 // matches the existing tests that assume desktop rendering.
-vi.mock('../../hooks/use-mobile', () => ({
+vi.mock('../../hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
 }))
 
-import { useIsMobile } from '../../hooks/use-mobile'
+import { useIsMobile } from '../../hooks/useIsMobile'
 
 const mockedUseIsMobile = vi.mocked(useIsMobile)
 

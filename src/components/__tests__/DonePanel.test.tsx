@@ -51,7 +51,7 @@ vi.mock('lucide-react', () => ({
   CalendarDays: (props: Record<string, unknown>) => <svg data-testid="calendar-days" {...props} />,
 }))
 
-vi.mock('../StaticBlock', () => ({
+vi.mock('../RichContentRenderer', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
 }))
 

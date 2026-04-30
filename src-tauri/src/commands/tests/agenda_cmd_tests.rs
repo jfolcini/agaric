@@ -994,14 +994,16 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
     mat.shutdown();
 }
 
-// MAINT-164: this test uses hardcoded April 2026 dates and the production
-// `list_projected_agenda_inner` reads `chrono::Local::now().date_naive()`
-// directly (`commands/agenda.rs:309`), so the assertion drifts as the
-// system clock advances past the hardcoded range. Pre-existing failure on
-// commit a59da9e (Session 557) once today moved past 2026-04-30. Re-enable
-// once the projected-agenda path takes a `today: NaiveDate` parameter
-// (or a `Clock` trait) — at that point this test should pin a fake today.
-#[ignore = "MAINT-164: real-clock dependency drifts the assertion past 2026-04-30"]
+// MAINT-164: re-enabled in session 559 — `list_projected_agenda_on_the_fly`
+// no longer reads `chrono::Local::now()` directly; `today` is threaded in
+// from `list_projected_agenda_inner_with_today` so this test can pin a
+// fake today and the assertion stops drifting as the system clock advances.
+//
+// The repeat rule is `daily` (default mode — no `.+` or `++` prefix), so
+// `today` does not change the projected dates; we still pin it to
+// 2026-04-06 (the due date) for documentation, and to make the test robust
+// against any future change that adds a "skip past today" behavior in
+// default mode.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn projected_agenda_respects_repeat_count_end_condition() {
     let (pool, _dir) = test_pool().await;
@@ -1079,8 +1081,17 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
+    // MAINT-164: bypass the projected_agenda_cache (which itself reads
+    // `chrono::Local::now()` during rebuild and was populated as a side
+    // effect of the `set_property` ops above). Calling `_on_the_fly`
+    // directly with a pinned `today` keeps the assertion stable across
+    // system-clock advances. See the doc comment on
+    // `list_projected_agenda_on_the_fly` for the full rationale.
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2026, 4, 6).unwrap();
+    let range_start = chrono::NaiveDate::from_ymd_opt(2026, 4, 7).unwrap();
+    let range_end = chrono::NaiveDate::from_ymd_opt(2026, 4, 30).unwrap();
     let entries =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-30".into(), None)
+        list_projected_agenda_on_the_fly(&pool, range_start, range_end, 200, pinned_today)
             .await
             .unwrap();
 

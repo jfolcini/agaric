@@ -23,7 +23,7 @@ import { logger } from '../lib/logger'
 import { reportIpcError } from '../lib/report-ipc-error'
 import { getBlock, setDueDate, setScheduledDate } from '../lib/tauri'
 import { PageLink } from './PageLink'
-import { renderRichContent } from './StaticBlock'
+import { renderRichContent } from './RichContentRenderer'
 import { Calendar } from './ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 

@@ -5,8 +5,9 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { makeBlock } from '../../__tests__/fixtures'
+import { buildFilters, parseQueryExpression } from '../../lib/query-utils'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
-import { buildFilters, detectColumns, parseQueryExpression, QueryResult } from '../QueryResult'
+import { detectColumns, QueryResult } from '../QueryResult'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('../QueryBuilderModal', () => ({

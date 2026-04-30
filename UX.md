@@ -234,7 +234,7 @@ File: `src/components/ui/button.tsx` (button variants), `src/components/Sortable
 - **Dynamic viewport height:** `100dvh` (not `100vh`) — handles mobile browser chrome correctly
 - **Safe area insets:** `viewport-fit=cover` in meta tag + `padding: env(safe-area-inset-*)` on body — handles notches and rounded corners
 - **Virtual keyboard awareness:** `visualViewport?.height` with `innerHeight` fallback — prevents content from being hidden behind soft keyboard
-- **Mobile breakpoint:** `768px` (Tailwind `md`), detected via `window.innerWidth < 768` in `useIsMobile` hook (`src/hooks/use-mobile.ts`)
+- **Mobile breakpoint:** `768px` (Tailwind `md`), detected via `window.innerWidth < 768` in `useIsMobile` hook (`src/hooks/useIsMobile.ts`)
 - **Mobile detection:** Synchronous initializer in `useIsMobile` to prevent layout flash
 
 ### Pointer Events

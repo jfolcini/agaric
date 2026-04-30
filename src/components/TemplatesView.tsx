@@ -16,10 +16,12 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { reportIpcError } from '@/lib/report-ipc-error'
+import { cn } from '@/lib/utils'
 import { createPageInSpace, deleteProperty, queryByProperty, setProperty } from '../lib/tauri'
 import { loadTemplatePagesWithPreview } from '../lib/template-utils'
 import { useNavigationStore } from '../stores/navigation'
@@ -163,7 +165,7 @@ export function TemplatesView(): React.ReactElement {
             {/* Search input — only show when there are templates */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
+              <SearchInput
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={t('templates.search')}
@@ -218,12 +220,12 @@ export function TemplatesView(): React.ReactElement {
                       variant="ghost"
                       size="icon-xs"
                       aria-label={t('templates.removeTemplateLabel', { name: tpl.content })}
-                      className={[
+                      className={cn(
                         'shrink-0 opacity-0 group-hover:opacity-100 transition-opacity',
                         'text-muted-foreground hover:text-destructive focus-visible:opacity-100',
                         '[@media(pointer:coarse)]:opacity-100',
                         'touch-target [@media(pointer:coarse)]:min-w-[44px]',
-                      ].join(' ')}
+                      )}
                       onClick={() => setPendingRemoval({ id: tpl.id, name: tpl.content ?? '' })}
                     >
                       <X className="h-3.5 w-3.5" />

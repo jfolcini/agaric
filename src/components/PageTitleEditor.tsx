@@ -2,6 +2,7 @@ import type React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
+import { cn } from '../lib/utils'
 import { renderRichContent } from './RichContentRenderer'
 
 export interface PageTitleEditorProps {
@@ -18,11 +19,11 @@ function hasInlineTokens(text: string): boolean {
   return text.includes('[[') || text.includes('#[')
 }
 
-const TITLE_CLASS = [
+const TITLE_CLASS = cn(
   'flex-1 text-xl font-semibold outline-hidden rounded-md px-1',
   'focus:ring-2 focus:ring-ring/50',
   'hover:bg-accent/5 focus-within:bg-accent/5 transition-colors',
-].join(' ')
+)
 
 export function PageTitleEditor({
   title,

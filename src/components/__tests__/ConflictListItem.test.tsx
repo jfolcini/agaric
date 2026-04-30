@@ -20,7 +20,7 @@ import { t } from '@/lib/i18n'
 import { makeConflict } from '../../__tests__/fixtures'
 import { ConflictListItem } from '../ConflictListItem'
 
-vi.mock('../StaticBlock', () => ({
+vi.mock('../RichContentRenderer', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
 }))
 
@@ -44,6 +44,7 @@ describe('ConflictListItem', () => {
   const defaultProps = {
     isExpanded: false,
     isSelected: false,
+    isFocused: false,
     deviceName: undefined as string | undefined,
     onToggleExpanded: vi.fn(),
     onToggleSelected: vi.fn(),
@@ -640,13 +641,19 @@ describe('ConflictListItem', () => {
       const block = makeConflict({ id: 'C1', content: 'text', parent_id: 'GONE' })
 
       const { container } = render(
-        <ul>
+        <div role="listbox" aria-label="Test conflict list">
           <ConflictListItem {...defaultProps} block={block} original={undefined} />
-        </ul>,
+        </div>,
       )
 
+      // ConflictListItem's <li role="option"> contains the action buttons
+      // (Keep / Discard / View original); axe's `nested-interactive` flags
+      // that combination by default. Matches the same rule disable used by
+      // ConflictList.test.tsx for the same intentional pattern.
       await waitFor(async () => {
-        const results = await axe(container)
+        const results = await axe(container, {
+          rules: { 'nested-interactive': { enabled: false } },
+        })
         expect(results).toHaveNoViolations()
       })
     })
@@ -657,13 +664,15 @@ describe('ConflictListItem', () => {
       const block = makeConflict({ id: 'C1', content: 'accessible conflict' })
 
       const { container } = render(
-        <ul>
+        <div role="listbox" aria-label="Test conflict list">
           <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
-        </ul>,
+        </div>,
       )
 
       await waitFor(async () => {
-        const results = await axe(container)
+        const results = await axe(container, {
+          rules: { 'nested-interactive': { enabled: false } },
+        })
         expect(results).toHaveNoViolations()
       })
     })
@@ -672,18 +681,20 @@ describe('ConflictListItem', () => {
       const block = makeConflict({ id: 'C1', content: 'selected conflict' })
 
       const { container } = render(
-        <ul>
+        <div role="listbox" aria-label="Test conflict list">
           <ConflictListItem
             {...defaultProps}
             block={block}
             original={originalBlock}
             isSelected={true}
           />
-        </ul>,
+        </div>,
       )
 
       await waitFor(async () => {
-        const results = await axe(container)
+        const results = await axe(container, {
+          rules: { 'nested-interactive': { enabled: false } },
+        })
         expect(results).toHaveNoViolations()
       })
     })
@@ -692,18 +703,20 @@ describe('ConflictListItem', () => {
       const block = makeConflict({ id: 'C1', content: 'expanded conflict' })
 
       const { container } = render(
-        <ul>
+        <div role="listbox" aria-label="Test conflict list">
           <ConflictListItem
             {...defaultProps}
             block={block}
             original={originalBlock}
             isExpanded={true}
           />
-        </ul>,
+        </div>,
       )
 
       await waitFor(async () => {
-        const results = await axe(container)
+        const results = await axe(container, {
+          rules: { 'nested-interactive': { enabled: false } },
+        })
         expect(results).toHaveNoViolations()
       })
     })

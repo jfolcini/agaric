@@ -28,10 +28,6 @@ const LazyPdfViewerDialog = lazy(() =>
   import('./PdfViewerDialog').then((m) => ({ default: m.PdfViewerDialog })),
 )
 
-// Re-export for backward compatibility
-export { getAssetUrl } from '../lib/attachment-utils'
-export { renderRichContent } from './RichContentRenderer'
-
 export interface StaticBlockProps {
   blockId: string
   content: string

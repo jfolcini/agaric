@@ -112,7 +112,6 @@ export function ConflictList(): React.ReactElement {
   )
   const [deviceNames, setDeviceNames] = useState<Map<string, string>>(new Map())
   const fetchedParentsRef = useRef(new Set<string>())
-  const listRef = useRef<HTMLDivElement>(null)
 
   // UX-265 sub-fix 2 — filter bar state.
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
@@ -290,21 +289,6 @@ export function ConflictList(): React.ReactElement {
     vim: false,
     homeEnd: true,
   })
-
-  // Programmatically set ARIA attributes on <li> children for listbox pattern
-  // without modifying ConflictListItem.
-  useEffect(() => {
-    if (!listRef.current) return
-    const items = listRef.current.querySelectorAll<HTMLLIElement>(':scope > .conflict-item')
-    items.forEach((item, index) => {
-      const block = filteredBlocks[index]
-      if (block) {
-        item.id = `conflict-${block.id}`
-        item.setAttribute('role', 'option')
-        item.setAttribute('aria-selected', String(index === focusedIndex))
-      }
-    })
-  }, [filteredBlocks, focusedIndex])
 
   const handleToggleSelectAll = useCallback(() => {
     if (selectedIds.size === blocks.length) {
@@ -587,7 +571,6 @@ export function ConflictList(): React.ReactElement {
       )}
 
       <div
-        ref={listRef}
         className="conflict-items space-y-2 list-none p-0"
         tabIndex={0}
         role="listbox"
@@ -599,7 +582,7 @@ export function ConflictList(): React.ReactElement {
           if (handleKeyDown(e)) e.preventDefault()
         }}
       >
-        {filteredBlocks.map((block) => {
+        {filteredBlocks.map((block, index) => {
           const original = block.parent_id ? originals.get(block.parent_id) : undefined
           return (
             <ConflictListItem
@@ -608,6 +591,7 @@ export function ConflictList(): React.ReactElement {
               original={original}
               isExpanded={expandedIds.has(block.id)}
               isSelected={selectedIds.has(block.id)}
+              isFocused={index === focusedIndex}
               deviceName={deviceNames.get(block.id)}
               onToggleExpanded={toggleExpanded}
               onToggleSelected={toggleSelected}

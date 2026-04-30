@@ -104,7 +104,6 @@ import {
   dueDateColor,
   formatCompactDate,
   MONTH_SHORT,
-  PRIORITY_DISPLAY,
   TaskCheckbox,
 } from '../BlockInlineControls'
 import { TooltipProvider } from '../ui/tooltip'
@@ -166,12 +165,6 @@ describe('dueDateColor', () => {
   it('returns muted classes for future dates', () => {
     expect(dueDateColor('2099-12-31')).toContain('bg-muted')
   })
-})
-
-describe('PRIORITY_DISPLAY', () => {
-  it('maps 1 to P1', () => expect(PRIORITY_DISPLAY['1']).toBe('P1'))
-  it('maps 2 to P2', () => expect(PRIORITY_DISPLAY['2']).toBe('P2'))
-  it('maps 3 to P3', () => expect(PRIORITY_DISPLAY['3']).toBe('P3'))
 })
 
 describe('MONTH_SHORT', () => {

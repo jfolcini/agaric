@@ -112,6 +112,14 @@ pub async fn count_agenda_batch_by_source_inner(
 /// computation for first-run or pre-cache scenarios.
 ///
 /// Returns at most `limit` entries (default 200, max 500).
+///
+/// MAINT-164: the on-the-fly fallback's `dot_plus` (`.+`) / `plus_plus` (`++`)
+/// repeat-mode projection is anchored to `today`. We capture `today` once
+/// here from `chrono::Local::now()` and thread it through. Tests that need
+/// to pin a fixed `today` (so the assertion does not drift with the system
+/// clock) call [`list_projected_agenda_on_the_fly`] directly — that also
+/// bypasses the cache check, since the cache itself is rebuilt from
+/// `chrono::Local::now()` and has the same drift problem.
 #[instrument(skip(pool), err)]
 pub async fn list_projected_agenda_inner(
     pool: &SqlitePool,
@@ -119,6 +127,7 @@ pub async fn list_projected_agenda_inner(
     end_date: String,
     limit: Option<i64>,
 ) -> Result<Vec<ProjectedAgendaEntry>, AppError> {
+    let today = chrono::Local::now().date_naive();
     validate_date_format(&start_date)?;
     validate_date_format(&end_date)?;
 
@@ -213,18 +222,35 @@ pub async fn list_projected_agenda_inner(
     }
 
     // Fallback: on-the-fly computation (first run before cache is populated).
-    list_projected_agenda_on_the_fly(pool, range_start, range_end, cap).await
+    list_projected_agenda_on_the_fly(pool, range_start, range_end, cap, today).await
 }
 
 /// On-the-fly projection of repeating tasks (original algorithm).
 ///
 /// Used as a fallback when `projected_agenda_cache` is empty (e.g. first boot
 /// before the materializer has populated the cache).
-async fn list_projected_agenda_on_the_fly(
+///
+/// `today` anchors `dot_plus` (`.+`) and `plus_plus` (`++`) repeat-mode
+/// projections; it is threaded in from
+/// [`list_projected_agenda_inner_with_today`] (MAINT-164) instead of being
+/// read from `chrono::Local::now()` so tests can pin a fixed today.
+///
+/// `pub(crate)` so the MAINT-164 regression test in
+/// `commands::tests::agenda_cmd_tests` can call this path directly,
+/// bypassing the cache-or-fallback branch in
+/// [`list_projected_agenda_inner_with_today`]. The cache rebuild itself
+/// (`cache::projected_agenda::rebuild_projected_agenda_cache_impl`) also
+/// reads `chrono::Local::now()`, so any `set_property` op in a test
+/// indirectly populates the cache with today-anchored rows that vary as
+/// the system clock advances. Calling on-the-fly directly sidesteps that
+/// drift; threading `today` through the cache rebuild itself is a larger
+/// follow-up that MAINT-164 leaves open.
+pub(crate) async fn list_projected_agenda_on_the_fly(
     pool: &SqlitePool,
     range_start: chrono::NaiveDate,
     range_end: chrono::NaiveDate,
     cap: usize,
+    today: chrono::NaiveDate,
 ) -> Result<Vec<ProjectedAgendaEntry>, AppError> {
     // Find repeating blocks: non-DONE, non-deleted, has repeat property,
     // has at least one date column.
@@ -306,7 +332,7 @@ async fn list_projected_agenda_on_the_fly(
             ("default", trimmed.as_str())
         };
 
-        let today = chrono::Local::now().date_naive();
+        // `today` is now a parameter (MAINT-164) so tests can pin it.
 
         // Project for each date source (due_date, scheduled_date)
         let sources: Vec<(&str, &str)> = [
