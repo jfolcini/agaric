@@ -55,21 +55,17 @@ pub async fn apply_reverse_in_tx(
         OpPayload::DeleteBlock(p) => {
             // Cascade soft-delete (same as delete_block_inner).
             //
-            // Recursive member filters `is_conflict = 0` so conflict
-            // copies aren't swept into the reverse cascade (invariant #9).
-            // `depth < 100` bounds the walk.
+            // `descendants_cte_active!()` pins invariant #9: `is_conflict = 0`
+            // (conflict copies aren't swept into the reverse cascade —
+            // they have independent lifecycles) AND `deleted_at IS NULL`
+            // (don't re-sweep already-deleted descendants), with `depth < 100`
+            // bounding the walk. Shared CTE lives in `crate::block_descendants`.
             let now = now_rfc3339();
-            sqlx::query(
-                "WITH RECURSIVE descendants(id, depth) AS ( \
-                     SELECT id, 0 FROM blocks WHERE id = ? \
-                     UNION ALL \
-                     SELECT b.id, d.depth + 1 FROM blocks b \
-                     INNER JOIN descendants d ON b.parent_id = d.id \
-                     WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
-                 ) \
-                 UPDATE blocks SET deleted_at = ? \
+            sqlx::query(concat!(
+                crate::descendants_cte_active!(),
+                "UPDATE blocks SET deleted_at = ? \
                  WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
-            )
+            ))
             .bind(p.block_id.as_str())
             .bind(&now)
             .execute(&mut **tx)
@@ -78,20 +74,15 @@ pub async fn apply_reverse_in_tx(
         OpPayload::RestoreBlock(p) => {
             // Cascade restore (same as restore_block_inner).
             //
-            // Recursive member filters `is_conflict = 0` — conflict copies
-            // have independent lifecycles (invariant #9). `depth < 100`
-            // bounds the walk.
-            sqlx::query(
-                "WITH RECURSIVE descendants(id, depth) AS ( \
-                     SELECT id, 0 FROM blocks WHERE id = ? \
-                     UNION ALL \
-                     SELECT b.id, d.depth + 1 FROM blocks b \
-                     INNER JOIN descendants d ON b.parent_id = d.id \
-                     WHERE b.is_conflict = 0 AND d.depth < 100 \
-                 ) \
-                 UPDATE blocks SET deleted_at = NULL \
+            // `descendants_cte_standard!()` pins invariant #9: `is_conflict = 0`
+            // (conflict copies have independent lifecycles and must not be
+            // bulk-restored with the original) and `depth < 100`. Shared CTE
+            // lives in `crate::block_descendants`.
+            sqlx::query(concat!(
+                crate::descendants_cte_standard!(),
+                "UPDATE blocks SET deleted_at = NULL \
                  WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
-            )
+            ))
             .bind(p.block_id.as_str())
             .bind(&p.deleted_at_ref)
             .execute(&mut **tx)
