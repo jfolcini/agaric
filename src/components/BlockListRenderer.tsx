@@ -4,6 +4,11 @@
  * Renders the SortableContext wrapper, viewport-aware placeholders, drop
  * indicators, and SortableBlock components. Extracted from BlockTree.tsx
  * (M-1 subtask 5) for file organization — no state of its own.
+ *
+ * Per-block action callbacks (onDelete / onIndent / …) and reference
+ * resolvers (resolveBlockTitle / …) flow via `BlockActionsProvider` /
+ * `BlockResolversProvider` published by BlockTree (MAINT-118), so this
+ * component no longer accepts or forwards them.
  */
 
 import { useDroppable } from '@dnd-kit/core'
@@ -43,28 +48,9 @@ export interface BlockListRendererProps {
   // ── Roving editor ──────────────────────────────────────────────────
   rovingEditor: RovingEditorHandle
 
-  // ── Block callbacks ────────────────────────────────────────────────
-  onNavigate: (id: string) => void
-  onDelete: (blockId: string) => void
-  onIndent: (blockId: string) => void
-  onDedent: (blockId: string) => void
-  onMoveUp: (blockId: string) => void
-  onMoveDown: (blockId: string) => void
-  onMerge: (blockId: string) => void
-  onToggleTodo: (blockId: string) => void
-  onTogglePriority: (blockId: string) => void
-  onToggleCollapse: (blockId: string) => void
-  onShowHistory: (blockId: string) => void
-  onShowProperties: (blockId: string) => void
-  onZoomIn: (blockId: string) => void
-  onSelect: (blockId: string, mode: 'toggle' | 'range') => void
+  // ── Container event handler ─────────────────────────────────────────
+  /** Pointer-down handler for the `<ul>` container (used to clear focus). */
   onContainerPointerDown: (e: React.PointerEvent) => void
-
-  // ── Resolve callbacks ──────────────────────────────────────────────
-  resolveBlockTitle: (id: string) => string
-  resolveTagName: (id: string) => string
-  resolveBlockStatus: (id: string) => 'active' | 'deleted'
-  resolveTagStatus: (id: string) => 'active' | 'deleted'
 
   // ── Collapse / tree state ──────────────────────────────────────────
   hasChildrenSet: Set<string>
@@ -84,25 +70,7 @@ export function BlockListRenderer({
   overId,
   viewport,
   rovingEditor,
-  onNavigate,
-  onDelete,
-  onIndent,
-  onDedent,
-  onMoveUp,
-  onMoveDown,
-  onMerge,
-  onToggleTodo,
-  onTogglePriority,
-  onToggleCollapse,
-  onShowHistory,
-  onShowProperties,
-  onZoomIn,
-  onSelect,
   onContainerPointerDown,
-  resolveBlockTitle,
-  resolveTagName,
-  resolveBlockStatus,
-  resolveTagStatus,
   hasChildrenSet,
   collapsedIds,
   blockProperties,
@@ -218,24 +186,6 @@ export function BlockListRenderer({
               isAnimating={animatingBlockIds.has(block.id)}
               siblingAria={siblingAriaProps.get(block.id)}
               properties={blockProperties[block.id]}
-              onNavigate={onNavigate}
-              onDelete={onDelete}
-              onIndent={onIndent}
-              onDedent={onDedent}
-              onMoveUp={onMoveUp}
-              onMoveDown={onMoveDown}
-              onMerge={onMerge}
-              onToggleTodo={onToggleTodo}
-              onTogglePriority={onTogglePriority}
-              onToggleCollapse={onToggleCollapse}
-              onShowHistory={onShowHistory}
-              onShowProperties={onShowProperties}
-              onZoomIn={onZoomIn}
-              onSelect={onSelect}
-              resolveBlockTitle={resolveBlockTitle}
-              resolveTagName={resolveTagName}
-              resolveBlockStatus={resolveBlockStatus}
-              resolveTagStatus={resolveTagStatus}
             />
           ))}
           {/* Sentinel droppable zone for dropping after last block */}

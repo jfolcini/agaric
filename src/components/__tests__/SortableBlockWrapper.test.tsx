@@ -9,12 +9,15 @@
  *  - aria-level / aria-setsize / aria-posinset / aria-expanded
  *  - Drop indicator visibility (projected + overId + activeId)
  *  - Animation class gating on isAnimating
- *  - onZoomIn passed through only when hasChildren is true
  *  - axe a11y
+ *
+ * Per-block action callbacks and reference resolvers no longer flow
+ * through SortableBlockWrapper as props (MAINT-118) — they're published
+ * via `BlockActionsProvider` / `BlockResolversProvider`. The tests
+ * covering callback gating live with SortableBlock now.
  */
 
 import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { makeBlock } from '../../__tests__/fixtures'
@@ -29,7 +32,6 @@ vi.mock('../SortableBlock', () => ({
       <button
         type="button"
         data-testid={`sortable-block-${props['blockId']}`}
-        data-has-zoom-in={props['onZoomIn'] != null ? 'yes' : 'no'}
         data-depth={String(props['depth'])}
         data-is-selected={String(props['isSelected'])}
       >
@@ -41,9 +43,6 @@ vi.mock('../SortableBlock', () => ({
 }))
 
 import { SortableBlockWrapper } from '../SortableBlockWrapper'
-
-const noop = () => {}
-const resolveActive = () => 'active' as const
 
 /** Minimal props for SortableBlockWrapper — overrides merge on top. */
 function makeProps(
@@ -73,24 +72,6 @@ function makeProps(
     isAnimating: false,
     siblingAria: { setsize: 1, posinset: 1 },
     properties: undefined,
-    onNavigate: noop,
-    onDelete: noop,
-    onIndent: noop,
-    onDedent: noop,
-    onMoveUp: noop,
-    onMoveDown: noop,
-    onMerge: noop,
-    onToggleTodo: noop,
-    onTogglePriority: noop,
-    onToggleCollapse: noop,
-    onShowHistory: noop,
-    onShowProperties: noop,
-    onZoomIn: noop,
-    onSelect: noop,
-    resolveBlockTitle: (id: string) => id,
-    resolveTagName: (id: string) => id,
-    resolveBlockStatus: resolveActive,
-    resolveTagStatus: resolveActive,
     ...overrides,
   }
 }
@@ -268,24 +249,6 @@ describe('SortableBlockWrapper', () => {
     expect(container.querySelectorAll('.drop-indicator')).toHaveLength(0)
   })
 
-  it('passes onZoomIn to SortableBlock only when hasChildren is true', () => {
-    renderInList(makeProps({ hasChildren: true }))
-
-    expect(sortableBlockProps).toHaveLength(1)
-    const lastProps = sortableBlockProps[0]
-    expect(lastProps).toBeDefined()
-    expect(lastProps?.['onZoomIn']).toBeTypeOf('function')
-  })
-
-  it('does not pass onZoomIn when hasChildren is false', () => {
-    renderInList(makeProps({ hasChildren: false }))
-
-    expect(sortableBlockProps).toHaveLength(1)
-    const lastProps = sortableBlockProps[0]
-    expect(lastProps).toBeDefined()
-    expect(lastProps?.['onZoomIn']).toBeUndefined()
-  })
-
   it('uses projected depth for the active drag target', () => {
     const block = makeBlock({ id: 'BLK001', depth: 0 })
     renderInList(
@@ -335,22 +298,6 @@ describe('SortableBlockWrapper', () => {
 
     expect(sortableBlockProps).toHaveLength(1)
     expect(sortableBlockProps[0]?.['properties']).toEqual(props)
-  })
-
-  it('forwards onNavigate callback invocation via SortableBlock prop', async () => {
-    const onNavigate = vi.fn()
-    const user = userEvent.setup()
-    renderInList(makeProps({ onNavigate }))
-
-    // The mock SortableBlock exposes onNavigate as a prop; invoke it directly
-    expect(sortableBlockProps).toHaveLength(1)
-    const invokedNavigate = sortableBlockProps[0]?.['onNavigate'] as (id: string) => void
-    expect(invokedNavigate).toBeTypeOf('function')
-    invokedNavigate('BLK001')
-    expect(onNavigate).toHaveBeenCalledWith('BLK001')
-
-    // Click the rendered button too to ensure the DOM is interactive
-    await user.click(screen.getByTestId('sortable-block-BLK001'))
   })
 
   it('has no a11y violations in the full render path', async () => {
