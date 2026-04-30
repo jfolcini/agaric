@@ -338,7 +338,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         },
       }),
       BlockRefPicker.configure({
-        items: searchBlockRefsRef.current,
+        items: (query: string) => searchBlockRefsRef.current(query),
       }),
       SlashCommand.configure({
         items: searchSlashCommands,

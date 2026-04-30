@@ -265,3 +265,348 @@ describe('BlockRefPicker real-editor chain result (UX-232)', () => {
     expect(editor.state.selection.empty).toBe(true)
   })
 })
+
+// ── Input rule: ((text)) auto-resolution (MAINT-130(c)) ─────────────────
+
+describe('BlockRefPicker input rule (MAINT-130(c))', () => {
+  it('registers an input rule via addInputRules', () => {
+    const ext = BlockRefPicker.configure({ items: () => [] })
+    expect(ext.config.addInputRules).toBeDefined()
+  })
+
+  it('input rule regex matches ((text)) pattern', () => {
+    const regex = /\(\(([^)]+)\)\)$/
+    const match = '((Some Block))'.match(regex)
+    expect(match).not.toBeNull()
+    expect(match?.[1]).toBe('Some Block')
+  })
+
+  it('input rule regex matches ((text)) at end of string', () => {
+    const regex = /\(\(([^)]+)\)\)$/
+    const match = 'hello ((world))'.match(regex)
+    expect(match).not.toBeNull()
+    expect(match?.[1]).toBe('world')
+  })
+
+  it('input rule regex does not match incomplete ((text', () => {
+    const regex = /\(\(([^)]+)\)\)$/
+    expect('((text'.match(regex)).toBeNull()
+  })
+
+  it('input rule regex does not match empty (())', () => {
+    const regex = /\(\(([^)]+)\)\)$/
+    expect('(())'.match(regex)).toBeNull()
+  })
+
+  it('inserts block_ref node at captured position on exact match', async () => {
+    const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
+    const chainProxy: Record<string, unknown> = {
+      focus: () => chainProxy,
+      insertContentAt: (pos: number, content: unknown) => {
+        insertContentAtCalls.push({ pos, content })
+        return chainProxy
+      },
+      run: () => true,
+    }
+    const mockEditor = { chain: () => chainProxy } as unknown
+
+    const mockItems = vi
+      .fn()
+      .mockResolvedValue([{ id: 'BLOCK_ULID_1', label: 'Some Block', isCreate: false }])
+
+    const ext = BlockRefPicker.configure({ items: mockItems })
+
+    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
+    const rules = (ext.config.addInputRules as Function).call({
+      options: ext.options,
+      editor: mockEditor,
+    })
+    expect(rules).toHaveLength(1)
+    const rule = rules[0]
+
+    const deleteCalls: Array<{ from: number; to: number }> = []
+    const mockState = {
+      tr: { delete: (from: number, to: number) => deleteCalls.push({ from, to }) },
+    }
+    const mockRange = { from: 5, to: 19 } // ((Some Block)) occupies 14 chars
+    const mockMatch = ['((Some Block))', 'Some Block']
+
+    rule.handler({ state: mockState, range: mockRange, match: mockMatch })
+
+    expect(deleteCalls).toEqual([{ from: 5, to: 19 }])
+
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+
+    expect(insertContentAtCalls).toEqual([
+      { pos: 5, content: { type: 'block_ref', attrs: { id: 'BLOCK_ULID_1' } } },
+    ])
+  })
+
+  it('falls back to plain text at captured position when no match (no onCreate path)', async () => {
+    const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
+    const chainProxy: Record<string, unknown> = {
+      focus: () => chainProxy,
+      insertContentAt: (pos: number, content: unknown) => {
+        insertContentAtCalls.push({ pos, content })
+        return chainProxy
+      },
+      run: () => true,
+    }
+    const mockEditor = { chain: () => chainProxy } as unknown
+
+    const mockItems = vi.fn().mockResolvedValue([])
+
+    const ext = BlockRefPicker.configure({ items: mockItems })
+    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
+    const rules = (ext.config.addInputRules as Function).call({
+      options: ext.options,
+      editor: mockEditor,
+    })
+    const rule = rules[0]
+
+    const mockState = { tr: { delete: vi.fn() } }
+    const mockRange = { from: 3, to: 10 }
+    const mockMatch = ['((Foo))', 'Foo']
+
+    rule.handler({ state: mockState, range: mockRange, match: mockMatch })
+
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+
+    // Plain text re-inserted at the captured position
+    expect(insertContentAtCalls).toEqual([{ pos: 3, content: 'Foo' }])
+  })
+
+  it('falls back to plain text when multiple non-exact matches exist', async () => {
+    const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
+    const chainProxy: Record<string, unknown> = {
+      focus: () => chainProxy,
+      insertContentAt: (pos: number, content: unknown) => {
+        insertContentAtCalls.push({ pos, content })
+        return chainProxy
+      },
+      run: () => true,
+    }
+    const mockEditor = { chain: () => chainProxy } as unknown
+
+    // Three near-matches, none exactly equal to "alice" (case-insensitive)
+    const mockItems = vi.fn().mockResolvedValue([
+      { id: 'B1', label: "Alice's notes", isCreate: false },
+      { id: 'B2', label: 'alice meeting', isCreate: false },
+      { id: 'B3', label: 'alice 2024-01-01', isCreate: false },
+    ])
+
+    const ext = BlockRefPicker.configure({ items: mockItems })
+    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
+    const rules = (ext.config.addInputRules as Function).call({
+      options: ext.options,
+      editor: mockEditor,
+    })
+    const rule = rules[0]
+
+    const mockState = { tr: { delete: vi.fn() } }
+    const mockRange = { from: 0, to: 9 }
+    const mockMatch = ['((alice))', 'alice']
+
+    rule.handler({ state: mockState, range: mockRange, match: mockMatch })
+
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+
+    // No exact match → plain text fallback (no block_ref node inserted)
+    expect(insertContentAtCalls).toEqual([{ pos: 0, content: 'alice' }])
+  })
+
+  it('falls back to plain text on items callback error and logs a warning', async () => {
+    const { logger } = await import('../../lib/logger')
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
+    const chainProxy: Record<string, unknown> = {
+      focus: () => chainProxy,
+      insertContentAt: (pos: number, content: unknown) => {
+        insertContentAtCalls.push({ pos, content })
+        return chainProxy
+      },
+      run: () => true,
+    }
+    const mockEditor = { chain: () => chainProxy } as unknown
+
+    const mockItems = vi.fn().mockRejectedValue(new Error('items failed'))
+
+    const ext = BlockRefPicker.configure({ items: mockItems })
+    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
+    const rules = (ext.config.addInputRules as Function).call({
+      options: ext.options,
+      editor: mockEditor,
+    })
+    const rule = rules[0]
+
+    const mockState = { tr: { delete: vi.fn() } }
+    const mockRange = { from: 7, to: 18 }
+    const mockMatch = ['((Broken))', 'Broken']
+
+    rule.handler({ state: mockState, range: mockRange, match: mockMatch })
+
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+
+    expect(insertContentAtCalls).toEqual([{ pos: 7, content: 'Broken' }])
+    expect(warnSpy).toHaveBeenCalledWith(
+      'BlockRefPicker',
+      expect.stringContaining('input rule'),
+      { text: 'Broken' },
+      expect.any(Error),
+    )
+
+    warnSpy.mockRestore()
+  })
+})
+
+// ── resolveBlockRefFromSelection command (MAINT-130(c)) ─────────────────
+
+describe('resolveBlockRefFromSelection command (MAINT-130(c))', () => {
+  /** Helper: create a chainProxy that tracks deleteRange + insertContentAt calls. */
+  function createChainProxy() {
+    const deleteRangeCalls: Array<{ from: number; to: number }> = []
+    const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
+    const chainProxy: Record<string, unknown> = {
+      focus: () => chainProxy,
+      deleteRange: (range: { from: number; to: number }) => {
+        deleteRangeCalls.push(range)
+        return chainProxy
+      },
+      insertContentAt: (pos: number, content: unknown) => {
+        insertContentAtCalls.push({ pos, content })
+        return chainProxy
+      },
+      run: () => true,
+    }
+    return { chainProxy, deleteRangeCalls, insertContentAtCalls }
+  }
+
+  /** Helper: get the resolveBlockRefFromSelection command function. */
+  function getCommand(ext: ReturnType<typeof BlockRefPicker.configure>) {
+    const addCommands = ext.config.addCommands
+    expect(addCommands).toBeDefined()
+    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
+    const commands = (addCommands as Function).call({ options: ext.options })
+    return commands.resolveBlockRefFromSelection
+  }
+
+  it('returns false when selection is collapsed (no selection)', () => {
+    const { chainProxy, insertContentAtCalls } = createChainProxy()
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: {
+        selection: { from: 5, to: 5 },
+        doc: { textBetween: () => '' },
+      },
+    } as unknown
+
+    const ext = BlockRefPicker.configure({ items: vi.fn().mockResolvedValue([]) })
+    const command = getCommand(ext)
+
+    const result = command()({ editor: mockEditor })
+    expect(result).toBe(false)
+    expect(insertContentAtCalls).toHaveLength(0)
+  })
+
+  it('returns false for whitespace-only selection', () => {
+    const { chainProxy, insertContentAtCalls } = createChainProxy()
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: {
+        selection: { from: 5, to: 10 },
+        doc: { textBetween: () => '   ' },
+      },
+    } as unknown
+
+    const ext = BlockRefPicker.configure({ items: vi.fn().mockResolvedValue([]) })
+    const command = getCommand(ext)
+
+    const result = command()({ editor: mockEditor })
+    expect(result).toBe(false)
+    expect(insertContentAtCalls).toHaveLength(0)
+  })
+
+  it('resolves exact match and inserts block_ref at captured position', async () => {
+    const { chainProxy, deleteRangeCalls, insertContentAtCalls } = createChainProxy()
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: {
+        selection: { from: 5, to: 15 },
+        doc: { textBetween: () => 'Some Block' },
+      },
+    } as unknown
+
+    const mockItems = vi
+      .fn()
+      .mockResolvedValue([{ id: 'BLOCK_42', label: 'Some Block', isCreate: false }])
+    const ext = BlockRefPicker.configure({ items: mockItems })
+    const command = getCommand(ext)
+
+    const result = command()({ editor: mockEditor })
+    expect(result).toBe(true)
+    expect(deleteRangeCalls).toEqual([{ from: 5, to: 15 }])
+
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+
+    expect(insertContentAtCalls).toEqual([
+      { pos: 5, content: { type: 'block_ref', attrs: { id: 'BLOCK_42' } } },
+    ])
+  })
+
+  it('falls back to plain text when no exact match is found (no onCreate)', async () => {
+    const { chainProxy, insertContentAtCalls } = createChainProxy()
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: {
+        selection: { from: 3, to: 11 },
+        doc: { textBetween: () => 'New Block' },
+      },
+    } as unknown
+
+    const mockItems = vi.fn().mockResolvedValue([])
+    const ext = BlockRefPicker.configure({ items: mockItems })
+    const command = getCommand(ext)
+
+    const result = command()({ editor: mockEditor })
+    expect(result).toBe(true)
+
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+
+    // No node inserted — plain-text fallback at captured position
+    expect(insertContentAtCalls).toEqual([{ pos: 3, content: 'New Block' }])
+  })
+
+  it('falls back to plain text on items callback error and logs a warning', async () => {
+    const { logger } = await import('../../lib/logger')
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const { chainProxy, insertContentAtCalls } = createChainProxy()
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: {
+        selection: { from: 2, to: 12 },
+        doc: { textBetween: () => 'Error Block' },
+      },
+    } as unknown
+
+    const mockItems = vi.fn().mockRejectedValue(new Error('network error'))
+    const ext = BlockRefPicker.configure({ items: mockItems })
+    const command = getCommand(ext)
+
+    const result = command()({ editor: mockEditor })
+    expect(result).toBe(true)
+
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+
+    expect(insertContentAtCalls).toEqual([{ pos: 2, content: 'Error Block' }])
+    expect(warnSpy).toHaveBeenCalledWith(
+      'BlockRefPicker',
+      expect.stringContaining('resolveBlockRefFromSelection'),
+      { text: 'Error Block' },
+      expect.any(Error),
+    )
+
+    warnSpy.mockRestore()
+  })
+})
