@@ -1,5 +1,49 @@
 # Session Log
 
+## Session 568 — MAINT-128 partial — close 2 more god-component decompositions (TrashView + PageBrowser) (2026-04-30)
+
+**2 MAINT-128 sub-rows partial-closed in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent.** Theme: continued the MAINT-128 work from sessions 566-567. Picked TrashView and PageBrowser — both have well-scoped extraction targets in their MAINT-128 row descriptions. PageBrowser is the LARGEST god-component in the table at 956L; TrashView is the 3rd largest at 788L.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 23 → 23 (MAINT-128 row STAYS — 3 of 9 god-components remain in scope: BlockTree, PropertyRowEditor, AddFilterRow).
+- **Previously-resolved counter:** 816+ → 818+ across 534 → 535 sessions.
+
+**Items partial-closed (2 of 9 MAINT-128 sub-rows):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-128 TrashView decomposition | `src/components/TrashView.tsx` (788L → 450L, -338L / -43% — **hits ≤450L target exactly; ≤350L stretch deferred**) + 9 new files: `useTrashFilter.ts` (63L), `useTrashMultiSelect.ts` (41L), `useTrashListShortcuts.ts` (118L beyond-spec), `useTrashBreadcrumbs.ts` (63L beyond-spec), `useTrashDescendantCounts.ts` (39L beyond-spec) under `src/hooks/`; `TrashRowItem.tsx` (161L), `TrashListView.tsx` (118L), and 5 dialog siblings (`TrashPurgeDialog`, `TrashBatchPurgeDialog`, `TrashBatchRestoreDialog`, `TrashEmptyDialog`, `TrashRestoreAllDialog`, ~36-41L each) under `src/components/TrashView/` + 2 hook test files (11 new tests: 6 useTrashFilter + 5 useTrashMultiSelect) — Subagent ea7fe7b4 | **Extracted the 4 in-scope targets per MAINT-128's description plus 3 cohesive beyond-spec hooks** to hit the ≤450L target. **Drift:** description listed 4 dialogs but code had 5 (single purge, batch purge, batch restore, empty trash, restore all) — all 5 lifted since the pattern is identical. Beyond-spec hooks (`useTrashListShortcuts` for the UX-275 keyboard shortcuts effect, `useTrashBreadcrumbs` for parent-page resolution via batchResolve, `useTrashDescendantCounts` for cascade-count badges) each have single-responsibility scope. **Reviewer flagged SHOULD-FIX:** the 3 beyond-spec hooks lack dedicated unit tests; behavior is covered by 76 existing TrashView integration tests but unit-level coverage would catch regressions faster. Deferred to follow-up — flagged in REVIEW-LATER as a small follow-up item. 76 existing TrashView tests pass unchanged. Reviewer (`2a5c660b`) APPROVED WITH NITS. |
+| MAINT-128 PageBrowser decomposition | `src/components/PageBrowser.tsx` (956L → 427L, -529L / -55% — ≤300L stretch deferred; gap is irreducible orchestrator glue) + 4 new files: `usePageBrowserGrouping.ts` (287L), `usePageBrowserSort.ts` (91L) under `src/hooks/`; `PageBrowserHeader.tsx` (118L), `PageBrowserRowRenderer.tsx` (245L) under `src/components/PageBrowser/` + 2 hook test files (19 new tests: 11 usePageBrowserGrouping + 8 usePageBrowserSort) — Subagent 815502a8 | **Extracted the 4 in-scope targets per MAINT-128's description.** `usePageBrowserGrouping` owns `buildSinglePageBranch`, `buildMultiPageBranch`, `sortTopLevelUnits`. **Critical: preserved the `buildMultiPageBranch(starredSet: ReadonlySet<string>)` signature** from session 562's MAINT-130(b) work. `usePageBrowserSort` is a thin wrapper over `useLocalStoragePreference` (MAINT-129) with bare-string parse/serialize for the legacy on-disk format (`'alphabetical' | 'recent' | 'created'`). `PageBrowserHeader` and `PageBrowserRowRenderer` are purely presentational — all state passed as props. **Stretch ≤300L NOT met** (landed at 427L); gap is ~127L of irreducible orchestrator glue (data loading + handleCreatePage + alias resolution + load-more announcements + pendingFocus management + filter↔grouping memos). Reviewer confirmed the gap is justified. 92 existing PageBrowser tests pass unchanged including FEAT-14 mixed-mode coverage. Reviewer (`2a5c660b`) APPROVED with no required changes. |
+
+**Process notes:**
+
+- **2 file-disjoint parallel subagents.** TrashView changes only `src/components/TrashView.tsx` + new `src/components/TrashView/` directory + 5 new hooks; PageBrowser changes only `src/components/PageBrowser.tsx` + new `src/components/PageBrowser/` directory + 2 new hooks. Zero overlap.
+- **TrashView subagent flagged 5 dialogs, not 4.** The MAINT-128 description was stale — code had 5 ConfirmDialogs. All 5 lifted since the pattern is identical.
+- **TrashView subagent extracted 3 beyond-spec hooks** to hit the ≤450L target. Reviewer accepted but flagged missing unit tests — logged as MAINT-167 follow-up.
+- **PageBrowser subagent preserved the `buildMultiPageBranch` ReadonlySet signature** from session 562 MAINT-130(b). Verified by reviewer against HEAD.
+- **No `cargo sqlx prepare`** needed — no SQL changes.
+- **No FEATURE-MAP.md update needed** — internal decomposition; user-facing surface unchanged.
+
+**Files touched (this session's batch):**
+
+- Frontend new (16): `src/hooks/{useTrashFilter,useTrashMultiSelect,useTrashListShortcuts,useTrashBreadcrumbs,useTrashDescendantCounts,usePageBrowserGrouping,usePageBrowserSort}.ts` + `src/components/TrashView/{TrashRowItem,TrashListView,TrashPurgeDialog,TrashBatchPurgeDialog,TrashBatchRestoreDialog,TrashEmptyDialog,TrashRestoreAllDialog}.tsx` + `src/components/PageBrowser/{PageBrowserHeader,PageBrowserRowRenderer}.tsx`.
+- Frontend modified (2): `src/components/TrashView.tsx`, `src/components/PageBrowser.tsx`.
+- New test files (4): `src/hooks/__tests__/{useTrashFilter,useTrashMultiSelect,usePageBrowserGrouping,usePageBrowserSort}.test.ts(x)` (30 new tests total: 6 + 5 + 11 + 8).
+- Existing tests modified: 0 (76 TrashView + 92 PageBrowser tests pass unchanged).
+- Docs: `REVIEW-LATER.md` (MAINT-128 row trimmed to 3 components; new MAINT-167 added for the missing TrashView beyond-spec hook unit tests). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- TrashView batch: `npx vitest run src/components/__tests__/TrashView` → **76/76 passed**.
+- PageBrowser batch: `npx vitest run src/components/__tests__/PageBrowser` → **92/92 passed**.
+- New hook tests: `npx vitest run src/hooks/__tests__/{useTrashFilter,useTrashMultiSelect,usePageBrowserGrouping,usePageBrowserSort}` → **30/30 passed**.
+- Smoke: `npx vitest run src/components/__tests__/App` → **113/113 passed**.
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome: clean.
+
+---
+
 ## Session 567 — MAINT-128 partial — close 2 more god-component decompositions (HistoryView + ConflictList) (2026-04-30)
 
 **2 MAINT-128 sub-rows partial-closed in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent.** Theme: continued the MAINT-128 work from session 566. Picked HistoryView and ConflictList — both have well-scoped hook + dialog extraction targets in their MAINT-128 row descriptions.
