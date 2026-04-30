@@ -366,10 +366,11 @@ export function TagFilterPanel(): React.ReactElement {
           <h4 className="mb-2 text-sm font-medium text-muted-foreground">
             {t('tagFilter.matchingTagsTitle')}
           </h4>
+          {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern for tag suggestions — no semantic HTML equivalent for non-tabular interactive grid */}
           <div
             className="space-y-1"
             ref={matchingTagsRef}
-            role="listbox"
+            role="grid"
             aria-label={t('tagFilter.matchingTagsTitle')}
             tabIndex={0}
             onKeyDown={(e) => {
@@ -381,9 +382,10 @@ export function TagFilterPanel(): React.ReactElement {
             {filteredMatching.map((tag, index) => {
               const isFocused = index === matchingFocusedIndex
               return (
+                // biome-ignore lint/a11y/useSemanticElements: ARIA grid row — no semantic HTML equivalent for nested-action rows
                 <div
                   key={tag.tag_id}
-                  role="option"
+                  role="row"
                   aria-selected={isFocused}
                   data-matching-tag
                   tabIndex={-1}
@@ -392,19 +394,25 @@ export function TagFilterPanel(): React.ReactElement {
                     isFocused && 'ring-2 ring-ring/50 bg-accent/30',
                   )}
                 >
-                  <span>
+                  {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
+                  {/* biome-ignore lint/a11y/useFocusableInteractive: text-only gridcell, focus stays on the row */}
+                  <span role="gridcell">
                     <HighlightPrefix text={tag.name} prefix={prefix} /> ({tag.usage_count})
                   </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="gap-1 px-2"
-                    onClick={() => handleAddTag(tag)}
-                    tabIndex={-1}
-                  >
-                    <Plus className="h-3 w-3" />
-                    {t('tagFilter.addButton')}
-                  </Button>
+                  {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
+                  {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner Button */}
+                  <span role="gridcell">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="gap-1 px-2"
+                      onClick={() => handleAddTag(tag)}
+                      tabIndex={-1}
+                    >
+                      <Plus className="h-3 w-3" />
+                      {t('tagFilter.addButton')}
+                    </Button>
+                  </span>
                 </div>
               )
             })}
@@ -430,9 +438,10 @@ export function TagFilterPanel(): React.ReactElement {
           <h4 className="text-sm font-medium text-muted-foreground">
             {t('tagFilter.resultsTitle')} ({results.length})
           </h4>
+          {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern for tag results — no semantic HTML equivalent for non-tabular interactive grid */}
           <div
             ref={resultsListRef}
-            role="listbox"
+            role="grid"
             tabIndex={0}
             onKeyDown={(e) => {
               if (resultsHandleKeyDown(e)) {
@@ -449,30 +458,35 @@ export function TagFilterPanel(): React.ReactElement {
             {results.map((block, index) => {
               const isFocused = index === resultsFocusedIndex
               return (
+                // biome-ignore lint/a11y/useSemanticElements: ARIA grid row — no semantic HTML equivalent for nested-action rows
                 <div
                   key={block.id}
                   id={`tag-result-${block.id}`}
-                  role="option"
+                  role="row"
                   aria-selected={isFocused}
                   data-result-item
                   tabIndex={-1}
                   className={cn(isFocused && 'ring-2 ring-ring/50 rounded-lg')}
                 >
-                  <ResultCard
-                    block={block}
-                    onClick={() => handleResultClick(block)}
-                    contentClassName="whitespace-pre-wrap"
-                  >
-                    {block.page_id && pageTitles.get(block.page_id) && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {t('tagFilter.inPage')}{' '}
-                        <PageLink
-                          pageId={block.page_id}
-                          title={pageTitles.get(block.page_id) ?? ''}
-                        />
-                      </p>
-                    )}
-                  </ResultCard>
+                  {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
+                  {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner ResultCard */}
+                  <div role="gridcell">
+                    <ResultCard
+                      block={block}
+                      onClick={() => handleResultClick(block)}
+                      contentClassName="whitespace-pre-wrap"
+                    >
+                      {block.page_id && pageTitles.get(block.page_id) && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {t('tagFilter.inPage')}{' '}
+                          <PageLink
+                            pageId={block.page_id}
+                            title={pageTitles.get(block.page_id) ?? ''}
+                          />
+                        </p>
+                      )}
+                    </ResultCard>
+                  </div>
                 </div>
               )
             })}

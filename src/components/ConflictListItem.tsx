@@ -94,91 +94,104 @@ export function ConflictListItem({
     : t('conflict.keepTooltip')
 
   return (
-    <li
+    // biome-ignore lint/a11y/useSemanticElements: ARIA grid row pattern for conflict list — no semantic HTML equivalent for nested-action rows
+    <div
       id={`conflict-${block.id}`}
-      // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: parent <ul> uses role="listbox", so children must be role="option" per WAI-ARIA APG. The original imperative useEffect bypassed this rule by setting role at runtime; the MAINT-130 refactor declares it on JSX directly. `tabIndex={-1}` keeps the row programmatically focusable (managed by useListKeyboardNavigation via aria-activedescendant) without inserting it into tab order.
-      role="option"
+      role="row"
       aria-selected={isFocused}
       tabIndex={-1}
       className="conflict-item flex items-start justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50 active:bg-accent/70"
       data-testid="conflict-item"
     >
-      <label
-        className="flex items-center shrink-0 mr-2"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === ' ') e.stopPropagation()
-        }}
-      >
-        <input
-          type="checkbox"
-          checked={isSelected}
-          onChange={() => onToggleSelected(block.id)}
-          aria-label={t('conflict.selectConflictLabel', { id: truncateId(block.id) })}
-          className="h-4 w-4 rounded border-muted-foreground/50 [@media(pointer:coarse)]:size-11"
-        />
-      </label>
-      <button
-        type="button"
-        className="conflict-item-content flex min-w-0 flex-col gap-1 text-left flex-1 cursor-pointer bg-transparent border-none p-0"
-        onClick={() => onToggleExpanded(block.id)}
-        aria-expanded={isExpanded}
-        aria-label={isExpanded ? t('conflict.collapse') : t('conflict.expand')}
-      >
-        <div className="flex items-center gap-2 flex-wrap">
-          <ChevronToggle isExpanded={isExpanded} size="md" />
-          <Badge variant="secondary" className="conflict-item-type shrink-0">
-            {block.block_type}
-          </Badge>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    'conflict-type-badge shrink-0 cursor-help border-dashed',
-                    conflictTypeBadgeClass(conflictType),
-                  )}
-                  aria-label={t(`conflict.type${conflictType}`)}
-                >
-                  {conflictType}
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t(`conflict.type${conflictType}Description`)}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        </div>
-        <div className="conflict-metadata flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="conflict-source-id font-mono" title={block.id}>
-            ID: {truncateId(block.id)}
-          </span>
-          <span className="conflict-timestamp">{getConflictTimestamp(block)}</span>
-          {deviceName != null && (
-            <span className="conflict-device" title={t('conflicts.sourceDevice')}>
-              From: {deviceName}
-            </span>
-          )}
-        </div>
-        {originalMissing && (
-          <div
-            className="conflict-original-missing-banner flex items-start gap-2 rounded-md border border-dashed border-status-overdue/40 bg-status-overdue/5 p-2 text-xs text-status-overdue"
-            data-testid="conflict-original-missing"
-            role="alert"
-          >
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden="true" />
-            <span>{t('conflict.originalNotFound')}</span>
+      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
+      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner controls */}
+      <div role="gridcell" className="shrink-0 mr-2">
+        <label
+          className="flex items-center"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (e.key === ' ') e.stopPropagation()
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={() => onToggleSelected(block.id)}
+            aria-label={t('conflict.selectConflictLabel', { id: truncateId(block.id) })}
+            className="h-4 w-4 rounded border-muted-foreground/50 [@media(pointer:coarse)]:size-11"
+          />
+        </label>
+      </div>
+      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
+      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner controls */}
+      <div role="gridcell" className="flex-1 min-w-0">
+        <button
+          type="button"
+          className="conflict-item-content flex flex-col gap-1 text-left w-full cursor-pointer bg-transparent border-none p-0"
+          onClick={() => onToggleExpanded(block.id)}
+          aria-expanded={isExpanded}
+          aria-label={isExpanded ? t('conflict.collapse') : t('conflict.expand')}
+        >
+          <div className="flex items-center gap-2 flex-wrap">
+            <ChevronToggle isExpanded={isExpanded} size="md" />
+            <Badge variant="secondary" className="conflict-item-type shrink-0">
+              {block.block_type}
+            </Badge>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      'conflict-type-badge shrink-0 cursor-help border-dashed',
+                      conflictTypeBadgeClass(conflictType),
+                    )}
+                    aria-label={t(`conflict.type${conflictType}`)}
+                  >
+                    {conflictType}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{t(`conflict.type${conflictType}Description`)}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
-        )}
-        <ConflictTypeRenderer
-          conflictType={conflictType}
-          block={block}
-          original={original}
-          isExpanded={isExpanded}
-        />
-      </button>
-      <div className="conflict-item-actions flex items-center gap-2 ml-2 shrink-0 flex-wrap">
+          <div className="conflict-metadata flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="conflict-source-id font-mono" title={block.id}>
+              ID: {truncateId(block.id)}
+            </span>
+            <span className="conflict-timestamp">{getConflictTimestamp(block)}</span>
+            {deviceName != null && (
+              <span className="conflict-device" title={t('conflicts.sourceDevice')}>
+                From: {deviceName}
+              </span>
+            )}
+          </div>
+          {originalMissing && (
+            <div
+              className="conflict-original-missing-banner flex items-start gap-2 rounded-md border border-dashed border-status-overdue/40 bg-status-overdue/5 p-2 text-xs text-status-overdue"
+              data-testid="conflict-original-missing"
+              role="alert"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden="true" />
+              <span>{t('conflict.originalNotFound')}</span>
+            </div>
+          )}
+          <ConflictTypeRenderer
+            conflictType={conflictType}
+            block={block}
+            original={original}
+            isExpanded={isExpanded}
+          />
+        </button>
+      </div>
+      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
+      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner action buttons */}
+      <div
+        role="gridcell"
+        className="conflict-item-actions flex items-center gap-2 ml-2 shrink-0 flex-wrap"
+      >
         {block.parent_id && (
           <Button
             variant="ghost"
@@ -237,6 +250,6 @@ export function ConflictListItem({
           </Tooltip>
         </TooltipProvider>
       </div>
-    </li>
+    </div>
   )
 }

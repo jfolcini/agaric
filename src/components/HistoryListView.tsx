@@ -66,11 +66,12 @@ export function HistoryListView({
   return (
     <>
       {entries.length > 0 && (
+        // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern for history list — no semantic HTML equivalent for non-tabular interactive grid
         <div
           ref={listRef}
           tabIndex={-1}
           className="history-list space-y-2 p-0 m-0 focus:outline-none"
-          role="listbox"
+          role="grid"
           aria-label={t('history.entriesLabel')}
           aria-multiselectable="true"
         >

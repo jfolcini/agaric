@@ -641,19 +641,17 @@ describe('ConflictListItem', () => {
       const block = makeConflict({ id: 'C1', content: 'text', parent_id: 'GONE' })
 
       const { container } = render(
-        <div role="listbox" aria-label="Test conflict list">
+        // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern test fixture matches the production ConflictList
+        <div role="grid" aria-label="Test conflict list">
           <ConflictListItem {...defaultProps} block={block} original={undefined} />
         </div>,
       )
 
-      // ConflictListItem's <li role="option"> contains the action buttons
-      // (Keep / Discard / View original); axe's `nested-interactive` flags
-      // that combination by default. Matches the same rule disable used by
-      // ConflictList.test.tsx for the same intentional pattern.
+      // MAINT-162: ConflictListItem now uses <div role="row"> with <div role="gridcell">
+      // children. Grid permits nested interactive widgets per WAI-ARIA APG, so axe runs
+      // with default rules (no `nested-interactive` override needed).
       await waitFor(async () => {
-        const results = await axe(container, {
-          rules: { 'nested-interactive': { enabled: false } },
-        })
+        const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
     })
@@ -664,15 +662,14 @@ describe('ConflictListItem', () => {
       const block = makeConflict({ id: 'C1', content: 'accessible conflict' })
 
       const { container } = render(
-        <div role="listbox" aria-label="Test conflict list">
+        // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern test fixture matches the production ConflictList
+        <div role="grid" aria-label="Test conflict list">
           <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
         </div>,
       )
 
       await waitFor(async () => {
-        const results = await axe(container, {
-          rules: { 'nested-interactive': { enabled: false } },
-        })
+        const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
     })
@@ -681,7 +678,8 @@ describe('ConflictListItem', () => {
       const block = makeConflict({ id: 'C1', content: 'selected conflict' })
 
       const { container } = render(
-        <div role="listbox" aria-label="Test conflict list">
+        // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern test fixture matches the production ConflictList
+        <div role="grid" aria-label="Test conflict list">
           <ConflictListItem
             {...defaultProps}
             block={block}
@@ -692,9 +690,7 @@ describe('ConflictListItem', () => {
       )
 
       await waitFor(async () => {
-        const results = await axe(container, {
-          rules: { 'nested-interactive': { enabled: false } },
-        })
+        const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
     })
@@ -703,7 +699,8 @@ describe('ConflictListItem', () => {
       const block = makeConflict({ id: 'C1', content: 'expanded conflict' })
 
       const { container } = render(
-        <div role="listbox" aria-label="Test conflict list">
+        // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern test fixture matches the production ConflictList
+        <div role="grid" aria-label="Test conflict list">
           <ConflictListItem
             {...defaultProps}
             block={block}
@@ -714,9 +711,7 @@ describe('ConflictListItem', () => {
       )
 
       await waitFor(async () => {
-        const results = await axe(container, {
-          rules: { 'nested-interactive': { enabled: false } },
-        })
+        const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
     })
