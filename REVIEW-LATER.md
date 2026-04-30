@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-20 open items — 20 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 21 backend Medium findings closed + 26 MAINT closed (some partially) across sessions 549-587 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-587): MAINT-131 fully reduced to residual cleanup; **3 schema-integrity migrations landed in session 582** (M-30 partial UNIQUE on attachments.fs_path, M-93 ON DELETE CASCADE FK on block_drafts.block_id, M-90 is_space property tightened to `select` type); **H-9 family closed across sessions 583-584** (H-9b deny-list redaction architecture + H-9b-activation log-format switch + H-9c preview UI confirmed shipped); **MAINT-162 closed in 585** (StaticBlock role flip + 21 axe overrides removed cumulatively); **C-2b closed in 586** (op-log replay schema + cursor + boot integration + 8 tests — last CRITICAL backend code review finding); **MAINT-127 closed in 587** (navigation.ts 543L → 116L + new tabs.ts 480L; 52 consumer files migrated); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
+20 open items — 20 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 22 backend Medium findings closed + 26 MAINT closed (some partially) across sessions 549-588 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-588): MAINT-131 fully reduced to residual cleanup; **3 schema-integrity migrations landed in session 582** (M-30, M-93, M-90); **H-9 family closed across sessions 583-584**; **MAINT-162 closed in 585**; **C-2b closed in 586** (last CRITICAL backend code review finding); **MAINT-127 closed in 587** (navigation.ts split + new tabs.ts); **M-25 closed in 588 + M-85 partially closed** (cursor pagination on `list_projected_agenda` — covers M-25's user-facing surface AND M-85's `get_agenda` MCP tool; M-85's `list_tags` + `list_property_defs` remain open); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
 
-Previously resolved: 848+ items across 554 sessions (per SESSION-LOG.md unique session count; latest is session 587).
+Previously resolved: 850+ items across 555 sessions (per SESSION-LOG.md unique session count; latest is session 588).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -1013,20 +1013,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 03/F7
 - **Status:** Open
 
-### Commands (CRUD)
-
-### M-25 — `list_projected_agenda_inner` returns hard-capped `Vec<>` without cursor pagination
-- **Domain:** Commands (CRUD)
-- **Location:** `src-tauri/src/commands/agenda.rs:111-214`, Tauri wrapper at `src-tauri/src/commands/agenda.rs:467-476`
-- **What:** The command (and its wrapper) returns a flat `Vec<ProjectedAgendaEntry>` clamped to `[1, 500]` with no `next_cursor`. AGENTS.md invariant #3 requires cursor-based pagination on every list query, and ARCHITECTURE.md §22 already lists this query as superlinear at 100K agenda entries — at scale the hard cap silently drops items.
-- **Why it matters:** Frontend has no signal that more entries exist beyond the cap, so projected agendas truncate without warning. The cap is a workaround, not a contract.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** Change the return type to `PageResponse<ProjectedAgendaEntry>` keyed on `(projected_date, block_id)` from `projected_agenda_cache`, and keep the current cap only as a degenerate first-run behaviour for the on-the-fly fallback.
-- **Pass-1 source:** 04/F9
-- **Status:** Open
-
 ### Commands (System)
 
 ### M-34 — `start_pairing_inner` builds a QR with `host=0.0.0.0, port=0`
@@ -1083,17 +1069,17 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### MCP
 
-### M-85 — `list_tags` / `list_property_defs` / `get_agenda` lack cursor pagination
+### M-85 — `list_tags` / `list_property_defs` lack cursor pagination
 - **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/tools_ro.rs:384-401` (list_tags schema), `src-tauri/src/mcp/tools_ro.rs:403-413` (list_property_defs), `src-tauri/src/mcp/tools_ro.rs:415-453, 528-548` (get_agenda); inners `src-tauri/src/commands/tags.rs:257-262`, `src-tauri/src/commands/properties.rs:459-469`, `src-tauri/src/commands/agenda.rs:117-122`.
-- **What:** Three list-style RO tools return a flat `Vec<...>` with a server-side cap (100/500) and no `cursor` / `next_cursor` / `has_more` field, in violation of AGENTS.md invariant #6 ("Cursor-based pagination on ALL list queries — no offset pagination"). The other list tools (`list_pages`, `get_page`, `search`, `list_backlinks`) do paginate, so the asymmetry is internal.
-- **Why it matters:** A power user with thousands of agenda entries (multi-year repeating tasks) or hundreds of tags hits a silent ceiling; nothing in the response signals truncation. The hard invariant is the invariant, and the MCP layer is the only place it currently leaks.
+- **Location:** `src-tauri/src/mcp/tools_ro.rs:384-401` (list_tags schema), `src-tauri/src/mcp/tools_ro.rs:403-413` (list_property_defs); inners `src-tauri/src/commands/tags.rs:257-262`, `src-tauri/src/commands/properties.rs:459-469`.
+- **What:** Two list-style RO tools return a flat `Vec<...>` with a server-side cap (100/500) and no `cursor` / `next_cursor` / `has_more` field, in violation of AGENTS.md invariant #3 ("Cursor-based pagination on ALL list queries — no offset pagination"). The other list tools (`list_pages`, `get_page`, `search`, `list_backlinks`, `get_agenda` via M-25 in session 588) do paginate, so the asymmetry is internal.
+- **Why it matters:** A power user with hundreds of tags or property-defs hits a silent ceiling; nothing in the response signals truncation. AGENTS.md invariant #3 is the contract.
 - **Cost:** M
 - **Risk:** Low (extending shared `*_inner` helpers must stay backward-compatible with frontend callers)
 - **Impact:** Medium
-- **Recommendation:** Either extend the inners to return a `PageResponse<T>` with cursors (modeled on `list_pages_inner`) and surface them in the MCP schema, or — as a backward-compatible interim — add a `truncated: bool` field to the response and document the cap. **Requires user approval per AGENTS.md Architectural Stability — adds cursor pagination to the public MCP tool surface.**
+- **Recommendation:** Extend the inners to return a `PageResponse<T>` with cursors (modeled on `list_pages_inner` + the `list_projected_agenda` migration in session 588) and surface them in the MCP schema. **Requires user approval per AGENTS.md Architectural Stability — adds cursor pagination to the public MCP tool surface.** Note: invariant #3 has a carve-out for "named small-cardinality lookups" (e.g. `list_property_keys` returns a fixed-size set bounded by user vocabulary). `list_tags` and `list_property_defs` arguably qualify — small finite cardinality bounded by user vocabulary, not data volume — so this might be reframed as a deliberate non-fix per the carve-out rather than a hard violation. Re-evaluate before fixing.
 - **Pass-1 source:** 09/F5
-- **Status:** Open
+- **Status:** Open. `get_agenda` portion closed in session 588 alongside M-25.
 
 ### GCal / Spaces / Drafts
 
