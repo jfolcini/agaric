@@ -812,6 +812,20 @@ export function listAttachments(blockId: string): Promise<AttachmentRow[]> {
   return invoke('list_attachments', { blockId })
 }
 
+/**
+ * Batch-fetch attachment counts for many blocks in one IPC.
+ *
+ * Returns a record mapping block_id → count. Block IDs absent from the
+ * record have either 0 attachments or are not in the database; callers
+ * should default missing keys to 0.
+ *
+ * MAINT-131 — replaces N per-block `listAttachments` IPCs for badge
+ * counts in `SortableBlock` with a single batched query.
+ */
+export function getBatchAttachmentCounts(blockIds: string[]): Promise<Record<string, number>> {
+  return invoke('get_batch_attachment_counts', { blockIds })
+}
+
 /** Add an attachment to a block. */
 export function addAttachment(params: {
   blockId: string

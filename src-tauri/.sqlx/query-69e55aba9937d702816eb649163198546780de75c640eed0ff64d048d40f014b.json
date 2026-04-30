@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id AS \"block_id!\", COUNT(*) AS \"cnt!: i64\"\n           FROM attachments\n           WHERE block_id IN (SELECT value FROM json_each(?))\n           GROUP BY block_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "cnt!: i64",
+        "ordinal": 1,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "69e55aba9937d702816eb649163198546780de75c640eed0ff64d048d40f014b"
+}

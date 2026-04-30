@@ -297,6 +297,52 @@ pub async fn list_attachments_inner(
     Ok(rows)
 }
 
+/// Batch-fetch attachment counts for many blocks in one query.
+///
+/// Returns a `HashMap<block_id, count>` where missing block IDs (those with
+/// no attachments OR not present in the database) are simply absent from the
+/// map. Frontend callers should default to 0 for blocks not in the map.
+///
+/// Uses `json_each()` so the full ID list is passed as a single JSON-encoded
+/// bind parameter — no dynamic SQL construction. Mirrors the pattern used in
+/// `commands/blocks/queries.rs::batch_resolve_inner` and `fts/index.rs`.
+///
+/// Empty `block_ids` returns an empty map (not an error). This matches the
+/// frontend pattern where a page with no blocks should not fail.
+///
+/// MAINT-131 — replaces N per-block `list_attachments` IPCs with a single
+/// batched query.
+///
+/// # Errors
+///
+/// - [`AppError::Database`] — on query failure
+#[instrument(skip(pool, block_ids), err)]
+pub async fn get_batch_attachment_counts_inner(
+    pool: &SqlitePool,
+    block_ids: Vec<String>,
+) -> Result<std::collections::HashMap<String, u32>, AppError> {
+    if block_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let ids_json = serde_json::to_string(&block_ids)?;
+
+    let rows = sqlx::query!(
+        r#"SELECT block_id AS "block_id!", COUNT(*) AS "cnt!: i64"
+           FROM attachments
+           WHERE block_id IN (SELECT value FROM json_each(?))
+           GROUP BY block_id"#,
+        ids_json
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.block_id, u32::try_from(r.cnt).unwrap_or(u32::MAX)))
+        .collect())
+}
+
 /// Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
@@ -367,6 +413,19 @@ pub async fn list_attachments(
     block_id: String,
 ) -> Result<Vec<AttachmentRow>, AppError> {
     list_attachments_inner(&pool.0, block_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: batch-fetch attachment counts. Delegates to [`get_batch_attachment_counts_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_batch_attachment_counts(
+    pool: State<'_, ReadPool>,
+    block_ids: Vec<String>,
+) -> Result<std::collections::HashMap<String, u32>, AppError> {
+    get_batch_attachment_counts_inner(&pool.0, block_ids)
         .await
         .map_err(sanitize_internal_error)
 }

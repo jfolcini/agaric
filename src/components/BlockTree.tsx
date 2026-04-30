@@ -25,6 +25,7 @@ import { parse } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { type RovingEditorHandle, useRovingEditor } from '../editor/use-roving-editor'
+import { BatchAttachmentCountsProvider } from '../hooks/useBatchAttachmentCounts'
 import { type BlockActions, BlockActionsProvider } from '../hooks/useBlockActions'
 import { useBlockCollapse } from '../hooks/useBlockCollapse'
 import { useBlockDatePicker } from '../hooks/useBlockDatePicker'
@@ -664,6 +665,12 @@ export function BlockTree({
     ],
   )
 
+  // ── Batch attachment counts (MAINT-131) ─────────────────────────────
+  // Single IPC for the whole page that publishes block_id → count to all
+  // SortableBlock descendants, replacing N per-row `listAttachments` IPCs
+  // for the badge count.
+  const allBlockIds = useMemo(() => blocks.map((b) => b.id), [blocks])
+
   if (loading) {
     return (
       <div
@@ -684,7 +691,7 @@ export function BlockTree({
   const measuring = DND_MEASURING
 
   return (
-    <>
+    <BatchAttachmentCountsProvider blockIds={allBlockIds}>
       <BlockZoomBar
         breadcrumbs={zoomBreadcrumb}
         onNavigate={handleZoomIn}
@@ -771,6 +778,6 @@ export function BlockTree({
           if (!open) setPropertyDrawerBlockId(null)
         }}
       />
-    </>
+    </BatchAttachmentCountsProvider>
   )
 }
