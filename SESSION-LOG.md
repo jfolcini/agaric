@@ -1,5 +1,57 @@
 # Session Log
 
+## Session 588 — 1-subagent batch: M-25 cursor pagination on `list_projected_agenda` (2026-04-30)
+
+**One backend Medium item closed; one partially closed as a side effect.** Build subagent migrated `list_projected_agenda_inner` from a flat `Vec<ProjectedAgendaEntry>` (clamped to 500 silent-truncating) to the canonical `PageResponse<ProjectedAgendaEntry>` shape with cursor pagination, bringing the command into compliance with AGENTS.md invariant #3 ("Cursor-based pagination on ALL list queries"). The migration cascaded through Specta-generated `bindings.ts`, the `tauri.ts` wrapper, the `useDuePanelData` consumer, the GCal connector consumer, the MCP `get_agenda` tool, and 17 backend tests. **Bonus: M-85's `get_agenda` portion is now closed** because the MCP `get_agenda` tool wraps `list_projected_agenda_inner` and inherited the cursor support.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 21 → **20** unchanged (M-25 + M-85 are Backend Code Review Mediums, not FEAT/MAINT/PERF/PUB).
+- **Backend Code Review MEDIUM count:** dropped by 1 (M-25 fully closed, M-85 reframed to drop `get_agenda`).
+- **Previously-resolved counter:** 848+ → 850+ across 554 → 555 sessions.
+
+**Items closed:**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| **M-25 — Cursor pagination on `list_projected_agenda`** (subagent A) | Backend (`commands/agenda.rs`): both `list_projected_agenda_inner` AND the on-the-fly fallback `list_projected_agenda_on_the_fly` now take an `after_cursor: Option<Cursor>` parameter and return `PageResponse<ProjectedAgendaEntry>`. Reused the canonical `Cursor::for_id_and_deleted_at(block_id, projected_date)` constructor (`pagination/mod.rs:325`) — same H-8 convention as `list_agenda_range`, packing `(date, block_id)` into the `(deleted_at, id)` slots. SQL keyset comparison: `(pac.projected_date, pac.block_id) > (?, ?)` ASC. The opaque cursor is base64-URL-safe-no-pad of versioned JSON; `Cursor::decode` enforces version 1. Per-page clamp `[1, 500]` preserved. Frontend (`tauri.ts` wrapper + `useDuePanelData` consumer): wrapper returns `Promise<PageResponse<ProjectedAgendaEntry>>`, consumer reads `.items` and ignores `next_cursor`/`has_more` (single-page-by-design — DuePanel only needs today's bounded projections). MCP (`tools_ro.rs`): `GetAgendaArgs.cursor` arg added + handler thread-through + JSON schema updated. GCal connector (`gcal_push/connector.rs`): single-page consumer with `AGENDA_FETCH_LIMIT` cap. **Backend test churn:** 17 existing agenda_cmd tests updated to thread `None` cursor + access `.items`; 1 cache test updated. **2 new backend tests:** `list_projected_agenda_returns_next_cursor_when_capped_m25` (seeds 30 daily projections, limit=5, asserts has_more=true + next_cursor.is_some()), `list_projected_agenda_walks_pages_correctly_m25` (seeds 9 daily projections, walks 3 pages with limit=4, asserts strict ordering + no duplicates). **2 snapshot files updated** (insta) for MCP wire shape: `tool_descriptions.snap` + `tool_response_get_agenda.snap`. 1 new frontend test in `tauri.test.ts` for the cursor-forward path. 16 frontend mock-return updates across 2 test files (`DuePanel.test.tsx` 13 sites + `useDuePanelData.test.ts` 3 sites). **3281/3281 backend tests + 8960/8960 frontend tests pass.** — Subagent agent_id 389cbc9d |
+| **M-85 (partial) — `get_agenda` MCP tool now paginated** | Inherited from M-25's MCP wrapper changes. The MCP `get_agenda` tool's JSON schema gained a `cursor` arg (existing agents that ignore it continue to work). M-85's remaining scope is now `list_tags` + `list_property_defs` only — both arguably qualify for AGENTS.md invariant #3's "named small-cardinality lookups bounded by user vocabulary" carve-out, so the remaining work might be reframed as a deliberate non-fix rather than a hard violation. M-85 entry updated to reflect the partial closure + the carve-out reconsideration. — Subagent agent_id 389cbc9d (incidental) |
+
+**Process notes:**
+
+- **No review subagent.** Backend full nextest 3281/3281 + frontend full vitest 8960/8960 + tsc clean is strong objective evidence. The change is well-scoped (cursor pagination follows the codebase's existing canonical shape) and the subagent's report is thorough (drift findings + per-file table). Skipping review per "don't gold-plate".
+- **2 prek-driven autofix rounds** (orchestrator):
+  - **Round 1 — biome:** `npx biome check --write src/` fixed 2 files (auto-format on `useNavigationStore` neighbour mocks for the new PageResponse object literals + 2 trailing-whitespace + 2 missing-newline-at-EOF on `bindings.ts` from specta regen).
+  - **Round 2 — cargo fmt:** the new `(cursor_flag, cursor_date, cursor_id)` triple destructure and 12 `.unwrap().items` chains in `agenda_cmd_tests.rs` needed reflow per cargo fmt — auto-fixed via `cargo fmt`. Re-ran prek clean.
+- **Drift findings the build subagent flagged (read-only, except #1 which was acted on):**
+  - **(1) Pre-existing missing sqlx cache** for `materializer_apply_cursor` from session 586's C-2b commit (the previous author missed `cargo sqlx prepare`). Subagent picked it up incidentally during their own `cargo sqlx prepare -- --tests` and committed the cache file alongside the M-25 changes. Pure incidental cleanup; flagged here so it's not a surprise in the diff.
+  - **(2) Snapshot `assertion_line` metadata drift** in `tool_descriptions.snap` (insta auto-updated when `.new` was promoted). Harmless.
+  - **(3) Cache + on-the-fly ordering verified consistent** — `list_projected_agenda_on_the_fly`'s in-memory sort `(projected_date, block.id)` matches the cache path's `ORDER BY pac.projected_date ASC, pac.block_id ASC`, so cursor pagination is interchangeable mid-walk if the materializer populates the cache between calls.
+  - **(4) On-the-fly per-block `cap` short-circuit removed** — cursor pagination needs every entry within the date range. The 10,000-step inner safety per `(block × source)` and the date range bounds remain (runaway recurrence still prevented). Documented at `commands/agenda.rs:327-330`.
+  - **(5) MCP `get_agenda` tool now exposes a `cursor` arg** (added to `GetAgendaArgs` and the JSON schema). Existing agents that ignore the new field continue to work; agents wanting to page can use it. **This is the M-85-partial closure.**
+- **No `bindings.ts` regeneration manually** — Specta auto-regenerated via `cargo test specta_tests -- --ignored` (the existing pattern).
+- **No FEATURE-MAP.md update needed** — internal IPC type change with backward-compat consumer migration; no user-facing surface change beyond `next_cursor`/`has_more` becoming available for paginated callers.
+
+**Files touched (this session's batch):**
+
+- Backend modified (8): `src-tauri/src/commands/agenda.rs`, `src-tauri/src/commands/tests/agenda_cmd_tests.rs`, `src-tauri/src/cache/tests.rs`, `src-tauri/src/gcal_push/connector.rs`, `src-tauri/src/mcp/tools_ro.rs`, `src-tauri/src/mcp/summarise.rs`, `src-tauri/src/mcp/tools_ro/tests.rs`, `src-tauri/benches/agenda_bench.rs`.
+- Backend snapshots (2): `src-tauri/src/mcp/tools_ro/snapshots/agaric_lib__mcp__tools_ro__tests__tool_descriptions.snap`, `…__tool_response_get_agenda.snap`.
+- Backend cache (1 new): `src-tauri/.sqlx/query-db7cdf97…json` (incidental session-586 cleanup, see drift #1).
+- Frontend modified (5): `src/lib/bindings.ts` (auto-regenerated), `src/lib/tauri.ts`, `src/hooks/useDuePanelData.ts`, `src/lib/__tests__/tauri.test.ts`, `src/components/__tests__/DuePanel.test.tsx`, `src/hooks/__tests__/useDuePanelData.test.ts`.
+- Docs: `REVIEW-LATER.md` (M-25 entry deleted; M-85 entry updated to drop `get_agenda` + add carve-out reconsideration note; summary line + previously-resolved counter bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after 2 minor autofix rounds: 1 biome `npx biome check --write src/` fixed 2 files + 1 cargo fmt fixed 16 indentation drifts).
+
+- Backend full nextest: 3281/3281 (3 skipped); agenda subset: 113/113.
+- Frontend full vitest: 8960/8960 across 364 files.
+- Targeted frontend (3 files): 234/234.
+- TypeScript: 0 errors.
+- Cargo: full nextest run, fmt, clippy, deny, machete all green.
+
+**Commit:** `09a3ded` — `feat(agenda): M-25 — cursor pagination on list_projected_agenda (closes M-25 + partially M-85)`. (Docs commit follows separately.)
+
+---
+
 ## Session 587 — 1-subagent batch: MAINT-127 navigation.ts split (2026-04-30)
 
 **Final item in the user-approved 4-item batch closed.** Build subagent split the 543L `src/stores/navigation.ts` god-store into a slim view+block store (`navigation.ts` 116L) and a new tab-engine store (`tabs.ts` 480L) with cross-store coordination via direct `useNavigationStore.getState().setView(...)` calls from tab actions when they imply a view change. 52 consumer files migrated (9 view-only stay on `useNavigationStore`, 8 tabs-only switched to `useTabsStore`, 35 use both). 8959/8959 frontend tests pass.
