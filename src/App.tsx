@@ -1,56 +1,19 @@
-import {
-  Activity,
-  Calendar,
-  ChevronsLeft,
-  FileText,
-  GitMerge,
-  History,
-  Keyboard,
-  LayoutTemplate,
-  Moon,
-  Network,
-  Plus,
-  RefreshCw,
-  Search,
-  Settings,
-  Sun,
-  Tag,
-  Trash2,
-  WifiOff,
-} from 'lucide-react'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { AppSidebar } from './components/AppSidebar'
 import { BootGate } from './components/BootGate'
 import { BugReportDialog } from './components/BugReportDialog'
 import { FeatureErrorBoundary } from './components/FeatureErrorBoundary'
 import { GlobalDateControls, JournalControls, JournalPage } from './components/JournalPage'
 import { LoadingSkeleton } from './components/LoadingSkeleton'
 import { NoPeersDialog } from './components/NoPeersDialog'
+import { NAV_ITEMS } from './components/nav-items'
 import { QuickCaptureDialog } from './components/QuickCaptureDialog'
 import { RecentPagesStrip } from './components/RecentPagesStrip'
-import { SpaceAccentBadge } from './components/SpaceAccentBadge'
-import { SpaceStatusChip } from './components/SpaceStatusChip'
-import { SpaceSwitcher } from './components/SpaceSwitcher'
 import { TabBar } from './components/TabBar'
 import { ScrollArea } from './components/ui/scroll-area'
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuBadge,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-  SidebarRail,
-  SidebarTrigger,
-  useSidebar,
-} from './components/ui/sidebar'
+import { SidebarInset, SidebarProvider, SidebarTrigger } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
 import { ViewHeaderOutletProvider, ViewHeaderOutletSlot } from './components/ViewHeaderOutlet'
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
@@ -66,7 +29,6 @@ import { useTheme } from './hooks/useTheme'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
 import { announce } from './lib/announcer'
 import { BUG_REPORT_EVENT, type BugReportEventDetail } from './lib/bug-report-events'
-import { formatRelativeTime } from './lib/format-relative-time'
 import { logger } from './lib/logger'
 import { CLOSE_ALL_OVERLAYS_EVENT } from './lib/overlay-events'
 import { setPriorityLevels } from './lib/priority-levels'
@@ -150,37 +112,6 @@ const WelcomeModal = lazy(() =>
   import('./components/WelcomeModal').then((m) => ({ default: m.WelcomeModal })),
 )
 
-/** Sidebar nav items — page-editor is not listed here (it's navigated to programmatically). */
-const NAV_ITEMS: { id: Exclude<View, 'page-editor'>; icon: React.ElementType; labelKey: string }[] =
-  [
-    { id: 'journal', icon: Calendar, labelKey: 'sidebar.journal' },
-    { id: 'search', icon: Search, labelKey: 'sidebar.search' },
-    { id: 'pages', icon: FileText, labelKey: 'sidebar.pages' },
-    { id: 'tags', icon: Tag, labelKey: 'sidebar.tags' },
-    { id: 'settings', icon: Settings, labelKey: 'sidebar.settings' },
-    { id: 'trash', icon: Trash2, labelKey: 'sidebar.trash' },
-    { id: 'status', icon: Activity, labelKey: 'sidebar.status' },
-    { id: 'conflicts', icon: GitMerge, labelKey: 'sidebar.conflicts' },
-    { id: 'history', icon: History, labelKey: 'sidebar.history' },
-    { id: 'templates', icon: LayoutTemplate, labelKey: 'sidebar.templates' },
-    { id: 'graph', icon: Network, labelKey: 'sidebar.graph' },
-  ]
-
-function CollapseButton() {
-  const { t } = useTranslation()
-  const { toggleSidebar } = useSidebar()
-  return (
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <SidebarMenuButton tooltip={t('sidebar.toggleSidebar')} onClick={toggleSidebar}>
-          <ChevronsLeft className="transition-transform group-data-[state=collapsed]:rotate-180" />
-          <span>{t('sidebar.collapse')}</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    </SidebarMenu>
-  )
-}
-
 /** Resolve the header label from the current navigation state. */
 function useHeaderLabel(): string {
   const { t } = useTranslation()
@@ -192,23 +123,6 @@ function useHeaderLabel(): string {
   }
   const item = NAV_ITEMS.find((item) => item.id === currentView)
   return item ? t(item.labelKey) : ''
-}
-
-/** Compute the CSS class for the sync status dot colour. */
-function syncDotClass(syncState: string, hasPeers: boolean): string {
-  if (!hasPeers) return 'bg-muted-foreground'
-  switch (syncState) {
-    case 'idle':
-      return 'bg-sync-idle'
-    case 'syncing':
-    case 'discovering':
-    case 'pairing':
-      return 'bg-sync-active'
-    case 'error':
-      return 'bg-destructive'
-    default:
-      return 'bg-muted-foreground'
-  }
 }
 
 /** Returns the number of unresolved conflicts. Polls every 30 s and on focus. */
@@ -855,169 +769,24 @@ function App() {
         {t('accessibility.skipToMain')}
       </a>
       <SidebarProvider>
-        {/*
-         * "icon" collapses the sidebar to a 48px icon-only rail rather than
-         * fully off-canvas. Chosen over "offcanvas" so that on desktop the
-         * primary nav stays one click away (vs. requiring a swipe/click to
-         * re-open). See UX.md § Mobile Sidebar.
-         */}
-        <Sidebar collapsible="icon">
-          <SidebarHeader className="p-4 pb-2">
-            {/*
-             * FEAT-3 Phase 1: replace static branding with the
-             * SpaceSwitcher. The switcher occupies the same vertical
-             * footprint so downstream sidebar height math stays valid.
-             * It is hidden when the sidebar collapses to icon mode to
-             * preserve the compact rail layout (the switcher
-             * re-appears on expand).
-             *
-             * FEAT-3p10: when the sidebar collapses, the SpaceSwitcher
-             * dropdown disappears and the user loses the only visual
-             * cue of which space is active. The SpaceAccentBadge takes
-             * its place in the icon rail — a 32px circle with the
-             * first letter of the space name on top of the accent
-             * color. Click cycles to the next space.
-             */}
-            <div className="hidden justify-center group-data-[collapsible=icon]:flex">
-              {(() => {
-                const active = availableSpaces.find((s) => s.id === currentSpaceId) ?? null
-                return active != null ? <SpaceAccentBadge space={active} /> : null
-              })()}
-            </div>
-            <div className="group-data-[collapsible=icon]:hidden">
-              <SpaceSwitcher />
-            </div>
-          </SidebarHeader>
-          <SidebarContent>
-            <FeatureErrorBoundary name="Sidebar">
-              <SidebarGroup>
-                <SidebarGroupContent>
-                  <SidebarMenu>
-                    {NAV_ITEMS.map((item) => {
-                      const label = t(item.labelKey)
-                      return (
-                        <SidebarMenuItem key={item.id}>
-                          <SidebarMenuButton
-                            isActive={currentView === item.id}
-                            aria-current={currentView === item.id ? 'page' : undefined}
-                            tooltip={label}
-                            onClick={() => setView(item.id)}
-                          >
-                            <item.icon />
-                            <span>{label}</span>
-                            {item.id === 'conflicts' && conflictCount > 0 && (
-                              <SidebarMenuBadge
-                                aria-label={t('sidebar.conflictCount', { count: conflictCount })}
-                              >
-                                {conflictCount}
-                              </SidebarMenuBadge>
-                            )}
-                            {item.id === 'trash' && trashCount > 0 && (
-                              <SidebarMenuBadge
-                                aria-label={t('sidebar.trashCount', { count: trashCount })}
-                              >
-                                {trashCount}
-                              </SidebarMenuBadge>
-                            )}
-                            {item.id === 'status' && (
-                              <span
-                                className={cn(
-                                  'ml-auto h-2.5 w-2.5 rounded-full',
-                                  syncDotClass(syncState, syncPeers.length > 0),
-                                )}
-                                aria-hidden="true"
-                              />
-                            )}
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      )
-                    })}
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </SidebarGroup>
-            </FeatureErrorBoundary>
-          </SidebarContent>
-          <SidebarFooter>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip={t('sidebar.newPageTooltip')} onClick={handleNewPage}>
-                  <Plus />
-                  <span>{t('sidebar.newPage')}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  tooltip={
-                    !isOnline
-                      ? t('sidebar.offline')
-                      : syncing
-                        ? t('sidebar.syncing')
-                        : t('sidebar.syncTooltip')
-                  }
-                  onClick={handleSyncClick}
-                  disabled={syncing || !isOnline}
-                >
-                  {!isOnline ? (
-                    <WifiOff className="h-4 w-4 text-muted-foreground" />
-                  ) : (
-                    <RefreshCw className={syncing ? 'animate-spin' : ''} />
-                  )}
-                  <span>{isOnline ? t('sidebar.sync') : t('sidebar.offline')}</span>
-                  <span
-                    className={cn(
-                      'sync-button-status-dot ml-auto h-2.5 w-2.5 rounded-full',
-                      syncDotClass(syncState, syncPeers.length > 0),
-                    )}
-                    data-testid="sync-button-status-dot"
-                    data-sync-state={syncState}
-                    aria-hidden="true"
-                  />
-                </SidebarMenuButton>
-                <span
-                  className="px-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden"
-                  data-testid="last-synced"
-                >
-                  {lastSyncedAt
-                    ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t) })
-                    : t('sidebar.lastSyncedNever')}
-                </span>
-                {/*
-                 * FEAT-3p10 — visual identity status chip. Sits next to
-                 * the sync chip so the sidebar footer carries one
-                 * cohesive "what is active" surface. Click forwards
-                 * focus to the SpaceSwitcher trigger so the user can
-                 * pick a different space without hunting for the
-                 * dropdown. Auto-hides when no space is active (boot
-                 * pre-bootstrap edge case).
-                 */}
-                <div className="px-2 pt-1 group-data-[collapsible=icon]:hidden">
-                  <SpaceStatusChip />
-                </div>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  tooltip={t('sidebar.toggleTheme')}
-                  onClick={toggleTheme}
-                  data-testid="theme-toggle"
-                >
-                  {isDark ? <Sun /> : <Moon />}
-                  <span>{t('sidebar.toggleTheme')}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  tooltip={t('sidebar.shortcuts')}
-                  onClick={() => setShortcutsOpen(true)}
-                >
-                  <Keyboard />
-                  <span>{t('sidebar.shortcuts')}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-            <CollapseButton />
-          </SidebarFooter>
-          <SidebarRail />
-        </Sidebar>
+        <AppSidebar
+          currentView={currentView}
+          onSelectView={setView}
+          conflictCount={conflictCount}
+          trashCount={trashCount}
+          syncState={syncState}
+          syncPeers={syncPeers}
+          syncing={syncing}
+          isOnline={isOnline}
+          lastSyncedAt={lastSyncedAt}
+          isDark={isDark}
+          onToggleTheme={toggleTheme}
+          onNewPage={handleNewPage}
+          onSyncClick={handleSyncClick}
+          onShowShortcuts={() => setShortcutsOpen(true)}
+          availableSpaces={availableSpaces}
+          currentSpaceId={currentSpaceId}
+        />
         <SidebarInset>
           <ViewHeaderOutletProvider>
             <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-4">

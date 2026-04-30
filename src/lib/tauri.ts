@@ -129,13 +129,13 @@ export interface BulkTrashResponse {
 }
 
 /** Restore all soft-deleted blocks. Returns count of restored blocks. */
-export function restoreAllDeleted(): Promise<BulkTrashResponse> {
-  return invoke('restore_all_deleted')
+export async function restoreAllDeleted(): Promise<BulkTrashResponse> {
+  return unwrap(await commands.restoreAllDeleted())
 }
 
 /** Permanently purge all soft-deleted blocks. Irreversible. */
-export function purgeAllDeleted(): Promise<BulkTrashResponse> {
-  return invoke('purge_all_deleted')
+export async function purgeAllDeleted(): Promise<BulkTrashResponse> {
+  return unwrap(await commands.purgeAllDeleted())
 }
 
 /**
@@ -146,8 +146,8 @@ export function purgeAllDeleted(): Promise<BulkTrashResponse> {
  * the root's `deleted_at` timestamp, excluding the root itself and conflict copies.
  * Roots with zero descendants are omitted — treat missing keys as `0`.
  */
-export function trashDescendantCounts(rootIds: string[]): Promise<Record<string, number>> {
-  return invoke('trash_descendant_counts', { rootIds })
+export async function trashDescendantCounts(rootIds: string[]): Promise<Record<string, number>> {
+  return unwrap(await commands.trashDescendantCounts(rootIds))
 }
 
 /** List blocks with optional filters and cursor-based pagination.
@@ -363,18 +363,15 @@ export async function queryByTags(params: {
 }
 
 /** List tags whose name starts with the given prefix (autocomplete). */
-export function listTagsByPrefix(params: {
+export async function listTagsByPrefix(params: {
   prefix: string
   limit?: number | undefined
 }): Promise<TagCacheRow[]> {
-  return invoke('list_tags_by_prefix', {
-    prefix: params.prefix,
-    limit: params.limit ?? null,
-  })
+  return unwrap(await commands.listTagsByPrefix(params.prefix, params.limit ?? null))
 }
 
-export function listTagsForBlock(blockId: string): Promise<string[]> {
-  return invoke('list_tags_for_block', { blockId })
+export async function listTagsForBlock(blockId: string): Promise<string[]> {
+  return unwrap(await commands.listTagsForBlock(blockId))
 }
 
 // ---------------------------------------------------------------------------
@@ -390,7 +387,7 @@ export interface PropertyRow {
 }
 
 /** Set (upsert) a property on a block. Exactly one value field must be non-null. */
-export function setProperty(params: {
+export async function setProperty(params: {
   blockId: string
   key: string
   valueText?: string | null | undefined
@@ -398,29 +395,33 @@ export function setProperty(params: {
   valueDate?: string | null | undefined
   valueRef?: string | null | undefined
 }): Promise<BlockRow> {
-  return invoke('set_property', {
-    blockId: params.blockId,
-    key: params.key,
-    valueText: params.valueText ?? null,
-    valueNum: params.valueNum ?? null,
-    valueDate: params.valueDate ?? null,
-    valueRef: params.valueRef ?? null,
-  })
+  return unwrap(
+    await commands.setProperty(
+      params.blockId,
+      params.key,
+      params.valueText ?? null,
+      params.valueNum ?? null,
+      params.valueDate ?? null,
+      params.valueRef ?? null,
+    ),
+  )
 }
 
 /** Delete a property from a block by key. */
 export async function deleteProperty(blockId: string, key: string): Promise<void> {
-  await invoke('delete_property', { blockId, key })
+  unwrap(await commands.deleteProperty(blockId, key))
 }
 
 /** Get all properties for a block. */
-export function getProperties(blockId: string): Promise<PropertyRow[]> {
-  return invoke('get_properties', { blockId })
+export async function getProperties(blockId: string): Promise<PropertyRow[]> {
+  return unwrap(await commands.getProperties(blockId))
 }
 
 /** Batch-fetch properties for multiple blocks in a single IPC call. */
-export function getBatchProperties(blockIds: string[]): Promise<Record<string, PropertyRow[]>> {
-  return invoke('get_batch_properties', { blockIds })
+export async function getBatchProperties(
+  blockIds: string[],
+): Promise<Record<string, PropertyRow[]>> {
+  return unwrap(await commands.getBatchProperties(blockIds))
 }
 
 // ---------------------------------------------------------------------------
@@ -634,25 +635,27 @@ export async function listBacklinksGrouped(params: {
 }
 
 /** Query unlinked references grouped by source page, with filters, sort, and pagination. */
-export function listUnlinkedReferences(params: {
+export async function listUnlinkedReferences(params: {
   pageId: string
   filters?: BacklinkFilter[] | null | undefined
   sort?: BacklinkSort | null | undefined
   cursor?: string | null | undefined
   limit?: number | null | undefined
 }): Promise<GroupedBacklinkResponse> {
-  return invoke('list_unlinked_references', {
-    pageId: params.pageId,
-    filters: params.filters ?? null,
-    sort: params.sort ?? null,
-    cursor: params.cursor ?? null,
-    limit: params.limit ?? null,
-  })
+  return unwrap(
+    await commands.listUnlinkedReferences(
+      params.pageId,
+      params.filters ?? null,
+      params.sort ?? null,
+      params.cursor ?? null,
+      params.limit ?? null,
+    ),
+  )
 }
 
 /** List all distinct property keys currently in use. */
-export function listPropertyKeys(): Promise<string[]> {
-  return invoke('list_property_keys')
+export async function listPropertyKeys(): Promise<string[]> {
+  return unwrap(await commands.listPropertyKeys())
 }
 
 // ---------------------------------------------------------------------------
@@ -660,34 +663,32 @@ export function listPropertyKeys(): Promise<string[]> {
 // ---------------------------------------------------------------------------
 
 /** Create a new property definition. */
-export function createPropertyDef(params: {
+export async function createPropertyDef(params: {
   key: string
   valueType: string
   options?: string | null | undefined
 }): Promise<PropertyDefinition> {
-  return invoke('create_property_def', {
-    key: params.key,
-    valueType: params.valueType,
-    options: params.options ?? null,
-  })
+  return unwrap(
+    await commands.createPropertyDef(params.key, params.valueType, params.options ?? null),
+  )
 }
 
 /** List all property definitions. */
-export function listPropertyDefs(): Promise<PropertyDefinition[]> {
-  return invoke('list_property_defs')
+export async function listPropertyDefs(): Promise<PropertyDefinition[]> {
+  return unwrap(await commands.listPropertyDefs())
 }
 
 /** Update the options JSON for a select-type property definition. */
-export function updatePropertyDefOptions(
+export async function updatePropertyDefOptions(
   key: string,
   options: string,
 ): Promise<PropertyDefinition> {
-  return invoke('update_property_def_options', { key, options })
+  return unwrap(await commands.updatePropertyDefOptions(key, options))
 }
 
 /** Delete a property definition by key. */
-export function deletePropertyDef(key: string): Promise<void> {
-  return invoke('delete_property_def', { key })
+export async function deletePropertyDef(key: string): Promise<void> {
+  unwrap(await commands.deletePropertyDef(key))
 }
 
 // ---------------------------------------------------------------------------
