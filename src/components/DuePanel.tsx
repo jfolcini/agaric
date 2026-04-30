@@ -16,11 +16,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { getTodayString } from '@/lib/date-utils'
-import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useDuePanelData } from '../hooks/useDuePanelData'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { useLocalStoragePreference } from '../hooks/useLocalStoragePreference'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { BlockListItem } from './BlockListItem'
@@ -56,36 +56,18 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   const [collapsed, setCollapsed] = useState(false)
   const [sourceFilter, setSourceFilter] = useState<string | null>(null)
 
-  const [hideBeforeScheduled, setHideBeforeScheduled] = useState(() => {
-    try {
-      return localStorage.getItem('agaric:hideBeforeScheduled') === 'true'
-    } catch (err) {
-      logger.warn(
-        'DuePanel',
-        'Failed to read localStorage preference',
-        { key: 'agaric:hideBeforeScheduled' },
-        err,
-      )
-      return false
-    }
-  })
+  // On-disk format is the bare boolean (`'true'` / `'false'`); JSON.parse
+  // and JSON.stringify both round-trip these values, so the default
+  // parse/serialize keep wire-format compatibility.
+  const [hideBeforeScheduled, setHideBeforeScheduled] = useLocalStoragePreference<boolean>(
+    'agaric:hideBeforeScheduled',
+    false,
+    { source: 'DuePanel' },
+  )
 
   const toggleHideBeforeScheduled = useCallback(() => {
-    setHideBeforeScheduled((prev) => {
-      const next = !prev
-      try {
-        localStorage.setItem('agaric:hideBeforeScheduled', String(next))
-      } catch (err) {
-        logger.warn(
-          'DuePanel',
-          'Failed to write localStorage preference',
-          { key: 'agaric:hideBeforeScheduled' },
-          err,
-        )
-      }
-      return next
-    })
-  }, [])
+    setHideBeforeScheduled((prev) => !prev)
+  }, [setHideBeforeScheduled])
 
   const {
     blocks,

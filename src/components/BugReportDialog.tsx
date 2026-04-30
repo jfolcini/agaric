@@ -41,6 +41,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { buildGitHubIssueUrl, formatReportBody } from '@/lib/bug-report'
 import { bugReportZipFilename, buildReportZip } from '@/lib/bug-report-zip'
 import { writeText } from '@/lib/clipboard'
@@ -101,6 +102,23 @@ export function BugReportDialog({
   // what was elided.
   const [showFullLog, setShowFullLog] = useState<boolean>(false)
 
+  // MAINT-120: collect metadata via the shared useIpcCommand hook. Mirrors
+  // the original Promise.then().catch().finally() shape — the
+  // `setLoadingMetadata` flag stays external because it's tied to the
+  // open/close lifecycle rather than the IPC itself.
+  const { execute: executeCollectMetadata } = useIpcCommand<void, BugReport>({
+    call: () => collectBugReportMetadata(),
+    module: MODULE,
+    errorLogMessage: 'failed to collect metadata',
+    logLevel: 'warn',
+    onSuccess: (md) => {
+      setMetadata(md)
+    },
+    onError: () => {
+      toast.error(t('bugReport.loadMetadataFailed'))
+    },
+  })
+
   // Reset form when re-opening, and load metadata lazily on open.
   useEffect(() => {
     if (!open) return
@@ -117,18 +135,10 @@ export function BugReportDialog({
     setPreviewLoading(false)
 
     setLoadingMetadata(true)
-    collectBugReportMetadata()
-      .then((md) => {
-        setMetadata(md)
-      })
-      .catch((err: unknown) => {
-        logger.warn(MODULE, 'failed to collect metadata', undefined, err)
-        toast.error(t('bugReport.loadMetadataFailed'))
-      })
-      .finally(() => {
-        setLoadingMetadata(false)
-      })
-  }, [open, initialTitle, initialDescription, t])
+    void executeCollectMetadata().finally(() => {
+      setLoadingMetadata(false)
+    })
+  }, [open, initialTitle, initialDescription, executeCollectMetadata])
 
   // Reload logs whenever the user toggles either switch while the dialog
   // is open. When the outer switch is off, we clear the list.
@@ -179,36 +189,60 @@ export function BugReportDialog({
     })
   }, [title, body, t])
 
-  const handleCopy = useCallback(async () => {
-    try {
-      if (typeof navigator === 'undefined' || navigator.clipboard == null) {
-        toast.error(t('bugReport.copyFailed'))
-        return
-      }
-      await writeText(body)
+  // MAINT-120: copy the formatted report body to the clipboard. The
+  // navigator-availability guard stays in the wrapper because it short-
+  // circuits BEFORE the IPC call.
+  const { execute: executeCopy } = useIpcCommand<void, void>({
+    call: () => writeText(body),
+    module: MODULE,
+    errorLogMessage: 'clipboard write failed',
+    logLevel: 'warn',
+    onSuccess: () => {
       toast.success(t('bugReport.copied'))
-    } catch (err) {
-      logger.warn(MODULE, 'clipboard write failed', undefined, err)
+    },
+    onError: () => {
       toast.error(t('bugReport.copyFailed'))
+    },
+  })
+
+  const handleCopy = useCallback(async () => {
+    if (typeof navigator === 'undefined' || navigator.clipboard == null) {
+      toast.error(t('bugReport.copyFailed'))
+      return
     }
-  }, [body, t])
+    await executeCopy()
+  }, [executeCopy, t])
+
+  // MAINT-120: build + download the diagnostic-logs ZIP. `call` chains the
+  // three sequential IPC + browser calls so a failure in any one routes
+  // through the hook's logger.warn + toast.error path. Returns `true` on
+  // success so `handleSubmit` can branch on it (vs. `undefined` on error).
+  const { execute: executeBuildZip } = useIpcCommand<
+    { redact: boolean; metadata: BugReport },
+    true
+  >({
+    call: async ({ redact: r, metadata: md }) => {
+      const entries = await readLogsForReport(r)
+      const blob = await buildReportZip(entries, md)
+      downloadBlob(blob, zipFileName)
+      return true
+    },
+    module: MODULE,
+    errorLogMessage: 'failed to build/download ZIP',
+    errorLogContext: ({ redact: r }) => ({ redact: r }),
+    logLevel: 'warn',
+    onError: () => {
+      toast.error(t('bugReport.buildZipFailed'))
+    },
+  })
 
   const handleSubmit = useCallback(async () => {
     if (submitting) return
     setSubmitting(true)
     try {
       if (includeLogs && metadata != null) {
-        // Logs on → build a ZIP, save to disk, then open the GitHub URL
-        // with a body that points at the saved filename.
-        try {
-          const entries = await readLogsForReport(redact)
-          const blob = await buildReportZip(entries, metadata)
-          downloadBlob(blob, zipFileName)
-        } catch (err) {
-          logger.warn(MODULE, 'failed to build/download ZIP', { redact }, err)
-          toast.error(t('bugReport.buildZipFailed'))
-          return
-        }
+        const ok = await executeBuildZip({ redact, metadata })
+        if (ok === undefined) return
       }
       await openUrl(issueUrl)
       toast.success(t('bugReport.submitted'))
@@ -216,7 +250,30 @@ export function BugReportDialog({
     } finally {
       setSubmitting(false)
     }
-  }, [submitting, includeLogs, metadata, redact, zipFileName, issueUrl, onOpenChange, t])
+  }, [submitting, includeLogs, metadata, redact, executeBuildZip, issueUrl, onOpenChange, t])
+
+  // MAINT-120: re-fetch logs and surface the contents of one entry inline
+  // for preview. `setPreviewLoading` toggles outside the hook because it
+  // gates aria-busy on the sub-dialog.
+  const { execute: executePreview } = useIpcCommand<{ filename: string; redact: boolean }, string>({
+    call: async ({ filename, redact: r }) => {
+      const entries = await readLogsForReport(r)
+      const entry = entries.find((e) => e.name === filename)
+      if (entry == null) {
+        throw new Error(`log entry not found: ${filename}`)
+      }
+      return entry.contents
+    },
+    module: MODULE,
+    errorLogMessage: 'failed to read log for preview',
+    errorLogContext: ({ filename, redact: r }) => ({ filename, redact: r }),
+    onSuccess: (contents) => {
+      setPreviewContents(contents)
+    },
+    onError: () => {
+      setPreviewError(t('bugReport.previewError'))
+    },
+  })
 
   const handleOpenPreview = useCallback(
     async (filename: string) => {
@@ -225,21 +282,10 @@ export function BugReportDialog({
       setPreviewError(null)
       setPreviewLoading(true)
       setPreviewOpen(true)
-      try {
-        const entries = await readLogsForReport(redact)
-        const entry = entries.find((e) => e.name === filename)
-        if (entry == null) {
-          throw new Error(`log entry not found: ${filename}`)
-        }
-        setPreviewContents(entry.contents)
-      } catch (err) {
-        logger.error(MODULE, 'failed to read log for preview', { filename, redact }, err)
-        setPreviewError(t('bugReport.previewError'))
-      } finally {
-        setPreviewLoading(false)
-      }
+      await executePreview({ filename, redact })
+      setPreviewLoading(false)
     },
-    [redact, t],
+    [executePreview, redact],
   )
 
   const handlePreviewOpenChange = useCallback((next: boolean) => {

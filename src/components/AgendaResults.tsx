@@ -18,7 +18,7 @@ import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { StatusIcon } from '@/components/ui/status-icon'
-import { formatCompactDate, getTodayString } from '@/lib/date-utils'
+import { dueDateColor, formatCompactDate, getTodayString } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
@@ -64,14 +64,6 @@ export interface AgendaResultsProps {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
-
-/** Determine the color class for a due date chip based on whether it's overdue, today, or future. */
-function dueDateColor(dateStr: string): string {
-  const todayStr = getTodayString()
-  if (dateStr < todayStr) return 'bg-destructive/10 text-destructive'
-  if (dateStr === todayStr) return 'bg-status-pending text-status-pending-foreground'
-  return 'bg-muted text-muted-foreground'
-}
 
 /** Whether a YYYY-MM-DD date string represents an overdue date (UX-6). */
 function isOverdue(dateStr: string): boolean {

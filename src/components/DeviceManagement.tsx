@@ -19,6 +19,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
+import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { writeText } from '@/lib/clipboard'
 import { truncateId } from '@/lib/format'
 import { logger } from '@/lib/logger'
@@ -60,11 +61,14 @@ export function DeviceManagement(): React.ReactElement {
     return () => clearInterval(id)
   }, [])
 
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const [id, peerList] = await Promise.all([getDeviceId(), listPeerRefs()])
+  // MAINT-120: load device id + peer list in parallel via the shared
+  // useIpcCommand hook. Inline error display via `setError` (no toast —
+  // matches existing behavior).
+  const { execute: executeLoadData } = useIpcCommand<void, [string, PeerRefRow[]]>({
+    call: () => Promise.all([getDeviceId(), listPeerRefs()]),
+    module: 'DeviceManagement',
+    errorLogMessage: 'Failed to load device info',
+    onSuccess: ([id, peerList]) => {
       setDeviceId(id)
       // Sort: named devices first (alphabetical), then unnamed by synced_at
       peerList.sort((a, b) => {
@@ -74,27 +78,45 @@ export function DeviceManagement(): React.ReactElement {
         return 0 // preserve backend synced_at ordering for unnamed peers
       })
       setPeers(peerList)
-    } catch (err) {
-      logger.error('DeviceManagement', 'Failed to load device info', undefined, err)
+    },
+    onError: () => {
       setError('Failed to load device info')
-    }
+    },
+  })
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    await executeLoadData()
     setLoading(false)
-  }, [])
+  }, [executeLoadData])
 
   useEffect(() => {
     loadData()
   }, [loadData])
 
-  const handleUnpair = useCallback(async (peerId: string) => {
-    try {
-      await deletePeerRef(peerId)
+  // MAINT-120: unpair a peer device. The success path filters the row
+  // out of the local list and closes the confirm dialog; on error we
+  // surface an inline error banner (no toast — matches existing flow).
+  const { execute: executeUnpair } = useIpcCommand<{ peerId: string }, void>({
+    call: ({ peerId }) => deletePeerRef(peerId),
+    module: 'DeviceManagement',
+    errorLogMessage: 'Failed to unpair device',
+    onSuccess: (_result, { peerId }) => {
       setPeers((prev) => prev.filter((p) => p.peer_id !== peerId))
       setUnpairPeerId(null)
-    } catch (err) {
-      logger.error('DeviceManagement', 'Failed to unpair device', undefined, err)
+    },
+    onError: () => {
       setError('Failed to unpair device')
-    }
-  }, [])
+    },
+  })
+
+  const handleUnpair = useCallback(
+    async (peerId: string) => {
+      await executeUnpair({ peerId })
+    },
+    [executeUnpair],
+  )
 
   const handleSyncNow = useCallback(
     async (peerId: string) => {

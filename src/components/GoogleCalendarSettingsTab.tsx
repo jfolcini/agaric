@@ -63,6 +63,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
+import { useIpcCommand } from '@/hooks/useIpcCommand'
 import type { GcalStatus } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
@@ -100,28 +101,34 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
   // refreshes without each mount re-fetching unnecessarily.
   const [, setTick] = useState<number>(0)
 
-  const loadStatus = useCallback(async () => {
-    try {
-      const result = await invoke<GcalStatus>('get_gcal_status')
+  // MAINT-120: load gcal status via the shared useIpcCommand hook. The
+  // success path also keeps `windowInput` synced when the server-side value
+  // changes (and the user isn't mid-edit on a different value); on error
+  // we surface an inline status banner via `setStatusError`.
+  const { execute: executeLoadStatus } = useIpcCommand<void, GcalStatus>({
+    call: () => invoke<GcalStatus>('get_gcal_status'),
+    module: 'GoogleCalendarSettingsTab',
+    errorLogMessage: 'failed to load gcal status',
+    onSuccess: (result) => {
       setStatus(result)
       setStatusError(null)
-      // Keep the input in sync when the server-side value changes (and
-      // the user is not mid-edit on a different value).
       setWindowInput((prev) => {
-        // If prev was an invalid / empty string, adopt the server value.
         const parsed = Number.parseInt(prev, 10)
         if (!Number.isFinite(parsed) || parsed !== result.window_days) {
           return String(result.window_days)
         }
         return prev
       })
-    } catch (err) {
-      logger.error('GoogleCalendarSettingsTab', 'failed to load gcal status', undefined, err)
+    },
+    onError: () => {
       setStatusError(t('gcal.loadFailed'))
-    } finally {
-      setLoading(false)
-    }
-  }, [t])
+    },
+  })
+
+  const loadStatus = useCallback(async () => {
+    await executeLoadStatus()
+    setLoading(false)
+  }, [executeLoadStatus])
 
   useEffect(() => {
     void loadStatus()
@@ -198,22 +205,30 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     }
   }, [])
 
+  // MAINT-120: persist the window-days setting. Optimistic update keeps
+  // both the input and status in sync; on rejection we toast and refetch
+  // so the UI doesn't drift from the server-side value.
+  const { execute: executeSetWindowDays } = useIpcCommand<{ n: number }, void>({
+    call: ({ n }) => invoke('set_gcal_window_days', { n }),
+    module: 'GoogleCalendarSettingsTab',
+    errorLogMessage: 'failed to set window days',
+    errorLogContext: ({ n }) => ({ n }),
+    optimistic: ({ n }) => {
+      setWindowInput(String(n))
+      setStatus((s) => (s === null ? s : { ...s, window_days: n }))
+    },
+    onError: () => {
+      toast.error(t('gcal.windowFailed'))
+      void loadStatus()
+    },
+  })
+
   const persistWindowDays = useCallback(
     async (raw: number) => {
       const clamped = clampWindow(raw)
-      // Keep UI in sync if the server-side clamp differs from the input.
-      setWindowInput(String(clamped))
-      setStatus((s) => (s === null ? s : { ...s, window_days: clamped }))
-      try {
-        await invoke('set_gcal_window_days', { n: clamped })
-      } catch (err) {
-        logger.error('GoogleCalendarSettingsTab', 'failed to set window days', { n: clamped }, err)
-        toast.error(t('gcal.windowFailed'))
-        // Re-fetch the server-side value so the UI doesn't drift.
-        void loadStatus()
-      }
+      await executeSetWindowDays({ n: clamped })
     },
-    [loadStatus, t],
+    [executeSetWindowDays],
   )
 
   const scheduleWindowPersist = useCallback(
@@ -261,71 +276,102 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     void persistWindowDays(clamped)
   }, [persistWindowDays, status, windowInput, t])
 
+  // MAINT-120: privacy-mode toggle. Optimistic flip; on rejection we
+  // restore the captured `previous` snapshot so the Switch reverts.
+  const { execute: executeSetPrivacy } = useIpcCommand<
+    { mode: 'full' | 'minimal'; previous: GcalStatus | null },
+    void
+  >({
+    call: ({ mode }) => invoke('set_gcal_privacy_mode', { mode }),
+    module: 'GoogleCalendarSettingsTab',
+    errorLogMessage: 'failed to set privacy mode',
+    errorLogContext: ({ mode }) => ({ mode }),
+    optimistic: ({ mode }) => {
+      setStatus((s) => (s === null ? s : { ...s, privacy_mode: mode }))
+    },
+    revert: ({ previous }) => {
+      setStatus(previous)
+    },
+    onSuccess: () => {
+      toast.success(t('gcal.privacyUpdated'))
+    },
+    onError: () => {
+      toast.error(t('gcal.privacyFailed'))
+    },
+  })
+
   const handlePrivacyToggle = useCallback(
     async (nextMinimal: boolean) => {
       const mode: 'full' | 'minimal' = nextMinimal ? 'minimal' : 'full'
-      const previous = status
-      setStatus((s) => (s === null ? s : { ...s, privacy_mode: mode }))
-      try {
-        await invoke('set_gcal_privacy_mode', { mode })
-        toast.success(t('gcal.privacyUpdated'))
-      } catch (err) {
-        logger.error('GoogleCalendarSettingsTab', 'failed to set privacy mode', { mode }, err)
-        setStatus(previous)
-        toast.error(t('gcal.privacyFailed'))
-      }
+      await executeSetPrivacy({ mode, previous: status })
     },
-    [status, t],
+    [executeSetPrivacy, status],
   )
 
-  const handleConnect = useCallback(async () => {
-    try {
-      await invoke('begin_gcal_oauth')
-      // Re-fetch — the OAuth flow is async on the backend, but a
-      // successful round-trip means at minimum the command dispatched.
+  // MAINT-120: kick off Google OAuth flow. On success refetch so the
+  // panel reflects the new connected state once the round-trip completes.
+  const { execute: executeBeginOauth } = useIpcCommand<void, void>({
+    call: () => invoke('begin_gcal_oauth'),
+    module: 'GoogleCalendarSettingsTab',
+    errorLogMessage: 'failed to begin gcal oauth',
+    onSuccess: () => {
       void loadStatus()
-    } catch (err) {
-      logger.error('GoogleCalendarSettingsTab', 'failed to begin gcal oauth', undefined, err)
+    },
+    onError: () => {
       toast.error(t('gcal.connectFailed'))
-    }
-  }, [loadStatus, t])
+    },
+  })
+
+  const handleConnect = useCallback(async () => {
+    await executeBeginOauth()
+  }, [executeBeginOauth])
+
+  // MAINT-120: force a full resync. `isResyncing` is tracked outside the
+  // hook because it gates aria-busy + spinner on the action button while
+  // the IPC is in flight.
+  const { execute: executeForceResync } = useIpcCommand<void, void>({
+    call: () => invoke('force_gcal_resync'),
+    module: 'GoogleCalendarSettingsTab',
+    errorLogMessage: 'failed to force resync',
+    onSuccess: () => {
+      toast.success(t('gcal.resyncStarted'))
+      void loadStatus()
+    },
+    onError: () => {
+      toast.error(t('gcal.resyncFailed'))
+    },
+  })
 
   const handleForceResync = useCallback(async () => {
     setIsResyncing(true)
-    try {
-      await invoke('force_gcal_resync')
-      toast.success(t('gcal.resyncStarted'))
+    await executeForceResync()
+    setIsResyncing(false)
+  }, [executeForceResync])
+
+  // MAINT-120: disconnect (with optional calendar deletion). The success
+  // toast picks one of two messages based on the `deleteCalendar` arg.
+  const { execute: executeDisconnect } = useIpcCommand<{ deleteCalendar: boolean }, void>({
+    call: ({ deleteCalendar }) => invoke('disconnect_gcal', { deleteCalendar }),
+    module: 'GoogleCalendarSettingsTab',
+    errorLogMessage: 'failed to disconnect gcal',
+    errorLogContext: ({ deleteCalendar }) => ({ deleteCalendar }),
+    onSuccess: (_result, { deleteCalendar }) => {
+      toast.success(
+        deleteCalendar ? t('gcal.disconnect.successWithDelete') : t('gcal.disconnect.successKeep'),
+      )
       void loadStatus()
-    } catch (err) {
-      logger.error('GoogleCalendarSettingsTab', 'failed to force resync', undefined, err)
-      toast.error(t('gcal.resyncFailed'))
-    } finally {
-      setIsResyncing(false)
-    }
-  }, [loadStatus, t])
+    },
+    onError: () => {
+      toast.error(t('gcal.disconnect.failed'))
+    },
+  })
 
   const handleDisconnect = useCallback(
     async (deleteCalendar: boolean) => {
       setDisconnectOpen(false)
-      try {
-        await invoke('disconnect_gcal', { deleteCalendar })
-        toast.success(
-          deleteCalendar
-            ? t('gcal.disconnect.successWithDelete')
-            : t('gcal.disconnect.successKeep'),
-        )
-        void loadStatus()
-      } catch (err) {
-        logger.error(
-          'GoogleCalendarSettingsTab',
-          'failed to disconnect gcal',
-          { deleteCalendar },
-          err,
-        )
-        toast.error(t('gcal.disconnect.failed'))
-      }
+      await executeDisconnect({ deleteCalendar })
     },
-    [loadStatus, t],
+    [executeDisconnect],
   )
 
   if (loading) {

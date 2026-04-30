@@ -6,7 +6,7 @@
  * Compact layout with touch-friendly sizing.
  */
 
-import { File, FileText, Image, Paperclip, Trash2 } from 'lucide-react'
+import { Paperclip, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -14,46 +14,18 @@ import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { cn } from '@/lib/utils'
 import { useBlockAttachments } from '../hooks/useBlockAttachments'
+import { formatSize } from '../lib/attachment-utils'
+import { formatRelativeTime } from '../lib/format-relative-time'
 import type { AttachmentRow } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
+import { MimeIcon } from './MimeIcon'
+
+// Re-exported for back-compat with tests / consumers that imported it from here.
+export { formatSize }
 
 interface AttachmentListProps {
   blockId: string
-}
-
-/** Format bytes into a human-readable size string. */
-export function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-/** Return a relative timestamp string like "2m ago", "3h ago", "5d ago". */
-function relativeTime(dateStr: string): string {
-  const now = Date.now()
-  const then = new Date(dateStr).getTime()
-  if (Number.isNaN(then)) return dateStr
-  const diffMs = now - then
-  const seconds = Math.floor(diffMs / 1000)
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  return `${days}d ago`
-}
-
-/** Return the appropriate lucide icon for a MIME type. */
-function MimeIcon({ mimeType }: { mimeType: string }): React.ReactElement {
-  if (mimeType.startsWith('image/')) {
-    return <Image className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-  }
-  if (mimeType.startsWith('text/')) {
-    return <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-  }
-  return <File className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
 }
 
 export function AttachmentList({ blockId }: AttachmentListProps): React.ReactElement {
@@ -136,7 +108,7 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
                 {formatSize(attachment.size_bytes)}
               </span>
               <span className="shrink-0 text-xs text-muted-foreground">
-                {relativeTime(attachment.created_at)}
+                {formatRelativeTime(attachment.created_at, t)}
               </span>
               <button
                 type="button"

@@ -145,6 +145,20 @@ export function getTodayString(): string {
   return formatDate(new Date())
 }
 
+/**
+ * Color classes for a YYYY-MM-DD due-date string.
+ *
+ * Past → destructive (overdue), today → status-pending (warning),
+ * future → muted (informational). Used by the inline due-date chip in
+ * `BlockInlineControls` and the agenda results list.
+ */
+export function dueDateColor(dateStr: string): string {
+  const todayStr = getTodayString()
+  if (dateStr < todayStr) return 'bg-destructive/10 text-destructive'
+  if (dateStr === todayStr) return 'bg-status-pending text-status-pending-foreground'
+  return 'bg-muted text-muted-foreground'
+}
+
 /** Check if a string is a YYYY-MM-DD date page title. */
 export function isDateFormattedPage(title: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(title)

@@ -18,6 +18,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { announce } from '../lib/announcer'
+import { formatDate } from '../lib/date-utils'
 import { logger } from '../lib/logger'
 import { reportIpcError } from '../lib/report-ipc-error'
 import { getBlock, setDueDate, setScheduledDate } from '../lib/tauri'
@@ -63,13 +64,6 @@ export interface BlockListItemProps {
   isFocused?: boolean
 }
 
-function formatDateISO(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
 function BlockListItemInner({
   content,
   contentMaxLength: _contentMaxLength = 120,
@@ -104,7 +98,7 @@ function BlockListItemInner({
   const handleDateSelect = useCallback(
     async (date: Date | undefined) => {
       if (!date || !blockId) return
-      const dateStr = formatDateISO(date)
+      const dateStr = formatDate(date)
       setPopoverOpen(false)
       if (onReschedule) {
         onReschedule(blockId, dateStr)

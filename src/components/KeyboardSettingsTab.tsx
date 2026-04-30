@@ -4,7 +4,8 @@
  */
 
 import { Check, Pencil, X } from 'lucide-react'
-import React, { useCallback, useMemo, useState } from 'react'
+import type React from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,30 +18,8 @@ import {
   type ShortcutBinding,
   setCustomShortcut,
 } from '@/lib/keyboard-config'
-import { modKey } from '@/lib/platform'
+import { renderKeys } from '@/lib/render-keyboard-shortcut'
 import { ConfirmDialog } from './ConfirmDialog'
-
-/** Render a keys string as styled <kbd> elements. Handles `+` combos and `/` alternatives. */
-function renderKeys(keys: string): React.ReactNode {
-  const alternatives = keys.split(' / ')
-  const mod = modKey()
-  return alternatives.map((alt, i) => {
-    const parts = alt.split(' + ').map((part) => (part === 'Ctrl' ? mod : part))
-    return (
-      <React.Fragment key={alt}>
-        {i > 0 && <span className="text-muted-foreground font-normal mx-1">/</span>}
-        {parts.map((part, j) => (
-          <React.Fragment key={part}>
-            {j > 0 && <span className="text-muted-foreground font-normal mx-0.5">+</span>}
-            <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold shadow-sm">
-              {part}
-            </kbd>
-          </React.Fragment>
-        ))}
-      </React.Fragment>
-    )
-  })
-}
 
 export function KeyboardSettingsTab(): React.ReactElement {
   const { t } = useTranslation()

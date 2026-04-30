@@ -223,6 +223,76 @@ export function useBlockKeyboardHandlers({
     [focusedBlockId, handleFlush, moveDown],
   )
 
+  /**
+   * Shared merge orchestration: edit `prevBlockId` with the merged content,
+   * remove `removeBlockId`, and revert the edit on remove failure. The
+   * caller supplies the per-handler log messages, log metadata blockIds,
+   * and editor-remount cleanup callbacks so the two handlers preserve
+   * their original log lines (`(edit step)` vs. `by ID (edit step)` etc.)
+   * while sharing the revert + toast error path.
+   *
+   * Returns `true` on success, `false` if edit or remove failed (in which
+   * case cleanup ran and the merge toast was shown).
+   */
+  const mergeBlocksAndHandle = useCallback(
+    async (params: {
+      prevBlockId: string
+      removeBlockId: string
+      prevContent: string
+      mergedContent: string
+      editLogMessage: string
+      editLogBlockId: string
+      removeLogMessage: string
+      removeLogBlockId: string
+      onEditFailureCleanup: () => void
+      onRemoveFailureCleanup: () => void
+    }): Promise<boolean> => {
+      try {
+        await edit(params.prevBlockId, params.mergedContent)
+      } catch (err) {
+        logger.error(
+          'useBlockKeyboardHandlers',
+          params.editLogMessage,
+          {
+            blockId: params.editLogBlockId,
+          },
+          err,
+        )
+        params.onEditFailureCleanup()
+        toast.error(t('blockTree.mergeBlocksFailed'))
+        return false
+      }
+      try {
+        await remove(params.removeBlockId)
+      } catch (err) {
+        logger.error(
+          'useBlockKeyboardHandlers',
+          params.removeLogMessage,
+          {
+            blockId: params.removeLogBlockId,
+          },
+          err,
+        )
+        // Revert the edit to avoid partial state (merged content in prev + original in current)
+        await edit(params.prevBlockId, params.prevContent).catch((revertErr: unknown) => {
+          logger.warn(
+            'useBlockKeyboardHandlers',
+            'Failed to revert edit after merge failure',
+            {
+              blockId: params.prevBlockId,
+            },
+            revertErr,
+          )
+        })
+        params.onRemoveFailureCleanup()
+        toast.error(t('blockTree.mergeBlocksFailed'))
+        return false
+      }
+      return true
+    },
+    [edit, remove, t],
+  )
+
   const handleMergeWithPrev = useCallback(async () => {
     if (!focusedBlockId) return
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
@@ -237,47 +307,20 @@ export function useBlockKeyboardHandlers({
     const prevDoc = parse(prevContent)
     const joinPoint = pmEndOfFirstBlock(prevDoc)
 
-    try {
-      await edit(prevBlock.id, mergedContent)
-    } catch (err) {
-      logger.error(
-        'useBlockKeyboardHandlers',
-        'Failed to merge blocks (edit step)',
-        {
-          blockId: prevBlock.id,
-        },
-        err,
-      )
-      rovingEditorRef.current.mount(focusedBlockId, currentContent)
-      toast.error(t('blockTree.mergeBlocksFailed'))
-      return
-    }
-    try {
-      await remove(focusedBlockId)
-    } catch (err) {
-      logger.error(
-        'useBlockKeyboardHandlers',
-        'Failed to merge blocks (remove step)',
-        {
-          blockId: focusedBlockId,
-        },
-        err,
-      )
-      // Revert the edit to avoid partial state (merged content in prev + original in current)
-      await edit(prevBlock.id, prevContent).catch((revertErr: unknown) => {
-        logger.warn(
-          'useBlockKeyboardHandlers',
-          'Failed to revert edit after merge failure',
-          {
-            blockId: prevBlock.id,
-          },
-          revertErr,
-        )
-      })
-      rovingEditorRef.current.mount(focusedBlockId, currentContent)
-      toast.error(t('blockTree.mergeBlocksFailed'))
-      return
-    }
+    const remount = () => rovingEditorRef.current.mount(focusedBlockId, currentContent)
+    const ok = await mergeBlocksAndHandle({
+      prevBlockId: prevBlock.id,
+      removeBlockId: focusedBlockId,
+      prevContent,
+      mergedContent,
+      editLogMessage: 'Failed to merge blocks (edit step)',
+      editLogBlockId: prevBlock.id,
+      removeLogMessage: 'Failed to merge blocks (remove step)',
+      removeLogBlockId: focusedBlockId,
+      onEditFailureCleanup: remount,
+      onRemoveFailureCleanup: remount,
+    })
+    if (!ok) return
 
     setFocused(prevBlock.id)
     rovingEditorRef.current.mount(prevBlock.id, mergedContent)
@@ -293,7 +336,7 @@ export function useBlockKeyboardHandlers({
         editor.commands.setTextSelection(pmPos)
       }
     }, 0)
-  }, [focusedBlockId, collapsedVisible, edit, remove, setFocused, t])
+  }, [focusedBlockId, collapsedVisible, mergeBlocksAndHandle, setFocused])
 
   const handleMergeById = useCallback(
     async (blockId: string) => {
@@ -308,56 +351,30 @@ export function useBlockKeyboardHandlers({
 
       const mergedContent = prevContent + currentContent
 
-      try {
-        await edit(prevBlock.id, mergedContent)
-      } catch (err) {
-        logger.error(
-          'useBlockKeyboardHandlers',
-          'Failed to merge blocks by ID (edit step)',
-          {
-            blockId,
-          },
-          err,
-        )
+      const remountIfNeeded = () => {
         if (editorContent !== null) {
           rovingEditorRef.current.mount(blockId, currentContent)
         }
-        toast.error(t('blockTree.mergeBlocksFailed'))
-        return
       }
-      try {
-        await remove(blockId)
-      } catch (err) {
-        logger.error(
-          'useBlockKeyboardHandlers',
-          'Failed to merge blocks by ID (remove step)',
-          {
-            blockId,
-          },
-          err,
-        )
-        // Revert the edit to avoid partial state (merged content in prev + original in current)
-        await edit(prevBlock.id, prevContent).catch((revertErr: unknown) => {
-          logger.warn(
-            'useBlockKeyboardHandlers',
-            'Failed to revert edit after merge failure',
-            {
-              blockId: prevBlock.id,
-            },
-            revertErr,
-          )
-        })
-        if (editorContent !== null) {
-          rovingEditorRef.current.mount(blockId, currentContent)
-        }
-        toast.error(t('blockTree.mergeBlocksFailed'))
-        return
-      }
+
+      const ok = await mergeBlocksAndHandle({
+        prevBlockId: prevBlock.id,
+        removeBlockId: blockId,
+        prevContent,
+        mergedContent,
+        editLogMessage: 'Failed to merge blocks by ID (edit step)',
+        editLogBlockId: blockId,
+        removeLogMessage: 'Failed to merge blocks by ID (remove step)',
+        removeLogBlockId: blockId,
+        onEditFailureCleanup: remountIfNeeded,
+        onRemoveFailureCleanup: remountIfNeeded,
+      })
+      if (!ok) return
 
       setFocused(prevBlock.id)
       rovingEditorRef.current.mount(prevBlock.id, mergedContent)
     },
-    [collapsedVisible, focusedBlockId, edit, remove, setFocused, t],
+    [collapsedVisible, focusedBlockId, mergeBlocksAndHandle, setFocused],
   )
 
   // Re-entrancy guard: prevents rapid Backspace presses from duplicating deletes.

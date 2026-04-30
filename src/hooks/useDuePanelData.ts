@@ -112,6 +112,25 @@ function listBlocksForAgenda(
   })
 }
 
+/**
+ * Shared tail of the four "fetch → filter → batchResolve → merge titles"
+ * effects in this hook. Skips when `ids` is empty, calls `batchResolve`,
+ * checks the staleness flag again after the await, and finally hands the
+ * resolved rows to `applyResolved`. Each call site retains its own merge
+ * semantics (replace map vs. add-with-fallback vs. add-only-truthy) via
+ * the callback so wire format stays byte-equivalent across migrations.
+ */
+export async function resolveAndMergeTitles(
+  ids: string[],
+  isStale: () => boolean,
+  applyResolved: (resolved: ResolvedBlock[]) => void,
+): Promise<void> {
+  if (ids.length === 0) return
+  const resolved = await batchResolve(ids)
+  if (isStale()) return
+  applyResolved(resolved)
+}
+
 export interface UseDuePanelDataOptions {
   date: string
   sourceFilter: string | null
@@ -182,16 +201,10 @@ export function useDuePanelData({
         setOverdueBlocks(overdue)
 
         if (overdue.length > 0) {
-          const contentRefs = overdue.flatMap((b) => (b.content ? extractUlidRefs(b.content) : []))
-          const idsToResolve = [
-            ...new Set([
-              ...overdue.map((b) => b.page_id).filter((id): id is string => id != null),
-              ...contentRefs,
-            ]),
-          ]
-          if (idsToResolve.length > 0) {
-            const resolved = await batchResolve(idsToResolve)
-            if (!stale) {
+          await resolveAndMergeTitles(
+            collectResolveIds(overdue),
+            () => stale,
+            (resolved) => {
               setPageTitles((prev) => {
                 const next = new Map(prev)
                 for (const r of resolved) {
@@ -199,8 +212,8 @@ export function useDuePanelData({
                 }
                 return next
               })
-            }
-          }
+            },
+          )
         }
       } catch {
         if (!stale) setOverdueBlocks([])
@@ -248,25 +261,19 @@ export function useDuePanelData({
 
         // Resolve parent titles
         if (upcoming.length > 0) {
-          const contentRefs = upcoming.flatMap((b) => (b.content ? extractUlidRefs(b.content) : []))
-          const idsToResolve = [
-            ...new Set([
-              ...upcoming.map((b) => b.page_id).filter((id): id is string => id != null),
-              ...contentRefs,
-            ]),
-          ]
-          if (idsToResolve.length > 0) {
-            const titles = await batchResolve(idsToResolve)
-            if (!stale) {
+          await resolveAndMergeTitles(
+            collectResolveIds(upcoming),
+            () => stale,
+            (resolved) => {
               setPageTitles((prev) => {
                 const next = new Map(prev)
-                for (const r of titles) {
+                for (const r of resolved) {
                   if (r.title) next.set(r.id, r.title)
                 }
                 return next
               })
-            }
-          }
+            },
+          )
         }
       } catch {
         if (!stale) setUpcomingBlocks([])
@@ -292,18 +299,23 @@ export function useDuePanelData({
         setHasMore(resp.has_more)
         setTotalCount(cursor ? totalCount + nonEmptyItems.length : nonEmptyItems.length)
 
-        // Resolve parent page titles
+        // Resolve parent page titles. Uses the closed-over `pageTitles`
+        // (not a functional update) to preserve byte-equivalent behaviour
+        // with the pre-MAINT-129 implementation.
         const uniqueParentIds = [
           ...new Set(newBlocks.map((b) => b.page_id).filter((id): id is string => id != null)),
         ]
-        if (uniqueParentIds.length > 0) {
-          const resolved = await batchResolve(uniqueParentIds)
-          const titleMap = new Map(pageTitles)
-          for (const r of resolved) {
-            titleMap.set(r.id, r.title ?? 'Untitled')
-          }
-          setPageTitles(titleMap)
-        }
+        await resolveAndMergeTitles(
+          uniqueParentIds,
+          () => false,
+          (resolved) => {
+            const titleMap = new Map(pageTitles)
+            for (const r of resolved) {
+              titleMap.set(r.id, r.title ?? 'Untitled')
+            }
+            setPageTitles(titleMap)
+          },
+        )
       } catch (err) {
         logger.warn('useDuePanelData', 'fetchBlocks failed', { date }, err)
       } finally {
@@ -334,13 +346,13 @@ export function useDuePanelData({
         setHasMore(resp.has_more)
         setTotalCount(nonEmptyItems.length)
 
-        // Resolve parent page titles + inline ULID refs (B-53)
-        const idsToResolve = collectResolveIds(nonEmptyItems)
-        if (idsToResolve.length > 0) {
-          const resolved = await batchResolve(idsToResolve)
-          if (cancelled) return
-          setPageTitles(buildTitleMap(resolved, 'Untitled'))
-        }
+        // Resolve parent page titles + inline ULID refs (B-53). Replaces
+        // the map (initial fetch wipes pageTitles above).
+        await resolveAndMergeTitles(
+          collectResolveIds(nonEmptyItems),
+          () => cancelled,
+          (resolved) => setPageTitles(buildTitleMap(resolved, 'Untitled')),
+        )
       } catch (err) {
         logger.warn('useDuePanelData', 'block fetch failed', undefined, err)
       } finally {
@@ -385,35 +397,23 @@ export function useDuePanelData({
           // Filter out empty-content projected entries (UX-129)
           const nonEmptyEntries = entries.filter((e) => e.block.content?.trim())
           setProjectedEntries(nonEmptyEntries)
-          const contentRefs = nonEmptyEntries.flatMap((e) =>
-            e.block.content ? extractUlidRefs(e.block.content) : [],
-          )
-          const idsToResolve = [
-            ...new Set([
-              ...nonEmptyEntries
-                .map((e) => e.block.page_id)
-                .filter((id): id is string => id != null),
-              ...contentRefs,
-            ]),
-          ]
-          if (idsToResolve.length > 0) {
-            batchResolve(idsToResolve)
-              .then((resolved) => {
-                if (!stale) {
-                  setPageTitles((prev) => {
-                    const next = new Map(prev)
-                    for (const r of resolved) {
-                      next.set(r.id, r.title ?? 'Untitled')
-                    }
-                    return next
-                  })
+          const idsToResolve = collectResolveIds(nonEmptyEntries.map((e) => e.block))
+          resolveAndMergeTitles(
+            idsToResolve,
+            () => stale,
+            (resolved) => {
+              setPageTitles((prev) => {
+                const next = new Map(prev)
+                for (const r of resolved) {
+                  next.set(r.id, r.title ?? 'Untitled')
                 }
+                return next
               })
-              .catch((err) => {
-                logger.warn('useDuePanelData', 'nested agenda fetch failed', undefined, err)
-                toast.error(t('duePanel.loadAgendaFailed'))
-              })
-          }
+            },
+          ).catch((err) => {
+            logger.warn('useDuePanelData', 'nested agenda fetch failed', undefined, err)
+            toast.error(t('duePanel.loadAgendaFailed'))
+          })
         }
       })
       .catch((err) => {
