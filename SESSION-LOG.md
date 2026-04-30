@@ -1,5 +1,51 @@
 # Session Log
 
+## Session 581 — 1-subagent + orchestrator batch: L-65 mDNS interface filter + L-132 claim_lease batching (2026-04-30)
+
+**Smaller scope to recover from Session 580's stuck-subagent loss.** Orchestrator implemented L-132 directly (audit + previous BUILD A's task; lease.rs was small enough to handle without delegation); 1 background subagent handled L-65 (mDNS interface filtering — different file, different domain, parallel). 1 technical-review subagent reviewed L-65. Both items are LOW-severity backend code-review findings, removed from REVIEW-LATER.md per the file's own rule on full closure.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 22 → 22 unchanged (L-65 and L-132 are Backend Code Review LOWs, not FEAT/MAINT/PERF/PUB).
+- **Backend Code Review section:** 2 LOW entries deleted (L-65, L-132).
+- **Previously-resolved counter:** 836+ → 838+ across 547 → 548 sessions.
+
+**Items closed:**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| L-132 — `claim_lease` 4 round-trips → 2 (orchestrator) | `src-tauri/src/gcal_push/lease.rs`. **Inside the existing `BEGIN IMMEDIATE` tx**, replaced 2 single-key SELECTs (`push_lease_device_id`, `push_lease_expires_at`) with 1 batched `SELECT key, value FROM gcal_settings WHERE key IN (?, ?)`, and replaced 2 single-key UPDATEs with 1 batched `UPDATE … SET value = CASE key WHEN ? THEN ? WHEN ? THEN ? ELSE value END, updated_at = ? WHERE key IN (?, ?)`. Round-trip count inside the tx drops from 4 (2 SELECT + 2 UPDATE) to 2 (1 SELECT + 1 UPDATE). NotFound semantics preserved via `rows_affected() == 2` check (with a single combined error message instead of the previous per-key one — diagnostic only, not user-visible). All 10 existing lease tests pass unchanged + 1 new regression test (`claim_writes_both_lease_rows_atomically_l132`) verifying both rows reach the same `updated_at` after a successful claim — neither would hold if the batched UPDATE silently wrote only one row. `cargo sqlx prepare -- --tests` regenerated 3 new entries in the `.sqlx/` cache for the new query macros. — Orchestrator |
+| L-65 — mDNS `enable_addr_auto()` privacy fix (subagent A) | `src-tauri/Cargo.toml` (promoted `if-addrs = "0.15"` from transitive to direct dep — already in Cargo.lock via `mdns-sd`, no version drift); `src-tauri/src/sync_net/websocket.rs` (new helper `filter_announceable_addrs<I: IntoIterator<Item = IpAddr>>(addrs: I) -> Vec<IpAddr>` keeps only `IpAddr::V4` matching `Ipv4Addr::is_private()` — RFC 1918 only; rewrote `MdnsService::announce` to call `if_addrs::get_if_addrs()`, filter via the helper, and pass the resulting `&[IpAddr]` to `ServiceInfo::new(...)`); fallback path on empty filter result OR `get_if_addrs()` failure: warn-log + revert to `enable_addr_auto()` (degraded mode, preserves discoverability when the filter cannot help). 5 new pure-function tests (loopback+link-local drop, public IPv4 drop incl. CGNAT, all-IPv6 drop, multi-homed bounded-set invariant, empty-input → empty-output fallback contract). 64/64 sync_net tests pass. **Set-narrowing transformation only** — no peer-validation, rate-limiting, or DoS guards added (per AGENTS.md "Threat Model" §"Do not add security hardening that assumes adversarial peers"). — Subagent agent_id 3503580e (build) + agent_id 886c6f40 (review) |
+
+**Process notes:**
+
+- **Decoupled from Session 580's stuck BUILD A.** Session 580 launched a subagent for L-132 that hung in exploration/compile for 30+ minutes without modifying `lease.rs`. Session 581 picked up L-132 directly via orchestrator — `lease.rs` is small (~500L), the audit had already located the cited site, and the fix was mechanical (batched SELECT + CASE-WHEN UPDATE).
+- **1 prek-driven nit fix** (orchestrator): `cargo fmt` flagged 2 cosmetic alignment issues in the new code (`gcal_push/lease.rs:493-499` chained `.find().expect()` — wanted multi-line; `sync_net/tests.rs:346-354` — comment alignment in a `vec![]`). Auto-fixed via `cargo fmt`. Re-ran prek clean, then committed.
+- **Reviewer false-positive on L-65 (recorded for context):** Reviewer agent_id 886c6f40 returned VERDICT NEEDS CHANGES, claiming `Ipv4Addr::is_private()` includes CGNAT (`100.64.0.0/10`) "in Rust 1.70+", which would have made the build subagent's CGNAT-drop test fail. Orchestrator verified by:
+  - Running `rustc --version` → `1.95.0` (current toolchain).
+  - Reading the actual test source.
+  - Running the test in isolation: **`filter_announceable_addrs_drops_public_ipv4` → 1/1 PASS**.
+  - The reviewer was wrong: per Rust stdlib, `Ipv4Addr::is_private()` matches RFC 1918 only. CGNAT is matched by the unstable `is_shared()` method (gated behind the `ip` feature). The current implementation is correct. The reviewer's other should-fix (add a test for the `get_if_addrs()` failure path) and 2 nits (Cargo.toml comment + rustdoc clarification) are deferrable per "don't gold-plate".
+- **No `cargo sqlx prepare` for L-65** (no SQL changes); **needed for L-132** (3 new query macros — 1 batched SELECT, 1 batched UPDATE, 1 in the regression test). Cache committed.
+- **No `bindings.ts` regeneration** (no IPC type changes).
+- **No FEATURE-MAP.md update needed** — backend perf/privacy fixes only, no user-facing surface change.
+
+**Files touched (this session's batch):**
+
+- Backend modified (3): `src-tauri/Cargo.toml` (+1 line for `if-addrs` direct dep), `src-tauri/Cargo.lock` (no-op churn from the direct-dep promotion), `src-tauri/src/gcal_push/lease.rs` (+99/–33 — claim_lease refactor + 1 regression test), `src-tauri/src/sync_net/websocket.rs` (announce + helper rewrite), `src-tauri/src/sync_net/tests.rs` (+5 tests).
+- Backend new (3): `.sqlx/query-3c5a779…json`, `.sqlx/query-5dbed11…json`, `.sqlx/query-e178695…json` (regenerated for the new lease.rs queries).
+- Docs: `REVIEW-LATER.md` (L-65, L-132 entries deleted; summary counters bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after 1 cargo fmt autofix round on the new lease.rs + tests.rs additions).
+
+- L-132: lease tests 11/11 pass (10 baseline + 1 new); broader gcal_push test sweep clean.
+- L-65: sync_net tests 64/64 pass (59 baseline + 5 new).
+- Cargo: full nextest run, fmt, clippy, deny, machete all green.
+
+**Commit:** `3280992` — `fix(backend): 1-subagent + orch batch — L-65 mDNS interface filter + L-132 claim_lease batching`. (Docs commit follows separately.)
+
+---
+
 ## Session 580 — 2-subagent batch: L-118 regression tests + MAINT-125 batch-6 (closure) + 4 stale entries removed (2026-04-30)
 
 **2 parallel build subagents + 2 parallel technical-review subagents + significant orchestrator follow-up work.** The plan was a 3-subagent batch (L-132 + L-118 + MAINT-125 batch-6) but **BUILD A (L-132) hung in exploration/compile** for >15 minutes without modifying `lease.rs`; orchestrator decoupled the session and shipped what was ready. **BUILD B (L-118)** discovered the bug was already fixed by **L-46** (commit `61b68c7`'s `McpToggleGate`) — the work shifted to adding 2 regression tests that lock down the gate invariant. **BUILD C (MAINT-125 batch-6)** migrated the 14 remaining raw `invoke('...')` wrappers; orchestrator picked up the 4 typed `invoke<T>(...)` residuals (`listSpaces`, `createPageInSpace`, `createSpace`, `quickCaptureBlock` — all already typed in `bindings.ts`) per reviewer flag, dropped the unused `invoke` import, and closed MAINT-125 to **78/78 (100%)**. Orchestrator also swept 4 stale entries from REVIEW-LATER.md (L-118, L-133, H-17, M-23 — all confirmed already-fixed by an audit subagent before the build subagents launched).
