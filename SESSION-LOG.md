@@ -1,5 +1,47 @@
 # Session Log
 
+## Session 566 — MAINT-128 partial — close 2 god-component decompositions (SettingsView + SortableBlock) (2026-04-30)
+
+**2 MAINT-128 sub-rows partial-closed in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent.** Theme: tackled 2 of the 9 components in MAINT-128's table — SettingsView and SortableBlock. Both have clear extraction targets with low cross-cutting risk; chosen over PropertyRowEditor (which last session's inspection rejected as design-heavy due to shared state) and ConflictList (which has DOM-mutation cleanup tied to its split, raising risk).
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 23 → 23 (MAINT-128 row STAYS — 7 of 9 god-components remain in scope: PageBrowser, BlockTree, TrashView, ConflictList, HistoryView, PropertyRowEditor, AddFilterRow).
+- **Previously-resolved counter:** 812+ → 814+ across 532 → 533 sessions.
+
+**Items partial-closed (2 of 9 MAINT-128 sub-rows):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-128 SettingsView decomposition | `src/components/SettingsView.tsx` (656L → 198L, -458L / -70%) + 5 new siblings under `src/components/settings/`: `AutostartRow.tsx` (112L), `QuickCaptureRow.tsx` (185L), `GeneralTab.tsx` (22L), `AppearanceTab.tsx` (174L), `HelpTab.tsx` (31L) — Subagent 480d5028 | **Lifted 2 inline rows + 3 inline tab panels to siblings.** `AutostartRow` (FEAT-13 row) and `QuickCaptureRow` (FEAT-12 row) extracted verbatim with their imports and async IPC state. The 3 previously-inlined tabs (`'general'` = DeadlineWarningSection + AutostartRow + QuickCaptureRow; `'appearance'` = theme/font/week-start selectors + relevant useState/handlers; `'help'` = report-bug button) all moved into siblings. The 6 already-existing tabs (KeyboardSettingsTab, DataSettingsTab, AgentAccessSettingsTab, GoogleCalendarSettingsTab, DeviceManagement, PropertyDefinitionsList) stay where they are — moving them into `src/components/settings/` is a pure-rename orthogonal to this decomposition; deferred. The `bugReportOpen` state intentionally stays at SettingsView root (BugReportDialog mount) so a tab switch doesn't tear down a half-filled dialog. **`useTheme()` moved INTO AppearanceTab** — App.tsx still calls `useTheme()` at the shell level, so theme classes still apply on app boot regardless of Settings panel state; subagent + reviewer both verified this is observably equivalent. **Target ≤150L not reached** (landed at 198L) — the gap requires extracting `useSettingsTab()` for localStorage+URL persistence; deferred. 50 existing SettingsView tests pass unchanged. Reviewer (`e620bdfc`) APPROVED. |
+| MAINT-128 SortableBlock hook extraction | `src/components/SortableBlock.tsx` (584L → 507L, -77L) + 3 new hooks: `src/hooks/useAttachmentCount.ts` (35L) + `src/hooks/usePropertyDefForEdit.ts` (91L) + `src/hooks/useBlockContextMenu.ts` (64L) + 3 test files: `src/hooks/__tests__/{useAttachmentCount,usePropertyDefForEdit,useBlockContextMenu}.test.tsx` (15 new tests, 5 per hook) — Subagent d6b044c2 | **Extracted 3 hooks per the MAINT-128 description.** `useAttachmentCount(blockId)` owns the `useState<number>(0)` + `listAttachments(blockId)` IPC call + stale-flag cleanup. `usePropertyDefForEdit(editingProp)` owns the 4 useState slots (`selectOptions`, `isRefProp`, `refPages`, `refSearch`) + the `listPropertyDefs()` loader effect with reset semantics on `editingProp === null`. `useBlockContextMenu()` owns the context-menu position + the 2 prop-edit slots (`editingProp`, `editingKey`). **Subagent flagged: `useBlockAttachments` exists but was NOT reused** — it calls `toast.error` on failure, while `SortableBlock`'s attachment count uses `logger.warn` silently (existing test `SortableBlock.test.tsx:4002` asserts no other side effects). MAINT-131 will eventually consolidate via a batched backend command. **Target ≤300L not reached** (landed at 507L) — the gap requires a JSX extraction (`<SortableBlockBody>` carving out the swipe-content div) that's outside the scope of the 3-hook description; deferred. 188 existing SortableBlock tests + 209 BlockTree tests pass unchanged. Reviewer (`e620bdfc`) APPROVED. |
+
+**Process notes:**
+
+- **2 file-disjoint parallel subagents.** SettingsView changes only `src/components/SettingsView.tsx` + new `src/components/settings/`; SortableBlock changes only `src/components/SortableBlock.tsx` + new `src/hooks/{useAttachmentCount,usePropertyDefForEdit,useBlockContextMenu}*`. Zero overlap.
+- **Both subagents flagged that the row's stretch line-count target wasn't reached** (SettingsView 198L vs ≤150L target; SortableBlock 507L vs ≤250L target). Each gap is a different additional refactor (`useSettingsTab` hook for SettingsView; `<SortableBlockBody>` JSX extraction for SortableBlock) explicitly OUT of scope for this batch's surgical extraction targets. Both deferred to future sessions; the partial wins are valuable on their own.
+- **Drift discovered (subagent flagged for SortableBlock):** `useBlockAttachments` exists but reusing it would have changed observable behavior (toast.error vs silent logger.warn). Reviewer validated the rationale.
+- **No `cargo sqlx prepare`** needed — no SQL changes.
+- **No FEATURE-MAP.md update needed** — internal decomposition; user-facing surface unchanged.
+
+**Files touched (this session's batch):**
+
+- Frontend new (8): `src/components/settings/{AutostartRow,QuickCaptureRow,GeneralTab,AppearanceTab,HelpTab}.tsx` + `src/hooks/{useAttachmentCount,usePropertyDefForEdit,useBlockContextMenu}.ts`.
+- Frontend modified (2): `src/components/SettingsView.tsx`, `src/components/SortableBlock.tsx`.
+- New test files (3): `src/hooks/__tests__/{useAttachmentCount,usePropertyDefForEdit,useBlockContextMenu}.test.tsx` (5 tests each = 15 total).
+- Existing tests modified: 0 (`SettingsView.test.tsx`, `SortableBlock.test.tsx`, `BlockTree.test.tsx` all pass unchanged).
+- Docs: `REVIEW-LATER.md` (MAINT-128 row trimmed — SettingsView and SortableBlock entries marked as partially closed; SortableBlock LOC stretch-target gap noted; appendix detail trimmed accordingly). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- SettingsView batch: `npx vitest run src/components/__tests__/SettingsView` → **50/50 passed**.
+- SortableBlock batch: `npx vitest run src/components/__tests__/SortableBlock src/components/__tests__/BlockTree` → **397/397 passed** (188 + 209).
+- New hook tests: `npx vitest run src/hooks/__tests__/useAttachmentCount src/hooks/__tests__/usePropertyDefForEdit src/hooks/__tests__/useBlockContextMenu` → **15/15 passed**.
+- TypeScript: `npx tsc -b --noEmit` → 0 errors.
+- Biome: clean.
+
+---
+
 ## Session 565 — Close 2 paired editor items (MAINT-165 + MAINT-130(c) sub-task 3) (2026-04-30)
 
 **2 MAINT items closed in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent.** Theme: paired the new MAINT-165 (opened during session 564 review as a latent ref-plumbing drift in 4 sibling pickers) with the deferred MAINT-130(c) sub-task 3 (`createPickerPlugin` factory). REVIEW-LATER explicitly recommended pairing them — both touch the picker subsystem. Files were disjoint though (use-roving-editor.ts vs the 5 picker extension files), so 2 parallel subagents ran without coordination overhead.
