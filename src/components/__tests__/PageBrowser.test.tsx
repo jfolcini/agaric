@@ -2029,8 +2029,8 @@ describe('PageBrowser', () => {
       const unstarBtn = within(starredCopy).getByRole('button', { name: /unstar page/i })
       await user.click(unstarBtn)
 
-      // Starred section gone — both copies refreshed via
-      // `starredRevision`.
+      // Starred section gone — both copies refreshed via the
+      // `useStarredPages` hook subscription.
       expect(screen.queryByText('Starred')).not.toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
       // The tree-leaf copy is still visible.

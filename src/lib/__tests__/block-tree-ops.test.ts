@@ -12,8 +12,36 @@ import {
   computeIndentedBlocks,
   findPrevSiblingAt,
   isNonEmptyBlock,
+  midpointPosition,
   planSplit,
-} from '../page-blocks'
+} from '../block-tree-ops'
+
+describe('midpointPosition', () => {
+  it('returns the floored midpoint when there is a gap', () => {
+    expect(midpointPosition(0, 10)).toBe(5)
+  })
+
+  it('nudges up by one when the floored midpoint collides with beforePos', () => {
+    // (3 + 4) / 2 = 3.5 → floor = 3 → collides with beforePos → return 4
+    expect(midpointPosition(3, 4)).toBe(4)
+  })
+
+  it('handles adjacent integers without gap', () => {
+    // (5 + 6) / 2 = 5.5 → floor = 5 → collides → return 6
+    expect(midpointPosition(5, 6)).toBe(6)
+  })
+
+  it('returns a value strictly greater than beforePos', () => {
+    for (const [a, b] of [
+      [0, 1],
+      [0, 2],
+      [10, 11],
+      [-3, 0],
+    ] as const) {
+      expect(midpointPosition(a, b)).toBeGreaterThan(a)
+    }
+  })
+})
 
 describe('isNonEmptyBlock', () => {
   it('returns true for a non-paragraph block even without content', () => {

@@ -1,5 +1,46 @@
 # Session Log
 
+## Session 562 — Close 2 frontend-cleanup items (MAINT-130(b), MAINT-127 page-blocks portion) (2026-04-30)
+
+**2 MAINT items closed in one PROMPT.md batch with 2 parallel build subagents + 1 review subagent.** Theme: continued the smaller-batch shape from sessions 559-561. Both items are clean refactors with non-overlapping files; subagents ran fully in parallel with no orchestrator-direct work needed.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 24 → 23 (net −1: closed MAINT-130(b); MAINT-130 row remains because sub-item (c) is still open. MAINT-127 row remains because the other 3 god-files — `navigation.ts`, `keyboard-config.ts`, `useGraphSimulation.ts` — are still in scope).
+- **Previously-resolved counter:** 806+ → 808+ across 528 → 529 sessions.
+
+**Items closed (2):**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| MAINT-130(b) | `src/hooks/useStarredPages.ts` (new, 70L) + `src/hooks/__tests__/useStarredPages.test.tsx` (new, 9 tests) + `src/components/PageBrowser.tsx` (-6 LOC, threaded `starredIds: ReadonlySet<string>` into `buildMultiPageBranch`) + `src/components/PageHeader.tsx` (-6 LOC) + `src/components/__tests__/PageHeader.test.tsx` (-5 LOC, dropped now-dead module mock) + 2-line doc-comment refresh in `src/components/__tests__/PageBrowser.test.tsx` — Subagent 1568c682 | **`useStarredPages` hook extracted, eliminating the `starredRevision` re-render counter at 2 callsites.** The hook layers on top of the existing `src/lib/starred-pages.ts` storage layer and broadcasts changes via `window.dispatchEvent(new CustomEvent('starred-pages-changed'))` so all mounted instances re-read after any toggle. **Drift discovered:** the brief suggested layering on `useLocalStoragePreference`, but that hook writes via `useEffect` (asynchronous post-render), creating a race with the synchronous broadcast — the subagent rejected the suggestion and went directly to `starred-pages.ts` lib calls instead. Reviewer (`08e787b5`) confirmed the race-condition rationale is sound. The hook returns a referentially-stable `starredIds` (custom `setsEqual` short-circuit prevents needless state updates when contents haven't changed). 9 hook tests + 92 PageBrowser tests + 84 PageHeader tests + 13 unchanged starred-pages-lib tests = **198 / 198 pass**. Reviewer-suggested doc comment added at `useStarredPages.ts:60-67` explaining the write-before-dispatch ordering. |
+| MAINT-127 (page-blocks.ts portion only) | `src/lib/block-tree-ops.ts` (new, 143L) + `src/lib/__tests__/block-tree-ops.test.ts` (new, 33 tests) + `src/stores/page-blocks.ts` (718L → 591L) + deleted `src/stores/__tests__/page-blocks-helpers.test.ts` (contents moved verbatim to the new test file) — Subagent b143c73c | **Pure tree algorithms extracted from `page-blocks.ts` to `src/lib/block-tree-ops.ts`.** Functions moved: `midpointPosition` (promoted from `function` → `export function` because `computeReorderPosition` in `page-blocks.ts` still uses it), `planSplit`, `findPrevSiblingAt`, `computeIndentedBlocks`. **Scope expansion (flagged in subagent output, validated by reviewer):** `serializeSingleBlock` (private helper for `planSplit`) + `isNonEmptyBlock` (test-only export consumed by `planSplit`) + `SplitPlan` type (the return type of `planSplit`) all moved alongside `planSplit` because leaving them in `page-blocks.ts` would have created a circular import. The new file's docstring explains the layer choice (pure algorithms over `FlatBlock[]`, no IPC, no Zustand state). Existing 27-test page-blocks-helpers test moved verbatim to `block-tree-ops.test.ts` + 4 new tests added for the now-exported `midpointPosition` (happy-path, collision nudge, adjacent integers, strictly-greater invariant) + 2 additional edge-case tests = 33 tests. Option A migration chosen (caller updated directly, no re-export shim) — only 1 production caller needed updating (`page-blocks.ts` itself). Reviewer (`08e787b5`) APPROVED with no nits. |
+
+**Process notes:**
+
+- **2 parallel build subagents + 1 review subagent — clean parallel execution.** Both items touch non-overlapping files (frontend hooks/components vs. lib/store), so no worktrees needed. Both subagents completed successfully on first attempt (compare to MAINT-130(b)'s prior cancel-by-user in session 561; this attempt with a tighter brief succeeded).
+- **2 surgical drift discoveries** during BUILD:
+  1. **MAINT-130(b)** — Brief suggested `useLocalStoragePreference` foundation; subagent identified an effect-time-write race condition with the synchronous broadcast and went directly to `starred-pages.ts` lib calls. Reviewer validated the race claim against `useLocalStoragePreference.ts:70-76`.
+  2. **MAINT-127** — Brief listed 4 functions to move; subagent identified that `planSplit` has 2 module-private dependencies (`serializeSingleBlock`, `isNonEmptyBlock`, plus the `SplitPlan` type) that had to move with it to avoid a circular import. Reviewer validated by checking external usages of `isNonEmptyBlock` (none outside the moved file's tests).
+- **Review subagent caught 1 nit only** — a 4-line doc comment at `useStarredPages.ts:60-67` explaining the write-before-dispatch ordering. Added before commit.
+- **No `cargo sqlx prepare`** needed — no SQL changes.
+- **No FEATURE-MAP.md update needed** — the 2 changes are pure refactors / hook extractions; user-facing surface unchanged.
+
+**Files touched (this session's batch):**
+
+- Frontend new (2 hooks + 2 test files): `src/hooks/useStarredPages.ts`, `src/hooks/__tests__/useStarredPages.test.tsx`, `src/lib/block-tree-ops.ts`, `src/lib/__tests__/block-tree-ops.test.ts`.
+- Frontend modified (3): `src/components/PageBrowser.tsx`, `src/components/PageHeader.tsx`, `src/stores/page-blocks.ts`.
+- Test files modified (2) + deleted (1): `src/components/__tests__/PageBrowser.test.tsx` (2-line doc refresh), `src/components/__tests__/PageHeader.test.tsx` (dead mock removal); `src/stores/__tests__/page-blocks-helpers.test.ts` (deleted; contents moved).
+- Docs: `REVIEW-LATER.md` (1 row removed for MAINT-130(b); MAINT-127 row trimmed; appendix details updated). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS. Targeted runs:
+
+- MAINT-130(b): `npx vitest run src/hooks/__tests__/useStarredPages src/components/__tests__/PageBrowser src/components/__tests__/PageHeader src/lib/__tests__/starred-pages` → **198/198 passed** (9 + 92 + 84 + 13).
+- MAINT-127: `npx vitest run src/lib/__tests__/block-tree-ops src/stores/__tests__/page-blocks` → **110/110 passed** (33 + 77).
+- Combined targeted run: **325/325 passed** across 6 test files.
+
+---
+
 ## Session 561 — Close 1 large item (MAINT-118 Phase 1) — context-backed handler bag drops 18 props from 4-component chain (2026-04-30)
 
 **1 MAINT item closed in one PROMPT.md batch with 1 orchestrator-direct execution + 1 review subagent.** Theme: finally delivered the long-deferred MAINT-118 (the 33-prop drilling chain that silent-failed 3× as a subagent across Sessions 555/557/558). The strategy that worked: orchestrator-direct, scope-narrowed to the 3-component chain only (BlockListRenderer → SortableBlockWrapper → SortableBlock + the BlockTree call site that wraps them), with backward-compatible SortableBlock props so the 4272-line existing test file didn't need a rewrite. Bonus 1 background subagent for MAINT-130(b) was canceled by user partway through; not on disk.
