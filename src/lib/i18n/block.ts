@@ -147,7 +147,6 @@ export const block: Record<string, string> = {
   'blockTree.setScheduledDateFailed': 'Failed to set scheduled date',
   'blockTree.setPropertyFailed': 'Failed to set property',
   'blockTree.loadingLabel': 'Loading blocks',
-  'block.editLabel': 'Edit block',
   'block.emptyPlaceholder': 'Type / for commands...',
   'blockContext.selected': 'selected',
   'blockContext.clear': 'Clear',

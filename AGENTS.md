@@ -171,7 +171,7 @@ Components exceeding ~500 lines are candidates for extraction. The established p
 
 ## Backend Architecture
 
-- **Error handling:** `AppError` enum (11 variants: `Database`, `Migration`, `Io`, `Json`, `Ulid`, `NotFound`, `InvalidOperation`, `Channel`, `Snapshot`, `Validation`, `NonReversible`) serializes to `{ kind, message }` for Tauri 2 IPC. Specta-derived TS bindings.
+- **Error handling:** `AppError` enum (12 variants: `Database`, `Migration`, `Io`, `Json`, `Ulid`, `NotFound`, `InvalidOperation`, `Channel`, `Snapshot`, `Validation`, `NonReversible`, `Gcal`) serializes to `{ kind, message }` for Tauri 2 IPC. Specta-derived TS bindings.
 - **Undo/redo:** Two-tier model. In-editor: TipTap/ProseMirror history (cleared on blur). Page-level: `reverse.rs` computes inverse ops from op log. Non-reversible: `purge_block`, `delete_attachment`.
 - **Materializer:** Foreground queue (256 cap, core tables + `BatchApplyOps`) + background queue (1024 cap, caches/FTS). Auto-dedup, silent drop on backpressure. Background tasks use split read/write pools — reads from reader pool, writes only for the final transaction. Foreground consumer batch-drains and parallelizes independent block_id groups via JoinSet.
 - **Tag inheritance:** Materialized `block_tag_inherited` table, maintained transactionally by command handlers + background rebuild task. Replaces recursive CTEs for `include_inherited=true` queries.
