@@ -29,11 +29,14 @@ import {
 
 type Handler = (args: unknown) => unknown
 
-// `list_projected_agenda` and the draft/peer stubs all return the same null-ish
-// payload; define them once and alias to keep the map readable.
+// Stub return shapes used by handlers that don't need behaviour beyond a
+// type-correct empty payload. `list_projected_agenda` is cursor-paginated
+// (M-25) and returns a `PageResponse<T>` shape, NOT a bare array — using
+// `returnEmptyArray` for it crashes consumers that read `response.items`.
 const returnNull: Handler = () => null
 const returnUndefined: Handler = () => undefined
 const returnEmptyArray: Handler = () => []
+const returnEmptyPage: Handler = () => ({ items: [], next_cursor: null, has_more: false })
 
 export const HANDLERS: Record<string, Handler> = {
   // ---------------------------------------------------------------------------
@@ -1304,7 +1307,7 @@ export const HANDLERS: Record<string, Handler> = {
   // Projected agenda (repeating tasks)
   // ---------------------------------------------------------------------------
 
-  list_projected_agenda: returnEmptyArray,
+  list_projected_agenda: returnEmptyPage,
 
   // ---------------------------------------------------------------------------
   // Draft autosave (F-17)

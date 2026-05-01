@@ -66,8 +66,9 @@ test.describe('Error scenarios', () => {
   test('shows error toast when edit fails', async ({ page }) => {
     await openGettingStarted(page)
 
-    // Click the first seed block to open the editor
-    const firstBlock = page.getByRole('button', { name: 'Edit block' }).first()
+    // Click the first seed block to open the editor. Static blocks are
+    // passive div containers (MAINT-162), located via data-testid.
+    const firstBlock = page.locator('[data-testid="block-static"]').first()
     await firstBlock.click()
 
     // Now inject an error for future edit_block calls

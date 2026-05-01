@@ -5,9 +5,9 @@ import { expect, test } from './helpers'
  * All block operations use the "Getting Started" seed page.
  *
  * Key selectors:
- * - Static blocks: `button` with `aria-label="Edit block"` (class `.block-static`)
+ * - Static blocks: `[data-testid="block-static"]` div (passive container after MAINT-162 — no role/aria-label)
  * - TipTap editor: `[role="textbox"][aria-label="Block editor"]` (contenteditable)
- * - Sortable wrapper: `.sortable-block`
+ * - Sortable wrapper: `[data-testid="sortable-block"]`
  * - Enter saves; Escape discards.
  */
 
@@ -74,8 +74,9 @@ test.describe('Editor lifecycle', () => {
   test('clicks a block to edit it inline', async ({ page }) => {
     await openGettingStarted(page)
 
-    // Click the first seed block to focus it
-    const firstBlock = page.getByRole('button', { name: 'Edit block' }).first()
+    // Click the first seed block to focus it. Static blocks are passive
+    // div containers (MAINT-162), located via data-testid.
+    const firstBlock = page.locator('[data-testid="block-static"]').first()
     const originalText = await firstBlock.textContent()
     await firstBlock.click()
 
