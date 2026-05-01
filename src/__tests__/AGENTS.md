@@ -1,5 +1,7 @@
 # Frontend Test Infrastructure
 
+> **See also:** [AGENTS.md § Frontend Development Guidelines](../../AGENTS.md#frontend-development-guidelines) for component hierarchy, design system patterns, and mandatory primitives. This document focuses on testing patterns and conventions for that frontend.
+
 ## Overview
 
 Five test layers, each with distinct tools:
@@ -239,6 +241,24 @@ it('has no a11y violations', async () => {
 Setup in `src/test-setup.ts` extends vitest matchers with `vitest-axe/matchers` and imports `vitest-axe/extend-expect`, making `toHaveNoViolations()` available globally.
 
 Components with multiple visual states (e.g., `EditableBlock` focused vs unfocused, `MonthlyDayCell` focused) get separate axe audits for each state.
+
+## Test File Checklist
+
+Before committing a new component test file, verify:
+
+- [ ] All imports are explicit (no vitest globals — `import { describe, expect, it, vi } from 'vitest'`)
+- [ ] `beforeEach` resets `vi.clearAllMocks()` and any global Zustand stores
+- [ ] At least one happy-path test
+- [ ] At least one error-path test (mock `invoke` to reject; verify graceful state)
+- [ ] Accessibility audit (`expect(await axe(container)).toHaveNoViolations()`)
+- [ ] Async expectations use `await screen.findBy*` or `waitFor`, not bare `setTimeout`
+- [ ] React 19 timing issues handled (use `act(async)` / `findBy*` for external-source updates — see § React 19 test timing)
+- [ ] Tauri IPC mocked via `vi.mocked(invoke)` with `mockResolvedValueOnce` / `mockRejectedValueOnce` per call
+- [ ] Per-page stores created fresh in `beforeEach`; provider wrapper used when component reads them
+- [ ] User interactions go through `userEvent` (not `fireEvent`) — exception: explicit `blur` events
+- [ ] Scoped queries use `within()` when the same text/role appears multiple times
+- [ ] Portal-scoped helpers used for Radix overlays (Dialog, Sheet, Popover) — see e2e helpers
+- [ ] No `await sleep(n)` or arbitrary timers — use `waitFor` on the observable end state
 
 ## Property-Based Testing (fast-check)
 

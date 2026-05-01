@@ -155,6 +155,7 @@
 | Overdue task accumulation | Via embedded queries on journal pages | DuePanel shows overdue tasks on today's view | Done |
 | Scheduled date hide-before | `SCHEDULED` blocks hidden until date. Configurable via `:scheduled/future-days` | localStorage toggle in DuePanel | Done |
 | Deadline warning period | Configurable future-days display | Configurable N days in PropertiesView | Done |
+| Google Calendar push | N/A natively (plugins exist) | Opt-in daily-digest push to a dedicated "Agaric Agenda" calendar. Per-space configuration foundation in place (FEAT-3p9 M1); per-space connector iteration is M2 remaining work | Better |
 
 ### 9. Daily Journal
 
@@ -182,7 +183,26 @@
 | Unlinked references | Plain-text mentions | UnlinkedReferences component with "Link it" button, grouped by source page | Done |
 | Recent pages quick access | Shown in search results and command palette | Not implemented | Gap |
 
-### 11. Sync & Storage
+### 11. Spaces (Workspaces)
+
+| Capability | Logseq | Agaric | Status |
+| --- | --- | --- | --- |
+| Workspaces / multi-vault | One graph per app instance. Multi-graph requires switching graphs (separate folders) | Multiple `space` blocks in one DB partition pages into independent contexts (Personal, Work, custom). Per-space data scope — pages never leak between spaces | Better |
+| Per-space journal | N/A | Daily-note timeline keyed by `(date, space)`; same date in different spaces = two distinct ULIDs. Per-space journal templates (Phase 5b) | Better |
+| Per-space tabs / recents | N/A | `tabsBySpace` + `recentPagesBySpace` Zustand slices; switching space swaps the tab strip and MRU strip | Better |
+| Cross-space link policy | N/A | `[[ULID]]` chips whose target lives in a foreign space render as broken-link chips. No auto-navigation, no "show anyway" toggle | Better |
+| Quick switching | N/A | `Ctrl+1` … `Ctrl+9` (or `⌘+1` … `⌘+9`) jumps to the Nth space alphabetically; rebindable | Better |
+| Visual identity | N/A | Per-space accent color, status-bar chip, window-title prefix (Phase 10) | Better |
+| Manage-spaces UI | N/A | Inline rename, accent picker (7 swatches), safety-checked delete (Phase 6) | Better |
+
+### 12. AI / MCP Integration
+
+| Capability | Logseq | Agaric | Status |
+| --- | --- | --- | --- |
+| MCP (Model Context Protocol) | N/A | Native MCP support via `agaric-mcp` stdio sidecar — Claude Desktop, Cursor, Continue, Claude Code talk directly to the running app over a local socket. No network hop. Read-only by default; gated by Settings → Agent access toggle | Better |
+| Plugin-based AI | Plugins exist via marketplace | Not applicable — MCP supersedes for the AI-agent use case | Tie |
+
+### 13. Sync & Storage
 
 | Capability | Logseq | Agaric | Status |
 | --- | --- | --- | --- |
@@ -199,7 +219,7 @@
 | Manual IP entry / mDNS fallback | N/A | last_address on peer_refs, sync daemon fallback, DeviceManagement UI | Done |
 | Offline state indication | N/A | useSyncStore 'offline' state, StatusPanel display | Done |
 
-### 12. Templates
+### 14. Templates
 
 | Capability | Logseq | Agaric | Status |
 | --- | --- | --- | --- |
@@ -210,7 +230,7 @@
 | Template including parent | `template-including-parent:: true` — built-in property, includes parent block content | Not implemented | Gap |
 | Template CRUD UI | Edit template page directly. No dedicated management UI | Templates are pages — edit normally. Kebab menu "Save as template", template picker | Done |
 
-### 13. Import / Export
+### 15. Import / Export
 
 | Capability | Logseq | Agaric | Status |
 | --- | --- | --- | --- |
@@ -223,7 +243,7 @@
 | Publishing as HTML | Static site generation (`public:: true` pages) | Not implemented | Gap |
 | SQLite DB export/import | DB version: SQLite file export | N/A — SQLite is the native format | Design choice |
 
-### 14. Mobile
+### 16. Mobile
 
 | Capability | Logseq | Agaric | Status |
 | --- | --- | --- | --- |
@@ -232,7 +252,7 @@
 | Mobile sync | Logseq Sync or DIY (iCloud/Dropbox). Background sync not supported — frequent feature request | LAN sync via SyncDaemon (same as desktop) | Done |
 | Mobile editor quality | Full editor on mobile. Performance complaints on Android | Full editor (same as desktop, responsive layout) | Done |
 
-### 15. Out of Scope (Noted, Not Priority)
+### 17. Out of Scope (Noted, Not Priority)
 
 | Feature | Logseq | Notes |
 | --- | --- | --- |
@@ -267,6 +287,8 @@
 | **Tag inheritance** | Materialized `block_tag_inherited` table: blocks automatically inherit ancestor tags, O(1) lookups, incrementally maintained on 7 op types | File version: no tag inheritance. DB version: `Extends` relationship (still beta) |
 | **Inline queries** | 3 query types (tag, property, backlinks) as live-updating embedded blocks with table/list rendering, click-to-navigate | `{{query}}` blocks with simple or Datalog syntax. More flexible but steeper learning curve |
 | **Accessibility** | ARIA coverage on core components, keyboard navigation, semantic HTML, axe a11y tests on 100+ components (~12,000+ total tests: ~3,400 Rust + ~8,700 frontend) | Basic keyboard shortcuts, limited ARIA coverage |
+| **AI agent integration** | Native MCP support via `agaric-mcp` stdio sidecar — Claude Desktop, Cursor, Continue, Claude Code talk directly to the running app. Read-only socket gated by Settings → Agent access toggle. No network hop | No native MCP support; relies on third-party plugins |
+| **Spaces (workspaces)** | Multiple spaces in one DB partition pages into independent contexts (Personal, Work, custom). Per-space journal, tabs, recents, sync-scope; cross-space links render as broken-link chips. Quick switch via `Ctrl+1`…`Ctrl+9` | One graph per app instance; multi-graph requires switching graphs |
 
 ---
 
@@ -297,25 +319,20 @@ This section is important for honesty. These are areas where Logseq has capabili
 
 Logseq is undergoing a fundamental architectural shift from file-based storage to a "DB version" backed by SQLite + Datascript. This is worth examining because it directly affects the comparison.
 
-**What the DB version promises:**
+### DB Version Status (as of April 2026)
 
-- SQLite storage (like Agaric already has)
-- Typed properties with Classes (like database tables)
-- Tag inheritance via `Extends`
-- RTC (Real Time Collaboration) sync — multi-user, cloud-based
-- New mobile app (iOS in alpha, Android "coming soon")
-- Better query performance (no more loading entire graph into memory)
+| Component | Status | Notes |
+| --- | --- | --- |
+| SQLite storage | Beta | "Data loss is possible" (official README). Like Agaric already has |
+| Typed properties + Classes | Beta | Like Agaric already has |
+| Tag inheritance via `Extends` | Beta | Like Agaric's `block_tag_inherited` |
+| RTC (Real-Time Collaboration) | Alpha | Multi-user cloud sync; data loss reported (db-test issue #781) |
+| iOS app | Alpha | Sign-up form required |
+| Android app | Planned | "Coming soon" as of early 2026 |
+| Plugin compatibility | Broken | Plugin ecosystem doesn't work with DB version |
+| Migration from file version | Incomplete | Community workarounds only |
 
-**Current reality (as of April 2026):**
-
-- DB version is in **beta** — "data loss is possible" (official README)
-- RTC sync is in **alpha** — data loss reported (db-test issue #781)
-- 241 open issues in logseq/db-test repo
-- Specific issues: sync doesn't resume after internet reconnects (#780), synced files differ in size (#783), large blocks not editable (#782), rendering blanked out when scrolling (#785), terrible performance with numbered lists (#784)
-- iOS app in alpha (sign-up required), Android "coming soon"
-- Plugin ecosystem not compatible with DB version
-- No migration path from file version yet fully established (community posting "Data structures for bridging Logseq-MD to Logseq-DB", Mar 2026)
-- Community uncertainty: "Logseq project status?" thread with 40 replies (Mar 2026), "Preparing a Logseq graph for migration to Obsidian" (Apr 2026)
+**Known DB-version issues (241 open in `logseq/db-test`):** sync doesn't resume after internet reconnects (#780); synced files differ in size (#783); large blocks not editable (#782); rendering blanked out when scrolling (#785); terrible performance with numbered lists (#784). Community threads: "Logseq project status?" (40 replies, Mar 2026); "Preparing a Logseq graph for migration to Obsidian" (Apr 2026).
 
 **What this means for the comparison:**
 
@@ -412,6 +429,8 @@ Logseq is undergoing a fundamental architectural shift from file-based storage t
 
 ## Part 6: Summary Scorecard
 
+> **Last verified:** 2026-05-01. Scores reflect shipped, stable functionality on this date. Logseq DB version (beta) and Agaric FEAT-3p9 M2 (in progress) are not awarded points.
+
 Scoring: 1-10 per category based on shipped, stable functionality. Not promises or beta features.
 
 | Category | Logseq | Agaric | Notes |
@@ -427,6 +446,8 @@ Scoring: 1-10 per category based on shipped, stable functionality. Not promises 
 | Daily journal | 7 | 9 | Agaric: 4 modes + calendar picker. Logseq: infinite scroll + configurable format |
 | Search | 7 | 8 | Agaric: trigram tokenizer + CJK + advanced backlink filters. Logseq: desktop-only full-text |
 | Templates | 7 | 7 | Both: slash command + dynamic variables + journal template |
+| Spaces / workspaces | 1 | 10 | Agaric: per-space journal/tabs/recents/sync, accent identity, Ctrl+1…9 hotkeys. Logseq: one graph per app instance |
+| AI / MCP integration | 1 | 9 | Agaric: native MCP sidecar (Claude Desktop, Cursor, Continue). Logseq: third-party plugins only |
 | Sync/storage | 5 | 9 | Agaric: free LAN sync, shipped. Logseq Sync: paid BETA. DIY sync fragile |
 | Data integrity | 3 | 9 | Agaric: hash chains + crash recovery + undo history. Logseq: timestamps only |
 | Performance | 5 | 8 | Agaric: Tauri 2 + CQRS + cursor pagination. Logseq: Electron, memory-heavy |
@@ -434,7 +455,7 @@ Scoring: 1-10 per category based on shipped, stable functionality. Not promises 
 | Mobile | 6 | 7 | Agaric: 24 MB Android APK, good perf. Logseq: Android slow, iOS available but limited |
 | Extras | 9 | 0 | Logseq: graph view, whiteboards, PDF reader, flashcards, plugins |
 
-Totals: **Logseq 125 / Agaric 132**
+Totals: **Logseq 127 / Agaric 151**
 
 The gap has widened since the initial comparison due to block references, tag inheritance, inline queries, and formatting improvements. Logseq's 9 in "Extras" covers real functionality (graph view, whiteboards, PDF reader, flashcards, 200+ plugins) that Agaric doesn't attempt. For the target workflow (daily journaling + task management + project notes), Agaric's advantages in sync, data integrity, performance, and task management are decisive. For broader knowledge management workflows (Zettelkasten, research), Logseq's linking system and Datalog queries remain superior.
 

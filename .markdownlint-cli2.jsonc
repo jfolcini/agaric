@@ -8,6 +8,7 @@
   },
   "ignores": [
     "SESSION-LOG.md",
+    "docs/session-log/**",
     "node_modules/**",
     "dist/**",
     "src-tauri/target/**",

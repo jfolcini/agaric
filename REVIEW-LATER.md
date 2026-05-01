@@ -1,5 +1,7 @@
 # Review Later
 
+> **Last updated:** 2026-05-01 (Session 597)
+
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
 > **Do not add "Resolved" sections to this file.** When an item is resolved, remove it
@@ -19,22 +21,33 @@ Items flagged during development that need revisiting. Organized by section with
 
 14 open items.
 
-| ID | Section | Title | Cost |
-|----|---------|-------|------|
-| FEAT-3p9 | FEAT | Spaces Phase 9: per-space external integrations — foundation (per-space `gcal_space_config` table + per-space keychain key + legacy single-space migration) in place; remaining work threads `space_id` through oauth/lease/connector/commands, branches the push loop by space, ships per-space Settings accordion, and (when FEAT-11 lands) prefixes OS notifications with the space name | M |
-| FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L |
-| FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L |
-| MAINT-111 | MAINT | Migrate MCP server JSON-RPC framing onto `rmcp` 1.6 (reference impl behind `mcp_rmcp_spike` feature flag; 3 milestones, 12-14h end-to-end) | L |
-| MAINT-113 | MAINT | `ConflictFreeBlockId` newtype to lift invariant #9 (`is_conflict = 0` + `depth < 100` in every recursive CTE over `blocks`) into the type system — 220 `is_conflict = 0` SQL occurrences across 70 files. LOW-priority refactor for elegance, not correctness; the convention + review + documented invariant are already working. Do NOT do on a deadline. | L |
-| MAINT-114 | MAINT | Consolidation audit of `.github/workflows/` — fold `release-tag.yml` into `release.yml` as a `workflow_dispatch` job (4 → 3 files). Spike-then-commit; abandon if merged file isn't shorter than the sum. | S–M |
-| MAINT-128 | MAINT | God-component decomposition: `PropertyRowEditor.tsx` (539L) — design-heavy split (5 typed editors share `localValue`, date hook state, select-options state, ref-picker state, 10+ callbacks). Closing this row requires either accepting the existing `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` at L85 permanently, or splitting each typed editor into its own component AND lifting the shared state UP to a containing hook. | L |
-| PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
-| PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
-| PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
-| PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S |
-| PUB-3 | PUB | Employer IP clearance before public release | S |
-| PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S |
-| PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S |
+| ID | Section | Title | Cost | Blocked on |
+|----|---------|-------|------|-----------|
+| FEAT-3p9 | FEAT | Spaces Phase 9: per-space external integrations — foundation (per-space `gcal_space_config` table + per-space keychain key + legacy single-space migration) in place; remaining work threads `space_id` through oauth/lease/connector/commands, branches the push loop by space, ships per-space Settings accordion, and (when FEAT-11 lands) prefixes OS notifications with the space name | M | — (M3 sub-task blocked on FEAT-11) |
+| FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L | Design review |
+| FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L | — |
+| MAINT-111 | MAINT | Migrate MCP server JSON-RPC framing onto `rmcp` 1.6 (reference impl behind `mcp_rmcp_spike` feature flag; 3 milestones, 12-14h end-to-end) | L | — |
+| MAINT-113 | MAINT | `ConflictFreeBlockId` newtype to lift invariant #9 (`is_conflict = 0` + `depth < 100` in every recursive CTE over `blocks`) into the type system — 220 `is_conflict = 0` SQL occurrences across 70 files. LOW-priority refactor for elegance, not correctness; the convention + review + documented invariant are already working. Do NOT do on a deadline. | L | — |
+| MAINT-114 | MAINT | Consolidation audit of `.github/workflows/` — fold `release-tag.yml` into `release.yml` as a `workflow_dispatch` job (4 → 3 files). Spike-then-commit; abandon if merged file isn't shorter than the sum. | S–M | — |
+| MAINT-128 | MAINT | God-component decomposition: `PropertyRowEditor.tsx` (550L) — design-heavy split (5 typed editors share `localValue`, date hook state, select-options state, ref-picker state, 10+ callbacks). Closing this row requires either accepting the existing `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` at L85 permanently, or splitting each typed editor into its own component AND lifting the shared state UP to a containing hook. | L | — |
+| PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
+| PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
+| PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S | — |
+| PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S | Identity decision |
+| PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
+| PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
+| PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
+
+### Quick wins (S-cost, ready to grab)
+
+These can be tackled in a single session with low risk — listed for prioritization convenience (canonical entries remain in the per-section detail blocks below):
+
+- **PERF-19** — backlink pagination keyset for non-Created sorts (2 sites)
+- **PERF-20** — concurrency cap on `try_join_all` in backlink filter resolver
+- **PERF-23** — stream-send for `read_attachment_file` (receive side already streams)
+- **MAINT-114** — workflow consolidation audit (spike-then-commit)
+- **PUB-5** — Tauri updater wiring (user-only: keypair + 2 secrets + uncomment)
+- **PUB-8** — Android release keystore + 4 GH Actions secrets (CI wiring already shipped)
 
 > **`PUB-*` statuses are heterogeneous now that the publish target is concrete (`github.com/jfolcini/agaric`).**
 > PUB-5 / PUB-8 are ACTIONABLE; PUB-2 / PUB-3 remain DEFERRED on the identity / employer-IP decisions. macOS + Windows code signing are explicitly out of scope: the maintainer opted out of paid Apple Developer Program enrollment ($99/year) and Windows OV/EV certs ($200–400/year) for this OSS project. Bundles ship unsigned with Gatekeeper / SmartScreen first-launch warnings; see `BUILD.md` → "Desktop code signing in CI" for the user-facing install instructions.
@@ -203,7 +216,7 @@ The initial one-line recommendation was "4 → 2 (validate + release)". On inspe
 
 ### MAINT-128 — God-component decomposition: `PropertyRowEditor.tsx`
 
-**What:** `PropertyRowEditor.tsx` is 539L and carries an explicit `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` at L85. The file dispatches on `def.value_type` (text/number/date/ref/select → 5 parallel JSX subtrees) but the 5 typed editors share `localValue`, date hook state, select-options state (3 fields), ref-picker state (4 fields), and 10+ callbacks — splitting naïvely re-creates the prop-chain problem that the `biome-ignore` acknowledges.
+**What:** `PropertyRowEditor.tsx` is 550L and carries an explicit `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` at L85. The file dispatches on `def.value_type` (text/number/date/ref/select → 5 parallel JSX subtrees) but the 5 typed editors share `localValue`, date hook state, select-options state (3 fields), ref-picker state (4 fields), and 10+ callbacks — splitting naïvely re-creates the prop-chain problem that the `biome-ignore` acknowledges.
 
 **Closing this row requires a design discussion:**
 

@@ -20,6 +20,8 @@ cargo tauri android build --target aarch64
 
 ## `agaric-mcp` sidecar binary (FEAT-4f)
 
+> **User-facing overview:** see [README.md § Using Agaric with MCP clients](README.md#using-agaric-with-mcp-clients) for what this binary is, where it lives per-platform, and how to point a client at it. This section covers the build-time mechanics.
+
 Agaric ships an `agaric-mcp` stub binary alongside the main app for MCP (Model Context Protocol) clients. Tauri's build system validates the sidecar's path on every `cargo` invocation, which is a chicken-and-egg problem: the binary can't be built if its path isn't validated, and its path can't be validated if the binary doesn't exist.
 
 **Solution:** `scripts/prepare-external-bins.mjs` creates an empty placeholder at `src-tauri/binaries/agaric-mcp-<triple>` so `cargo` commands can proceed, then optionally builds the real binary and overwrites the placeholder.
@@ -240,7 +242,19 @@ prek run --all-files
 prek run
 ```
 
-The `prek.toml` configuration runs 26 hooks: 9 builtin file checks, gitleaks secret scanning, Biome lint, TypeScript check, CSS variable guard (`no-hsl-rgb-var-wrap`), Vitest, npm audit, license-checker, depcheck, knip, markdownlint, lychee link checker, sqruff (SQL lint for `src-tauri/migrations/`), cargo fmt, clippy, nextest, deny, machete. File-type-aware — Rust hooks skip when no `.rs` files are staged; sqruff runs only on `src-tauri/migrations/*.sql`.
+The `prek.toml` configuration runs the full set of file-type-aware hooks. Every hook either skips (`(no files to check)`) or runs based on staged file types — Rust hooks skip when no `.rs` files are staged; sqruff runs only on `src-tauri/migrations/*.sql`; etc.
+
+#### Hooks by category
+
+| Category | Hooks | Triggers on |
+| --- | --- | --- |
+| **File checks** | trailing whitespace, end-of-file, check-yaml/toml/json, check-merge-conflict, large-file guard, private-key detection | All staged files |
+| **Security** | gitleaks (secret scanning), actionlint (GitHub Actions linter) | All / `.github/workflows/*` |
+| **Frontend lint + tests** | biome check, typescript check, no-hsl/rgb wrapping CSS vars, no legacy React APIs, vitest, axe-presence, test-file naming, IPC error-path coverage, AGENTS.md test-count drift, snapshot redaction | `*.ts`, `*.tsx`, `*.css`, `*.json` (config) |
+| **Backend** | cargo fmt, cargo clippy, cargo nextest run, cargo deny, cargo machete | `*.rs` |
+| **Database** | sqlx prepare check, sqruff (SQL lint), tauri command sanitize | `src-tauri/migrations/*.sql`, command files |
+| **Docs** | markdownlint-cli2, lychee (link checker), markdown link targets, tauri-mock parity | `*.md`, mock parity scripts |
+| **Bindings** | ts_bindings_up_to_date, npm audit, license check, depcheck, knip | `src-tauri/**/*.rs`, `package.json` |
 
 ---
 
@@ -402,6 +416,16 @@ cargo tauri android build
 Release APKs are ~24 MB (R8/ProGuard minification strips debug symbols and shrinks the Java layer). ProGuard keep rules are configured in `src-tauri/gen/android/app/proguard-rules.pro` and verified working.
 
 ### Signing a Release APK
+
+#### Quick reference
+
+- [ ] Generate release keystore: `keytool -genkeypair ...` (one-time, back it up offline — losing it means you can never push an update for the same package)
+- [ ] Base64-encode keystore: `base64 -w0 ~/agaric-release.jks`
+- [ ] Add 4 GitHub Actions secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`
+- [ ] Tag a release: `git tag v0.1.16 && git push --tags`
+- [ ] CI signs the APK on the matrix and publishes to the GitHub Release
+
+For local builds (without CI), follow the manual steps below.
 
 Release APKs must be signed before installing on a device:
 
@@ -603,27 +627,45 @@ Build artifacts are uploaded as GitHub Actions artifacts and can be downloaded f
 
 The project uses sqlx `query!` macros for compile-time-checked SQL. An offline cache (`.sqlx/` directory) is committed to the repo so builds work without a live database.
 
-After changing SQL queries in Rust source:
+### Workflow
 
-```bash
-cd src-tauri
-cargo sqlx prepare -- --tests
-```
+When you add or modify a SQL query in `src-tauri/src/**/*.rs`:
 
-This regenerates the `.sqlx/` cache files. Commit the changes. The CI `sqlx offline cache check` step verifies the cache is up to date.
+1. **Make the change** — edit the `query!()` / `query_as!()` / `query_scalar!()` invocation (or its accompanying SQL file).
+2. **Regenerate the cache:**
+
+   ```bash
+   cd src-tauri
+   cargo sqlx prepare -- --tests
+   ```
+
+3. **Stage everything together** — both the `.rs` change and the new/modified files under `src-tauri/.sqlx/`. Both must be committed in the same commit.
+4. **CI verification** — the pre-push hook + CI `sqlx offline cache check` step runs `cargo sqlx prepare --check` and fails if the cache is stale.
+
+If the cache is stale, `cargo tauri dev` and `cargo build` will fail with sqlx compile errors. Always run `cargo sqlx prepare` after SQL changes.
 
 ---
 
 ## TypeScript Bindings (Specta)
 
-`src/lib/bindings.ts` is auto-generated from Rust types via Specta. After changing Rust types used in Tauri commands:
+`src/lib/bindings.ts` is auto-generated from Rust types via Specta. The frontend imports from this file; if it drifts, TypeScript compilation fails with `Property 'newCommand' does not exist on type 'Commands'`.
 
-```bash
-cd src-tauri
-cargo test -- specta_tests --ignored
-```
+### Workflow
 
-This regenerates `bindings.ts`. The `ts_bindings_up_to_date` pre-commit hook verifies sync.
+When you add a Tauri command, modify its signature, or change a type used in its arguments / return / events:
+
+1. **Make the change** — annotate the command with `#[tauri::command]` and `#[specta::specta]`; ensure types implement `Type` (most do automatically via the workspace's specta features).
+2. **Regenerate the bindings:**
+
+   ```bash
+   cd src-tauri
+   cargo test -- specta_tests --ignored
+   ```
+
+3. **Stage everything together** — both the `.rs` change and `src/lib/bindings.ts`.
+4. **CI verification** — the `ts_bindings_up_to_date` pre-commit hook runs the same regeneration and fails if `bindings.ts` is stale.
+
+The mock layer (`src/lib/tauri-mock.ts`) must also keep parity with the real command set; the `tauri-mock parity` pre-commit hook enforces that any command in `bindings.ts` has a corresponding mock handler.
 
 ---
 
