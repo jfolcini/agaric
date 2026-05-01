@@ -25,6 +25,13 @@ pub mod summarise;
 pub mod tools_ro;
 pub mod tools_rw;
 
+// MAINT-111 spike — see `rmcp_spike.md`. Off by default; the
+// production build does not compile this module. Adding it via a
+// feature-gated `pub mod` is the only edit needed in `mod.rs` for
+// the spike to land.
+#[cfg(feature = "mcp_rmcp_spike")]
+pub mod rmcp_spike;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

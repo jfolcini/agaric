@@ -50,6 +50,15 @@ flat_map_option = "warn"
 # `cargo nextest run` does not. Local devs can still run the test
 # manually: `cargo build --bin agaric-mcp && cargo nextest run --features ci-smoke -E 'test(stub_binary)'`.
 ci-smoke = []
+# MAINT-111 spike: opt-in evaluation of the official Rust MCP SDK
+# (`rmcp`) as a possible replacement for the hand-rolled JSON-RPC 2.0
+# framing in `mcp/server.rs`. **Off by default** — the production build
+# still uses `mcp/server.rs`. The spike module exposes ONE read-only
+# tool (`search`) through `rmcp`'s `ServerHandler` trait, alongside a
+# self-contained test that asserts the activity-feed + ActorContext
+# integration points still work through `rmcp`'s framing. See
+# `src/mcp/rmcp_spike.md` for the verdict.
+mcp_rmcp_spike = ["dep:rmcp"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -196,6 +205,15 @@ url = "2"
 # tauri-plugin-* crates.
 tauri-plugin-global-shortcut = "2"
 dirs = { version = "6.0.0", default-features = false }
+
+# MAINT-111 spike: official Rust MCP SDK. Optional + feature-gated so
+# the default build does not link `rmcp`. Pinned to v1.6 (post-1.0,
+# Apache-2.0). Defaults (`base64`, `macros`, `server`) include the
+# `transport-async-rw` server transport via the `server` feature; the
+# `client` feature is added so the spike's end-to-end test can drive a
+# real rmcp client over an in-memory `tokio::io::duplex` pair. See
+# `src/mcp/rmcp_spike.md` for the spike verdict.
+rmcp = { version = "1.6", optional = true, features = ["client"] }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["async_tokio"] }
