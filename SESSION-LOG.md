@@ -1,5 +1,36 @@
 # Session Log
 
+## Session 595 — docs-only cleanup: close FEAT-4 (shipped) + FEAT-4i (mobile-only, dropped) (2026-05-01)
+
+**Two related FEAT items deleted from REVIEW-LATER.** No code changes.
+
+**FEAT-4** ("Agent access — expose notes to external agents via an MCP server") was carrying its full original umbrella spec even after both its planned phases shipped: v1 (FEAT-4a..g — RO socket + 9 read tools + Settings tab + activity feed) shipped in earlier sessions, and v2 (the four slices: op-log `origin` column + RW socket + 6 write tools + Settings toggle, then activity-feed per-entry Undo + FEAT-4c emission wiring, then per-session bulk revert) all shipped. The only remaining sub-phase was v3 = FEAT-4i, which was filed as a sibling row.
+
+**FEAT-4i** ("MCP v3 — Mobile, HTTPS/LAN via mTLS reuse from `sync_cert.rs`, agent-pairing flow") was strictly mobile. Its scope is verbatim "expose MCP over HTTPS on the LAN" because the desktop UDS / named-pipe transport doesn't work on Android (UDS paths inside `/data/data/com.agaric.app/` aren't reachable cross-process). Verification line: "verify the stub binary runs on both Android (via Tauri's Android target) and iOS (out of scope for the first mobile release — iOS comes later if at all)." The user confirmed they do not plan mobile MCP support — the row was effectively a permanent DEFER without a corresponding feature.
+
+**Removal logic:** per the file's own rules at the top of REVIEW-LATER ("remove resolved items entirely; no historical references; the git history is the audit trail — this file is not a changelog"):
+
+- FEAT-4i — explicitly removed per user instruction (mobile-only, not on the roadmap).
+- FEAT-4 — once FEAT-4i is gone, FEAT-4 has zero remaining sub-phases and v1 + v2 are both shipped. Per the rules it should be deleted entirely. Unlike FEAT-3 (which stays as an umbrella because Phases 5–11 / FEAT-3p5..p11 are still tracked), FEAT-4's umbrella has nothing left to track.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 18 → **16** (FEAT-4 + FEAT-4i rows + detail blocks deleted).
+- **FEAT category open count:** 7 → 5.
+- **Net file delta:** REVIEW-LATER.md `+2 / -151` (table rows trimmed; ~147-line FEAT-4 spec block + ~20-line FEAT-4i block removed).
+- **Previously-resolved counter:** 858+ → 858+ (no item closed by code work — both already shipped or design-deferred, just the docs catching up) across 561 → 562 sessions.
+
+**Files touched (this session):**
+
+- `REVIEW-LATER.md` only.
+- `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (no code changes; only the markdown lint, lychee, AGENTS.md test-count drift hooks ran on the modified file; the rest skipped via `(no files to check)` against the unchanged tree).
+
+**Commit plan:** single docs commit (REVIEW-LATER edit + SESSION-LOG entry together, since this is a pure cleanup with no code surface). Not pushed.
+
+---
+
 ## Session 594 — 1-subagent investigative spike: MAINT-111 rmcp evaluation (2026-05-01)
 
 **Spike outcome: GO (modest scope).** The official Rust MCP SDK `rmcp 1.6` cleanly adapts onto agaric's existing `ToolRegistry` trait without owning the registry; the activity-feed, `ActorContext`, and `LAST_APPEND` integration points all survive the migration intact (verified with 3 passing tests behind an off-by-default Cargo feature). The original MAINT-111 entry estimated 300-500 LOC collapse in `server.rs`; the spike's measured number is ~250 LOC (pure framing + dispatch + error mapping; lifecycle and transport stay agaric-specific).

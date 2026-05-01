@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-18 open items — 18 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 27 backend Medium findings closed + 27 MAINT closed (some partially) across sessions 549-594 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-594): **3 schema-integrity migrations landed in session 582** (M-30, M-93, M-90); **H-9 family closed across sessions 583-584**; **MAINT-162 closed in 585**; **C-2b closed in 586** (last CRITICAL backend code review finding); **MAINT-127 closed in 587** (navigation.ts split + new tabs.ts); **M-25 closed in 588 + M-85's `get_agenda` portion** (cursor pagination on `list_projected_agenda`); **FEAT-3p4 closed in 589** (Spaces Phase 4 — `space_id` threaded through 11 read commands, promoted to required `String` on `list_blocks` + `search_blocks`, per-space `useNavigationStore.currentView` slice + frontend callsite migration); **MAINT-131 closed in 590** (`useBlockReschedule.reschedule()` absorbs duplicated `getBlock`-then-decide pattern + new `useBlockPropertyIpc` hook drops the last 5 presentational components' direct `lib/tauri` imports); **decisions cluster closed in 591** (M-34 dropped `host`/`port` from the pairing QR so mDNS owns discovery end-to-end; M-81 re-parents orphan conflict copies to the nearest live ancestor — or `NULL` when none exists — emitting one `MoveBlock` op per repair so peers replay via sync, applied at both cascade sites including the production `delete_block` path; M-85 moved `list_tags_inner` + `list_property_defs_inner` + the matching MCP tools to `PageResponse<T>` cursor pagination and trimmed AGENTS.md invariant #3 carve-out (a) to keep only `list_property_keys`); **M-19 closed in 592** (cache rebuild streaming); **M-51 + L-67 closed in 593** (sync streaming: streaming wire helpers, `TempAttachmentWriter` with mid-stream `blake3::Hasher` + atomic rename, `apply_snapshot` + `decode_snapshot` accept `impl Read` so `zstd::stream::Decoder` pipes through ciborium); **MAINT-111 spike closed in 594** (verdict: GO modest scope; `rmcp 1.6` reference implementation lives behind off-by-default `mcp_rmcp_spike` Cargo feature with 3 passing tests proving activity-feed + ActorContext + LAST_APPEND integration points survive; ~250 LOC of pure framing/dispatch in `server.rs` would collapse if the migration is pursued; the umbrella row stays open with a concrete 3-milestone migration plan); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
+16 open items — 16 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 27 backend Medium findings closed + 27 MAINT closed (some partially) across sessions 549-595 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-595): **3 schema-integrity migrations landed in session 582** (M-30, M-93, M-90); **H-9 family closed across sessions 583-584**; **MAINT-162 closed in 585**; **C-2b closed in 586** (last CRITICAL backend code review finding); **MAINT-127 closed in 587** (navigation.ts split + new tabs.ts); **M-25 closed in 588 + M-85's `get_agenda` portion** (cursor pagination on `list_projected_agenda`); **FEAT-3p4 closed in 589** (Spaces Phase 4 — `space_id` threaded through 11 read commands, promoted to required `String` on `list_blocks` + `search_blocks`, per-space `useNavigationStore.currentView` slice + frontend callsite migration); **MAINT-131 closed in 590** (`useBlockReschedule.reschedule()` absorbs duplicated `getBlock`-then-decide pattern + new `useBlockPropertyIpc` hook drops the last 5 presentational components' direct `lib/tauri` imports); **decisions cluster closed in 591** (M-34, M-81, M-85); **M-19 closed in 592** (cache rebuild streaming); **M-51 + L-67 closed in 593** (sync streaming via `impl Read`); **MAINT-111 spike closed in 594** (verdict: GO modest scope; reference impl behind `mcp_rmcp_spike` feature flag; 3-milestone migration plan recorded); **FEAT-4 + FEAT-4i closed in 595** (FEAT-4 v1 + v2 both shipped as FEAT-4a..h with RO socket + 9 read tools + RW socket + 6 write tools + activity-feed undo + per-session bulk revert; FEAT-4i was the deferred mobile-only HTTPS/LAN transport — removed since the user does not plan mobile MCP support and FEAT-4 has nothing else left to track); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining**.
 
-Previously resolved: 858+ items across 561 sessions (per SESSION-LOG.md unique session count; latest is session 594).
+Previously resolved: 858+ items across 562 sessions (per SESSION-LOG.md unique session count; latest is session 595).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -27,8 +27,6 @@ Previously resolved: 858+ items across 561 sessions (per SESSION-LOG.md unique s
 |----|---------|-------|------|
 | FEAT-3 | FEAT | Spaces — parent / umbrella (Phases 1 + 2 + 3 + 4 shipped; Phases 5–11 split into FEAT-3p5..FEAT-3p11) | S |
 | FEAT-3p9 | FEAT | Spaces Phase 9: per-space external integrations — per-space GCal calendar IDs / OAuth / push pipeline + space-name prefix on OS notifications (FEAT-11 coupling) | L |
-| FEAT-4 | FEAT | Agent access: expose notes to external agents via an MCP server — parent / umbrella | L |
-| FEAT-4i | FEAT | MCP v3 — Mobile (HTTPS/LAN via mTLS reuse from `sync_cert.rs`, agent-pairing flow) — DEFERRED pending v2 | L |
 | FEAT-5 | FEAT | Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar) — parent / umbrella | L |
 | FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L |
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L |
@@ -204,153 +202,6 @@ Fresh installs and upgrades both run a boot-time Rust bootstrap (`src-tauri/src/
 
 **Cost:** L — schema migration + connector refactor + UI refactor + per-space lease handling. Realistic estimate: 2 sessions. Depends on FEAT-3p4 (the push pipeline must already pull space-scoped agenda).
 **Status:** Open. Depends on FEAT-3p4. Independent of FEAT-3p5 / p6 / p7 / p8 / p10 / p11. Notification-prefix sub-task depends on FEAT-11 landing first.
-
-### FEAT-4 — Agent access: expose notes to external agents via an MCP server
-
-**Problem:** External agents (Claude Desktop, Claude Code, Cursor, Devin, Continue, etc.) cannot read from or write to the user's notes. The user wants to let agents interact with their vault in a controlled way — starting with desktop, potentially extending to mobile later — without handing over the database file or bypassing the op-log / CQRS invariants.
-
-Out of scope for this item: cloud-hosted inference, remote agents, multi-user authorization, any non-local transport (see "Mobile" below for the deferred story).
-
-**User decisions recorded up front (do not re-litigate during implementation):**
-
-- **Two sockets, not one.** Read-only access and read-write access live on **separate** Unix-domain sockets (named pipes on Windows) with independent toggles. No runtime scope negotiation, no per-tool allowlist in v1. User points their agent at whichever socket they want to grant.
-- **Read-only first.** v1 ships the RO socket + 9 read tools only. Write tools are deferred to v2 so the user can live with read-only agents before granting mutation. The architecture must leave the RW slot obviously open so v2 is purely additive.
-- **Writes (when they land in v2) apply straight to the op log**, tagged with `origin = "agent:<name>"` where `<name>` is the MCP `clientInfo.name` from the handshake. No staging queue, no user-confirmation modal per write. Safety comes from the existing op-log undo (`reverse.rs`) plus a new "recent agent activity" feed and one-click bulk revert.
-- **Non-reversible ops are never exposed to agents**, even with RW. `purge_block` and `delete_attachment` (the two `NonReversible` variants in `AppError`) stay frontend-only. Agents can `delete_block` (reversible soft-delete) but cannot purge.
-
-**Protocol:** Model Context Protocol (JSON-RPC 2.0 over a local transport). Every mainstream agent already speaks MCP, so there is no custom client to ship.
-
-**Transport (desktop):**
-
-- Linux/macOS: Unix-domain socket at `~/.local/share/com.agaric.app/mcp-ro.sock` (and, in v2, `mcp-rw.sock`), mode `0600`.
-- Windows: named pipe `\\.\pipe\agaric-mcp-ro` (and `...-rw` in v2) with an ACL that grants only the current user.
-- Rationale matches AGENTS.md threat model: single-user, no adversarial actor, no cloud. The kernel enforces "only this user's processes can connect" with zero crypto, zero tokens, zero MITM surface. Do not add bearer tokens, rate limits, or path-traversal hardening against the agent — the threat model does not justify the complexity.
-
-Because MCP clients launch their server as a stdio subprocess, a small stub binary `src-tauri/src/bin/agaric-mcp.rs` bridges stdio ↔ UDS/pipe. That stub is what the user pastes into their agent's config (`command: "agaric-mcp"`, optional `args: ["--socket", "<path>"]`, env discovery via `$AGARIC_MCP_SOCKET` with the sensible default above). The stub must be packaged alongside the Tauri app binary on every platform.
-
-**Architecture:**
-
-- New module `src-tauri/src/mcp/` — a Tokio task started alongside `sync_daemon` in the same lifetime. Binds the enabled socket(s), accepts connections, dispatches JSON-RPC requests into a tool registry.
-- **Registry trait** + two impls planned: `ReadOnlyTools` (wired in v1) and `ReadWriteTools` (wired in v2). The socket plumbing takes the registry as a generic parameter so the same server code serves both sockets.
-- Every tool handler is a thin wrapper around an existing `*_inner` command handler (there are ~78 in `src-tauri/src/commands/`, each taking `&SqlitePool`). **Never bypass the command layer.** Doing so would violate invariants 1, 2, 5, and 9 from AGENTS.md (append-only op log, CQRS split, sqlx compile-time queries, CTE correctness).
-- **`ActorContext` threaded through from day one.** Even in v1, MCP handlers pass `Actor::Agent { name }` (vs the implicit `Actor::User` used by frontend-invoked commands). In v1 it is only used for structured logging; in v2 it populates the op-log origin column without a schema-change surprise. The `ActorContext` plumbing is the only non-local change v1 makes to existing command handlers — keep it a purely additive parameter (or a `tokio::task_local!`) so frontend call sites remain untouched.
-- **Pool usage:** MCP tools use the reader pool only in v1. v2 write tools acquire the writer pool exactly like regular commands (no new pool).
-- **Subscriptions / live updates:** not in v1. If v2 or v3 wants them, they can ride on existing Tauri events re-emitted over MCP notifications — no new backend plumbing.
-
-**Tool surface v1 — read only (9):**
-
-| Tool | Backing `*_inner` | Notes |
-|------|---------------------|-------|
-| `list_pages` | (new: `list_pages_inner`) | Tiny new handler in `pages.rs` — query blocks where the page flag is set. No existing caller does this today; frontend uses backlinks / FTS. |
-| `get_page` | (new: `get_page_inner`) | Composes `get_block_inner` (root) + `list_blocks_inner` (descendants). Thin wrapper, no new SQL. |
-| `search` | `search_blocks_inner` (`queries.rs`) | FTS. Enforce snippet + result caps at the tool boundary (see Open Questions). |
-| `get_block` | `get_block_inner` (`blocks/queries.rs`) | |
-| `list_backlinks` | `list_backlinks_grouped_inner` (`queries.rs`) | |
-| `list_tags` | (new: `list_tags_inner`) | Small wrapper over `list_tags_by_prefix_inner("")`. Keep the public MCP name simple. |
-| `list_property_defs` | `list_property_defs_inner` (`properties.rs`) | Exposes the typed property schema so agents can sensibly use v2 write tools (`set_property`). Read-only, cheap, and prevents v1 agents from hardcoding property-key assumptions. |
-| `get_agenda` | `list_projected_agenda_inner` (`agenda.rs`) | |
-| `journal_for_date` | (new: `journal_for_date_inner`) | `today_journal_inner` / `navigate_journal_inner` exist but neither resolves an arbitrary date. Extract the shared lookup into a new thin helper both can delegate to — do **not** fork the logic. |
-
-The four "(new)" handlers are in-module thin wrappers, not new surface area: they compose existing helpers. Each still follows the `pub async fn name_inner(pool: &SqlitePool, …) -> Result<…, AppError>` signature so they are uniformly testable and callable from MCP. `list_property_defs_inner` already exists at `properties.rs:447` — it wires through as-is, no new Rust function needed.
-
-Each tool's JSON schema is pinned with an `insta` snapshot so accidental shape changes break CI.
-
-**Tool surface v2 — deferred (6 write tools):**
-
-`append_block`, `update_block_content`, `set_property`, `add_tag`, `create_page`, `delete_block` (reversible). Out of scope for v1; listed here so the registry layout is not a surprise.
-
-**Frontend:**
-
-- One new Settings tab **"Agent access"** composed from existing `ui/` primitives (Label, Switch, Button, ScrollArea, Badge per AGENTS.md frontend guidelines — no bespoke UI).
-- RO enable/disable toggle (v1). RW toggle hidden / disabled pending v2.
-- "Copy Claude Desktop config" + "Copy generic MCP config" buttons. Copies a JSON snippet with the correct command + socket path for the current OS.
-- Socket path display + platform-appropriate "Reveal in file manager" button.
-- Recent-activity feed: rolling 100-entry ring buffer emitted as Tauri events from `src-tauri/src/mcp/`, rendered with `ScrollArea` + existing list primitives. In v1 entries are read-only queries with tool name + summary + timestamp. In v2, write entries gain a one-click "Undo" action wired to `reverse.rs`.
-- Kill switch (disconnects all active sessions immediately).
-- i18n keys for every user-visible string. `aria-label` on every icon-only button. `axe(container)` test.
-
-**Backend file layout:**
-
-```
-src-tauri/src/mcp/
-    mod.rs              — task lifecycle, socket binding, config
-    server.rs           — JSON-RPC dispatch, per-connection state
-    registry.rs         — ToolRegistry trait
-    tools_ro.rs         — ReadOnlyTools impl (v1)
-    tools_rw.rs         — ReadWriteTools impl (v2, empty stub in v1)
-    activity.rs         — ring buffer + Tauri event emitter
-    actor.rs            — ActorContext + task-local plumbing
-    tests/              — handshake, each tool, permission, concurrency
-src-tauri/src/bin/
-    agaric-mcp.rs       — stdio ↔ socket stub
-```
-
-**Testing (per AGENTS.md conventions):**
-
-- **Rust:** handshake + each tool (happy + error), socket permission check (mode 0600 on unix, owner-only ACL on windows), concurrent-client stress (≥8 parallel clients sharing the reader pool), `insta` snapshots of every tool's JSON schema, property test over `search` with random queries asserting FTS parity vs direct `search_blocks_inner` call, exact-count assertions (`assert_eq!`, never `>=`).
-- **Frontend:** Settings tab render + interaction + `axe(container)`, activity feed component with mocked event stream, copy-config button copies the right snippet per platform.
-- **Smoke:** small Python harness using the official `mcp` package exercises the full tool surface end-to-end against a dev build of the Tauri app. Runs manually, not in CI (dev-build dependency).
-- **Packaging:** verify `agaric-mcp` binary is included in Linux `.deb`, macOS `.app`, and Windows `.exe` installer outputs (add to `tauri.conf.json` `bundle.resources` or equivalent).
-
-**Documentation:**
-
-- `README.md` — short user-facing "Using an agent with Agaric" section with Claude Desktop / Cursor config snippets.
-- `FEATURE-MAP.md` — new entry under the appropriate domain.
-- **No changes to `AGENTS.md`** (per the AGENTS.md invariant at the top of that file).
-
-**Rollout phases (each independently shippable, gated by mandatory review subagent per AGENTS.md):**
-
-1. **v1 — RO server.** `src-tauri/src/mcp/` task, `agaric-mcp` stub binary, 9 read tools, Settings tab with toggle + copy-config + activity feed (reads only). Packaging updates so the stub ships with the installer. Full test suite + smoke harness. Sub-items: FEAT-4a..FEAT-4g.
-2. **v2 — RW server.** `mcp-rw.sock`, 6 write tools, `ActorContext` → op-log origin wiring (additive migration for the column — the current `op_log` schema has no `origin` column, so v2 adds one via a new migration), activity feed gains write entries + one-click undo. Bulk "revert all agent ops from session X" action. Sub-item: FEAT-4h.
-3. **v3 — Mobile (deferred, design sketch only).** Reuse `sync_cert.rs` + `sync_daemon` mTLS plumbing to expose MCP over HTTPS on the LAN, with an agent-pairing flow that mirrors device pairing. Not started; requires its own design approval before Phase 3. Sub-item: FEAT-4i.
-
-**Open questions (must be resolved before v1 implementation starts):**
-
-- **Auto-start vs opt-in.** Does the MCP server start automatically on app launch (current sidebar toggle gates only accepting connections) or does it only start when the user flips the toggle? Recommend opt-in (off by default, user flips once, persisted).
-- **Socket path on Android / iOS.** `app_data_dir()` on Android is `/data/data/com.agaric.app/` — UDS works there but other processes cannot reach it unless they share a sandbox. Confirm this is deferred entirely to Phase 3 (it is, per the user's "desktop first" direction) and not quietly shipped half-broken in v1.
-- **Search result size cap.** FTS snippets can be large. Does `search` enforce a hard per-result snippet-length cap + a hard result-count cap? Recommend 512 chars / 50 results by default, overridable via tool params.
-- **Config-copy UX.** Should "Copy Claude Desktop config" also offer a "Write directly into `claude_desktop_config.json`" one-shot button, or stay docs-only? Recommend docs-only in v1 — writing into third-party config files is a support trap.
-- **Multi-app coexistence.** If the user launches a second Agaric instance (dev build alongside release), they race on the same socket path. Recommend the second launcher detects the existing socket, logs a warning, and does not bind — no cross-instance fallover.
-- **Tool-call observability.** Do we persist MCP activity beyond the in-memory ring buffer, and if so for how long? Recommend in-memory only for v1 (no new table, no new retention policy decision).
-- **Client identification beyond `clientInfo.name`.** MCP `clientInfo` is self-reported and spoofable. For single-user-local-only this is fine, but confirm we are not building any authorization logic on top of it (we are not, and should not).
-
-**Cost:** L — spans one new backend module (~6 files), one new bin target, one new Settings tab, packaging updates on 3 platforms, ~30 tests across frontend and backend, and a smoke harness. Realistic estimate: 2–3 focused sessions for v1; v2 a separate 2-session batch.
-
-**Decision:** Accept the recommended answers to all 6 open questions — opt-in auto-start (off by default), Android deferred to Phase 3, search capped at 512 chars / 50 results by default, docs-only config copy, second-instance detects existing socket and does not bind, in-memory ring buffer only, no authorization on `clientInfo.name`. v1 ready to schedule in a future dedicated session.
-
-**Implementation DAG (v1):**
-
-```
-4a ──┐
-     ├──▶ 4c ──┬──▶ 4d ──┐
-     │        │         ├──▶ 4e ──▶ 4g
-4b ──┘        └──▶ 4f ──┘
-```
-
-First wave (parallel): `4a` + `4b` — independent implementations (socket transport and the tool-registry trait are separate files that don't import each other). They meet at `4c`'s integration point. Second wave: `4c`. Third wave (parallel): `4d` + `4f`. Fourth wave: `4e`. Fifth wave: `4g`.
-
-**Status:** IN PROGRESS — v1 (FEAT-4a..FEAT-4g, RO server + 9 read tools + Settings tab + activity feed) shipped. v2 complete: slices 1-2 (op-log `origin` column + RW socket + 6 write tools + Settings toggle), slice 3 (activity-feed per-entry Undo + FEAT-4c emission wiring), and slice 4 (per-session bulk revert) all shipped. v3 (FEAT-4i, Mobile) DEFERRED pending user-requested mobile support + separate design approval.
-
-### FEAT-4i — MCP v3: Mobile (HTTPS/LAN via mTLS reuse from `sync_cert.rs`, agent-pairing flow)
-
-Part of the FEAT-4 family. See FEAT-4 for the v3 rollout phase specification (design sketch only).
-
-**Scope (when designed + approved):**
-
-- Reuse `src-tauri/src/sync_cert.rs` (the existing persistent TLS certificate infrastructure used by `sync_daemon` for device-to-device mTLS) to expose MCP over HTTPS on the LAN.
-- Agent-pairing flow mirrors the device-pairing UX already shipped in the Sync feature — user scans a QR code or enters a short code on the agent-running machine; the Agaric device trusts the agent's cert after explicit acceptance.
-- Same protocol (JSON-RPC 2.0, same tool registry) — only the transport changes.
-- Android-specific sandbox considerations (the UDS path on Android is inside the app's private data dir and other processes cannot reach it) handled by the new HTTPS-over-LAN transport.
-
-**Do NOT** start this sub-item until both v1 and v2 have shipped and the user has explicitly asked for mobile support. Do NOT weaken the mTLS posture — the fact that the LAN is "the user's own network" does not change the requirement to authenticate both ends with device-owned certs.
-
-**Verification (when scheduled):** reuse the existing `sync_daemon/` test harness patterns; add a pairing flow e2e test; verify the stub binary runs on both Android (via Tauri's Android target) and iOS (out of scope for the first mobile release — iOS comes later if at all).
-
-**Depends on:** FEAT-4h (v2 complete) + separate design-approval session before implementation begins.
-
-**Status:** DEFERRED — pending v2 ship + user-requested mobile support + separate design approval.
-
-**Cost:** L
 
 ### FEAT-5 — Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar)
 
