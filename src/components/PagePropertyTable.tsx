@@ -39,13 +39,16 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   const [showAddPopover, setShowAddPopover] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
-  // Load properties and definitions in parallel
+  // Load properties and definitions in parallel.
+  // M-85: `listPropertyDefs` is paginated; this surface is
+  // single-page-by-design — the seeded property vocabulary fits
+  // well under one page, so we destructure `.items` and ignore the cursor.
   useEffect(() => {
     setLoading(true)
     Promise.all([getProperties(pageId), listPropertyDefs()])
-      .then(([props, defs]) => {
+      .then(([props, defsPage]) => {
         setProperties(Array.isArray(props) ? props : [])
-        setDefinitions(Array.isArray(defs) ? defs : [])
+        setDefinitions(Array.isArray(defsPage.items) ? defsPage.items : [])
       })
       .catch((err) => {
         logger.warn('PagePropertyTable', 'load properties/defs failed', { pageId }, err)

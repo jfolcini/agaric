@@ -62,7 +62,6 @@ const mockedInvoke = vi.mocked(invoke)
 const mockPairingInfo = {
   passphrase: 'alpha bravo charlie delta',
   qr_svg: '<svg data-testid="backend-qr"><rect/></svg>',
-  port: 9000,
 }
 
 const mockPeers = [
@@ -714,7 +713,7 @@ describe('PairingDialog', () => {
   it('dialog body has overflow-y-auto for small screens', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'start_pairing')
-        return { passphrase: 'word1 word2 word3 word4', qr_svg: '<svg></svg>', port: 8080 }
+        return { passphrase: 'word1 word2 word3 word4', qr_svg: '<svg></svg>' }
       if (cmd === 'list_peer_refs') return []
       return null
     })

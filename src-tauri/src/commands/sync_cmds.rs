@@ -134,6 +134,10 @@ pub fn get_device_id_inner(device_id: &DeviceId) -> String {
 /// Generates a fresh passphrase, creates a QR code SVG for sharing,
 /// stores the session in `pairing_state`, and returns the pairing info
 /// to the frontend.
+///
+/// M-34: the QR payload + [`PairingInfo`] both carry only the passphrase.
+/// mDNS owns discovery + address resolution end-to-end; the QR is not a
+/// scan-bootstrap channel for a direct `host:port` connection.
 #[instrument(skip(pairing_state), err)]
 pub fn start_pairing_inner(
     pairing_state: &Mutex<Option<PairingSession>>,
@@ -141,18 +145,14 @@ pub fn start_pairing_inner(
 ) -> Result<PairingInfo, AppError> {
     let session = PairingSession::new(device_id, "");
     let passphrase = session.passphrase.clone();
-    let qr_svg = generate_qr_svg(&pairing_qr_payload(&passphrase, "0.0.0.0", 0))?;
+    let qr_svg = generate_qr_svg(&pairing_qr_payload(&passphrase))?;
 
     *pairing_state
         .lock()
         .map_err(|_| AppError::InvalidOperation("pairing state lock poisoned".into()))? =
         Some(session);
 
-    Ok(PairingInfo {
-        passphrase,
-        qr_svg,
-        port: 0,
-    })
+    Ok(PairingInfo { passphrase, qr_svg })
 }
 
 /// Confirm pairing with a remote device.

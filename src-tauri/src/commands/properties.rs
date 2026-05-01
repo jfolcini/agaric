@@ -11,6 +11,7 @@ use crate::db::{CommandTx, ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
+use crate::pagination;
 
 use super::sanitize_internal_error;
 use super::*;
@@ -588,18 +589,50 @@ pub async fn create_property_def_inner(
     Ok(row)
 }
 
-/// List all property definitions, ordered by key.
+/// List all property definitions, paginated and ordered by `key ASC`
+/// (M-85, AGENTS.md invariant #3).
+///
+/// `key` is the primary key on `property_definitions` (a string, not a
+/// ULID), so the keyset cursor is encoded via [`Cursor::for_id`] with
+/// `last.key.clone()` — `for_id` accepts any `String` and stores it in
+/// the cursor's `id` slot. `limit` is forwarded through
+/// [`pagination::PageRequest::new`] which clamps to the canonical
+/// `[1, MAX_PAGE_SIZE]` range; the MCP tool boundary applies its own
+/// `LIST_RESULT_CAP` clamp.
+///
+/// M-85: previously returned a flat `Vec<PropertyDefinition>`. Now
+/// returns a [`PageResponse<PropertyDefinition>`] so the tool surface
+/// is consistent with the rest of the paginated read commands. The
+/// frontend `listPropertyDefs()` wrapper destructures `.items`; MCP
+/// agents thread `cursor` / `next_cursor` / `has_more`.
 #[instrument(skip(pool), err)]
 pub async fn list_property_defs_inner(
     pool: &SqlitePool,
-) -> Result<Vec<PropertyDefinition>, AppError> {
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<pagination::PageResponse<PropertyDefinition>, AppError> {
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    let (cursor_flag, cursor_key): (Option<i64>, &str) = match page.after.as_ref() {
+        Some(c) => (Some(1), c.id.as_str()),
+        None => (None, ""),
+    };
+    let fetch_limit = page.limit + 1;
     let rows = sqlx::query_as!(
         PropertyDefinition,
-        "SELECT key, value_type, options, created_at FROM property_definitions ORDER BY key"
+        r#"SELECT key, value_type, options, created_at
+         FROM property_definitions
+         WHERE (?1 IS NULL OR key > ?2)
+         ORDER BY key ASC
+         LIMIT ?3"#,
+        cursor_flag,
+        cursor_key,
+        fetch_limit,
     )
     .fetch_all(pool)
     .await?;
-    Ok(rows)
+    pagination::build_page_response(rows, page.limit, |last| {
+        pagination::Cursor::for_id(last.key.clone())
+    })
 }
 
 /// Update the options array for a select-type definition.
@@ -1006,14 +1039,17 @@ pub async fn create_property_def(
         .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: list all property definitions. Delegates to [`list_property_defs_inner`].
+/// Tauri command: list all property definitions, paginated (M-85).
+/// Delegates to [`list_property_defs_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_property_defs(
     read_pool: State<'_, ReadPool>,
-) -> Result<Vec<PropertyDefinition>, AppError> {
-    list_property_defs_inner(&read_pool.0)
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<pagination::PageResponse<PropertyDefinition>, AppError> {
+    list_property_defs_inner(&read_pool.0, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }

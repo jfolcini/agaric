@@ -2101,14 +2101,19 @@ describe('App', () => {
 
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_property_defs') {
-          return [
-            {
-              key: 'priority',
-              value_type: 'select',
-              options: '["1","2","3","4"]',
-              created_at: '2025-01-01T00:00:00Z',
-            },
-          ]
+          // M-85: paginated PageResponse envelope.
+          return {
+            items: [
+              {
+                key: 'priority',
+                value_type: 'select',
+                options: '["1","2","3","4"]',
+                created_at: '2025-01-01T00:00:00Z',
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
         }
         return emptyPage
       })
@@ -2124,7 +2129,7 @@ describe('App', () => {
       __resetPriorityLevelsForTests()
 
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_property_defs') return []
+        if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
         return emptyPage
       })
 
@@ -2140,14 +2145,18 @@ describe('App', () => {
 
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_property_defs') {
-          return [
-            {
-              key: 'priority',
-              value_type: 'select',
-              options: 'not-json',
-              created_at: '2025-01-01T00:00:00Z',
-            },
-          ]
+          return {
+            items: [
+              {
+                key: 'priority',
+                value_type: 'select',
+                options: 'not-json',
+                created_at: '2025-01-01T00:00:00Z',
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
         }
         return emptyPage
       })
@@ -2169,14 +2178,18 @@ describe('App', () => {
 
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_property_defs') {
-          return [
-            {
-              key: 'priority',
-              value_type: 'select',
-              options: '{"x":"y"}',
-              created_at: '2025-01-01T00:00:00Z',
-            },
-          ]
+          return {
+            items: [
+              {
+                key: 'priority',
+                value_type: 'select',
+                options: '{"x":"y"}',
+                created_at: '2025-01-01T00:00:00Z',
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
         }
         return emptyPage
       })

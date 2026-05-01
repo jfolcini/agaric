@@ -16,10 +16,10 @@ async fn restore_all_deleted_restores_all_soft_deleted_blocks() {
     insert_block(&pool, "RA_DEL2", "content", "deleted two", None, Some(2)).await;
     insert_block(&pool, "RA_ALIVE", "content", "alive", None, Some(3)).await;
 
-    soft_delete::cascade_soft_delete(&pool, "RA_DEL1")
+    soft_delete::cascade_soft_delete(&pool, DEV, "RA_DEL1")
         .await
         .unwrap();
-    soft_delete::cascade_soft_delete(&pool, "RA_DEL2")
+    soft_delete::cascade_soft_delete(&pool, DEV, "RA_DEL2")
         .await
         .unwrap();
 
@@ -83,7 +83,7 @@ async fn restore_all_deleted_handles_cascade_deleted_blocks() {
     insert_block(&pool, "RA_PAR", "page", "parent", None, Some(1)).await;
     insert_block(&pool, "RA_CHD", "content", "child", Some("RA_PAR"), Some(1)).await;
 
-    let (ts, count) = soft_delete::cascade_soft_delete(&pool, "RA_PAR")
+    let (ts, count) = soft_delete::cascade_soft_delete(&pool, DEV, "RA_PAR")
         .await
         .unwrap();
     assert_eq!(count, 2, "cascade must delete parent + child");
@@ -132,10 +132,10 @@ async fn purge_all_deleted_removes_all_soft_deleted_blocks() {
     insert_block(&pool, "PA_DEL2", "content", "doomed two", None, Some(2)).await;
     insert_block(&pool, "PA_ALIVE", "content", "alive", None, Some(3)).await;
 
-    soft_delete::cascade_soft_delete(&pool, "PA_DEL1")
+    soft_delete::cascade_soft_delete(&pool, DEV, "PA_DEL1")
         .await
         .unwrap();
-    soft_delete::cascade_soft_delete(&pool, "PA_DEL2")
+    soft_delete::cascade_soft_delete(&pool, DEV, "PA_DEL2")
         .await
         .unwrap();
 
@@ -221,10 +221,10 @@ async fn purge_all_deleted_cleans_dependent_tables() {
     .unwrap();
 
     // Soft-delete both the block with relations and the tag
-    soft_delete::cascade_soft_delete(&pool, "PA_REL")
+    soft_delete::cascade_soft_delete(&pool, DEV, "PA_REL")
         .await
         .unwrap();
-    soft_delete::cascade_soft_delete(&pool, "PA_TAG")
+    soft_delete::cascade_soft_delete(&pool, DEV, "PA_TAG")
         .await
         .unwrap();
 
@@ -301,13 +301,13 @@ async fn purge_all_deleted_preserves_non_deleted_blocks() {
         .await
         .unwrap();
 
-    soft_delete::cascade_soft_delete(&pool, "PA5_DEL1")
+    soft_delete::cascade_soft_delete(&pool, DEV, "PA5_DEL1")
         .await
         .unwrap();
-    soft_delete::cascade_soft_delete(&pool, "PA5_DEL2")
+    soft_delete::cascade_soft_delete(&pool, DEV, "PA5_DEL2")
         .await
         .unwrap();
-    soft_delete::cascade_soft_delete(&pool, "PA5_DEL3")
+    soft_delete::cascade_soft_delete(&pool, DEV, "PA5_DEL3")
         .await
         .unwrap();
 
@@ -373,7 +373,7 @@ async fn list_trash_with_cascade_deleted_page_returns_only_root_and_restores_des
     )
     .await;
 
-    let (_ts, count) = soft_delete::cascade_soft_delete(&pool, "UX243_PG")
+    let (_ts, count) = soft_delete::cascade_soft_delete(&pool, DEV, "UX243_PG")
         .await
         .unwrap();
     assert_eq!(count, 3, "cascade must delete page + 2 children");
@@ -485,7 +485,7 @@ async fn purge_root_from_trash_removes_descendants() {
     )
     .await;
 
-    soft_delete::cascade_soft_delete(&pool, "UX243_PP")
+    soft_delete::cascade_soft_delete(&pool, DEV, "UX243_PP")
         .await
         .unwrap();
 
@@ -569,7 +569,7 @@ async fn purge_all_deleted_succeeds_when_tag_is_deleted_but_still_inherited_by_l
     .unwrap();
 
     // Soft-delete ONLY the tag — P and C stay alive.
-    let (_ts, cnt) = soft_delete::cascade_soft_delete(&pool, "BUG46_T")
+    let (_ts, cnt) = soft_delete::cascade_soft_delete(&pool, DEV, "BUG46_T")
         .await
         .unwrap();
     assert_eq!(cnt, 1, "only the tag should be soft-deleted");

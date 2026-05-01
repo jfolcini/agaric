@@ -122,8 +122,11 @@ export const commands = {
 	listPropertyKeys: () => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("list_property_keys")),
 	// Tauri command: create a property definition. Delegates to [`create_property_def_inner`].
 	createPropertyDef: (key: string, valueType: string, options: string | null) => typedError<PropertyDefinition, AppErrorSchema>(__TAURI_INVOKE("create_property_def", { key, valueType, options })),
-	// Tauri command: list all property definitions. Delegates to [`list_property_defs_inner`].
-	listPropertyDefs: () => typedError<PropertyDefinition[], AppErrorSchema>(__TAURI_INVOKE("list_property_defs")),
+	/**
+	 *  Tauri command: list all property definitions, paginated (M-85).
+	 *  Delegates to [`list_property_defs_inner`].
+	 */
+	listPropertyDefs: (cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyDefinition>, AppErrorSchema>(__TAURI_INVOKE("list_property_defs", { cursor, limit })),
 	// Tauri command: update options for a select-type definition. Delegates to [`update_property_def_options_inner`].
 	updatePropertyDefOptions: (key: string, options: string) => typedError<PropertyDefinition, AppErrorSchema>(__TAURI_INVOKE("update_property_def_options", { key, options })),
 	// Tauri command: delete a property definition. Delegates to [`delete_property_def_inner`].
@@ -722,11 +725,16 @@ export type PageResponse<T> = {
 	has_more: boolean,
 };
 
-// Response payload returned by [`start_pairing`].
+/**
+ *  Response payload returned by [`start_pairing`].
+ *
+ *  M-34: the QR payload + [`PairingInfo`] both carry only the passphrase.
+ *  mDNS owns discovery + address resolution end-to-end; there is no
+ *  scan-bootstrap path that would need a `host`/`port` here.
+ */
 export type PairingInfo = {
 	passphrase: string,
 	qr_svg: string,
-	port: number,
 };
 
 // A row from the `peer_refs` table representing a remote sync peer.

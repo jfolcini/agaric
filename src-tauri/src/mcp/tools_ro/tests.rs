@@ -741,8 +741,19 @@ async fn list_tags_happy_path() {
         .call_tool("list_tags", json!({}), &test_ctx())
         .await
         .expect("happy path");
-    let arr = result.as_array().expect("tag array");
+    // M-85: response is a `PageResponse { items, next_cursor, has_more }`
+    // rather than a flat array.
+    let arr = result["items"].as_array().expect("tag items array");
     assert_eq!(arr.len(), 2, "two tags returned");
+    assert!(
+        result["next_cursor"].is_null(),
+        "two-tag fixture under default limit must not paginate (got {result:?})",
+    );
+    assert_eq!(
+        result["has_more"],
+        json!(false),
+        "two-tag fixture under default limit must report has_more=false",
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -767,11 +778,15 @@ async fn list_property_defs_happy_path() {
     // `property_definitions` table so adding/removing seeded defs
     // does not silently desync this assertion from reality.
     let (tools, _mat, _dir) = mk_tools().await;
+    // M-85: under the default page limit (`MAX_PAGE_SIZE = 200`) all
+    // seeded definitions fit on a single page, so we still see them
+    // all. The response is now a `PageResponse { items, next_cursor,
+    // has_more }` rather than a flat array.
     let result = tools
         .call_tool("list_property_defs", json!({}), &test_ctx())
         .await
         .expect("happy path");
-    let arr = result.as_array().expect("defs array");
+    let arr = result["items"].as_array().expect("defs items array");
 
     // (a) Stable subset — these four are the reserved-column keys
     //     enumerated by `op::is_reserved_property_key` and must
@@ -800,6 +815,11 @@ async fn list_property_defs_happy_path() {
         arr.len() as i64,
         live_count,
         "list_property_defs response count must match live property_definitions row count",
+    );
+    // Seeded defaults fit under the default limit — no second page.
+    assert!(
+        result["next_cursor"].is_null(),
+        "seeded defaults fit under the default limit; expected no next_cursor (got {result:?})",
     );
 }
 
@@ -931,11 +951,12 @@ async fn call_tool_scopes_actor_even_when_outer_scope_absent() {
         panic!("list_property_defs must succeed inside scoped call, got {result:?}");
     };
     // Sanity-check the response shape: list_property_defs returns a JSON
-    // array of definitions. Confirms the scoped call actually ran the
-    // handler (not just returned a default value).
+    // PageResponse object (M-85) with an `items` array. Confirms the
+    // scoped call actually ran the handler (not just returned a default
+    // value).
     assert!(
-        resp.is_array(),
-        "list_property_defs response should be a JSON array, got {resp:?}",
+        resp["items"].is_array(),
+        "list_property_defs response should expose an `items` array, got {resp:?}",
     );
 }
 
@@ -987,6 +1008,112 @@ async fn list_pages_cursor_pagination_roundtrip() {
         assert!(
             !ids1.contains(id),
             "page2 must not repeat page1 items; found overlap on {id}",
+        );
+    }
+}
+
+// -------------------------------------------------------------------
+// M-85 — wire-level cursor pagination for list_tags / list_property_defs
+// -------------------------------------------------------------------
+//
+// `list_tags` and `list_property_defs` both moved from a flat
+// top-level array to the canonical `PageResponse { items, next_cursor,
+// has_more }` envelope (M-85). The two tests below exercise that
+// directly through `tools.call_tool(...)` so a future regression on
+// either side of the JSON boundary surfaces as a wire-shape failure.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_tags_paginates_m85() {
+    let (tools, mat, _dir) = mk_tools().await;
+    // Seed 6 tag blocks; with limit=4 the first page must overflow and
+    // the wire response must expose `items` + `next_cursor` + `has_more`.
+    for i in 0..6 {
+        create_block_inner(
+            &tools.pool,
+            DEV,
+            &mat,
+            "tag".into(),
+            format!("tag-m85-{i}"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    settle(&mat).await;
+
+    let resp = tools
+        .call_tool("list_tags", json!({"limit": 4}), &test_ctx())
+        .await
+        .expect("list_tags wire call must succeed");
+    // Wire shape — PageResponse JSON envelope (M-85).
+    let items = resp["items"].as_array().expect("response.items[]");
+    assert_eq!(
+        items.len(),
+        4,
+        "first page must contain exactly the requested 4 entries (got {})",
+        items.len(),
+    );
+    assert_eq!(
+        resp["has_more"],
+        json!(true),
+        "has_more must be true when more rows remain past the cap (M-85)",
+    );
+    assert!(
+        resp["next_cursor"].is_string(),
+        "next_cursor must be present when has_more is true (M-85), got {resp:?}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_property_defs_paginates_m85() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    // Use the migration-seeded defaults (~19 rows) — with limit=4 the
+    // first page must overflow.
+    let resp = tools
+        .call_tool("list_property_defs", json!({"limit": 4}), &test_ctx())
+        .await
+        .expect("list_property_defs wire call must succeed");
+    let items = resp["items"].as_array().expect("response.items[]");
+    assert_eq!(
+        items.len(),
+        4,
+        "first page must contain exactly the requested 4 entries (got {})",
+        items.len(),
+    );
+    assert_eq!(
+        resp["has_more"],
+        json!(true),
+        "has_more must be true when more rows remain past the cap (M-85)",
+    );
+    assert!(
+        resp["next_cursor"].is_string(),
+        "next_cursor must be present when has_more is true (M-85), got {resp:?}",
+    );
+
+    // Threading the cursor back must yield a non-empty second page
+    // disjoint from the first (no duplicates, monotonic on key).
+    let cursor = resp["next_cursor"].as_str().unwrap().to_string();
+    let resp2 = tools
+        .call_tool(
+            "list_property_defs",
+            json!({"limit": 4, "cursor": cursor}),
+            &test_ctx(),
+        )
+        .await
+        .expect("second-page wire call must succeed");
+    let items2 = resp2["items"].as_array().expect("response.items[]");
+    assert!(
+        !items2.is_empty(),
+        "second page must not be empty when has_more was true",
+    );
+    let keys1: std::collections::HashSet<&str> =
+        items.iter().map(|d| d["key"].as_str().unwrap()).collect();
+    for d in items2 {
+        let k = d["key"].as_str().unwrap();
+        assert!(
+            !keys1.contains(k),
+            "page2 must not repeat page1 items; found overlap on key {k}",
         );
     }
 }
@@ -1278,7 +1405,7 @@ async fn inner_get_page_unknown_id_not_found() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inner_list_tags_wraps_by_prefix() {
+async fn inner_list_tags_returns_seeded_tags() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     create_block_inner(&pool, DEV, &mat, "tag".into(), "alpha".into(), None, None)
@@ -1289,15 +1416,20 @@ async fn inner_list_tags_wraps_by_prefix() {
         .unwrap();
     settle(&mat).await;
 
-    let tags = list_tags_inner(&pool, Some(100)).await.unwrap();
-    assert_eq!(tags.len(), 2);
+    // M-85: paginated; under default limit both tags are on page 1.
+    let page = list_tags_inner(&pool, None, Some(100)).await.unwrap();
+    assert_eq!(page.items.len(), 2);
+    assert!(!page.has_more);
+    assert!(page.next_cursor.is_none());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inner_list_tags_empty_db() {
     let (pool, _dir) = test_pool().await;
-    let tags = list_tags_inner(&pool, Some(100)).await.unwrap();
-    assert_eq!(tags.len(), 0);
+    let page = list_tags_inner(&pool, None, Some(100)).await.unwrap();
+    assert_eq!(page.items.len(), 0);
+    assert!(!page.has_more);
+    assert!(page.next_cursor.is_none());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1532,8 +1664,9 @@ async fn snapshot_list_tags_response_shape() {
         .await
         .unwrap();
     insta::assert_yaml_snapshot!("tool_response_list_tags", result, {
-        "[].tag_id" => "[ULID]",
-        "[].updated_at" => "[TIMESTAMP]",
+        ".items[].tag_id" => "[ULID]",
+        ".items[].updated_at" => "[TIMESTAMP]",
+        ".next_cursor" => "[CURSOR]",
     });
 }
 
@@ -1545,7 +1678,8 @@ async fn snapshot_list_property_defs_response_shape() {
         .await
         .unwrap();
     insta::assert_yaml_snapshot!("tool_response_list_property_defs", result, {
-        "[].created_at" => "[TIMESTAMP]",
+        ".items[].created_at" => "[TIMESTAMP]",
+        ".next_cursor" => "[CURSOR]",
     });
 }
 

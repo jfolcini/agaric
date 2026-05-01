@@ -53,8 +53,11 @@ export function useAppBootRecovery(): void {
   // or a missing definition leaves the default `['1','2','3']` levels in
   // place.
   useEffect(() => {
+    // M-85: `listPropertyDefs` is paginated; boot recovery is
+    // single-page-by-design — the priority def lives among the seeded
+    // built-ins, which fit well under one page.
     listPropertyDefs()
-      .then((defs) => {
+      .then(({ items: defs }) => {
         if (!Array.isArray(defs)) return
         const priorityDef = defs.find((d) => d.key === 'priority')
         if (!priorityDef) return

@@ -42,8 +42,11 @@ export function usePropertyDefForEdit(
       return
     }
     let stale = false
+    // M-85: `listPropertyDefs` is paginated. The popover is single-page-by-design —
+    // the seeded property vocabulary fits well under one page; we destructure
+    // `.items` and ignore the cursor.
     listPropertyDefs()
-      .then((defs) => {
+      .then(({ items: defs }) => {
         if (stale) return
         const def = defs.find((d) => d.key === editingProp.key)
         if (def?.value_type === 'select' && def.options) {

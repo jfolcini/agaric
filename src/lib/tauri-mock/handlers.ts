@@ -824,7 +824,6 @@ export const HANDLERS: Record<string, Handler> = {
   start_pairing: () => ({
     passphrase: 'alpha bravo charlie delta',
     qr_svg: '<svg></svg>',
-    port: 8765,
   }),
   confirm_pairing: returnUndefined,
   cancel_pairing: returnUndefined,
@@ -1106,7 +1105,13 @@ export const HANDLERS: Record<string, Handler> = {
     return def
   },
 
-  list_property_defs: () => [...propertyDefs.values()],
+  list_property_defs: () => ({
+    // M-85: paginated; the mock returns every def in one page (the
+    // mock fixtures stay small enough that pagination is irrelevant).
+    items: [...propertyDefs.values()],
+    next_cursor: null,
+    has_more: false,
+  }),
 
   update_property_def_options: (args) => {
     const a = args as Record<string, unknown>

@@ -850,7 +850,7 @@ async fn restore_block_clears_deleted_at() {
     let mat = test_materializer(&pool);
 
     insert_block(&pool, "REST01", "content", "restore me", None, Some(1)).await;
-    let (ts, _) = soft_delete::cascade_soft_delete(&pool, "REST01")
+    let (ts, _) = soft_delete::cascade_soft_delete(&pool, DEV, "REST01")
         .await
         .unwrap();
 
@@ -888,7 +888,7 @@ async fn restore_block_cascades_to_descendants() {
     )
     .await;
 
-    let (ts, count) = soft_delete::cascade_soft_delete(&pool, "RPAR")
+    let (ts, count) = soft_delete::cascade_soft_delete(&pool, DEV, "RPAR")
         .await
         .unwrap();
     assert_eq!(count, 3, "cascade must delete parent + child + grandchild");
@@ -914,7 +914,7 @@ async fn restore_block_writes_op_log_entry() {
     let mat = test_materializer(&pool);
 
     insert_block(&pool, "REST_LOG", "content", "restore-log", None, Some(1)).await;
-    let (ts, _) = soft_delete::cascade_soft_delete(&pool, "REST_LOG")
+    let (ts, _) = soft_delete::cascade_soft_delete(&pool, DEV, "REST_LOG")
         .await
         .unwrap();
 
@@ -989,7 +989,7 @@ async fn restore_with_wrong_deleted_at_ref_returns_invalid_operation() {
     let mat = test_materializer(&pool);
 
     insert_block(&pool, "MISMATCH01", "content", "test", None, Some(1)).await;
-    let (ts, _) = soft_delete::cascade_soft_delete(&pool, "MISMATCH01")
+    let (ts, _) = soft_delete::cascade_soft_delete(&pool, DEV, "MISMATCH01")
         .await
         .unwrap();
 
@@ -1017,7 +1017,7 @@ async fn purge_block_removes_from_db() {
     let mat = test_materializer(&pool);
 
     insert_block(&pool, "PURGE01", "content", "doomed", None, Some(1)).await;
-    soft_delete::cascade_soft_delete(&pool, "PURGE01")
+    soft_delete::cascade_soft_delete(&pool, DEV, "PURGE01")
         .await
         .unwrap();
 
@@ -1162,7 +1162,7 @@ async fn purge_block_removes_tags_properties_attachments_links() {
     .unwrap();
 
     // Soft-delete then purge
-    soft_delete::cascade_soft_delete(&pool, "PURGE_REL")
+    soft_delete::cascade_soft_delete(&pool, DEV, "PURGE_REL")
         .await
         .unwrap();
     purge_block_inner(&pool, DEV, &mat, "PURGE_REL".into())
@@ -1322,7 +1322,7 @@ async fn purge_block_inner_succeeds_when_tag_still_inherited_by_alive_blocks() {
     .unwrap();
 
     // Soft-delete only the tag.
-    let (_ts, cnt) = soft_delete::cascade_soft_delete(&pool, "PURGE_TAG")
+    let (_ts, cnt) = soft_delete::cascade_soft_delete(&pool, DEV, "PURGE_TAG")
         .await
         .unwrap();
     assert_eq!(cnt, 1, "only the tag should be soft-deleted");
@@ -1377,7 +1377,7 @@ async fn purge_block_writes_op_log_entry() {
     let mat = test_materializer(&pool);
 
     insert_block(&pool, "PURGE_LOG", "content", "purge-log", None, Some(1)).await;
-    soft_delete::cascade_soft_delete(&pool, "PURGE_LOG")
+    soft_delete::cascade_soft_delete(&pool, DEV, "PURGE_LOG")
         .await
         .unwrap();
 
@@ -2003,5 +2003,112 @@ async fn move_block_to_deleted_parent_returns_not_found() {
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
         "moving to deleted parent must return AppError::NotFound"
+    );
+}
+
+// ======================================================================
+// M-81 — re-parent orphan conflict copies on the production delete path
+//
+// `cascade_soft_delete` (the trash / empty-trash path) and
+// `delete_block_inner` (the user-driven Delete command) are TWO sites
+// that both run a cascade soft-delete and both must apply the M-81
+// re-parent step. The `_m81` tests in `soft_delete::tests` cover the
+// helper site. These two integration tests cover the production
+// command site so the user-visible orphan-conflict-copy bug is
+// regression-pinned end to end.
+// ======================================================================
+
+/// M-81 production path — happy case: when the user deletes a block
+/// whose subtree contains a conflict copy, the copy must be re-parented
+/// to the nearest live ancestor outside the cascade subtree.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_block_reparents_conflict_copy_under_deleted_subtree_m81() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // GP is the live ancestor outside the cascade subtree.
+    insert_block(&pool, "M81P_GP", "page", "grandparent", None, Some(1)).await;
+    // P is the cascade root, parented under GP.
+    insert_block(&pool, "M81P_P", "page", "parent", Some("M81P_GP"), Some(1)).await;
+    // C is a non-conflict child of P; cascaded.
+    insert_block(&pool, "M81P_C", "content", "child", Some("M81P_P"), Some(1)).await;
+    // CC is a conflict copy parented under C — its `parent_id` will be
+    // inside the cascade subtree once P is deleted.
+    sqlx::query!(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict, conflict_source) \
+         VALUES ('M81P_CC', 'content', 'conflict copy', 'M81P_C', 2, 1, 'M81P_C')"
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    delete_block_inner(&pool, DEV, &mat, "M81P_P".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // CC must now point at the nearest live, non-conflict ancestor — GP,
+    // the cascade root's parent.
+    let parent_id: Option<String> =
+        sqlx::query_scalar!("SELECT parent_id FROM blocks WHERE id = 'M81P_CC'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        parent_id.as_deref(),
+        Some("M81P_GP"),
+        "conflict copy must be re-parented to the nearest live ancestor outside the cascade subtree"
+    );
+    // CC must still be alive (invariant #9 — conflict copies have
+    // independent lifecycles and are excluded from the cascade UPDATE).
+    let deleted_at: Option<String> =
+        sqlx::query_scalar!("SELECT deleted_at FROM blocks WHERE id = 'M81P_CC'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(deleted_at, None, "conflict copy must remain alive");
+}
+
+/// M-81 production path — null case: when the cascade root itself has
+/// no live parent, no ancestor can host the orphan, so the conflict
+/// copy floats to `parent_id = NULL` (top-level orphan).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_block_reparents_conflict_copy_to_null_when_no_ancestor_m81() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // P is the cascade root with NO parent — nothing to re-parent
+    // under once the subtree goes away.
+    insert_block(&pool, "M81PN_P", "page", "parent", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "M81PN_C",
+        "content",
+        "child",
+        Some("M81PN_P"),
+        Some(1),
+    )
+    .await;
+    sqlx::query!(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict, conflict_source) \
+         VALUES ('M81PN_CC', 'content', 'conflict copy', 'M81PN_C', 2, 1, 'M81PN_C')"
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    delete_block_inner(&pool, DEV, &mat, "M81PN_P".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let parent_id: Option<String> =
+        sqlx::query_scalar!("SELECT parent_id FROM blocks WHERE id = 'M81PN_CC'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        parent_id, None,
+        "conflict copy must float to parent_id = NULL when no live ancestor exists outside the cascade"
     );
 }

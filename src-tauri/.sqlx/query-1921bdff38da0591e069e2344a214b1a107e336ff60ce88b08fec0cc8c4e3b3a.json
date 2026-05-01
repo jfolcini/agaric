@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT tag_id, name, usage_count, updated_at\n         FROM tags_cache\n         WHERE (?1 IS NULL OR tag_id > ?2)\n         ORDER BY tag_id ASC\n         LIMIT ?3",
+  "describe": {
+    "columns": [
+      {
+        "name": "tag_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "usage_count",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 3,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "1921bdff38da0591e069e2344a214b1a107e336ff60ce88b08fec0cc8c4e3b3a"
+}

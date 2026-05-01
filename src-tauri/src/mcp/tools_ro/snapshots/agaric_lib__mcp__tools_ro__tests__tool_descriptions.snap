@@ -1,6 +1,5 @@
 ---
 source: src/mcp/tools_ro/tests.rs
-assertion_line: 94
 expression: wire
 ---
 - description: List all pages with cursor pagination.
@@ -98,21 +97,32 @@ expression: wire
       - block_id
     type: object
   name: list_backlinks
-- description: List every tag in the tag cache (no prefix filter).
+- description: "List every tag in the tag cache (no prefix filter), with cursor pagination."
   inputSchema:
     additionalProperties: false
     properties:
+      cursor:
+        description: Opaque pagination cursor from a prior response (M-85).
+        type: string
       limit:
-        description: Max tags returned (capped at 100).
+        description: Max tags per response (capped at 100).
         maximum: 100
         minimum: 1
         type: integer
     type: object
   name: list_tags
-- description: List every property definition (typed property schema).
+- description: "List every property definition (typed property schema), with cursor pagination."
   inputSchema:
     additionalProperties: false
-    properties: {}
+    properties:
+      cursor:
+        description: Opaque pagination cursor from a prior response (M-85).
+        type: string
+      limit:
+        description: Max definitions per response (capped at 100).
+        maximum: 100
+        minimum: 1
+        type: integer
     type: object
   name: list_property_defs
 - description: Project the agenda (repeating tasks + due/scheduled blocks) for a date range.

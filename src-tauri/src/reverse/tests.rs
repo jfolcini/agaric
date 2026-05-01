@@ -1484,9 +1484,10 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
     .unwrap();
 
     // Step 1: cascade_soft_delete records the original `deleted_at_a`.
-    let (deleted_at_a, _count_a) = crate::soft_delete::cascade_soft_delete(&pool, block_id)
-        .await
-        .unwrap();
+    let (deleted_at_a, _count_a) =
+        crate::soft_delete::cascade_soft_delete(&pool, TEST_DEVICE, block_id)
+            .await
+            .unwrap();
 
     // Step 2: restore so the block is alive again, then append a
     // RestoreBlock op carrying `deleted_at_a` so we have a record to
@@ -1521,9 +1522,10 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
 
     // Step 4: apply the reverse — equivalent to what the redo path
     // does in production — and capture the new `deleted_at_b`.
-    let (deleted_at_b, _count_b) = crate::soft_delete::cascade_soft_delete(&pool, block_id)
-        .await
-        .unwrap();
+    let (deleted_at_b, _count_b) =
+        crate::soft_delete::cascade_soft_delete(&pool, TEST_DEVICE, block_id)
+            .await
+            .unwrap();
 
     // The asymmetry: the reverse did not carry `deleted_at_ref`
     // through, so the new timestamp is distinct from the original

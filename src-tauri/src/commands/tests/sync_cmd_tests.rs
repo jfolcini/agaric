@@ -135,12 +135,54 @@ fn sync_start_pairing_returns_passphrase_and_qr() {
         "qr_svg must contain an SVG tag"
     );
 
-    // Port is a placeholder
-    assert_eq!(info.port, 0, "port must be 0 (placeholder)");
+    // M-34: PairingInfo no longer carries host/port — mDNS owns
+    // discovery + address resolution end-to-end. Asserted here as a
+    // compile-time + structural check via the new test below.
 
     // Session should be stored in state
     let session = pairing_state.lock().unwrap();
     assert!(session.is_some(), "pairing session must be stored in state");
+}
+
+/// M-34: parse the QR JSON embedded in the pairing flow and assert the
+/// payload shape is exactly `{"v": 1, "passphrase": "..."}` — no `host`
+/// and no `port`. Locks down the wire format on the orchestration side
+/// (the unit-level encoder/parser test lives in `pairing.rs`).
+#[test]
+fn start_pairing_qr_payload_carries_only_passphrase_m34() {
+    let pairing_state = Mutex::new(None);
+    let info =
+        start_pairing_inner(&pairing_state, "device-A").expect("start_pairing_inner must succeed");
+
+    // Re-derive the exact JSON the QR encodes (the SVG is opaque
+    // bytes, but `pairing_qr_payload` is what was rendered).
+    let payload = crate::pairing::pairing_qr_payload(&info.passphrase);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&payload).expect("M-34: QR payload must be valid JSON");
+    let object = parsed
+        .as_object()
+        .expect("M-34: QR payload must be a JSON object");
+
+    // Exact-count assertion: only `v` (schema version) and `passphrase`.
+    assert_eq!(
+        object.len(),
+        2,
+        "M-34: QR payload must contain exactly two keys (v, passphrase), got: {:?}",
+        object.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        object.get("passphrase").and_then(|v| v.as_str()),
+        Some(info.passphrase.as_str()),
+        "M-34: 'passphrase' field must round-trip"
+    );
+    assert!(
+        !object.contains_key("host"),
+        "M-34: QR payload must not contain 'host' — mDNS owns discovery"
+    );
+    assert!(
+        !object.contains_key("port"),
+        "M-34: QR payload must not contain 'port' — mDNS owns address resolution"
+    );
 }
 
 #[test]

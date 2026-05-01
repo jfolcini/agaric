@@ -51,7 +51,6 @@ export function PairingDialog({
   const [pairingInfo, setPairingInfo] = useState<{
     passphrase: string
     qr_svg: string
-    port: number
   } | null>(null)
   const [words, setWords] = useState<[string, string, string, string]>(['', '', '', ''])
   const [peers, setPeers] = useState<PeerRefRow[]>([])
@@ -106,7 +105,7 @@ export function PairingDialog({
   // so the error banner copy stays byte-equivalent.
   const { execute: executeInit } = useIpcCommand<
     void,
-    [{ passphrase: string; qr_svg: string; port: number }, PeerRefRow[]]
+    [{ passphrase: string; qr_svg: string }, PeerRefRow[]]
   >({
     call: () => Promise.all([startPairing(), listPeerRefs()]),
     module: 'PairingDialog',

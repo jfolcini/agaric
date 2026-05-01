@@ -64,7 +64,8 @@ function makeDef(key: string, valueType = 'text'): PropertyDefinition {
 function setupMock(props: PropertyRowData[] = [], defs: PropertyDefinition[] = []) {
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'get_properties') return props
-    if (cmd === 'list_property_defs') return defs
+    // M-85: paginated PageResponse envelope.
+    if (cmd === 'list_property_defs') return { items: defs, next_cursor: null, has_more: false }
     if (cmd === 'set_property') return undefined
     if (cmd === 'delete_property') return undefined
     if (cmd === 'set_due_date') return { id: 'BLOCK_1', block_type: 'content' }

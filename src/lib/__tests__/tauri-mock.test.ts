@@ -1896,8 +1896,18 @@ describe('compute_edit_diff', () => {
 // ---------------------------------------------------------------------------
 
 describe('property definition commands', () => {
+  // M-85: `list_property_defs` is paginated. The mock returns a
+  // `PageResponse<PropertyDefinition>` envelope; tests destructure
+  // `.items` and ignore the cursor (mock fixture is single-page).
   it('list_property_defs returns seed definitions', () => {
-    const defs = invoke('list_property_defs') as Array<Record<string, unknown>>
+    const page = invoke('list_property_defs') as {
+      items: Array<Record<string, unknown>>
+      next_cursor: string | null
+      has_more: boolean
+    }
+    expect(page.has_more).toBe(false)
+    expect(page.next_cursor).toBeNull()
+    const defs = page.items
     expect(defs.length).toBeGreaterThanOrEqual(2)
     const keys = defs.map((d) => d['key'])
     expect(keys).toContain('context')
@@ -1913,8 +1923,10 @@ describe('property definition commands', () => {
     expect(def['key']).toBe('effort')
     expect(def['value_type']).toBe('number')
 
-    const defs = invoke('list_property_defs') as Array<Record<string, unknown>>
-    expect(defs.some((d) => d['key'] === 'effort')).toBe(true)
+    const page = invoke('list_property_defs') as {
+      items: Array<Record<string, unknown>>
+    }
+    expect(page.items.some((d) => d['key'] === 'effort')).toBe(true)
   })
 
   it('update_property_def_options updates options', () => {
@@ -1939,8 +1951,10 @@ describe('property definition commands', () => {
   it('delete_property_def removes a definition', () => {
     invoke('create_property_def', { key: 'temp', valueType: 'text' })
     invoke('delete_property_def', { key: 'temp' })
-    const defs = invoke('list_property_defs') as Array<Record<string, unknown>>
-    expect(defs.some((d) => d['key'] === 'temp')).toBe(false)
+    const page = invoke('list_property_defs') as {
+      items: Array<Record<string, unknown>>
+    }
+    expect(page.items.some((d) => d['key'] === 'temp')).toBe(false)
   })
 })
 
@@ -2121,14 +2135,17 @@ describe('get_device_id', () => {
 })
 
 describe('start_pairing', () => {
-  it('returns pairing info with passphrase, qr_svg, and port', () => {
+  it('returns pairing info with passphrase and qr_svg', () => {
+    // M-34: PairingInfo carries only passphrase + qr_svg. mDNS owns
+    // discovery + address resolution end-to-end, so the response has no
+    // host/port fields.
     const result = invoke('start_pairing') as Record<string, unknown>
     expect(result).toHaveProperty('passphrase')
     expect(result).toHaveProperty('qr_svg')
-    expect(result).toHaveProperty('port')
+    expect(result).not.toHaveProperty('host')
+    expect(result).not.toHaveProperty('port')
     expect(typeof result['passphrase']).toBe('string')
     expect(typeof result['qr_svg']).toBe('string')
-    expect(typeof result['port']).toBe('number')
   })
 
   it('returns expected default values', () => {
@@ -2136,7 +2153,6 @@ describe('start_pairing', () => {
     expect(result).toEqual({
       passphrase: 'alpha bravo charlie delta',
       qr_svg: '<svg></svg>',
-      port: 8765,
     })
   })
 })

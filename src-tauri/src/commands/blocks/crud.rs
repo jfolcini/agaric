@@ -610,6 +610,18 @@ pub async fn delete_block_inner(
     // Append to op_log within transaction
     let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
 
+    // M-81 — re-parent orphan conflict copies BEFORE the cascade UPDATE so
+    // the canonical ancestor walk reads the pre-cascade `deleted_at IS
+    // NULL` state of the subtree (post-cascade every subtree row would be
+    // soft-deleted, which makes `ancestors_cte_active!` terminate at
+    // depth 0). Same helper used by `cascade_soft_delete` (the trash /
+    // empty-trash path) — both cascade sites share the repair logic so
+    // the re-parent semantics live in one place. Each re-parent emits its
+    // own `MoveBlock` op log entry inside this same transaction so peers
+    // replay the repair via normal sync.
+    crate::soft_delete::reparent_orphan_conflict_copies(&mut tx, device_id, &block_id, &now)
+        .await?;
+
     // Cascade soft-delete within same transaction.
     //
     // `descendants_cte_active!()` filters `is_conflict = 0` AND

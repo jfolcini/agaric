@@ -41,7 +41,8 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
         return undefined
       }
       if (cmd === 'list_property_defs') {
-        return []
+        // M-85: paginated PageResponse envelope.
+        return { items: [], next_cursor: null, has_more: false }
       }
       return null
     })
@@ -60,7 +61,7 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
         throw new Error('IPC down')
       }
       if (cmd === 'list_property_defs') {
-        return []
+        return { items: [], next_cursor: null, has_more: false }
       }
       return null
     })
@@ -83,13 +84,17 @@ describe('useAppBootRecovery — priority levels (UX-201b)', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_drafts') return []
       if (cmd === 'list_property_defs') {
-        return [
-          {
-            key: 'priority',
-            value_type: 'select',
-            options: JSON.stringify(['urgent', 'high', 'low']),
-          },
-        ]
+        return {
+          items: [
+            {
+              key: 'priority',
+              value_type: 'select',
+              options: JSON.stringify(['urgent', 'high', 'low']),
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
       }
       return null
     })
@@ -104,7 +109,7 @@ describe('useAppBootRecovery — priority levels (UX-201b)', () => {
   it('keeps defaults when the priority definition is missing', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_drafts') return []
-      if (cmd === 'list_property_defs') return []
+      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
       return null
     })
 
@@ -123,7 +128,11 @@ describe('useAppBootRecovery — priority levels (UX-201b)', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_drafts') return []
       if (cmd === 'list_property_defs') {
-        return [{ key: 'priority', value_type: 'select', options: '{not-json' }]
+        return {
+          items: [{ key: 'priority', value_type: 'select', options: '{not-json' }],
+          next_cursor: null,
+          has_more: false,
+        }
       }
       return null
     })

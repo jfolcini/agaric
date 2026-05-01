@@ -15,8 +15,8 @@
 //! | `search` | [`search_blocks_inner`](crate::commands::search_blocks_inner) | FTS5. Result count capped at 50, snippet length at 512 chars. |
 //! | `get_block` | [`get_block_inner`](crate::commands::get_block_inner) | |
 //! | `list_backlinks` | [`list_backlinks_grouped_inner`](crate::commands::list_backlinks_grouped_inner) | Grouped by source page. |
-//! | `list_tags` | [`list_tags_inner`](crate::commands::list_tags_inner) | All tags; thin wrapper over `list_tags_by_prefix_inner("")`. |
-//! | `list_property_defs` | [`list_property_defs_inner`](crate::commands::list_property_defs_inner) | Typed property schema. |
+//! | `list_tags` | [`list_tags_inner`](crate::commands::list_tags_inner) | Cursor paginated (M-85). Limit clamped server-side to 100. |
+//! | `list_property_defs` | [`list_property_defs_inner`](crate::commands::list_property_defs_inner) | Typed property schema; cursor paginated (M-85). |
 //! | `get_agenda` | [`list_projected_agenda_inner`](crate::commands::list_projected_agenda_inner) | Date-range agenda projection. |
 //! | `journal_for_date` | [`journal_for_date_inner`](crate::commands::journal_for_date_inner) | Idempotent date → page lookup. **M-84 carve-out:** on first read-of-the-day this RO tool emits a single `CreateBlock` op (origin `agent:<name>`) for the missing journal page; see the M-82/M-84 commentary on [`ReadOnlyTools`] below. |
 //!
@@ -175,12 +175,19 @@ struct ListBacklinksArgs {
 #[serde(deny_unknown_fields)]
 struct ListTagsArgs {
     #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
     limit: Option<i64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ListPropertyDefsArgs {}
+struct ListPropertyDefsArgs {
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -481,16 +488,21 @@ fn tool_desc_list_backlinks() -> ToolDescription {
 fn tool_desc_list_tags() -> ToolDescription {
     ToolDescription {
         name: TOOL_LIST_TAGS.to_string(),
-        description: "List every tag in the tag cache (no prefix filter).".to_string(),
+        description: "List every tag in the tag cache (no prefix filter), with cursor pagination."
+            .to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
+                "cursor": {
+                    "type": "string",
+                    "description": "Opaque pagination cursor from a prior response (M-85).",
+                },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": LIST_RESULT_CAP,
-                    "description": format!("Max tags returned (capped at {LIST_RESULT_CAP})."),
+                    "description": format!("Max tags per response (capped at {LIST_RESULT_CAP})."),
                 },
             },
         }),
@@ -500,11 +512,24 @@ fn tool_desc_list_tags() -> ToolDescription {
 fn tool_desc_list_property_defs() -> ToolDescription {
     ToolDescription {
         name: TOOL_LIST_PROPERTY_DEFS.to_string(),
-        description: "List every property definition (typed property schema).".to_string(),
+        description:
+            "List every property definition (typed property schema), with cursor pagination."
+                .to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
-            "properties": {},
+            "properties": {
+                "cursor": {
+                    "type": "string",
+                    "description": "Opaque pagination cursor from a prior response (M-85).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": LIST_RESULT_CAP,
+                    "description": format!("Max definitions per response (capped at {LIST_RESULT_CAP})."),
+                },
+            },
         }),
     }
 }
@@ -682,15 +707,14 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
 async fn handle_list_tags(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListTagsArgs = parse_args(TOOL_LIST_TAGS, args)?;
     let limit = validate_limit(TOOL_LIST_TAGS, args.limit, LIST_RESULT_CAP)?;
-    let resp = list_tags_inner(pool, limit).await?;
+    let resp = list_tags_inner(pool, args.cursor, limit).await?;
     to_tool_result(&resp)
 }
 
 async fn handle_list_property_defs(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
-    // Validate the arg object even though it is always empty — catches
-    // typos like `{"prefix": "foo"}` and surfaces them as -32602.
-    let _: ListPropertyDefsArgs = parse_args(TOOL_LIST_PROPERTY_DEFS, args)?;
-    let resp = list_property_defs_inner(pool).await?;
+    let args: ListPropertyDefsArgs = parse_args(TOOL_LIST_PROPERTY_DEFS, args)?;
+    let limit = validate_limit(TOOL_LIST_PROPERTY_DEFS, args.limit, LIST_RESULT_CAP)?;
+    let resp = list_property_defs_inner(pool, args.cursor, limit).await?;
     to_tool_result(&resp)
 }
 

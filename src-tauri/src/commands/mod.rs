@@ -515,11 +515,14 @@ pub struct PropertyDefinition {
 // ---------------------------------------------------------------------------
 
 /// Response payload returned by [`start_pairing`].
+///
+/// M-34: the QR payload + [`PairingInfo`] both carry only the passphrase.
+/// mDNS owns discovery + address resolution end-to-end; there is no
+/// scan-bootstrap path that would need a `host`/`port` here.
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct PairingInfo {
     pub passphrase: String,
     pub qr_svg: String,
-    pub port: u16,
 }
 
 /// Response payload returned by [`start_sync`].
