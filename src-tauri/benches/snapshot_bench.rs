@@ -139,7 +139,7 @@ fn bench_apply_snapshot(c: &mut Criterion) {
                     let mat = target_mat.clone();
                     let data = compressed.clone();
                     async move {
-                        apply_snapshot(&pool, &mat, &data).await.unwrap();
+                        apply_snapshot(&pool, &mat, &data[..]).await.unwrap();
                     }
                 })
             },

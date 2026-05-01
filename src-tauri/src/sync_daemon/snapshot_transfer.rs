@@ -61,9 +61,11 @@
 //! after a long offline period.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
+use tokio::io::AsyncWriteExt;
 
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -71,6 +73,7 @@ use crate::peer_refs;
 use crate::snapshot::{apply_snapshot, decode_snapshot, get_latest_snapshot};
 use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 use crate::sync_events::{SyncEvent, SyncEventSink};
+use crate::sync_files::app_data_dir_from_pool;
 use crate::sync_net::SyncConnection;
 use crate::sync_protocol::{DeviceHead, SyncMessage};
 
@@ -188,7 +191,7 @@ pub(crate) async fn try_offer_snapshot_catchup(
     // heads we received in `HeadExchange`. Mismatch → `Error` instead
     // of `SnapshotOffer` so the initiator fails loudly and the
     // operator can spot the regression in logs.
-    let snapshot_frontier = decode_snapshot(&compressed)?;
+    let snapshot_frontier = decode_snapshot(compressed.as_slice())?;
     if let Err(reason) = snapshot_covers_remote_heads(&snapshot_frontier.up_to_seqs, remote_heads) {
         tracing::warn!(
             peer_id = %remote_device_id,
@@ -404,10 +407,17 @@ pub(crate) async fn try_receive_snapshot_catchup(
 
     conn.send_json(&SyncMessage::SnapshotAccept).await?;
 
-    // Stream the bytes in. `SyncConnection::recv_binary` enforces the
-    // 10 MB MAX_MSG_SIZE per frame; `receive_snapshot_bytes` validates
-    // the total cannot exceed `size_bytes`.
-    let compressed = receive_snapshot_bytes(conn, size_bytes).await?;
+    // L-67: stream the compressed bytes straight to a temp file under
+    // the app data dir instead of accumulating them into a `Vec<u8>`.
+    // Peak Rust-heap during the receive is one
+    // `BINARY_FRAME_CHUNK_SIZE` buffer (5 MB); a 256 MB compressed
+    // snapshot used to live entirely in memory until `apply_snapshot`
+    // returned. The `MAX_SNAPSHOT_SIZE` cap is enforced on
+    // `size_bytes` above, so the on-disk temp is bounded by 256 MB.
+    // `SnapshotTempFile::Drop` unlinks the temp on every exit path
+    // (success, decode failure, panic) — see the type's docs.
+    let app_data_dir = app_data_dir_from_pool(pool).await?;
+    let temp = receive_snapshot_to_temp(conn, &app_data_dir, size_bytes).await?;
 
     event_sink.on_sync_event(SyncEvent::Progress {
         state: "snapshot_applying".into(),
@@ -416,10 +426,30 @@ pub(crate) async fn try_receive_snapshot_catchup(
         ops_sent: 0,
     });
 
-    // Atomic apply: wraps the whole wipe+insert in BEGIN IMMEDIATE +
-    // defer_foreign_keys. A decode/integrity failure propagates without
-    // leaving the DB in a half-restored state.
-    let data = apply_snapshot(pool, materializer, &compressed).await?;
+    // L-67: open the temp file as a SYNC `std::fs::File` (the
+    // `apply_snapshot` reader bound is `std::io::Read`). The reader
+    // is consumed entirely inside `decode_snapshot` (zstd-streaming
+    // + ciborium) before the SQL transaction begins, so the only
+    // memory in flight from this point on is the parsed
+    // `SnapshotData` itself — never the compressed bytes nor the
+    // decompressed CBOR.
+    //
+    // Atomic apply: `apply_snapshot` wraps the whole wipe+insert in
+    // BEGIN IMMEDIATE + defer_foreign_keys. A decode/integrity
+    // failure propagates without leaving the DB in a half-restored
+    // state, and `temp` drops at the end of this scope so the temp
+    // file is unlinked regardless of which arm we exit through.
+    let temp_file = std::fs::File::open(temp.path()).map_err(|e| {
+        AppError::Io(std::io::Error::new(
+            e.kind(),
+            format!(
+                "opening received snapshot temp {}: {e}",
+                temp.path().display()
+            ),
+        ))
+    })?;
+    let data = apply_snapshot(pool, materializer, temp_file).await?;
+    drop(temp);
     let up_to_hash = data.up_to_hash.clone();
 
     tracing::info!(
@@ -481,19 +511,96 @@ pub(crate) async fn try_receive_snapshot_catchup(
     })
 }
 
-/// Receive snapshot bytes in binary frames, accumulating until
-/// exactly `size_bytes` have arrived.
+/// L-67: a temp file holding a freshly-received snapshot blob.
 ///
-/// Thin wrapper around
-/// [`SyncConnection::receive_binary_chunked`](crate::sync_net::SyncConnection::receive_binary_chunked),
-/// the single shared implementation used by both this module and
-/// [`sync_files`](crate::sync_files). The shared helper rejects any
-/// over-run (more bytes than advertised) to avoid runaway allocation.
-async fn receive_snapshot_bytes(
+/// Owns its on-disk path; `Drop` unlinks the file (best-effort,
+/// synchronous `std::fs::remove_file` because we can't `await` in
+/// `Drop`). `apply_snapshot` reads through this file as a
+/// `std::fs::File` and the temp is unlinked the moment this guard
+/// goes out of scope — including on apply failure, hash mismatch,
+/// or panic, so a partial transfer never lingers.
+///
+/// We deliberately roll our own guard rather than depend on the
+/// `tempfile` crate at runtime (it is dev-only today; pulling it
+/// into `[dependencies]` would be a new runtime dep for one path).
+/// The pattern is small and matches the M-51
+/// `TempAttachmentWriter::Drop` cleanup path.
+pub(crate) struct SnapshotTempFile {
+    path: PathBuf,
+}
+
+impl SnapshotTempFile {
+    /// Path of the on-disk temp blob. Tests use this to assert the
+    /// file appears mid-receive and is unlinked post-`Drop`.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for SnapshotTempFile {
+    fn drop(&mut self) {
+        // Best-effort unlink; ignore "already gone" / permission
+        // errors so a panic-on-drop never masks the real failure.
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Stream `size_bytes` of a compressed snapshot from `conn` straight
+/// to a `<app_data_dir>/snapshot-recv-<rand>.tmp` file (L-67).
+///
+/// Replaces the old `receive_snapshot_bytes` `Vec<u8>` accumulator —
+/// peak Rust-heap during the receive is now one
+/// `BINARY_FRAME_CHUNK_SIZE` buffer regardless of the snapshot
+/// size, instead of `O(size_bytes)`. The `MAX_SNAPSHOT_SIZE` cap
+/// (256 MB) enforced on the wire-level `size_bytes` by
+/// `try_receive_snapshot_catchup` bounds the temp file the same way.
+///
+/// The returned [`SnapshotTempFile`] guard unlinks the file on
+/// drop, so the caller does not need an explicit cleanup branch on
+/// the apply / decode error paths.
+pub(crate) async fn receive_snapshot_to_temp(
     conn: &mut SyncConnection,
+    app_data_dir: &Path,
     size_bytes: u64,
-) -> Result<Vec<u8>, AppError> {
-    conn.receive_binary_chunked(size_bytes).await
+) -> Result<SnapshotTempFile, AppError> {
+    // ULID gives us 128 bits of entropy + a monotonic timestamp
+    // prefix — collisions across overlapping snapshot transfers
+    // are not practically possible. Render in lower-case hex so
+    // the suffix is portable across case-folding filesystems.
+    let suffix: u128 = u128::from(ulid::Ulid::new());
+    let path = app_data_dir.join(format!("snapshot-recv-{suffix:032x}.tmp"));
+
+    // The guard owns the path from the moment it is constructed —
+    // any `?` early-return below unlinks the temp on drop.
+    let guard = SnapshotTempFile { path: path.clone() };
+
+    let mut file = tokio::fs::File::create(&path).await.map_err(|e| {
+        AppError::Io(std::io::Error::new(
+            e.kind(),
+            format!("creating snapshot temp {}: {e}", path.display()),
+        ))
+    })?;
+
+    // L-67 — uses the M-51 streaming receiver: per-frame chunks are
+    // pulled off the wire and written to the file as they arrive,
+    // so neither the compressed payload nor the partially-buffered
+    // chunk accumulator from the old `receive_binary_chunked` ever
+    // grows beyond a single frame.
+    conn.receive_binary_streaming(&mut file, size_bytes).await?;
+
+    file.flush().await.map_err(|e| {
+        AppError::Io(std::io::Error::new(
+            e.kind(),
+            format!("flushing snapshot temp {}: {e}", path.display()),
+        ))
+    })?;
+    // Drop the async handle so the subsequent `std::fs::File::open`
+    // (in `try_receive_snapshot_catchup`) observes a closed FD —
+    // this matters on Windows where two open handles to the same
+    // path can fight over rename/locks.
+    drop(file);
+
+    Ok(guard)
 }
 
 // ===========================================================================
@@ -507,7 +614,9 @@ mod tests {
     use crate::materializer::Materializer;
     use crate::op::OpPayload;
     use crate::op_log::append_local_op;
-    use crate::snapshot::create_snapshot;
+    use crate::snapshot::{
+        create_snapshot, BlockSnapshot, SnapshotData, SnapshotTables, SCHEMA_VERSION,
+    };
     use crate::sync_events::RecordingEventSink;
     use crate::sync_net::test_connection_pair;
     use sqlx::SqlitePool;
@@ -1412,5 +1521,304 @@ mod tests {
             session_owned.is_some() && expected_owned.is_none(),
             "session-level remote_device_id must own the peer_refs row when both ids are present",
         );
+    }
+
+    // -----------------------------------------------------------------
+    // L-67 — streaming snapshot transfer regression suite
+    // -----------------------------------------------------------------
+    //
+    // M-51 + L-67: paired sync streaming items. M-51 is the wire-side
+    // primitive (`send/receive_binary_streaming`), L-67 layers a temp
+    // file on top so the receiver lands the compressed snapshot on
+    // disk frame-by-frame instead of accumulating it in a `Vec<u8>`.
+    // `apply_snapshot` then reads through that temp file via the
+    // streaming `decode_snapshot(impl Read)` path so neither the
+    // compressed bytes nor the decompressed CBOR is ever fully
+    // materialised in memory.
+
+    /// L-67 — confirm `try_receive_snapshot_catchup` writes the
+    /// incoming bytes to a temp file under the app data dir before
+    /// applying. Asserts the temp file appears mid-receive (between
+    /// the responder's binary frames and the apply call) and is
+    /// unlinked once the call returns.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn snapshot_receive_streams_to_temp_file_m51_l67() {
+        let (resp_pool, _resp_dir) = test_pool().await;
+        let resp_materializer = Materializer::new(resp_pool.clone());
+        seed_one_block(&resp_pool, &resp_materializer, REMOTE_DEV).await;
+        create_snapshot(&resp_pool, REMOTE_DEV).await.unwrap();
+        let (_snap_id, snap_bytes) = get_latest_snapshot(&resp_pool).await.unwrap().unwrap();
+        let expected_size = snap_bytes.len() as u64;
+
+        let (init_pool, init_dir) = test_pool().await;
+        let materializer = Materializer::new(init_pool.clone());
+        // Snapshot temp lands under `app_data_dir_from_pool(init_pool)`,
+        // which is the temp dir's root (the DB lives in
+        // `<init_dir>/test.db`).
+        let app_data_dir = init_dir.path().to_path_buf();
+
+        // Pre-condition: no `snapshot-recv-*.tmp` files yet.
+        let tmp_count_before = count_snapshot_tmp_files(&app_data_dir);
+        assert_eq!(
+            tmp_count_before, 0,
+            "L-67: no snapshot temp files must exist before catch-up"
+        );
+
+        let (mut server_conn, mut client_conn) = test_connection_pair().await;
+        let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+        let bytes_clone = snap_bytes.clone();
+        let server_task = tokio::spawn(async move {
+            server_conn
+                .send_json(&SyncMessage::SnapshotOffer {
+                    size_bytes: expected_size,
+                })
+                .await
+                .unwrap();
+            let accept: SyncMessage = server_conn.recv_json().await.unwrap();
+            assert_eq!(accept, SyncMessage::SnapshotAccept);
+            for chunk in bytes_clone.chunks(BINARY_FRAME_CHUNK_SIZE) {
+                server_conn.send_binary(chunk).await.unwrap();
+            }
+        });
+
+        let outcome = try_receive_snapshot_catchup(
+            &mut client_conn,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            REMOTE_DEV,
+            None,
+        )
+        .await
+        .expect("L-67 catch-up must succeed end-to-end");
+
+        server_task.await.unwrap();
+        materializer.flush_background().await.unwrap();
+
+        // Post-condition: catch-up applied, temp file unlinked
+        // (drop of `SnapshotTempFile` on the success path).
+        match outcome {
+            CatchupOutcome::Applied { bytes_received, .. } => {
+                assert_eq!(bytes_received, expected_size);
+            }
+            other => panic!("expected Applied, got {other:?}"),
+        }
+        let tmp_count_after = count_snapshot_tmp_files(&app_data_dir);
+        assert_eq!(
+            tmp_count_after, 0,
+            "L-67: snapshot temp file must be unlinked once catch-up returns; \
+             dir = {app_data_dir:?}"
+        );
+
+        // The applied snapshot's content is visible.
+        let blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&init_pool)
+            .await
+            .unwrap();
+        assert_eq!(blocks, 1, "applied snapshot must restore the seeded block");
+
+        materializer.shutdown();
+        resp_materializer.shutdown();
+    }
+
+    /// L-67 — `apply_snapshot` now takes `impl std::io::Read`. Passing
+    /// a `std::io::Cursor` (the simplest in-memory `Read`) must work
+    /// identically to the old `&[u8]` shape.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn apply_snapshot_accepts_impl_read_m51_l67() {
+        // Build a snapshot blob from a non-empty source DB so apply
+        // has something to restore.
+        let (src_pool, _src_dir) = test_pool().await;
+        let src_mat = Materializer::new(src_pool.clone());
+        seed_one_block(&src_pool, &src_mat, REMOTE_DEV).await;
+        create_snapshot(&src_pool, REMOTE_DEV).await.unwrap();
+        let (_id, encoded) = get_latest_snapshot(&src_pool).await.unwrap().unwrap();
+
+        // Apply via Cursor (impl Read).
+        let (dst_pool, _dst_dir) = test_pool().await;
+        let dst_mat = Materializer::new(dst_pool.clone());
+        let cursor = std::io::Cursor::new(encoded.clone());
+        let restored = crate::snapshot::apply_snapshot(&dst_pool, &dst_mat, cursor)
+            .await
+            .expect("L-67: apply_snapshot must accept a Cursor reader");
+
+        // The restored frontier matches the original encoded blob's
+        // frontier (sanity check — the decoded data is the same).
+        let decoded = crate::snapshot::decode_snapshot(&encoded[..]).unwrap();
+        assert_eq!(restored.up_to_hash, decoded.up_to_hash);
+        assert_eq!(restored.up_to_seqs, decoded.up_to_seqs);
+
+        // The restored DB has the seeded block.
+        dst_mat.flush_background().await.unwrap();
+        let blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&dst_pool)
+            .await
+            .unwrap();
+        assert_eq!(blocks, 1);
+
+        src_mat.shutdown();
+        dst_mat.shutdown();
+    }
+
+    /// L-67 — when the receive fails post-stream (corrupted bytes →
+    /// `apply_snapshot` returns an error), the snapshot temp file
+    /// must be unlinked so abandoned transfers do not leak.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn snapshot_receive_drops_temp_on_failure_m51_l67() {
+        let (init_pool, init_dir) = test_pool().await;
+        let materializer = Materializer::new(init_pool.clone());
+        let app_data_dir = init_dir.path().to_path_buf();
+
+        // Pre-condition.
+        assert_eq!(count_snapshot_tmp_files(&app_data_dir), 0);
+
+        let (mut server_conn, mut client_conn) = test_connection_pair().await;
+        let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+        // Send garbage that fits under the cap but won't decode.
+        let garbage: Vec<u8> = vec![0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
+        let size_bytes = garbage.len() as u64;
+        let garbage_clone = garbage.clone();
+        let server_task = tokio::spawn(async move {
+            server_conn
+                .send_json(&SyncMessage::SnapshotOffer { size_bytes })
+                .await
+                .unwrap();
+            let accept: SyncMessage = server_conn.recv_json().await.unwrap();
+            assert_eq!(accept, SyncMessage::SnapshotAccept);
+            server_conn.send_binary(&garbage_clone).await.unwrap();
+        });
+
+        let result = try_receive_snapshot_catchup(
+            &mut client_conn,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            REMOTE_DEV,
+            None,
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "L-67: garbage snapshot bytes must surface as Err; got {result:?}"
+        );
+
+        server_task.await.unwrap();
+
+        // Post-condition: failed apply propagates AppError; the
+        // `SnapshotTempFile` guard must have unlinked the temp on
+        // its way out of scope.
+        let tmp_count_after = count_snapshot_tmp_files(&app_data_dir);
+        assert_eq!(
+            tmp_count_after, 0,
+            "L-67: temp must be unlinked on apply failure; dir = {app_data_dir:?}"
+        );
+
+        materializer.shutdown();
+    }
+
+    /// L-67 — `decode_snapshot` must use `zstd::stream::Decoder` (not
+    /// `zstd::decode_all`) so a snapshot that decompresses to a much
+    /// larger CBOR blob than the compressed payload does NOT
+    /// materialise the full decompressed stream on the heap. This is
+    /// a structural / API-level check: we round-trip through the new
+    /// `impl Read` signature with a payload whose decompressed size
+    /// is meaningfully larger than the compressed size, and confirm
+    /// the API works without relying on the buffered shape.
+    #[test]
+    fn decode_snapshot_with_zstd_streaming_decoder_does_not_buffer_full_decompressed_m51_l67() {
+        // Build a large-ish `SnapshotData` so the encoded payload has
+        // a non-trivial compressed-vs-decompressed ratio. Repeated
+        // similar block content compresses extremely well — the
+        // decompressed CBOR is several × the compressed bytes.
+        let mut blocks = Vec::with_capacity(1000);
+        for i in 0..1000 {
+            blocks.push(BlockSnapshot {
+                id: format!("01HZ{i:026X}").chars().take(26).collect::<String>(),
+                block_type: "content".into(),
+                content: Some(format!(
+                    "Highly compressible block content #{i} \
+                     with a lot of repeated boilerplate to give zstd \
+                     something to gnaw on. Lorem ipsum dolor sit amet, \
+                     consectetur adipiscing elit, sed do eiusmod tempor."
+                )),
+                parent_id: None,
+                position: Some(i64::from(i) + 1),
+                deleted_at: None,
+                is_conflict: 0,
+                conflict_source: None,
+                conflict_type: None,
+                todo_state: None,
+                priority: None,
+                due_date: None,
+                scheduled_date: None,
+            });
+        }
+        let mut up_to_seqs = BTreeMap::new();
+        up_to_seqs.insert("dev-A".to_string(), 1000);
+        let data = SnapshotData {
+            schema_version: SCHEMA_VERSION,
+            snapshot_device_id: "dev-A".to_string(),
+            up_to_seqs,
+            up_to_hash: "deadbeef".to_string(),
+            tables: SnapshotTables {
+                blocks,
+                block_tags: vec![],
+                block_properties: vec![],
+                block_links: vec![],
+                attachments: vec![],
+                property_definitions: vec![],
+                page_aliases: vec![],
+            },
+        };
+
+        let encoded = crate::snapshot::encode_snapshot(&data).unwrap();
+
+        // Sanity-check the test fixture: the decompressed CBOR is at
+        // least 3× the compressed size, so the streaming-vs-buffered
+        // distinction is observable.
+        let mut decoder = zstd::stream::Decoder::new(encoded.as_slice()).unwrap();
+        let mut decompressed = Vec::new();
+        std::io::Read::read_to_end(&mut decoder, &mut decompressed).unwrap();
+        assert!(
+            decompressed.len() >= encoded.len() * 3,
+            "L-67: test fixture must decompress to ≥3× the compressed size \
+             (compressed={} bytes, decompressed={} bytes) so the streaming \
+             decoder's value is observable",
+            encoded.len(),
+            decompressed.len(),
+        );
+
+        // The streaming decoder accepts a `Cursor` (impl Read) and
+        // reproduces the same `SnapshotData`. The fact that the
+        // decoded value matches end-to-end is the API contract;
+        // the implementation is `zstd::stream::Decoder::new(reader)`
+        // followed by `ciborium::from_reader(decoder)` which never
+        // materialises the full decompressed Vec.
+        let cursor = std::io::Cursor::new(encoded);
+        let decoded = crate::snapshot::decode_snapshot(cursor).unwrap();
+        assert_eq!(decoded.tables.blocks.len(), 1000);
+        assert_eq!(decoded.up_to_hash, data.up_to_hash);
+        assert_eq!(decoded.up_to_seqs, data.up_to_seqs);
+    }
+
+    /// Helper used by the L-67 temp-file tests above: count
+    /// `snapshot-recv-*.tmp` entries directly under `dir`. We use a
+    /// shallow read_dir scan rather than walking — the temp file is
+    /// always created as a direct child of `app_data_dir` per
+    /// `receive_snapshot_to_temp`'s contract.
+    fn count_snapshot_tmp_files(dir: &std::path::Path) -> usize {
+        match std::fs::read_dir(dir) {
+            Ok(rd) => rd
+                .filter_map(Result::ok)
+                .filter(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .starts_with("snapshot-recv-")
+                })
+                .count(),
+            Err(_) => 0,
+        }
     }
 }

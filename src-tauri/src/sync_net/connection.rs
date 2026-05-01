@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
@@ -169,6 +170,14 @@ impl SyncConnection {
     /// the sentinel that [`Self::receive_binary_chunked`] expects when
     /// invoked with `size_bytes == 0`.
     ///
+    /// Buffered shape: callers that already have the full payload in a
+    /// `Vec<u8>` (e.g. an `encode_snapshot` blob loaded from
+    /// `log_snapshots`) use this; callers that have a `tokio::fs::File`
+    /// or other `AsyncRead` source should prefer
+    /// [`Self::send_binary_streaming`] (M-51 / L-67) so the file is
+    /// chunked off-disk frame-by-frame instead of materialised in a
+    /// `Vec<u8>` first.
+    ///
     /// Used by both
     /// [`crate::sync_daemon::snapshot_transfer`] (snapshot blob → wire)
     /// and [`crate::sync_files`] (attachment file → wire) so the chunking
@@ -197,15 +206,113 @@ impl SyncConnection {
     /// `size_bytes` (a sender bug), preserving the bound that the
     /// previous per-call helpers in `snapshot_transfer` and `sync_files`
     /// enforced separately.
+    ///
+    /// Buffered shape: this thin wrapper around
+    /// [`Self::receive_binary_streaming`] writes into an in-memory
+    /// `Vec<u8>` of `size_bytes`. Callers that need to land the bytes
+    /// on disk (M-51 attachment writer, L-67 snapshot temp file)
+    /// should prefer the streaming variant directly so the peak
+    /// Rust-heap stays at one frame instead of `O(size_bytes)`.
     pub async fn receive_binary_chunked(&mut self, size_bytes: u64) -> Result<Vec<u8>, AppError> {
         // On 32-bit targets `usize::try_from` saturates at `usize::MAX`;
         // `Vec::with_capacity` is a hint so saturation is safe.
         let capacity = usize::try_from(size_bytes).unwrap_or(usize::MAX);
         let mut data: Vec<u8> = Vec::with_capacity(capacity);
+        // `Vec<u8>` implements `AsyncWrite` (tokio appends each chunk
+        // to the vector, so over-runs grow the buffer up to the per-
+        // call cap enforced by the streaming helper). The streaming
+        // variant validates over-run on the per-frame boundary, so we
+        // inherit the same guarantee here without re-implementing it.
+        self.receive_binary_streaming(&mut data, size_bytes).await?;
+        Ok(data)
+    }
 
-        // Zero-size payload: expect exactly one empty binary frame
-        // (matches the sender's empty-data path).
-        if size_bytes == 0 {
+    /// Stream `total_size` bytes from `reader` over the wire as a
+    /// sequence of binary frames sized at most `chunk_size`. Empty
+    /// payload (`total_size == 0`) is delivered as a single empty
+    /// frame so the receiver's per-frame accounting terminates
+    /// cleanly — preserving the contract documented on
+    /// [`Self::send_binary_chunked`] and
+    /// [`Self::receive_binary_chunked`].
+    ///
+    /// **M-51 / L-67:** this is the primary low-memory entry point
+    /// for shipping a large file (attachment) or compressed snapshot
+    /// over the wire — the only buffer is the fixed-size frame
+    /// allocation, so peak Rust-heap stays at `chunk_size` regardless
+    /// of `total_size`. The reader is consumed in lock-step with the
+    /// wire so a 1 GB attachment never touches a 1 GB `Vec<u8>` on
+    /// the heap.
+    ///
+    /// Returns an error if the reader hits EOF before `total_size`
+    /// bytes have been read (caller contract: `total_size` must
+    /// match the reader's true length, e.g. as reported by
+    /// `metadata().len()` for a `tokio::fs::File`).
+    pub async fn send_binary_streaming<R: AsyncRead + Unpin>(
+        &mut self,
+        mut reader: R,
+        total_size: u64,
+        chunk_size: usize,
+    ) -> Result<(), AppError> {
+        // Zero-size sentinel: emit a single empty frame so the
+        // receiver loop terminates after one `recv_binary` call.
+        if total_size == 0 {
+            return self.send_binary(&[]).await;
+        }
+
+        // Defensive minimum: a zero-byte chunk size would loop
+        // forever. The shared `BINARY_FRAME_CHUNK_SIZE` is non-zero
+        // by definition, so this guards against bad call sites only.
+        let chunk_size = chunk_size.max(1);
+        let mut buf: Vec<u8> = vec![0u8; chunk_size];
+        let mut sent: u64 = 0;
+        while sent < total_size {
+            // Bytes still to ship; cap each frame at `chunk_size`.
+            let remaining = total_size - sent;
+            let want = std::cmp::min(remaining, chunk_size as u64);
+            // `usize::try_from` is safe: `want <= chunk_size: usize`.
+            let want = usize::try_from(want).unwrap_or(usize::MAX);
+            let mut filled = 0;
+            while filled < want {
+                let n = reader
+                    .read(&mut buf[filled..want])
+                    .await
+                    .map_err(|e| sync_err(format!("read for streaming send: {e}")))?;
+                if n == 0 {
+                    return Err(sync_err(format!(
+                        "streaming send: reader exhausted at {} bytes, expected {}",
+                        sent + filled as u64,
+                        total_size
+                    )));
+                }
+                filled += n;
+            }
+            self.send_binary(&buf[..filled]).await?;
+            sent += filled as u64;
+        }
+        Ok(())
+    }
+
+    /// Receive exactly `total_size` bytes from the wire as one or more
+    /// binary frames and write them to `writer` as they arrive.
+    /// Mirrors [`Self::send_binary_streaming`]:
+    /// `total_size == 0` consumes a single empty frame; over-run
+    /// (more bytes than advertised) is rejected; `MAX_MSG_SIZE` per
+    /// frame is enforced by the underlying [`Self::recv_binary`].
+    ///
+    /// **M-51 / L-67:** this is the primary low-memory entry point
+    /// for receiving a large attachment file or compressed snapshot.
+    /// The `writer` is typically a `TempAttachmentWriter`
+    /// (M-51 — attaches a `blake3::Hasher` and renames atomically on
+    /// commit) or a `tokio::fs::File` opened on a temp file under
+    /// `app_data_dir` (L-67). Peak Rust-heap stays at one frame
+    /// regardless of `total_size`.
+    pub async fn receive_binary_streaming<W: AsyncWrite + Unpin>(
+        &mut self,
+        writer: &mut W,
+        total_size: u64,
+    ) -> Result<(), AppError> {
+        // Zero-size sentinel: expect exactly one empty frame.
+        if total_size == 0 {
             let chunk = self.recv_binary().await?;
             if !chunk.is_empty() {
                 return Err(sync_err(format!(
@@ -213,21 +320,27 @@ impl SyncConnection {
                     chunk.len()
                 )));
             }
-            return Ok(data);
+            return Ok(());
         }
 
-        while (data.len() as u64) < size_bytes {
+        let mut received: u64 = 0;
+        while received < total_size {
             let chunk = self.recv_binary().await?;
-            data.extend_from_slice(&chunk);
-            if (data.len() as u64) > size_bytes {
+            let chunk_len = chunk.len() as u64;
+            if received + chunk_len > total_size {
                 return Err(sync_err(format!(
                     "received {} binary bytes, expected {}",
-                    data.len(),
-                    size_bytes
+                    received + chunk_len,
+                    total_size
                 )));
             }
+            writer
+                .write_all(&chunk)
+                .await
+                .map_err(|e| sync_err(format!("write for streaming receive: {e}")))?;
+            received += chunk_len;
         }
-        Ok(data)
+        Ok(())
     }
 
     /// Get the remote peer's certificate hash (populated on client-side
