@@ -10,6 +10,7 @@
 //!   stay here so the explicit-vs-inline origin is preserved.  Readers
 //!   that want "any kind of reference" UNION the two tables.
 
+use futures_util::TryStreamExt;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 
@@ -212,23 +213,30 @@ async fn rebuild_block_tag_refs_cache_impl(pool: &SqlitePool) -> Result<u64, App
     .into_iter()
     .collect();
 
-    let source_rows = sqlx::query!(
-        "SELECT id, content FROM blocks \
-         WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
-    )
-    .fetch_all(&mut *tx)
-    .await?;
-
+    // M-19a: stream `(id, content)` rows instead of materialising every
+    // non-deleted/non-conflict block's content into a `Vec<SourceRow>`.
+    // The peak Rust-heap working set drops from
+    // `~content-bytes-per-block × block-count` (≈100 MB on a 100 K-block
+    // vault with ~1 KB content) to one row's content at a time. The
+    // `(source, tag)` HashSet is bounded by the actual ref count, which
+    // is much smaller than total content bytes; it remains because
+    // deduplication of repeated `#[ULID]` tokens within a single block
+    // still needs cross-row state.
     let re = super::tag_ref_re();
-    // Deduplicate via HashSet so adjacent / repeated `#[ULID]` tokens
-    // collapse into a single row per (source, tag) pair.
     let mut rows: HashSet<(String, String)> = HashSet::new();
-    for row in &source_rows {
-        let content = row.content.as_deref().unwrap_or("");
-        for cap in re.captures_iter(content) {
-            let tag_id = cap[1].to_string();
-            if tag_ids.contains(&tag_id) {
-                rows.insert((row.id.clone(), tag_id));
+    {
+        let mut stream = sqlx::query!(
+            "SELECT id, content FROM blocks \
+             WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
+        )
+        .fetch(&mut *tx);
+        while let Some(row) = stream.try_next().await? {
+            let content = row.content.as_deref().unwrap_or("");
+            for cap in re.captures_iter(content) {
+                let tag_id = cap[1].to_string();
+                if tag_ids.contains(&tag_id) {
+                    rows.insert((row.id.clone(), tag_id));
+                }
             }
         }
     }
@@ -284,21 +292,24 @@ async fn rebuild_block_tag_refs_cache_split_impl(
     .into_iter()
     .collect();
 
-    let source_rows = sqlx::query!(
-        "SELECT id, content FROM blocks \
-         WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
-    )
-    .fetch_all(read_pool)
-    .await?;
-
+    // M-19a: stream `(id, content)` rows from `read_pool` instead of
+    // materialising every block's content. See `rebuild_block_tag_refs_cache_impl`
+    // above for the full rationale.
     let re = super::tag_ref_re();
     let mut rows: HashSet<(String, String)> = HashSet::new();
-    for row in &source_rows {
-        let content = row.content.as_deref().unwrap_or("");
-        for cap in re.captures_iter(content) {
-            let tag_id = cap[1].to_string();
-            if tag_ids.contains(&tag_id) {
-                rows.insert((row.id.clone(), tag_id));
+    {
+        let mut stream = sqlx::query!(
+            "SELECT id, content FROM blocks \
+             WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
+        )
+        .fetch(read_pool);
+        while let Some(row) = stream.try_next().await? {
+            let content = row.content.as_deref().unwrap_or("");
+            for cap in re.captures_iter(content) {
+                let tag_id = cap[1].to_string();
+                if tag_ids.contains(&tag_id) {
+                    rows.insert((row.id.clone(), tag_id));
+                }
             }
         }
     }
@@ -326,4 +337,205 @@ async fn rebuild_block_tag_refs_cache_split_impl(
     }
     tx.commit().await?;
     Ok(inserted)
+}
+
+// ---------------------------------------------------------------------------
+// M-19a — streaming-rebuild correctness tests
+// ---------------------------------------------------------------------------
+//
+// These tests are intentionally local to this file rather than appended
+// to `cache/tests.rs` so that sibling M-19 subagents (agenda /
+// projected_agenda) can append their own `_m19*` tests without merge
+// contention against this slice. The fixtures here are deliberately
+// minimal — broader coverage (cross-cache UNION semantics, idempotency,
+// etc.) lives in `cache/tests.rs`.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::init_pool;
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    /// Fresh in-temp-dir SQLite pool with all migrations applied.
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path: PathBuf = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    async fn insert_block(pool: &SqlitePool, id: &str, block_type: &str, content: &str) {
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+            id,
+            block_type,
+            content,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn fetch_all_pairs(pool: &SqlitePool) -> HashSet<(String, String)> {
+        sqlx::query!("SELECT source_id, tag_id FROM block_tag_refs")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.source_id, r.tag_id))
+            .collect()
+    }
+
+    /// Build a 26-char ULID-shaped id from a 5-char prefix.
+    fn ulid_like(prefix: &str, n: usize) -> String {
+        // Pad with `0` to reach 26 chars; the last 6 chars encode `n` as
+        // base-32 Crockford-compatible digits (0-9, A-Z minus IOLU). For
+        // n < 32^6 (1B), this is unique and matches the regex
+        // `[0-9A-Z]{26}`.
+        let alphabet = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+        let mut suffix = [b'0'; 6];
+        let mut v = n;
+        for ch in suffix.iter_mut().rev() {
+            *ch = alphabet[v % 32];
+            v /= 32;
+        }
+        let suffix = std::str::from_utf8(&suffix).unwrap();
+        let core = format!("{prefix}{suffix}");
+        // Pad to 26 with leading zeros after the prefix.
+        format!("{:0>26}", core)
+    }
+
+    // ----- M-19a tests -----------------------------------------------------
+
+    #[tokio::test]
+    async fn rebuild_streams_rows_without_full_vec_materialization_m19a() {
+        let (pool, _dir) = test_pool().await;
+
+        // Three real tag blocks; every source block references one or
+        // two of them inline.
+        let tag_a = ulid_like("TAGAA", 0);
+        let tag_b = ulid_like("TAGBB", 0);
+        let tag_c = ulid_like("TAGCC", 0);
+        for tag in [&tag_a, &tag_b, &tag_c] {
+            insert_block(&pool, tag, "tag", "tag-name").await;
+        }
+
+        // 200 source blocks. Build the expected (source_id, tag_id)
+        // pairs in lockstep so we can cross-check the rebuild output
+        // against the fixture data — the streaming path must produce
+        // the identical set as the prior `fetch_all`-into-`Vec` path.
+        let mut expected: HashSet<(String, String)> = HashSet::new();
+        for i in 0..200 {
+            let src = ulid_like("BLK00", i);
+            // Pattern: every block references tag_a; every 3rd also
+            // references tag_b; every 5th also references tag_c.
+            let mut content = format!("note {i} #[{tag_a}]");
+            if i % 3 == 0 {
+                content.push_str(&format!(" #[{tag_b}]"));
+                expected.insert((src.clone(), tag_b.clone()));
+            }
+            if i % 5 == 0 {
+                content.push_str(&format!(" #[{tag_c}]"));
+                expected.insert((src.clone(), tag_c.clone()));
+            }
+            insert_block(&pool, &src, "content", &content).await;
+            expected.insert((src, tag_a.clone()));
+        }
+
+        let inserted = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+
+        let actual = fetch_all_pairs(&pool).await;
+        assert_eq!(
+            actual, expected,
+            "streamed rebuild must produce the identical (source_id, tag_id) set"
+        );
+        assert_eq!(
+            usize::try_from(inserted).expect("inserted count fits usize"),
+            expected.len(),
+            "inserted count must equal the number of distinct pairs"
+        );
+    }
+
+    #[tokio::test]
+    async fn rebuild_with_no_blocks_emits_zero_rows_m19a() {
+        let (pool, _dir) = test_pool().await;
+
+        let inserted = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+
+        assert_eq!(inserted, 0, "empty fixture must insert zero rows");
+        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tag_refs")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "block_tag_refs must be empty after rebuild");
+    }
+
+    #[tokio::test]
+    async fn rebuild_dedupes_repeated_refs_in_same_block_m19a() {
+        let (pool, _dir) = test_pool().await;
+
+        let tag_x = ulid_like("TAGXX", 0);
+        let src = ulid_like("SRCDD", 0);
+        insert_block(&pool, &tag_x, "tag", "x").await;
+        // Three references to the same tag inside one block.
+        let content = format!("#[{tag_x}] #[{tag_x}] #[{tag_x}]");
+        insert_block(&pool, &src, "content", &content).await;
+
+        let inserted = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+
+        assert_eq!(
+            inserted, 1,
+            "repeated `#[ULID]` tokens in the same block must collapse to one row"
+        );
+        let pairs = fetch_all_pairs(&pool).await;
+        let mut expected = HashSet::new();
+        expected.insert((src, tag_x));
+        assert_eq!(pairs, expected, "exactly one (source, tag) row");
+    }
+
+    #[tokio::test]
+    async fn rebuild_skips_deleted_and_conflict_blocks_m19a() {
+        let (pool, _dir) = test_pool().await;
+
+        let tag = ulid_like("TAGEE", 0);
+        let healthy = ulid_like("HEALT", 0);
+        let deleted = ulid_like("DELET", 0);
+        let conflict = ulid_like("CONFL", 0);
+
+        insert_block(&pool, &tag, "tag", "t").await;
+        insert_block(&pool, &healthy, "content", &format!("#[{tag}]")).await;
+        insert_block(&pool, &deleted, "content", &format!("#[{tag}]")).await;
+        insert_block(&pool, &conflict, "content", &format!("#[{tag}]")).await;
+
+        // Soft-delete one source.
+        let now = "2025-01-15T12:00:00+00:00";
+        sqlx::query!(
+            "UPDATE blocks SET deleted_at = ? WHERE id = ?",
+            now,
+            deleted,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Mark the other as a conflict copy.
+        sqlx::query!("UPDATE blocks SET is_conflict = 1 WHERE id = ?", conflict)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let inserted = rebuild_block_tag_refs_cache_impl(&pool).await.unwrap();
+
+        assert_eq!(
+            inserted, 1,
+            "only the healthy source must produce a row (deleted + conflict excluded)"
+        );
+        let pairs = fetch_all_pairs(&pool).await;
+        let mut expected = HashSet::new();
+        expected.insert((healthy, tag));
+        assert_eq!(
+            pairs, expected,
+            "row set must contain exactly the healthy source's reference"
+        );
+    }
 }
