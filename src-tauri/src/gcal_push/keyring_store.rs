@@ -55,6 +55,23 @@ pub const KEYRING_SERVICE: &str = "com.agaric.app.gcal";
 /// access token and refresh token plus the expiry deadline.
 pub const KEYRING_ACCOUNT: &str = "oauth_tokens";
 
+/// Per-space keychain account name for FEAT-3p9 Milestone 1.
+///
+/// Format: `oauth_tokens_<SPACE_ULID>` — the trailing ULID is the
+/// canonical (uppercase) ULID of the page block flagged is_space=true.
+/// Returned as `String` because `keyring::Entry::new` requires a
+/// `&str` and we cannot const-format a ULID into a `&'static str`.
+///
+/// Legacy `KEYRING_ACCOUNT = "oauth_tokens"` remains the constant used
+/// by existing oauth/lease/connector code paths. M1 of FEAT-3p9 only
+/// adds the per-space alternative + the one-shot migration that
+/// rewrites the legacy entry into the Personal-space-suffixed entry.
+/// M2 will switch the production code paths over.
+#[must_use]
+pub fn keyring_account_for_space(space_id: &str) -> String {
+    format!("oauth_tokens_{space_id}")
+}
+
 // ---------------------------------------------------------------------------
 // Wire format (JSON in the keyring)
 // ---------------------------------------------------------------------------
@@ -325,8 +342,13 @@ struct OsKeyringBackend {
 
 impl OsKeyringBackend {
     fn new() -> Result<Self, KeyringBackendError> {
-        let entry =
-            keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).map_err(map_keyring_err)?;
+        Self::for_account(KEYRING_ACCOUNT)
+    }
+
+    /// Construct a backend for an arbitrary account name. Used by
+    /// FEAT-3p9 M1's per-space [`KeyringTokenStore::new_for_space`].
+    fn for_account(account: &str) -> Result<Self, KeyringBackendError> {
+        let entry = keyring::Entry::new(KEYRING_SERVICE, account).map_err(map_keyring_err)?;
         Ok(Self { entry })
     }
 }
@@ -417,6 +439,42 @@ impl KeyringTokenStore {
         Self { backend, emitter }
     }
 
+    /// FEAT-3p9 M1 — construct a store backed by the OS keychain
+    /// keyed on the per-space account name returned by
+    /// [`keyring_account_for_space`]. Used at boot to wire the
+    /// per-space token store the M1 migration needs as its `personal_token_store`.
+    ///
+    /// # Errors
+    /// Same shape as [`KeyringTokenStore::new`] — wraps the keyring
+    /// platform-unavailable / IO failures into [`AppError::Validation`]
+    /// and emits [`GcalEvent::KeyringUnavailable`] on the platform-down
+    /// path so the UI can react.
+    pub fn new_for_space(
+        emitter: Arc<dyn GcalEventEmitter>,
+        space_id: &str,
+    ) -> Result<Self, AppError> {
+        let account = keyring_account_for_space(space_id);
+        match OsKeyringBackend::for_account(&account) {
+            Ok(backend) => Ok(Self {
+                backend: Arc::new(backend),
+                emitter,
+            }),
+            Err(KeyringBackendError::PlatformUnavailable(m)) => {
+                tracing::warn!(
+                    target: "gcal",
+                    space_id,
+                    error = %m,
+                    "OS keyring unavailable on per-space construct",
+                );
+                emitter.emit(GcalEvent::KeyringUnavailable);
+                Err(AppError::Validation(format!("keyring.unavailable: {m}")))
+            }
+            Err(KeyringBackendError::Io(m)) => {
+                Err(AppError::Validation(format!("keyring.io: {m}")))
+            }
+        }
+    }
+
     fn map_platform_unavailable<T>(
         &self,
         result: Result<T, KeyringBackendError>,
@@ -476,9 +534,16 @@ impl TokenStore for KeyringTokenStore {
 // ---------------------------------------------------------------------------
 
 /// In-memory [`TokenStore`] for unit tests.
+///
+/// The optional `store_error` field lets a test simulate a
+/// keyring-unavailable failure on the next [`TokenStore::store`] call
+/// without having to spin up a separate failing-stub trait impl
+/// (FEAT-3p9 M1 migration tests use this to exercise the
+/// keychain-failure branch).
 #[cfg(test)]
 pub struct MockTokenStore {
     inner: std::sync::Mutex<Option<Token>>,
+    store_error: std::sync::Mutex<Option<String>>,
 }
 
 #[cfg(test)]
@@ -486,7 +551,19 @@ impl MockTokenStore {
     pub fn new() -> Self {
         Self {
             inner: std::sync::Mutex::new(None),
+            store_error: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Cause the next (and every subsequent) call to [`TokenStore::store`]
+    /// on this mock to return `Err(AppError::Validation(message))`. Used
+    /// by FEAT-3p9 M1 migration tests to simulate a keyring-unavailable
+    /// per-space write.
+    pub fn inject_store_error(&self, message: &str) {
+        *self
+            .store_error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(message.to_owned());
     }
 }
 
@@ -509,6 +586,14 @@ impl TokenStore for MockTokenStore {
     }
 
     async fn store(&self, token: &Token) -> Result<(), AppError> {
+        if let Some(msg) = self
+            .store_error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+        {
+            return Err(AppError::Validation(msg));
+        }
         *self
             .inner
             .lock()
@@ -969,5 +1054,52 @@ mod tests {
     #[test]
     fn keyring_account_constant_is_stable() {
         assert_eq!(KEYRING_ACCOUNT, "oauth_tokens");
+    }
+
+    // ── FEAT-3p9 M1 — per-space keychain account name ──────────────
+
+    const SPACE_PERSONAL_ULID: &str = "00000000000000000AGAR1CPER";
+
+    #[test]
+    fn keyring_account_for_space_uses_oauth_tokens_underscore_prefix() {
+        let got = keyring_account_for_space(SPACE_PERSONAL_ULID);
+        assert_eq!(got, format!("oauth_tokens_{SPACE_PERSONAL_ULID}"));
+    }
+
+    #[test]
+    fn keyring_account_for_space_distinct_from_legacy_account() {
+        // Defence-in-depth: the per-space account name MUST never
+        // collide with the legacy `KEYRING_ACCOUNT` constant; the
+        // FEAT-3p9 M1 migration relies on writing both entries.
+        assert_ne!(
+            keyring_account_for_space(SPACE_PERSONAL_ULID),
+            KEYRING_ACCOUNT,
+        );
+    }
+
+    #[tokio::test]
+    async fn keyring_account_for_space_round_trips_via_keyring_token_store() {
+        // Round-trip a token through `KeyringTokenStore::with_backend`
+        // using a `MemBackend` that doesn't actually consult the
+        // account name — the assertion is on the store seam working
+        // unchanged once the per-space account string is in play.
+        let backend: Arc<dyn KeyringBackend> = Arc::new(MemBackend::new());
+        let (store, _emitter) = store_with(backend);
+
+        let token = fixed_token();
+        store.store(&token).await.unwrap();
+
+        let loaded = store.load().await.unwrap().expect("token must round-trip");
+        assert_eq!(loaded.access.expose_secret(), token.access.expose_secret());
+        assert_eq!(
+            loaded.refresh.expose_secret(),
+            token.refresh.expose_secret(),
+        );
+
+        // And confirm the format helper itself remains stable.
+        assert_eq!(
+            keyring_account_for_space(SPACE_PERSONAL_ULID),
+            "oauth_tokens_00000000000000000AGAR1CPER",
+        );
     }
 }

@@ -38,6 +38,8 @@ pub(crate) mod keyring_store;
 #[allow(dead_code)]
 pub(crate) mod lease;
 #[allow(dead_code)]
+pub(crate) mod migration;
+#[allow(dead_code)]
 pub(crate) mod models;
 #[allow(dead_code)]
 pub(crate) mod oauth;

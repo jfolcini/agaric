@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM gcal_space_config WHERE space_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "36c7f845cb8b718933e936014f4ddf42ca428521ef45a376fc2f1a9e748bbb62"
+}

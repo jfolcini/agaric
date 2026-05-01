@@ -1054,6 +1054,47 @@ pub fn run() {
             // build flavors.
             let _ = NoopEventEmitter;
 
+            // FEAT-3p9 M1 — one-shot migration: copy the legacy
+            // single-space `gcal_settings` row + keychain entry into
+            // the per-space `gcal_space_config` row keyed by the
+            // seeded Personal-space ULID. Idempotent across boots via
+            // the `gcal_per_space_migrated` flag in `gcal_settings`.
+            // MUST run AFTER `bootstrap_spaces` so SPACE_PERSONAL_ULID
+            // exists, and BEFORE the GCal connector spawns. Keychain
+            // failures are non-fatal: the migration logs and lets the
+            // next boot retry.
+            let personal_token_store_for_migration: std::sync::Arc<dyn TokenStore> =
+                match KeyringTokenStore::new_for_space(
+                    gcal_emitter.clone(),
+                    spaces::bootstrap::SPACE_PERSONAL_ULID,
+                ) {
+                    Ok(store) => std::sync::Arc::new(store),
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "gcal",
+                            error = %e,
+                            "FEAT-3p9 M1: per-space keyring unavailable; \
+                             migration will reuse the legacy noop shim",
+                        );
+                        gcal_token_store.clone()
+                    }
+                };
+            if let Err(e) = tauri::async_runtime::block_on(
+                gcal_push::migration::migrate_legacy_gcal_to_personal_space(
+                    &pools_write_for_gcal,
+                    gcal_token_store.as_ref(),
+                    personal_token_store_for_migration.as_ref(),
+                    gcal_emitter.as_ref(),
+                    chrono::Utc::now(),
+                ),
+            ) {
+                tracing::warn!(
+                    target: "gcal",
+                    error = %e,
+                    "FEAT-3p9 M1 migration failed; will retry on next boot",
+                );
+            }
+
             // Spawn the connector task.  The handle + state trio are
             // registered on Tauri so the five gcal commands can
             // resolve.
