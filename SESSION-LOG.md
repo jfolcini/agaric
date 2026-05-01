@@ -1,5 +1,72 @@
 # Session Log
 
+## Session 591 — 3-subagent batch: decisions cluster (M-34 + M-81 + M-85) (2026-05-01)
+
+**Three user-approved architectural decisions executed end-to-end.** The user answered the outstanding Architectural-Stability questions on M-34 (pairing QR design), M-81 (cascade conflict-copy semantics), and M-85 (MCP list-tag/property-def pagination), the decisions were recorded inline under a `**Decision (user, session 591):**` bullet on each REVIEW-LATER entry (mirroring the pattern PERF-19/20/23 use for defer decisions), and three build subagents closed the items in parallel — with an orchestrator-level follow-up closing the production gap M-81's subagent flagged. All three items deleted from REVIEW-LATER; open count 18 → 15.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 18 → **15** (M-34, M-81, M-85 rows + detail blocks deleted; the three rows lived in the `## MEDIUM findings` section rather than the main planned-work table, so the planned-work table count is unchanged at 18 while the Medium-findings block loses three entries).
+- **Cumulative backend Medium closures:** 22 → **25**.
+- **Previously-resolved counter:** 852+ → 855+ across 557 → 558 sessions.
+
+**Decisions (inline, recorded before build):**
+
+| Item | Decision | Rationale |
+|---|---|---|
+| **M-34** | Drop both `host` and `port` from the pairing QR. `PairingInfo` becomes `{passphrase, qr_svg}` only; mDNS owns discovery + address resolution end-to-end; `ARCHITECTURE.md` §18 simplifies to `{"passphrase":"..."}`. | The placeholders (`0.0.0.0`/`0`) never functioned as a bootstrap; the scanning device already falls back to mDNS. Dropping the fields matches actual behaviour and removes doc/code drift. |
+| **M-81** | Re-parent orphan conflict copies to the nearest live non-deleted non-conflict ancestor; set `parent_id = NULL` when no such ancestor exists; emit one `MoveBlock` op log entry per re-parent in the same `BEGIN IMMEDIATE` transaction so peers replay the repair via sync; `tracing::warn` per re-parent. | Keeps the conflict copy reachable through normal descendants walks (no orphan state). Reuses the existing `MoveBlock` op type — no new op type, honours Architectural Stability. |
+| **M-85** | Move `list_tags_inner` and `list_property_defs_inner` to `PageResponse<T>` cursor pagination at both the inner layer AND the MCP tool boundary; migrate all frontend callsites; trim AGENTS.md invariant #3 carve-out (a) to keep only `list_property_keys`. | Aligns the two tools with the canonical cursor contract and the session-588 `get_agenda` closure; `list_property_keys` is deliberately left flat-`Vec` this batch (the carve-out is still permissive for future small-cardinality lookups). |
+
+**Items closed:**
+
+| Item | Subsystem / files | Subagent |
+|---|---|---|
+| **M-34** | `src-tauri/src/pairing.rs`, `src-tauri/src/commands/sync_cmds.rs`, `src-tauri/src/commands/mod.rs`, `ARCHITECTURE.md` §18, `src/components/PairingDialog.tsx` + test, `src/lib/tauri.ts` + test, `src/lib/tauri-mock/handlers.ts` + test, `src/lib/bindings.ts` (auto-regen). | agent_id `697f76f6` |
+| **M-81** (helper + test site) | `src-tauri/src/soft_delete/trash.rs` (+143L, new `reparent_orphan_conflict_copies` helper + `cascade_soft_delete` now takes `device_id: &str`), `src-tauri/src/soft_delete/mod.rs` (+5 `_m81` tests including the warn-log capture), 44 mechanical caller signature updates across 8 test/bench files. 6 new `.sqlx/` cache files. | agent_id `e7206f63` |
+| **M-81** (production path, orchestrator follow-up) | `src-tauri/src/soft_delete/mod.rs` promoted `reparent_orphan_conflict_copies` to `pub(crate) use` so `commands::blocks::crud::delete_block_inner` can call the same helper; `src-tauri/src/commands/blocks/crud.rs` now calls the helper before its inline cascade UPDATE (same transaction); 2 new integration tests in `src-tauri/src/command_integration_tests/block_integration.rs` pinning the production path (`delete_block_reparents_conflict_copy_under_deleted_subtree_m81` + `_to_null_when_no_ancestor_m81`). | orchestrator (in-line) |
+| **M-85** | `src-tauri/src/commands/tags.rs` (`list_tags_inner` → `PageResponse<TagCacheRow>`), `src-tauri/src/commands/properties.rs` (`list_property_defs_inner` → `PageResponse<PropertyDefinition>`), `src-tauri/src/mcp/tools_ro.rs` (both tool schemas + handlers gain `cursor`/`limit`), `src-tauri/src/mcp/summarise.rs`, 3 insta snapshots in `src-tauri/src/mcp/tools_ro/snapshots/`, `AGENTS.md` (trim carve-out names), 8 new `_m85` backend tests + 2 MCP wire tests, `src/lib/tauri.ts` wrapper, 12 frontend callsites migrated, 8 frontend test files updated with a `pageOf(...)` helper for the new envelope shape. | agent_id `f7488940` |
+
+**Per-subagent highlights:**
+
+- **M-34 subagent (`697f76f6`)** — 2 new `_m34` tests (encoder + orchestration). Nextest full: 3324/3324. Vitest on touched files: 447/447. tsc + biome clean. No i18n keys removed (existing `device.addressInputLabel` / `device.addressHint` reference M-35's manual-peer-address UI, not the pairing QR).
+- **M-81 subagent (`e7206f63`)** — 5 new `_m81` tests, 56 soft_delete/cascade tests total all green; full-suite 3338 green / 1 failure (`specta_tests::ts_bindings_up_to_date`, caused by concurrent in-flight M-85 work without regenerated bindings — the subagent correctly did not regenerate bindings per its prompt and flagged this as M-85's responsibility, which the M-85 subagent then did). Drift finding #3: flagged that the production `delete_block_inner` path runs its own inline cascade (not via `cascade_soft_delete`) and therefore still leaked orphans — handled as the orchestrator follow-up above.
+- **M-85 subagent (`f7488940`)** — 8 backend `_m85` tests + 2 MCP wire tests + `pageOf` helper introduced across 8 frontend test files (the sed/python-scripted envelope wrapping pattern — 26+26+20+11 sites). Confirmed `list_property_keys` intentionally left flat-`Vec`.
+- **Orchestrator follow-up** — extracted the re-parent helper to `pub(crate)` so both cascade sites share it; added 2 `delete_block_reparents_..._m81` integration tests that pin the user-visible production path. This turned the M-81 fix from test-only-semantic-win into real production closure.
+
+**Process notes:**
+
+- **Decisions recorded inline BEFORE build** via a pre-build docs commit (`f6989bb`) so the chosen path was visible in `git log` and REVIEW-LATER even while subagents were still working. Mirrors the user's instruction "record the decisions in review later (including the ones i recently made)" — decisions landed as `**Decision (user, session 591):**` bullets on each affected entry, then were deleted alongside the entries after each item closed.
+- **3 parallel-then-sequential subagents.** M-81 + M-34 launched in parallel (disjoint files). M-85 launched after M-34 finished (both touch `bindings.ts` and `tauri.ts`; sequencing them avoided a bindings regeneration race). M-81 ran in the background through both waves since it only touched `src-tauri/src/soft_delete/` + cascade test callers.
+- **Orchestrator follow-up was the right call.** M-81's original scope ("Modify `cascade_soft_delete`") was literally satisfied, but the user-visible production behaviour still leaked orphans because `delete_block_inner` runs its own inline cascade. The follow-up (~40 LOC + 2 tests) extracted the helper to `pub(crate)` and plumbed it into the production path. Without it the M-81 closure would have been cosmetic.
+- **Two biome/cargo-fmt autofix rounds** after the three subagents landed (M-85's envelope-wrapping scripts left a handful of multi-line `pageOf(...)` calls and multi-arg chains that biome wanted collapsed; cargo fmt cleaned up a few `.await.unwrap()` chains and two-line `let mut x = …` formations). All fixes applied via `npx biome check --write` + `cargo fmt --all`; re-ran prek until clean.
+- **One AGENTS.md edit** landed as part of M-85, scoped to invariant #3's carve-out (a): removed `list_property_defs` and `list_tags` from the named list. Per AGENTS.md's "no changes without explicit user approval" rule, the user explicitly approved this in the final question before build.
+
+**Files touched (this session's batch):** ~70 files across the three items + orchestrator follow-up.
+
+- **Backend production (7):** `src-tauri/src/pairing.rs`, `src-tauri/src/commands/{mod,sync_cmds,tags,properties}.rs`, `src-tauri/src/soft_delete/{mod,trash}.rs`, `src-tauri/src/mcp/{tools_ro,summarise}.rs`, `src-tauri/src/commands/blocks/crud.rs`.
+- **Backend tests (12):** `src-tauri/src/pairing.rs`, `src-tauri/src/commands/tests/{sync_cmd,tag_cmd,block_cmd,edge_case_tests,tests.rs}`, `src-tauri/src/command_integration_tests/{block,trash,property}_integration.rs`, `src-tauri/src/reverse/tests.rs`, `src-tauri/src/mcp/tools_ro/tests.rs`, `src-tauri/src/soft_delete/mod.rs` (test module).
+- **Backend benches (2):** `src-tauri/benches/soft_delete_bench.rs`, `src-tauri/benches/property_def_bench.rs`.
+- **Backend snapshots (3):** `tool_descriptions.snap`, `tool_response_list_tags.snap`, `tool_response_list_property_defs.snap`.
+- **Backend sqlx cache:** ~10 new / 1 deleted.
+- **Docs (backend):** `ARCHITECTURE.md` §18 (QR JSON spec), `AGENTS.md` invariant #3 carve-out (a).
+- **Frontend production (8):** `src/components/{BlockPropertyDrawer,PagePropertyTable,PairingDialog,PropertyDefinitionsList,QueryBuilderModal}.tsx`, `src/hooks/{useAppBootRecovery,usePropertyDefForEdit}.ts`, `src/lib/{tauri,bindings}.ts`, `src/lib/tauri-mock/handlers.ts`.
+- **Frontend tests (16):** `src/components/__tests__/{App,BlockPropertyDrawer,PageHeader,PagePropertyTable,PairingDialog,PropertiesView,PropertyDefinitionsList,QueryBuilderModal,SortableBlock}.test.tsx`, `src/hooks/__tests__/{useAppBootRecovery,useBlockPropertyIpc,usePropertyDefForEdit}.test.{ts,tsx}`, `src/lib/__tests__/{tauri,tauri-mock}.test.ts`.
+- **Docs (this session):** `REVIEW-LATER.md` (3 rows + detail blocks deleted; summary line + previously-resolved counter bumped), `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after biome `--write` + cargo fmt; the prior 3 subagents each ran their own tests green but the orchestrator's merge introduced a few formatting drifts that the final pass cleaned up).
+
+- Backend full nextest: **3339 / 3339** (3 skipped); `_m34` + `_m81` + `_m85` suites all 100% green.
+- Frontend full vitest: **8993 / 8993** across 366 files.
+- TypeScript: 0 errors.
+- Biome: 0 errors across 807 files.
+- Cargo fmt + clippy + deny + machete: clean.
+- Sqlx cache: regenerated; 8+6 new entries, 1 deleted stale entry.
+
+**Commit plan:** feat commit for code (M-34, M-81 helper, M-81 production follow-up, M-85 — all one session), then docs commit for SESSION-LOG.md. Pre-build decisions commit already landed as `f6989bb`. Not pushed.
+
+---
+
 ## Session 590 — orchestrator-only batch: MAINT-131 final pass (2026-05-01)
 
 **MAINT-131 fully closed.** The two batch-IPC migrations (sessions 572 + 575) and the date / link-metadata hook wraps (session 576) had landed already; this session closed the residual: the 5 presentational components named in the spec (`BlockListItem`, `RescheduleDropZone`, `DateChipEditor`, `BlockPropertyDrawer`, `LinkEditPopover`) had been left with direct `lib/tauri` imports for the **non-date** IPCs they still call (`getBlock` for the duplicated "decide due vs scheduled" pattern in BlockListItem + RescheduleDropZone; `getProperties` / `listPropertyDefs` / `setProperty` in BlockPropertyDrawer's add-property handler). All five components are now pure JSX + hooks with **zero** direct `lib/tauri` imports — the explicit goal stated in the MAINT-131 entry.
