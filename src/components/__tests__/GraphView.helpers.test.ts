@@ -25,7 +25,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    const result = await fetchGraphData([])
+    const result = await fetchGraphData([], null)
 
     expect(result.nodes).toHaveLength(0)
     expect(result.edges).toHaveLength(0)
@@ -45,7 +45,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    await fetchGraphData(['tag-a'])
+    await fetchGraphData(['tag-a'], null)
 
     expect(mockedInvoke).toHaveBeenCalledWith(
       'list_blocks',
@@ -61,7 +61,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    await fetchGraphData(['tag-a', 'tag-b'])
+    await fetchGraphData(['tag-a', 'tag-b'], null)
 
     expect(mockedInvoke).toHaveBeenCalledWith(
       'query_by_tags',
@@ -91,7 +91,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    const result = await fetchGraphData(['tag-a'])
+    const result = await fetchGraphData(['tag-a'], null)
 
     expect(result.nodes).toHaveLength(2)
     expect(result.nodes.map((n) => n.id)).toEqual(['page-1', 'page-2'])
@@ -114,7 +114,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    const result = await fetchGraphData([])
+    const result = await fetchGraphData([], null)
 
     expect(result.nodes).toHaveLength(2)
   })
@@ -140,7 +140,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    const result = await fetchGraphData([])
+    const result = await fetchGraphData([], null)
 
     const page1 = result.nodes.find((n) => n.id === 'page-1')
     const page2 = result.nodes.find((n) => n.id === 'page-2')
@@ -171,7 +171,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    const result = await fetchGraphData([])
+    const result = await fetchGraphData([], null)
     const byId = new Map(result.nodes.map((n) => [n.id, n]))
     expect(byId.get('page-1')?.backlink_count).toBe(0)
     expect(byId.get('page-2')?.backlink_count).toBe(2)
@@ -195,7 +195,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    const result = await fetchGraphData([])
+    const result = await fetchGraphData([], null)
     expect(result.edges).toHaveLength(0)
   })
 
@@ -215,7 +215,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    const result = await fetchGraphData([])
+    const result = await fetchGraphData([], null)
     expect(result.nodes.map((n) => n.label)).toEqual(['Untitled', 'Untitled'])
   })
 
@@ -232,7 +232,7 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    const result = await fetchGraphData([])
+    const result = await fetchGraphData([], null)
     expect(result.hasMore).toBe(true)
   })
 
@@ -249,6 +249,6 @@ describe('fetchGraphData', () => {
       return Promise.resolve(null)
     })
 
-    await expect(fetchGraphData([])).rejects.toThrow('boom')
+    await expect(fetchGraphData([], null)).rejects.toThrow('boom')
   })
 })

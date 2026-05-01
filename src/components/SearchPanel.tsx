@@ -104,13 +104,18 @@ export function SearchPanel(): React.ReactElement {
 
   const queryFn = useCallback(
     (cursor?: string) =>
+      // FEAT-3 Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
+      // fallback is intentional pre-bootstrap behaviour: empty string
+      // forces a no-match SQL filter (returning empty results) rather
+      // than a runtime null deref. The `enabled: spaceIsReady` gate
+      // below normally prevents this branch from firing.
       searchBlocks({
         query: debouncedQuery,
         parentId: filterPageId ?? undefined,
         tagIds: filterTagIds.length > 0 ? filterTagIds : undefined,
         cursor,
         limit: 50,
-        spaceId: currentSpaceId ?? undefined,
+        spaceId: currentSpaceId ?? '',
       }),
     [debouncedQuery, filterPageId, filterTagIds, currentSpaceId],
   )
@@ -294,10 +299,12 @@ export function SearchPanel(): React.ReactElement {
   useEffect(() => {
     if (!pagePopoverOpen) return
     setPageSearchLoading(true)
+    // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. `?? ''` is the
+    // pre-bootstrap no-match fallback (see SearchPanel main `queryFn`).
     listBlocks({
       blockType: 'page',
       limit: 20,
-      spaceId: currentSpaceId ?? undefined,
+      spaceId: currentSpaceId ?? '',
     })
       .then((res) => {
         // UX-248 — Unicode-aware fold so `İstanbul` ↔ `istanbul`

@@ -130,18 +130,20 @@ async function handleScheduleMode(ctx: DatePickContext): Promise<void> {
  * current editor cursor position.
  */
 async function handleDateMode(ctx: DatePickContext): Promise<void> {
-  const resp = await listBlocks({ blockType: 'page', limit: 500 })
+  // BUG-1 / H-3b — date pages must own a `space` property to surface
+  // in PageBrowser. The legacy `createBlock({ blockType: 'page' })`
+  // path leaks pages without `space`, so route through the atomic
+  // `createPageInSpace` helper using the active space from the store.
+  const currentSpaceId = useSpaceStore.getState().currentSpaceId
+  if (currentSpaceId === null || currentSpaceId === undefined) {
+    throw new Error('No active space; cannot create date page')
+  }
+  // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`; date pages live
+  // inside the active space, so the lookup is naturally scoped.
+  const resp = await listBlocks({ blockType: 'page', limit: 500, spaceId: currentSpaceId })
   const existing = resp.items.find((b) => b.content === ctx.dateStr || b.content === ctx.legacyStr)
   let datePageId = existing?.id
   if (!datePageId) {
-    // BUG-1 / H-3b — date pages must own a `space` property to surface
-    // in PageBrowser. The legacy `createBlock({ blockType: 'page' })`
-    // path leaks pages without `space`, so route through the atomic
-    // `createPageInSpace` helper using the active space from the store.
-    const currentSpaceId = useSpaceStore.getState().currentSpaceId
-    if (currentSpaceId === null || currentSpaceId === undefined) {
-      throw new Error('No active space; cannot create date page')
-    }
     const newPageId = await createPageInSpace({
       content: ctx.dateStr,
       spaceId: currentSpaceId,

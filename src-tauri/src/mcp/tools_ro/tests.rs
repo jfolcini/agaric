@@ -1,4 +1,5 @@
 use super::*;
+use crate::commands::tests::common::TEST_SPACE_ID;
 use crate::commands::{create_block_inner, create_space_inner};
 use crate::db::init_pool;
 use crate::materializer::Materializer;
@@ -435,9 +436,14 @@ async fn search_happy_path_returns_matches() {
     .await
     .unwrap();
     settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
 
     let result = tools
-        .call_tool("search", json!({"query": "needle"}), &test_ctx())
+        .call_tool(
+            "search",
+            json!({"query": "needle", "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .expect("happy path");
     let items = result["items"].as_array().expect("items");
@@ -448,7 +454,7 @@ async fn search_happy_path_returns_matches() {
 async fn search_missing_query_returns_validation() {
     let (tools, _mat, _dir) = mk_tools().await;
     let err = tools
-        .call_tool("search", json!({}), &test_ctx())
+        .call_tool("search", json!({"space_id": TEST_SPACE_ID}), &test_ctx())
         .await
         .expect_err("missing query must fail");
     assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
@@ -471,7 +477,11 @@ fn limit_validation_cases() -> Vec<(&'static str, i64, Value)> {
         // the inner lookup, so out-of-range cases fire before any
         // NotFound is possible.
         (TOOL_GET_PAGE, LIST_RESULT_CAP, json!({"page_id": "ANY"})),
-        (TOOL_SEARCH, SEARCH_RESULT_CAP, json!({"query": "needle"})),
+        (
+            TOOL_SEARCH,
+            SEARCH_RESULT_CAP,
+            json!({"query": "needle", "space_id": TEST_SPACE_ID}),
+        ),
         (
             TOOL_LIST_BACKLINKS,
             LIST_RESULT_CAP,
@@ -559,9 +569,14 @@ async fn search_truncates_long_content() {
     .await
     .unwrap();
     settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
 
     let result = tools
-        .call_tool("search", json!({"query": "needle"}), &test_ctx())
+        .call_tool(
+            "search",
+            json!({"query": "needle", "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .expect("happy path");
     let items = result["items"].as_array().expect("items");
@@ -1015,9 +1030,20 @@ proptest::proptest! {
                 "no match".into(), None, Some(3),
             ).await.unwrap();
             settle(&mat).await;
+            // FEAT-3p4 — assign every seeded block to the test space
+            // so the FEAT-3p4-required `space_id` filter returns them.
+            crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
 
             let via_tool = tools
-                .call_tool("search", json!({"query": query, "limit": 50}), &test_ctx())
+                .call_tool(
+                    "search",
+                    json!({
+                        "query": query,
+                        "limit": 50,
+                        "space_id": TEST_SPACE_ID,
+                    }),
+                    &test_ctx(),
+                )
                 .await
                 .unwrap();
             let via_inner = search_blocks_inner(
@@ -1027,7 +1053,7 @@ proptest::proptest! {
                 Some(SEARCH_RESULT_CAP),
                 None,
                 None,
-                None,
+                TEST_SPACE_ID.into(),
             )
             .await
             .unwrap();
@@ -1098,7 +1124,11 @@ async fn concurrent_clients_exact_success_count() {
                     request_id: format!("{c}-{ok}"),
                 };
                 let a = tools
-                    .call_tool("search", json!({"query": "hello"}), &ctx)
+                    .call_tool(
+                        "search",
+                        json!({"query": "hello", "space_id": TEST_SPACE_ID}),
+                        &ctx,
+                    )
                     .await;
                 let b = tools.call_tool("list_pages", json!({}), &ctx).await;
                 let d = tools
@@ -1413,8 +1443,13 @@ async fn snapshot_search_response_shape() {
     .await
     .unwrap();
     settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
     let result = tools
-        .call_tool("search", json!({"query": "findme"}), &test_ctx())
+        .call_tool(
+            "search",
+            json!({"query": "findme", "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .unwrap();
     insta::assert_yaml_snapshot!("tool_response_search", result, {

@@ -67,13 +67,17 @@ export function toPastDatePreset(value: string): string | null {
 // ---------------------------------------------------------------------------
 
 /** Query blocks matching the given todo_state values. */
-async function queryStatus(values: string[]): Promise<Map<string, BlockRow>> {
+async function queryStatus(
+  values: string[],
+  spaceId: string | null,
+): Promise<Map<string, BlockRow>> {
   const result = new Map<string, BlockRow>()
   for (const value of values) {
     const resp = await queryByProperty({
       key: 'todo_state',
       valueText: value,
       limit: 500,
+      spaceId,
     })
     for (const b of resp.items) {
       result.set(b.id, b)
@@ -83,13 +87,17 @@ async function queryStatus(values: string[]): Promise<Map<string, BlockRow>> {
 }
 
 /** Query blocks matching the given priority values. */
-async function queryPriority(values: string[]): Promise<Map<string, BlockRow>> {
+async function queryPriority(
+  values: string[],
+  spaceId: string | null,
+): Promise<Map<string, BlockRow>> {
   const result = new Map<string, BlockRow>()
   for (const value of values) {
     const resp = await queryByProperty({
       key: 'priority',
       valueText: value,
       limit: 500,
+      spaceId,
     })
     for (const b of resp.items) {
       result.set(b.id, b)
@@ -114,9 +122,10 @@ function isOverdue(
 async function queryOverdueForColumn(
   columnKey: 'due_date' | 'scheduled_date',
   todayStr: string,
+  spaceId: string | null,
 ): Promise<Map<string, BlockRow>> {
   const result = new Map<string, BlockRow>()
-  const resp = await queryByProperty({ key: columnKey, limit: 500 })
+  const resp = await queryByProperty({ key: columnKey, limit: 500, spaceId })
   for (const b of resp.items) {
     if (isOverdue(b, columnKey, todayStr)) {
       result.set(b.id, b)
@@ -134,6 +143,7 @@ async function queryPresetRangeForColumn(
   value: string,
   columnKey: 'due_date' | 'scheduled_date',
   today: Date,
+  spaceId: string,
 ): Promise<Map<string, BlockRow>> {
   const result = new Map<string, BlockRow>()
   const preset = toFutureDatePreset(value)
@@ -143,8 +153,8 @@ async function queryPresetRangeForColumn(
   const agendaSource = `column:${columnKey}`
   const resp =
     range.start === range.end
-      ? await listBlocks({ agendaDate: range.start, agendaSource, limit: 500 })
-      : await listBlocks({ agendaDateRange: range, agendaSource, limit: 500 })
+      ? await listBlocks({ agendaDate: range.start, agendaSource, limit: 500, spaceId })
+      : await listBlocks({ agendaDateRange: range, agendaSource, limit: 500, spaceId })
   for (const b of resp.items) {
     result.set(b.id, b)
   }
@@ -159,6 +169,7 @@ async function queryDateDimension(
   values: string[],
   columnKey: 'due_date' | 'scheduled_date',
   today: Date,
+  spaceId: string | null,
 ): Promise<Map<string, BlockRow>> {
   const result = new Map<string, BlockRow>()
   const todayStr = formatDate(today)
@@ -166,8 +177,11 @@ async function queryDateDimension(
   for (const value of values) {
     const partial =
       value === 'Overdue'
-        ? await queryOverdueForColumn(columnKey, todayStr)
-        : await queryPresetRangeForColumn(value, columnKey, today)
+        ? await queryOverdueForColumn(columnKey, todayStr, spaceId)
+        : // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
+          // fallback is intentional pre-bootstrap behaviour: empty string
+          // forces a no-match SQL filter rather than a runtime null deref.
+          await queryPresetRangeForColumn(value, columnKey, today, spaceId ?? '')
     for (const [id, block] of partial) {
       result.set(id, block)
     }
@@ -183,6 +197,7 @@ async function queryPropertyDateDimension(
   values: string[],
   propertyKey: string,
   today: Date,
+  spaceId: string | null,
 ): Promise<Map<string, BlockRow>> {
   const result = new Map<string, BlockRow>()
 
@@ -199,6 +214,7 @@ async function queryPropertyDateDimension(
         key: propertyKey,
         valueDate: dateStr,
         limit: 500,
+        spaceId,
       })
       for (const b of resp.items) {
         result.set(b.id, b)
@@ -209,14 +225,14 @@ async function queryPropertyDateDimension(
 }
 
 /** Query blocks matching the given tag names (resolved to IDs via prefix search). */
-async function queryTag(values: string[]): Promise<Map<string, BlockRow>> {
+async function queryTag(values: string[], spaceId: string): Promise<Map<string, BlockRow>> {
   const result = new Map<string, BlockRow>()
   for (const value of values) {
     // Resolve tag name to ID via prefix search + exact match
     const candidates = await listTagsByPrefix({ prefix: value, limit: 50 })
     const match = candidates.find((t) => t.name.toLowerCase() === value.toLowerCase())
     if (!match) continue
-    const resp = await listBlocks({ tagId: match.tag_id, limit: 500 })
+    const resp = await listBlocks({ tagId: match.tag_id, limit: 500, spaceId })
     for (const b of resp.items) {
       result.set(b.id, b)
     }
@@ -225,7 +241,10 @@ async function queryTag(values: string[]): Promise<Map<string, BlockRow>> {
 }
 
 /** Query blocks by custom property key[:value] pairs. */
-async function queryPropertyDimension(values: string[]): Promise<Map<string, BlockRow>> {
+async function queryPropertyDimension(
+  values: string[],
+  spaceId: string | null,
+): Promise<Map<string, BlockRow>> {
   const result = new Map<string, BlockRow>()
   for (const filterValue of values) {
     const colonIdx = filterValue.indexOf(':')
@@ -235,6 +254,7 @@ async function queryPropertyDimension(values: string[]): Promise<Map<string, Blo
       key,
       ...(value != null && { valueText: value }),
       limit: 500,
+      spaceId,
     })
     for (const b of resp.items) {
       result.set(b.id, b)
@@ -252,14 +272,22 @@ async function queryPropertyDimension(values: string[]): Promise<Map<string, Blo
  *
  * - Empty filter list → default: all blocks with a due_date or scheduled_date.
  * - Non-empty → evaluate each dimension, then intersect result sets (AND).
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, scopes every dispatched IPC
+ * to the active space; when `null` the call is cross-space (legacy).
+ * Required helpers (`listBlocks`) receive `''` as the no-match
+ * pre-bootstrap fallback per the AGENTS conventions.
  */
-export async function executeAgendaFilters(filters: AgendaFilter[]): Promise<ExecuteFiltersResult> {
+export async function executeAgendaFilters(
+  filters: AgendaFilter[],
+  spaceId: string | null,
+): Promise<ExecuteFiltersResult> {
   if (filters.length === 0) {
     // Default: blocks with due_date or scheduled_date, plus undated tasks
     const [dueResp, schedResp, undatedResp] = await Promise.all([
-      queryByProperty({ key: 'due_date', limit: 500 }),
-      queryByProperty({ key: 'scheduled_date', limit: 500 }),
-      listUndatedTasks({ limit: 500 }),
+      queryByProperty({ key: 'due_date', limit: 500, spaceId }),
+      queryByProperty({ key: 'scheduled_date', limit: 500, spaceId }),
+      listUndatedTasks({ limit: 500, spaceId }),
     ])
     // Merge and deduplicate by id
     const seen = new Set<string>()
@@ -287,28 +315,30 @@ export async function executeAgendaFilters(filters: AgendaFilter[]): Promise<Exe
 
     switch (filter.dimension) {
       case 'status':
-        blockMap = await queryStatus(filter.values)
+        blockMap = await queryStatus(filter.values, spaceId)
         break
       case 'priority':
-        blockMap = await queryPriority(filter.values)
+        blockMap = await queryPriority(filter.values, spaceId)
         break
       case 'dueDate':
-        blockMap = await queryDateDimension(filter.values, 'due_date', today)
+        blockMap = await queryDateDimension(filter.values, 'due_date', today, spaceId)
         break
       case 'scheduledDate':
-        blockMap = await queryDateDimension(filter.values, 'scheduled_date', today)
+        blockMap = await queryDateDimension(filter.values, 'scheduled_date', today, spaceId)
         break
       case 'completedDate':
-        blockMap = await queryPropertyDateDimension(filter.values, 'completed_at', today)
+        blockMap = await queryPropertyDateDimension(filter.values, 'completed_at', today, spaceId)
         break
       case 'createdDate':
-        blockMap = await queryPropertyDateDimension(filter.values, 'created_at', today)
+        blockMap = await queryPropertyDateDimension(filter.values, 'created_at', today, spaceId)
         break
       case 'tag':
-        blockMap = await queryTag(filter.values)
+        // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. `?? ''` is
+        // the pre-bootstrap no-match fallback.
+        blockMap = await queryTag(filter.values, spaceId ?? '')
         break
       case 'property':
-        blockMap = await queryPropertyDimension(filter.values)
+        blockMap = await queryPropertyDimension(filter.values, spaceId)
         break
     }
 

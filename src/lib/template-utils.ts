@@ -4,9 +4,17 @@ import { createBlock, getProperties, listBlocks, queryByProperty } from './tauri
 
 /**
  * Load all pages marked as templates (property `template` = 'true').
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, restricts templates to the
+ * active space. `null` keeps the cross-space (legacy) behaviour.
  */
-export async function loadTemplatePages(): Promise<BlockRow[]> {
-  const resp = await queryByProperty({ key: 'template', valueText: 'true', limit: 100 })
+export async function loadTemplatePages(spaceId: string | null): Promise<BlockRow[]> {
+  const resp = await queryByProperty({
+    key: 'template',
+    valueText: 'true',
+    limit: 100,
+    spaceId,
+  })
   return resp.items.filter((b) => b.block_type === 'page')
 }
 
@@ -14,12 +22,20 @@ export async function loadTemplatePages(): Promise<BlockRow[]> {
  * Load the journal template page (property `journal-template` = 'true').
  * Returns the first matching page (or null) and an optional warning when
  * multiple journal templates are found so the caller can surface it to the user.
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, restricts the search to the
+ * active space.
  */
-export async function loadJournalTemplate(): Promise<{
+export async function loadJournalTemplate(spaceId: string | null): Promise<{
   template: BlockRow | null
   duplicateWarning: string | null
 }> {
-  const resp = await queryByProperty({ key: 'journal-template', valueText: 'true', limit: 10 })
+  const resp = await queryByProperty({
+    key: 'journal-template',
+    valueText: 'true',
+    limit: 10,
+    spaceId,
+  })
   const pages = resp.items.filter((b) => b.block_type === 'page')
   const duplicateWarning =
     pages.length > 1
@@ -32,16 +48,21 @@ export async function loadJournalTemplate(): Promise<{
 /**
  * Load template pages with a preview of their first child's content.
  * Returns the page data plus a truncated preview string.
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, restricts templates to the
+ * active space. The child preview's `listBlocks` call is required to
+ * pass `spaceId`; the `?? ''` fallback is the pre-bootstrap no-match
+ * sentinel.
  */
-export async function loadTemplatePagesWithPreview(): Promise<
-  Array<{ id: string; content: string; preview: string | null }>
-> {
-  const pages = await loadTemplatePages()
+export async function loadTemplatePagesWithPreview(
+  spaceId: string | null,
+): Promise<Array<{ id: string; content: string; preview: string | null }>> {
+  const pages = await loadTemplatePages(spaceId)
   const result: Array<{ id: string; content: string; preview: string | null }> = []
   for (const page of pages) {
     let preview: string | null = null
     try {
-      const children = await listBlocks({ parentId: page.id, limit: 1 })
+      const children = await listBlocks({ parentId: page.id, limit: 1, spaceId: spaceId ?? '' })
       if (children.items.length > 0) {
         const text = children.items[0]?.content ?? ''
         preview = text.length > 60 ? `${text.slice(0, 60)}…` : text
@@ -90,12 +111,22 @@ export function expandTemplateVariables(content: string, context: { pageTitle?: 
 export async function insertTemplateBlocks(
   templatePageId: string,
   parentId: string,
+  spaceId: string | null,
   context?: { pageTitle?: string },
 ): Promise<string[]> {
   const ids: string[] = []
 
+  // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. Templates belong
+  // to a single space, so the recursive copy walks within `spaceId`. The
+  // `?? ''` fallback is the pre-bootstrap no-match sentinel.
+  const effectiveSpaceId = spaceId ?? ''
+
   async function copyChildren(sourceParentId: string, destParentId: string): Promise<void> {
-    const resp = await listBlocks({ parentId: sourceParentId, limit: 500 })
+    const resp = await listBlocks({
+      parentId: sourceParentId,
+      limit: 500,
+      spaceId: effectiveSpaceId,
+    })
     for (const child of resp.items) {
       try {
         const expandedContent = expandTemplateVariables(child.content ?? '', context ?? {})

@@ -272,6 +272,7 @@ describe('UnlinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 20,
+        spaceId: null,
       })
     })
 
@@ -479,6 +480,7 @@ describe('UnlinkedReferences', () => {
         sort: null,
         cursor: 'cursor_page2',
         limit: 20,
+        spaceId: null,
       })
     })
 
@@ -540,6 +542,7 @@ describe('UnlinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 20,
+        spaceId: null,
       })
     })
   })
@@ -1078,6 +1081,7 @@ describe('UnlinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 20,
+        spaceId: null,
       })
     })
   })
@@ -1112,6 +1116,7 @@ describe('UnlinkedReferences', () => {
         sort: { type: 'Created', dir: 'Desc' },
         cursor: null,
         limit: 20,
+        spaceId: null,
       })
     })
   })

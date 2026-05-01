@@ -21,15 +21,21 @@ use crate::sync_scheduler::SyncScheduler;
 use super::*;
 
 /// List blocks that link to the given block (backlinks), with cursor pagination.
+///
+/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
+/// source blocks whose owning page carries `space = ?space_id`. `None`
+/// is the unscoped (pre-FEAT-3) behaviour preserved for callsites that
+/// have not migrated.
 #[instrument(skip(pool), err)]
 pub async fn get_backlinks_inner(
     pool: &SqlitePool,
     block_id: String,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let page = pagination::PageRequest::new(cursor, limit)?;
-    pagination::list_backlinks(pool, &block_id, &page).await
+    pagination::list_backlinks(pool, &block_id, &page, space_id.as_deref()).await
 }
 
 /// List conflict-copy blocks (blocks with `is_conflict = true`), with cursor pagination.
@@ -57,9 +63,11 @@ pub async fn get_status_inner(
 /// Returns an empty page if the query is blank. Otherwise delegates to
 /// [`fts::search_fts`] with cursor pagination.
 ///
-/// `space_id` (FEAT-3 Phase 2) — when `Some`, restricts matches to blocks
-/// whose owning page carries `space = ?space_id`. `None` = unscoped, the
-/// pre-FEAT-3 behaviour every existing callsite still uses.
+/// FEAT-3 Phase 4 — `space_id` is required (not optional). The filter is
+/// threaded through `fts::search_fts` so the FTS5 hits are restricted to
+/// blocks whose owning page carries `space = ?space_id`. The MCP path
+/// (`mcp::tools_ro::handle_search`) requires the agent to thread its
+/// active space too — see the `search` tool's input schema.
 #[instrument(skip(pool, tag_ids), err)]
 pub async fn search_blocks_inner(
     pool: &SqlitePool,
@@ -68,7 +76,7 @@ pub async fn search_blocks_inner(
     limit: Option<i64>,
     parent_id: Option<String>,
     tag_ids: Option<Vec<String>>,
-    space_id: Option<String>,
+    space_id: String,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     if query.trim().is_empty() {
         return Ok(PageResponse {
@@ -84,7 +92,7 @@ pub async fn search_blocks_inner(
         &page,
         parent_id.as_deref(),
         tag_ids.as_deref(),
-        space_id.as_deref(),
+        Some(space_id.as_str()),
     )
     .await
 }
@@ -95,9 +103,15 @@ pub async fn search_blocks_inner(
 /// When `value_text` is provided, only blocks whose property value matches are returned.
 /// Results are paginated using cursor-based pagination (by block_id).
 ///
+/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
+/// blocks whose owning page carries `space = ?space_id`. `None` is the
+/// unscoped (pre-FEAT-3) behaviour preserved for callsites that have
+/// not migrated.
+///
 /// # Errors
 /// - [`AppError::Validation`] — `key` is empty
 #[instrument(skip(pool), err)]
+#[allow(clippy::too_many_arguments)]
 pub async fn query_by_property_inner(
     pool: &SqlitePool,
     key: String,
@@ -106,6 +120,7 @@ pub async fn query_by_property_inner(
     operator: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     if key.trim().is_empty() {
         return Err(AppError::Validation(
@@ -121,6 +136,7 @@ pub async fn query_by_property_inner(
         value_date.as_deref(),
         op,
         &page,
+        space_id.as_deref(),
     )
     .await
 }
@@ -130,6 +146,12 @@ pub async fn query_by_property_inner(
 /// When no filters are supplied, returns all backlinks (backward compatible).
 /// Filters use AND semantics at the top level; use `And`/`Or`/`Not` filter
 /// variants for compound boolean logic.
+///
+/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
+/// source blocks whose owning page carries `space = ?space_id`. The
+/// filter is applied at the base-set step so `total_count` and
+/// `filtered_count` reflect the post-space-filter universe. `None` is
+/// the unscoped (pre-FEAT-3) behaviour.
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `block_id` is empty
@@ -141,15 +163,22 @@ pub async fn query_backlinks_filtered_inner(
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<BacklinkQueryResponse, AppError> {
     if block_id.trim().is_empty() {
         return Err(AppError::Validation("block_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
-    backlink::eval_backlink_query(pool, &block_id, filters, sort, &page).await
+    backlink::eval_backlink_query(pool, &block_id, filters, sort, &page, space_id.as_deref()).await
 }
 
 /// Query backlinks grouped by source page.
+///
+/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
+/// source blocks whose owning page carries `space = ?space_id`. The
+/// filter is applied at the base-set step so `total_count` and
+/// `filtered_count` reflect the post-space-filter universe. `None` is
+/// the unscoped (pre-FEAT-3) behaviour.
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `block_id` is empty
@@ -161,12 +190,21 @@ pub async fn list_backlinks_grouped_inner(
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
     if block_id.trim().is_empty() {
         return Err(AppError::Validation("block_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
-    backlink::eval_backlink_query_grouped(pool, &block_id, filters, sort, &page).await
+    backlink::eval_backlink_query_grouped(
+        pool,
+        &block_id,
+        filters,
+        sort,
+        &page,
+        space_id.as_deref(),
+    )
+    .await
 }
 
 /// Query unlinked references for a page — blocks that mention the page's
@@ -179,6 +217,12 @@ pub async fn list_backlinks_grouped_inner(
 /// `total_count` and `filtered_count` both reflect the post-filter,
 /// post-self-reference-exclusion block count (AGENTS.md pattern #4).
 ///
+/// `space_id` (FEAT-3p4) — when `Some`, restricts FTS-matched blocks to
+/// those whose owning page carries `space = ?space_id`. The filter is
+/// applied at the base-set step so `total_count` and `filtered_count`
+/// reflect the post-space-filter universe. `None` is the unscoped
+/// (pre-FEAT-3) behaviour.
+///
 /// # Errors
 /// - [`AppError::Validation`] — `page_id` is empty
 #[instrument(skip(pool, filters, sort), err)]
@@ -189,12 +233,14 @@ pub async fn list_unlinked_references_inner(
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
     if page_id.trim().is_empty() {
         return Err(AppError::Validation("page_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
-    backlink::eval_unlinked_references(pool, page_id, filters, sort, &page).await
+    backlink::eval_unlinked_references(pool, page_id, filters, sort, &page, space_id.as_deref())
+        .await
 }
 
 /// Count backlinks per target page for a batch of page IDs in a single query.
@@ -247,8 +293,9 @@ pub async fn get_backlinks(
     block_id: String,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    get_backlinks_inner(&pool.0, block_id, cursor, limit)
+    get_backlinks_inner(&pool.0, block_id, cursor, limit, space_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -290,7 +337,7 @@ pub async fn search_blocks(
     limit: Option<i64>,
     parent_id: Option<String>,
     tag_ids: Option<Vec<String>>,
-    space_id: Option<String>,
+    space_id: String,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     search_blocks_inner(&pool.0, query, cursor, limit, parent_id, tag_ids, space_id)
         .await
@@ -301,6 +348,7 @@ pub async fn search_blocks(
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn query_by_property(
     pool: State<'_, ReadPool>,
     key: String,
@@ -309,9 +357,10 @@ pub async fn query_by_property(
     operator: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     query_by_property_inner(
-        &pool.0, key, value_text, value_date, operator, cursor, limit,
+        &pool.0, key, value_text, value_date, operator, cursor, limit, space_id,
     )
     .await
     .map_err(sanitize_internal_error)
@@ -321,6 +370,7 @@ pub async fn query_by_property(
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn query_backlinks_filtered(
     read_pool: State<'_, ReadPool>,
     block_id: String,
@@ -328,16 +378,26 @@ pub async fn query_backlinks_filtered(
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<BacklinkQueryResponse, AppError> {
-    query_backlinks_filtered_inner(&read_pool.0, block_id, filters, sort, cursor, limit)
-        .await
-        .map_err(sanitize_internal_error)
+    query_backlinks_filtered_inner(
+        &read_pool.0,
+        block_id,
+        filters,
+        sort,
+        cursor,
+        limit,
+        space_id,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: grouped backlink query. Delegates to [`list_backlinks_grouped_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn list_backlinks_grouped(
     read_pool: State<'_, ReadPool>,
     block_id: String,
@@ -345,16 +405,26 @@ pub async fn list_backlinks_grouped(
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
-    list_backlinks_grouped_inner(&read_pool.0, block_id, filters, sort, cursor, limit)
-        .await
-        .map_err(sanitize_internal_error)
+    list_backlinks_grouped_inner(
+        &read_pool.0,
+        block_id,
+        filters,
+        sort,
+        cursor,
+        limit,
+        space_id,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: unlinked references query. Delegates to [`list_unlinked_references_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn list_unlinked_references(
     read_pool: State<'_, ReadPool>,
     page_id: String,
@@ -362,10 +432,19 @@ pub async fn list_unlinked_references(
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
-    list_unlinked_references_inner(&read_pool.0, &page_id, filters, sort, cursor, limit)
-        .await
-        .map_err(sanitize_internal_error)
+    list_unlinked_references_inner(
+        &read_pool.0,
+        &page_id,
+        filters,
+        sort,
+        cursor,
+        limit,
+        space_id,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`].

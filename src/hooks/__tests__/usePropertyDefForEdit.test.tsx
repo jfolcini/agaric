@@ -102,7 +102,9 @@ describe('usePropertyDefForEdit', () => {
       expect(result.current.refPages).toHaveLength(2)
     })
     expect(result.current.selectOptions).toBeNull()
-    expect(mockListBlocks).toHaveBeenCalledWith({ blockType: 'page' })
+    // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`; `''` is the
+    // pre-bootstrap fallback when no space is seeded in the test.
+    expect(mockListBlocks).toHaveBeenCalledWith({ blockType: 'page', spaceId: '' })
   })
 
   it('logs a warning and clears state when listPropertyDefs rejects', async () => {

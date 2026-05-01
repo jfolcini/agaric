@@ -53,6 +53,9 @@ expression: wire
       query:
         description: FTS5 MATCH query string.
         type: string
+      space_id:
+        description: "FEAT-3p4 — ULID of the space the search runs inside. Required: every FTS5 hit is restricted to blocks whose owning page carries `space = ?space_id`."
+        type: string
       tag_ids:
         description: Optional list of tag ULIDs to intersect the result set with.
         items:
@@ -60,6 +63,7 @@ expression: wire
         type: array
     required:
       - query
+      - space_id
     type: object
   name: search
 - description: Fetch a single block by ULID. Returns the BlockRow including soft-deleted blocks.
@@ -87,6 +91,9 @@ expression: wire
         maximum: 100
         minimum: 1
         type: integer
+      space_id:
+        description: FEAT-3p4 — optional ULID of the space to scope backlinks to. Omit for the unscoped (cross-space) view.
+        type: string
     required:
       - block_id
     type: object
@@ -123,6 +130,9 @@ expression: wire
         maximum: 500
         minimum: 1
         type: integer
+      space_id:
+        description: FEAT-3p4 — optional ULID of the space to scope the agenda to. Omit for the unscoped (cross-space) view.
+        type: string
       start_date:
         description: Inclusive YYYY-MM-DD lower bound.
         type: string

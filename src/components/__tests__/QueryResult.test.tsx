@@ -868,6 +868,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
       operator: 'eq',
       cursor: null,
       limit: 200,
+      spaceId: null,
     })
   })
 

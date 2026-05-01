@@ -18,6 +18,11 @@ use super::*;
 /// Returns a `HashMap<date, count>` for dates that have at least one matching
 /// agenda entry whose owning block is not soft-deleted.
 ///
+/// `space_id` (FEAT-3p4) — when `Some`, restricts the count to blocks
+/// whose owning page carries `space = ?space_id`. `None` is the
+/// unscoped (pre-FEAT-3) behaviour preserved for callsites that have
+/// not migrated.
+///
 /// # Errors
 ///
 /// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
@@ -25,6 +30,7 @@ use super::*;
 pub async fn count_agenda_batch_inner(
     pool: &SqlitePool,
     dates: Vec<String>,
+    space_id: Option<String>,
 ) -> Result<HashMap<String, usize>, AppError> {
     if dates.is_empty() {
         return Ok(HashMap::new());
@@ -38,6 +44,13 @@ pub async fn count_agenda_batch_inner(
     // `?1, ?2, …` placeholder list with a single bind, and lets us drop
     // through `sqlx::query!` for compile-time SQL verification (AGENTS.md
     // invariant #6). Mirrors the sibling `count_agenda_batch_by_source_inner`.
+    //
+    // FEAT-3p4 — ?2 (space_id) drives the shared space-filter clause.
+    // The literal mirrors `crate::space_filter_clause!` — kept inline
+    // here because `sqlx::query!` requires a string literal and does
+    // not accept `concat!()`. Resolves the agenda-cached block to its
+    // owning page via `COALESCE(b.page_id, b.id)` and intersects
+    // against `block_properties(key = 'space').value_ref`.
     let dates_json = serde_json::to_string(&dates)?;
     let rows = sqlx::query!(
         r#"SELECT ac.date, COUNT(*) AS "cnt!: i64"
@@ -45,8 +58,12 @@ pub async fn count_agenda_batch_inner(
          JOIN blocks b ON b.id = ac.block_id
          WHERE ac.date IN (SELECT value FROM json_each(?1))
            AND b.deleted_at IS NULL
+           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN (
+                SELECT bp.block_id FROM block_properties bp
+                WHERE bp.key = 'space' AND bp.value_ref = ?2))
          GROUP BY ac.date"#,
-        dates_json
+        dates_json,
+        space_id,
     )
     .fetch_all(pool)
     .await?;
@@ -68,6 +85,11 @@ pub async fn count_agenda_batch_inner(
 /// Returns a nested map: `date -> source -> count`. Only includes entries
 /// whose owning block is not soft-deleted.
 ///
+/// `space_id` (FEAT-3p4) — when `Some`, restricts the count to blocks
+/// whose owning page carries `space = ?space_id`. `None` is the
+/// unscoped (pre-FEAT-3) behaviour preserved for callsites that have
+/// not migrated.
+///
 /// # Errors
 ///
 /// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
@@ -75,6 +97,7 @@ pub async fn count_agenda_batch_inner(
 pub async fn count_agenda_batch_by_source_inner(
     pool: &SqlitePool,
     dates: Vec<String>,
+    space_id: Option<String>,
 ) -> Result<HashMap<String, HashMap<String, usize>>, AppError> {
     if dates.is_empty() {
         return Ok(HashMap::new());
@@ -83,14 +106,24 @@ pub async fn count_agenda_batch_by_source_inner(
         validate_date_format(d)?;
     }
     let dates_json = serde_json::to_string(&dates)?;
+    // FEAT-3p4 — ?2 (space_id) drives the shared space-filter clause.
+    // The literal mirrors `crate::space_filter_clause!` — kept inline
+    // here because this is dynamic SQL (`sqlx::query_as`) which cannot
+    // reuse the macro form. Resolves the agenda-cached block to its
+    // owning page via `COALESCE(b.page_id, b.id)` and intersects
+    // against `block_properties(key = 'space').value_ref`.
     let sql = "SELECT ac.date, ac.source, COUNT(*) as cnt \
          FROM agenda_cache ac \
          JOIN blocks b ON b.id = ac.block_id \
          WHERE ac.date IN (SELECT value FROM json_each(?1)) \
            AND b.deleted_at IS NULL \
+           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
          GROUP BY ac.date, ac.source";
     let rows = sqlx::query_as::<_, (String, String, i64)>(sql)
         .bind(dates_json)
+        .bind(space_id.as_deref())
         .fetch_all(pool)
         .await?;
     let mut result: HashMap<String, HashMap<String, usize>> = HashMap::new();
@@ -137,6 +170,7 @@ pub async fn list_projected_agenda_inner(
     end_date: String,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<PageResponse<ProjectedAgendaEntry>, AppError> {
     let today = chrono::Local::now().date_naive();
     validate_date_format(&start_date)?;
@@ -202,6 +236,11 @@ pub async fn list_projected_agenda_inner(
         Option<String>,
         Option<String>,
     )> = sqlx::query_as(
+        // FEAT-3p4 — ?7 (space_id) drives the shared space-filter clause.
+        // Mirrors `crate::space_filter_clause!` — kept inline because this
+        // query uses dynamic-typed `query_as`. Resolves the cached block
+        // to its owning page via `COALESCE(b.page_id, b.id)` and
+        // intersects against `block_properties(key = 'space').value_ref`.
         "SELECT pac.block_id, pac.projected_date, pac.source,
                 b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at, b.is_conflict, b.conflict_type,
@@ -219,6 +258,9 @@ pub async fn list_projected_agenda_inner(
            )
            AND (?3 IS NULL OR (pac.projected_date > ?4
                OR (pac.projected_date = ?4 AND pac.block_id > ?5)))
+           AND (?7 IS NULL OR COALESCE(b.page_id, b.id) IN (
+                SELECT bp.block_id FROM block_properties bp
+                WHERE bp.key = 'space' AND bp.value_ref = ?7))
          ORDER BY pac.projected_date ASC, pac.block_id ASC
          LIMIT ?6",
     )
@@ -228,6 +270,7 @@ pub async fn list_projected_agenda_inner(
     .bind(cursor_date)
     .bind(cursor_id)
     .bind(fetch_limit)
+    .bind(space_id.as_deref())
     .fetch_all(pool)
     .await?;
 
@@ -243,6 +286,7 @@ pub async fn list_projected_agenda_inner(
             limit_i64,
             today,
             after.as_ref(),
+            space_id.as_deref(),
         )
         .await;
     }
@@ -327,6 +371,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     limit: i64,
     today: chrono::NaiveDate,
     after: Option<&Cursor>,
+    space_id: Option<&str>,
 ) -> Result<PageResponse<ProjectedAgendaEntry>, AppError> {
     // The compute below has no in-loop cap (with cursor pagination we need
     // every entry within the date range, regardless of page size). The
@@ -341,6 +386,12 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     // page has a `template` property are excluded so template scaffolding
     // never surfaces in agenda / Google Calendar results.  `b.page_id`
     // is the denormalised root-page column (migration 0027).
+    // FEAT-3p4 — ?1 (space_id) drives the shared space-filter clause.
+    // Mirrors `crate::space_filter_clause!` — kept inline because
+    // `sqlx::query_as!` requires a string literal directly. Resolves
+    // the repeating block to its owning page via
+    // `COALESCE(b.page_id, b.id)` and intersects against
+    // `block_properties(key = 'space').value_ref`.
     let rows = sqlx::query_as!(
         RepeatingBlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
@@ -364,7 +415,11 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
            AND NOT EXISTS (
                SELECT 1 FROM block_properties tp
                WHERE tp.block_id = b.page_id AND tp.key = 'template'
-           )"#,
+           )
+           AND (?1 IS NULL OR COALESCE(b.page_id, b.id) IN (
+                SELECT bp_sp.block_id FROM block_properties bp_sp
+                WHERE bp_sp.key = 'space' AND bp_sp.value_ref = ?1))"#,
+        space_id, // ?1
     )
     .fetch_all(pool)
     .await?;
@@ -571,8 +626,9 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
 pub async fn count_agenda_batch(
     read_pool: State<'_, ReadPool>,
     dates: Vec<String>,
+    space_id: Option<String>,
 ) -> Result<HashMap<String, usize>, AppError> {
-    count_agenda_batch_inner(&read_pool.0, dates)
+    count_agenda_batch_inner(&read_pool.0, dates, space_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -584,8 +640,9 @@ pub async fn count_agenda_batch(
 pub async fn count_agenda_batch_by_source(
     read_pool: State<'_, ReadPool>,
     dates: Vec<String>,
+    space_id: Option<String>,
 ) -> Result<HashMap<String, HashMap<String, usize>>, AppError> {
-    count_agenda_batch_by_source_inner(&read_pool.0, dates)
+    count_agenda_batch_by_source_inner(&read_pool.0, dates, space_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -604,23 +661,29 @@ pub async fn list_projected_agenda(
     end_date: String,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<PageResponse<ProjectedAgendaEntry>, AppError> {
-    list_projected_agenda_inner(&pool.0, start_date, end_date, cursor, limit)
+    list_projected_agenda_inner(&pool.0, start_date, end_date, cursor, limit, space_id)
         .await
         .map_err(sanitize_internal_error)
 }
 
 /// List undated tasks: blocks with todo_state but no due_date and no scheduled_date.
 /// Cursor-paginated.
+///
+/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to blocks
+/// whose owning page carries `space = ?space_id`. `None` is the unscoped
+/// (pre-FEAT-3) behaviour preserved for callsites that have not migrated.
 #[instrument(skip(pool), err)]
 pub async fn list_undated_tasks_inner(
     pool: &SqlitePool,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     use crate::pagination;
     let page_req = pagination::PageRequest::new(cursor, limit)?;
-    pagination::list_undated_tasks(pool, &page_req).await
+    pagination::list_undated_tasks(pool, &page_req, space_id.as_deref()).await
 }
 
 /// Tauri command: list undated tasks. Delegates to [`list_undated_tasks_inner`].
@@ -631,8 +694,9 @@ pub async fn list_undated_tasks(
     pool: State<'_, ReadPool>,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    list_undated_tasks_inner(&pool.0, cursor, limit)
+    list_undated_tasks_inner(&pool.0, cursor, limit, space_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -689,7 +753,7 @@ mod tests_m24 {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn count_agenda_batch_with_empty_input() {
         let (pool, _dir) = test_pool().await;
-        let result = count_agenda_batch_inner(&pool, vec![])
+        let result = count_agenda_batch_inner(&pool, vec![], None)
             .await
             .expect("empty input must succeed");
         assert!(
@@ -723,7 +787,7 @@ mod tests_m24 {
 
         // Query a subset: only the first two dates.
         let result =
-            count_agenda_batch_inner(&pool, vec!["2025-03-01".into(), "2025-03-02".into()])
+            count_agenda_batch_inner(&pool, vec!["2025-03-01".into(), "2025-03-02".into()], None)
                 .await
                 .expect("count_agenda_batch_inner must succeed on valid dates");
 
@@ -764,7 +828,7 @@ mod tests_m24 {
         // are simply absent from the returned map — they do NOT show up
         // with a count of 0.
         let result =
-            count_agenda_batch_inner(&pool, vec!["2025-05-01".into(), "2025-05-02".into()])
+            count_agenda_batch_inner(&pool, vec!["2025-05-01".into(), "2025-05-02".into()], None)
                 .await
                 .expect("unknown dates must not error");
 
@@ -784,9 +848,10 @@ mod tests_m24 {
         // Mixed query: one known date (with rows) + one unknown date.
         // Confirms the unknown date is silently omitted while the known
         // one still produces the correct count.
-        let mixed = count_agenda_batch_inner(&pool, vec!["2025-04-01".into(), "2025-05-01".into()])
-            .await
-            .expect("mixed known+unknown dates must succeed");
+        let mixed =
+            count_agenda_batch_inner(&pool, vec!["2025-04-01".into(), "2025-05-01".into()], None)
+                .await
+                .expect("mixed known+unknown dates must succeed");
         assert_eq!(
             mixed.get("2025-04-01"),
             Some(&1),

@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next'
 import { useGraphSimulation } from '@/hooks/useGraphSimulation'
 import { applyGraphFilters, type GraphFilter } from '@/lib/graph-filters'
 import { listTagsByPrefix } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { logger } from '../lib/logger'
 import { EmptyState } from './EmptyState'
@@ -60,6 +61,7 @@ export function clearGraphCache(): void {
 export function GraphView(): React.ReactElement {
   const { t } = useTranslation()
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const svgRef = useRef<SVGSVGElement>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -76,8 +78,13 @@ export function GraphView(): React.ReactElement {
     return tagFilter && tagFilter.type === 'tag' ? tagFilter.tagIds : []
   }, [filters])
 
-  // Stable-ish key to trigger refetch when the tag set changes.
-  const tagCacheKey = useMemo(() => getCacheKey(tagFilterIds), [tagFilterIds])
+  // Stable-ish key to trigger refetch when the tag set or active space
+  // changes — the cache is keyed by (spaceId, tagIds) so switching
+  // spaces doesn't show the wrong space's nodes from cache.
+  const tagCacheKey = useMemo(
+    () => `${currentSpaceId ?? '__null__'}|${getCacheKey(tagFilterIds)}`,
+    [currentSpaceId, tagFilterIds],
+  )
 
   // Fetch available tags on mount
   useEffect(() => {
@@ -105,7 +112,7 @@ export function GraphView(): React.ReactElement {
 
     async function run() {
       try {
-        const result = await fetchGraphData(tagFilterIds)
+        const result = await fetchGraphData(tagFilterIds, currentSpaceId)
         if (cancelled) return
 
         graphCacheMap.set(tagCacheKey, {
@@ -131,7 +138,7 @@ export function GraphView(): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [t, tagCacheKey, tagFilterIds])
+  }, [t, tagCacheKey, tagFilterIds, currentSpaceId])
 
   // Client-side filtering (status, priority, has-date, has-backlinks, exclude-templates).
   // Tag filter is pass-through here because tag_ids is not populated on nodes

@@ -38,10 +38,17 @@ use crate::pagination::{BlockRow, Cursor, PageRequest};
 /// convention used by `eval_unlinked_references` and
 /// `eval_backlink_query_grouped`. (L-95)
 ///
+/// `space_id` (FEAT-3p4) — when `Some`, the base-set query restricts
+/// source blocks to those whose owning page (`COALESCE(b.page_id, b.id)`)
+/// carries `space = ?space_id`. Applying the filter at the base-set
+/// step means `total_count` and `filtered_count` reflect the
+/// post-space-filter universe. `None` is the unscoped (pre-FEAT-3)
+/// behaviour.
+///
 /// ## Algorithm
 ///
 /// 1. Get base backlink set (source_ids linking to `block_id`,
-///    excluding self-references).
+///    excluding self-references; space-scoped when `space_id` is `Some`).
 /// 2. If filters provided, resolve each to a set, AND them all together,
 ///    then intersect with the base set.
 /// 3. Sort the result set.
@@ -54,6 +61,7 @@ pub async fn eval_backlink_query(
     filters: Option<Vec<BacklinkFilter>>,
     sort: Option<BacklinkSort>,
     page: &PageRequest,
+    space_id: Option<&str>,
 ) -> Result<BacklinkQueryResponse, AppError> {
     // 1. Get base backlink set
     //    `bl.source_id != ?1` excludes self-references so a block linking
@@ -61,13 +69,27 @@ pub async fn eval_backlink_query(
     //    backlink. The `?1` parameter is reused (no extra bind needed).
     //    Mirrors `eval_unlinked_references` / `eval_backlink_query_grouped`.
     //    (L-95)
+    //
+    //    FEAT-3p4 — the trailing `(?2 IS NULL OR COALESCE(...))` clause
+    //    mirrors `crate::space_filter_clause!`. Resolves the source block
+    //    to its owning page via `COALESCE(b.page_id, b.id)` and
+    //    intersects against `block_properties(key = 'space').value_ref`
+    //    when `space_id` is `Some`. Kept inline (not via the macro)
+    //    because this is dynamic SQL (`sqlx::query_scalar`) — the
+    //    macro form requires literal strings. The single `?2` is bound
+    //    twice so the `(? IS NULL OR …)` short-circuit works for the
+    //    same value.
     let base_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
         "SELECT bl.source_id FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
-           AND b.deleted_at IS NULL AND b.is_conflict = 0",
+           AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?2))",
     )
     .bind(block_id)
+    .bind(space_id)
     .fetch_all(pool)
     .await?
     .into_iter()
@@ -442,7 +464,7 @@ mod tests {
         // base-set query.
         insert_block_link(&pool, "BLK", "BLK").await;
 
-        let resp = eval_backlink_query(&pool, "BLK", None, None, &default_page())
+        let resp = eval_backlink_query(&pool, "BLK", None, None, &default_page(), None)
             .await
             .unwrap();
 
@@ -474,7 +496,7 @@ mod tests {
         insert_block_link(&pool, "BLK_A", "BLK_B").await;
         insert_block_link(&pool, "BLK_B", "BLK_B").await;
 
-        let resp = eval_backlink_query(&pool, "BLK_B", None, None, &default_page())
+        let resp = eval_backlink_query(&pool, "BLK_B", None, None, &default_page(), None)
             .await
             .unwrap();
 

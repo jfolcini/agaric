@@ -232,7 +232,13 @@ pub async fn remove_tag_inner(
 /// Builds a `TagExpr` from the provided tag_ids, prefixes, and mode.
 /// `mode` is `"and"` for intersection, anything else defaults to `"or"` (union).
 /// Returns an empty page when no tag IDs or prefixes are supplied.
+///
+/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
+/// blocks whose owning page carries `space = ?space_id`. `None` is the
+/// unscoped (pre-FEAT-3) behaviour preserved for callsites that have
+/// not migrated.
 #[instrument(skip(pool, tag_ids), err)]
+#[allow(clippy::too_many_arguments)]
 pub async fn query_by_tags_inner(
     pool: &SqlitePool,
     tag_ids: Vec<String>,
@@ -241,6 +247,7 @@ pub async fn query_by_tags_inner(
     include_inherited: Option<bool>,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let mut exprs = Vec::new();
     for tag_id in tag_ids {
@@ -265,7 +272,14 @@ pub async fn query_by_tags_inner(
     };
 
     let page = pagination::PageRequest::new(cursor, limit)?;
-    tag_query::eval_tag_query(pool, &expr, &page, include_inherited.unwrap_or(false)).await
+    tag_query::eval_tag_query(
+        pool,
+        &expr,
+        &page,
+        include_inherited.unwrap_or(false),
+        space_id.as_deref(),
+    )
+    .await
 }
 
 /// List all tags matching a name prefix (autocomplete / UI).
@@ -343,6 +357,7 @@ pub async fn remove_tag(
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn query_by_tags(
     pool: State<'_, ReadPool>,
     tag_ids: Vec<String>,
@@ -351,6 +366,7 @@ pub async fn query_by_tags(
     include_inherited: Option<bool>,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     query_by_tags_inner(
         &pool.0,
@@ -360,6 +376,7 @@ pub async fn query_by_tags(
         include_inherited,
         cursor,
         limit,
+        space_id,
     )
     .await
     .map_err(sanitize_internal_error)

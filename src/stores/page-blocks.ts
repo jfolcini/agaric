@@ -37,6 +37,7 @@ import type { BlockRow, PageResponse } from '../lib/tauri'
 import { createBlock, deleteBlock, editBlock, listBlocks, moveBlock } from '../lib/tauri'
 import { buildFlatTree, type FlatBlock, getDragDescendants } from '../lib/tree-utils'
 import { useBlockStore } from './blocks'
+import { useSpaceStore } from './space'
 import { useUndoStore } from './undo'
 
 export type { FlatBlock }
@@ -91,13 +92,16 @@ const MAX_SUBTREE_BLOCKS = 2000
 
 async function loadSubtree(
   parentId: string | undefined,
+  spaceId: string,
   maxDepth = 10,
   currentDepth = 0,
   loaded: { count: number } = { count: 0 },
 ): Promise<BlockRow[]> {
   if (currentDepth >= maxDepth) return []
   if (loaded.count >= MAX_SUBTREE_BLOCKS) return []
-  const resp: PageResponse<BlockRow> = await listBlocks({ parentId, limit: 500 })
+  // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. Subtrees never
+  // cross spaces, so the same id is threaded through the recursion.
+  const resp: PageResponse<BlockRow> = await listBlocks({ parentId, limit: 500, spaceId })
   const blocks = resp.items
   if (blocks.length === 0) return blocks
 
@@ -105,7 +109,7 @@ async function loadSubtree(
   if (loaded.count >= MAX_SUBTREE_BLOCKS) return blocks
 
   const childArrays = await Promise.all(
-    blocks.map((b) => loadSubtree(b.id, maxDepth, currentDepth + 1, loaded)),
+    blocks.map((b) => loadSubtree(b.id, spaceId, maxDepth, currentDepth + 1, loaded)),
   )
 
   return [...blocks, ...childArrays.flat()]
@@ -165,7 +169,13 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       set({ loading: true })
       try {
         const start = performance.now()
-        const allBlocks = await loadSubtree(rootParentId ?? undefined)
+        // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. Subtrees
+        // belong to a single space; pull `currentSpaceId` from the
+        // singleton store. The `?? ''` fallback is intentional
+        // pre-bootstrap behaviour: empty string forces a no-match SQL
+        // filter rather than a runtime null deref.
+        const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
+        const allBlocks = await loadSubtree(rootParentId ?? undefined, spaceId)
         // Defensive: discard if rootParentId changed (shouldn't happen with per-page stores)
         if (get().rootParentId !== rootParentId) return
         let newBlocks = buildFlatTree(allBlocks, rootParentId)

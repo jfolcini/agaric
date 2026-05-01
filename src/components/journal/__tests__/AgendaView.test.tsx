@@ -360,9 +360,12 @@ describe('AgendaView', () => {
 
     expect(mockedExecuteAgendaFilters).toHaveBeenCalledTimes(1)
     // UX-196: agenda now opens with a TODO+DOING status filter by default.
-    expect(mockedExecuteAgendaFilters).toHaveBeenCalledWith([
-      { dimension: 'status', values: ['TODO', 'DOING'] },
-    ])
+    // FEAT-3 Phase 4 — `executeAgendaFilters` now takes `spaceId` as
+    // its second positional arg (`null` here because no space is seeded).
+    expect(mockedExecuteAgendaFilters).toHaveBeenCalledWith(
+      [{ dimension: 'status', values: ['TODO', 'DOING'] }],
+      null,
+    )
 
     // Simulate filter change from AgendaFilterBuilder
     mockedExecuteAgendaFilters.mockResolvedValueOnce({
@@ -378,9 +381,12 @@ describe('AgendaView', () => {
     })
 
     expect(mockedExecuteAgendaFilters).toHaveBeenCalledTimes(2)
-    expect(mockedExecuteAgendaFilters).toHaveBeenLastCalledWith([
-      { dimension: 'status', values: ['TODO'] },
-    ])
+    // FEAT-3 Phase 4 — `executeAgendaFilters` now takes `spaceId` as
+    // its second positional arg (`null` here, no seeded space).
+    expect(mockedExecuteAgendaFilters).toHaveBeenLastCalledWith(
+      [{ dimension: 'status', values: ['TODO'] }],
+      null,
+    )
   })
 
   // 8b. AgendaFilterBuilder shows updated filter count
@@ -481,6 +487,9 @@ describe('AgendaView', () => {
         key: 'todo_state',
         cursor: 'cursor_page2',
         limit: 200,
+        // FEAT-3 Phase 4 — `currentSpaceId` is null in this fixture; the
+        // wrapper forwards it as the optional `spaceId`.
+        spaceId: null,
       })
     })
 
@@ -531,12 +540,14 @@ describe('AgendaView', () => {
     expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-has-active-filters', 'true')
 
     // The backend query should be called with the active-states filter,
-    // not an empty array (which would include DONE).
-    expect(mockedExecuteAgendaFilters).toHaveBeenCalledWith([
-      { dimension: 'status', values: ['TODO', 'DOING'] },
-    ])
+    // not an empty array (which would include DONE). FEAT-3 Phase 4
+    // adds `spaceId` (null here, no seeded space).
+    expect(mockedExecuteAgendaFilters).toHaveBeenCalledWith(
+      [{ dimension: 'status', values: ['TODO', 'DOING'] }],
+      null,
+    )
     // Explicitly: the default must NOT be an empty filter array.
-    expect(mockedExecuteAgendaFilters).not.toHaveBeenCalledWith([])
+    expect(mockedExecuteAgendaFilters).not.toHaveBeenCalledWith([], null)
   })
 
   // 13. hasMore passed to AgendaResults

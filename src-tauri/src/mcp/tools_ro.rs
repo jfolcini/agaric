@@ -141,6 +141,12 @@ struct SearchArgs {
     parent_id: Option<String>,
     #[serde(default)]
     tag_ids: Option<Vec<String>>,
+    /// FEAT-3p4 — the active space's ULID. Required: every search runs
+    /// inside a single space and the FTS5 hits are restricted to blocks
+    /// whose owning page carries `space = ?space_id`. Agents that do not
+    /// yet track a "current space" must pick one explicitly (typically
+    /// the first space surfaced via `list_spaces`).
+    space_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -157,6 +163,12 @@ struct ListBacklinksArgs {
     cursor: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
+    /// FEAT-3p4 — when supplied, restrict backlinks to source blocks
+    /// whose owning page lives in this space. Optional: omitting the
+    /// field returns the unscoped (cross-space) view kept for callers
+    /// that have not migrated.
+    #[serde(default)]
+    space_id: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -179,6 +191,12 @@ struct GetAgendaArgs {
     cursor: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
+    /// FEAT-3p4 — when supplied, restrict the agenda to blocks whose
+    /// owning page lives in this space. Optional: omitting the field
+    /// returns the unscoped (cross-space) view kept for callers that
+    /// have not migrated.
+    #[serde(default)]
+    space_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -392,7 +410,7 @@ fn tool_desc_search() -> ToolDescription {
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
-            "required": ["query"],
+            "required": ["query", "space_id"],
             "properties": {
                 "query": { "type": "string", "description": "FTS5 MATCH query string." },
                 "cursor": { "type": "string" },
@@ -407,6 +425,10 @@ fn tool_desc_search() -> ToolDescription {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Optional list of tag ULIDs to intersect the result set with.",
+                },
+                "space_id": {
+                    "type": "string",
+                    "description": "FEAT-3p4 — ULID of the space the search runs inside. Required: every FTS5 hit is restricted to blocks whose owning page carries `space = ?space_id`.",
                 },
             },
         }),
@@ -446,6 +468,10 @@ fn tool_desc_list_backlinks() -> ToolDescription {
                     "minimum": 1,
                     "maximum": LIST_RESULT_CAP,
                     "description": format!("Max grouped results per response (capped at {LIST_RESULT_CAP})."),
+                },
+                "space_id": {
+                    "type": "string",
+                    "description": "FEAT-3p4 — optional ULID of the space to scope backlinks to. Omit for the unscoped (cross-space) view."
                 },
             },
         }),
@@ -505,6 +531,10 @@ fn tool_desc_get_agenda() -> ToolDescription {
                     "minimum": 1,
                     "maximum": AGENDA_RESULT_CAP,
                     "description": format!("Max entries per response (capped at {AGENDA_RESULT_CAP})."),
+                },
+                "space_id": {
+                    "type": "string",
+                    "description": "FEAT-3p4 — optional ULID of the space to scope the agenda to. Omit for the unscoped (cross-space) view."
                 },
             },
         }),
@@ -603,7 +633,9 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
         limit,
         parent_id,
         tag_ids,
-        None, // FEAT-3 Phase 2: MCP agents see every space — unscoped.
+        // FEAT-3p4 — `search_blocks_inner` requires a space ULID; the
+        // agent threads its active space (see `SearchArgs::space_id`).
+        args.space_id,
     )
     .await?;
     // Truncate each result's content to SEARCH_SNIPPET_CAP chars. We
@@ -634,7 +666,16 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
     let limit = validate_limit(TOOL_LIST_BACKLINKS, args.limit, LIST_RESULT_CAP)?;
     // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
-    let resp = list_backlinks_grouped_inner(pool, block_id, None, None, args.cursor, limit).await?;
+    let resp = list_backlinks_grouped_inner(
+        pool,
+        block_id,
+        None,
+        None,
+        args.cursor,
+        limit,
+        args.space_id,
+    )
+    .await?;
     to_tool_result(&resp)
 }
 
@@ -656,9 +697,15 @@ async fn handle_list_property_defs(pool: &SqlitePool, args: Value) -> Result<Val
 async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetAgendaArgs = parse_args(TOOL_GET_AGENDA, args)?;
     let limit = validate_limit(TOOL_GET_AGENDA, args.limit, AGENDA_RESULT_CAP)?;
-    let resp =
-        list_projected_agenda_inner(pool, args.start_date, args.end_date, args.cursor, limit)
-            .await?;
+    let resp = list_projected_agenda_inner(
+        pool,
+        args.start_date,
+        args.end_date,
+        args.cursor,
+        limit,
+        args.space_id,
+    )
+    .await?;
     to_tool_result(&resp)
 }
 

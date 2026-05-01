@@ -25,6 +25,7 @@ import { useTranslation } from 'react-i18next'
 import { useItemCount } from '../hooks/useItemCount'
 import { getConflicts, listBlocks } from '../lib/tauri'
 import { useNavigationStore, type View } from '../stores/navigation'
+import { useSpaceStore } from '../stores/space'
 import { type PageEntry, selectPageStack, useTabsStore } from '../stores/tabs'
 import { FeatureErrorBoundary } from './FeatureErrorBoundary'
 import { JournalPage } from './JournalPage'
@@ -88,8 +89,16 @@ export function useConflictCount(): number {
 /** Returns the number of trashed items. Polls every 30 s and on focus. */
 export function useTrashCount(): number {
   const currentView = useNavigationStore((s) => s.currentView)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view changes (user may have restored items)
-  const queryFn = useCallback(() => listBlocks({ showDeleted: true, limit: 100 }), [currentView])
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view or space changes (user may have restored items / switched spaces)
+  const queryFn = useCallback(
+    () =>
+      // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`; trash is
+      // scoped to the active space. `?? ''` is the pre-bootstrap
+      // no-match fallback (see TrashView for the rationale).
+      listBlocks({ showDeleted: true, limit: 100, spaceId: currentSpaceId ?? '' }),
+    [currentView, currentSpaceId],
+  )
   return useItemCount(queryFn, 30_000)
 }
 

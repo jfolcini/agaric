@@ -10,6 +10,7 @@ import { useBlockPropertyEvents } from '../../hooks/useBlockPropertyEvents'
 import { useWeekStart } from '../../hooks/useWeekStart'
 import { formatDate, getWeekOptions } from '../../lib/date-utils'
 import { countAgendaBatchBySource } from '../../lib/tauri'
+import { useSpaceStore } from '../../stores/space'
 
 /** Compute ~42 date strings (6 weeks) for the calendar view centred on the given month. */
 function getCalendarDateRange(month: Date): string[] {
@@ -114,6 +115,7 @@ export function JournalCalendarDropdown({
   const { t } = useTranslation()
   const { weekStartsOn } = useWeekStart()
   const { invalidationKey } = useBlockPropertyEvents()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const calRef = useRef<HTMLDivElement>(null)
   const [flipAbove, setFlipAbove] = useState(false)
   const [shiftLeft, setShiftLeft] = useState(0)
@@ -125,7 +127,7 @@ export function JournalCalendarDropdown({
   useEffect(() => {
     let cancelled = false
     const dates = getCalendarDateRange(currentDate)
-    countAgendaBatchBySource({ dates })
+    countAgendaBatchBySource({ dates, spaceId: currentSpaceId })
       .then((data) => {
         if (!cancelled) setAgendaBySource(data)
       })
@@ -140,7 +142,7 @@ export function JournalCalendarDropdown({
     return () => {
       cancelled = true
     }
-  }, [monthKey, invalidationKey])
+  }, [monthKey, invalidationKey, currentSpaceId])
 
   const { datesWithDue, datesWithScheduled, datesWithProperty } = useMemo(
     () => computeSourceModifiers(agendaBySource),

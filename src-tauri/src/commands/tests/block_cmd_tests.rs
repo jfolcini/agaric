@@ -542,6 +542,7 @@ async fn create_block_with_page_and_space_id_emits_two_ops_atomically() {
     // The page must surface from `list_blocks(blockType='page', spaceId=Personal)` —
     // the very pagination path PageBrowser uses. Without the space property
     // it would silently disappear (BUG-1 root cause).
+    assign_all_to_test_space(&pool).await;
     let page = list_blocks_inner(
         &pool,
         None,
@@ -554,7 +555,7 @@ async fn create_block_with_page_and_space_id_emits_two_ops_atomically() {
         None, // agenda_source
         None, // cursor
         None, // limit
-        Some(crate::spaces::bootstrap::SPACE_PERSONAL_ULID.into()),
+        crate::spaces::bootstrap::SPACE_PERSONAL_ULID.to_string(),
     )
     .await
     .unwrap();
@@ -1317,9 +1318,20 @@ async fn list_blocks_no_filters_returns_top_level() {
     insert_block(&pool, "TOP2", "content", "b", None, Some(2)).await;
     insert_block(&pool, "CHILD1", "content", "c", Some("TOP1"), Some(1)).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
-        &pool, None, None, None, None, None, None, None, None, None, None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1342,6 +1354,7 @@ async fn list_blocks_with_block_type_filter() {
     insert_block(&pool, "TAG1", "tag", "urgent", None, None).await;
     insert_block(&pool, "CONT1", "content", "hello", None, Some(2)).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -1354,7 +1367,7 @@ async fn list_blocks_with_block_type_filter() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1372,6 +1385,7 @@ async fn list_blocks_with_parent_id_filter() {
     insert_block(&pool, "CH2", "content", "child 2", Some("PAR"), Some(2)).await;
     insert_block(&pool, "OTHER", "content", "other", None, Some(2)).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         Some("PAR".into()),
@@ -1384,7 +1398,7 @@ async fn list_blocks_with_parent_id_filter() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1409,6 +1423,7 @@ async fn list_blocks_with_tag_id_filter() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -1421,7 +1436,7 @@ async fn list_blocks_with_tag_id_filter() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1450,6 +1465,7 @@ async fn list_blocks_show_deleted_returns_trash() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -1462,7 +1478,7 @@ async fn list_blocks_show_deleted_returns_trash() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1483,6 +1499,7 @@ async fn list_blocks_rejects_conflicting_filters() {
     let (pool, _dir) = test_pool().await;
 
     // parent_id + block_type
+    assign_all_to_test_space(&pool).await;
     let result = list_blocks_inner(
         &pool,
         Some("P1".into()),
@@ -1495,7 +1512,7 @@ async fn list_blocks_rejects_conflicting_filters() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -1516,7 +1533,7 @@ async fn list_blocks_rejects_conflicting_filters() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -1537,7 +1554,7 @@ async fn list_blocks_rejects_conflicting_filters() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -1558,7 +1575,7 @@ async fn list_blocks_rejects_conflicting_filters() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -1567,87 +1584,20 @@ async fn list_blocks_rejects_conflicting_filters() {
     );
 }
 
-// FEAT-3 Phase 2: agenda and tag dispatch paths do not yet honour
-// space_id (deferred to Phase 4). The combination must be rejected
-// explicitly so callers don't silently get cross-space results.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_blocks_rejects_space_id_with_agenda_date() {
-    let (pool, _dir) = test_pool().await;
-
-    let result = list_blocks_inner(
-        &pool,
-        None,
-        None,
-        None,
-        None,
-        Some("2025-01-15".into()),
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some("SPACE01".into()),
-    )
-    .await;
-    assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("space_id is not supported") && msg.contains("FEAT-3 Phase 4")),
-        "space_id + agenda_date should be rejected: {result:?}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_blocks_rejects_space_id_with_tag_id() {
-    let (pool, _dir) = test_pool().await;
-
-    let result = list_blocks_inner(
-        &pool,
-        None,
-        None,
-        Some("TAG01".into()),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some("SPACE01".into()),
-    )
-    .await;
-    assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("space_id is not supported") && msg.contains("FEAT-3 Phase 4")),
-        "space_id + tag_id should be rejected: {result:?}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_blocks_rejects_space_id_with_agenda_date_range() {
-    let (pool, _dir) = test_pool().await;
-
-    let result = list_blocks_inner(
-        &pool,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some("2025-01-01".into()),
-        Some("2025-01-31".into()),
-        None,
-        None,
-        None,
-        Some("SPACE01".into()),
-    )
-    .await;
-    assert!(
-        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("space_id is not supported") && msg.contains("FEAT-3 Phase 4")),
-        "space_id + agenda_date_start/end should be rejected: {result:?}"
-    );
-}
+// FEAT-3 Phase 4 — the legacy `list_blocks_rejects_space_id_with_*`
+// tests (agenda_date / agenda_date_range / tag_id) have been removed.
+// Phase 4 dropped the rejection guard: agenda and tag filters now
+// thread `space_id` through their pagination helpers
+// (`pagination::list_agenda`, `list_agenda_range`, `list_by_tag`), so
+// the combination is supported and returns the correct space-scoped
+// result set. Coverage of the success path lives alongside the other
+// space-scoped tests in `agenda_cmd_tests.rs::*_feat3p4` and
+// `block_cmd_tests.rs::list_blocks_single_filter_is_accepted`.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_blocks_single_filter_is_accepted() {
     let (pool, _dir) = test_pool().await;
+    assign_all_to_test_space(&pool).await;
 
     // Each single filter should succeed (may return empty results — that's fine).
     assert!(
@@ -1663,7 +1613,7 @@ async fn list_blocks_single_filter_is_accepted() {
             None,
             None,
             None,
-            None, // FEAT-3 Phase 2: space_id unscoped
+            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .is_ok(),
@@ -1682,7 +1632,7 @@ async fn list_blocks_single_filter_is_accepted() {
             None,
             None,
             None,
-            None, // FEAT-3 Phase 2: space_id unscoped
+            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .is_ok(),
@@ -1701,7 +1651,7 @@ async fn list_blocks_single_filter_is_accepted() {
             None,
             None,
             None,
-            None, // FEAT-3 Phase 2: space_id unscoped
+            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .is_ok(),
@@ -1721,7 +1671,7 @@ async fn list_blocks_single_filter_is_accepted() {
             None,
             None,
             None,
-            None, // FEAT-3 Phase 2: space_id unscoped
+            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .is_ok(),
@@ -1733,9 +1683,20 @@ async fn list_blocks_single_filter_is_accepted() {
 async fn list_blocks_empty_db_returns_empty_page() {
     let (pool, _dir) = test_pool().await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
-        &pool, None, None, None, None, None, None, None, None, None, None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();

@@ -4,6 +4,7 @@ import { parseDate } from '@/lib/parse-date'
 import { type PropertyFilter, parseQueryExpression } from '@/lib/query-utils'
 import type { BlockRow } from '@/lib/tauri'
 import { batchResolve, listBlocks, queryByProperty, queryByTags } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 /** Number of items per paginated request. */
 const PAGE_SIZE = 50
@@ -51,6 +52,7 @@ export class QueryValidationError extends Error {
 export async function fetchTagQuery(
   params: Record<string, string>,
   pageCursor?: string,
+  spaceId?: string | null,
 ): Promise<QueryFetchResult> {
   const tagExpr = params['expr'] ?? ''
   const resp = await queryByTags({
@@ -59,6 +61,7 @@ export async function fetchTagQuery(
     mode: 'or',
     cursor: pageCursor,
     limit: PAGE_SIZE,
+    spaceId: spaceId ?? null,
   })
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
 }
@@ -67,6 +70,7 @@ export async function fetchTagQuery(
 export async function fetchPropertyQuery(
   params: Record<string, string>,
   pageCursor?: string,
+  spaceId?: string | null,
 ): Promise<QueryFetchResult> {
   if (!params['key']) {
     throw new QueryValidationError('Property query requires key:NAME parameter')
@@ -77,6 +81,7 @@ export async function fetchPropertyQuery(
     ...(params['date'] != null && { valueDate: params['date'] }),
     cursor: pageCursor,
     limit: PAGE_SIZE,
+    spaceId: spaceId ?? null,
   })
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
 }
@@ -85,14 +90,19 @@ export async function fetchPropertyQuery(
 export async function fetchBacklinksQuery(
   params: Record<string, string>,
   pageCursor?: string,
+  spaceId?: string | null,
 ): Promise<QueryFetchResult> {
   if (!params['target']) {
     throw new QueryValidationError('Backlinks query requires target:ULID parameter')
   }
+  // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
+  // fallback is intentional pre-bootstrap behaviour: empty string
+  // forces a no-match SQL filter rather than a runtime null deref.
   const resp = await listBlocks({
     parentId: params['target'],
     cursor: pageCursor,
     limit: PAGE_SIZE,
+    spaceId: spaceId ?? '',
   })
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
 }
@@ -101,6 +111,7 @@ export async function fetchBacklinksQuery(
 export async function fetchFilteredQuery(
   propertyFilters: PropertyFilter[],
   tagFilters: string[],
+  spaceId?: string | null,
 ): Promise<QueryFetchResult> {
   const queryPromises: Promise<BlockRow[]>[] = []
 
@@ -113,6 +124,7 @@ export async function fetchFilteredQuery(
         ...(resolvedDate ? { valueDate: resolvedDate } : { valueText: pf.value }),
         operator: op,
         limit: FILTERED_SUBQUERY_LIMIT,
+        spaceId: spaceId ?? null,
       }).then((resp) => resp.items),
     )
   }
@@ -124,6 +136,7 @@ export async function fetchFilteredQuery(
         prefixes: [tf],
         mode: 'or',
         limit: FILTERED_SUBQUERY_LIMIT,
+        spaceId: spaceId ?? null,
       }).then((resp) => resp.items),
     )
   }
@@ -171,16 +184,17 @@ type ParsedQuery = ReturnType<typeof parseQueryExpression>
 export async function dispatchQuery(
   parsed: ParsedQuery,
   pageCursor?: string,
+  spaceId?: string | null,
 ): Promise<QueryFetchResult> {
   switch (parsed.type) {
     case 'tag':
-      return await fetchTagQuery(parsed.params, pageCursor)
+      return await fetchTagQuery(parsed.params, pageCursor, spaceId)
     case 'property':
-      return await fetchPropertyQuery(parsed.params, pageCursor)
+      return await fetchPropertyQuery(parsed.params, pageCursor, spaceId)
     case 'filtered':
-      return await fetchFilteredQuery(parsed.propertyFilters, parsed.tagFilters)
+      return await fetchFilteredQuery(parsed.propertyFilters, parsed.tagFilters, spaceId)
     case 'backlinks':
-      return await fetchBacklinksQuery(parsed.params, pageCursor)
+      return await fetchBacklinksQuery(parsed.params, pageCursor, spaceId)
     default:
       throw new QueryValidationError(`Unknown query type: ${parsed.type}`)
   }
@@ -278,6 +292,7 @@ function handleFetchError(
 
 export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryExecutionResult {
   const { expression } = options
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [results, setResults] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -302,7 +317,7 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
           return
         }
         const parsed = parseQueryExpression(expression)
-        const result = await dispatchQuery(parsed, pageCursor)
+        const result = await dispatchQuery(parsed, pageCursor, currentSpaceId)
         applyQueryResult(result, isLoadMore, { setResults, setCursor, setHasMore })
         const titles = await resolvePageTitles(result.items)
         mergePageTitles(titles, isLoadMore, setPageTitles)
@@ -313,7 +328,7 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
         endFetch(isLoadMore, { setLoading, setLoadingMore })
       }
     },
-    [expression],
+    [expression, currentSpaceId],
   )
 
   useEffect(() => {

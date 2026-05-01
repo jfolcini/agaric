@@ -36,6 +36,7 @@ import { setPriorityLevels } from '../lib/priority-levels'
 import type { BlockRow, PropertyDefinition, PropertyRow } from '../lib/tauri'
 import { listBlocks, setProperty, updatePropertyDefOptions } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
+import { useSpaceStore } from '../stores/space'
 import { EmptyState } from './EmptyState'
 
 /**
@@ -102,6 +103,7 @@ export function PropertyRowEditor({
   const { t } = useTranslation()
   const valueType = def?.value_type ?? 'text'
   const resolveTitle = useResolveStore((s) => s.resolveTitle)
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
 
   const currentValue = readCurrentValue(prop)
 
@@ -235,14 +237,17 @@ export function PropertyRowEditor({
   const handleOpenRefPicker = useCallback(() => {
     setRefSearch('')
     setRefPickerOpen(true)
-    listBlocks({ blockType: 'page', limit: 500 })
+    // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
+    // fallback is intentional pre-bootstrap behaviour: empty string
+    // forces a no-match SQL filter rather than a runtime null deref.
+    listBlocks({ blockType: 'page', limit: 500, spaceId: currentSpaceId ?? '' })
       .then((res) => setRefPages(res.items))
       .catch((err: unknown) => {
         logger.error('PropertyRowEditor', 'Failed to load pages for ref picker', undefined, err)
         toast.error(t('pageProperty.loadPagesFailed'))
         setRefPages([])
       })
-  }, [t])
+  }, [t, currentSpaceId])
 
   const filteredRefPages = useMemo(() => {
     if (!refSearch) return refPages

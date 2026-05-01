@@ -4085,8 +4085,10 @@ describe('SortableBlock error paths', () => {
       expect(screen.getByTestId('ref-picker')).toBeInTheDocument()
     })
 
-    // listBlocks was called and rejected — refPages falls back to []
-    expect(mockListBlocks).toHaveBeenCalledWith({ blockType: 'page' })
+    // listBlocks was called and rejected — refPages falls back to [].
+    // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`; `''` is the
+    // pre-bootstrap fallback when no space is seeded in the test.
+    expect(mockListBlocks).toHaveBeenCalledWith({ blockType: 'page', spaceId: '' })
 
     // Ref picker shows "No pages found" because refPages is empty
     expect(screen.getByTestId('ref-no-results')).toBeInTheDocument()

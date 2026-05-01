@@ -267,10 +267,10 @@ describe('purgeBlock', () => {
 describe('listBlocks', () => {
   const emptyPage = { items: [], next_cursor: null, has_more: false }
 
-  it('invokes list_blocks with all nulls when no params given', async () => {
+  it('invokes list_blocks with all nulls + the required spaceId', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
-    const result = await listBlocks()
+    const result = await listBlocks({ spaceId: 'TEST_SPACE_01' })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
@@ -281,7 +281,7 @@ describe('listBlocks', () => {
       agenda: null,
       cursor: null,
       limit: null,
-      spaceId: null,
+      spaceId: 'TEST_SPACE_01',
     })
     expect(result).toEqual(emptyPage)
   })
@@ -312,6 +312,7 @@ describe('listBlocks', () => {
       agendaDate: '2025-01-15',
       cursor: 'cursor123',
       limit: 25,
+      spaceId: 'TEST_SPACE_01',
     })
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
@@ -326,7 +327,7 @@ describe('listBlocks', () => {
       },
       cursor: 'cursor123',
       limit: 25,
-      spaceId: null,
+      spaceId: 'TEST_SPACE_01',
     })
     expect(result).toEqual(pageResp)
   })
@@ -334,7 +335,7 @@ describe('listBlocks', () => {
   it('defaults missing optional params to null (not undefined)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
-    await listBlocks({ blockType: 'page' })
+    await listBlocks({ blockType: 'page', spaceId: 'TEST_SPACE_01' })
 
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
     // Tauri 2 requires null for Option<T>, not undefined
@@ -345,9 +346,17 @@ describe('listBlocks', () => {
     expect(args['agenda']).toBeNull()
     expect(args['cursor']).toBeNull()
     expect(args['limit']).toBeNull()
-    expect(args['spaceId']).toBeNull()
+    // FEAT-3 Phase 4 — `spaceId` is required and forwarded as-is.
+    expect(args['spaceId']).toBe('TEST_SPACE_01')
     // blockType should be the value we passed
     expect(args['blockType']).toBe('page')
+  })
+
+  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    await listBlocks({ spaceId: 'SPACE_42' })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['spaceId']).toBe('SPACE_42')
   })
 })
 
@@ -365,6 +374,7 @@ describe('listUndatedTasks', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('list_undated_tasks', {
       cursor: 'abc',
       limit: 10,
+      spaceId: null,
     })
     expect(result).toEqual(emptyPage)
   })
@@ -375,6 +385,14 @@ describe('listUndatedTasks', () => {
     const callArgs = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
     expect(callArgs['cursor']).toBeNull()
     expect(callArgs['limit']).toBeNull()
+    expect(callArgs['spaceId']).toBeNull()
+  })
+
+  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    await listUndatedTasks({ spaceId: 'SPACE_42' })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['spaceId']).toBe('SPACE_42')
   })
 
   it('propagates errors from invoke', async () => {
@@ -496,7 +514,7 @@ describe('searchBlocks', () => {
   it('invokes search_blocks with all nulls when no optional params given', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
-    const result = await searchBlocks({ query: 'hello' })
+    const result = await searchBlocks({ query: 'hello', spaceId: 'TEST_SPACE_01' })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
@@ -505,7 +523,7 @@ describe('searchBlocks', () => {
       limit: null,
       parentId: null,
       tagIds: null,
-      spaceId: null,
+      spaceId: 'TEST_SPACE_01',
     })
     expect(result).toEqual(emptyPage)
   })
@@ -532,6 +550,7 @@ describe('searchBlocks', () => {
       query: 'found',
       cursor: 'cursor123',
       limit: 25,
+      spaceId: 'TEST_SPACE_01',
     })
 
     expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
@@ -540,24 +559,16 @@ describe('searchBlocks', () => {
       limit: 25,
       parentId: null,
       tagIds: null,
-      spaceId: null,
+      spaceId: 'TEST_SPACE_01',
     })
     expect(result).toEqual(pageResp)
   })
 
-  it('defaults query to empty string when no params given', async () => {
+  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
-
-    await searchBlocks()
-
-    expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
-      query: '',
-      cursor: null,
-      limit: null,
-      parentId: null,
-      tagIds: null,
-      spaceId: null,
-    })
+    await searchBlocks({ query: 'q', spaceId: 'SPACE_42' })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['spaceId']).toBe('SPACE_42')
   })
 })
 
@@ -585,6 +596,7 @@ describe('queryByTags', () => {
       includeInherited: null,
       cursor: null,
       limit: null,
+      spaceId: null,
     })
     expect(result).toEqual(emptyPage)
   })
@@ -622,8 +634,16 @@ describe('queryByTags', () => {
       includeInherited: null,
       cursor: 'cursor123',
       limit: 25,
+      spaceId: null,
     })
     expect(result).toEqual(pageResp)
+  })
+
+  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    await queryByTags({ tagIds: [], prefixes: [], mode: 'and', spaceId: 'SPACE_42' })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['spaceId']).toBe('SPACE_42')
   })
 
   it('propagates errors from invoke', async () => {
@@ -741,11 +761,12 @@ describe('getBacklinks', () => {
       blockId: 'TARGET',
       cursor: 'cur1',
       limit: 10,
+      spaceId: null,
     })
     expect(result).toEqual(pageResp)
   })
 
-  it('defaults optional cursor and limit to null', async () => {
+  it('defaults optional cursor, limit, and spaceId to null', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
     await getBacklinks({ blockId: 'TARGET' })
@@ -754,7 +775,15 @@ describe('getBacklinks', () => {
       blockId: 'TARGET',
       cursor: null,
       limit: null,
+      spaceId: null,
     })
+  })
+
+  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    await getBacklinks({ blockId: 'TARGET', spaceId: 'SPACE_42' })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['spaceId']).toBe('SPACE_42')
   })
 })
 
@@ -1112,11 +1141,12 @@ describe('queryByProperty', () => {
       operator: null,
       cursor: 'cur1',
       limit: 10,
+      spaceId: null,
     })
     expect(result).toEqual(pageResp)
   })
 
-  it('defaults optional valueText, cursor and limit to null', async () => {
+  it('defaults optional valueText, cursor, limit, and spaceId to null', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
     await queryByProperty({ key: 'status' })
@@ -1128,7 +1158,15 @@ describe('queryByProperty', () => {
       operator: null,
       cursor: null,
       limit: null,
+      spaceId: null,
     })
+  })
+
+  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    await queryByProperty({ key: 'status', spaceId: 'SPACE_42' })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['spaceId']).toBe('SPACE_42')
   })
 })
 
@@ -1439,6 +1477,7 @@ describe('queryBacklinksFiltered', () => {
       sort: null,
       cursor: null,
       limit: null,
+      spaceId: null,
     })
   })
 
@@ -1457,7 +1496,15 @@ describe('queryBacklinksFiltered', () => {
       sort: null,
       cursor: null,
       limit: null,
+      spaceId: null,
     })
+  })
+
+  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyResponse)
+    await queryBacklinksFiltered({ blockId: 'TARGET', spaceId: 'SPACE_42' })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['spaceId']).toBe('SPACE_42')
   })
 })
 
@@ -1584,8 +1631,16 @@ describe('countAgendaBatch', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('count_agenda_batch', {
       dates: ['2025-01-15', '2025-01-16'],
+      spaceId: null,
     })
     expect(result).toEqual(expected)
+  })
+
+  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+    mockedInvoke.mockResolvedValueOnce({})
+    await countAgendaBatch({ dates: ['2025-01-15'], spaceId: 'SPACE_42' })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['spaceId']).toBe('SPACE_42')
   })
 })
 
@@ -1606,8 +1661,16 @@ describe('countAgendaBatchBySource', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('count_agenda_batch_by_source', {
       dates: ['2025-01-15', '2025-01-16'],
+      spaceId: null,
     })
     expect(result).toEqual(expected)
+  })
+
+  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+    mockedInvoke.mockResolvedValueOnce({})
+    await countAgendaBatchBySource({ dates: ['2025-01-15'], spaceId: 'SPACE_42' })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['spaceId']).toBe('SPACE_42')
   })
 })
 
@@ -1720,6 +1783,7 @@ describe('listBacklinksGrouped', () => {
       sort: null,
       cursor: null,
       limit: null,
+      spaceId: null,
     })
     expect(result).toEqual(emptyResponse)
   })
@@ -1737,7 +1801,15 @@ describe('listBacklinksGrouped', () => {
       sort,
       cursor: 'cur1',
       limit: 10,
+      spaceId: null,
     })
+  })
+
+  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyResponse)
+    await listBacklinksGrouped({ blockId: 'PAGE1', spaceId: 'SPACE_42' })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['spaceId']).toBe('SPACE_42')
   })
 })
 
@@ -1767,6 +1839,7 @@ describe('listUnlinkedReferences', () => {
       sort: null,
       cursor: null,
       limit: null,
+      spaceId: null,
     })
     expect(result).toEqual(emptyResponse)
   })
@@ -1782,7 +1855,15 @@ describe('listUnlinkedReferences', () => {
       sort: null,
       cursor: 'cur1',
       limit: 20,
+      spaceId: null,
     })
+  })
+
+  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyResponse)
+    await listUnlinkedReferences({ pageId: 'PAGE1', spaceId: 'SPACE_42' })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['spaceId']).toBe('SPACE_42')
   })
 })
 
@@ -2088,11 +2169,12 @@ describe('listProjectedAgenda', () => {
       endDate: '2025-02-15',
       cursor: null,
       limit: 50,
+      spaceId: null,
     })
     expect(result).toEqual(expected)
   })
 
-  it('defaults optional cursor and limit to null', async () => {
+  it('defaults optional cursor, limit, and spaceId to null', async () => {
     mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
 
     await listProjectedAgenda({ startDate: '2025-01-15', endDate: '2025-02-15' })
@@ -2102,6 +2184,7 @@ describe('listProjectedAgenda', () => {
       endDate: '2025-02-15',
       cursor: null,
       limit: null,
+      spaceId: null,
     })
   })
 
@@ -2120,7 +2203,19 @@ describe('listProjectedAgenda', () => {
       endDate: '2025-02-15',
       cursor: 'OPAQUE_CURSOR',
       limit: 25,
+      spaceId: null,
     })
+  })
+
+  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+    mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+    await listProjectedAgenda({
+      startDate: '2025-01-15',
+      endDate: '2025-02-15',
+      spaceId: 'SPACE_42',
+    })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['spaceId']).toBe('SPACE_42')
   })
 })
 
@@ -2139,7 +2234,7 @@ describe('listPageLinks', () => {
     const result = await listPageLinks()
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('list_page_links')
+    expect(mockedInvoke).toHaveBeenCalledWith('list_page_links', { spaceId: null })
     expect(result).toEqual(expected)
   })
 
@@ -2149,6 +2244,13 @@ describe('listPageLinks', () => {
     const result = await listPageLinks()
 
     expect(result).toEqual([])
+  })
+
+  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+    await listPageLinks('SPACE_42')
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(args['spaceId']).toBe('SPACE_42')
   })
 })
 
@@ -2876,7 +2978,7 @@ describe('cross-cutting', () => {
     await deleteBlock('id')
     await restoreBlock('id', 'ref')
     await purgeBlock('id')
-    await listBlocks()
+    await listBlocks({ spaceId: 'TEST_SPACE_01' })
     await getBlock('id')
     await batchResolve(['id'])
     await moveBlock('id', null, 0)
@@ -2885,7 +2987,7 @@ describe('cross-cutting', () => {
     await getBacklinks({ blockId: 'id' })
     await getBlockHistory({ blockId: 'id' })
     await getConflicts()
-    await searchBlocks({ query: 'test' })
+    await searchBlocks({ query: 'test', spaceId: 'TEST_SPACE_01' })
     await getStatus()
     await queryByTags({ tagIds: ['t'], prefixes: [], mode: 'and' })
     await listTagsByPrefix({ prefix: 'w' })

@@ -109,7 +109,7 @@ describe('TrashView', () => {
         agenda: null,
         cursor: null,
         limit: 50,
-        spaceId: null,
+        spaceId: 'SPACE_TEST',
       })
     })
   })
@@ -304,7 +304,7 @@ describe('TrashView', () => {
         agenda: null,
         cursor: 'cursor_page2',
         limit: 50,
-        spaceId: null,
+        spaceId: 'SPACE_TEST',
       })
     })
 

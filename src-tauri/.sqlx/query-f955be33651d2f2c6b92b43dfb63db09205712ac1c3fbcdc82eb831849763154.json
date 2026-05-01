@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id, b.block_type, b.content, b.parent_id, b.position,\n                b.deleted_at, b.is_conflict as \"is_conflict: bool\",\n                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id\n         FROM block_tags bt\n         JOIN blocks b ON b.id = bt.block_id\n         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0\n           AND (?2 IS NULL OR b.id > ?3)\n         ORDER BY b.id ASC\n         LIMIT ?4",
+  "query": "SELECT b.id, b.block_type, b.content, b.parent_id, b.position,\n                b.deleted_at, b.is_conflict as \"is_conflict: bool\",\n                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id, ac.date as \"ac_date: String\"\n         FROM agenda_cache ac\n         JOIN blocks b ON b.id = ac.block_id\n         WHERE ac.date >= ?1 AND ac.date <= ?2\n           AND b.deleted_at IS NULL AND b.is_conflict = 0\n           AND (?3 IS NULL OR ac.source = ?3)\n           AND (?4 IS NULL OR (ac.date > ?5 OR (ac.date = ?5 AND b.id > ?6)))\n           AND (?8 IS NULL OR COALESCE(b.page_id, b.id) IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?8))\n         ORDER BY ac.date ASC, b.id ASC\n         LIMIT ?7",
   "describe": {
     "columns": [
       {
@@ -67,10 +67,15 @@
         "name": "page_id",
         "ordinal": 12,
         "type_info": "Text"
+      },
+      {
+        "name": "ac_date: String",
+        "ordinal": 13,
+        "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 4
+      "Right": 8
     },
     "nullable": [
       false,
@@ -85,8 +90,9 @@
       true,
       true,
       true,
-      true
+      true,
+      false
     ]
   },
-  "hash": "3476ccc2f487f5b63d46e619a3a1c73baa0bd34a585ef52ecfdac211375d9d0c"
+  "hash": "f955be33651d2f2c6b92b43dfb63db09205712ac1c3fbcdc82eb831849763154"
 }

@@ -13,6 +13,38 @@ use agaric_lib::commands::{
     get_block_history_inner, get_block_inner, get_conflicts_inner, list_blocks_inner,
     set_property_inner,
 };
+// FEAT-3p4 — inline copies of the test helpers, mirrored from
+// `agaric_lib::commands::tests::common`. The `tests` module is
+// `#[cfg(test)]`-gated so it is invisible to bench targets; duplicating
+// the constants + helper here is the simplest way to keep benches
+// self-contained without exposing test-only code in the production
+// surface. Mirror any signature change across both copies.
+const TEST_SPACE_ID: &str = "01TESTSPACE000000000000001";
+
+async fn assign_all_to_test_space(pool: &SqlitePool) {
+    sqlx::query(
+        "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'page', 'TestSpace', NULL, NULL)",
+    )
+    .bind(TEST_SPACE_ID)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_ref) \
+         SELECT b.id, 'space', ? FROM blocks b \
+         WHERE b.id <> ? \
+           AND NOT EXISTS ( \
+                SELECT 1 FROM block_properties bp \
+                WHERE bp.block_id = b.id AND bp.key = 'space' \
+           )",
+    )
+    .bind(TEST_SPACE_ID)
+    .bind(TEST_SPACE_ID)
+    .execute(pool)
+    .await
+    .unwrap();
+}
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
 
@@ -315,6 +347,9 @@ fn bench_list_blocks_empty(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "list_empty"));
+    // FEAT-3p4 — seed the test space so the FEAT-3p4-required `space_id`
+    // filter has a valid block to point at; nothing else to assign.
+    rt.block_on(assign_all_to_test_space(&pool));
 
     c.bench_function("list_blocks_empty", |b| {
         b.to_async(&rt).iter(|| {
@@ -332,7 +367,7 @@ fn bench_list_blocks_empty(c: &mut Criterion) {
                     None,
                     None,
                     Some(50),
-                    None,
+                    TEST_SPACE_ID.into(),
                 )
                 .await
                 .unwrap()
@@ -348,6 +383,7 @@ fn bench_list_blocks_10_items(c: &mut Criterion) {
     let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
 
     rt.block_on(seed_blocks(&pool, &materializer, 10));
+    rt.block_on(assign_all_to_test_space(&pool));
 
     c.bench_function("list_blocks_10_items", |b| {
         b.to_async(&rt).iter(|| {
@@ -365,7 +401,7 @@ fn bench_list_blocks_10_items(c: &mut Criterion) {
                     None,
                     None,
                     Some(50),
-                    None,
+                    TEST_SPACE_ID.into(),
                 )
                 .await
                 .unwrap()
@@ -383,6 +419,7 @@ fn bench_list_blocks_100_items(c: &mut Criterion) {
     let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
 
     rt.block_on(seed_blocks(&pool, &materializer, 100));
+    rt.block_on(assign_all_to_test_space(&pool));
 
     c.bench_function("list_blocks_100_items", |b| {
         b.to_async(&rt).iter(|| {
@@ -400,7 +437,7 @@ fn bench_list_blocks_100_items(c: &mut Criterion) {
                     None,
                     None,
                     Some(200),
-                    None,
+                    TEST_SPACE_ID.into(),
                 )
                 .await
                 .unwrap()
@@ -418,6 +455,7 @@ fn bench_list_blocks_paginate_10_of_100(c: &mut Criterion) {
     let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
 
     rt.block_on(seed_blocks(&pool, &materializer, 100));
+    rt.block_on(assign_all_to_test_space(&pool));
 
     c.bench_function("list_blocks_paginate_10_of_100", |b| {
         b.to_async(&rt).iter(|| {
@@ -436,7 +474,7 @@ fn bench_list_blocks_paginate_10_of_100(c: &mut Criterion) {
                     None,
                     None,
                     Some(10),
-                    None,
+                    TEST_SPACE_ID.into(),
                 )
                 .await
                 .unwrap();
@@ -454,7 +492,7 @@ fn bench_list_blocks_paginate_10_of_100(c: &mut Criterion) {
                         None,
                         Some(cursor),
                         Some(10),
-                        None,
+                        TEST_SPACE_ID.into(),
                     )
                     .await
                     .unwrap();
@@ -488,6 +526,7 @@ fn bench_list_blocks_with_type_filter(c: &mut Criterion) {
             .await
             .unwrap();
         }
+        assign_all_to_test_space(&pool).await;
     });
 
     c.bench_function("list_blocks_with_type_filter", |b| {
@@ -506,7 +545,7 @@ fn bench_list_blocks_with_type_filter(c: &mut Criterion) {
                     None,
                     None,
                     Some(50),
-                    None,
+                    TEST_SPACE_ID.into(),
                 )
                 .await
                 .unwrap()
@@ -745,6 +784,7 @@ fn bench_list_blocks_at_scale(c: &mut Criterion) {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("list_s{db_size}")));
         rt.block_on(seed_blocks_bulk(&pool, db_size));
+        rt.block_on(assign_all_to_test_space(&pool));
 
         group.bench_with_input(
             BenchmarkId::from_parameter(format!("{db_size}_blocks")),
@@ -765,7 +805,7 @@ fn bench_list_blocks_at_scale(c: &mut Criterion) {
                             None,
                             None,
                             Some(50),
-                            None,
+                            TEST_SPACE_ID.into(),
                         )
                         .await
                         .unwrap()

@@ -91,7 +91,10 @@ function makePagePickerItem(id: string, title: string): PickerItem {
 async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promise<PickerItem[]> {
   let source = pagesListRef.current
   if (source.length === 0) {
-    const spaceId = useSpaceStore.getState().currentSpaceId ?? undefined
+    // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
+    // fallback is intentional pre-bootstrap behaviour: empty string
+    // forces a no-match SQL filter rather than a runtime null deref.
+    const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
     const resp = await listBlocks({ blockType: 'page', limit: 500, spaceId })
     source = resp.items.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
     pagesListRef.current = source
@@ -108,7 +111,10 @@ async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promi
  * FEAT-3 Phase 2 — the FTS call is scoped to the current space.
  */
 async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise<PickerItem[]> {
-  const spaceId = useSpaceStore.getState().currentSpaceId ?? undefined
+  // FEAT-3 Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
+  // fallback is intentional pre-bootstrap behaviour (see
+  // `searchPagesViaCache` for the rationale).
+  const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
   const resp = await searchBlocks({ query: q, limit: 20, spaceId })
   const matches = resp.items
     .filter((b) => b.block_type === 'page')
@@ -336,7 +342,11 @@ export function useBlockResolve(): UseBlockResolveReturn {
       const q = query.replace(/\)+$/, '').trim()
       if (q.length < 2) return []
 
-      const resp = await searchBlocks({ query: q, limit: 20 })
+      // FEAT-3 Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
+      // fallback is intentional pre-bootstrap behaviour: empty string
+      // forces a no-match SQL filter rather than a runtime null deref.
+      const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
+      const resp = await searchBlocks({ query: q, limit: 20, spaceId })
       const results: PickerItem[] = resp.items
         .filter((b) => b.deleted_at === null)
         .map((b) => {

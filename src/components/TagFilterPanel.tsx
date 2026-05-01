@@ -23,6 +23,7 @@ import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, getBlock, listTagsByPrefix, queryByTags } from '../lib/tauri'
+import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
 import { PageLink } from './PageLink'
 import { ResultCard } from './ResultCard'
@@ -53,6 +54,7 @@ function HighlightPrefix({ text, prefix }: { text: string; prefix: string }): Re
 
 export function TagFilterPanel(): React.ReactElement {
   const { t } = useTranslation()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [prefix, setPrefix] = useState('')
   const [matchingTags, setMatchingTags] = useState<MatchingTag[]>([])
   const [selectedTags, setSelectedTags] = useState<SelectedTag[]>([])
@@ -108,8 +110,9 @@ export function TagFilterPanel(): React.ReactElement {
         mode,
         ...(cursor != null && { cursor }),
         limit: 50,
+        spaceId: currentSpaceId,
       }),
-    [selectedTags, mode],
+    [selectedTags, mode, currentSpaceId],
   )
 
   const {

@@ -28,7 +28,7 @@ describe('loadTemplatePages', () => {
       has_more: false,
     })
 
-    const result = await loadTemplatePages()
+    const result = await loadTemplatePages(null)
 
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
       key: 'template',
@@ -37,6 +37,7 @@ describe('loadTemplatePages', () => {
       operator: null,
       cursor: null,
       limit: 100,
+      spaceId: null,
     })
     expect(result).toHaveLength(2)
     expect(result[0]?.id).toBe('T1')
@@ -50,7 +51,7 @@ describe('loadTemplatePages', () => {
       has_more: false,
     })
 
-    const result = await loadTemplatePages()
+    const result = await loadTemplatePages(null)
     expect(result).toHaveLength(0)
   })
 })
@@ -93,7 +94,7 @@ describe('insertTemplateBlocks', () => {
       has_more: false,
     })
 
-    const ids = await insertTemplateBlocks('TMPL', 'PARENT')
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
 
     expect(ids).toEqual(['NEW1', 'NEW2'])
     expect(mockedInvoke).toHaveBeenCalledWith(
@@ -155,7 +156,7 @@ describe('insertTemplateBlocks', () => {
       has_more: false,
     })
 
-    const ids = await insertTemplateBlocks('TMPL', 'PARENT')
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
 
     // Both blocks were created
     expect(ids).toEqual(['NEW_A', 'NEW_B'])
@@ -218,7 +219,7 @@ describe('insertTemplateBlocks', () => {
       has_more: false,
     })
 
-    const ids = await insertTemplateBlocks('TMPL', 'PARENT')
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
 
     // B was skipped; A and C were created
     expect(ids).toEqual(['NEW_A', 'NEW_C'])
@@ -245,7 +246,7 @@ describe('insertTemplateBlocks', () => {
       has_more: false,
     })
 
-    const ids = await insertTemplateBlocks('TMPL', 'PARENT')
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
 
     expect(ids).toEqual([])
     // Only the list_blocks call should happen
@@ -261,7 +262,7 @@ describe('loadJournalTemplate', () => {
       has_more: false,
     })
 
-    const { template, duplicateWarning } = await loadJournalTemplate()
+    const { template, duplicateWarning } = await loadJournalTemplate(null)
 
     expect(template).not.toBeNull()
     expect(template?.id).toBe('JT1')
@@ -282,7 +283,7 @@ describe('loadJournalTemplate', () => {
       has_more: false,
     })
 
-    const { template, duplicateWarning } = await loadJournalTemplate()
+    const { template, duplicateWarning } = await loadJournalTemplate(null)
     expect(template).toBeNull()
     expect(duplicateWarning).toBeNull()
   })
@@ -297,7 +298,7 @@ describe('loadJournalTemplate', () => {
       has_more: false,
     })
 
-    const { template, duplicateWarning } = await loadJournalTemplate()
+    const { template, duplicateWarning } = await loadJournalTemplate(null)
 
     expect(template).not.toBeNull()
     expect(template?.id).toBe('JT1')
@@ -313,7 +314,7 @@ describe('loadJournalTemplate', () => {
       has_more: false,
     })
 
-    const { duplicateWarning } = await loadJournalTemplate()
+    const { duplicateWarning } = await loadJournalTemplate(null)
     expect(duplicateWarning).toBeNull()
   })
 })
@@ -335,7 +336,7 @@ describe('loadTemplatePagesWithPreview', () => {
       has_more: false,
     })
 
-    const result = await loadTemplatePagesWithPreview()
+    const result = await loadTemplatePagesWithPreview(null)
     expect(result).toHaveLength(1)
     expect(result[0]?.preview).toBe('## Attendees')
   })
@@ -352,7 +353,7 @@ describe('loadTemplatePagesWithPreview', () => {
       has_more: false,
     })
 
-    const result = await loadTemplatePagesWithPreview()
+    const result = await loadTemplatePagesWithPreview(null)
     expect(result[0]?.preview).toBeNull()
   })
 
@@ -371,7 +372,7 @@ describe('loadTemplatePagesWithPreview', () => {
       has_more: false,
     })
 
-    const result = await loadTemplatePagesWithPreview()
+    const result = await loadTemplatePagesWithPreview(null)
     expect(result[0]?.preview).toBe(`${'A'.repeat(60)}\u2026`)
   })
 
@@ -383,7 +384,7 @@ describe('loadTemplatePagesWithPreview', () => {
     })
     mockedInvoke.mockRejectedValueOnce(new Error('list_blocks failed'))
 
-    const result = await loadTemplatePagesWithPreview()
+    const result = await loadTemplatePagesWithPreview(null)
     expect(result[0]?.preview).toBeNull()
   })
 })

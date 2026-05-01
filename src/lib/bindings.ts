@@ -41,7 +41,7 @@ export const commands = {
 	dateRange: DateRange | null,
 	// Optional source filter (`due_date` / `scheduled_date`).
 	source: string | null,
-} | null, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, showDeleted, agenda, cursor, limit, spaceId })),
+} | null, cursor: string | null, limit: number | null, spaceId: string) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, showDeleted, agenda, cursor, limit, spaceId })),
 	// Tauri command: fetch a single block by ID. Delegates to [`get_block_inner`].
 	getBlock: (blockId: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("get_block", { blockId })),
 	/**
@@ -57,7 +57,7 @@ export const commands = {
 	// Tauri command: remove a tag from a block. Delegates to [`remove_tag_inner`].
 	removeTag: (blockId: string, tagId: string) => typedError<TagResponse, AppErrorSchema>(__TAURI_INVOKE("remove_tag", { blockId, tagId })),
 	// Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`].
-	getBacklinks: (blockId: string, cursor: string | null, limit: number | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("get_backlinks", { blockId, cursor, limit })),
+	getBacklinks: (blockId: string, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("get_backlinks", { blockId, cursor, limit, spaceId })),
 	// Tauri command: list op-log history for a block. Delegates to [`get_block_history_inner`].
 	getBlockHistory: (blockId: string, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppErrorSchema>(__TAURI_INVOKE("get_block_history", { blockId, cursor, limit })),
 	// Tauri command: list conflict-copy blocks. Delegates to [`get_conflicts_inner`].
@@ -65,11 +65,11 @@ export const commands = {
 	// Tauri command: get materializer queue status. Delegates to [`get_status_inner`].
 	getStatus: () => typedError<StatusInfo, AppErrorSchema>(__TAURI_INVOKE("get_status")),
 	// Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
-	searchBlocks: (query: string, cursor: string | null, limit: number | null, parentId: string | null, tagIds: string[] | null, spaceId: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, parentId, tagIds, spaceId })),
+	searchBlocks: (query: string, cursor: string | null, limit: number | null, parentId: string | null, tagIds: string[] | null, spaceId: string) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, parentId, tagIds, spaceId })),
 	// Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`].
-	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit })),
+	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit, spaceId })),
 	// Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
-	queryByProperty: (key: string, valueText: string | null, valueDate: string | null, operator: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_property", { key, valueText, valueDate, operator, cursor, limit })),
+	queryByProperty: (key: string, valueText: string | null, valueDate: string | null, operator: string | null, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_property", { key, valueText, valueDate, operator, cursor, limit, spaceId })),
 	// Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
 	listTagsByPrefix: (prefix: string, limit: number | null) => typedError<TagCacheRow[], AppErrorSchema>(__TAURI_INVOKE("list_tags_by_prefix", { prefix, limit })),
 	// Tauri command: list tag IDs for a block. Delegates to [`list_tags_for_block_inner`].
@@ -113,11 +113,11 @@ export const commands = {
 	 */
 	computeEditDiff: (deviceId: string, seq: number) => typedError<DiffSpan[] | null, AppErrorSchema>(__TAURI_INVOKE("compute_edit_diff", { deviceId, seq })),
 	// Tauri command: filtered backlink query. Delegates to [`query_backlinks_filtered_inner`].
-	queryBacklinksFiltered: (blockId: string, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null) => typedError<BacklinkQueryResponse, AppErrorSchema>(__TAURI_INVOKE("query_backlinks_filtered", { blockId, filters, sort, cursor, limit })),
+	queryBacklinksFiltered: (blockId: string, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<BacklinkQueryResponse, AppErrorSchema>(__TAURI_INVOKE("query_backlinks_filtered", { blockId, filters, sort, cursor, limit, spaceId })),
 	// Tauri command: grouped backlink query. Delegates to [`list_backlinks_grouped_inner`].
-	listBacklinksGrouped: (blockId: string, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null) => typedError<GroupedBacklinkResponse, AppErrorSchema>(__TAURI_INVOKE("list_backlinks_grouped", { blockId, filters, sort, cursor, limit })),
+	listBacklinksGrouped: (blockId: string, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<GroupedBacklinkResponse, AppErrorSchema>(__TAURI_INVOKE("list_backlinks_grouped", { blockId, filters, sort, cursor, limit, spaceId })),
 	// Tauri command: unlinked references query. Delegates to [`list_unlinked_references_inner`].
-	listUnlinkedReferences: (pageId: string, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null) => typedError<GroupedBacklinkResponse, AppErrorSchema>(__TAURI_INVOKE("list_unlinked_references", { pageId, filters, sort, cursor, limit })),
+	listUnlinkedReferences: (pageId: string, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<GroupedBacklinkResponse, AppErrorSchema>(__TAURI_INVOKE("list_unlinked_references", { pageId, filters, sort, cursor, limit, spaceId })),
 	// Tauri command: list distinct property keys. Delegates to [`list_property_keys_inner`].
 	listPropertyKeys: () => typedError<string[], AppErrorSchema>(__TAURI_INVOKE("list_property_keys")),
 	// Tauri command: create a property definition. Delegates to [`create_property_def_inner`].
@@ -183,9 +183,9 @@ export const commands = {
 	// Tauri command: cancel an active sync session.
 	cancelSync: () => typedError<null, AppErrorSchema>(__TAURI_INVOKE("cancel_sync")),
 	// Tauri command: batch-count agenda items per date. Delegates to [`count_agenda_batch_inner`].
-	countAgendaBatch: (dates: string[]) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("count_agenda_batch", { dates })),
+	countAgendaBatch: (dates: string[], spaceId: string | null) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("count_agenda_batch", { dates, spaceId })),
 	// Tauri command: batch-count agenda items per (date, source). Delegates to [`count_agenda_batch_by_source_inner`].
-	countAgendaBatchBySource: (dates: string[]) => typedError<{ [key in string]: { [key in string]: number } }, AppErrorSchema>(__TAURI_INVOKE("count_agenda_batch_by_source", { dates })),
+	countAgendaBatchBySource: (dates: string[], spaceId: string | null) => typedError<{ [key in string]: { [key in string]: number } }, AppErrorSchema>(__TAURI_INVOKE("count_agenda_batch_by_source", { dates, spaceId })),
 	// Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`].
 	countBacklinksBatch: (pageIds: string[]) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("count_backlinks_batch", { pageIds })),
 	// Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`].
@@ -203,9 +203,9 @@ export const commands = {
 	 *  Cursor-paginated (M-25) — pass `cursor = next_cursor` from the previous
 	 *  response to fetch the next page.
 	 */
-	listProjectedAgenda: (startDate: string, endDate: string, cursor: string | null, limit: number | null) => typedError<PageResponse<ProjectedAgendaEntry>, AppErrorSchema>(__TAURI_INVOKE("list_projected_agenda", { startDate, endDate, cursor, limit })),
+	listProjectedAgenda: (startDate: string, endDate: string, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<ProjectedAgendaEntry>, AppErrorSchema>(__TAURI_INVOKE("list_projected_agenda", { startDate, endDate, cursor, limit, spaceId })),
 	// Tauri command: list undated tasks. Delegates to [`list_undated_tasks_inner`].
-	listUndatedTasks: (cursor: string | null, limit: number | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_undated_tasks", { cursor, limit })),
+	listUndatedTasks: (cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_undated_tasks", { cursor, limit, spaceId })),
 	/**
 	 *  Tauri command: import a Logseq-style markdown file as a page with
 	 *  block hierarchy. Delegates to [`import_markdown_inner`].
@@ -222,7 +222,7 @@ export const commands = {
 	// Tauri command: batch-fetch full attachment lists. Delegates to [`list_attachments_batch_inner`].
 	listAttachmentsBatch: (blockIds: string[]) => typedError<{ [key in string]: AttachmentRow[] }, AppErrorSchema>(__TAURI_INVOKE("list_attachments_batch", { blockIds })),
 	// Tauri command: list all page-to-page links for graph visualization.
-	listPageLinks: () => typedError<PageLink[], AppErrorSchema>(__TAURI_INVOKE("list_page_links")),
+	listPageLinks: (spaceId: string | null) => typedError<PageLink[], AppErrorSchema>(__TAURI_INVOKE("list_page_links", { spaceId })),
 	// Tauri command: save a draft for a block. Delegates to [`draft::save_draft`].
 	saveDraft: (blockId: string, content: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("save_draft", { blockId, content })),
 	/**

@@ -219,7 +219,10 @@ describe('useJournalBlockCreation', () => {
 
     expect(mockedLoadJournalTemplateForSpace).toHaveBeenCalled()
     expect(mockedLoadJournalTemplate).toHaveBeenCalled()
-    expect(mockedInsertTemplateBlocks).toHaveBeenCalledWith('TMPL', 'PNEW', {
+    // FEAT-3 Phase 4 — `insertTemplateBlocks` now accepts `spaceId` as
+    // its third positional arg (the active space scopes the recursive
+    // copy walk).
+    expect(mockedInsertTemplateBlocks).toHaveBeenCalledWith('TMPL', 'PNEW', 'SPACE_TEST', {
       pageTitle: '2025-06-15',
     })
   })

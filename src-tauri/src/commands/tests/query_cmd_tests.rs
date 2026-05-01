@@ -27,7 +27,7 @@ async fn get_backlinks_returns_linked_blocks() {
         .await
         .unwrap();
 
-    let resp = get_backlinks_inner(&pool, "BL_TGT".into(), None, None)
+    let resp = get_backlinks_inner(&pool, "BL_TGT".into(), None, None, None)
         .await
         .unwrap();
 
@@ -80,9 +80,18 @@ async fn get_conflicts_returns_conflict_blocks() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_blocks_inner_empty_query_returns_empty() {
     let (pool, _dir) = test_pool().await;
-    let result = search_blocks_inner(&pool, "".into(), None, None, None, None, None)
-        .await
-        .unwrap();
+    assign_all_to_test_space(&pool).await;
+    let result = search_blocks_inner(
+        &pool,
+        "".into(),
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         result.items.len(),
         0,
@@ -94,9 +103,18 @@ async fn search_blocks_inner_empty_query_returns_empty() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_blocks_inner_whitespace_query_returns_empty() {
     let (pool, _dir) = test_pool().await;
-    let result = search_blocks_inner(&pool, "   ".into(), None, None, None, None, None)
-        .await
-        .unwrap();
+    assign_all_to_test_space(&pool).await;
+    let result = search_blocks_inner(
+        &pool,
+        "   ".into(),
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         result.items.len(),
         0,
@@ -122,9 +140,18 @@ async fn search_blocks_inner_finds_indexed_block() {
     .await;
     crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
-    let result = search_blocks_inner(&pool, "searchable".into(), None, None, None, None, None)
-        .await
-        .unwrap();
+    assign_all_to_test_space(&pool).await;
+    let result = search_blocks_inner(
+        &pool,
+        "searchable".into(),
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
     assert_eq!(result.items.len(), 1, "should find one matching block");
     assert_eq!(result.items[0].id, "SRCH1", "found block should be SRCH1");
 }
@@ -135,9 +162,18 @@ async fn search_blocks_inner_no_results_for_unindexed_term() {
     insert_block(&pool, "SRCH2", "content", "apple banana", None, Some(0)).await;
     crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
-    let result = search_blocks_inner(&pool, "cherry".into(), None, None, None, None, None)
-        .await
-        .unwrap();
+    assign_all_to_test_space(&pool).await;
+    let result = search_blocks_inner(
+        &pool,
+        "cherry".into(),
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         result.items.len(),
         0,
@@ -175,9 +211,18 @@ async fn search_blocks_with_parent_id_filter() {
     crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
     // Without filter — both should appear
-    let all = search_blocks_inner(&pool, "searchable".into(), None, None, None, None, None)
-        .await
-        .unwrap();
+    assign_all_to_test_space(&pool).await;
+    let all = search_blocks_inner(
+        &pool,
+        "searchable".into(),
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
     assert_eq!(all.items.len(), 2, "no filter: should find both blocks");
 
     // With parent_id filter — only block under PAGE_A
@@ -188,7 +233,7 @@ async fn search_blocks_with_parent_id_filter() {
         None,
         Some("PAGE_A".into()),
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -237,9 +282,18 @@ async fn search_blocks_with_tag_filter() {
     crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
     // Without tag filter — all three
-    let all = search_blocks_inner(&pool, "findme".into(), None, None, None, None, None)
-        .await
-        .unwrap();
+    assign_all_to_test_space(&pool).await;
+    let all = search_blocks_inner(
+        &pool,
+        "findme".into(),
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         all.items.len(),
         3,
@@ -254,7 +308,7 @@ async fn search_blocks_with_tag_filter() {
         None,
         None,
         Some(vec!["TAG_X".into()]),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -274,7 +328,7 @@ async fn search_blocks_with_tag_filter() {
         None,
         None,
         Some(vec!["TAG_X".into(), "TAG_Y".into()]),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -313,9 +367,18 @@ async fn search_blocks_without_filters() {
     crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
     // No filters (backward compatible) — all matching results returned
-    let result = search_blocks_inner(&pool, "universal".into(), None, None, None, None, None)
-        .await
-        .unwrap();
+    assign_all_to_test_space(&pool).await;
+    let result = search_blocks_inner(
+        &pool,
+        "universal".into(),
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         result.items.len(),
         2,
@@ -330,7 +393,7 @@ async fn search_blocks_without_filters() {
         None,
         None,
         Some(vec![]),
-        None,
+        TEST_SPACE_ID.into(),
     )
     .await
     .unwrap();
@@ -373,7 +436,7 @@ async fn insert_tag_assoc(pool: &SqlitePool, block_id: &str, tag_id: &str) {
 async fn query_by_tags_inner_empty_inputs_returns_empty() {
     let (pool, _dir) = test_pool().await;
 
-    let result = query_by_tags_inner(&pool, vec![], vec![], "or".into(), None, None, None)
+    let result = query_by_tags_inner(&pool, vec![], vec![], "or".into(), None, None, None, None)
         .await
         .unwrap();
 
@@ -407,6 +470,7 @@ async fn query_by_tags_inner_or_mode_unions_tag_ids() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -436,6 +500,7 @@ async fn query_by_tags_inner_and_mode_intersects_tag_ids() {
         vec!["TAG_A".into(), "TAG_B".into()],
         vec![],
         "and".into(),
+        None,
         None,
         None,
         None,
@@ -478,6 +543,7 @@ async fn query_by_tags_inner_with_prefix() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -515,7 +581,7 @@ async fn query_by_property_returns_matching_blocks() {
     insert_property(&pool, "QP_B1", "todo", "TODO").await;
     insert_property(&pool, "QP_B2", "todo", "DONE").await;
 
-    let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None, None)
+    let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None, None, None)
         .await
         .unwrap();
 
@@ -534,7 +600,8 @@ async fn query_by_property_returns_matching_blocks() {
 async fn query_by_property_empty_key_returns_validation_error() {
     let (pool, _dir) = test_pool().await;
 
-    let result = query_by_property_inner(&pool, "".into(), None, None, None, None, None).await;
+    let result =
+        query_by_property_inner(&pool, "".into(), None, None, None, None, None, None).await;
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
@@ -560,6 +627,7 @@ async fn query_by_property_filters_by_value() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -579,9 +647,18 @@ async fn query_by_property_paginates_correctly() {
     }
 
     // First page: limit 2
-    let r1 = query_by_property_inner(&pool, "status".into(), None, None, None, None, Some(2))
-        .await
-        .unwrap();
+    let r1 = query_by_property_inner(
+        &pool,
+        "status".into(),
+        None,
+        None,
+        None,
+        None,
+        Some(2),
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(r1.items.len(), 2, "first page should have 2 items");
     assert!(r1.has_more, "first page should indicate more items");
@@ -607,6 +684,7 @@ async fn query_by_property_paginates_correctly() {
         None,
         r1.next_cursor,
         Some(2),
+        None,
     )
     .await
     .unwrap();
@@ -631,6 +709,7 @@ async fn query_by_property_paginates_correctly() {
         None,
         r2.next_cursor,
         Some(2),
+        None,
     )
     .await
     .unwrap();
@@ -654,7 +733,7 @@ async fn query_by_property_excludes_deleted_blocks() {
         .await
         .unwrap();
 
-    let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None, None)
+    let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None, None, None)
         .await
         .unwrap();
 
@@ -701,7 +780,7 @@ async fn query_by_property_reserved_date_key_filters_by_value_date() {
         .unwrap();
 
     // Query all blocks with due_date (no value filter)
-    let all = query_by_property_inner(&pool, "due_date".into(), None, None, None, None, None)
+    let all = query_by_property_inner(&pool, "due_date".into(), None, None, None, None, None, None)
         .await
         .unwrap();
     assert_eq!(all.items.len(), 2, "both blocks have due_date");
@@ -712,6 +791,7 @@ async fn query_by_property_reserved_date_key_filters_by_value_date() {
         "due_date".into(),
         None,
         Some("2025-06-15".into()),
+        None,
         None,
         None,
         None,
@@ -759,6 +839,7 @@ async fn query_by_property_with_gt_operator() {
         Some("gt".into()),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -793,6 +874,7 @@ async fn query_by_property_with_lt_operator() {
         Some("lt".into()),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -825,6 +907,7 @@ async fn query_by_property_defaults_to_eq() {
         Some("active".into()),
         None,
         None, // operator = None → defaults to "eq"
+        None,
         None,
         None,
     )
@@ -1063,4 +1146,1372 @@ async fn count_backlinks_batch_large_input_beyond_sqlite_param_limit() {
     assert_eq!(result.len(), 2, "only two IDs have backlinks");
     assert_eq!(result.get("BIG_TGT1"), Some(&2), "BIG_TGT1 has 2 backlinks");
     assert_eq!(result.get("BIG_TGT2"), Some(&1), "BIG_TGT2 has 1 backlink");
+}
+
+// ======================================================================
+// FEAT-3p4 — space scoping for query_by_tags_inner
+// ======================================================================
+//
+// These tests cover the `Some(space_id)` branch of `query_by_tags_inner`
+// so the `(? IS NULL OR COALESCE(b.page_id, b.id) IN (...))` clause
+// added to `tag_query::eval_tag_query`'s final projection is verified
+// end-to-end. Tags themselves are never assigned to a space (they are
+// global by design); the filter applies to the resulting blocks.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_tags_returns_only_current_space_blocks_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "TAG_X", "tag", "x", None, None).await;
+
+    insert_block(&pool, "QT_A1", "content", "task A1", None, None).await;
+    insert_tag_assoc(&pool, "QT_A1", "TAG_X").await;
+    assign_to_space(&pool, "QT_A1", TEST_SPACE_ID).await;
+
+    insert_block(&pool, "QT_B1", "content", "task B1", None, None).await;
+    insert_tag_assoc(&pool, "QT_B1", "TAG_X").await;
+    assign_to_space(&pool, "QT_B1", TEST_SPACE_B_ID).await;
+
+    let result = query_by_tags_inner(
+        &pool,
+        vec!["TAG_X".into()],
+        vec![],
+        "or".into(),
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let ids: Vec<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["QT_A1"],
+        "space A filter must surface exactly QT_A1; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_tags_with_none_space_id_returns_all_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "TAG_X", "tag", "x", None, None).await;
+
+    insert_block(&pool, "QT_A1", "content", "task A1", None, None).await;
+    insert_tag_assoc(&pool, "QT_A1", "TAG_X").await;
+    assign_to_space(&pool, "QT_A1", TEST_SPACE_ID).await;
+
+    insert_block(&pool, "QT_B1", "content", "task B1", None, None).await;
+    insert_tag_assoc(&pool, "QT_B1", "TAG_X").await;
+    assign_to_space(&pool, "QT_B1", TEST_SPACE_B_ID).await;
+
+    let result = query_by_tags_inner(
+        &pool,
+        vec!["TAG_X".into()],
+        vec![],
+        "or".into(),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert!(
+        ids.contains("QT_A1"),
+        "None must include QT_A1; got {ids:?}"
+    );
+    assert!(
+        ids.contains("QT_B1"),
+        "None must include QT_B1; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_tags_with_nonexistent_space_id_returns_empty_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    insert_block(&pool, "TAG_X", "tag", "x", None, None).await;
+    insert_block(&pool, "QT_A1", "content", "task A1", None, None).await;
+    insert_tag_assoc(&pool, "QT_A1", "TAG_X").await;
+    assign_to_space(&pool, "QT_A1", TEST_SPACE_ID).await;
+
+    let result = query_by_tags_inner(
+        &pool,
+        vec!["TAG_X".into()],
+        vec![],
+        "or".into(),
+        None,
+        None,
+        None,
+        Some("DOES_NOT_EXIST".into()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        result.items.is_empty(),
+        "nonexistent space must return zero rows; got {} items",
+        result.items.len()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_tags_disjointness_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "TAG_X", "tag", "x", None, None).await;
+
+    for id in &["QT_A1", "QT_A2", "QT_A3"] {
+        insert_block(&pool, id, "content", "a task", None, None).await;
+        insert_tag_assoc(&pool, id, "TAG_X").await;
+        assign_to_space(&pool, id, TEST_SPACE_ID).await;
+    }
+    for id in &["QT_B1", "QT_B2"] {
+        insert_block(&pool, id, "content", "b task", None, None).await;
+        insert_tag_assoc(&pool, id, "TAG_X").await;
+        assign_to_space(&pool, id, TEST_SPACE_B_ID).await;
+    }
+
+    let a = query_by_tags_inner(
+        &pool,
+        vec!["TAG_X".into()],
+        vec![],
+        "or".into(),
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let b = query_by_tags_inner(
+        &pool,
+        vec!["TAG_X".into()],
+        vec![],
+        "or".into(),
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_B_ID.into()),
+    )
+    .await
+    .unwrap();
+    let a_ids: std::collections::HashSet<&str> = a.items.iter().map(|b| b.id.as_str()).collect();
+    let b_ids: std::collections::HashSet<&str> = b.items.iter().map(|b| b.id.as_str()).collect();
+    assert!(
+        a_ids.is_disjoint(&b_ids),
+        "query_by_tags scoped to disjoint spaces must produce disjoint sets; \
+         intersection = {:?}",
+        a_ids.intersection(&b_ids).collect::<Vec<_>>()
+    );
+    assert_eq!(a_ids.len(), 3);
+    assert_eq!(b_ids.len(), 2);
+}
+
+// ======================================================================
+// FEAT-3p4 — space scoping for query_by_property_inner
+// ======================================================================
+//
+// These tests cover both routing branches: the reserved-column branch
+// (`todo_state`, exercised via `assert_..._feat3p4` for the four reserved
+// keys) and the non-reserved property branch (`status`). Both apply the
+// same `(?N IS NULL OR COALESCE(b.page_id, b.id) IN (...))` clause; the
+// reserved branch test pins the column-routed SELECT, the non-reserved
+// branch test pins the JOIN form.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_returns_only_current_space_blocks_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    // Non-reserved property `status`.
+    insert_block(&pool, "QP_A1", "content", "a", None, None).await;
+    insert_property(&pool, "QP_A1", "status", "open").await;
+    assign_to_space(&pool, "QP_A1", TEST_SPACE_ID).await;
+
+    insert_block(&pool, "QP_B1", "content", "b", None, None).await;
+    insert_property(&pool, "QP_B1", "status", "open").await;
+    assign_to_space(&pool, "QP_B1", TEST_SPACE_B_ID).await;
+
+    let result = query_by_property_inner(
+        &pool,
+        "status".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let ids: Vec<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["QP_A1"],
+        "space A filter must surface exactly QP_A1; got {ids:?}"
+    );
+
+    // Reserved-column branch — `todo_state` lives on `blocks` directly.
+    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+        .bind("QP_A1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+        .bind("QP_B1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let result_reserved = query_by_property_inner(
+        &pool,
+        "todo_state".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let ids_reserved: Vec<&str> = result_reserved
+        .items
+        .iter()
+        .map(|b| b.id.as_str())
+        .collect();
+    assert_eq!(
+        ids_reserved,
+        vec!["QP_A1"],
+        "reserved-column branch must also honour space filter; got {ids_reserved:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_with_none_space_id_returns_all_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "QP_A1", "content", "a", None, None).await;
+    insert_property(&pool, "QP_A1", "status", "open").await;
+    assign_to_space(&pool, "QP_A1", TEST_SPACE_ID).await;
+
+    insert_block(&pool, "QP_B1", "content", "b", None, None).await;
+    insert_property(&pool, "QP_B1", "status", "open").await;
+    assign_to_space(&pool, "QP_B1", TEST_SPACE_B_ID).await;
+
+    let result =
+        query_by_property_inner(&pool, "status".into(), None, None, None, None, None, None)
+            .await
+            .unwrap();
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert!(ids.contains("QP_A1"));
+    assert!(ids.contains("QP_B1"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_with_nonexistent_space_id_returns_empty_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    insert_block(&pool, "QP_A1", "content", "a", None, None).await;
+    insert_property(&pool, "QP_A1", "status", "open").await;
+    assign_to_space(&pool, "QP_A1", TEST_SPACE_ID).await;
+
+    let result = query_by_property_inner(
+        &pool,
+        "status".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("DOES_NOT_EXIST".into()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        result.items.is_empty(),
+        "nonexistent space must return zero rows; got {} items",
+        result.items.len()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_disjointness_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    for id in &["QP_A1", "QP_A2", "QP_A3"] {
+        insert_block(&pool, id, "content", "a", None, None).await;
+        insert_property(&pool, id, "status", "open").await;
+        assign_to_space(&pool, id, TEST_SPACE_ID).await;
+    }
+    for id in &["QP_B1", "QP_B2"] {
+        insert_block(&pool, id, "content", "b", None, None).await;
+        insert_property(&pool, id, "status", "open").await;
+        assign_to_space(&pool, id, TEST_SPACE_B_ID).await;
+    }
+
+    let a = query_by_property_inner(
+        &pool,
+        "status".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let b = query_by_property_inner(
+        &pool,
+        "status".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_B_ID.into()),
+    )
+    .await
+    .unwrap();
+    let a_ids: std::collections::HashSet<&str> = a.items.iter().map(|b| b.id.as_str()).collect();
+    let b_ids: std::collections::HashSet<&str> = b.items.iter().map(|b| b.id.as_str()).collect();
+    assert!(
+        a_ids.is_disjoint(&b_ids),
+        "query_by_property scoped to disjoint spaces must produce \
+         disjoint sets; intersection = {:?}",
+        a_ids.intersection(&b_ids).collect::<Vec<_>>()
+    );
+    assert_eq!(a_ids.len(), 3);
+    assert_eq!(b_ids.len(), 2);
+}
+
+// ======================================================================
+// FEAT-3p4 — space scoping for backlink read-side commands
+// ======================================================================
+//
+// Helper: insert a directed `block_links(source_id -> target_id)` row.
+async fn insert_link(pool: &sqlx::SqlitePool, source_id: &str, target_id: &str) {
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(source_id)
+        .bind(target_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+// ----------------------------------------------------------------------
+// get_backlinks_inner — pagination::list_backlinks shared filter
+// ----------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_backlinks_returns_only_current_space_blocks_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "GBL_TGT", "page", "target", None, None).await;
+
+    insert_block(&pool, "GBL_A1", "content", "src A1", None, None).await;
+    insert_link(&pool, "GBL_A1", "GBL_TGT").await;
+    assign_to_space(&pool, "GBL_A1", TEST_SPACE_ID).await;
+
+    insert_block(&pool, "GBL_B1", "content", "src B1", None, None).await;
+    insert_link(&pool, "GBL_B1", "GBL_TGT").await;
+    assign_to_space(&pool, "GBL_B1", TEST_SPACE_B_ID).await;
+
+    let resp = get_backlinks_inner(
+        &pool,
+        "GBL_TGT".into(),
+        None,
+        None,
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["GBL_A1"],
+        "space A scope must surface exactly GBL_A1; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_backlinks_with_none_space_id_returns_all_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "GBL_TGT", "page", "target", None, None).await;
+
+    insert_block(&pool, "GBL_A1", "content", "src A1", None, None).await;
+    insert_link(&pool, "GBL_A1", "GBL_TGT").await;
+    assign_to_space(&pool, "GBL_A1", TEST_SPACE_ID).await;
+
+    insert_block(&pool, "GBL_B1", "content", "src B1", None, None).await;
+    insert_link(&pool, "GBL_B1", "GBL_TGT").await;
+    assign_to_space(&pool, "GBL_B1", TEST_SPACE_B_ID).await;
+
+    let resp = get_backlinks_inner(&pool, "GBL_TGT".into(), None, None, None)
+        .await
+        .unwrap();
+    let ids: std::collections::HashSet<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+    assert!(ids.contains("GBL_A1"));
+    assert!(ids.contains("GBL_B1"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_backlinks_with_nonexistent_space_id_returns_empty_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    insert_block(&pool, "GBL_TGT", "page", "target", None, None).await;
+    insert_block(&pool, "GBL_A1", "content", "src A1", None, None).await;
+    insert_link(&pool, "GBL_A1", "GBL_TGT").await;
+    assign_to_space(&pool, "GBL_A1", TEST_SPACE_ID).await;
+
+    let resp = get_backlinks_inner(
+        &pool,
+        "GBL_TGT".into(),
+        None,
+        None,
+        Some("01NONEXISTENT0000000000000".into()),
+    )
+    .await
+    .unwrap();
+    assert!(resp.items.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_backlinks_disjointness_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "GBL_TGT", "page", "target", None, None).await;
+
+    for id in &["GBL_A1", "GBL_A2", "GBL_A3"] {
+        insert_block(&pool, id, "content", "a", None, None).await;
+        insert_link(&pool, id, "GBL_TGT").await;
+        assign_to_space(&pool, id, TEST_SPACE_ID).await;
+    }
+    for id in &["GBL_B1", "GBL_B2"] {
+        insert_block(&pool, id, "content", "b", None, None).await;
+        insert_link(&pool, id, "GBL_TGT").await;
+        assign_to_space(&pool, id, TEST_SPACE_B_ID).await;
+    }
+
+    let a = get_backlinks_inner(
+        &pool,
+        "GBL_TGT".into(),
+        None,
+        None,
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let b = get_backlinks_inner(
+        &pool,
+        "GBL_TGT".into(),
+        None,
+        None,
+        Some(TEST_SPACE_B_ID.into()),
+    )
+    .await
+    .unwrap();
+    let unscoped = get_backlinks_inner(&pool, "GBL_TGT".into(), None, None, None)
+        .await
+        .unwrap();
+    let a_ids: std::collections::HashSet<&str> = a.items.iter().map(|b| b.id.as_str()).collect();
+    let b_ids: std::collections::HashSet<&str> = b.items.iter().map(|b| b.id.as_str()).collect();
+    let u_ids: std::collections::HashSet<&str> =
+        unscoped.items.iter().map(|b| b.id.as_str()).collect();
+    assert!(
+        a_ids.is_disjoint(&b_ids),
+        "scoped result sets must be disjoint; intersection = {:?}",
+        a_ids.intersection(&b_ids).collect::<Vec<_>>()
+    );
+    let union: std::collections::HashSet<&str> = a_ids.union(&b_ids).copied().collect();
+    assert_eq!(
+        union, u_ids,
+        "A ∪ B must equal the unscoped result set; \
+         A = {a_ids:?}, B = {b_ids:?}, U = {u_ids:?}"
+    );
+    assert_eq!(a_ids.len(), 3);
+    assert_eq!(b_ids.len(), 2);
+}
+
+// ----------------------------------------------------------------------
+// query_backlinks_filtered_inner — base-set space filter
+// ----------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_backlinks_filtered_returns_only_current_space_blocks_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "QBF_TGT", "page", "target", None, None).await;
+
+    insert_block(&pool, "QBF_A1", "content", "src A1", None, None).await;
+    insert_link(&pool, "QBF_A1", "QBF_TGT").await;
+    assign_to_space(&pool, "QBF_A1", TEST_SPACE_ID).await;
+
+    insert_block(&pool, "QBF_B1", "content", "src B1", None, None).await;
+    insert_link(&pool, "QBF_B1", "QBF_TGT").await;
+    assign_to_space(&pool, "QBF_B1", TEST_SPACE_B_ID).await;
+
+    let resp = query_backlinks_filtered_inner(
+        &pool,
+        "QBF_TGT".into(),
+        None,
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["QBF_A1"],
+        "space A scope must surface exactly QBF_A1; got {ids:?}"
+    );
+    assert_eq!(
+        resp.total_count, 1,
+        "total_count must reflect the post-space-filter universe"
+    );
+    assert_eq!(resp.filtered_count, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_backlinks_filtered_with_none_space_id_returns_all_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "QBF_TGT", "page", "target", None, None).await;
+
+    insert_block(&pool, "QBF_A1", "content", "src A1", None, None).await;
+    insert_link(&pool, "QBF_A1", "QBF_TGT").await;
+    assign_to_space(&pool, "QBF_A1", TEST_SPACE_ID).await;
+
+    insert_block(&pool, "QBF_B1", "content", "src B1", None, None).await;
+    insert_link(&pool, "QBF_B1", "QBF_TGT").await;
+    assign_to_space(&pool, "QBF_B1", TEST_SPACE_B_ID).await;
+
+    let resp =
+        query_backlinks_filtered_inner(&pool, "QBF_TGT".into(), None, None, None, None, None)
+            .await
+            .unwrap();
+    let ids: std::collections::HashSet<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+    assert!(ids.contains("QBF_A1"));
+    assert!(ids.contains("QBF_B1"));
+    assert_eq!(resp.total_count, 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_backlinks_filtered_with_nonexistent_space_id_returns_empty_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    insert_block(&pool, "QBF_TGT", "page", "target", None, None).await;
+    insert_block(&pool, "QBF_A1", "content", "src A1", None, None).await;
+    insert_link(&pool, "QBF_A1", "QBF_TGT").await;
+    assign_to_space(&pool, "QBF_A1", TEST_SPACE_ID).await;
+
+    let resp = query_backlinks_filtered_inner(
+        &pool,
+        "QBF_TGT".into(),
+        None,
+        None,
+        None,
+        None,
+        Some("01NONEXISTENT0000000000000".into()),
+    )
+    .await
+    .unwrap();
+    assert!(resp.items.is_empty());
+    assert_eq!(resp.total_count, 0);
+    assert_eq!(resp.filtered_count, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_backlinks_filtered_disjointness_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "QBF_TGT", "page", "target", None, None).await;
+
+    for id in &["QBF_A1", "QBF_A2", "QBF_A3"] {
+        insert_block(&pool, id, "content", "a", None, None).await;
+        insert_link(&pool, id, "QBF_TGT").await;
+        assign_to_space(&pool, id, TEST_SPACE_ID).await;
+    }
+    for id in &["QBF_B1", "QBF_B2"] {
+        insert_block(&pool, id, "content", "b", None, None).await;
+        insert_link(&pool, id, "QBF_TGT").await;
+        assign_to_space(&pool, id, TEST_SPACE_B_ID).await;
+    }
+
+    let a = query_backlinks_filtered_inner(
+        &pool,
+        "QBF_TGT".into(),
+        None,
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let b = query_backlinks_filtered_inner(
+        &pool,
+        "QBF_TGT".into(),
+        None,
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_B_ID.into()),
+    )
+    .await
+    .unwrap();
+    let unscoped =
+        query_backlinks_filtered_inner(&pool, "QBF_TGT".into(), None, None, None, None, None)
+            .await
+            .unwrap();
+    let a_ids: std::collections::HashSet<&str> = a.items.iter().map(|b| b.id.as_str()).collect();
+    let b_ids: std::collections::HashSet<&str> = b.items.iter().map(|b| b.id.as_str()).collect();
+    let u_ids: std::collections::HashSet<&str> =
+        unscoped.items.iter().map(|b| b.id.as_str()).collect();
+    assert!(a_ids.is_disjoint(&b_ids));
+    let union: std::collections::HashSet<&str> = a_ids.union(&b_ids).copied().collect();
+    assert_eq!(union, u_ids);
+    assert_eq!(a_ids.len(), 3);
+    assert_eq!(b_ids.len(), 2);
+}
+
+// ----------------------------------------------------------------------
+// list_backlinks_grouped_inner — grouped base-set space filter
+// ----------------------------------------------------------------------
+//
+// The grouped path resolves each source block to its OWN root page and
+// then drops same-page self-references. To exercise the space filter
+// cleanly we put each source under its own page, and put the target on
+// a third page so no source-target pair shares a root.
+
+/// Insert a "child block under page" pair: page is created at the root,
+/// then `child_id` is inserted with `parent_id = page_id` and `page_id =
+/// page_id` so the denormalized root-page resolver returns `page_id`.
+async fn seed_block_under_page(
+    pool: &sqlx::SqlitePool,
+    page_id: &str,
+    page_title: &str,
+    child_id: &str,
+) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', ?, NULL, NULL, NULL)",
+    )
+    .bind(page_id)
+    .bind(page_title)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'content', 'src', ?, 0, ?)",
+    )
+    .bind(child_id)
+    .bind(page_id)
+    .bind(page_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_backlinks_grouped_returns_only_current_space_blocks_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    // Target page lives on its own dedicated page so no source's root
+    // matches it (avoids same-page self-ref drop).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES ('LBG_TGT', 'page', 'tgt', NULL, NULL, NULL)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    seed_block_under_page(&pool, "LBG_PA", "page A", "LBG_SRC_A1").await;
+    insert_link(&pool, "LBG_SRC_A1", "LBG_TGT").await;
+    assign_to_space(&pool, "LBG_PA", TEST_SPACE_ID).await;
+
+    seed_block_under_page(&pool, "LBG_PB", "page B", "LBG_SRC_B1").await;
+    insert_link(&pool, "LBG_SRC_B1", "LBG_TGT").await;
+    assign_to_space(&pool, "LBG_PB", TEST_SPACE_B_ID).await;
+
+    let resp = list_backlinks_grouped_inner(
+        &pool,
+        "LBG_TGT".into(),
+        None,
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let block_ids: Vec<&str> = resp
+        .groups
+        .iter()
+        .flat_map(|g| g.blocks.iter().map(|b| b.id.as_str()))
+        .collect();
+    assert_eq!(
+        block_ids,
+        vec!["LBG_SRC_A1"],
+        "space A scope must surface exactly LBG_SRC_A1; got {block_ids:?}"
+    );
+    assert_eq!(resp.total_count, 1);
+    assert_eq!(resp.filtered_count, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_backlinks_grouped_with_none_space_id_returns_all_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES ('LBG_TGT', 'page', 'tgt', NULL, NULL, NULL)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    seed_block_under_page(&pool, "LBG_PA", "page A", "LBG_SRC_A1").await;
+    insert_link(&pool, "LBG_SRC_A1", "LBG_TGT").await;
+    assign_to_space(&pool, "LBG_PA", TEST_SPACE_ID).await;
+
+    seed_block_under_page(&pool, "LBG_PB", "page B", "LBG_SRC_B1").await;
+    insert_link(&pool, "LBG_SRC_B1", "LBG_TGT").await;
+    assign_to_space(&pool, "LBG_PB", TEST_SPACE_B_ID).await;
+
+    let resp = list_backlinks_grouped_inner(&pool, "LBG_TGT".into(), None, None, None, None, None)
+        .await
+        .unwrap();
+    let ids: std::collections::HashSet<&str> = resp
+        .groups
+        .iter()
+        .flat_map(|g| g.blocks.iter().map(|b| b.id.as_str()))
+        .collect();
+    assert!(ids.contains("LBG_SRC_A1"));
+    assert!(ids.contains("LBG_SRC_B1"));
+    assert_eq!(resp.total_count, 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_backlinks_grouped_with_nonexistent_space_id_returns_empty_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES ('LBG_TGT', 'page', 'tgt', NULL, NULL, NULL)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    seed_block_under_page(&pool, "LBG_PA", "page A", "LBG_SRC_A1").await;
+    insert_link(&pool, "LBG_SRC_A1", "LBG_TGT").await;
+    assign_to_space(&pool, "LBG_PA", TEST_SPACE_ID).await;
+
+    let resp = list_backlinks_grouped_inner(
+        &pool,
+        "LBG_TGT".into(),
+        None,
+        None,
+        None,
+        None,
+        Some("01NONEXISTENT0000000000000".into()),
+    )
+    .await
+    .unwrap();
+    assert!(resp.groups.is_empty());
+    assert_eq!(resp.total_count, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_backlinks_grouped_disjointness_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES ('LBG_TGT', 'page', 'tgt', NULL, NULL, NULL)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Each source page hosts multiple sources to broaden the test.
+    seed_block_under_page(&pool, "LBG_PA", "page A", "LBG_SRC_A1").await;
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES ('LBG_SRC_A2', 'content', 'src', 'LBG_PA', 1, 'LBG_PA')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    insert_link(&pool, "LBG_SRC_A1", "LBG_TGT").await;
+    insert_link(&pool, "LBG_SRC_A2", "LBG_TGT").await;
+    assign_to_space(&pool, "LBG_PA", TEST_SPACE_ID).await;
+
+    seed_block_under_page(&pool, "LBG_PB", "page B", "LBG_SRC_B1").await;
+    insert_link(&pool, "LBG_SRC_B1", "LBG_TGT").await;
+    assign_to_space(&pool, "LBG_PB", TEST_SPACE_B_ID).await;
+
+    let a = list_backlinks_grouped_inner(
+        &pool,
+        "LBG_TGT".into(),
+        None,
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let b = list_backlinks_grouped_inner(
+        &pool,
+        "LBG_TGT".into(),
+        None,
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_B_ID.into()),
+    )
+    .await
+    .unwrap();
+    let unscoped =
+        list_backlinks_grouped_inner(&pool, "LBG_TGT".into(), None, None, None, None, None)
+            .await
+            .unwrap();
+    let collect_ids = |resp: &crate::backlink::GroupedBacklinkResponse| {
+        resp.groups
+            .iter()
+            .flat_map(|g| g.blocks.iter().map(|b| b.id.clone()))
+            .collect::<std::collections::HashSet<_>>()
+    };
+    let a_ids = collect_ids(&a);
+    let b_ids = collect_ids(&b);
+    let u_ids = collect_ids(&unscoped);
+    assert!(a_ids.is_disjoint(&b_ids));
+    let union: std::collections::HashSet<String> = a_ids.union(&b_ids).cloned().collect();
+    assert_eq!(union, u_ids);
+    assert_eq!(a_ids.len(), 2);
+    assert_eq!(b_ids.len(), 1);
+}
+
+// ----------------------------------------------------------------------
+// list_unlinked_references_inner — FTS base-set space filter
+// ----------------------------------------------------------------------
+//
+// We build a target page whose title is a unique tokenizable string,
+// then create source blocks (under their own pages) that mention the
+// title as text but DON'T have a `[[link]]`. Each source page is
+// assigned to a different space; the scoped query must surface only
+// the in-space sources.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_unlinked_references_returns_only_current_space_blocks_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    // Target page (the title to match) — give it a distinctive token.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES ('LUR_TGT', 'page', 'fnordzazz', NULL, NULL, NULL)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+        .bind("LUR_TGT")
+        .bind("fnordzazz")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Two source pages, each with one mention but no [[link]].
+    seed_block_under_page(&pool, "LUR_PA", "Page A", "LUR_SRC_A1").await;
+    sqlx::query("UPDATE blocks SET content = 'see fnordzazz here' WHERE id = ?")
+        .bind("LUR_SRC_A1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+        .bind("LUR_SRC_A1")
+        .bind("see fnordzazz here")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assign_to_space(&pool, "LUR_PA", TEST_SPACE_ID).await;
+
+    seed_block_under_page(&pool, "LUR_PB", "Page B", "LUR_SRC_B1").await;
+    sqlx::query("UPDATE blocks SET content = 'also fnordzazz' WHERE id = ?")
+        .bind("LUR_SRC_B1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+        .bind("LUR_SRC_B1")
+        .bind("also fnordzazz")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assign_to_space(&pool, "LUR_PB", TEST_SPACE_B_ID).await;
+
+    let resp = list_unlinked_references_inner(
+        &pool,
+        "LUR_TGT",
+        None,
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::HashSet<&str> = resp
+        .groups
+        .iter()
+        .flat_map(|g| g.blocks.iter().map(|b| b.id.as_str()))
+        .collect();
+    assert!(
+        ids.contains("LUR_SRC_A1"),
+        "space A must contain LUR_SRC_A1; got {ids:?}"
+    );
+    assert!(
+        !ids.contains("LUR_SRC_B1"),
+        "space A must NOT contain LUR_SRC_B1; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_unlinked_references_with_none_space_id_returns_all_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES ('LUR_TGT', 'page', 'fnordzazz', NULL, NULL, NULL)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+        .bind("LUR_TGT")
+        .bind("fnordzazz")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    seed_block_under_page(&pool, "LUR_PA", "Page A", "LUR_SRC_A1").await;
+    sqlx::query("UPDATE blocks SET content = 'see fnordzazz here' WHERE id = ?")
+        .bind("LUR_SRC_A1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+        .bind("LUR_SRC_A1")
+        .bind("see fnordzazz here")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assign_to_space(&pool, "LUR_PA", TEST_SPACE_ID).await;
+
+    seed_block_under_page(&pool, "LUR_PB", "Page B", "LUR_SRC_B1").await;
+    sqlx::query("UPDATE blocks SET content = 'also fnordzazz' WHERE id = ?")
+        .bind("LUR_SRC_B1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+        .bind("LUR_SRC_B1")
+        .bind("also fnordzazz")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assign_to_space(&pool, "LUR_PB", TEST_SPACE_B_ID).await;
+
+    let resp = list_unlinked_references_inner(&pool, "LUR_TGT", None, None, None, None, None)
+        .await
+        .unwrap();
+    let ids: std::collections::HashSet<&str> = resp
+        .groups
+        .iter()
+        .flat_map(|g| g.blocks.iter().map(|b| b.id.as_str()))
+        .collect();
+    assert!(ids.contains("LUR_SRC_A1"));
+    assert!(ids.contains("LUR_SRC_B1"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_unlinked_references_with_nonexistent_space_id_returns_empty_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES ('LUR_TGT', 'page', 'fnordzazz', NULL, NULL, NULL)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+        .bind("LUR_TGT")
+        .bind("fnordzazz")
+        .execute(&pool)
+        .await
+        .unwrap();
+    seed_block_under_page(&pool, "LUR_PA", "Page A", "LUR_SRC_A1").await;
+    sqlx::query("UPDATE blocks SET content = 'fnordzazz' WHERE id = ?")
+        .bind("LUR_SRC_A1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+        .bind("LUR_SRC_A1")
+        .bind("fnordzazz")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assign_to_space(&pool, "LUR_PA", TEST_SPACE_ID).await;
+
+    let resp = list_unlinked_references_inner(
+        &pool,
+        "LUR_TGT",
+        None,
+        None,
+        None,
+        None,
+        Some("01NONEXISTENT0000000000000".into()),
+    )
+    .await
+    .unwrap();
+    assert!(resp.groups.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_unlinked_references_disjointness_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES ('LUR_TGT', 'page', 'fnordzazz', NULL, NULL, NULL)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+        .bind("LUR_TGT")
+        .bind("fnordzazz")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Two A-side sources (under one page), one B-side source.
+    seed_block_under_page(&pool, "LUR_PA", "Page A", "LUR_SRC_A1").await;
+    sqlx::query("UPDATE blocks SET content = 'fnordzazz x1' WHERE id = ?")
+        .bind("LUR_SRC_A1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+        .bind("LUR_SRC_A1")
+        .bind("fnordzazz x1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES ('LUR_SRC_A2', 'content', 'fnordzazz x2', 'LUR_PA', 1, 'LUR_PA')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+        .bind("LUR_SRC_A2")
+        .bind("fnordzazz x2")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assign_to_space(&pool, "LUR_PA", TEST_SPACE_ID).await;
+
+    seed_block_under_page(&pool, "LUR_PB", "Page B", "LUR_SRC_B1").await;
+    sqlx::query("UPDATE blocks SET content = 'fnordzazz y' WHERE id = ?")
+        .bind("LUR_SRC_B1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+        .bind("LUR_SRC_B1")
+        .bind("fnordzazz y")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assign_to_space(&pool, "LUR_PB", TEST_SPACE_B_ID).await;
+
+    let collect_ids = |resp: &crate::backlink::GroupedBacklinkResponse| {
+        resp.groups
+            .iter()
+            .flat_map(|g| g.blocks.iter().map(|b| b.id.clone()))
+            .collect::<std::collections::HashSet<_>>()
+    };
+    let a = list_unlinked_references_inner(
+        &pool,
+        "LUR_TGT",
+        None,
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let b = list_unlinked_references_inner(
+        &pool,
+        "LUR_TGT",
+        None,
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_B_ID.into()),
+    )
+    .await
+    .unwrap();
+    let unscoped = list_unlinked_references_inner(&pool, "LUR_TGT", None, None, None, None, None)
+        .await
+        .unwrap();
+    let a_ids = collect_ids(&a);
+    let b_ids = collect_ids(&b);
+    let u_ids = collect_ids(&unscoped);
+    assert!(a_ids.is_disjoint(&b_ids));
+    let union: std::collections::HashSet<String> = a_ids.union(&b_ids).cloned().collect();
+    assert_eq!(union, u_ids);
+    assert_eq!(a_ids.len(), 2);
+    assert_eq!(b_ids.len(), 1);
+}
+
+// ======================================================================
+// FEAT-3p4 — space scoping for list_page_links_inner (graph view)
+// ======================================================================
+//
+// Build a fixture with two source pages (one per space) linking to two
+// target pages (one per space). When scoped to A, only the A→A edge
+// must surface — cross-space edges are filtered out by the
+// AND-of-both-endpoints space-filter clause.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_returns_only_current_space_edges_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    // Four pages: PSA & PTA in space A, PSB & PTB in space B.
+    for (id, title) in &[
+        ("LPL_PSA", "src A"),
+        ("LPL_PTA", "tgt A"),
+        ("LPL_PSB", "src B"),
+        ("LPL_PTB", "tgt B"),
+    ] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', ?, NULL, NULL, NULL)",
+        )
+        .bind(id)
+        .bind(title)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    assign_to_space(&pool, "LPL_PSA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LPL_PTA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LPL_PSB", TEST_SPACE_B_ID).await;
+    assign_to_space(&pool, "LPL_PTB", TEST_SPACE_B_ID).await;
+
+    // Four directed edges: A→A, A→B, B→A, B→B.
+    insert_link(&pool, "LPL_PSA", "LPL_PTA").await;
+    insert_link(&pool, "LPL_PSA", "LPL_PTB").await;
+    insert_link(&pool, "LPL_PSB", "LPL_PTA").await;
+    insert_link(&pool, "LPL_PSB", "LPL_PTB").await;
+
+    let scoped_a = crate::commands::list_page_links_inner(&pool, Some(TEST_SPACE_ID.into()))
+        .await
+        .unwrap();
+    let edges_a: std::collections::HashSet<(String, String)> = scoped_a
+        .iter()
+        .map(|l| (l.source_id.clone(), l.target_id.clone()))
+        .collect();
+    assert_eq!(
+        edges_a,
+        [("LPL_PSA".into(), "LPL_PTA".into())]
+            .iter()
+            .cloned()
+            .collect(),
+        "scoped to A must yield exactly the A→A edge; got {edges_a:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_with_none_space_id_returns_all_edges_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    for (id, title) in &[
+        ("LPL_PSA", "src A"),
+        ("LPL_PTA", "tgt A"),
+        ("LPL_PSB", "src B"),
+        ("LPL_PTB", "tgt B"),
+    ] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', ?, NULL, NULL, NULL)",
+        )
+        .bind(id)
+        .bind(title)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    assign_to_space(&pool, "LPL_PSA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LPL_PTA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LPL_PSB", TEST_SPACE_B_ID).await;
+    assign_to_space(&pool, "LPL_PTB", TEST_SPACE_B_ID).await;
+
+    insert_link(&pool, "LPL_PSA", "LPL_PTA").await;
+    insert_link(&pool, "LPL_PSA", "LPL_PTB").await;
+    insert_link(&pool, "LPL_PSB", "LPL_PTA").await;
+    insert_link(&pool, "LPL_PSB", "LPL_PTB").await;
+
+    let unscoped = crate::commands::list_page_links_inner(&pool, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        unscoped.len(),
+        4,
+        "None must surface all four edges across spaces; got {unscoped:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_with_nonexistent_space_id_returns_empty_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    for (id, title) in &[("LPL_PSA", "src A"), ("LPL_PTA", "tgt A")] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', ?, NULL, NULL, NULL)",
+        )
+        .bind(id)
+        .bind(title)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    assign_to_space(&pool, "LPL_PSA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LPL_PTA", TEST_SPACE_ID).await;
+    insert_link(&pool, "LPL_PSA", "LPL_PTA").await;
+
+    let resp =
+        crate::commands::list_page_links_inner(&pool, Some("01NONEXISTENT0000000000000".into()))
+            .await
+            .unwrap();
+    assert!(resp.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_disjointness_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    for (id, title) in &[
+        ("LPL_PSA", "src A"),
+        ("LPL_PTA", "tgt A"),
+        ("LPL_PSB", "src B"),
+        ("LPL_PTB", "tgt B"),
+    ] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', ?, NULL, NULL, NULL)",
+        )
+        .bind(id)
+        .bind(title)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    assign_to_space(&pool, "LPL_PSA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LPL_PTA", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "LPL_PSB", TEST_SPACE_B_ID).await;
+    assign_to_space(&pool, "LPL_PTB", TEST_SPACE_B_ID).await;
+
+    insert_link(&pool, "LPL_PSA", "LPL_PTA").await; // A→A
+    insert_link(&pool, "LPL_PSA", "LPL_PTB").await; // A→B (cross-space)
+    insert_link(&pool, "LPL_PSB", "LPL_PTA").await; // B→A (cross-space)
+    insert_link(&pool, "LPL_PSB", "LPL_PTB").await; // B→B
+
+    let to_set = |v: Vec<crate::commands::PageLink>| {
+        v.into_iter()
+            .map(|l| (l.source_id, l.target_id))
+            .collect::<std::collections::HashSet<(String, String)>>()
+    };
+    let a = to_set(
+        crate::commands::list_page_links_inner(&pool, Some(TEST_SPACE_ID.into()))
+            .await
+            .unwrap(),
+    );
+    let b = to_set(
+        crate::commands::list_page_links_inner(&pool, Some(TEST_SPACE_B_ID.into()))
+            .await
+            .unwrap(),
+    );
+    assert!(a.is_disjoint(&b), "A and B edge sets must be disjoint");
+    assert!(a.contains(&("LPL_PSA".into(), "LPL_PTA".into())));
+    assert!(b.contains(&("LPL_PSB".into(), "LPL_PTB".into())));
+    // Cross-space edges (A→B, B→A) are excluded from BOTH scoped queries —
+    // their union with the unscoped set is what completes the picture.
+    assert_eq!(a.len(), 1);
+    assert_eq!(b.len(), 1);
 }

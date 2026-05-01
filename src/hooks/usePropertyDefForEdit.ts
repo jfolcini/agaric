@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
 import { listBlocks, listPropertyDefs } from '../lib/tauri'
+import { useSpaceStore } from '../stores/space'
 
 export interface UsePropertyDefForEditReturn {
   selectOptions: string[] | null
@@ -26,6 +27,7 @@ export interface UsePropertyDefForEditReturn {
 export function usePropertyDefForEdit(
   editingProp: { key: string; value: string } | null,
 ): UsePropertyDefForEditReturn {
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [selectOptions, setSelectOptions] = useState<string[] | null>(null)
   const [isRefProp, setIsRefProp] = useState(false)
   const [refPages, setRefPages] = useState<BlockRow[]>([])
@@ -63,7 +65,11 @@ export function usePropertyDefForEdit(
         } else if (def?.value_type === 'ref') {
           setIsRefProp(true)
           setSelectOptions(null)
-          listBlocks({ blockType: 'page' })
+          // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
+          // fallback is intentional pre-bootstrap behaviour: empty
+          // string forces a no-match SQL filter rather than a runtime
+          // null deref.
+          listBlocks({ blockType: 'page', spaceId: currentSpaceId ?? '' })
             .then((res) => {
               if (!stale) setRefPages(res.items)
             })
@@ -85,7 +91,7 @@ export function usePropertyDefForEdit(
     return () => {
       stale = true
     }
-  }, [editingProp])
+  }, [editingProp, currentSpaceId])
 
   return { selectOptions, isRefProp, refPages, refSearch, setRefSearch }
 }

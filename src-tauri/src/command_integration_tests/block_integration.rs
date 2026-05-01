@@ -674,9 +674,20 @@ async fn deleted_blocks_excluded_from_list_blocks() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let live = list_blocks_inner(
-        &pool, None, None, None, None, None, None, None, None, None, None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -717,6 +728,7 @@ async fn deleted_blocks_visible_in_list_blocks_show_deleted() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let trash = list_blocks_inner(
         &pool,
         None,
@@ -729,7 +741,7 @@ async fn deleted_blocks_visible_in_list_blocks_show_deleted() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1434,9 +1446,20 @@ async fn list_blocks_top_level_returns_root_blocks() {
     insert_block(&pool, "ROOT2", "content", "b", None, Some(2)).await;
     insert_block(&pool, "CHILD1", "content", "c", Some("ROOT1"), Some(1)).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
-        &pool, None, None, None, None, None, None, None, None, None, None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1464,6 +1487,7 @@ async fn list_blocks_with_parent_id_returns_children_only() {
     insert_block(&pool, "LC02", "content", "child 2", Some("LP01"), Some(2)).await;
     insert_block(&pool, "LOTHER", "content", "other", None, Some(2)).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         Some("LP01".into()),
@@ -1476,7 +1500,7 @@ async fn list_blocks_with_parent_id_returns_children_only() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1499,6 +1523,7 @@ async fn list_blocks_with_block_type_filter_returns_matching_type() {
     insert_block(&pool, "LTAG1", "tag", "urgent", None, None).await;
     insert_block(&pool, "LCONT1", "content", "hello", None, Some(2)).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -1511,7 +1536,7 @@ async fn list_blocks_with_block_type_filter_returns_matching_type() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1524,9 +1549,20 @@ async fn list_blocks_with_block_type_filter_returns_matching_type() {
 async fn list_blocks_empty_db_returns_empty_page_no_more() {
     let (pool, _dir) = test_pool().await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
-        &pool, None, None, None, None, None, None, None, None, None, None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1556,6 +1592,7 @@ async fn list_blocks_show_deleted_returns_only_deleted() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let trash = list_blocks_inner(
         &pool,
         None,
@@ -1568,7 +1605,7 @@ async fn list_blocks_show_deleted_returns_only_deleted() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1615,6 +1652,7 @@ async fn pagination_walk_all_pages_no_duplicates() {
     let mut cursor: Option<String> = None;
     let mut pages = 0;
     loop {
+        assign_all_to_test_space(&pool).await;
         let page = list_blocks_inner(
             &pool,
             None,
@@ -1627,7 +1665,7 @@ async fn pagination_walk_all_pages_no_duplicates() {
             None,
             cursor,
             Some(4),
-            None, // FEAT-3 Phase 2: space_id unscoped
+            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .unwrap();
@@ -1665,6 +1703,7 @@ async fn pagination_limit_1_produces_single_item_pages() {
     let mut pages = 0;
 
     loop {
+        assign_all_to_test_space(&pool).await;
         let page = list_blocks_inner(
             &pool,
             None,
@@ -1677,7 +1716,7 @@ async fn pagination_limit_1_produces_single_item_pages() {
             None,
             cursor,
             Some(1),
-            None, // FEAT-3 Phase 2: space_id unscoped
+            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .unwrap();

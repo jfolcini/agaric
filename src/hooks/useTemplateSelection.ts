@@ -46,7 +46,8 @@ export function useTemplateSelection({
 
   const openTemplatePicker = useCallback(async () => {
     try {
-      const pages = await loadTemplatePagesWithPreview()
+      const tplSpaceId = useSpaceStore.getState().currentSpaceId
+      const pages = await loadTemplatePagesWithPreview(tplSpaceId)
       if (pages.length === 0) {
         toast.error(t('slash.noTemplates'))
         return
@@ -71,7 +72,7 @@ export function useTemplateSelection({
         const tplSpaceId = useSpaceStore.getState().currentSpaceId
         const pageTitle =
           useResolveStore.getState().cache.get(keyFor(tplSpaceId, rootParentId ?? ''))?.title ?? ''
-        const ids = await insertTemplateBlocks(templatePageId, parentId, {
+        const ids = await insertTemplateBlocks(templatePageId, parentId, tplSpaceId, {
           pageTitle,
         })
         if (ids.length > 0) {

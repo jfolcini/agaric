@@ -19,6 +19,7 @@ import type { NavigateToPageFn } from '../lib/block-events'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, queryByProperty } from '../lib/tauri'
+import { useSpaceStore } from '../stores/space'
 import { BlockListItem } from './BlockListItem'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import {
@@ -44,6 +45,7 @@ export function DonePanel({
 }: DonePanelProps): React.ReactElement | null {
   const { t } = useTranslation()
   const { invalidationKey } = useBlockPropertyEvents()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [blocks, setBlocks] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
@@ -62,6 +64,7 @@ export function DonePanel({
           valueDate: date,
           ...(cursor != null && { cursor }),
           limit: 50,
+          spaceId: currentSpaceId,
         })
         // Filter out blocks with empty content (UX-129) and blocks from the excluded page (B-74)
         const nonEmptyItems = filterDoneBlocks(resp.items, excludePageId)
@@ -83,7 +86,7 @@ export function DonePanel({
         setLoading(false)
       }
     },
-    [date, blocks, totalCount, t, excludePageId],
+    [date, blocks, totalCount, t, excludePageId, currentSpaceId],
   )
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: invalidationKey triggers refetch on property changes (F-39)
@@ -103,6 +106,7 @@ export function DonePanel({
           key: 'completed_at',
           valueDate: date,
           limit: 50,
+          spaceId: currentSpaceId,
         })
         if (cancelled) return
         // Filter out blocks with empty content (UX-129) and blocks from the excluded page (B-74)
@@ -131,7 +135,7 @@ export function DonePanel({
     return () => {
       cancelled = true
     }
-  }, [date, t, invalidationKey, excludePageId])
+  }, [date, t, invalidationKey, excludePageId, currentSpaceId])
 
   const loadMore = useCallback(() => {
     if (nextCursor) {

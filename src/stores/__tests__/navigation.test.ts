@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useJournalStore } from '../journal'
-import { useNavigationStore } from '../navigation'
+import { selectCurrentViewForSpace, useNavigationStore } from '../navigation'
 import { useRecentPagesStore } from '../recent-pages'
 import { useSpaceStore } from '../space'
 import {
@@ -16,9 +16,12 @@ function resetStore() {
   resetTabIdCounter()
   // FEAT-3 Phase 3 — clear the per-space slices alongside the flat fields
   // so tab data from a prior test doesn't leak in via the selector fall-
-  // back path.
+  // back path. FEAT-3p4 — `currentViewBySpace` is now persisted alongside
+  // `currentView`; reset both so view state from a prior test doesn't
+  // bleed across cases.
   useNavigationStore.setState({
     currentView: 'journal',
+    currentViewBySpace: {},
     selectedBlockId: null,
   })
   useTabsStore.setState({
@@ -951,8 +954,12 @@ describe('useNavigationStore', () => {
       expect(raw).not.toBeNull()
 
       const parsed = JSON.parse(raw as string)
-      expect(parsed.version).toBe(2)
+      // FEAT-3p4 bumped the persist version 2 → 3 to add `currentViewBySpace`.
+      expect(parsed.version).toBe(3)
       expect(parsed.state.currentView).toBe('search')
+      // FEAT-3p4 — `currentViewBySpace` is also persisted alongside the flat
+      // mirror so the per-space slice survives reloads.
+      expect(parsed.state).toHaveProperty('currentViewBySpace')
       // Tabs do NOT bleed into the navigation slot post-split.
       expect(parsed.state).not.toHaveProperty('tabs')
       expect(parsed.state).not.toHaveProperty('activeTabIndex')
@@ -1320,7 +1327,7 @@ describe('useNavigationStore', () => {
     // store start from defaults. Verifies the v1→v2 navigation migration
     // does not blow up on legacy data and does not bleed tab fields into
     // the slimmer v2 navigation contract.
-    it('navigation v1→v2 ignores legacy tab fields without crashing', () => {
+    it('navigation v1→v3 ignores legacy tab fields and seeds currentViewBySpace', () => {
       const NAV_KEY = 'agaric:navigation'
       const legacyShape = {
         state: {
@@ -1340,16 +1347,20 @@ describe('useNavigationStore', () => {
 
       expect(() => useNavigationStore.persist.rehydrate()).not.toThrow()
 
-      // Only currentView survives — the v2 contract drops tabs.
+      // Only currentView survives — the v2 contract drops tabs; v3 adds
+      // `currentViewBySpace` (seeded from the flat mirror under
+      // `__legacy__`).
       expect(useNavigationStore.getState().currentView).toBe('page-editor')
+      expect(useNavigationStore.getState().currentViewBySpace['__legacy__']).toBe('page-editor')
       const reReadRaw = localStorage.getItem(NAV_KEY)
       expect(reReadRaw).not.toBeNull()
       const reRead = JSON.parse(reReadRaw as string)
-      // After first persist post-rehydrate, the version should be 2 and
+      // After first persist post-rehydrate, the version should be 3 and
       // the tab fields should be gone.
-      expect(reRead.version).toBe(2)
+      expect(reRead.version).toBe(3)
       expect(reRead.state).not.toHaveProperty('tabs')
       expect(reRead.state).not.toHaveProperty('tabsBySpace')
+      expect(reRead.state).toHaveProperty('currentViewBySpace')
 
       localStorage.removeItem(NAV_KEY)
     })
@@ -1427,6 +1438,123 @@ describe('useNavigationStore', () => {
         expect(useTabsStore.getState().tabs).toBe(beforeTabs)
         expect(useTabsStore.getState().activeTabIndex).toBe(beforeIndex)
       }
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // FEAT-3p4 — per-space currentView
+  // ---------------------------------------------------------------------------
+  describe('FEAT-3p4 per-space currentView', () => {
+    beforeEach(() => {
+      // Each per-space test drives `useSpaceStore` directly. Reset it
+      // back to "no active space" between cases so the subscriber never
+      // races against leftovers from a sibling test. The `setState` on
+      // the space store fires the per-store subscribers, which can
+      // pollute `currentViewBySpace` with stale flush values from the
+      // previous test's currentSpaceId — re-clear the navigation slice
+      // AFTER the space reset so we start each test with a known empty
+      // partition map.
+      useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [], isReady: true })
+      useNavigationStore.setState({
+        currentView: 'journal',
+        currentViewBySpace: {},
+      })
+    })
+
+    it('setView writes both the flat field and the active-space slice', () => {
+      useSpaceStore.setState({
+        currentSpaceId: 'space-1',
+        availableSpaces: [{ id: 'space-1', name: 'One', accent_color: null }],
+        isReady: true,
+      })
+
+      useNavigationStore.getState().setView('search')
+
+      expect(useNavigationStore.getState().currentView).toBe('search')
+      expect(useNavigationStore.getState().currentViewBySpace['space-1']).toBe('search')
+    })
+
+    it('selectCurrentViewForSpace falls back to flat currentView when spaceId is null', () => {
+      useNavigationStore.setState({
+        currentView: 'pages',
+        currentViewBySpace: {},
+      })
+
+      expect(selectCurrentViewForSpace(useNavigationStore.getState(), null)).toBe('pages')
+    })
+
+    it('selectCurrentViewForSpace reads from per-space slice when spaceId is non-null', () => {
+      useNavigationStore.setState({
+        currentView: 'journal',
+        currentViewBySpace: {
+          'space-1': 'search',
+          'space-2': 'pages',
+        },
+      })
+
+      expect(selectCurrentViewForSpace(useNavigationStore.getState(), 'space-1')).toBe('search')
+      expect(selectCurrentViewForSpace(useNavigationStore.getState(), 'space-2')).toBe('pages')
+    })
+
+    it('switching space flushes the outgoing view and pulls the incoming slice', () => {
+      // Seed space-1 and set its view via the action so flat + per-space stay in sync.
+      useSpaceStore.setState({
+        currentSpaceId: 'space-1',
+        availableSpaces: [
+          { id: 'space-1', name: 'One', accent_color: null },
+          { id: 'space-2', name: 'Two', accent_color: null },
+        ],
+        isReady: true,
+      })
+      useNavigationStore.getState().setView('search')
+      // Pre-seed space-2 so we can verify pull-on-switch.
+      useNavigationStore.setState((prev) => ({
+        currentViewBySpace: { ...prev.currentViewBySpace, 'space-2': 'pages' },
+      }))
+
+      // Switch space-1 → space-2. The subscriber flushes the flat field
+      // (space-1's `search`) into the slice and pulls space-2's `pages`
+      // into the flat field.
+      useSpaceStore.setState({ currentSpaceId: 'space-2' })
+
+      expect(useNavigationStore.getState().currentView).toBe('pages')
+      // space-1's view is retained in its slice for next time.
+      expect(useNavigationStore.getState().currentViewBySpace['space-1']).toBe('search')
+    })
+
+    it('switching to a fresh space defaults to page-editor', () => {
+      // space-1 has a recorded view; space-2 has never been visited.
+      useSpaceStore.setState({
+        currentSpaceId: 'space-1',
+        availableSpaces: [
+          { id: 'space-1', name: 'One', accent_color: null },
+          { id: 'space-2', name: 'Two', accent_color: null },
+        ],
+        isReady: true,
+      })
+      useNavigationStore.getState().setView('search')
+
+      // Switch to fresh space-2.
+      useSpaceStore.setState({ currentSpaceId: 'space-2' })
+
+      // Default for fresh spaces is `page-editor` per the FEAT-3p4 spec.
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+    })
+
+    it('setView in space-A does not bleed into space-B', () => {
+      useSpaceStore.setState({
+        currentSpaceId: 'space-1',
+        availableSpaces: [
+          { id: 'space-1', name: 'One', accent_color: null },
+          { id: 'space-2', name: 'Two', accent_color: null },
+        ],
+        isReady: true,
+      })
+      useNavigationStore.getState().setView('tags')
+
+      // space-1 slice has 'tags'; space-2 slice is undefined (never visited).
+      expect(useNavigationStore.getState().currentViewBySpace['space-1']).toBe('tags')
+      expect(useNavigationStore.getState().currentViewBySpace['space-2']).toBeUndefined()
     })
   })
 })

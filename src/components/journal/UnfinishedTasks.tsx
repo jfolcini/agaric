@@ -20,6 +20,7 @@ import type { NavigateToPageFn } from '../../lib/block-events'
 import { priorityColor } from '../../lib/priority-color'
 import type { BlockRow } from '../../lib/tauri'
 import { batchResolve, queryByProperty } from '../../lib/tauri'
+import { useSpaceStore } from '../../stores/space'
 import { BlockListItem } from '../BlockListItem'
 import { LoadingSkeleton } from '../LoadingSkeleton'
 
@@ -188,6 +189,7 @@ export function UnfinishedTasks({
   onNavigateToPage,
 }: UnfinishedTasksProps): React.ReactElement | null {
   const { t } = useTranslation()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [collapsed, setCollapsed] = useState(readCollapsedState)
   const [blocks, setBlocks] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -212,8 +214,8 @@ export function UnfinishedTasks({
       try {
         // Query blocks with due_date and scheduled_date, then filter client-side
         const [dueResp, schedResp] = await Promise.all([
-          queryByProperty({ key: 'due_date', limit: 500 }),
-          queryByProperty({ key: 'scheduled_date', limit: 500 }),
+          queryByProperty({ key: 'due_date', limit: 500, spaceId: currentSpaceId }),
+          queryByProperty({ key: 'scheduled_date', limit: 500, spaceId: currentSpaceId }),
         ])
 
         if (stale) return
@@ -241,7 +243,7 @@ export function UnfinishedTasks({
     return () => {
       stale = true
     }
-  }, [todayStr])
+  }, [todayStr, currentSpaceId])
 
   const groups = useMemo(() => groupByAge(blocks, todayStr), [blocks, todayStr])
 

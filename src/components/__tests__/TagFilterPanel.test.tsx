@@ -313,6 +313,7 @@ describe('TagFilterPanel', () => {
       includeInherited: null,
       cursor: null,
       limit: 50,
+      spaceId: null,
     })
 
     expect(screen.getByText('work note')).toBeInTheDocument()
@@ -360,6 +361,7 @@ describe('TagFilterPanel', () => {
       includeInherited: null,
       cursor: 'cursor_abc',
       limit: 50,
+      spaceId: null,
     })
 
     // Both results should be accumulated
@@ -656,6 +658,7 @@ describe('TagFilterPanel', () => {
       includeInherited: null,
       cursor: null,
       limit: 50,
+      spaceId: null,
     })
   })
 

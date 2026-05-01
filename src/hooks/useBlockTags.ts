@@ -6,6 +6,7 @@ import type { BlockRow } from '../lib/tauri'
 import { addTag, createBlock, listBlocks, listTagsForBlock, removeTag } from '../lib/tauri'
 import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
+import { useSpaceStore } from '../stores/space'
 import { useUndoStore } from '../stores/undo'
 
 export interface TagEntry {
@@ -30,13 +31,17 @@ export interface UseBlockTagsReturn {
 
 export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
   const pageStore = usePageBlockStoreApi()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [allTags, setAllTags] = useState<TagEntry[]>([])
   const [appliedTagIds, setAppliedTagIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
 
-  // Load all available tags on mount
+  // Load all available tags for the active space.
+  // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
+  // fallback is intentional pre-bootstrap behaviour: empty string
+  // forces a no-match SQL filter rather than a runtime null deref.
   useEffect(() => {
-    listBlocks({ blockType: 'tag' })
+    listBlocks({ blockType: 'tag', spaceId: currentSpaceId ?? '' })
       .then((resp) => {
         setAllTags(resp.items.map((t: BlockRow) => ({ id: t.id, name: t.content ?? '' })))
       })
@@ -44,7 +49,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         logger.error('useBlockTags', 'Failed to load all tags', undefined, error)
         toast.error(i18n.t('tags.loadFailed'))
       })
-  }, [])
+  }, [currentSpaceId])
 
   // Load applied tags when blockId changes
   useEffect(() => {

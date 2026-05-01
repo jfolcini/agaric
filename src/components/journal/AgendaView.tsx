@@ -9,6 +9,7 @@ import { useAgendaPreferences } from '../../hooks/useAgendaPreferences'
 import { executeAgendaFilters } from '../../lib/agenda-filters'
 import type { BlockRow } from '../../lib/tauri'
 import { batchResolve, queryByProperty } from '../../lib/tauri'
+import { useSpaceStore } from '../../stores/space'
 import type { AgendaFilter } from '../AgendaFilterBuilder'
 import { AgendaFilterBuilder, AgendaSortGroupControls } from '../AgendaFilterBuilder'
 import { AgendaResults } from '../AgendaResults'
@@ -20,6 +21,7 @@ interface AgendaViewProps {
 }
 
 export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactElement {
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   // ── Agenda filter state ────────────────────────────────────────────
   // Default to active task states (TODO + DOING) so the agenda opens with
   // actionable items only — DONE is hidden until the user clears the filter
@@ -51,7 +53,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
 
     async function runFilters() {
       try {
-        const result = await executeAgendaFilters(agendaFilters)
+        const result = await executeAgendaFilters(agendaFilters, currentSpaceId)
         if (cancelled) return
 
         const outcome = processFilterResult(result)
@@ -82,14 +84,19 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
     return () => {
       cancelled = true
     }
-  }, [agendaFilters, refreshKey])
+  }, [agendaFilters, refreshKey, currentSpaceId])
 
   /** Load the next page of agenda results (used for default unfiltered view). */
   const loadMoreAgenda = useCallback(async () => {
     if (!agendaCursor) return
     setAgendaLoading(true)
     try {
-      const resp = await queryByProperty({ key: 'todo_state', cursor: agendaCursor, limit: 200 })
+      const resp = await queryByProperty({
+        key: 'todo_state',
+        cursor: agendaCursor,
+        limit: 200,
+        spaceId: currentSpaceId,
+      })
       setFilteredBlocks((prev) => [...prev, ...resp.items])
       setAgendaHasMore(resp.has_more)
       setAgendaCursor(resp.next_cursor)
@@ -97,7 +104,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
       logger.warn('AgendaView', 'Failed to load more agenda items', undefined, err)
     }
     setAgendaLoading(false)
-  }, [agendaCursor])
+  }, [agendaCursor, currentSpaceId])
 
   return (
     <div className="agenda-view space-y-4" data-testid="agenda-view">

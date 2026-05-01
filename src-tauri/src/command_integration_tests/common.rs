@@ -86,6 +86,31 @@ pub async fn assign_to_test_space(pool: &SqlitePool, block_id: &str) {
         .unwrap();
 }
 
+/// FEAT-3p4 — bulk-assign every block currently in the DB (excluding the
+/// space block itself and any block that already carries a `space`
+/// property) to [`TEST_SPACE_ID`]. Use this at the end of a test's seed
+/// phase so the FEAT-3p4 hard-filter paths (`list_blocks_inner`,
+/// `search_blocks_inner`) return everything the test set up. Idempotent —
+/// the `NOT EXISTS` guard skips blocks that are already assigned to any
+/// space (so cross-space tests still work).
+pub async fn assign_all_to_test_space(pool: &SqlitePool) {
+    ensure_test_space(pool).await;
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_ref) \
+         SELECT b.id, 'space', ? FROM blocks b \
+         WHERE b.id <> ? \
+           AND NOT EXISTS ( \
+                SELECT 1 FROM block_properties bp \
+                WHERE bp.block_id = b.id AND bp.key = 'space' \
+           )",
+    )
+    .bind(TEST_SPACE_ID)
+    .bind(TEST_SPACE_ID)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// Allow materializer background tasks to settle before the next write.
 ///
 /// Uses the deterministic barrier-flush mechanism so tests are not

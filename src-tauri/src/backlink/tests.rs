@@ -1141,6 +1141,7 @@ async fn sort_created_asc() {
         None,
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -1166,6 +1167,7 @@ async fn sort_created_desc() {
         None,
         Some(BacklinkSort::Created { dir: SortDir::Desc }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -1194,6 +1196,7 @@ async fn sort_property_text() {
             dir: SortDir::Asc,
         }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -1221,6 +1224,7 @@ async fn sort_property_num() {
             dir: SortDir::Asc,
         }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -1248,6 +1252,7 @@ async fn sort_property_date() {
             dir: SortDir::Asc,
         }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -1267,7 +1272,7 @@ async fn pagination_limit_works() {
     setup_backlinks(&pool).await;
     let page = PageRequest::new(None, Some(2)).unwrap();
 
-    let resp = eval_backlink_query(&pool, "TARGET", None, None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
 
@@ -1291,7 +1296,7 @@ async fn pagination_cursor_works() {
 
     // First page
     let page1 = PageRequest::new(None, Some(2)).unwrap();
-    let resp1 = eval_backlink_query(&pool, "TARGET", None, None, &page1)
+    let resp1 = eval_backlink_query(&pool, "TARGET", None, None, &page1, None)
         .await
         .unwrap();
     assert_eq!(resp1.items.len(), 2, "first page should have 2 items");
@@ -1299,7 +1304,7 @@ async fn pagination_cursor_works() {
 
     // Second page
     let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
-    let resp2 = eval_backlink_query(&pool, "TARGET", None, None, &page2)
+    let resp2 = eval_backlink_query(&pool, "TARGET", None, None, &page2, None)
         .await
         .unwrap();
     assert_eq!(
@@ -1333,7 +1338,7 @@ async fn pagination_cursor_works_for_created_desc_i_search_18() {
 
     // First page
     let page1 = PageRequest::new(None, Some(2)).unwrap();
-    let resp1 = eval_backlink_query(&pool, "TARGET", None, sort.clone(), &page1)
+    let resp1 = eval_backlink_query(&pool, "TARGET", None, sort.clone(), &page1, None)
         .await
         .unwrap();
     assert_eq!(resp1.items.len(), 2, "first page should have 2 items");
@@ -1347,7 +1352,7 @@ async fn pagination_cursor_works_for_created_desc_i_search_18() {
 
     // Second page
     let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
-    let resp2 = eval_backlink_query(&pool, "TARGET", None, sort, &page2)
+    let resp2 = eval_backlink_query(&pool, "TARGET", None, sort, &page2, None)
         .await
         .unwrap();
     assert_eq!(
@@ -1379,7 +1384,7 @@ async fn pagination_binary_search_cursor_exists() {
 
     // First page: get first 1 item
     let page1 = PageRequest::new(None, Some(1)).unwrap();
-    let resp1 = eval_backlink_query(&pool, "TARGET", None, None, &page1)
+    let resp1 = eval_backlink_query(&pool, "TARGET", None, None, &page1, None)
         .await
         .unwrap();
     assert_eq!(resp1.items.len(), 1, "first page has 1 item");
@@ -1388,7 +1393,7 @@ async fn pagination_binary_search_cursor_exists() {
 
     // Second page via cursor from first item (cursor ID exists)
     let page2 = PageRequest::new(resp1.next_cursor, Some(1)).unwrap();
-    let resp2 = eval_backlink_query(&pool, "TARGET", None, None, &page2)
+    let resp2 = eval_backlink_query(&pool, "TARGET", None, None, &page2, None)
         .await
         .unwrap();
     assert_eq!(resp2.items.len(), 1, "second page has 1 item");
@@ -1400,7 +1405,7 @@ async fn pagination_binary_search_cursor_exists() {
 
     // Third page
     let page3 = PageRequest::new(resp2.next_cursor, Some(1)).unwrap();
-    let resp3 = eval_backlink_query(&pool, "TARGET", None, None, &page3)
+    let resp3 = eval_backlink_query(&pool, "TARGET", None, None, &page3, None)
         .await
         .unwrap();
     assert_eq!(resp3.items.len(), 1, "third page has 1 item");
@@ -1421,7 +1426,7 @@ async fn pagination_binary_search_cursor_missing() {
 
     // Get all items first to know the order
     let all_page = default_page();
-    let all = eval_backlink_query(&pool, "TARGET", None, None, &all_page)
+    let all = eval_backlink_query(&pool, "TARGET", None, None, &all_page, None)
         .await
         .unwrap();
     assert_eq!(all.items.len(), 3);
@@ -1439,7 +1444,7 @@ async fn pagination_binary_search_cursor_missing() {
     };
     let encoded = fake_cursor.encode().unwrap();
     let page_missing = PageRequest::new(Some(encoded), Some(50)).unwrap();
-    let resp = eval_backlink_query(&pool, "TARGET", None, None, &page_missing)
+    let resp = eval_backlink_query(&pool, "TARGET", None, None, &page_missing, None)
         .await
         .unwrap();
 
@@ -1474,7 +1479,7 @@ async fn pagination_total_count_correct_with_filters() {
     }];
     let page = PageRequest::new(None, Some(1)).unwrap();
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 3, "total includes all 3 backlinks");
@@ -1532,6 +1537,7 @@ async fn eval_backlink_query_created_desc_page_2_returns_remaining_results() {
         None,
         Some(BacklinkSort::Created { dir: SortDir::Desc }),
         &page1,
+        None,
     )
     .await
     .unwrap();
@@ -1564,6 +1570,7 @@ async fn eval_backlink_query_created_desc_page_2_returns_remaining_results() {
         None,
         Some(BacklinkSort::Created { dir: SortDir::Desc }),
         &page2,
+        None,
     )
     .await
     .unwrap();
@@ -1593,7 +1600,7 @@ async fn eval_backlink_query_created_desc_page_3_returns_remaining_results() {
 
     // Page 1
     let page1 = PageRequest::new(None, Some(10)).unwrap();
-    let resp1 = eval_backlink_query(&pool, "TARGET", None, Some(sort.clone()), &page1)
+    let resp1 = eval_backlink_query(&pool, "TARGET", None, Some(sort.clone()), &page1, None)
         .await
         .unwrap();
     let actual1: Vec<&str> = resp1.items.iter().map(|b| b.id.as_str()).collect();
@@ -1601,7 +1608,7 @@ async fn eval_backlink_query_created_desc_page_3_returns_remaining_results() {
 
     // Page 2
     let page2 = PageRequest::new(resp1.next_cursor, Some(10)).unwrap();
-    let resp2 = eval_backlink_query(&pool, "TARGET", None, Some(sort.clone()), &page2)
+    let resp2 = eval_backlink_query(&pool, "TARGET", None, Some(sort.clone()), &page2, None)
         .await
         .unwrap();
     let actual2: Vec<&str> = resp2.items.iter().map(|b| b.id.as_str()).collect();
@@ -1609,7 +1616,7 @@ async fn eval_backlink_query_created_desc_page_3_returns_remaining_results() {
 
     // Page 3: must yield the final 10 items, not empty.
     let page3 = PageRequest::new(resp2.next_cursor, Some(10)).unwrap();
-    let resp3 = eval_backlink_query(&pool, "TARGET", None, Some(sort), &page3)
+    let resp3 = eval_backlink_query(&pool, "TARGET", None, Some(sort), &page3, None)
         .await
         .unwrap();
     let actual3: Vec<&str> = resp3.items.iter().map(|b| b.id.as_str()).collect();
@@ -1638,7 +1645,7 @@ async fn eval_backlink_query_created_asc_pagination_unchanged() {
 
     // Page 1
     let page1 = PageRequest::new(None, Some(10)).unwrap();
-    let resp1 = eval_backlink_query(&pool, "TARGET", None, Some(sort.clone()), &page1)
+    let resp1 = eval_backlink_query(&pool, "TARGET", None, Some(sort.clone()), &page1, None)
         .await
         .unwrap();
     let actual1: Vec<&str> = resp1.items.iter().map(|b| b.id.as_str()).collect();
@@ -1647,7 +1654,7 @@ async fn eval_backlink_query_created_asc_pagination_unchanged() {
 
     // Page 2
     let page2 = PageRequest::new(resp1.next_cursor, Some(10)).unwrap();
-    let resp2 = eval_backlink_query(&pool, "TARGET", None, Some(sort.clone()), &page2)
+    let resp2 = eval_backlink_query(&pool, "TARGET", None, Some(sort.clone()), &page2, None)
         .await
         .unwrap();
     let actual2: Vec<&str> = resp2.items.iter().map(|b| b.id.as_str()).collect();
@@ -1656,7 +1663,7 @@ async fn eval_backlink_query_created_asc_pagination_unchanged() {
 
     // Page 3
     let page3 = PageRequest::new(resp2.next_cursor, Some(10)).unwrap();
-    let resp3 = eval_backlink_query(&pool, "TARGET", None, Some(sort), &page3)
+    let resp3 = eval_backlink_query(&pool, "TARGET", None, Some(sort), &page3, None)
         .await
         .unwrap();
     let actual3: Vec<&str> = resp3.items.iter().map(|b| b.id.as_str()).collect();
@@ -1675,7 +1682,7 @@ async fn empty_filters_returns_all_backlinks() {
     setup_backlinks(&pool).await;
     let page = default_page();
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(vec![]), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(vec![]), None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 3, "empty filters should not affect total");
@@ -1692,7 +1699,7 @@ async fn none_filters_returns_all_backlinks() {
     setup_backlinks(&pool).await;
     let page = default_page();
 
-    let resp = eval_backlink_query(&pool, "TARGET", None, None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 3, "None filters should not affect total");
@@ -1713,7 +1720,7 @@ async fn no_backlinks_returns_empty() {
     insert_block(&pool, "LONELY", "page", "No one links to me").await;
     let page = default_page();
 
-    let resp = eval_backlink_query(&pool, "LONELY", None, None, &page)
+    let resp = eval_backlink_query(&pool, "LONELY", None, None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 0, "no backlinks should yield zero total");
@@ -1741,7 +1748,7 @@ async fn deleted_backlinks_excluded() {
         .unwrap();
     let page = default_page();
 
-    let resp = eval_backlink_query(&pool, "TARGET", None, None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 2, "deleted block excluded from total");
@@ -1766,7 +1773,7 @@ async fn conflict_backlinks_excluded() {
         .unwrap();
     let page = default_page();
 
-    let resp = eval_backlink_query(&pool, "TARGET", None, None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 2, "conflict block excluded from total");
@@ -1827,7 +1834,7 @@ async fn eval_with_property_text_filter() {
         value: "active".into(),
     }];
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 3, "base set has 3 backlinks");
@@ -1849,7 +1856,7 @@ async fn eval_with_block_type_filter() {
         block_type: "content".into(),
     }];
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 2, "base set has 2 backlinks");
@@ -1884,7 +1891,7 @@ async fn eval_with_multiple_filters_and_semantics() {
         },
     ];
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 3, "base set has 3 backlinks");
@@ -2111,6 +2118,7 @@ async fn sort_property_text_missing_values_go_last_asc() {
             dir: SortDir::Asc,
         }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -2138,6 +2146,7 @@ async fn sort_property_text_missing_values_go_last_desc() {
             dir: SortDir::Desc,
         }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -2168,6 +2177,7 @@ async fn sort_property_num_missing_values_go_last() {
             dir: SortDir::Asc,
         }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -2195,6 +2205,7 @@ async fn sort_property_date_missing_values_go_last() {
             dir: SortDir::Asc,
         }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -2219,7 +2230,7 @@ async fn created_in_range_inverted_range_returns_empty() {
         before: Some("2020-01-01".into()),
     }];
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 3, "base set has 3 backlinks");
@@ -2273,7 +2284,7 @@ async fn pagination_with_property_text_sort() {
 
     // First page: limit 2
     let page1 = PageRequest::new(None, Some(2)).unwrap();
-    let resp1 = eval_backlink_query(&pool, "TARGET", None, sort.clone(), &page1)
+    let resp1 = eval_backlink_query(&pool, "TARGET", None, sort.clone(), &page1, None)
         .await
         .unwrap();
     assert_eq!(resp1.items.len(), 2, "first page should have 2 items");
@@ -2283,7 +2294,7 @@ async fn pagination_with_property_text_sort() {
 
     // Second page via cursor
     let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
-    let resp2 = eval_backlink_query(&pool, "TARGET", None, sort, &page2)
+    let resp2 = eval_backlink_query(&pool, "TARGET", None, sort, &page2, None)
         .await
         .unwrap();
     assert_eq!(resp2.items.len(), 1, "second page should have 1 item");
@@ -2343,6 +2354,7 @@ async fn sort_property_num_desc_order() {
             dir: SortDir::Desc,
         }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -2373,6 +2385,7 @@ async fn sort_property_date_desc_order() {
             dir: SortDir::Desc,
         }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -2401,6 +2414,7 @@ async fn snapshot_backlink_query_basic() {
         None,
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -2425,7 +2439,7 @@ async fn snapshot_backlink_query_with_filter() {
         value: "active".into(),
     }];
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
 
@@ -2441,7 +2455,7 @@ async fn snapshot_backlink_query_empty() {
     insert_block(&pool, "LONELY", "page", "No one links to me").await;
     let page = default_page();
 
-    let resp = eval_backlink_query(&pool, "LONELY", None, None, &page)
+    let resp = eval_backlink_query(&pool, "LONELY", None, None, &page, None)
         .await
         .unwrap();
 
@@ -2633,7 +2647,7 @@ async fn filter_property_num_non_finite_values() {
         op: CompareOp::Eq,
         value: f64::INFINITY,
     }];
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_inf_eq), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_inf_eq), None, &page, None)
         .await
         .unwrap();
     assert_eq!(
@@ -2647,7 +2661,7 @@ async fn filter_property_num_non_finite_values() {
         op: CompareOp::Gt,
         value: f64::NEG_INFINITY,
     }];
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_neg_inf_gt), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_neg_inf_gt), None, &page, None)
         .await
         .unwrap();
     assert_eq!(
@@ -2664,7 +2678,7 @@ async fn filter_property_num_non_finite_values() {
         op: CompareOp::Eq,
         value: f64::NAN,
     }];
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_nan_eq), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_nan_eq), None, &page, None)
         .await
         .unwrap();
     assert_eq!(
@@ -2709,7 +2723,7 @@ async fn filter_has_tag_prefix_with_special_chars() {
     let filters_pct = vec![BacklinkFilter::HasTagPrefix {
         prefix: "a%".into(),
     }];
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_pct), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_pct), None, &page, None)
         .await
         .unwrap();
     assert_eq!(
@@ -2726,7 +2740,7 @@ async fn filter_has_tag_prefix_with_special_chars() {
     let filters_usc = vec![BacklinkFilter::HasTagPrefix {
         prefix: "a_".into(),
     }];
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_usc), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_usc), None, &page, None)
         .await
         .unwrap();
     assert_eq!(
@@ -2764,7 +2778,7 @@ async fn fts_contains_mixed_operators_and_terms() {
     let filters_and = vec![BacklinkFilter::Contains {
         query: "AND hello".into(),
     }];
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_and), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_and), None, &page, None)
         .await
         .unwrap();
     assert_eq!(
@@ -2782,7 +2796,7 @@ async fn fts_contains_mixed_operators_and_terms() {
     let filters_not = vec![BacklinkFilter::Contains {
         query: "NOT goodbye".into(),
     }];
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_not), None, &page).await;
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_not), None, &page, None).await;
     assert!(
         resp.is_err(),
         "'NOT goodbye' as standalone NOT should produce an FTS5 syntax error"
@@ -2792,7 +2806,7 @@ async fn fts_contains_mixed_operators_and_terms() {
     let filters_hello = vec![BacklinkFilter::Contains {
         query: "hello".into(),
     }];
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_hello), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters_hello), None, &page, None)
         .await
         .unwrap();
     assert_eq!(
@@ -2857,7 +2871,7 @@ async fn total_and_filtered_count_no_filters() {
     setup_backlinks(&pool).await;
     let page = default_page();
 
-    let resp = eval_backlink_query(&pool, "TARGET", None, None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 3, "total count should be 3");
@@ -2881,7 +2895,7 @@ async fn total_and_filtered_count_with_filter() {
         key: "status".into(),
     }];
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 3, "base set has 3 backlinks");
@@ -3259,7 +3273,7 @@ async fn eval_grouped_empty() {
     insert_block(&pool, "LONELY", "page", "No one links to me").await;
     let page = default_page();
 
-    let resp = eval_backlink_query_grouped(&pool, "LONELY", None, None, &page)
+    let resp = eval_backlink_query_grouped(&pool, "LONELY", None, None, &page, None)
         .await
         .unwrap();
     assert!(resp.groups.is_empty(), "no backlinks means no groups");
@@ -3300,7 +3314,7 @@ async fn eval_grouped_happy_path() {
     insert_block_link(&pool, "BLK_B1", "TARGET").await;
     let page = default_page();
 
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.groups.len(), 2, "2 source pages");
@@ -3357,7 +3371,7 @@ async fn eval_grouped_pagination() {
 
     // First page: limit=2
     let page1 = PageRequest::new(None, Some(2)).unwrap();
-    let resp1 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page1)
+    let resp1 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page1, None)
         .await
         .unwrap();
     assert_eq!(resp1.groups.len(), 2, "first page should have 2 groups");
@@ -3368,7 +3382,7 @@ async fn eval_grouped_pagination() {
 
     // Second page via cursor
     let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
-    let resp2 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page2)
+    let resp2 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page2, None)
         .await
         .unwrap();
     assert_eq!(resp2.groups.len(), 1, "second page has 1 remaining group");
@@ -3414,7 +3428,7 @@ async fn eval_grouped_respects_filters() {
         key: "status".into(),
     }];
 
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 2, "base set has 2 backlinks");
@@ -3506,7 +3520,7 @@ async fn eval_backlink_query_grouped_total_count_excludes_self_references() {
     // N = 4 backlinks total in `block_links`, M = 2 self-references.
     // Post-filter expectation: total_count = N - M = 2.
     let page = default_page();
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
 
@@ -3566,7 +3580,7 @@ async fn eval_backlink_query_grouped_total_count_excludes_orphan_source_blocks()
 
     // N = 4 base backlinks, K = 3 orphans => total_count = 1.
     let page = default_page();
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
 
@@ -3629,7 +3643,7 @@ async fn eval_backlink_query_grouped_total_count_matches_visible_results() {
 
     // N = 10, M = 2, K = 3 => expected total_count = 5.
     let page = default_page();
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
 
@@ -3701,7 +3715,7 @@ async fn filter_source_page_included() {
         excluded: vec![],
     }];
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 2, "base set has 2 backlinks");
@@ -3748,7 +3762,7 @@ async fn filter_source_page_excluded() {
         excluded: vec!["PAGE_A".into()],
     }];
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 2, "base set has 2 backlinks");
@@ -3815,7 +3829,7 @@ async fn filter_source_page_included_and_excluded() {
         excluded: vec!["PAGE_B".into()],
     }];
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 4, "base set has 4 backlinks");
@@ -3879,7 +3893,7 @@ async fn filter_source_page_exclusion_only_sql_path() {
         excluded: vec!["PAGE_B".into()],
     }];
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 3, "base set has 3 backlinks");
@@ -3940,7 +3954,7 @@ async fn filter_source_page_deeply_nested_hierarchy() {
         excluded: vec![],
     }];
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 2, "base set has 2 backlinks");
@@ -4257,7 +4271,7 @@ async fn eval_unlinked_refs_empty_when_page_has_no_title() {
         .unwrap();
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "PAGE1", None, None, &page)
+    let resp = eval_unlinked_references(&pool, "PAGE1", None, None, &page, None)
         .await
         .unwrap();
     assert!(resp.groups.is_empty(), "no title means no unlinked refs");
@@ -4286,7 +4300,7 @@ async fn eval_unlinked_refs_finds_mentioning_blocks() {
     insert_fts(&pool, "BLK_B1", "We should check Project Alpha for updates").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.groups.len(), 1, "one source page group");
@@ -4327,7 +4341,7 @@ async fn eval_unlinked_refs_excludes_linked_blocks() {
     insert_block_link(&pool, "BLK_C1", "TARGET").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     assert!(
@@ -4353,7 +4367,7 @@ async fn eval_unlinked_refs_excludes_own_page_blocks() {
     insert_fts(&pool, "BLK_SELF", "This page is about Project Alpha").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     assert!(
@@ -4385,7 +4399,7 @@ async fn eval_unlinked_refs_handles_special_chars_in_title() {
     insert_fts(&pool, "BLK_D1", "Read C++ \"Tips\" & Tricks for help").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     assert_eq!(
@@ -4428,7 +4442,7 @@ async fn eval_unlinked_refs_cursor_pagination() {
 
     // First page: limit=1
     let page1 = PageRequest::new(None, Some(1)).unwrap();
-    let resp1 = eval_unlinked_references(&pool, "TARGET", None, None, &page1)
+    let resp1 = eval_unlinked_references(&pool, "TARGET", None, None, &page1, None)
         .await
         .unwrap();
     assert_eq!(resp1.groups.len(), 1, "first page has 1 group");
@@ -4441,7 +4455,7 @@ async fn eval_unlinked_refs_cursor_pagination() {
 
     // Second page via cursor
     let page2 = PageRequest::new(resp1.next_cursor, Some(1)).unwrap();
-    let resp2 = eval_unlinked_references(&pool, "TARGET", None, None, &page2)
+    let resp2 = eval_unlinked_references(&pool, "TARGET", None, None, &page2, None)
         .await
         .unwrap();
     assert_eq!(resp2.groups.len(), 1, "second page has 1 group");
@@ -4451,7 +4465,7 @@ async fn eval_unlinked_refs_cursor_pagination() {
 
     // Third page via cursor
     let page3 = PageRequest::new(resp2.next_cursor, Some(1)).unwrap();
-    let resp3 = eval_unlinked_references(&pool, "TARGET", None, None, &page3)
+    let resp3 = eval_unlinked_references(&pool, "TARGET", None, None, &page3, None)
         .await
         .unwrap();
     assert_eq!(resp3.groups.len(), 1, "third page has 1 group");
@@ -4491,7 +4505,7 @@ async fn eval_unlinked_refs_mixed_linked_and_unlinked() {
     insert_block_link(&pool, "BLK_E2", "TARGET").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     // Only BLK_E1 should appear (BLK_E2 is linked)
@@ -4543,7 +4557,7 @@ async fn eval_unlinked_refs_matches_alias() {
     insert_fts(&pool, "BLK_F1", "We should look at ProjAlpha for guidance").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     assert_eq!(resp.groups.len(), 1, "one group matching via alias");
@@ -4592,7 +4606,7 @@ async fn eval_unlinked_refs_matches_title_or_alias() {
     insert_fts(&pool, "BLK_H1", "ProX has the details we need").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     assert_eq!(
@@ -4633,7 +4647,7 @@ async fn eval_unlinked_refs_linked_blocks_excluded_even_with_alias() {
     insert_block_link(&pool, "BLK_I1", "TARGET").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     assert!(
@@ -4664,7 +4678,7 @@ async fn eval_unlinked_refs_empty_alias_ignored() {
     insert_fts(&pool, "BLK_J1", "Some unrelated content here").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     assert!(
@@ -4816,7 +4830,7 @@ async fn eval_unlinked_refs_no_filters_no_sort_regression() {
     setup_unlinked_refs_for_filters(&pool).await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
 
@@ -4838,7 +4852,7 @@ async fn eval_unlinked_refs_tag_filter_excludes_non_matching() {
     }];
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
 
@@ -4872,7 +4886,7 @@ async fn eval_unlinked_refs_property_filter_matches_exact_value() {
     }];
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
 
@@ -4910,6 +4924,7 @@ async fn eval_unlinked_refs_sort_created_asc_vs_desc() {
         None,
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -4931,6 +4946,7 @@ async fn eval_unlinked_refs_sort_created_asc_vs_desc() {
         None,
         Some(BacklinkSort::Created { dir: SortDir::Desc }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -4963,6 +4979,7 @@ async fn eval_unlinked_refs_sort_property_text_orders_by_value() {
             dir: SortDir::Asc,
         }),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -4992,7 +5009,7 @@ async fn eval_unlinked_refs_total_count_reflects_post_filter() {
 
     // Unfiltered: 4 blocks.
     let page = default_page();
-    let unfiltered = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+    let unfiltered = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
     assert_eq!(unfiltered.total_count, 4);
@@ -5004,7 +5021,7 @@ async fn eval_unlinked_refs_total_count_reflects_post_filter() {
         op: CompareOp::Eq,
         value: "high".into(),
     }];
-    let filtered = eval_unlinked_references(&pool, "TARGET", Some(filters), None, &page)
+    let filtered = eval_unlinked_references(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
     assert_eq!(
@@ -5049,7 +5066,7 @@ async fn eval_unlinked_references_excludes_conflict_page_title() {
     // makes `eval_unlinked_references` *always* return empty would also
     // make the post-flip assertion vacuously pass.
     let page = default_page();
-    let before = eval_unlinked_references(&pool, "FOO", None, None, &page)
+    let before = eval_unlinked_references(&pool, "FOO", None, None, &page, None)
         .await
         .unwrap();
     assert_eq!(
@@ -5069,7 +5086,7 @@ async fn eval_unlinked_references_excludes_conflict_page_title() {
         .await
         .unwrap();
 
-    let after = eval_unlinked_references(&pool, "FOO", None, None, &page)
+    let after = eval_unlinked_references(&pool, "FOO", None, None, &page, None)
         .await
         .unwrap();
     assert!(
@@ -5175,7 +5192,7 @@ async fn eval_unlinked_references_truncates_at_fts_row_cap() {
     bulk_insert_unlinked_match_blocks(&pool, "PARENT_PAGE", "Foobar", 10_001).await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
 
@@ -5219,7 +5236,7 @@ async fn eval_unlinked_references_does_not_truncate_at_exactly_fts_row_cap() {
     bulk_insert_unlinked_match_blocks(&pool, "PARENT_PAGE", "Foobar", 10_000).await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
 
@@ -5455,7 +5472,7 @@ async fn eval_grouped_blockrow_fetch_small_in_bind() {
     bulk_insert_n_backlink_sources(&pool, "SRC_PAGE", "TARGET", 5).await;
 
     let page = default_page();
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
 
@@ -5481,7 +5498,7 @@ async fn eval_grouped_blockrow_fetch_large_json_each() {
     bulk_insert_n_backlink_sources(&pool, "SRC_PAGE", "TARGET", 600).await;
 
     let page = default_page();
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
 
@@ -5526,7 +5543,7 @@ async fn filter_source_page_included_large_json_each() {
     }];
     let page = PageRequest::new(None, Some(200)).unwrap();
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
 
@@ -5571,7 +5588,7 @@ async fn filter_source_page_excluded_only_large_json_each() {
     }];
     let page = default_page();
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
 
@@ -5605,7 +5622,7 @@ async fn filter_source_page_include_exclude_large_json_each() {
     let filters = vec![BacklinkFilter::SourcePage { included, excluded }];
     let page = PageRequest::new(None, Some(200)).unwrap();
 
-    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         .await
         .unwrap();
 
