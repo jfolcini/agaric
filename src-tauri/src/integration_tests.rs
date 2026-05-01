@@ -1350,7 +1350,7 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
 
     // --- Wipe everything by applying the snapshot ---
     // (apply_snapshot wipes all tables then inserts snapshot data)
-    let restored = snapshot::apply_snapshot(&pool, &mat, &compressed)
+    let restored = snapshot::apply_snapshot(&pool, &mat, &compressed[..])
         .await
         .unwrap();
 

@@ -73,12 +73,19 @@ const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
 /// `apply_snapshot` returns by calling `peer_refs::upsert_peer_ref` followed
 /// by `peer_refs::update_on_sync(pool, peer_id, &up_to_hash, "")`. Future
 /// callers MUST follow the same pattern.
-pub async fn apply_snapshot(
+pub async fn apply_snapshot<R: std::io::Read>(
     pool: &SqlitePool,
     materializer: &Materializer,
-    compressed_data: &[u8],
+    compressed_reader: R,
 ) -> Result<SnapshotData, AppError> {
-    let data = decode_snapshot(compressed_data)?;
+    // L-67: the reader is consumed entirely inside `decode_snapshot`
+    // (zstd-streaming + ciborium) before we acquire the write lock,
+    // so the only memory in flight from this point on is the parsed
+    // `SnapshotData` itself — never the compressed bytes nor the
+    // decompressed CBOR. Production callers feed a `std::fs::File`
+    // opened on a temp file the binary stream was written into;
+    // tests still pass `&bytes[..]` (slice impls `Read`).
+    let data = decode_snapshot(compressed_reader)?;
 
     // F04: BEGIN IMMEDIATE — acquire write lock upfront (consistent with
     // every other write path in the codebase). L-7: route through

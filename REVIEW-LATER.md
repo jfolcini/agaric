@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-18 open items — 18 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 26 backend Medium findings closed + 27 MAINT closed (some partially) across sessions 549-592 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-592): **3 schema-integrity migrations landed in session 582** (M-30, M-93, M-90); **H-9 family closed across sessions 583-584**; **MAINT-162 closed in 585**; **C-2b closed in 586** (last CRITICAL backend code review finding); **MAINT-127 closed in 587** (navigation.ts split + new tabs.ts); **M-25 closed in 588 + M-85's `get_agenda` portion** (cursor pagination on `list_projected_agenda`); **FEAT-3p4 closed in 589** (Spaces Phase 4 — `space_id` threaded through 11 read commands, promoted to required `String` on `list_blocks` + `search_blocks`, per-space `useNavigationStore.currentView` slice + frontend callsite migration); **MAINT-131 closed in 590** (`useBlockReschedule.reschedule()` absorbs duplicated `getBlock`-then-decide pattern + new `useBlockPropertyIpc` hook drops the last 5 presentational components' direct `lib/tauri` imports); **decisions cluster closed in 591** (M-34 dropped `host`/`port` from the pairing QR so mDNS owns discovery end-to-end; M-81 re-parents orphan conflict copies to the nearest live ancestor — or `NULL` when none exists — emitting one `MoveBlock` op per repair so peers replay via sync, applied at both cascade sites including the production `delete_block` path; M-85 moved `list_tags_inner` + `list_property_defs_inner` + the matching MCP tools to `PageResponse<T>` cursor pagination and trimmed AGENTS.md invariant #3 carve-out (a) to keep only `list_property_keys`); **M-19 closed in 592** (cache rebuild streaming: `block_tag_refs` migrated to `try_next` row-stream + per-row regex, `agenda` migrated from dual-`HashMap` diff to a sort-merge stream walk with adjacent-key dedup and source-priority `prio` ordering, `projected_agenda` migrated from whole-vault `Vec` build to chunk-flush at `CHUNK_SIZE = 10_000` projections per write — peak Rust-heap drops from `O(N)` to `O(batch_size)` on every full-vault rebuild path); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
+18 open items — 18 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 27 backend Medium findings closed + 27 MAINT closed (some partially) across sessions 549-593 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-593): **3 schema-integrity migrations landed in session 582** (M-30, M-93, M-90); **H-9 family closed across sessions 583-584**; **MAINT-162 closed in 585**; **C-2b closed in 586** (last CRITICAL backend code review finding); **MAINT-127 closed in 587** (navigation.ts split + new tabs.ts); **M-25 closed in 588 + M-85's `get_agenda` portion** (cursor pagination on `list_projected_agenda`); **FEAT-3p4 closed in 589** (Spaces Phase 4 — `space_id` threaded through 11 read commands, promoted to required `String` on `list_blocks` + `search_blocks`, per-space `useNavigationStore.currentView` slice + frontend callsite migration); **MAINT-131 closed in 590** (`useBlockReschedule.reschedule()` absorbs duplicated `getBlock`-then-decide pattern + new `useBlockPropertyIpc` hook drops the last 5 presentational components' direct `lib/tauri` imports); **decisions cluster closed in 591** (M-34 dropped `host`/`port` from the pairing QR so mDNS owns discovery end-to-end; M-81 re-parents orphan conflict copies to the nearest live ancestor — or `NULL` when none exists — emitting one `MoveBlock` op per repair so peers replay via sync, applied at both cascade sites including the production `delete_block` path; M-85 moved `list_tags_inner` + `list_property_defs_inner` + the matching MCP tools to `PageResponse<T>` cursor pagination and trimmed AGENTS.md invariant #3 carve-out (a) to keep only `list_property_keys`); **M-19 closed in 592** (cache rebuild streaming: `block_tag_refs` migrated to `try_next` row-stream + per-row regex, `agenda` migrated from dual-`HashMap` diff to a sort-merge stream walk with adjacent-key dedup and source-priority `prio` ordering, `projected_agenda` migrated from whole-vault `Vec` build to chunk-flush at `CHUNK_SIZE = 10_000` projections per write); **M-51 + L-67 closed in 593** (sync streaming: new `SyncConnection::{send,receive}_binary_streaming` wire helpers, `read_attachment_file_metadata` + `TempAttachmentWriter` (mid-stream `blake3::Hasher`, atomic temp-file rename on hash match, `Drop` unlinks abandoned writers), `apply_snapshot` + `decode_snapshot` refactored to `impl Read` so `zstd::stream::Decoder` pipes through ciborium without buffering compressed-or-decompressed bytes, snapshot receiver streams compressed payload to a temp file via new `SnapshotTempFile` guard — wire format unchanged); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
 
-Previously resolved: 856+ items across 559 sessions (per SESSION-LOG.md unique session count; latest is session 592).
+Previously resolved: 858+ items across 560 sessions (per SESSION-LOG.md unique session count; latest is session 593).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -964,24 +964,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 ### Sync stack
 
 
-
-
-### M-51 — Both file send and receive buffer the entire file in memory
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_files.rs:182-195` (`read_attachment_file`); `:233-326` (sender); `:436-455` (`receive_binary_data`)
-- **What:** `read_attachment_file` does `std::fs::read(&full_path)` into a `Vec<u8>`, then `blake3::hash(&data)`, then chunks on the wire. The receiver accumulates all chunks into a single `Vec<u8>` before calling `write_attachment_file`. A 1 GB attachment requires ~1 GB of RAM on each side simultaneously.
-- **Why it matters:** Phones with limited RAM will OOM during a single large attachment transfer (e.g., a screen recording). The same shape applies to snapshot transfer (see L-67). On Android this is a real ceiling.
-- **Cost:** L
-- **Risk:** Medium-High (rewrite both halves to streaming + streaming blake3)
-- **Impact:** High (unblocks large attachments)
-- **Recommendation:** Stream: open the source file, read 5 MB at a time into a fixed buffer, feed each chunk into a `blake3::Hasher` and `send_binary` the same chunk. Receiver writes incrementally to a temp file, finalises hash, renames atomically on success (and unlinks the temp file on failure). `blake3::Hasher` already supports incremental updates.
-- **Pass-1 source:** 06/F16
-- **Status:** Open
-
-
-
-
-
 ### Search & Links
 
 ### Lifecycle / Snapshots / Merge / Recurrence
@@ -1050,17 +1032,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Sync
 
-### L-67 — Snapshot receiver allocates a single `Vec<u8>` of up to 256 MB
-- **Domain:** Sync
-- **Location:** `src-tauri/src/sync_daemon/snapshot_transfer.rs:372-405`; cap at `:285-300` (`MAX_SNAPSHOT_SIZE`)
-- **What:** `let capacity = usize::try_from(size_bytes).unwrap_or(usize::MAX); let mut data: Vec<u8> = Vec::with_capacity(capacity);` — the cap enforcement at line 285-300 bounds the allocation to 256 MB, but the entire payload is buffered before `apply_snapshot`. Note this is **not** the same shape as the OUT-OF-SCOPE F11/F12 (no unbounded behaviour: the cap exists and works); just a perf concern.
-- **Why it matters:** Large initial onboarding via snapshot is a real path; on Android with limited RAM, 256 MB plus the decompression+restore working set can OOM the daemon. Cap is correct, footprint is not.
-- **Cost:** M
-- **Risk:** Medium (cross-cutting refactor of `apply_snapshot` to take `impl Read`)
-- **Impact:** Medium
-- **Recommendation:** Stream-decode into a temp file (or a bounded ring buffer) and refactor `apply_snapshot` to accept `impl Read` so `zstd::stream::Decoder + tokio::io::copy` can pipe through. Pair with M-51 since the patterns are siblings.
-- **Pass-1 source:** 06/F40
-- **Status:** Open
 
 ### Search & Links
 

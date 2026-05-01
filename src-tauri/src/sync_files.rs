@@ -18,9 +18,12 @@
 //! into 5 MB frames.  Integrity is verified via blake3 hash.
 
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll};
 
 use sqlx::SqlitePool;
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::error::AppError;
 use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
@@ -244,6 +247,13 @@ async fn get_attachment_receive_meta(
 /// any I/O is performed (BUG-35). A malformed `fs_path` that attempts to
 /// escape `app_data_dir` (absolute path, `..` traversal, drive prefix on
 /// Windows) is rejected with [`AppError::Validation`].
+///
+/// **M-51 note:** this is the buffered-shape helper kept for utility
+/// callers (and the existing test suite). The production sync sender
+/// path no longer goes through here — see
+/// [`read_attachment_file_metadata`] (path-validate + size + hash via
+/// streaming) and [`open_attachment_for_read`] (async file handle for
+/// frame-by-frame send) for the low-memory path.
 pub fn read_attachment_file(
     app_data_dir: &Path,
     fs_path: &str,
@@ -263,6 +273,11 @@ pub fn read_attachment_file(
 ///
 /// The `fs_path` is validated via [`validate_attachment_fs_path`] before
 /// any I/O is performed (BUG-35).
+///
+/// **M-51 note:** kept for utility callers. The production sync receiver
+/// path uses [`write_attachment_streaming`] which streams chunks to a
+/// `<final>.tmp-<random>` file with a `blake3::Hasher` updated mid-write,
+/// then atomically renames on hash-verified `commit`.
 pub fn write_attachment_file(
     app_data_dir: &Path,
     fs_path: &str,
@@ -284,6 +299,371 @@ pub fn write_attachment_file(
         ))
     })?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// M-51 — streaming helpers (low-memory attachment transfer)
+// ---------------------------------------------------------------------------
+//
+// The buffered helpers above materialise the whole file in a `Vec<u8>` —
+// peak Rust-heap = file size on each side simultaneously. For large
+// attachments (up to 1 GB on Android) that pattern OOMs the device.
+//
+// The M-51 contract:
+//
+//   • `read_attachment_file_metadata` is the sender's pre-flight pass.
+//     It validates the path, opens the file once, hashes it through a
+//     fixed-size buffer (`HASH_BUF_SIZE`), and returns
+//     `(size_bytes, blake3_hex)`. The `Vec<u8>` of the file is never
+//     materialised.
+//   • `open_attachment_for_read` is the sender's transmit pass: open
+//     the same file as a `tokio::fs::File` and feed it to
+//     `SyncConnection::send_binary_streaming(file, size, chunk_size)`,
+//     which reads frame-sized chunks off disk and ships them straight
+//     to the wire.
+//   • `write_attachment_streaming` returns a `TempAttachmentWriter` —
+//     an `AsyncWrite` sink that lands chunks in a `<final>.tmp-<rand>`
+//     file under `app_data_dir`, updates a `blake3::Hasher` per
+//     `poll_write`, and on `commit(expected_hash)` either atomically
+//     renames into place or unlinks the temp on hash mismatch /
+//     write error. `Drop` guarantees the temp is unlinked on
+//     abandoned transfers (mid-stream peer drop / cancel).
+//
+// **Trade-off — two-pass hash on the sender side.** The existing
+// `FileOffer` wire message carries the hash AHEAD of the binary
+// stream, so the sender must know the hash before sending the offer.
+// To stay backward-compatible with the wire format (Architectural
+// Stability — no new variants without explicit user approval) we
+// hash the file in pass 1 and stream it in pass 2. This costs one
+// extra read of the file's bytes (sequential, OS page-cache often
+// eats the second read for free on warm files) but keeps the wire
+// protocol unchanged. The alternative — sending the hash AFTER the
+// stream as a `FileOfferAck` / `FileFooter` variant — would be a
+// wire-format change requiring user approval, so we deliberately
+// chose the two-pass path here.
+
+/// Path-validate `fs_path`, open the attachment file once, and compute
+/// `(size_bytes, blake3_hex)` by reading through a fixed-size buffer.
+///
+/// Used as the sender's pass-1 (M-51): the size + hash populate the
+/// `FileOffer` message, then [`open_attachment_for_read`] is called
+/// for pass-2 (the streaming send). The returned hash matches the
+/// hash a receiver computes mid-stream via `TempAttachmentWriter`,
+/// so the integrity guarantee is unchanged from the buffered shape.
+///
+/// Peak Rust-heap during this call is one `HASH_BUF_SIZE` buffer
+/// (currently 256 KiB) regardless of file size.
+pub async fn read_attachment_file_metadata(
+    app_data_dir: &Path,
+    fs_path: &str,
+) -> Result<(u64, String), AppError> {
+    /// Buffer size for the streaming hash pass. Large enough to amortise
+    /// syscall overhead, small enough that a 1 GB attachment never sees
+    /// a memory spike on 4 GB Android devices.
+    const HASH_BUF_SIZE: usize = 256 * 1024;
+
+    let full_path = validate_attachment_fs_path(app_data_dir, fs_path)?;
+    let mut file = tokio::fs::File::open(&full_path).await.map_err(|e| {
+        AppError::Io(std::io::Error::new(
+            e.kind(),
+            format!("opening attachment {}: {e}", full_path.display()),
+        ))
+    })?;
+    let size_bytes = file
+        .metadata()
+        .await
+        .map_err(|e| {
+            AppError::Io(std::io::Error::new(
+                e.kind(),
+                format!("metadata on attachment {}: {e}", full_path.display()),
+            ))
+        })?
+        .len();
+
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = vec![0u8; HASH_BUF_SIZE];
+    loop {
+        let n = file.read(&mut buf).await.map_err(|e| {
+            AppError::Io(std::io::Error::new(
+                e.kind(),
+                format!("reading attachment {}: {e}", full_path.display()),
+            ))
+        })?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let hash = hasher.finalize().to_hex().to_string();
+    Ok((size_bytes, hash))
+}
+
+/// Open an attachment file for streaming send (M-51 pass-2).
+///
+/// Path-validates `fs_path`, opens the file as a `tokio::fs::File`,
+/// queries `metadata().len()` for the size, and returns both. The
+/// caller passes the `File` to
+/// [`SyncConnection::send_binary_streaming`](crate::sync_net::SyncConnection::send_binary_streaming)
+/// alongside the size so frames are pulled off disk and pushed to
+/// the wire one at a time.
+///
+/// Returning the size again (despite [`read_attachment_file_metadata`]
+/// already returning it in pass-1) lets the caller assert the file
+/// did not change between passes — a sanity check defended against
+/// a concurrent writer (e.g. user re-imports the same attachment ID
+/// while a sync is in flight). The `FileOffer.size_bytes` advertised
+/// to the receiver is the pass-1 value, so any drift is caught by
+/// the receiver's existing M-52 size cross-check.
+pub async fn open_attachment_for_read(
+    app_data_dir: &Path,
+    fs_path: &str,
+) -> Result<(tokio::fs::File, u64), AppError> {
+    let full_path = validate_attachment_fs_path(app_data_dir, fs_path)?;
+    let file = tokio::fs::File::open(&full_path).await.map_err(|e| {
+        AppError::Io(std::io::Error::new(
+            e.kind(),
+            format!("opening attachment {}: {e}", full_path.display()),
+        ))
+    })?;
+    let size_bytes = file
+        .metadata()
+        .await
+        .map_err(|e| {
+            AppError::Io(std::io::Error::new(
+                e.kind(),
+                format!("metadata on attachment {}: {e}", full_path.display()),
+            ))
+        })?
+        .len();
+    Ok((file, size_bytes))
+}
+
+/// Streaming attachment writer (M-51).
+///
+/// Owns a `tokio::fs::File` opened on `<final>.tmp-<random>` plus a
+/// `blake3::Hasher` updated on every successful `poll_write`. On
+/// [`Self::commit`] the hash is finalised and compared to the
+/// caller-supplied `expected_hash`; on match the temp is renamed
+/// atomically to its final path, on mismatch the temp is unlinked
+/// and an [`AppError::InvalidOperation`] with the payload
+/// `hash_mismatch: …` is returned. `Drop` is a best-effort unlink
+/// so an abandoned writer (mid-stream cancel, peer drop, panic)
+/// never leaves a `*.tmp-*` orphan on disk.
+///
+/// **Atomicity:** readers never observe a half-written final file —
+/// `tokio::fs::rename` is atomic within a filesystem on every
+/// platform we ship to (Linux ext4/f2fs, macOS APFS, Windows NTFS,
+/// Android ext4/f2fs). The temp lives in the same directory as the
+/// final file by construction (same parent of the validated
+/// `fs_path`) so the rename never crosses filesystems.
+pub struct TempAttachmentWriter {
+    /// `Some` while writing; taken on `commit` so the file handle is
+    /// closed before `tokio::fs::rename` runs.
+    file: Option<tokio::fs::File>,
+    final_path: PathBuf,
+    temp_path: PathBuf,
+    hasher: blake3::Hasher,
+    /// Set once `commit` (or its error path) has explicitly cleaned
+    /// up the temp file, so `Drop` does not double-unlink.
+    finalised: bool,
+}
+
+impl TempAttachmentWriter {
+    /// Final on-disk path the temp will be renamed to on `commit`.
+    pub fn final_path(&self) -> &Path {
+        &self.final_path
+    }
+
+    /// Path of the in-progress `*.tmp-*` file. Tests use this to
+    /// assert mid-write visibility and post-commit unlinking.
+    pub fn temp_path(&self) -> &Path {
+        &self.temp_path
+    }
+
+    /// Flush + close the temp file, finalise the running blake3
+    /// hash, compare it to `expected_hash`, and on match atomically
+    /// rename the temp into its final location. On mismatch the
+    /// temp is unlinked and [`AppError::InvalidOperation`] is
+    /// returned with the payload `hash_mismatch: expected … got …`.
+    ///
+    /// This is the moment readers gain visibility on the new file —
+    /// before commit, only the temp `*.tmp-*` exists, so a concurrent
+    /// reader observing the final path sees either the previous
+    /// version (if any) or `ENOENT`, never a partial file.
+    pub async fn commit(mut self, expected_hash: &str) -> Result<(), AppError> {
+        // Flush and close the writer so the rename observes a
+        // closed file handle. (On Windows a rename across an open
+        // handle would fail; on Unix it succeeds but readers might
+        // race on the inode.)
+        if let Some(mut f) = self.file.take() {
+            f.flush().await.map_err(|e| {
+                AppError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("flushing attachment {}: {e}", self.temp_path.display()),
+                ))
+            })?;
+            // Drop the handle (close the file).
+            drop(f);
+        }
+
+        let actual_hash = self.hasher.finalize().to_hex().to_string();
+        if actual_hash != expected_hash {
+            // Hash mismatch: unlink temp and surface the canonical
+            // error string the receiver loop relies on for stats.
+            let _ = tokio::fs::remove_file(&self.temp_path).await;
+            self.finalised = true;
+            return Err(AppError::InvalidOperation(format!(
+                "hash_mismatch: expected {expected_hash}, got {actual_hash}"
+            )));
+        }
+
+        tokio::fs::rename(&self.temp_path, &self.final_path)
+            .await
+            .map_err(|e| {
+                // Best-effort cleanup of the temp on rename failure
+                // before bubbling the error up — otherwise a failed
+                // rename leaves a `*.tmp-*` orphan.
+                let temp_for_cleanup = self.temp_path.clone();
+                tokio::spawn(async move {
+                    let _ = tokio::fs::remove_file(&temp_for_cleanup).await;
+                });
+                AppError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!(
+                        "renaming {} → {}: {e}",
+                        self.temp_path.display(),
+                        self.final_path.display()
+                    ),
+                ))
+            })?;
+
+        self.finalised = true;
+        Ok(())
+    }
+}
+
+/// Best-effort temp cleanup on abandoned transfers. We can't `await`
+/// inside `Drop`, so this uses the synchronous `std::fs::remove_file`;
+/// failures (file already gone, permission denied, etc.) are
+/// intentionally ignored — the rename in `commit` is the only path
+/// that gives a strong durability guarantee, and `Drop` exists only
+/// to keep abandoned `*.tmp-*` files from accumulating.
+impl Drop for TempAttachmentWriter {
+    fn drop(&mut self) {
+        // Drop the file handle first so the unlink observes a
+        // closed FD on Windows.
+        let _ = self.file.take();
+        if !self.finalised {
+            let _ = std::fs::remove_file(&self.temp_path);
+        }
+    }
+}
+
+impl AsyncWrite for TempAttachmentWriter {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        // `TempAttachmentWriter: Unpin` (its fields are all Unpin),
+        // so projecting through `Pin<&mut Self>` is just a borrow.
+        let this = self.as_mut().get_mut();
+        let Some(file) = this.file.as_mut() else {
+            return Poll::Ready(Err(std::io::Error::other(
+                "TempAttachmentWriter already committed or dropped",
+            )));
+        };
+        match Pin::new(file).poll_write(cx, buf) {
+            Poll::Ready(Ok(n)) => {
+                // Hash exactly the bytes the underlying writer
+                // accepted — `poll_write` may report a short write,
+                // and we must not feed the hasher bytes the file
+                // never received.
+                this.hasher.update(&buf[..n]);
+                Poll::Ready(Ok(n))
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.as_mut().get_mut();
+        match this.file.as_mut() {
+            Some(f) => Pin::new(f).poll_flush(cx),
+            None => Poll::Ready(Ok(())),
+        }
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.as_mut().get_mut();
+        match this.file.as_mut() {
+            Some(f) => Pin::new(f).poll_shutdown(cx),
+            None => Poll::Ready(Ok(())),
+        }
+    }
+}
+
+/// Open a streaming attachment writer for the given `fs_path` (M-51).
+///
+/// Validates the path, creates the parent directories if needed, and
+/// opens a temp file at `<final>.tmp-<random>` in the same directory.
+/// The `<random>` suffix is a 128-bit ULID-derived hex blob, so two
+/// concurrent transfers of the same attachment cannot collide.
+///
+/// The returned writer is an `AsyncWrite` sink — callers feed it via
+/// [`SyncConnection::receive_binary_streaming`] then call
+/// [`TempAttachmentWriter::commit`] to atomically publish the file.
+pub async fn write_attachment_streaming(
+    app_data_dir: &Path,
+    fs_path: &str,
+) -> Result<TempAttachmentWriter, AppError> {
+    let final_path = validate_attachment_fs_path(app_data_dir, fs_path)?;
+    if let Some(parent) = final_path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            AppError::Io(std::io::Error::new(
+                e.kind(),
+                format!("creating directory {}: {e}", parent.display()),
+            ))
+        })?;
+    }
+
+    // ULID gives us 128 bits of entropy + a monotonic timestamp prefix —
+    // collisions across concurrent transfers of the same attachment
+    // are not practically possible. We render in lower-case hex to
+    // stay portable across filesystems that fold case in unhelpful
+    // ways (NTFS, APFS-default).
+    let suffix = u128::from(ulid::Ulid::new());
+    let temp_path = match final_path.file_name() {
+        Some(name) => {
+            let mut s = std::ffi::OsString::from(name);
+            s.push(format!(".tmp-{suffix:032x}"));
+            final_path.with_file_name(s)
+        }
+        None => {
+            // `validate_attachment_fs_path` already rejects empty /
+            // root-dir paths, so an attachment path always has a
+            // file name. This arm is defensive only.
+            return Err(AppError::Validation(
+                "attachment path has no file name component".into(),
+            ));
+        }
+    };
+
+    let file = tokio::fs::File::create(&temp_path).await.map_err(|e| {
+        AppError::Io(std::io::Error::new(
+            e.kind(),
+            format!("creating temp attachment {}: {e}", temp_path.display()),
+        ))
+    })?;
+
+    Ok(TempAttachmentWriter {
+        file: Some(file),
+        final_path,
+        temp_path,
+        hasher: blake3::Hasher::new(),
+        finalised: false,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -356,20 +736,22 @@ pub async fn receive_request_and_send_files(
             continue;
         };
 
-        let (data, hash) = match read_attachment_file(app_data_dir, &fs_path) {
-            Ok(r) => r,
+        // M-51 pass-1: hash the file in-place via a fixed-size buffer
+        // so the `FileOffer` carries the right hash without
+        // materialising the whole file as a `Vec<u8>`. See the module
+        // header for the two-pass rationale.
+        let (size_bytes, hash) = match read_attachment_file_metadata(app_data_dir, &fs_path).await {
+            Ok(meta) => meta,
             Err(e) => {
                 tracing::warn!(
                     attachment_id,
                     error = %e,
-                    "could not read attachment file, skipping"
+                    "could not read attachment file metadata (M-51), skipping"
                 );
                 stats.skipped_not_found += 1;
                 continue;
             }
         };
-
-        let size_bytes = data.len() as u64;
 
         // Send FileOffer metadata
         conn.send_json(&SyncMessage::FileOffer {
@@ -379,11 +761,45 @@ pub async fn receive_request_and_send_files(
         })
         .await?;
 
-        // Send binary data (chunked if > BINARY_FRAME_CHUNK_SIZE).
-        // Empty data is delivered as a single empty frame so the
-        // receiver's per-frame accounting terminates cleanly — see
-        // `SyncConnection::send_binary_chunked` for the shared contract.
-        conn.send_binary_chunked(&data, BINARY_FRAME_CHUNK_SIZE)
+        // M-51 pass-2: re-open the file and stream it frame-by-frame to
+        // the wire. Peak Rust-heap is one `BINARY_FRAME_CHUNK_SIZE`
+        // buffer regardless of file size — replaces the old
+        // `Vec<u8>`-of-the-whole-file pattern that OOMed on large
+        // attachments. Empty payload is still delivered as a single
+        // empty frame (zero-byte contract preserved by
+        // `send_binary_streaming`).
+        let (file, reopen_size) = match open_attachment_for_read(app_data_dir, &fs_path).await {
+            Ok(handle) => handle,
+            Err(e) => {
+                // Sender already advertised `size_bytes` + `hash` to
+                // the receiver in the FileOffer — bailing without a
+                // body would desync the wire. Surface this as a
+                // hard error so the session closes; the next sync
+                // cycle re-attempts the file. (We can't increment
+                // `stats.skipped_not_found` and continue here for
+                // the same reason — the receiver is now waiting on
+                // bytes that are never coming.)
+                tracing::error!(
+                    attachment_id,
+                    error = %e,
+                    "could not re-open attachment for streaming send (M-51) after FileOffer; \
+                     closing connection so the daemon retries"
+                );
+                return Err(e);
+            }
+        };
+        if reopen_size != size_bytes {
+            // The file changed between pass-1 (hash) and pass-2
+            // (stream). Surface a hard error so the session retries —
+            // the receiver's M-52 size cross-check would catch this
+            // anyway, but failing here keeps the bad bytes off the
+            // wire entirely.
+            return Err(AppError::InvalidOperation(format!(
+                "attachment {attachment_id} changed during send: \
+                 hash_pass={size_bytes} bytes, stream_pass={reopen_size} bytes"
+            )));
+        }
+        conn.send_binary_streaming(file, size_bytes, BINARY_FRAME_CHUNK_SIZE)
             .await?;
 
         // Wait for FileReceived acknowledgment
@@ -463,9 +879,9 @@ pub async fn request_and_receive_files(
     loop {
         // M-47: check cancel before reading the next FileOffer. Granularity
         // is per-file (not per-chunk) because the per-chunk inner read
-        // lives in `receive_binary_data`; aborting between files lets
-        // multi-gigabyte transfers be interrupted before the *next* file
-        // starts streaming.
+        // lives in `SyncConnection::receive_binary_streaming` (M-51);
+        // aborting between files lets multi-gigabyte transfers be
+        // interrupted before the *next* file starts streaming.
         if cancel.load(Ordering::Acquire) {
             tracing::info!(
                 files_received = stats.files_received,
@@ -510,37 +926,53 @@ pub async fn request_and_receive_files(
                     )));
                 }
 
-                // Receive binary data (may be chunked)
-                let data = receive_binary_data(conn, size_bytes).await?;
-
-                // M-50: Verify blake3 hash. Mismatch ⇒ no ACK, return
-                // Err so the daemon closes the connection and retries.
-                let actual_hash = blake3::hash(&data).to_hex().to_string();
-                if actual_hash != blake3_hash {
-                    tracing::error!(
-                        attachment_id,
-                        expected = blake3_hash,
-                        actual = actual_hash,
-                        "blake3 hash mismatch for received file, rejecting without ACK"
-                    );
-                    return Err(AppError::InvalidOperation(format!(
-                        "file_offer.hash_mismatch: attachment {attachment_id} expected {blake3_hash}, got {actual_hash}"
-                    )));
-                }
-
-                // M-50: Write file to disk. On failure, no ACK, return
-                // Err so the daemon retries the file later.
-                if let Err(e) = write_attachment_file(app_data_dir, &meta.fs_path, &data) {
+                // M-51: stream the binary frames straight to a temp
+                // file under `app_data_dir`, hashing in-place via
+                // `TempAttachmentWriter`'s built-in `blake3::Hasher`.
+                // Peak Rust-heap is one `BINARY_FRAME_CHUNK_SIZE`
+                // buffer regardless of file size — no `Vec<u8>` of
+                // the full payload anywhere. On any error we open
+                // the writer (so its `Drop` unlinks the temp) BEFORE
+                // returning so the partial file never lingers.
+                let mut writer = match write_attachment_streaming(app_data_dir, &meta.fs_path).await
+                {
+                    Ok(w) => w,
+                    Err(e) => {
+                        tracing::error!(
+                            attachment_id,
+                            error = %e,
+                            "failed to open temp attachment writer, rejecting without ACK"
+                        );
+                        return Err(e);
+                    }
+                };
+                if let Err(e) = conn.receive_binary_streaming(&mut writer, size_bytes).await {
                     tracing::error!(
                         attachment_id,
                         error = %e,
-                        "failed to write attachment file, rejecting without ACK"
+                        "failed to stream attachment bytes; temp file will be unlinked on Drop"
+                    );
+                    return Err(e);
+                }
+
+                // M-50 + M-51: hash verification happens INSIDE
+                // `commit` — the running `blake3::Hasher` is finalised
+                // and compared to the offer's `blake3_hash`. On match
+                // the temp is renamed atomically; on mismatch the
+                // temp is unlinked and `commit` returns
+                // `AppError::InvalidOperation("hash_mismatch: …")`.
+                if let Err(e) = writer.commit(&blake3_hash).await {
+                    tracing::error!(
+                        attachment_id,
+                        expected_hash = blake3_hash,
+                        error = %e,
+                        "attachment commit failed (M-51); temp unlinked, no ACK"
                     );
                     return Err(e);
                 }
 
                 stats.files_received += 1;
-                stats.bytes_received += data.len() as u64;
+                stats.bytes_received += size_bytes;
 
                 // Only after successful write + hash verify do we ACK.
                 conn.send_json(&SyncMessage::FileReceived { attachment_id })
@@ -561,21 +993,6 @@ pub async fn request_and_receive_files(
     }
 
     Ok(stats)
-}
-
-/// Receive binary data for a file, accumulating chunks until the expected
-/// size is reached.
-///
-/// Thin wrapper around
-/// [`SyncConnection::receive_binary_chunked`] so the chunking contract
-/// (zero-byte payload as a single empty frame, over-run rejection) is
-/// shared with [`crate::sync_daemon::snapshot_transfer`] rather than
-/// duplicated here.
-async fn receive_binary_data(
-    conn: &mut SyncConnection,
-    size_bytes: u64,
-) -> Result<Vec<u8>, AppError> {
-    conn.receive_binary_chunked(size_bytes).await
 }
 
 /// Consume and discard binary data for a file we don't need.

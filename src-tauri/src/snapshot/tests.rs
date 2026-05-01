@@ -120,7 +120,7 @@ async fn insert_op_at(pool: &SqlitePool, device_id: &str, block_id: &str, ts: &s
 fn encode_decode_round_trip() {
     let data = sample_snapshot_data();
     let encoded = encode_snapshot(&data).unwrap();
-    let decoded = decode_snapshot(&encoded).unwrap();
+    let decoded = decode_snapshot(&encoded[..]).unwrap();
 
     assert_eq!(
         decoded.schema_version, SCHEMA_VERSION,
@@ -224,7 +224,7 @@ fn decode_rejects_bad_version() {
         zstd::encode_all(cbor_buf.as_slice(), 3).unwrap()
     };
 
-    let err = decode_snapshot(&encoded).unwrap_err();
+    let err = decode_snapshot(&encoded[..]).unwrap_err();
     let msg = err.to_string();
     assert!(
         msg.contains("unsupported schema version 99"),
@@ -238,12 +238,25 @@ fn decode_rejects_bad_version() {
 
 #[test]
 fn decode_rejects_corrupt_data() {
-    let garbage = vec![0xDE, 0xAD, 0xBE, 0xEF, 0x42, 0x42, 0x42];
-    let err = decode_snapshot(&garbage).unwrap_err();
+    let garbage: [u8; 7] = [0xDE, 0xAD, 0xBE, 0xEF, 0x42, 0x42, 0x42];
+    let err = decode_snapshot(&garbage[..]).unwrap_err();
     let msg = err.to_string();
+    // L-67: with the streaming decoder, the zstd error can surface in
+    // either layer:
+    //   • `zstd decompress` if `Decoder::new` rejects the magic bytes
+    //     up front, OR
+    //   • `CBOR decode: Io(... Unknown frame descriptor ...)` when the
+    //     zstd error comes through `ciborium::from_reader`'s underlying
+    //     `Read` call (which is the typical path: `Decoder::new` is
+    //     lazy and the failure shows up the first time CBOR pulls
+    //     bytes through it).
+    // Either is a legitimate "garbage rejected" outcome — the test's
+    // intent is just "garbage must not decode".
+    let zstd_layer = msg.contains("zstd decompress");
+    let cbor_io_layer = msg.contains("CBOR decode") && msg.contains("Unknown frame descriptor");
     assert!(
-        msg.contains("zstd decompress"),
-        "expected zstd error, got: {msg}"
+        zstd_layer || cbor_io_layer,
+        "expected zstd or zstd-via-CBOR error for garbage bytes, got: {msg}"
     );
 }
 
@@ -270,7 +283,7 @@ fn encode_empty_snapshot() {
     };
 
     let encoded = encode_snapshot(&data).unwrap();
-    let decoded = decode_snapshot(&encoded).unwrap();
+    let decoded = decode_snapshot(&encoded[..]).unwrap();
 
     assert_eq!(
         decoded.tables.blocks.len(),
@@ -332,7 +345,7 @@ async fn create_snapshot_and_read_back() {
     assert_eq!(id, snapshot_id, "fetched snapshot id must match created id");
 
     // Decode and verify
-    let decoded = decode_snapshot(&data).unwrap();
+    let decoded = decode_snapshot(&data[..]).unwrap();
     assert_eq!(
         decoded.snapshot_device_id, device_id,
         "snapshot device id must match"
@@ -432,7 +445,7 @@ async fn apply_snapshot_wipes_and_restores() {
     assert_eq!(count, 2, "should have 2 blocks before apply");
 
     // Apply snapshot (RESET)
-    let restored = apply_snapshot(&pool, &mat, &snap_data).await.unwrap();
+    let restored = apply_snapshot(&pool, &mat, &snap_data[..]).await.unwrap();
 
     // Only original block should remain
     let count_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
@@ -541,7 +554,7 @@ async fn apply_snapshot_drops_drafts_observably_m66() {
     assert_eq!(drafts_before, 3, "must have 3 drafts staged before apply");
 
     // Apply the snapshot.
-    apply_snapshot(&pool, &mat, &snap_data).await.unwrap();
+    apply_snapshot(&pool, &mat, &snap_data[..]).await.unwrap();
 
     // Drafts must be wiped (preserves prior behaviour).
     let drafts_after: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM block_drafts")
@@ -607,7 +620,9 @@ async fn apply_snapshot_empty_db() {
     };
     let simple_encoded = encode_snapshot(&simple_data).unwrap();
 
-    let restored = apply_snapshot(&pool, &mat, &simple_encoded).await.unwrap();
+    let restored = apply_snapshot(&pool, &mat, &simple_encoded[..])
+        .await
+        .unwrap();
 
     assert_eq!(
         restored.tables.blocks.len(),
@@ -809,7 +824,7 @@ async fn get_latest_snapshot_returns_most_recent() {
     );
 
     // Decode and verify it has the updated content
-    let decoded = decode_snapshot(&latest_data).unwrap();
+    let decoded = decode_snapshot(&latest_data[..]).unwrap();
     assert_eq!(
         decoded.tables.blocks[0].content.as_deref(),
         Some("v2"),
@@ -917,7 +932,7 @@ fn cbor_round_trip_option_f64() {
     };
 
     let encoded = encode_snapshot(&data).unwrap();
-    let decoded = decode_snapshot(&encoded).unwrap();
+    let decoded = decode_snapshot(&encoded[..]).unwrap();
 
     let props = &decoded.tables.block_properties;
     assert_eq!(props.len(), 7, "should have all 7 property variants");
@@ -1002,7 +1017,7 @@ async fn create_snapshot_empty_op_log_returns_empty_snapshot_i_lifecycle_2() {
     assert_eq!(row.up_to_seqs, "{}");
 
     // Decode the encoded blob and confirm the empty-frontier shape.
-    let decoded = decode_snapshot(&row.data).expect("encoded snapshot must decode");
+    let decoded = decode_snapshot(&row.data[..]).expect("encoded snapshot must decode");
     assert!(
         decoded.up_to_seqs.is_empty(),
         "empty op_log → empty up_to_seqs"
@@ -1041,7 +1056,7 @@ async fn apply_empty_snapshot_on_fresh_db_is_noop_i_lifecycle_2() {
     // must remain zero (empty snapshot is a true no-op on a fresh DB).
     let (dst_pool, _dst_dir) = test_pool().await;
     let dst_mat = test_materializer(&dst_pool);
-    let restored = apply_snapshot(&dst_pool, &dst_mat, &encoded)
+    let restored = apply_snapshot(&dst_pool, &dst_mat, &encoded[..])
         .await
         .expect("applying an empty snapshot to a fresh DB must succeed");
 
@@ -1111,7 +1126,7 @@ async fn compact_multi_device_ops() {
 
     // The snapshot should capture the multi-device frontier
     let (_, snap_data) = get_latest_snapshot(&pool).await.unwrap().unwrap();
-    let decoded = decode_snapshot(&snap_data).unwrap();
+    let decoded = decode_snapshot(&snap_data[..]).unwrap();
     assert!(
         decoded.up_to_seqs.contains_key("device-A"),
         "frontier should include device-A"
@@ -1155,7 +1170,7 @@ async fn apply_snapshot_rejects_fk_violation() {
     };
 
     let encoded = encode_snapshot(&bad_data).unwrap();
-    let result = apply_snapshot(&pool, &mat, &encoded).await;
+    let result = apply_snapshot(&pool, &mat, &encoded[..]).await;
     assert!(
         result.is_err(),
         "FK violation should cause apply_snapshot to fail"
@@ -1252,7 +1267,7 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
     ciborium::into_writer(&bad, &mut cbor_buf).unwrap();
     let encoded = zstd::encode_all(cbor_buf.as_slice(), 3).unwrap();
 
-    let result = apply_snapshot(&pool, &mat, &encoded).await;
+    let result = apply_snapshot(&pool, &mat, &encoded[..]).await;
     assert!(
         result.is_err(),
         "NULL value in NOT NULL column block_type must be rejected"
@@ -1303,7 +1318,7 @@ async fn apply_snapshot_rejects_invalid_block_type() {
     };
 
     let encoded = encode_snapshot(&bad_data).unwrap();
-    let result = apply_snapshot(&pool, &mat, &encoded).await;
+    let result = apply_snapshot(&pool, &mat, &encoded[..]).await;
     assert!(
         result.is_err(),
         "block_type 'banana' is not in (content|tag|page) — \
@@ -1359,7 +1374,7 @@ async fn apply_snapshot_rejects_malformed_ulid_block_id() {
     };
 
     let encoded = encode_snapshot(&bad_data).unwrap();
-    let result = apply_snapshot(&pool, &mat, &encoded).await;
+    let result = apply_snapshot(&pool, &mat, &encoded[..]).await;
     assert!(
         result.is_err(),
         "malformed ULID as parent_id with no matching block must be rejected (deferred FK)"
@@ -1466,7 +1481,7 @@ async fn apply_snapshot_full_all_5_tables() {
     };
 
     let encoded = encode_snapshot(&data).unwrap();
-    let restored = apply_snapshot(&pool, &mat, &encoded).await.unwrap();
+    let restored = apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
 
     // Verify all tables populated
     assert_eq!(
@@ -1707,7 +1722,7 @@ fn empty_blocks_map_round_trip() {
     };
 
     let encoded = encode_snapshot(&data).unwrap();
-    let decoded = decode_snapshot(&encoded).unwrap();
+    let decoded = decode_snapshot(&encoded[..]).unwrap();
 
     assert_eq!(
         decoded.schema_version, SCHEMA_VERSION,
@@ -1799,7 +1814,7 @@ fn large_text_field_round_trip() {
     };
 
     let encoded = encode_snapshot(&data).unwrap();
-    let decoded = decode_snapshot(&encoded).unwrap();
+    let decoded = decode_snapshot(&encoded[..]).unwrap();
 
     assert_eq!(
         decoded.tables.blocks.len(),
@@ -1876,7 +1891,7 @@ fn all_nullable_fields_null_round_trip() {
     };
 
     let encoded = encode_snapshot(&data).unwrap();
-    let decoded = decode_snapshot(&encoded).unwrap();
+    let decoded = decode_snapshot(&encoded[..]).unwrap();
 
     let block = &decoded.tables.blocks[0];
     assert!(block.content.is_none(), "content should be None");
@@ -1917,11 +1932,11 @@ fn all_nullable_fields_null_round_trip() {
 fn encode_decode_identity() {
     let data = sample_snapshot_data();
     let encoded = encode_snapshot(&data).unwrap();
-    let decoded = decode_snapshot(&encoded).unwrap();
+    let decoded = decode_snapshot(&encoded[..]).unwrap();
 
     // Re-encode and decode again to verify idempotency
     let re_encoded = encode_snapshot(&decoded).unwrap();
-    let re_decoded = decode_snapshot(&re_encoded).unwrap();
+    let re_decoded = decode_snapshot(&re_encoded[..]).unwrap();
 
     // Verify all top-level fields
     assert_eq!(
@@ -2112,7 +2127,7 @@ async fn create_snapshot_captures_all_related_tables() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    let decoded = decode_snapshot(&row.data).unwrap();
+    let decoded = decode_snapshot(&row.data[..]).unwrap();
 
     // 8. Verify all related tables are populated
     assert_eq!(
@@ -2519,7 +2534,7 @@ fn snapshot_v1_deserializes_with_default_fields() {
     let compressed = zstd::encode_all(cbor_buf.as_slice(), 3).unwrap();
 
     // Decode using the real decode_snapshot (which accepts v1..=SCHEMA_VERSION)
-    let decoded = decode_snapshot(&compressed).unwrap();
+    let decoded = decode_snapshot(&compressed[..]).unwrap();
     assert_eq!(
         decoded.schema_version, 1,
         "v1 snapshot schema version must be preserved"
@@ -2581,7 +2596,7 @@ fn snapshot_v2_round_trips_new_fields() {
     };
 
     let encoded = encode_snapshot(&data).unwrap();
-    let decoded = decode_snapshot(&encoded).unwrap();
+    let decoded = decode_snapshot(&encoded[..]).unwrap();
 
     assert_eq!(
         decoded.schema_version, SCHEMA_VERSION,
@@ -2627,7 +2642,7 @@ fn snapshot_version_0_rejected() {
     };
 
     let encoded = encode_snapshot(&data).unwrap();
-    let result = decode_snapshot(&encoded);
+    let result = decode_snapshot(&encoded[..]);
     assert!(result.is_err(), "schema_version 0 should be rejected");
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -2718,7 +2733,7 @@ async fn compact_op_log_transaction_happy_path() {
     // Verify the snapshot captures all 3 blocks (snapshot is taken
     // before op purge, so it reflects the full table state)
     let (_, snap_data) = get_latest_snapshot(&pool).await.unwrap().unwrap();
-    let decoded = decode_snapshot(&snap_data).unwrap();
+    let decoded = decode_snapshot(&snap_data[..]).unwrap();
     assert_eq!(
         decoded.tables.blocks.len(),
         3,
@@ -2763,7 +2778,7 @@ fn snapshot_version_4_rejected() {
     };
 
     let encoded = encode_snapshot(&data).unwrap();
-    let result = decode_snapshot(&encoded);
+    let result = decode_snapshot(&encoded[..]);
     assert!(result.is_err(), "schema_version 4 should be rejected");
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -2917,7 +2932,7 @@ async fn apply_snapshot_rebuilds_caches() {
     // Apply snapshot — this should both wipe the stale caches AND enqueue
     // the cache rebuild tasks on the materializer.
     let encoded = encode_snapshot(&data).unwrap();
-    let restored = apply_snapshot(&pool, &mat, &encoded).await.unwrap();
+    let restored = apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
 
     assert_eq!(restored.tables.blocks.len(), 3);
     assert_eq!(restored.tables.block_tags.len(), 1);
@@ -3062,7 +3077,7 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
     };
 
     let encoded = encode_snapshot(&data).unwrap();
-    let _ = apply_snapshot(&pool, &mat, &encoded).await.unwrap();
+    let _ = apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
 
     // Process every enqueued cache rebuild task IN ORDER. The fix
     // guarantees `RebuildPageIds` is the first task in the array, so
@@ -3185,7 +3200,7 @@ async fn apply_snapshot_uses_awaiting_enqueue_background() {
     let bg_dropped_before = mat.metrics().bg_dropped.load(Ordering::Relaxed);
 
     let encoded = encode_snapshot(&data).unwrap();
-    let _restored = apply_snapshot(&pool, &mat, &encoded).await.unwrap();
+    let _restored = apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
 
     // Drain the bg queue so every enqueued rebuild task has been
     // processed by the consumer.
@@ -3278,7 +3293,7 @@ async fn apply_snapshot_rejects_traversal_attachment_fs_path() {
     };
 
     let encoded = encode_snapshot(&data).unwrap();
-    let err = apply_snapshot(&pool, &mat, &encoded)
+    let err = apply_snapshot(&pool, &mat, &encoded[..])
         .await
         .expect_err("apply_snapshot must reject traversal fs_path");
 
@@ -3434,7 +3449,7 @@ async fn compact_stale_read_safety() {
 
     // Verify the snapshot captured both devices in its frontier
     let (_, snap_data) = get_latest_snapshot(&pool).await.unwrap().unwrap();
-    let decoded = decode_snapshot(&snap_data).unwrap();
+    let decoded = decode_snapshot(&snap_data[..]).unwrap();
     assert!(
         decoded.up_to_seqs.contains_key("dev-A"),
         "snapshot frontier should include dev-A"
@@ -3637,7 +3652,7 @@ mod proptest_tests {
         #[test]
         fn snapshot_cbor_roundtrip(data in arb_snapshot_data()) {
             let encoded = encode_snapshot(&data).expect("encode must succeed");
-            let decoded = decode_snapshot(&encoded).expect("decode must succeed");
+            let decoded = decode_snapshot(&encoded[..]).expect("decode must succeed");
 
             // Compare via JSON serialization since SnapshotData doesn't derive PartialEq.
             let original_json = serde_json::to_string(&data).expect("serialize original");
@@ -3766,7 +3781,7 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
     // Apply snapshot → wipes stale row (and the stale blocks), restores
     // tag + content block, enqueues RebuildBlockTagRefsCache.
     let encoded = encode_snapshot(&data).unwrap();
-    let _restored = apply_snapshot(&pool, &mat, &encoded).await.unwrap();
+    let _restored = apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
 
     // Run the enqueued rebuild tasks.
     mat.flush_background().await.unwrap();
@@ -3891,7 +3906,7 @@ fn maint133_v2_snapshot_decodes_with_none_conflict_type() {
     let compressed = zstd::encode_all(cbor_buf.as_slice(), 3).unwrap();
 
     // The real decoder must accept v2 without the new field.
-    let decoded = decode_snapshot(&compressed)
+    let decoded = decode_snapshot(&compressed[..])
         .expect("v2 snapshot (no conflict_type field) must decode cleanly via serde(default)");
 
     assert_eq!(
@@ -3982,7 +3997,7 @@ async fn maint133_conflict_type_survives_round_trip() {
     .unwrap();
     let snap_data = snap_row.data;
 
-    apply_snapshot(&pool, &mat, &snap_data).await.unwrap();
+    apply_snapshot(&pool, &mat, &snap_data[..]).await.unwrap();
 
     let post_round_trip: Option<String> =
         sqlx::query_scalar("SELECT conflict_type FROM blocks WHERE id = 'block-conflict'")
@@ -4107,7 +4122,7 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
     };
 
     let encoded = encode_snapshot(&data).unwrap();
-    let err = apply_snapshot(&pool, &mat, &encoded)
+    let err = apply_snapshot(&pool, &mat, &encoded[..])
         .await
         .expect_err("apply_snapshot must surface the chunk-2 PK violation");
 
@@ -4230,7 +4245,7 @@ async fn compact_then_apply_snapshot_preserves_conflict_copy_l108() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    apply_snapshot(&pool, &mat, &snap_data).await.unwrap();
+    apply_snapshot(&pool, &mat, &snap_data[..]).await.unwrap();
 
     // Noise block must be gone (RESET wiped pre-snapshot state).
     let noise_count: i64 =
@@ -4561,7 +4576,7 @@ async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
     // ── Destination pool: fresh, then apply the snapshot. ────────────
     let (dst_pool, _dst_dir) = test_pool().await;
     let dst_mat = test_materializer(&dst_pool);
-    let restored = apply_snapshot(&dst_pool, &dst_mat, &snap_data)
+    let restored = apply_snapshot(&dst_pool, &dst_mat, &snap_data[..])
         .await
         .expect("apply_snapshot must succeed on a fresh dst pool");
 

@@ -1785,3 +1785,337 @@ async fn add_attachment_rejects_traversal_at_command_layer() {
         .unwrap();
     assert_eq!(count, 0, "bad fs_path must not leave an attachment row");
 }
+
+// ===========================================================================
+// M-51 — streaming attachment transfer regression suite
+// ===========================================================================
+//
+// These tests pin the low-memory streaming path introduced in M-51:
+//
+//   • Sender uses `read_attachment_file_metadata` + streaming
+//     `send_binary_streaming` (no `Vec<u8>` of the full file on the
+//     heap).
+//   • Receiver uses `TempAttachmentWriter` (writes to
+//     `<final>.tmp-<rand>`, hashes mid-write, atomic rename on
+//     `commit`, drop unlinks the temp).
+//
+// The buffered-shape helpers (`read_attachment_file`,
+// `write_attachment_file`) are still around for utility callers; the
+// existing tests above continue to exercise them.
+
+/// M-51 — sender streams a 50 MB attachment frame-by-frame to the
+/// wire and the receiver lands the bytes via a temp-file writer.
+/// The end-to-end round-trip must preserve content and hash, and
+/// the metadata helper must compute the same blake3 the receiver's
+/// commit does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attachment_send_streams_without_full_vec_materialization_m51() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+    let app_data_dir = dir.path().to_path_buf();
+
+    // 50 MB attachment — large enough to span ~10 binary frames at
+    // BINARY_FRAME_CHUNK_SIZE = 5 MB. Deterministic byte pattern so
+    // the hash check is exact.
+    let file_size: usize = 50 * 1024 * 1024;
+    #[allow(clippy::cast_possible_truncation)]
+    let file_data: Vec<u8> = (0..file_size).map(|i| (i % 251) as u8).collect();
+    let expected_hash = blake3::hash(&file_data).to_hex().to_string();
+    let expected_size = u64::try_from(file_size).expect("test fixture size fits in u64");
+
+    insert_test_attachment(
+        &pool,
+        "ATT_M51_BIG",
+        "attachments/m51_big.bin",
+        i64::try_from(file_size).expect("test fixture size fits in i64"),
+    )
+    .await;
+    write_attachment_file(dir.path(), "attachments/m51_big.bin", &file_data).unwrap();
+
+    // Cross-check: the streaming metadata helper computes the same
+    // hash + size as the buffered shape — the exact equality is the
+    // M-51 contract that lets the sender keep the existing
+    // `FileOffer` wire shape.
+    let (meta_size, meta_hash) =
+        read_attachment_file_metadata(dir.path(), "attachments/m51_big.bin")
+            .await
+            .unwrap();
+    assert_eq!(meta_size, expected_size);
+    assert_eq!(meta_hash, expected_hash);
+
+    let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+
+    // Initiator: request the file, drive the receive side.
+    let init_dir = TempDir::new().unwrap();
+    let init_pool = init_pool(&init_dir.path().join("init.db")).await.unwrap();
+    let init_app = init_dir.path().to_path_buf();
+    insert_test_attachment(
+        &init_pool,
+        "ATT_M51_BIG",
+        "attachments/m51_big.bin",
+        i64::try_from(file_size).expect("test fixture size fits in i64"),
+    )
+    .await;
+
+    let cancel_resp = AtomicBool::new(false);
+    let cancel_init = AtomicBool::new(false);
+    let (resp_result, init_result) = tokio::join!(
+        receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel_resp),
+        request_and_receive_files(&mut client_conn, &init_pool, &init_app, &cancel_init),
+    );
+    let send_stats = resp_result.expect("M-51 streaming send must succeed");
+    let recv_stats = init_result.expect("M-51 streaming receive must succeed");
+
+    assert_eq!(send_stats.files_sent, 1);
+    assert_eq!(send_stats.bytes_sent, expected_size);
+    assert_eq!(recv_stats.files_received, 1);
+    assert_eq!(recv_stats.bytes_received, expected_size);
+
+    // The received file matches byte-for-byte and produces the same
+    // blake3 hash on the receiver side.
+    let received = std::fs::read(init_dir.path().join("attachments/m51_big.bin")).unwrap();
+    assert_eq!(received.len(), file_size);
+    assert_eq!(blake3::hash(&received).to_hex().to_string(), expected_hash);
+    assert_eq!(received, file_data);
+}
+
+/// M-51 — confirm the receiver writes through a `<final>.tmp-<rand>`
+/// path and the final filename only appears post-commit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attachment_receive_writes_to_temp_then_renames_m51() {
+    let dir = TempDir::new().unwrap();
+    let mut writer = write_attachment_streaming(dir.path(), "attachments/probe.bin")
+        .await
+        .expect("opening temp writer must succeed");
+
+    // The temp path is a sibling of the final path with a
+    // `.tmp-<32-hex>` suffix, and it exists on disk before any data
+    // has been written through the writer.
+    let final_path = dir.path().join("attachments/probe.bin");
+    let temp_path = writer.temp_path().to_path_buf();
+    assert!(
+        temp_path.starts_with(dir.path().join("attachments")),
+        "temp path must live in the same directory as the final path"
+    );
+    assert!(
+        temp_path.exists(),
+        "temp file must exist on disk before commit, got missing {temp_path:?}"
+    );
+    assert!(
+        !final_path.exists(),
+        "final file must NOT exist before commit"
+    );
+
+    // Drive bytes through the writer.
+    let payload: &[u8] = b"some attachment bytes for the temp-file probe";
+    writer.write_all(payload).await.unwrap();
+    writer.flush().await.unwrap();
+
+    // Mid-write: temp still present, final still absent.
+    assert!(temp_path.exists());
+    assert!(!final_path.exists());
+
+    // Commit with the right hash → atomic rename, temp gone.
+    let expected_hash = blake3::hash(payload).to_hex().to_string();
+    writer.commit(&expected_hash).await.unwrap();
+
+    assert!(
+        !temp_path.exists(),
+        "temp file must be gone after commit (rename consumed it)"
+    );
+    assert!(final_path.exists(), "final file must exist after commit");
+    assert_eq!(std::fs::read(&final_path).unwrap(), payload);
+}
+
+/// M-51 — hash mismatch on commit must unlink the temp and surface
+/// an `AppError::InvalidOperation("hash_mismatch: …")`. The final
+/// file must NOT exist.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attachment_receive_hash_mismatch_unlinks_temp_m51() {
+    let dir = TempDir::new().unwrap();
+    let mut writer = write_attachment_streaming(dir.path(), "attachments/bad.bin")
+        .await
+        .unwrap();
+    let temp_path = writer.temp_path().to_path_buf();
+
+    writer.write_all(b"actual bytes").await.unwrap();
+    writer.flush().await.unwrap();
+
+    let wrong_hash = blake3::hash(b"different bytes").to_hex().to_string();
+    let err = writer.commit(&wrong_hash).await.unwrap_err();
+    match err {
+        AppError::InvalidOperation(msg) => {
+            assert!(
+                msg.contains("hash_mismatch"),
+                "M-51: hash mismatch error must mention `hash_mismatch`, got {msg:?}"
+            );
+        }
+        other => panic!("expected InvalidOperation(hash_mismatch), got {other:?}"),
+    }
+
+    assert!(
+        !temp_path.exists(),
+        "M-51: temp file must be unlinked after a hash-mismatch commit failure"
+    );
+    let final_path = dir.path().join("attachments/bad.bin");
+    assert!(
+        !final_path.exists(),
+        "M-51: final file must not exist after a failed commit"
+    );
+}
+
+/// M-51 — dropping a `TempAttachmentWriter` mid-stream (no commit
+/// reached, e.g. peer disconnect / cancel) must unlink the temp so
+/// abandoned transfers do not leak `*.tmp-*` orphans.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attachment_receive_drop_unlinks_temp_m51() {
+    let dir = TempDir::new().unwrap();
+    let temp_path = {
+        let mut writer = write_attachment_streaming(dir.path(), "attachments/abandoned.bin")
+            .await
+            .unwrap();
+        let p = writer.temp_path().to_path_buf();
+        writer.write_all(b"some partial bytes").await.unwrap();
+        // Drop the writer without commit (mid-stream abandonment).
+        drop(writer);
+        p
+    };
+
+    assert!(
+        !temp_path.exists(),
+        "M-51: dropping a writer without commit must unlink the temp file"
+    );
+    let final_path = dir.path().join("attachments/abandoned.bin");
+    assert!(
+        !final_path.exists(),
+        "M-51: final file must never have appeared on an abandoned transfer"
+    );
+}
+
+/// M-51 — empty (zero-byte) attachments must still round-trip via a
+/// single empty binary frame, matching the
+/// `send_binary_streaming` / `receive_binary_streaming` zero-byte
+/// contract.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attachment_send_empty_file_uses_single_empty_frame_m51() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+    let app_data_dir = dir.path().to_path_buf();
+
+    // Empty attachment.
+    insert_test_attachment(&pool, "ATT_M51_EMPTY", "attachments/empty.bin", 0).await;
+    write_attachment_file(dir.path(), "attachments/empty.bin", b"").unwrap();
+
+    let init_dir = TempDir::new().unwrap();
+    let init_pool = init_pool(&init_dir.path().join("init.db")).await.unwrap();
+    insert_test_attachment(&init_pool, "ATT_M51_EMPTY", "attachments/empty.bin", 0).await;
+
+    let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+
+    let cancel_resp = AtomicBool::new(false);
+    let cancel_init = AtomicBool::new(false);
+    let (resp_result, init_result) = tokio::join!(
+        receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel_resp),
+        request_and_receive_files(&mut client_conn, &init_pool, init_dir.path(), &cancel_init,),
+    );
+    let send_stats = resp_result.unwrap();
+    let recv_stats = init_result.unwrap();
+
+    assert_eq!(send_stats.files_sent, 1);
+    assert_eq!(send_stats.bytes_sent, 0);
+    assert_eq!(recv_stats.files_received, 1);
+    assert_eq!(recv_stats.bytes_received, 0);
+
+    // Final file exists and is empty.
+    let path = init_dir.path().join("attachments/empty.bin");
+    assert!(path.exists());
+    let received = std::fs::read(&path).unwrap();
+    assert_eq!(received.len(), 0);
+}
+
+/// M-51 — feed identical bytes through the streaming sender and
+/// receiver and assert the receiver's `TempAttachmentWriter` hash
+/// (computed mid-write) matches the sender's pre-flight hash from
+/// `read_attachment_file_metadata`. Confirms blake3 round-trips
+/// correctly under the streaming shape.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attachment_streaming_round_trips_blake3_correctly_m51() {
+    let dir = TempDir::new().unwrap();
+    // Mid-sized payload (a few chunks worth) with a non-trivial byte
+    // distribution.
+    let payload_len = 12 * 1024 * 1024 + 17; // 12 MB + change
+    #[allow(clippy::cast_possible_truncation)]
+    let payload: Vec<u8> = (0..payload_len)
+        .map(|i: usize| (i.wrapping_mul(31) % 256) as u8)
+        .collect();
+    let expected_hash = blake3::hash(&payload).to_hex().to_string();
+
+    // Write the file via the buffered helper, then read its metadata
+    // via the streaming helper.
+    write_attachment_file(dir.path(), "attachments/round_trip.bin", &payload).unwrap();
+    let (meta_size, meta_hash) =
+        read_attachment_file_metadata(dir.path(), "attachments/round_trip.bin")
+            .await
+            .unwrap();
+    assert_eq!(meta_size, payload_len as u64);
+    assert_eq!(meta_hash, expected_hash);
+
+    // Drive the bytes through TempAttachmentWriter (the receiver
+    // shape) and confirm the running hasher matches.
+    let dest_dir = TempDir::new().unwrap();
+    let mut writer = write_attachment_streaming(dest_dir.path(), "attachments/round_trip.bin")
+        .await
+        .unwrap();
+    writer.write_all(&payload).await.unwrap();
+    writer.flush().await.unwrap();
+    writer.commit(&expected_hash).await.unwrap();
+
+    let dest = dest_dir.path().join("attachments/round_trip.bin");
+    let dest_bytes = std::fs::read(&dest).unwrap();
+    assert_eq!(dest_bytes, payload);
+    assert_eq!(
+        blake3::hash(&dest_bytes).to_hex().to_string(),
+        expected_hash
+    );
+}
+
+/// M-51 — the wire-level streaming helpers in `SyncConnection`
+/// (`send_binary_streaming` / `receive_binary_streaming`) must
+/// round-trip an `AsyncRead` source straight into an `AsyncWrite`
+/// sink without ever materialising the full payload as a Vec on
+/// the heap. Probe with a `tokio::io::Cursor` source + `Vec<u8>`
+/// sink and confirm exact byte equality.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn wire_helpers_streaming_round_trip_m51() {
+    let payload: Vec<u8> = (0..(BINARY_FRAME_CHUNK_SIZE * 2 + 7))
+        // wrap-around byte pattern; clippy-narrowed truncation per the
+        // existing protocol_large_file_chunking convention.
+        .map(|i| {
+            #[allow(clippy::cast_possible_truncation)]
+            let b = (i % 256) as u8;
+            b
+        })
+        .collect();
+    let expected_size = u64::try_from(payload.len()).unwrap();
+
+    let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+
+    let payload_clone = payload.clone();
+    let server_task = tokio::spawn(async move {
+        let cursor = std::io::Cursor::new(payload_clone);
+        server_conn
+            .send_binary_streaming(cursor, expected_size, BINARY_FRAME_CHUNK_SIZE)
+            .await
+            .unwrap();
+    });
+
+    let mut sink: Vec<u8> = Vec::with_capacity(payload.len());
+    client_conn
+        .receive_binary_streaming(&mut sink, expected_size)
+        .await
+        .unwrap();
+    server_task.await.unwrap();
+
+    assert_eq!(sink.len(), payload.len());
+    assert_eq!(sink, payload);
+}
