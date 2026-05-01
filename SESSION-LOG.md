@@ -1,5 +1,51 @@
 # Session Log
 
+## Session 590 — orchestrator-only batch: MAINT-131 final pass (2026-05-01)
+
+**MAINT-131 fully closed.** The two batch-IPC migrations (sessions 572 + 575) and the date / link-metadata hook wraps (session 576) had landed already; this session closed the residual: the 5 presentational components named in the spec (`BlockListItem`, `RescheduleDropZone`, `DateChipEditor`, `BlockPropertyDrawer`, `LinkEditPopover`) had been left with direct `lib/tauri` imports for the **non-date** IPCs they still call (`getBlock` for the duplicated "decide due vs scheduled" pattern in BlockListItem + RescheduleDropZone; `getProperties` / `listPropertyDefs` / `setProperty` in BlockPropertyDrawer's add-property handler). All five components are now pure JSX + hooks with **zero** direct `lib/tauri` imports — the explicit goal stated in the MAINT-131 entry.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 19 → **18** (MAINT-131 row + detail block deleted).
+- **Cumulative MAINT closures:** 26 → 27.
+- **Previously-resolved counter:** 851+ → 852+ across 556 → 557 sessions.
+
+**Items closed:**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| **MAINT-131 — Block-surface Tauri coupling** (orchestrator-only, no subagents) | Frontend hooks + 3 components | (1) Extended `useBlockReschedule` with a new `reschedule(blockId, dateStr): Promise<{ field: 'due_date' \| 'scheduled_date' }>` method that absorbs the 17-line `getBlock`-then-decide-then-setX pattern previously duplicated verbatim across `BlockListItem.handleDateSelect` and `RescheduleDropZone.handleDrop`. The fall-back semantics (default to `setDueDate` when `getBlock` rejects) are preserved with the same warn-level log. Added 5 new tests covering: due-date when both fields null, scheduled when scheduled-only, due preferred when both set, fall-back on getBlock rejection, re-throw on setter rejection. (2) Updated `BlockListItem.tsx` to call `reschedule()` instead of inline logic; dropped the `getBlock` + `logger` imports. (3) Updated `RescheduleDropZone.tsx` similarly; dropped `getBlock` + `logger` imports. (4) New `src/hooks/useBlockPropertyIpc.ts` thin hook wrapping the `getProperties` / `listPropertyDefs` / `setProperty` IPC trio (named `*PropertyIpc` to avoid collision with the existing `useBlockProperties` task-state/priority-cycling hook — distinct concerns). 8 new tests. (5) Updated `BlockPropertyDrawer.tsx` to pull the trio from the new hook; dropped the direct `lib/tauri` IPC imports (kept the type-only import for `PropertyDefinition` / `PropertyRow`, which is fine — types don't need a hook wrap). |
+
+**Process notes:**
+
+- **No subagents.** Single-orchestrator batch (~150 LOC across 4 production files + 2 test files). Subagent overhead would have outweighed parallelism gains.
+- **One naming collision caught during prek.** First attempt named the new hook `useBlockProperties` — already taken by an existing task-state/priority-cycling hook (`src/hooks/useBlockProperties.ts`, ~250 LOC). The `write` tool clobbered the existing file (it should not have, since the file existed; surfaced as a TS errors avalanche during prek). Restored the original via `git restore` and renamed the new hook to `useBlockPropertyIpc` (descriptive — it is the IPC-trio wrapper, distinct from the existing higher-level hook). No content was lost. Going forward, `read` before `write` if there is any chance the path exists.
+- **One biome auto-fix.** `npx biome check --write` collapsed two multi-line `useCallback` declarations + one `mockedInvoke.mockRejectedValueOnce(…).mockResolvedValueOnce(…)` chain to single lines. Pure formatting; no behaviour change.
+- **One test fixture fix.** First version of `useBlockPropertyIpc.test.tsx` asserted `expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs', {})`, but `commands.listPropertyDefs()` invokes with no second arg (the bindings file passes only the command name). Updated assertion to `toHaveBeenCalledWith('list_property_defs')`.
+- **No `bindings.ts` regeneration** — no Rust changes in this batch.
+- **No FEATURE-MAP.md update** — internal hook reorganization with no user-visible surface change.
+
+**Files touched (this session's batch):**
+
+- **Frontend hooks (new):** `src/hooks/useBlockPropertyIpc.ts` (66 LOC).
+- **Frontend hooks (extended):** `src/hooks/useBlockReschedule.ts` (44L → 100L; +56L for the `reschedule()` method, doc comment, and `RescheduleResult` / `RescheduleField` types).
+- **Frontend components (migrated):** `src/components/BlockListItem.tsx`, `src/components/journal/RescheduleDropZone.tsx`, `src/components/BlockPropertyDrawer.tsx`. All three now have zero direct `lib/tauri` imports (BlockPropertyDrawer keeps the type-only `import type { PropertyDefinition, PropertyRow as PropertyRowData } from '../lib/tauri'` — types are not a coupling concern).
+- **Frontend tests (new):** `src/hooks/__tests__/useBlockPropertyIpc.test.tsx` (8 tests).
+- **Frontend tests (extended):** `src/hooks/__tests__/useBlockReschedule.test.tsx` (+5 tests under a new `useBlockReschedule.reschedule` describe block).
+- **Docs (this session):** `REVIEW-LATER.md` (MAINT-131 row + detail block deleted; summary line + previously-resolved counter bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (one biome autofix round earlier; 0 hooks needed re-runs after).
+
+- Backend full nextest: 3322 / 3322 (no backend changes in this session).
+- Frontend full vitest: pass count up by +13 from session 589's 8981 (5 new `reschedule` tests + 8 new `useBlockPropertyIpc` tests).
+- TypeScript: 0 errors.
+- Biome: 0 errors across 805 files.
+- Cargo fmt / clippy / deny / machete: clean (no change from session 589).
+
+**Commit:** TBD — `refactor(blocks): MAINT-131 — fold getBlock+decide into useBlockReschedule.reschedule(); new useBlockPropertyIpc drops drawer's lib/tauri imports`. (Single commit; not pushed.)
+
+---
+
 ## Session 589 — 3-subagent batch: FEAT-3p4 Spaces Phase 4 closure (2026-05-01)
 
 **FEAT-3p4 fully closed in one big commit.** Three sequential build subagents + orchestrator-level frontend store work threaded `space_id` through every remaining cross-space query surface, promoted `space_id` from `Option<String>` to required `String` on `list_blocks` / `search_blocks`, and added the per-space `useNavigationStore.currentView` slice with space-switch flush/pull plumbing. The per-space `currentView` makes the user's last view stick per space (Search in Personal, Pages in Work, default `page-editor` for fresh spaces) instead of bleeding across the boundary. **Frontend callsites of all 13 affected commands now thread `currentSpaceId` through.** The `space_id` required-promotion at the type system + tauri-specta layer prevents new callers from leaking silently.
