@@ -16,6 +16,7 @@
 //! events, or touches the materializer — it is pure persistence for a
 //! local-device connector.
 
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
@@ -277,6 +278,171 @@ pub async fn list_event_map_dates(pool: &SqlitePool) -> Result<Vec<String>, AppE
         .fetch_all(pool)
         .await?;
     Ok(rows.into_iter().map(|r| r.date).collect())
+}
+
+// ---------------------------------------------------------------------------
+// FEAT-3p9 M1 — per-space config row + helpers
+// ---------------------------------------------------------------------------
+
+/// One row of `gcal_space_config` (migration `0041_gcal_space_config.sql`)
+/// — the per-space split of the legacy `gcal_settings` KV.
+///
+/// Empty strings represent "unset" for every TEXT column (matches the
+/// `gcal_settings` convention) so the schema can stay NOT NULL without
+/// requiring callers to construct `Option<String>` chains.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct GcalSpaceConfig {
+    /// PK — Crockford-base32 ULID of the page block flagged
+    /// `is_space = "true"` (e.g. `SPACE_PERSONAL_ULID`). Not enforced
+    /// by FK, mirroring the rest of the spaces properties model.
+    pub space_id: String,
+    /// Unverified email decoded from the OAuth ID token (display only).
+    pub account_email: String,
+    /// Agaric-owned Google Calendar id; empty when not connected.
+    pub calendar_id: String,
+    /// `[7, 90]`, default `30` — how many days forward the connector
+    /// syncs for this space.
+    pub window_days: i64,
+    /// `"full"` (default) or `"minimal"` — privacy classification for
+    /// the digest event body.
+    pub privacy_mode: String,
+    /// RFC 3339 UTC of the last successful push for this space; empty
+    /// when never pushed.
+    pub last_push_at: String,
+    /// Short error category (e.g. `keyring.unavailable`); empty when
+    /// the connector is healthy. Settings UI surface only.
+    pub last_error: String,
+    /// Device currently holding the per-space push lease; empty when
+    /// unheld. M2 will populate this; M1 only migrates the legacy
+    /// single-space lease into the Personal-space row.
+    pub push_lease_device_id: String,
+    /// RFC 3339 UTC lease expiry; empty when unheld.
+    pub push_lease_expires_at: String,
+    /// RFC 3339 UTC creation timestamp.
+    pub created_at: String,
+    /// RFC 3339 UTC last-modified timestamp; bumped on every upsert.
+    pub updated_at: String,
+}
+
+/// Build a fresh-defaults `GcalSpaceConfig` for `space_id`, with
+/// `created_at == updated_at == now` and every other field at its
+/// migration-default value.
+#[must_use]
+pub fn default_space_config(space_id: &str, now: DateTime<Utc>) -> GcalSpaceConfig {
+    let ts = now.to_rfc3339_opts(SecondsFormat::Secs, true);
+    GcalSpaceConfig {
+        space_id: space_id.to_owned(),
+        account_email: String::new(),
+        calendar_id: String::new(),
+        window_days: 30,
+        privacy_mode: "full".to_owned(),
+        last_push_at: String::new(),
+        last_error: String::new(),
+        push_lease_device_id: String::new(),
+        push_lease_expires_at: String::new(),
+        created_at: ts.clone(),
+        updated_at: ts,
+    }
+}
+
+/// Fetch the per-space config row for `space_id`, or `Ok(None)` if it
+/// has not been seeded yet.
+///
+/// # Errors
+/// [`AppError::Database`] on SQL errors.
+pub async fn get_space_config(
+    pool: &SqlitePool,
+    space_id: &str,
+) -> Result<Option<GcalSpaceConfig>, AppError> {
+    let row = sqlx::query_as!(
+        GcalSpaceConfig,
+        "SELECT space_id, account_email, calendar_id, window_days, \
+                privacy_mode, last_push_at, last_error, \
+                push_lease_device_id, push_lease_expires_at, \
+                created_at, updated_at \
+         FROM gcal_space_config WHERE space_id = ?",
+        space_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+/// Insert or update the per-space config row.
+///
+/// On update, every column except `space_id` and `created_at` is
+/// replaced from `config`, and `updated_at` is bumped to the current
+/// RFC 3339 UTC timestamp via [`now_rfc3339`] (overriding whatever
+/// `config.updated_at` carried).
+///
+/// # Errors
+/// [`AppError::Database`] on SQL errors.
+pub async fn upsert_space_config(
+    pool: &SqlitePool,
+    config: &GcalSpaceConfig,
+) -> Result<(), AppError> {
+    let updated_at = now_rfc3339();
+    sqlx::query!(
+        "INSERT INTO gcal_space_config \
+            (space_id, account_email, calendar_id, window_days, privacy_mode, \
+             last_push_at, last_error, push_lease_device_id, push_lease_expires_at, \
+             created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(space_id) DO UPDATE SET \
+            account_email         = excluded.account_email, \
+            calendar_id           = excluded.calendar_id, \
+            window_days           = excluded.window_days, \
+            privacy_mode          = excluded.privacy_mode, \
+            last_push_at          = excluded.last_push_at, \
+            last_error            = excluded.last_error, \
+            push_lease_device_id  = excluded.push_lease_device_id, \
+            push_lease_expires_at = excluded.push_lease_expires_at, \
+            updated_at            = excluded.updated_at",
+        config.space_id,
+        config.account_email,
+        config.calendar_id,
+        config.window_days,
+        config.privacy_mode,
+        config.last_push_at,
+        config.last_error,
+        config.push_lease_device_id,
+        config.push_lease_expires_at,
+        config.created_at,
+        updated_at,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Delete the per-space config row, silent on a missing row.
+///
+/// # Errors
+/// [`AppError::Database`] on SQL errors.
+pub async fn delete_space_config(pool: &SqlitePool, space_id: &str) -> Result<(), AppError> {
+    sqlx::query!("DELETE FROM gcal_space_config WHERE space_id = ?", space_id,)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// List every per-space config row, ordered ascending by `space_id`
+/// for deterministic test output.
+///
+/// # Errors
+/// [`AppError::Database`] on SQL errors.
+pub async fn list_space_configs(pool: &SqlitePool) -> Result<Vec<GcalSpaceConfig>, AppError> {
+    let rows = sqlx::query_as!(
+        GcalSpaceConfig,
+        "SELECT space_id, account_email, calendar_id, window_days, \
+                privacy_mode, last_push_at, last_error, \
+                push_lease_device_id, push_lease_expires_at, \
+                created_at, updated_at \
+         FROM gcal_space_config ORDER BY space_id ASC",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
 }
 
 // ---------------------------------------------------------------------------
@@ -685,5 +851,186 @@ mod tests {
         let json = serde_json::to_string(&row).unwrap();
         let back: GcalSettingRow = serde_json::from_str(&json).unwrap();
         assert_eq!(row, back);
+    }
+
+    // ── FEAT-3p9 M1 — gcal_space_config helpers ─────────────────────
+
+    use chrono::TimeZone;
+
+    const SPACE_A: &str = "00000000000000000AGAR1CPER";
+    const SPACE_B: &str = "00000000000000000AGAR1CWRK";
+
+    fn fixed_now() -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 4, 22, 10, 30, 0).unwrap()
+    }
+
+    #[test]
+    fn default_space_config_has_migration_default_values() {
+        let cfg = default_space_config(SPACE_A, fixed_now());
+        assert_eq!(cfg.space_id, SPACE_A);
+        assert_eq!(cfg.account_email, "");
+        assert_eq!(cfg.calendar_id, "");
+        assert_eq!(cfg.window_days, 30);
+        assert_eq!(cfg.privacy_mode, "full");
+        assert_eq!(cfg.last_push_at, "");
+        assert_eq!(cfg.last_error, "");
+        assert_eq!(cfg.push_lease_device_id, "");
+        assert_eq!(cfg.push_lease_expires_at, "");
+        assert_eq!(cfg.created_at, "2026-04-22T10:30:00Z");
+        assert_eq!(cfg.updated_at, cfg.created_at);
+    }
+
+    #[tokio::test]
+    async fn migration_creates_gcal_space_config_with_exact_columns() {
+        let (pool, _dir) = test_pool().await;
+        let cols: Vec<(i64, String, String, i64, Option<String>, i64)> =
+            sqlx::query_as("PRAGMA table_info('gcal_space_config')")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let names: Vec<&str> = cols.iter().map(|c| c.1.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "space_id",
+                "account_email",
+                "calendar_id",
+                "window_days",
+                "privacy_mode",
+                "last_push_at",
+                "last_error",
+                "push_lease_device_id",
+                "push_lease_expires_at",
+                "created_at",
+                "updated_at",
+            ],
+            "gcal_space_config must have the 11 spec columns in order"
+        );
+        assert_eq!(cols[0].5, 1, "`space_id` must be the PRIMARY KEY column");
+    }
+
+    #[tokio::test]
+    async fn get_space_config_on_missing_returns_none() {
+        let (pool, _dir) = test_pool().await;
+        let got = get_space_config(&pool, SPACE_A).await.unwrap();
+        assert_eq!(got, None);
+    }
+
+    #[tokio::test]
+    async fn upsert_space_config_then_get_returns_row() {
+        let (pool, _dir) = test_pool().await;
+        let cfg = default_space_config(SPACE_A, fixed_now());
+        upsert_space_config(&pool, &cfg).await.unwrap();
+
+        let got = get_space_config(&pool, SPACE_A)
+            .await
+            .unwrap()
+            .expect("row must exist after upsert");
+        assert_eq!(got.space_id, cfg.space_id);
+        assert_eq!(got.window_days, 30);
+        assert_eq!(got.privacy_mode, "full");
+        assert_eq!(got.created_at, cfg.created_at);
+        // updated_at is bumped to wall-clock now() by upsert, so just
+        // assert it is non-empty (the contract is "always bumps").
+        assert!(!got.updated_at.is_empty());
+    }
+
+    #[tokio::test]
+    async fn upsert_space_config_is_idempotent_and_updates_columns() {
+        let (pool, _dir) = test_pool().await;
+        let mut cfg = default_space_config(SPACE_A, fixed_now());
+        upsert_space_config(&pool, &cfg).await.unwrap();
+
+        // Mutate every non-PK column and re-upsert.
+        cfg.account_email = "user@example.com".into();
+        cfg.calendar_id = "cal123".into();
+        cfg.window_days = 14;
+        cfg.privacy_mode = "minimal".into();
+        cfg.last_push_at = "2026-04-22T10:31:00Z".into();
+        cfg.last_error = "throttled".into();
+        cfg.push_lease_device_id = "device-abc".into();
+        cfg.push_lease_expires_at = "2026-04-22T11:31:00Z".into();
+        upsert_space_config(&pool, &cfg).await.unwrap();
+
+        // Still exactly one row.
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM gcal_space_config")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 1, "upsert must not duplicate rows");
+
+        let got = get_space_config(&pool, SPACE_A).await.unwrap().unwrap();
+        assert_eq!(got.account_email, "user@example.com");
+        assert_eq!(got.calendar_id, "cal123");
+        assert_eq!(got.window_days, 14);
+        assert_eq!(got.privacy_mode, "minimal");
+        assert_eq!(got.last_push_at, "2026-04-22T10:31:00Z");
+        assert_eq!(got.last_error, "throttled");
+        assert_eq!(got.push_lease_device_id, "device-abc");
+        assert_eq!(got.push_lease_expires_at, "2026-04-22T11:31:00Z");
+        // created_at is preserved across upsert.
+        assert_eq!(got.created_at, cfg.created_at);
+    }
+
+    #[tokio::test]
+    async fn delete_space_config_removes_row() {
+        let (pool, _dir) = test_pool().await;
+        let cfg = default_space_config(SPACE_A, fixed_now());
+        upsert_space_config(&pool, &cfg).await.unwrap();
+
+        delete_space_config(&pool, SPACE_A).await.unwrap();
+        let got = get_space_config(&pool, SPACE_A).await.unwrap();
+        assert_eq!(got, None);
+    }
+
+    #[tokio::test]
+    async fn delete_space_config_is_silent_on_missing() {
+        let (pool, _dir) = test_pool().await;
+        delete_space_config(&pool, SPACE_A).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_space_configs_returns_rows_ordered_by_space_id() {
+        let (pool, _dir) = test_pool().await;
+        // Insert in reverse order — list must still come back ascending.
+        let cfg_b = default_space_config(SPACE_B, fixed_now());
+        upsert_space_config(&pool, &cfg_b).await.unwrap();
+        let cfg_a = default_space_config(SPACE_A, fixed_now());
+        upsert_space_config(&pool, &cfg_a).await.unwrap();
+
+        let listed = list_space_configs(&pool).await.unwrap();
+        let ids: Vec<&str> = listed.iter().map(|c| c.space_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![SPACE_A, SPACE_B],
+            "list_space_configs must order by space_id ASC"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_space_configs_returns_empty_when_no_rows() {
+        let (pool, _dir) = test_pool().await;
+        let listed = list_space_configs(&pool).await.unwrap();
+        assert!(listed.is_empty());
+    }
+
+    #[test]
+    fn gcal_space_config_serde_roundtrip_preserves_every_field() {
+        let cfg = GcalSpaceConfig {
+            space_id: SPACE_A.into(),
+            account_email: "u@example.com".into(),
+            calendar_id: "cal".into(),
+            window_days: 42,
+            privacy_mode: "minimal".into(),
+            last_push_at: FIXED_TS.into(),
+            last_error: "err".into(),
+            push_lease_device_id: "dev".into(),
+            push_lease_expires_at: FIXED_TS_B.into(),
+            created_at: FIXED_TS.into(),
+            updated_at: FIXED_TS_B.into(),
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: GcalSpaceConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, back);
     }
 }

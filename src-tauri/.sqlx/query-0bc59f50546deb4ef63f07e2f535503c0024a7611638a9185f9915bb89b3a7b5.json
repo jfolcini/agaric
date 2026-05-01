@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO gcal_space_config (space_id, account_email, calendar_id, window_days, privacy_mode, last_push_at, last_error, push_lease_device_id, push_lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(space_id) DO UPDATE SET account_email         = excluded.account_email, calendar_id           = excluded.calendar_id, window_days           = excluded.window_days, privacy_mode          = excluded.privacy_mode, last_push_at          = excluded.last_push_at, last_error            = excluded.last_error, push_lease_device_id  = excluded.push_lease_device_id, push_lease_expires_at = excluded.push_lease_expires_at, updated_at            = excluded.updated_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "0bc59f50546deb4ef63f07e2f535503c0024a7611638a9185f9915bb89b3a7b5"
+}

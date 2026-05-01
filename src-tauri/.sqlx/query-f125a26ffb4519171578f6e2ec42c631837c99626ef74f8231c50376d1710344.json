@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR REPLACE INTO gcal_settings (key, value, updated_at) VALUES (?, 'true', ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "f125a26ffb4519171578f6e2ec42c631837c99626ef74f8231c50376d1710344"
+}

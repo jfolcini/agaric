@@ -1,0 +1,80 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT space_id, account_email, calendar_id, window_days, privacy_mode, last_push_at, last_error, push_lease_device_id, push_lease_expires_at, created_at, updated_at FROM gcal_space_config WHERE space_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "space_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "account_email",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "calendar_id",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "window_days",
+        "ordinal": 3,
+        "type_info": "Integer"
+      },
+      {
+        "name": "privacy_mode",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_push_at",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_error",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "push_lease_device_id",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "push_lease_expires_at",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 10,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "333a286da77330a698b00fb69ef8aca6f8ff6964951fe1710774c7a9b66d1531"
+}
