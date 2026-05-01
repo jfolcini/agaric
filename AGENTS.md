@@ -4,6 +4,28 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React 1
 
 > **No changes to this file (AGENTS.md) without explicit user approval. Ever.**
 
+## Table of Contents
+
+1. [Documentation Map](#documentation-map)
+2. [Build Commands](#build-commands)
+3. [Key Architectural Invariants](#key-architectural-invariants)
+4. [Architectural Stability](#architectural-stability)
+5. [Coupled Dependency Updates](#coupled-dependency-updates)
+6. [Threat Model](#threat-model)
+7. [Database](#database)
+8. [Frontend Architecture](#frontend-architecture)
+9. [Frontend Development Guidelines](#frontend-development-guidelines)
+10. [Backend Architecture](#backend-architecture)
+11. [TypeScript Bindings (specta)](#typescript-bindings-specta)
+12. [Pre-commit & CI](#pre-commit--ci)
+13. [Releases](#releases)
+14. [Testing](#testing)
+15. [Code Quality Enforcement](#code-quality-enforcement)
+16. [Performance Conventions](#performance-conventions)
+17. [Backend Patterns](#backend-patterns-commonly-caught-in-review)
+18. [Android](#android)
+19. [State Files](#state-files)
+
 ## Documentation Map
 
 | Document | Purpose |
@@ -12,8 +34,8 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React 1
 | **[BUILD.md](BUILD.md)** | Build guide: prerequisites, platforms, Android, CI, troubleshooting |
 | **ARCHITECTURE.md** | Deep-dive: data model, op log, materializer, editor, sync, search (~1870 lines) |
 | **[FEATURE-MAP.md](FEATURE-MAP.md)** | Complete feature inventory: schema, commands, sync, editor, stores, testing. Use for discovery and review. |
-| `src-tauri/tests/AGENTS.md` | Rust test patterns, fixtures, pitfalls |
-| `src/__tests__/AGENTS.md` | Frontend test patterns, mocking, a11y |
+| [`src-tauri/tests/AGENTS.md`](src-tauri/tests/AGENTS.md) | Rust test patterns, fixtures, pitfalls |
+| [`src/__tests__/AGENTS.md`](src/__tests__/AGENTS.md) | Frontend test patterns, mocking, a11y |
 | `REVIEW-LATER.md` | Deferred items, tech debt backlog, future features |
 
 ## Build Commands
@@ -53,6 +75,8 @@ Do not introduce significant architectural changes (new tables, new op types, ne
 - **If a feature seems to require schema migration, a new op type, or a new Zustand store** — stop and discuss with the user first. There is almost always a way to achieve it within the existing model.
 
 ## Coupled Dependency Updates
+
+**Distinct from Architectural Stability:** This section covers *version pinning* of interdependent packages. The Architectural Stability section above covers *schema, op-types, and store changes*. Both require user approval, but for different reasons.
 
 Some dependencies ship as a **stack** — upstream locks multiple packages to the same major/minor and breaks when one slice moves ahead of the others. **Never bump one slice of a coupled stack on its own.** Move the whole stack in one commit, and only when every required upstream piece has a release this repo can consume. If the coupled bump requires a major we are not ready for, leave the entire stack alone and file (or update) a `MAINT-*` item in `REVIEW-LATER.md`.
 
@@ -131,8 +155,26 @@ Every frontend change — new component, bugfix, feature — must build on exist
 - **`aria-label`** on every icon-only button. Use `t()` i18n keys, not hardcoded English strings.
 - **`EmptyState`** component for all empty list/panel states. Never `return null` or show raw text for empty states.
 - **`LoadingSkeleton`** for initial load states. Inline spinners only for action feedback (submit buttons, pagination).
-- **Floating UI lifecycle logging**: Any component that creates DOM outside the React tree (portals, `document.body.appendChild`, `ReactRenderer`), manages capture-phase outside-click listeners, or uses `computePosition` must: (1) log failures at warn level via `logger.warn`, (2) guard callback invocations on stale/null state and log the desync, (3) handle positioning `.catch()` with a logged fallback, (4) be listed in `EDITOR_PORTAL_SELECTORS` if it should prevent editor blur. See `suggestion-renderer.ts` as the reference implementation.
+- **Floating UI lifecycle logging**: Any component that creates DOM outside the React tree (portals, `document.body.appendChild`, `ReactRenderer`), manages capture-phase outside-click listeners, or uses `computePosition` must:
+  1. Log failures at warn level via `logger.warn`.
+  2. Guard callback invocations on stale/null state and log the desync.
+  3. Handle positioning `.catch()` with a logged fallback.
+  4. Be listed in `EDITOR_PORTAL_SELECTORS` if it should prevent editor blur.
+
+  See `src/editor/suggestion-renderer.ts` as the reference implementation.
 - **Ref-as-prop (React 19)**: components that accept a ref declare `ref?: React.Ref<ElementType>` as a normal optional prop — either inherited via `React.ComponentProps<typeof X>` / `React.ComponentProps<'tag'>` (which include `ref?` automatically in React 19) or added explicitly to the props interface. Never wrap in `React.forwardRef` — it is deprecated. For imperative handles, declare `ref` as a prop and call `useImperativeHandle(ref, () => ...)` directly inside the function body (see `src/editor/SuggestionList.tsx`).
+
+  **❌ Deprecated:**
+
+  ```tsx
+  export const MyComponent = React.forwardRef<HTMLDivElement, Props>(({ ... }, ref) => { ... })
+  ```
+
+  **✅ React 19:**
+
+  ```tsx
+  export const MyComponent = ({ ref, ... }: Props & { ref?: React.Ref<HTMLDivElement> }) => { ... }
+  ```
 
 ### Anti-patterns — do not do these
 
@@ -145,8 +187,19 @@ Every frontend change — new component, bugfix, feature — must build on exist
 - **Skipping accessibility** — `aria-label`, `role`, `aria-busy`, `aria-expanded` are not optional.
 - **N+1 query patterns** — use `json_each()` batch queries on the backend instead of loops. See `fts.rs` batch resolve.
 - **Silent `.catch(() => {})` blocks** — always use `logger.warn` or `logger.error`. Silent error swallowing masks real bugs.
-- **Weakening strict settings** — do not add `@ts-ignore` or `biome-ignore` without a clear justification comment. Do not relax `exactOptionalPropertyTypes`, `noImplicitReturns`, or `unsafe_code = "deny"`.
+- **Weakening strict settings** — do not add `@ts-ignore` or `biome-ignore` without a clear justification comment. Acceptable only when: (a) the rule is genuinely too strict for the context (e.g., `noExcessiveCognitiveComplexity` when splitting a component would create worse prop-drilling); (b) the comment explains the tradeoff; (c) the ignore is scoped to the minimal range (single line or function, not whole file). Do not relax `exactOptionalPropertyTypes`, `noImplicitReturns`, or `unsafe_code = "deny"`.
 - **`React.forwardRef` wrappers** — deprecated in React 19. Accept `ref` as a normal prop instead (see "Ref-as-prop" in Mandatory patterns above). Likewise **never use `React.ComponentRef<typeof X>`** (deprecated) or the ambient `JSX.*` namespace (React 19 dropped the global — use `React.JSX.IntrinsicElements` / `React.ReactElement`).
+
+### Common frontend review catches
+
+These show up repeatedly in code review:
+
+- **Missing `aria-label` on icon-only buttons** — every icon button must have an accessible label. Use `t()` i18n keys, not hardcoded English.
+- **Hardcoded Tailwind colors** — use semantic tokens from `src/index.css` (e.g., `text-status-overdue` instead of `text-red-700`).
+- **Bare `overflow-auto`** — always use `ScrollArea` from `ui/scroll-area.tsx` for consistent styling and mobile support.
+- **Forgetting touch targets** — interactive elements must be ≥44px on touch devices. Use Button's `size` variants or `[@media(pointer:coarse)]:h-11` on custom elements.
+- **Skipping error-path tests for Tauri IPC** — every component that calls `invoke()` must test the rejection path (mock `invoke` to throw, verify graceful degradation).
+- **Silent `.catch(() => {})`** — always log via `logger.warn` / `logger.error`. Silent swallowing masks real bugs.
 
 ### When extending the design system
 
@@ -212,7 +265,9 @@ The 5-manifest lockstep rule is non-negotiable because:
 
 If a release tag fails at `verify-version`: delete it (`git push --delete origin <tag> && git tag -d <tag>`), run `scripts/bump-version.sh <tag> --commit --tag --push` on a clean main, done.
 
-## Testing Conventions
+## Testing
+
+### Conventions
 
 - **Minimum bar:** Every exported function gets happy-path + error-path tests. Components get render + interaction + `axe(container)` a11y tests. **Every component with Tauri IPC calls must have error-path tests** — mock invoke rejection and verify graceful degradation (toast, fallback UI, no crash).
 - **Test location:** `#[cfg(test)] mod tests` for Rust, `__tests__/` dirs for frontend.
@@ -224,9 +279,10 @@ If a release tag fails at `verify-version`: delete it (`git push --delete origin
 - **React 19 test timing:** state updates originating from non-React event sources — worker `dispatchEvent`, `window.setTimeout` / `setInterval` callbacks, IPC promise resolutions chained off external events — no longer flush within a bare `await new Promise(r => setTimeout(r, 0))` tick. Wrap such waits in `act(async () => { ... })`, switch sync `getByText` to async `findByText`, or `waitFor` on the observable end state. Do not add arbitrary sleeps.
 - **Detailed conventions:** `src-tauri/tests/AGENTS.md` (Rust), `src/__tests__/AGENTS.md` (frontend)
 
-## Tooling Efficiency
+### Running tests efficiently
 
 During development, run only the relevant check:
+
 - Editing Rust? → `cd src-tauri && cargo test specific_test_name`
 - Editing TS? → `npx vitest run`
 - Never run clippy/fmt/biome manually — prek hooks handle it at commit time
@@ -255,7 +311,7 @@ Baseline performance at 100K blocks (established by benchmarks):
 
 ## Backend Patterns (commonly caught in review)
 
-1. **Recursive CTE correctness:** every descendant walk (`list_children`, `list_page_links`, cascade ops) must include `AND is_conflict = 0` in the recursive member AND a `depth < 100` bound. Missing filter leaks conflict copies as phantom rows; missing bound allows runaway recursion on corrupted data.
+1. **Recursive CTE correctness:** every descendant walk (`list_children`, `list_page_links`, cascade ops) must follow invariant #9 (see "Key Architectural Invariants"). Missing filter leaks conflict copies as phantom rows; missing bound allows runaway recursion on corrupted data.
 2. **Transaction wrapping for atomic multi-op sequences:** when a feature requires multiple ops atomically (e.g., create block + set property for recurrence), use `_in_tx` variants or wrap in `BEGIN IMMEDIATE`. All-or-nothing semantics must be verified in tests.
 3. **Batch via `json_each()`, not N+1:** when resolving/counting many IDs, pass a JSON array and use `json_each()` with a single query. See `backlink/query.rs` and `fts.rs` for examples.
 4. **`total_count` uses post-filter count:** when a query filters after fetch (self-reference filtering in backlinks, etc.), set `total_count` from filtered length, not pre-filter length.
@@ -274,20 +330,6 @@ Baseline performance at 100K blocks (established by benchmarks):
 - **Known issues:** See REVIEW-LATER.md for open items (deferred by design).
 - **Headless testing:** See [BUILD.md](BUILD.md#installing-on-emulator) for ADB recipes and emulator setup.
 
-## Subagent Workflow
-
-```
-1. PLAN     — Pick tasks, group by domain
-2. BUILD    — Launch subagent(s), with worktrees if parallel + multi-file
-3. TEST     — Comprehensive tests for ALL new code
-4. REVIEW   — Separate review subagent for each build (mandatory)
-5. MERGE    — Copy changed files back
-6. COMMIT   — git add + commit (prek verifies)
-7. LOG      — Update SESSION-LOG.md
-```
-
-Every step is mandatory. No self-reviewed commits. Review subagents consistently catch real bugs — missing SQL filters (`is_conflict = 0`), incorrect CTE ordering, unused struct fields, TOCTOU race conditions, stale test assertions. Do not skip or abbreviate the review step.
-
 ## State Files
 
 | File | Purpose | When to update |
@@ -296,5 +338,7 @@ Every step is mandatory. No self-reviewed commits. Review subagents consistently
 | `REVIEW-LATER.md` | Deferred items, tech debt, future features | When a fix is deferred |
 | `FEATURE-MAP.md` | Complete feature inventory for discovery/review | When features are added/changed (keep in sync with SESSION-LOG updates) |
 | `AGENTS.md` | This file | Only with explicit user approval |
+
+For orchestrator workflow details, see [PROMPT.md § 2. BUILD](PROMPT.md).
 
 When resolving REVIEW-LATER items: remove the item entirely (table row + detail section). Record the removal in the summary log.

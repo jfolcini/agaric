@@ -4,7 +4,7 @@
 
 # Agaric
 
-A local-first, block-based note-taking app for **Linux** (primary), **Windows**, **macOS**, and **Android**. Inspired by Org-mode and Logseq — journal-first, with powerful tagging and emergent structure. No cloud, no accounts. Your data lives on your machine, syncs over local WiFi.
+A local-first, block-based note-taking app for **Linux** (primary), **Windows**, **macOS**, and **Android**. Inspired by Org-mode and Logseq — journal-first, with powerful tagging and emergent structure. No cloud, no accounts. Your data lives on your machine, syncs over local WiFi. **AI-ready** — ships an MCP integration so Claude Desktop, Cursor, Continue, and other agents talk directly to your local vault.
 
 ## What is it?
 
@@ -31,6 +31,18 @@ The default view is a **daily journal** — one page per day, created automatica
 - **Week** — Mon-Sun overview, click any day heading to jump to its daily view
 - **Month** — calendar grid with content indicator dots, click a day to switch to daily view, configurable week start
 - **Agenda** — tasks grouped by date (Overdue / Today / Tomorrow / future) with stackable filters across eight dimensions (status, priority, due date, scheduled date, completed date, created date, tag, property), sort and group controls, projected recurring task occurrences
+
+> See [UX.md](UX.md) for detailed interaction patterns of the journal modes, space switcher, and agenda dashboard.
+
+### Spaces
+
+Partition your notes into independent contexts — **Personal**, **Work**, custom — each with its own data scope and visual identity. Switching space swaps the journal, tabs, recent pages, and link resolution. Pages never leak between spaces.
+
+- **Per-space journal** — each space has its own daily-note timeline keyed by `(date, space)`
+- **Per-space tabs and recents** — switching space swaps the open-tab strip and recent-pages MRU
+- **Quick switching** — `Ctrl+1` … `Ctrl+9` (or `⌘+1` … `⌘+9`) jumps to the Nth space alphabetically
+- **Visual identity** — accent colour, status-bar chip, window-title prefix per space
+- **Cross-space links** — `[[ULID]]` to a foreign space renders as a broken-link chip (no auto-navigation, no leakage)
 
 ### Tags and Links
 
@@ -79,6 +91,7 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Append-only operat
 - **Import / Export** — Logseq/Markdown import (YAML frontmatter stripping, tab normalization), Markdown export with ULID-to-name resolution
 - **Trash** — soft delete with 30-day auto-purge, restore at any time
 - **Recurring tasks** — three repeat modes (+, .+, ++), end conditions (count, date), agenda projection
+- **Google Calendar push** — opt-in, off by default. Daily-digest event per date pushed to a dedicated "Agaric Agenda" calendar, per-space configuration foundation in place (FEAT-3p9 M1)
 
 ## Tech Stack
 
@@ -152,18 +165,18 @@ src/                         # React frontend
     journal/                 #   Journal-specific components (MonthlyDayCell, etc.)
   editor/                    #   TipTap editor setup and extensions
     extensions/              #   Custom TipTap extensions (tag-ref, block-link, etc.)
-  stores/                    #   Zustand state stores (8 stores, per-page factory)
+  stores/                    #   Zustand state stores (11 stores: blocks, boot, journal, navigation, page-blocks, recent-pages, resolve, space, sync, tabs, undo)
   hooks/                     #   Custom React hooks (~53 hooks)
   lib/                       #   Tauri API wrappers, utilities, and bindings
   index.css                  #   Tailwind theme (OKLch colors, semantic tokens)
 src-tauri/                   # Rust backend
   src/                       #   Commands, database, materializer, sync, merge
-  migrations/                #   SQLite migrations (30 files, auto-run on startup)
+  migrations/                #   SQLite migrations (41 files, auto-run on startup)
   tests/                     #   Integration tests
   benches/                   #   Criterion benchmarks (24 bench files)
   icons/                     #   App icons (all platforms)
   tauri.conf.json            #   Tauri configuration
-e2e/                         # Playwright E2E tests (26 spec files)
+e2e/                         # Playwright E2E tests (29 spec files)
 public/                      # Static assets (agaric.svg icon)
 BUILD.md                     # Complete build guide
 AGENTS.md                    # Developer conventions

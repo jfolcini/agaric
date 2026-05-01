@@ -2,6 +2,21 @@
 
 What you can do with Agaric. For technical architecture and implementation details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Contents
+
+1. [Views](#1-views) — sidebar views + page editor
+2. [Editor](#2-editor) — formatting, block ops, inline references
+3. [Slash Commands](#3-slash-commands) — 64 commands across 8 categories
+4. [Keyboard Shortcuts](#4-keyboard-shortcuts) — 77 configurable shortcuts
+5. [Properties](#5-properties) — typed key/values, repeat rules
+6. [Agenda](#6-agenda) — filters, sort, group, projection
+7. [Tags & Links](#7-tags--links) — including [Spaces](#spaces-feat-3-phases-1--2--3--4--5--5b--6--7--8--10--11-phase-9-foundation-in-place)
+8. [Sync](#8-sync) — discovery, pairing, auto-sync
+9. [Import & Export](#9-import--export)
+10. [Shared Components & Utilities](#10-shared-components--utilities)
+11. [Performance Optimizations](#11-performance-optimizations)
+12. [Known Limitations & Planned Improvements](#12-known-limitations--planned-improvements)
+
 ---
 
 ## 1. Views
@@ -428,6 +443,23 @@ Partition pages into user-defined contexts ("Personal" / "Work") with a sidebar 
 - **Per-space journal** (FEAT-3p5, session 500): each space owns its own daily note keyed by `(date, space_id)`. Backend `today_journal_inner` / `navigate_journal_inner` / `journal_for_date_inner` / `quick_capture_block_inner` + private `resolve_or_create_journal_page` filter the SELECT by both `content` (date) AND the `space` ref property; new-page creation emits atomic `CreateBlock` + `SetProperty(space)` ops inside a single `BEGIN IMMEDIATE` (mirrors `create_page_in_space_inner`). MCP `JournalForDateArgs` adds required `space_id` per the FEAT-4 "agents specify which space" contract. Frontend `useJournalStore` extended with `currentDateBySpace: Record<SpaceId, string>` + `modeBySpace: Record<SpaceId, JournalMode>`; module-scoped `useSpaceStore.subscribe(...)` flushes outgoing → outgoing slice and pulls incoming slice → flat fields, defaulting to today + `daily` for fresh spaces. New `persist` middleware with `partialize` persisting ONLY the per-space slices. `QuickCaptureDialog` reads `currentSpaceId` from `useSpaceStore` and threads it.
 - **Per-space journal templates** (FEAT-3p5b, session 502): each space block can carry a `journal_template` text property whose `value_text` is a markdown string. When `JournalPage` creates a new daily page in a space, the per-space template (if any) takes precedence over the legacy global `journal-template` page; if neither is set, the existing empty-block fallback runs. Frontend-only — no Rust changes, no new IPC, no schema. New `loadJournalTemplateForSpace(spaceId)` + `insertTemplateBlocksFromString(template, parentId, ctx)` helpers in `template-utils.ts` (the parser splits the markdown on `\n`, drops blank lines, expands variables per line via the existing `expandTemplateVariables`, and emits one `createBlock` per non-empty line with per-line `try/catch` mirroring `insertTemplateBlocks` resilience). `SpaceManageDialog`'s `SpaceRowEditor` gains a `<Textarea>` row that pre-populates from `getProperties(spaceId)` on mount and commits on blur (`setProperty` non-empty / `deleteProperty` empty), with toast + revert on failure. `aria-describedby` links the hint paragraph to the textarea so screen readers announce the per-space-overrides-global note on focus. `journal_template` joins `accent_color` as a space-scoped property NOT pre-registered in `property_definitions` (`block_properties` accepts arbitrary keys; both keys are written/read only from `SpaceManageDialog`).
 - **Cross-space link enforcement** (FEAT-3p7, session 500): chips whose target lives in a foreign space render via the existing broken-link UX (`block-link-deleted` styling, "Broken link — click to remove" tooltip, click deletes the chip — undoable; click does NOT navigate). Backend `batch_resolve_inner` takes `space_id: Option<String>` — `Some` for FEAT-3p7's space-scoped resolution, `None` for the legacy cross-space callsites (TrashView / SearchPanel / agenda / due / done / TagFilterPanel / useBacklinkResolution / etc. — to be promoted by FEAT-3p4). Includes `AND b.is_conflict = 0` filter (AGENTS.md invariant #9 — without it conflict copies leaked into resolution results). `get_page_inner` gains a post-fetch space-membership check returning `AppError::Validation` on mismatch. MCP RO `handle_get_page` reads the page's own `space` first then threads it through (preserves "MCP agents see every space" semantics). Frontend `useResolveStore.cache` restructured to composite keys `${spaceId}::${ulid}` with `__global__` sentinel for pre-hydrate state; new `clearAllForSpace(prevSpaceId)` action; `App.tsx` extends the space-switch subscriber with a `prevSpaceIdRef`-driven effect that calls `clearAllForSpace(prev)` BEFORE the new space takes effect. 12+ consumer callsites compose composite keys via `keyFor(spaceId, ulid)`; `useRichContentCallbacks` (4 resolves + `useTagClickHandler`) and `BlockTree` (`collectUncachedLinkIds` + `fetchAndCacheLinks`) all thread the active space.
+
+**Phases at a glance:**
+
+| Phase | Feature | Status |
+|---|---|---|
+| 1–4 | Data model, bootstrap, list/search/agenda scoping, per-space tabs + recents | ✅ Shipped |
+| 5 | Per-space daily journal pages | ✅ Shipped |
+| 5b | Per-space journal templates | ✅ Shipped |
+| 6 | Manage-spaces UI (rename, accent, safety-checked delete) | ✅ Shipped |
+| 7 | Cross-space link enforcement | ✅ Shipped |
+| 8 | History view scoping (current-space default + opt-in "All") | ✅ Shipped |
+| 10 | Per-space visual identity (accent, status chip, window title) | ✅ Shipped |
+| 11 | Digit hotkeys (Ctrl+1…9 / Cmd+1…9) | ✅ Shipped |
+| 9 (M1) | Per-space GCal config — schema + CRUD + keychain + legacy migration | ✅ Foundation in place |
+| 9 (M2) | Thread `space_id` through oauth/lease/connector, per-space commands, Settings UI | 🔄 In progress |
+| 9 (M3) | OS notification space-name prefix | ⏳ Blocked on FEAT-11 |
+
 - **GCal per-space config — foundation** (FEAT-3p9 M1, partial): additive `gcal_space_config` table (migration `0041_gcal_space_config.sql`) keyed by `space_id` with all per-space connector fields — `account_email`, `calendar_id`, `window_days INTEGER DEFAULT 30`, `privacy_mode DEFAULT 'full'`, `last_push_at`, `last_error`, `push_lease_device_id`, `push_lease_expires_at`, `created_at`, `updated_at`. `gcal_push::models` exposes `GcalSpaceConfig` (sqlx FromRow) plus per-space CRUD: `default_space_config(space_id, now)` / `get_space_config(pool, space_id)` / `upsert_space_config(pool, &config)` (INSERT … ON CONFLICT(space_id) DO UPDATE …) / `delete_space_config(pool, space_id)` (silent on missing) / `list_space_configs(pool)` (ORDER BY space_id ASC). `gcal_push::keyring_store::keyring_account_for_space(space_id) -> "oauth_tokens_<ULID>"` plus `KeyringTokenStore::new_for_space(emitter, space_id)` constructor backed by a private `OsKeyringBackend::for_account()` helper — purely additive (legacy `KEYRING_ACCOUNT = "oauth_tokens"` and `KeyringTokenStore::new()` preserved for the not-yet-converted oauth/lease/connector/commands code paths). `gcal_push::migration::migrate_legacy_gcal_to_personal_space(pool, legacy_token_store, personal_token_store, emitter, now)` runs once per device (fast-path-skip via `gcal_settings.gcal_per_space_migrated == "true"`): copies the legacy `gcal_settings` row into `gcal_space_config[SPACE_PERSONAL_ULID]`, then migrates the keychain entry from `oauth_tokens` to `oauth_tokens_<SPACE_PERSONAL_ULID>`, then sets the flag — keychain-unavailable is non-fatal (DB row migrated, flag NOT set, next boot retries). `lib.rs::run` wires the call AFTER `bootstrap_spaces` (which seeds `SPACE_PERSONAL_ULID`) and BEFORE the connector spawn. The remaining work (threading `space_id` through oauth/lease/connector/commands, per-space connector iteration, per-space Settings accordion UI, OS notification space-name prefix once FEAT-11 lands) is tracked under FEAT-3p9 in `REVIEW-LATER.md`.
 
 ---
@@ -661,3 +693,46 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 
 ### ScrollArea Primitive Extension (session 403)
 - **ScrollArea** (`src/components/ui/scroll-area.tsx`): Primitive extended with optional `orientation` ('vertical' | 'horizontal' | 'both', default 'vertical'), `viewportRef` (ref to scroll viewport for virtualizers / scroll-listening consumers), `viewportClassName` (classes applied to the viewport element), and `viewportProps` (spread onto viewport — role, tabIndex, aria-*). Backward compatible: all 27 existing call-sites continue to work unchanged. Replaced 8 bare `overflow-*` sites with `<ScrollArea>` (App main scroller, SidebarContent, PageBrowser virtualized list, SuggestionList, MermaidDiagram × 2, TabBar) per AGENTS.md "ScrollArea for every scrollable container" mandate. 9 new tests + 6 UX-226 site regression tests.
+
+---
+
+## 11. Performance Optimizations
+
+Recent improvements to keep the app responsive on large vaults (100K+ blocks).
+
+### Materializer Apply Cursor (C-2b)
+
+`materializer_apply_cursor` table (migration 0040) tracks the highest `op_log.seq` successfully applied by the foreground materializer. On boot, the system replays any ops missed by mid-flight crashes — closing the previous CQRS automatic-divergence gap where a crash between op-log append and cache update could leave caches behind.
+
+### Cache Streaming (M-19)
+
+Cache rebuilds (`block_tag_refs`, `agenda_cache`, `projected_agenda_cache`) stream rows in 1000-row batches with per-batch transactions instead of one monolithic transaction. Reduces lock hold time and lets concurrent reads interleave during large rebuilds.
+
+### Sync Streaming (M-51, L-67)
+
+Attachment + snapshot transfers stream through the sync transport in 5 MB binary frames instead of buffering the whole payload in memory. Drops O(file_size) heap pressure during sync of large attachments and snapshot catch-up.
+
+### MCP rmcp Migration (MAINT-111, spike)
+
+Reference implementation behind off-by-default `mcp_rmcp_spike` feature flag. Migration plan: 3 milestones to align with the rmcp 1.6 spec (~12-14h) and replace the custom newline-delimited JSON framing.
+
+---
+
+## 12. Known Limitations & Planned Improvements
+
+What's not yet shipped, in roughly priority order.
+
+### Performance
+
+- **Backlink pagination cursor (PERF-19)** — linear scan for non-Created sorts; planned: covering indexes for keyset pagination on every sort order.
+- **Backlink filter resolver (PERF-20)** — no concurrency cap on `try_join_all`; planned: bounded semaphore.
+- **Attachment file transfer (PERF-23)** — buffers whole file before chunked send for the *send* side; receive side already streams (M-51). Planned: stream send too.
+
+### Features
+
+- **GCal per-space (FEAT-3p9 M2)** — foundation in place; remaining work threads `space_id` through oauth/lease/connector and ships the per-space Settings accordion. M3 (notification space-name prefix) blocked on FEAT-11.
+- **OS notifications (FEAT-11)** — design pending; will adopt `tauri-plugin-notification`.
+- **Android OAuth + GCal connector (FEAT-5g)** — design sketch only. Blocked on loopback HTTP listener investigation + keyring Android backend.
+- **MCP rmcp migration (MAINT-111)** — spike complete; 3 milestones remaining.
+
+See [REVIEW-LATER.md](REVIEW-LATER.md) for the full backlog with cost / risk / impact estimates per item.

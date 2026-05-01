@@ -1,5 +1,7 @@
 # Rust Backend Test Infrastructure
 
+> **See also:** [AGENTS.md § Key Architectural Invariants](../../AGENTS.md#key-architectural-invariants) for the 9 invariants every test must respect (op log append-only, CQRS atomicity, cursor pagination, foreign keys ON, ULID uppercase, `is_conflict = 0` filtering on recursive CTEs, …). This document focuses on test patterns, fixtures, and Rust-specific conventions.
+
 ## Overview
 
 Three test layers, 2000+ tests total:
@@ -421,6 +423,26 @@ criterion_main!(benches);
 - Shut down materializer after each bench group
 - Use parameterized groups (`BenchmarkId::from_parameter`) for size comparisons (e.g., 100/1K/10K)
 - Verify new benches compile with `cargo check --bench <name>` before committing
+
+## Test File Checklist
+
+Before committing a new test file, verify:
+
+- [ ] DB-backed tests use `test_pool()` helper and bind `_dir` so the `TempDir` outlives the pool
+- [ ] Async tests use `#[tokio::test]` (or `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]` for materializer tests)
+- [ ] Operations that trigger background materializer tasks are followed by `settle()` / `mat.flush_background()`
+- [ ] Test names describe behaviour (`create_block_returns_correct_fields`), not "test_create"
+- [ ] Error paths covered: nonexistent ID → `AppError::NotFound`, deleted block → `AppError::NotFound`, invalid input → `AppError::Validation`
+- [ ] Snapshot tests redact non-deterministic fields (`.id` → `[ULID]`, `.created_at` → `[TIMESTAMP]`, `.hash` → `[HASH]`)
+- [ ] Helper functions are module-local (don't share across modules)
+- [ ] Recursive-CTE tests verify the `is_conflict = 0` + `depth < 100` invariants from AGENTS.md invariant #9
+- [ ] Op-log assertions check the appended record (no mutation of existing ops — append-only invariant)
+- [ ] `assert_eq!` for exact counts, never `assert!(count >= N)` (hides duplicate-result / missing-filter bugs)
+- [ ] No `unwrap()` outside test code; no silent `.ok()` swallowing errors on core paths
+- [ ] ULID test fixtures uppercase (Crockford base32 → blake3 hash determinism)
+- [ ] Position values are 1-based, not 0-based
+- [ ] Benchmarks declared `harness = false` and never run in CI
+- [ ] If the change touched SQL queries, `cargo sqlx prepare -- --tests` was run and `.sqlx/` updates are committed
 
 ## Quality Standards
 

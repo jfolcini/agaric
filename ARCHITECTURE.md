@@ -18,22 +18,25 @@ Anytype, faster than Logseq.
 6. [Content Format & Serializer](#6-content-format--serializer)
 7. [Editor Architecture](#7-editor-architecture)
 8. [Frontend Architecture](#8-frontend-architecture)
-9. [Search](#9-search)
-10. [Merge & Conflict Resolution](#10-merge--conflict-resolution)
-11. [Snapshots & Compaction](#11-snapshots--compaction)
-12. [Crash Recovery](#12-crash-recovery)
-13. [Type Safety & Bindings](#13-type-safety--bindings)
-14. [Dev Tooling & CI](#14-dev-tooling--ci)
-15. [Security](#15-security)
-16. [Query System](#16-query-system)
-17. [Android Platform](#17-android-platform)
-18. [Sync & Networking](#18-sync--networking)
-19. [MCP Server](#19-mcp-server)
-20. [Planned Features](#20-planned-features)
-21. [Tauri Command API](#21-tauri-command-api)
-22. [Rust Backend Modules](#22-rust-backend-modules)
-23. [Scalability Characteristics](#23-scalability-characteristics)
-24. [Lessons Learned & Established Patterns](#24-lessons-learned--established-patterns)
+9. [Spaces Architecture](#9-spaces-architecture)
+10. [GCal Integration](#10-gcal-integration)
+11. [Search](#11-search)
+12. [Merge & Conflict Resolution](#12-merge--conflict-resolution)
+13. [Snapshots & Compaction](#13-snapshots--compaction)
+14. [Crash Recovery](#14-crash-recovery)
+15. [Type Safety & Bindings](#15-type-safety--bindings)
+16. [Dev Tooling & CI](#16-dev-tooling--ci)
+17. [Security](#17-security)
+18. [Query System](#18-query-system)
+19. [Android Platform](#19-android-platform)
+20. [Sync & Networking](#20-sync--networking)
+21. [MCP Server](#21-mcp-server)
+22. [Planned Features](#22-planned-features)
+23. [Tauri Command API](#23-tauri-command-api)
+24. [Rust Backend Modules](#24-rust-backend-modules)
+25. [Scalability Characteristics](#25-scalability-characteristics)
+26. [Performance Optimizations](#26-performance-optimizations)
+27. [Lessons Learned & Established Patterns](#27-lessons-learned--established-patterns)
 
 ---
 
@@ -143,10 +146,28 @@ Query path uses UNION of `block_tags` + `block_tag_inherited` instead of recursi
 Old CTE preserved as `resolve_expr_cte()` for correctness verification (oracle test confirms
 both paths produce identical results).
 
+### Inline tag references
+
+Blocks can reference tags inline via `#[ULID]` tokens (rendered as chips). These references are
+tracked separately from explicit tags in a derived-state table `block_tag_refs`
+(migration `0034_block_tag_refs.sql`), maintained incrementally by the materializer.
+Distinguished from explicit tags (those applied via the `add_tag` op):
+
+- **Explicit tags** participate in tag inheritance and live in `block_tags` /
+  `block_tag_inherited`.
+- **Inline refs** do **not** participate in inheritance, but contribute to the deduplicated
+  `tags_cache.usage_count` so the chip count in `TagPanel` reflects both surfaces.
+- **Materialized via** `ReindexBlockTagRefs` (per-block, on `edit_block` /
+  `restore_block` / similar) + `RebuildBlockTagRefsCache` (full rebuild). The full rebuild is
+  wiped + rebuilt on snapshot restore — same lifecycle as `block_links`.
+
 ### Pages
 
 Page blocks may have parents (nestable). The page browser lists all page blocks regardless of
 depth. Sort order is a frontend preference (default: reverse ULID / creation time descending).
+
+Pages can be partitioned into user-defined contexts (e.g., "Personal", "Work") via the
+`space` ref property. See [Spaces Architecture](#9-spaces-architecture) for the design.
 
 ### Block links
 
@@ -357,7 +378,7 @@ cache derived from `[[ULID]]` tokens in content. Never written by ops directly.
 - On blur/flush: write `edit_block` op, delete the draft row.
 - Drafts never participate in sync, undo, or compaction.
 - Any surviving draft at boot is a crash recovery candidate (see
-  [Crash Recovery](#12-crash-recovery)).
+  [Crash Recovery](#14-crash-recovery)).
 
 ### Text ancestor reconstruction (LCA)
 
@@ -402,14 +423,32 @@ Both queues drain with automatic dedup: duplicate cache-rebuild tasks are coales
 is silent drop (appropriate for caches that will rebuild on the next cycle). Panic isolation per
 task via spawned sub-tasks.
 
-**Retry behaviour:**
+**Retry behaviour:** Two-tier semantics, both running through the shared
+`retry_with_backoff` helper in `materializer/consumer.rs` but with different schedules and
+observability contracts (MAINT-148h):
 
-- **Foreground:** single retry after 100ms backoff for transient errors. Panics and barrier tasks
-  are never retried. `fg_errors` only incremented if both attempts fail.
-- **Background:** up to 2 retries with exponential backoff (150ms initial, doubled per attempt
-  → 150ms, 300ms). Barrier tasks skip retry. Panics during retry stop the retry loop. Tuned up
-  from 50/100ms to reduce retry churn on transient WAL lock contention; see
-  `INITIAL_BACKOFF_MS` in `materializer/consumer.rs`.
+- **Foreground:** single retry, 100 ms constant backoff. `ApplyOp` / `BatchApplyOps` /
+  `Barrier` only. Panics and barrier tasks are never retried. On exhaustion the op is
+  **silently dropped** — there is no persistent retry queue for the apply path because
+  re-applying out of order would break the op-log invariant; sync replay is the recovery
+  mechanism. Bumps `fg_errors` (and, for Apply / BatchApplyOps, `fg_apply_dropped` plus a
+  divergence warn carrying op coords).
+- **Background:** up to 2 retries with exponential backoff (150 ms → 300 ms). All cache
+  rebuilds, FTS reindex, and attachment cleanup. Barrier tasks skip retry. Panics during retry
+  stop the retry loop. Idempotent per-block tasks (`UpdateFtsBlock`, `ReindexBlockLinks`,
+  `ReindexBlockTagRefs`) that exhaust in-memory retries are **persisted** to the
+  `materializer_retry_queue` table for re-enqueue on the much longer minute-to-hour schedule
+  from `retry_queue::backoff_delay_for` (BUG-22). Global rebuilds are not persisted because
+  they're re-dispatched by other code paths.
+- **Tuning history:** `INITIAL_BACKOFF_MS` was bumped from 50 ms → 100 ms → 150 ms to reduce
+  retry churn on transient WAL-lock contention. The two-schedule split (in-memory ms-scale
+  for transient WAL contention; persistent minute-to-hour scale for harder failures like a
+  corrupt snapshot or a missing block) was tuned in MAINT-148f / MAINT-148h.
+- **Idempotency:** Cache rebuilds use `INSERT OR IGNORE` / `UPDATE ... WHERE ...` patterns so
+  re-running a rebuild after a partial failure converges. Foreground `ApplyOp` is
+  exactly-once: the apply + cursor advance happen inside the same `BEGIN IMMEDIATE`
+  transaction, so a crash can never advance the cursor past the last successfully-applied seq
+  (see [Performance Optimizations § Materializer apply cursor](#materializer-apply-cursor-c-2b)).
 
 **Read/write pool split:** `Materializer::with_read_pool(write_pool, read_pool)` separates read
 and write paths for background tasks. Cache-rebuild functions read from the read pool and only
@@ -973,7 +1012,7 @@ component decompositions provide reusable logic across multiple views.
 | `useTheme`                      | Theme cycling (auto/dark/light)                                              |
 
 Sync hooks (`useSyncTrigger`, `useSyncEvents`, `useOnlineStatus`) are documented in
-[§18 Frontend sync integration](#18-sync--networking).
+[§20 Frontend sync integration](#20-sync--networking).
 
 `usePaginatedQuery` and `usePollingQuery` replace per-component boilerplate across
 PageBrowser, TrashView, ConflictList, BacklinksPanel, HistoryView, StatusPanel, and
@@ -1048,7 +1087,144 @@ changes the hook re-fetches page 1 (paginated) or restarts polling.
 
 ---
 
-## 9. Search
+## 9. Spaces Architecture
+
+Spaces partition pages into user-defined contexts (e.g., "Personal", "Work", "Side Project")
+without introducing new tables, op types, or sync messages. The whole feature is layered onto the
+existing properties system: a "space" is a page block tagged with `is_space = "true"`, and every
+non-space page owns a `space` ref property pointing at its containing space block. Scoping
+(list/search filters, cross-space link enforcement, per-space journals, per-space templates) is
+implemented at the query layer rather than at the schema layer.
+
+### Data model
+
+- **Space block:** A regular `page` block with `block_properties.key = 'is_space'` and
+  `value_text = 'true'`. The `is_space` property uses the `select` value type with options
+  `['true']` (migration `0039_is_space_select_type.sql`); `'false'` is represented by the
+  property's absence to avoid duplicate truth values.
+- **Page → space membership:** Every non-space page owns a `space` ref property whose
+  `value_ref` points at the owning space block. Membership is enforced at create time: pages
+  created via `create_page_in_space_inner` emit a `CreateBlock` op immediately followed by a
+  `SetProperty('space', <space_ulid>)` op in the same transaction. Pages created beneath an
+  existing parent inherit the parent's `space` property.
+- **Seeded spaces:** Two deterministic ULIDs ship by default — `Personal`
+  (`SPACE_PERSONAL_ULID`) and `Work` (`SPACE_WORK_ULID`) — defined in
+  `src-tauri/src/spaces/bootstrap.rs`. Determinism is required so every device materialises the
+  same seeded spaces from the op log without sync coordination.
+- **Legacy upgrade path:** Pages created before Spaces are reassigned to `Personal` on first
+  boot after the Phase 2 migration; the migration is one-shot and idempotent.
+
+### Scoping
+
+- **List/search filtering:** `list_blocks`, `search_blocks`, and the page browser filter by the
+  active space's ULID via the `space` property.
+- **Cross-space link enforcement (Phase 7):** Inserting a `[[ULID]]` block link or `#[ULID]` tag
+  reference whose target lives in a different space is rejected at command boundary. This is a
+  hard guard, not a UI nicety — the op never reaches the log.
+- **Per-space journal (Phase 5):** Daily/weekly/monthly/agenda views scope their queries to the
+  active space's journal pages. Each space has its own journal lineage.
+- **Per-space templates (Phase 5b):** Templates resolve against the active space's
+  `template = "true"` pages so a "Meeting notes" template in Work doesn't show up in Personal.
+
+### Phases (shipped)
+
+- **Phase 1** — `list_spaces` command, space block discovery via `is_space = "true"`.
+- **Phase 2** — `create_page_in_space` command, inheritance of `space` property from parent.
+- **Phase 3** — Frontend `useSpaceStore` + `SpaceSwitcher` UI, active-space persistence.
+- **Phase 4** — `list_blocks` / page browser filtered by active space.
+- **Phase 5** — Per-space journal (daily/weekly/monthly/agenda).
+- **Phase 5b** — Per-space templates.
+- **Phase 6** — `create_space` command, in-app space creation, accent colour.
+- **Phase 7** — Cross-space link enforcement at op boundary.
+- **Phase 8** — Per-space recent pages (`useRecentPagesStore`), per-space tabs (`useTabsStore`).
+- **Phase 9 (foundation in place; M2 remaining)** — Per-space external integrations. M1 added
+  `gcal_space_config` (migration `0041`) and per-space keychain entries; M2 will thread
+  `space_id` through the GCal push pipeline. See [GCal Integration](#10-gcal-integration).
+- **Phase 10** — Per-space property definitions visibility / scoping polish.
+- **Phase 11** — Quick-capture and miscellaneous space-aware UX cleanups.
+
+### Commands
+
+| Command                | Purpose                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------- |
+| `list_spaces`          | Read-only — returns every live, non-conflict space block.                                |
+| `create_space`         | Atomic create-new-space: emits `CreateBlock` (page) + `SetProperty('is_space', 'true')`. |
+| `create_page_in_space` | Atomic page-create-and-assign: emits `CreateBlock` + `SetProperty('space', <space_id>)`. |
+| `set_property`         | Used with `key = 'space'` to move an existing page between spaces.                       |
+
+### Frontend integration
+
+- **`useSpaceStore`** — active space, bootstrapped `Personal` / `Work`, accent colour cache.
+  Source of truth for `currentSpaceId` consumed by every space-scoped query.
+- **`useTabsStore`** — per-space tab strip (split out from navigation in MAINT-127). Each space
+  keeps its own open-tabs list so switching spaces restores the prior tab context.
+- **`useRecentPagesStore`** — per-space recent-pages MRU strip used by the sidebar.
+- **`SpaceSwitcher`** — sidebar dropdown for selecting the active space; also entry point for
+  `SpaceManageDialog` (rename / delete / accent colour).
+- **`SpaceStatusChip`** — header chip rendering the active space name + accent colour.
+- **`SpaceAccentBadge`** — small badge primitive used in lists / breadcrumbs to show which space
+  a page belongs to when the view spans multiple spaces.
+
+### Resolve cache restructuring
+
+`useResolveStore` keys cached `{title, deleted}` entries by composite `${spaceId}::${ulid}`
+strings rather than bare ULIDs (`src/stores/resolve.ts`). When no space is active, entries fall
+back to the `__global__` sentinel namespace. Switching spaces calls `clearAllForSpace(prevSpaceId)`,
+which performs a single linear scan deleting any entry with prefix `${prevSpaceId}::` — sibling
+spaces and the `__global__::` namespace are preserved. This avoids stale cross-space title
+resolution without nesting maps.
+
+---
+
+## 10. GCal Integration
+
+Agaric optionally pushes agenda items (blocks with `due_date` or `scheduled_date`) to Google
+Calendar. The integration runs entirely inside the Tauri host process via `gcal_push/`
+(`oauth.rs`, `keyring_store.rs`, `api.rs`, `digest.rs`, `connector.rs`, `lease.rs`, `models.rs`,
+`mod.rs`, `migration.rs`) and `commands/gcal.rs`. As of FEAT-3p9 Milestone 1 the schema and
+keychain layout are per-space; the connector / lease / commands still operate as a single
+"current space" pipeline, with M2 remaining to thread `space_id` through end-to-end.
+
+### Per-space architecture (foundation in place)
+
+- **`gcal_space_config` table** (migration `0041_gcal_space_config.sql`) — primary key
+  `space_id`, plus `account_email`, `calendar_id`, `window_days` (default 30, range 7–90),
+  `privacy_mode` (`'full'` | `'minimal'`), `last_push_at`, `last_error`,
+  `push_lease_device_id`, `push_lease_expires_at`. Mirrors the legacy single-row
+  `gcal_settings` table. No FK from `space_id` to `blocks(id)` — same convention as the rest of
+  the spaces properties model.
+- **Per-space keychain entry** — OS keychain account names follow the format
+  `oauth_tokens_<SPACE_ULID>` (see `gcal_push::keyring_store::keyring_account_for_space`).
+  Each space's OAuth refresh + access tokens live under their own key, so revoking one space
+  does not break another.
+- **Per-space CRUD helpers** — `gcal_push::api` exposes `get_config(space_id)`,
+  `upsert_config(space_id, …)`, and lease helpers keyed by `space_id`.
+- **Legacy migration** — `gcal_push::migration::migrate_legacy_gcal_to_personal_space` is a
+  one-shot bootstrap that copies the legacy single-space `gcal_settings` row plus the legacy
+  keychain token entry into the seeded `Personal` space. Idempotent — safe to re-run.
+
+### Remaining work (FEAT-3p9 M2)
+
+- Thread `space_id` through `gcal_push::oauth` (token acquisition / refresh),
+  `gcal_push::lease` (push lease ownership), `gcal_push::connector` (the actual push pipeline),
+  and `commands/gcal.rs` (Tauri command surface) so every operation is space-scoped.
+- Branch the push loop by space — iterate every connected space's config, instead of a single
+  current-space pull, so a multi-space user pushes Work items to the work calendar and Personal
+  items to the personal calendar in the same boot.
+- Per-space Tauri commands replacing the current "implicit current space" flavour
+  (connect / disconnect / set window / set privacy / get status, all keyed by `space_id`).
+- Settings UI accordion: one row per space, expanding to show the per-space Connect / Disconnect,
+  window, privacy, and status panel.
+
+### Notifications (blocked on FEAT-11)
+
+When `tauri-plugin-notification` lands (FEAT-11), agenda notifications will prefix the title
+with the owning space name (e.g., `[Work] Standup`). One `block_properties` lookup per
+notification — no schema change.
+
+---
+
+## 11. Search
 
 ### FTS5 integration
 
@@ -1072,7 +1248,7 @@ For a personal notes app with <100k blocks this is negligible — the index stay
 
 ---
 
-## 10. Merge & Conflict Resolution
+## 12. Merge & Conflict Resolution
 
 ### Strategy
 
@@ -1108,7 +1284,7 @@ Complexity: O(chain depth). No graph library required.
 
 ---
 
-## 11. Snapshots & Compaction
+## 13. Snapshots & Compaction
 
 ### Snapshot format
 
@@ -1170,7 +1346,7 @@ Purged blocks are absent from subsequent snapshots.
 
 ---
 
-## 12. Crash Recovery
+## 14. Crash Recovery
 
 Boot recovery runs **before** the materializer is created, before any user-visible UI.
 
@@ -1191,7 +1367,7 @@ dispatch after boot (stale-while-revalidate handles it).
 
 ---
 
-## 13. Type Safety & Bindings
+## 15. Type Safety & Bindings
 
 ### specta + tauri-specta
 
@@ -1218,7 +1394,7 @@ CI doesn't need a live database. `cargo sqlx prepare --check` is a CI gate.
 
 ---
 
-## 14. Dev Tooling & CI
+## 16. Dev Tooling & CI
 
 ### Testing layers
 
@@ -1261,7 +1437,7 @@ Single `check` job on Ubuntu 24.04: Biome → TypeScript → cargo fmt → cargo
 
 ---
 
-## 15. Security
+## 17. Security
 
 ### Encryption at rest
 
@@ -1295,7 +1471,7 @@ vulnerability scanning.
 
 ---
 
-## 16. Query System
+## 18. Query System
 
 ### Tag boolean queries
 
@@ -1406,7 +1582,7 @@ content is stored as plain text in the op log (no special op type).
 
 ---
 
-## 17. Android Platform
+## 19. Android Platform
 
 ### Build and deployment
 
@@ -1442,7 +1618,7 @@ AI agents and CI can interact with the Android app entirely via ADB — no displ
 
 ---
 
-## 18. Sync & Networking
+## 20. Sync & Networking
 
 Local WiFi sync between devices. No cloud. Discovery via mDNS, pairing via passphrase/QR code,
 transport via TLS WebSocket, protocol via op streaming with three-way merge.
@@ -1642,7 +1818,7 @@ indefinite hangs during large op transfers.
 
 ---
 
-## 19. MCP Server
+## 21. MCP Server
 
 The MCP (Model Context Protocol) server exposes Agaric's notes to local AI agents over a Unix-
 domain socket on Linux/macOS or a Windows named pipe. It is opt-in, single-user, and runs
@@ -1806,13 +1982,21 @@ file and calls `shutdown`). Self-reported agent names are treated as PII and red
 socket path. See AGENTS.md §[Threat Model](AGENTS.md#threat-model) for the broader rationale
 this carve-out inherits from.
 
+### Planned: rmcp Migration (MAINT-111)
+
+The current JSON-RPC framing is custom newline-delimited JSON. A migration to the `rmcp` 1.6
+reference implementation is planned (3 milestones). Spike complete behind the
+`mcp_rmcp_spike` Cargo feature flag (off by default; see `src-tauri/src/mcp/rmcp_spike.rs` and
+`rmcp_spike.md`).
+
 ---
 
-## 20. Planned Features
+## 22. Planned Features
 
-Planned items are tracked in the [issue tracker](https://github.com/jfolcini/agaric/issues).
+Planned items are tracked in the [issue tracker](https://github.com/jfolcini/agaric/issues)
+and `REVIEW-LATER.md`.
 
-**Recently completed** (formerly on this roadmap):
+### Shipped (no longer on roadmap)
 
 - Templates system with dynamic variables (#639) — `template-utils.ts`, `/template` slash command
 - Scheduling semantics — overdue, hide-before, warning period (#641) — AgendaFilterBuilder presets
@@ -1845,13 +2029,44 @@ Planned items are tracked in the [issue tracker](https://github.com/jfolcini/aga
 - Materialized tag inheritance — `block_tag_inherited` table, CTE-free query path
 - Frontend error logging — `logger.ts` with Rust IPC bridge, global handlers
 - Per-page block store — `PageBlockStore` context replacing global singleton
+- Spaces Phases 1–8, 10, 11 — see [Spaces Architecture](#9-spaces-architecture)
+- Inline tag references — `block_tag_refs` table (migration `0034`), `#[ULID]` chips materialized
+  incrementally; see [Inline tag references](#inline-tag-references) under Data Model
 
 All completed features use existing schema, op types, and materializer infrastructure. No
 architectural changes were required.
 
+### In progress
+
+- **FEAT-3p9 M2** — finish per-space GCal integration (thread `space_id` through
+  oauth/lease/connector/commands, branch the push loop by space, ship per-space Settings
+  accordion). Foundation in place; see [GCal Integration](#10-gcal-integration).
+- **FEAT-11** — adopt `tauri-plugin-notification` for OS notifications on due / scheduled tasks
+  (Org-mode parity, especially on mobile). Unblocks the GCal-Integration "space-name prefix"
+  sub-task.
+- **MAINT-111** — migrate the MCP server JSON-RPC framing onto the official `rmcp` 1.6 SDK.
+  3 milestones, 12–14h end-to-end. Spike complete behind the `mcp_rmcp_spike` Cargo feature
+  (off by default); see [MCP Server § Planned: rmcp Migration](#planned-rmcp-migration-maint-111).
+
+### Planned
+
+- **FEAT-5g** — Android OAuth + background connector for GCal (deferred — design sketch only,
+  large effort; depends on FEAT-3p9 landing first).
+- **MAINT-113** — `ConflictFreeBlockId` newtype to lift invariant #9 (`is_conflict = 0` and
+  `depth < 100` in every recursive CTE) into the type system. Low-priority elegance refactor;
+  the convention plus review plus documented invariant already work.
+- **MAINT-114** — consolidation audit of `.github/workflows/`. Spike-then-commit; abandon if
+  the merged file isn't shorter than the sum.
+- **MAINT-128** — god-component decomposition of `PropertyRowEditor.tsx` (539 LOC, 5 typed
+  editors sharing local state).
+- **PERF-19 / PERF-20 / PERF-23** — backlink pagination cursor on non-Created sorts, backlink
+  filter resolver concurrency cap, attachment read buffering. All small / scoped.
+- **PUB-2 / PUB-3 / PUB-5 / PUB-8** — public-release blockers (git author identity, employer
+  IP clearance, Tauri updater Minisign keys, Android release keystore).
+
 ---
 
-## 21. Tauri Command API
+## 23. Tauri Command API
 
 80+ total commands (including sync/pairing/file-transfer), split across `src-tauri/src/commands/` by domain: `blocks/` (crud + move + list + fetch), `pages.rs`, `tags.rs`, `properties.rs`, `agenda.rs`, `attachments.rs`, `history.rs`, `journal.rs`, `queries.rs`, `sync_cmds.rs`, `compaction.rs`, `drafts.rs`, `link_metadata.rs`, `logging.rs`. Each has an `inner_*` function taking `&SqlitePool` for testability. All use cursor-based pagination where applicable.
 
@@ -1964,13 +2179,13 @@ architectural changes were required.
 
 ---
 
-## 22. Rust Backend Modules
+## 24. Rust Backend Modules
 
 `backlink`, `cache`, `commands`, `dag`, `db`, `device`, `draft`, `error`, `fts`, `hash`, `import`, `link_metadata`, `materializer`, `merge`, `op`, `op_log`, `pagination`, `pairing`, `peer_refs`, `recovery`, `recurrence`, `reverse`, `snapshot`, `soft_delete`, `sync_cert`, `sync_daemon`, `sync_events`, `sync_files`, `sync_net`, `sync_protocol`, `sync_scheduler`, `tag_inheritance`, `tag_query`, `ulid`, `word_diff`
 
 ---
 
-## 23. Scalability Characteristics
+## 25. Scalability Characteristics
 
 Benchmark-driven analysis at 100K blocks. All measurements via Criterion on
 SQLite WAL mode with 2-writer + 4-reader pool.
@@ -1999,7 +2214,64 @@ integrity — `verify_op_record` checks hashes upfront).
 
 ---
 
-## 24. Lessons Learned & Established Patterns
+## 26. Performance Optimizations
+
+A handful of cross-cutting performance projects whose mechanics are not localised to any one
+section above. These are not micro-optimisations — each one targets a specific pathology that
+showed up in production / benchmarks.
+
+### Materializer apply cursor (C-2b)
+
+**Problem.** Snapshot restore and full sync replay used to re-walk the entire op log on every
+materializer dispatch. With a 100K-op log the foreground apply path stalled at boot and after a
+RESET because the consumer had no idea which ops had already been applied.
+
+**Solution.** A single-row `materializer_apply_cursor` table (migration
+`0040_materializer_apply_cursor.sql`) tracks the highest `op_log.seq` successfully applied by
+the foreground consumer. Boot-time replay reads the cursor and re-enqueues only the delta
+(`op_log WHERE seq > materialized_through_seq`). The cursor advances inside the same
+`BEGIN IMMEDIATE` transaction as the apply, so `op + cursor advance` are atomic — a crash
+leaves the cursor pointing at the last-applied seq, never ahead of state.
+
+**Implementation.** Cursor read in `recovery/replay.rs`, cursor advance in
+`materializer/handlers.rs`. Per-cache cursors were considered but rejected: the foreground
+apply is the convergence bottleneck, and derived caches are rebuildable from primary state.
+
+### Cache streaming (M-19)
+
+**Problem.** Full FTS / agenda / tag-refs cache rebuilds (post-snapshot, post-import, or after
+a schema change) materialised every block row in memory before the rebuild transaction. At
+100K blocks this peaked the process RSS and held the write connection for seconds, blocking
+the entire foreground apply path.
+
+**Solution.** Per-cache streaming rebuild paths split the work into bounded micro-batches
+(~1000 rows). Each batch reads through the read pool, holds the write connection only long
+enough to flush its INSERTs, and releases between batches so the foreground queue can interleave.
+
+**Implementation.** See `cache/block_tag_refs.rs` (M-19a) and `cache/agenda.rs` /
+`cache/projected_agenda.rs` (M-19b sort-merge dedup). The split-pool variant
+(`*_split` functions) takes separate read + write pools for the same reason
+`Materializer::with_read_pool` exists in the consumer.
+
+### Sync streaming (M-51, L-67)
+
+**Problem.** `OpBatch` and snapshot transfer used to deserialise the entire payload into
+memory before applying / writing to disk. A 50 MB snapshot or a 10K-op batch held a
+heap-resident copy and a single giant write transaction, making sync stall the UI for the
+duration.
+
+**Solution.** Streaming op deserialisation + per-op (or micro-batch) transactions on the apply
+side; for snapshots, the receiver streams compressed bytes straight into a
+`<app_data_dir>/snapshot-recv-*.tmp` file under the pre-existing 5 MB binary frame protocol,
+then decodes + restores from disk so peak RSS no longer scales with snapshot size.
+
+**Implementation.** `sync_net/connection.rs::send_binary_streaming` /
+`receive_binary_streaming` (M-51 / L-67), `snapshot/codec.rs` streaming decoder (L-67),
+`sync_daemon/snapshot_transfer.rs` for the temp-file landing path.
+
+---
+
+## 27. Lessons Learned & Established Patterns
 
 Hard-won patterns from 300+ development sessions. These are not aspirational — they are
 empirically validated through bugs found, fixes applied, and alternatives rejected.

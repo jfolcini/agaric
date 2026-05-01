@@ -16,6 +16,41 @@ Reference for building UI in this project. Pair with `AGENTS.md` (§ Frontend De
 | Toasts | Sonner (`src/components/ui/sonner.tsx`) |
 | Code style | 2-space indent, single quotes, no semicolons, 100-char width (Biome) |
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Design Tokens](#design-tokens)
+- [Spacing & Layout](#spacing--layout)
+- [Touch & Mobile](#touch--mobile)
+- [Keyboard Navigation](#keyboard-navigation)
+- [Accessibility](#accessibility)
+- [Animations & Transitions](#animations--transitions)
+- [Component Patterns](#component-patterns)
+- [Spaces UI](#spaces-ui)
+- [Google Calendar Integration](#google-calendar-integration)
+- [MCP Integration](#mcp-integration)
+- [Internationalization (i18n)](#internationalization-i18n)
+- [Two-Tier Undo/Redo Model](#two-tier-undoredo-model)
+- [Multi-Selection & Batch Operations](#multi-selection--batch-operations)
+- [Optimistic Updates](#optimistic-updates)
+- [Sheet/Drawer Pattern](#sheetdrawer-pattern)
+- [Conflict Resolution UX](#conflict-resolution-ux)
+- [Inline Query Blocks](#inline-query-blocks)
+- [Block Zoom-In](#block-zoom-in)
+- [Kebab / Overflow Menu](#kebab--overflow-menu)
+- [Agenda Views](#agenda-views)
+- [Template System UX](#template-system-ux)
+- [Property Drawer](#property-drawer)
+- [Import UX](#import-ux)
+- [Toast Action Patterns](#toast-action-patterns)
+- [Editor UX](#editor-ux)
+- [Navigation Patterns](#navigation-patterns)
+- [Quality Checklist](#quality-checklist)
+- [Common Pitfalls](#common-pitfalls)
+- [Lessons Learned](#lessons-learned)
+
+> ⚠️ **Before you code:** Read [Common Pitfalls](#common-pitfalls) — recurring mistakes caught in review (capture-phase listeners, async re-entrancy, portal lifecycle). Skipping this section costs review cycles.
+
 ## Design Tokens
 
 ### Color System (OKLCH)
@@ -926,6 +961,118 @@ File: `src/components/BlockContextMenu.tsx`
 - Use `<ScrollArea>` (Radix) for custom scrollbars
 - Scrollbar width: `w-2.5` desktop, `w-4` touch
 - Scrollable panels: `max-h-96` (was `max-h-60`, increased for usability)
+
+## Spaces UI
+
+File: `src/components/SpaceSwitcher.tsx`, `src/stores/space.ts`, `src/stores/tabs.ts`, `src/stores/recent-pages.ts`
+
+### Space Switcher
+
+- **Display:** Radix Select in the sidebar header. Replaces the static "Agaric" branding block.
+- **Items:** alphabetical list of available spaces; "Manage spaces…" action at the bottom (opens `SpaceManageDialog`).
+- **Active state:** the current space's name is shown in the trigger; dropdown items show alphabetical order.
+- **Mobile parity:** visible on both desktop and mobile (spaces are above the tab abstraction; mobile users still need context switching).
+
+### Per-Space Tabs
+
+- **Storage:** `useTabsStore` keyed by `spaceId` — `tabsBySpace[currentSpaceId]` is the active list.
+- **Persistence:** localStorage via Zustand `persist`; full per-space slice serialized.
+- **Tab bar:** hidden when current space has ≤1 tab (preserves the FEAT-7 autohide behaviour).
+- **Behaviour:** opening a page in a new tab affects only the current space's list; switching space swaps the visible tab strip.
+
+### Per-Space Recent Pages
+
+- **Storage:** `useRecentPagesStore.recentPagesBySpace[currentSpaceId]` (MRU strip, deduped).
+- **Visits never cross space boundaries** — switching space swaps the strip.
+
+### Per-Space Journal
+
+- Daily pages keyed by `(date, current_space_id)`. Same date in different spaces = two distinct ULIDs.
+- **Templates** (Phase 5b): each space block can carry a `journal_template` text property; per-space template takes precedence over the legacy global one; empty fallback if neither set.
+
+### Cross-Space Link Policy (Phase 7)
+
+- `[[ULID]]` chips whose target lives in a foreign space render via the existing broken-link UX (`block-link-deleted` style + "Broken link — click to remove" tooltip).
+- **No auto-switch on click. No "show anyway" toggle.** Single behaviour, period.
+- Same page title in two spaces is fine — they're distinct ULIDs and stay isolated.
+
+### Visual Identity (Phase 10)
+
+- **`SpaceStatusChip`:** left-bordered chip with accent stripe in `SidebarFooter` near the sync chip. Reads `availableSpaces.find(...).name` from `useSpaceStore`.
+- **`SpaceAccentBadge`:** 32 px circle with first-letter + accent colour (44 px on touch).
+- **Window title prefix:** active space name appears in the OS window title.
+
+### Digit Hotkeys (Phase 11)
+
+- `Ctrl+1` … `Ctrl+9` (or `⌘+1` … `⌘+9` on macOS) jump to the Nth space in alphabetical `availableSpaces` order.
+- Out-of-range / same-space hits are silent no-ops. Skipped on key-repeat or when typing into a field.
+- SpaceSwitcher dropdown shows the hint chip on each non-disabled row.
+
+### Manage-Spaces Dialog (Phase 6)
+
+File: `src/components/SpaceManageDialog.tsx`
+
+- Per-row inline rename, accent-colour picker (6 swatches), delete (disabled while non-empty or last space).
+- Inline create-new-space form (name + accent).
+- Onboarding banner while ≤2 spaces (dismissable; persisted in localStorage as `agaric:space-onboarding-seen-v1`).
+
+## Google Calendar Integration
+
+File: `src-tauri/src/gcal_push/`, `src/components/GoogleCalendarSettingsTab.tsx`
+
+### Status
+
+- **v1:** Daily-digest push (one all-day event per date, agenda entries listed in description). Off by default; opt-in per device.
+- **Per-space (FEAT-3p9 M1):** `gcal_space_config` table foundation in place; per-space keychain (`oauth_tokens_<SPACE_ULID>`); legacy single-space config migrates to `Personal` on first run. M2 (signature threading + per-space connector + per-space Settings UI) is the remaining work.
+- **Notifications prefix:** blocked on FEAT-11 (OS notifications).
+
+### Connection Flow
+
+- Settings → Google Calendar → "Connect" → OAuth via `tauri-plugin-oauth` → token stored in OS keychain.
+- Agaric creates a dedicated calendar named "Agaric Agenda" (`calendars.insert`); never writes to the user's primary calendar.
+- One active pusher at a time across devices via `push_lease` (60 s renewal, 180 s expiry).
+
+### Sync Behaviour
+
+- Listener: `block:properties-changed` events trigger a 500 ms debounced flush.
+- 15-min reconcile sweep over `[today, today + window_days]` (default 30 d).
+- Per-date hash compare: only push when content changed.
+- Privacy modes: `full` (default) shows entries inline; `minimal` shows only entry count.
+- Disconnect modal: keep the dedicated calendar (default) vs. `calendars.delete` it.
+
+## MCP Integration
+
+File: `src-tauri/src/mcp/`, `src-tauri/src/bin/agaric-mcp.rs` (sidecar binary), `src/components/agent-access/ActivityFeed.tsx` (UI), `src/components/AgentAccessSettingsTab.tsx` (Settings panel).
+
+### Sidecar Binary (FEAT-4f)
+
+- `agaric-mcp` stub binary built alongside the main app; MCP clients invoke it as a stdio subprocess.
+- The stub bridges stdio to Agaric's local socket so the running app handles every request — no network hop.
+- Path varies by platform; users configure their client's `command` field (see BUILD.md for paths).
+
+### Access Control
+
+- Settings → Agent access → "Read-only access" toggle (off by default).
+- Read-only by default; future granularity (FEAT-4h) will add per-agent permissions.
+
+### Activity Feed
+
+- Sidebar panel showing recent agent actions (block reads, writes, queries).
+- Each entry: timestamp + command name + brief target (block / page).
+- Click an entry to navigate to the affected block.
+- "Clear history" action wipes the in-memory log.
+
+### Supported Commands (read-only)
+
+- `list_pages`, `get_page`, `get_block`
+- `search` (FTS5 across block content; `space_id` required)
+- `list_backlinks`, `list_tags`, `list_property_defs`
+- `get_agenda` (tasks + due dates within a window)
+- `journal_for_date` (per-space, idempotent)
+
+### Migration: rmcp (MAINT-111)
+
+Spike complete behind `mcp_rmcp_spike` Cargo feature flag (off by default). Migration to the rmcp 1.6 reference implementation is planned; aligns with MCP spec and reduces custom framing code.
 
 ## Internationalization (i18n)
 

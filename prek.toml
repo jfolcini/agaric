@@ -10,7 +10,7 @@ hooks = [
     { id = "check-toml" },
     { id = "check-json", exclude = "(tsconfig.*\\.json$|\\.sqlx/)" },
     { id = "check-merge-conflict" },
-    { id = "check-added-large-files", args = ["--maxkb=500"] },
+    { id = "check-added-large-files", args = ["--maxkb=500"], exclude = "^docs/session-log/" },
     { id = "no-commit-to-branch", args = ["--branch=main"], stages = ["pre-push"] },
     { id = "detect-private-key", exclude = "^src-tauri/src/(sync_cert\\.rs|sync_net/tests\\.rs|sync_daemon/tests\\.rs)$|^SESSION-LOG\\.md$" },
 ]

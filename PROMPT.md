@@ -33,6 +33,26 @@ Each subagent prompt must include:
 
 **Subagent verification scope:** Build subagents verify only their own work by running the relevant tests. Do NOT run clippy, fmt, biome, or prek inside subagents — the orchestrator runs prek once after merging.
 
+### Subagent prompt template
+
+```text
+**Task:** [one-line description]
+**Working directory:** `/home/javier/dev/agaric`
+**Setup:** `. "$HOME/.cargo/env"`  (Rust subagents only)
+**Files to create/modify:**
+- `path/to/file.ext` — [what to do]
+**Do NOT modify:**
+- AGENTS.md (root)
+- Files outside this subagent's scope
+**Verification:**
+- Rust: `cd src-tauri && cargo nextest run`
+- Frontend: `npx vitest run`
+**Success criteria:**
+- All tests pass
+- Code follows AGENTS.md patterns
+- No new compiler warnings
+```
+
 ## 3. TEST
 
 Every new or changed code path must have tests:
@@ -85,6 +105,47 @@ In REVIEW-LATER.md: remove resolved items entirely — both the summary table ro
 
 **Concurrent edits to REVIEW-LATER.md:** Other agents may be working on REVIEW-LATER.md at the same time (resolving items, adding new ones, updating counts). Before writing to the file, always re-read it first to get the latest content. Never cache or assume stale state. If you read the file, make edits in memory, and then write — re-read immediately before writing to avoid overwriting another agent's changes.
 
+### Session log entry template
+
+Every session entry follows this shape:
+
+```text
+## Session N — <short title> (YYYY-MM-DD)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | YYYY-MM-DD |
+| **Subagents** | <count> build + <count> review (or "orchestrator-only") |
+| **Items closed** | <ID list, or "—"> |
+| **Items modified** | <ID list, or "—"> |
+| **Tests added** | +N (frontend) / +M (backend) |
+| **Files touched** | <count> |
+
+**Summary:** <2-3 sentence high-level outcome>
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** X → Y (<delta breakdown>)
+- **Previously resolved:** A+ → B+ across S → S+1 sessions
+
+**Files touched (this session):**
+- `path/to/file.ext` (LOC delta)
+- ...
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — N tests run, N passed.
+- `prek run --all-files` — all hooks pass.
+
+**Process notes:** <optional, only when worth capturing>
+
+**Lessons learned (for future sessions):** <optional, only when applicable>
+
+**Commit plan:** single commit / split / not pushed / pushed.
+
+---
+```
+
+Apply this template to NEW sessions. Older sessions (590-597 included) stay as-is unless an explicit catchup pass is requested.
+
 ---
 
 ## Principles
@@ -94,3 +155,12 @@ In REVIEW-LATER.md: remove resolved items entirely — both the summary table ro
 - Respect architectural invariants in AGENTS.md (append-only op log, CQRS split, cursor pagination, single TipTap instance, Biome only, sqlx compile-time queries, foreign keys ON, ULID uppercase normalization).
 - If a Rust change touches SQL queries, run `cargo sqlx prepare -- --tests` to update the `.sqlx/` cache.
 - If a Rust change touches types used in Tauri commands, run `cd src-tauri && cargo test -- specta_tests --ignored` to regenerate `src/lib/bindings.ts`.
+
+## Common Pitfalls
+
+- **Serializing parallelizable work** — if 4 subagents have independent file targets, launch all 4 in one batch; don't queue them.
+- **Running prek inside subagents** — subagents only run their own targeted tests. Orchestrator runs `prek run --all-files` once at commit time.
+- **Forgetting to re-read REVIEW-LATER.md before writing** — other agents may concurrently edit it. Always re-read immediately before write.
+- **Forgetting FEATURE-MAP.md updates** — new commands / components / hooks / stores / tables must be reflected in the feature map.
+- **Mixing refactoring with feature work in one commit** — keep them separate so reverts stay surgical.
+- **Subagent prompts that paste long doc contents inline** — keep prompts minimal; reference paths instead.
