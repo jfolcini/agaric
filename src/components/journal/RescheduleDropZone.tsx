@@ -34,11 +34,9 @@ import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { announce } from '@/lib/announcer'
-import { logger } from '@/lib/logger'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import { useBlockReschedule } from '../../hooks/useBlockReschedule'
-import { getBlock } from '../../lib/tauri'
 
 interface RescheduleDropZoneProps {
   dateStr: string
@@ -56,7 +54,7 @@ export function RescheduleDropZone({
 }: RescheduleDropZoneProps): React.ReactElement {
   const { t } = useTranslation()
   const [isOver, setIsOver] = useState(false)
-  const { setDueDate, setScheduledDate } = useBlockReschedule()
+  const { reschedule } = useBlockReschedule()
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (e.dataTransfer.types.includes(RESCHEDULE_DRAG_TYPE)) {
@@ -80,26 +78,7 @@ export function RescheduleDropZone({
       const blockId = e.dataTransfer.getData(RESCHEDULE_DRAG_TYPE)
       if (!blockId) return
       try {
-        let useScheduledDate = false
-        try {
-          const block = await getBlock(blockId)
-          if (block.scheduled_date && !block.due_date) {
-            useScheduledDate = true
-          }
-        } catch (err) {
-          logger.warn(
-            'RescheduleDropZone',
-            'Failed to fetch block, falling back to setDueDate',
-            { blockId },
-            err,
-          )
-        }
-
-        if (useScheduledDate) {
-          await setScheduledDate(blockId, dateStr)
-        } else {
-          await setDueDate(blockId, dateStr)
-        }
+        await reschedule(blockId, dateStr)
         toast.success(t('journal.rescheduled', { date: dateStr }))
         announce(t('announce.taskRescheduled', { date: dateStr }))
       } catch (err) {
@@ -110,7 +89,7 @@ export function RescheduleDropZone({
         announce(t('announce.rescheduleFailed'))
       }
     },
-    [dateStr, setDueDate, setScheduledDate, t],
+    [dateStr, reschedule, t],
   )
 
   return (

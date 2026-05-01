@@ -30,11 +30,11 @@ import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
+import { useBlockPropertyIpc } from '../hooks/useBlockPropertyIpc'
 import { useBlockReschedule } from '../hooks/useBlockReschedule'
 import { useDateInput } from '../hooks/useDateInput'
 import { usePropertySave } from '../hooks/usePropertySave'
 import type { PropertyDefinition, PropertyRow as PropertyRowData } from '../lib/tauri'
-import { getProperties, listPropertyDefs, setProperty } from '../lib/tauri'
 import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
 import { AddPropertyPopover } from './AddPropertyPopover'
 import { BuiltinDateFields } from './BuiltinDateFields'
@@ -57,6 +57,7 @@ export function BlockPropertyDrawer({
   const [properties, setProperties] = useState<PropertyRowData[]>([])
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
   const { setDueDate: setDueDateCmd, setScheduledDate: setScheduledDateCmd } = useBlockReschedule()
+  const { getProperties, listPropertyDefs, setProperty } = useBlockPropertyIpc()
 
   // Subscribe to built-in date fields from the block store so the drawer
   // updates reactively when dates are set via toolbar (H-12).
@@ -90,7 +91,7 @@ export function BlockPropertyDrawer({
         toast.error(t('property.loadFailed'))
       })
       .finally(() => setLoading(false))
-  }, [blockId, open, t])
+  }, [blockId, open, t, getProperties, listPropertyDefs])
 
   // Save / delete via shared hook (M-28)
   const { handleSave, handleDelete } = usePropertySave({
@@ -125,7 +126,7 @@ export function BlockPropertyDrawer({
         err,
       )
     }
-  }, [blockId])
+  }, [blockId, getProperties])
 
   // Clear a built-in date field (due_date or scheduled_date)
   const handleClearBuiltinDate = useCallback(
@@ -213,7 +214,7 @@ export function BlockPropertyDrawer({
         toast.error(t('property.saveFailed'))
       }
     },
-    [blockId, t],
+    [blockId, t, setProperty, getProperties],
   )
 
   // Definitions available for the add-property popover:

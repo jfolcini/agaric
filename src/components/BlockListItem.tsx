@@ -20,9 +20,7 @@ import { useBlockReschedule } from '../hooks/useBlockReschedule'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { announce } from '../lib/announcer'
 import { formatDate } from '../lib/date-utils'
-import { logger } from '../lib/logger'
 import { reportIpcError } from '../lib/report-ipc-error'
-import { getBlock } from '../lib/tauri'
 import { PageLink } from './PageLink'
 import { renderRichContent } from './RichContentRenderer'
 import { Calendar } from './ui/calendar'
@@ -88,7 +86,7 @@ function BlockListItemInner({
   const callbacks = useRichContentCallbacks()
   const onTagClick = useTagClickHandler()
   const [popoverOpen, setPopoverOpen] = useState(false)
-  const { setDueDate, setScheduledDate } = useBlockReschedule()
+  const { reschedule } = useBlockReschedule()
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: callbacks are stable (ref-backed) — only content drives the rendered output
   const richContent = useMemo(
@@ -106,33 +104,19 @@ function BlockListItemInner({
         onReschedule(blockId, dateStr)
         return
       }
-      let useScheduledDate = false
       try {
-        try {
-          const block = await getBlock(blockId)
-          if (block.scheduled_date && !block.due_date) {
-            useScheduledDate = true
-          }
-        } catch (err) {
-          logger.warn('BlockListItem', 'Failed to fetch block', { blockId }, err)
-        }
-        if (useScheduledDate) {
-          await setScheduledDate(blockId, dateStr)
-        } else {
-          await setDueDate(blockId, dateStr)
-        }
+        await reschedule(blockId, dateStr)
         toast.success(t('journal.rescheduled', { date: dateStr }))
         announce(t('announce.taskRescheduled', { date: dateStr }))
       } catch (err) {
         reportIpcError('BlockListItem', 'journal.rescheduleFailed', err, t, {
           blockId,
           dateStr,
-          useScheduledDate,
         })
         announce(t('announce.rescheduleFailed'))
       }
     },
-    [blockId, onReschedule, setDueDate, setScheduledDate, t],
+    [blockId, onReschedule, reschedule, t],
   )
 
   return (
