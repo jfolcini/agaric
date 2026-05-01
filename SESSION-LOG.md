@@ -1,5 +1,80 @@
 # Session Log
 
+## Session 594 — 1-subagent investigative spike: MAINT-111 rmcp evaluation (2026-05-01)
+
+**Spike outcome: GO (modest scope).** The official Rust MCP SDK `rmcp 1.6` cleanly adapts onto agaric's existing `ToolRegistry` trait without owning the registry; the activity-feed, `ActorContext`, and `LAST_APPEND` integration points all survive the migration intact (verified with 3 passing tests behind an off-by-default Cargo feature). The original MAINT-111 entry estimated 300-500 LOC collapse in `server.rs`; the spike's measured number is ~250 LOC (pure framing + dispatch + error mapping; lifecycle and transport stay agaric-specific).
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 18 → **18** (MAINT-111 stays open but transitions from "spike" to "concrete migration ticket"; row title + cost rewritten).
+- **MAINT-111 row** rewritten: title now "Migrate MCP server JSON-RPC framing onto rmcp 1.6 (post-spike, session 594 verdict: GO modest scope; reference impl behind `mcp_rmcp_spike` feature flag; 3 milestones, 12-14h end-to-end)", cost bumped M → L (the spike portion was M; the full migration is L).
+- **MAINT-111 detail block** rewritten: status header replaces "spike rationale" with "post-spike verdict + concrete numbers + 3-milestone migration plan + risk-mitigation suggestion (shadow-mode behind a feature flag during milestone 2)".
+- **Previously-resolved counter:** 858+ → 858+ (no item closed, just reframed) across 560 → 561 sessions.
+
+**What was answered (4 spike questions):**
+
+| # | Question | Verdict | Evidence |
+|---|---|---|---|
+| 1 | How much of `server.rs` collapses? | **Pass** | ~250 LOC of pure framing/dispatch; concrete function-by-function list in `rmcp_spike.md` (`make_success` / `make_error` / `parse_request` enums / `handle_initialize` / `handle_tools_list` / `handle_notification` / `truncate_params_preview` / `dispatch` / `wrap_tool_result_success` / JSON-RPC error codes / per-line write framing). |
+| 2a | Activity-feed emission survives? | **Pass** | `ServerHandler::call_tool` is overridable; spike replicates `handle_tools_call`'s `emit_tool_completion`. Test `RecordingEmitter` saw the entry. |
+| 2b | `ActorContext` threading survives? | **Pass** | `context.peer.peer_info().client_info.name` ↔ `ConnectionState.client_info.name`. Spike test asserts `current_actor()` returns `Actor::Agent { name: "spike-test-agent" }` inside the registry layer. |
+| 2c | `LAST_APPEND` tracker survives? | **Pass** | Spike wraps the registry call in `LAST_APPEND.scope(RefCell::new(Vec::new()), ...)` and calls `take_appends()` exactly like `handle_tools_call`. |
+| 3 | Spec-conformance delta? | **Pass** | rmcp gives us for free: protocol-version negotiation, `notifications/initialized` state machine, `tools/listChanged`, `notifications/cancelled` + `notifications/progress`, `ping`, `_meta` (SEP-1319), `CallToolResult.structuredContent`. Hand-rolled stubs all of these. |
+| 4 | Stable enough? | **Pass** | v1.6.0 (post-1.0). Apache-2.0. Tied to tokio (we use tokio). +6 transitive crates. |
+
+**Concrete numbers (default vs `--features mcp_rmcp_spike`):**
+
+| Metric | Default | + spike |
+|---|---|---|
+| Crates in `cargo tree -e normal --target x86_64-unknown-linux-gnu` | 471 | **477 (+6)** |
+| Cold `cargo check` wall time | 1m 17s | 1m 18s (**+1s**) |
+| `agaric-mcp` release stripped binary | 2,488,504 B | 2,488,536 B (**+32 B** — DCE; full migration would add ~200-400 KiB) |
+| Default-build warnings introduced | 0 | 0 |
+
+**Items closed (none) — items reframed:**
+
+| Item | What changed |
+|---|---|
+| **MAINT-111** | Spike done. Reference implementation in `src-tauri/src/mcp/rmcp_spike.rs` (566 LOC) gated behind off-by-default `mcp_rmcp_spike` Cargo feature, plus `src-tauri/src/mcp/rmcp_spike.md` (198 LOC) with the verdict + structural-fit table + 3-milestone migration plan. The umbrella row stays open with the new title; the underlying recommendation flipped from "evaluate" to "migrate over 3 milestones". |
+
+**3-milestone migration plan (recorded for next time the user picks this up):**
+
+1. **Milestone 1 (S, ~4h):** route `tools/list` through `rmcp` — replace the spike's single-tool filter with a full `RmcpReadOnlyAdapter` mapping every `ToolDescription` → `Tool`. No behaviour change at the wire level.
+2. **Milestone 2 (M, ~6h):** route `tools/call` through `rmcp` — override `ServerHandler::call_tool` with the spike's pattern (`ACTOR.scope`, `LAST_APPEND.scope`, `emit_tool_completion`); add `AppError → ErrorData` translation. Run both adapters in shadow-mode behind the feature flag, comparing responses byte-equivalent against the existing `mcp/server/tests.rs` / `tools_ro/tests.rs` / `tools_rw/tests.rs` golden assertions, before removing the hand-rolled `dispatch` / `handle_tools_call` body.
+3. **Milestone 3 (S, ~3h):** drop hand-rolled framing — delete `parse_request` / `make_success` / `make_error` / `handle_initialize` / `handle_notification` / `dispatch` / `truncate_params_preview` / JSON-RPC error code constants; replace `handle_connection` body with `adapter.serve(stream)`. Delete the `mcp_rmcp_spike` Cargo feature once the migration is the default path.
+
+Total: 12-14h end-to-end. Risk Medium (wire format identical, but every existing test must remain byte-equivalent).
+
+**Process notes:**
+
+- **1 subagent, scoped to investigation.** The subagent investigated `rmcp` upstream (crates.io page + repo + a server example), read 8 existing `mcp/*` files in read-only mode, added `rmcp` as an optional feature-gated dep, built the prototype, ran the verification matrix, and wrote the assessment. ~5h wall-clock.
+- **One orchestrator-level cargo-fmt round** after the subagent landed (some single-line / multi-line argument-list reformatting in `rmcp_spike.rs` plus a use-statement reorder). Pure formatting; no behaviour change.
+- **Default build untouched.** `cargo check --tests --benches` (no features) is identical to the pre-session 593 state — same crate count, same warnings. The spike module compiles and its tests run only when `--features mcp_rmcp_spike` is passed.
+- **No new SQL queries** (no sqlx changes).
+- **No bindings.ts regeneration** (no Tauri command surface change).
+- **`cargo deny`** clean on both default and spike-feature builds.
+
+**Files touched (this session's batch):**
+
+- **Backend production (new):** `src-tauri/src/mcp/rmcp_spike.rs` (566 LOC — adapter + 3 tests).
+- **Backend docs (new):** `src-tauri/src/mcp/rmcp_spike.md` (198 LOC — verdict + structural-fit table + migration plan; co-located with the prototype, invisible to `cargo build` because it's a `.md` file).
+- **Backend production (modified):** `src-tauri/src/mcp/mod.rs` (+7 LOC — single feature-gated `pub mod rmcp_spike;` line), `src-tauri/Cargo.toml` (+18 LOC — new `[features] mcp_rmcp_spike` + `rmcp = { version = "1.6", optional = true, features = ["client"] }`), `src-tauri/Cargo.lock` (+~50 LOC — rmcp + 5 transitive crates locked).
+- **Docs (this session):** `REVIEW-LATER.md` (MAINT-111 row + detail block rewritten as concrete migration ticket; summary line + previously-resolved-sessions counter bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after one cargo-fmt autofix round).
+
+- Backend full nextest (default features): **3365 / 3365** (3 skipped) — matches session 593's baseline; spike module + tests are absent without the feature flag.
+- Backend full nextest (`--features mcp_rmcp_spike`): **3368 / 3368** (3 skipped) — 3365 baseline + 3 new spike tests.
+- Backend `cargo check --tests --benches` (default): clean, 0 warnings, 1m 17s cold.
+- Backend `cargo check --tests --features mcp_rmcp_spike`: clean, 0 warnings, 1m 18s cold.
+- `cargo deny check` (both default and spike): advisories ok, bans ok, licenses ok, sources ok.
+- Frontend full vitest: 8993 / 8993 (no frontend changes).
+- TypeScript / biome / cargo fmt-clippy-deny-machete: clean.
+
+**Commit plan:** feat commit for the spike (Cargo.toml + Cargo.lock + `mcp/mod.rs` glue + new `rmcp_spike.rs` + new `rmcp_spike.md` + REVIEW-LATER MAINT-111 reframe), then docs commit for SESSION-LOG.md. Not pushed.
+
+---
+
 ## Session 593 — 1-subagent batch: M-51 + L-67 sync streaming (2026-05-01)
 
 **Two paired sync streaming items closed in one comprehensive batch.** M-51 (attachment file send/receive buffers entire file in memory) and L-67 (snapshot receiver allocates 256MB Vec) shared an underlying issue and shared the wire helper (`SyncConnection::{send,receive}_binary_chunked`); REVIEW-LATER explicitly paired them. One subagent handled both end-to-end so the new streaming wire helpers (`send_binary_streaming` + `receive_binary_streaming`) were added once and used by both. Wire format unchanged — no new `SyncMessage` variants, no field additions.
