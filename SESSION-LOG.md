@@ -1,5 +1,59 @@
 # Session Log
 
+## Session 593 — 1-subagent batch: M-51 + L-67 sync streaming (2026-05-01)
+
+**Two paired sync streaming items closed in one comprehensive batch.** M-51 (attachment file send/receive buffers entire file in memory) and L-67 (snapshot receiver allocates 256MB Vec) shared an underlying issue and shared the wire helper (`SyncConnection::{send,receive}_binary_chunked`); REVIEW-LATER explicitly paired them. One subagent handled both end-to-end so the new streaming wire helpers (`send_binary_streaming` + `receive_binary_streaming`) were added once and used by both. Wire format unchanged — no new `SyncMessage` variants, no field additions.
+
+**Peak Rust-heap dropped from `O(file_size)` / `O(snapshot_size)` to `O(BINARY_FRAME_CHUNK_SIZE = 5MB + per-row working set)` on both transfer paths.** 1 GB attachments and 256 MB snapshots can now be transferred without OOMing on Android.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 18 → **18** (M-51 lived in `## MEDIUM findings` Sync stack section; L-67 in `## LOW findings` Sync section — neither is in the planned-work table).
+- **Cumulative backend Medium closures:** 26 → **27**.
+- **Cumulative backend Low closures:** unchanged (the closing of L-67 plus the two LOW MAINT cleanup batches = +1; absolute count not tracked separately).
+- **Previously-resolved counter:** 856+ → 858+ across 559 → 560 sessions.
+
+**Items closed:**
+
+| Item | Subsystem / files | Subagent |
+|---|---|---|
+| **M-51** — both file send and receive buffer the entire file in memory | `src-tauri/src/sync_net/connection.rs` (new `send_binary_streaming<R: AsyncRead>` + `receive_binary_streaming<W: AsyncWrite>`; existing `_chunked` helpers kept as thin wrappers), `src-tauri/src/sync_files.rs` (new `read_attachment_file_metadata` + `open_attachment_for_read` + `TempAttachmentWriter` with mid-stream `blake3::Hasher` + atomic-rename `commit(expected_hash)` + `Drop`-unlinks abandoned writers; both production loops migrated; `read_attachment_file` / `write_attachment_file` retained for utility callers), `src-tauri/src/sync_files/tests.rs` (7 new `_m51` tests). | M-51+L-67 unified `7469aff7` |
+| **L-67** — snapshot receiver allocates a single `Vec<u8>` of up to 256 MB | `src-tauri/src/snapshot/codec.rs` (`decode_snapshot(reader: impl Read)` swaps `zstd::decode_all + ciborium::from_reader(slice)` for `zstd::stream::Decoder::new(reader) → ciborium::from_reader` directly), `src-tauri/src/snapshot/restore.rs` (`apply_snapshot(_, _, reader: impl Read)`), `src-tauri/src/sync_daemon/snapshot_transfer.rs` (new `SnapshotTempFile` path-owning guard with `Drop`-unlinks; new `receive_snapshot_to_temp` streams via `receive_binary_streaming`; `try_receive_snapshot_catchup` opens the temp as `std::fs::File` and passes to `apply_snapshot`), 4 new `_l67` tests inline. Two trivial callsite migrations: `src-tauri/src/integration_tests.rs` and `src-tauri/benches/snapshot_bench.rs` use `&compressed[..]` instead of `&compressed`. Test in `src-tauri/src/snapshot/tests.rs`: `decode_rejects_corrupt_data` updated to accept either error layer (eager-zstd or lazy-CBOR-via-zstd). | M-51+L-67 unified `7469aff7` |
+
+**Architectural decisions made by the subagent (justified):**
+
+1. **Two-pass hash on the M-51 sender.** `FileOffer.blake3_hash` is sent ahead of the binary stream, so the sender must know the hash before `send_binary_streaming` begins. Kept the wire format unchanged (per AGENTS.md Architectural Stability) by adding a streaming hash pass via `read_attachment_file_metadata` (256 KiB buffer; OS page-cache eats the second read on warm files), then re-opening the file for the actual send. Alternative — `FileFooter` / `FileOfferAck` wire variant carrying the hash trailing the stream — would have required user approval; skipped deliberately.
+2. **No `tempfile` crate added to runtime deps.** Rolled a small `SnapshotTempFile` guard (8 lines, `Drop` unlinks via `std::fs::remove_file`) matching the existing `TempAttachmentWriter::Drop` pattern. `tempfile` stays a dev-dep only.
+3. **`R: std::io::Read` (no `Send`/`'static`)** on `decode_snapshot` and `apply_snapshot`. The reader is consumed inline before any await point in `apply_snapshot`, so the looser bound is correct. Tests pass `&bytes[..]` (slice impls `Read`); production passes `std::fs::File`.
+4. **Lazy zstd-decoder error visibility.** `zstd::stream::Decoder::new` is lazy, so `decode_snapshot(garbage)` now surfaces the zstd error wrapped as `CBOR decode: Io(...)` (ciborium reads first, zstd decode fails inside). Updated `decode_rejects_corrupt_data` to accept either layer; the test's intent is preserved.
+5. **Cancel-flag semantics preserved.** Both M-51 sender and receiver still check `cancel.load(Ordering::Acquire)` between files (per-file granularity unchanged). Updated the inline doc comment to reference `SyncConnection::receive_binary_streaming` (M-51) instead of the removed `receive_binary_data` helper.
+6. **Sender mid-flight error path tightened.** When the file disappears or changes between hash-pass and stream-pass, `receive_request_and_send_files` now returns `Err` (closes the connection so the daemon retries) rather than silently incrementing `skipped_not_found` and continuing — once `FileOffer` is on the wire, the receiver is committed to expecting `size_bytes`, so silently skipping would desync. Documented inline.
+
+**Process notes:**
+
+- **Single subagent, not parallel.** M-51 and L-67 share `SyncConnection` + the streaming wire helpers, so a parallel split would have created merge contention on `sync_net/connection.rs`. One comprehensive subagent added the helpers once and used them for both.
+- **One orchestrator-level cargo fmt round** after the subagent landed (some single-line / multi-line argument-list reformatting in `sync_files.rs` + `sync_files/tests.rs` + `snapshot/tests.rs`). Pure formatting; no behaviour change.
+- **No bindings.ts regen** — Tauri command surface unchanged.
+- **No new SQL queries** — `cargo sqlx prepare` produced zero new cache entries.
+
+**Files touched (this session's batch):**
+
+- **Backend production (5):** `src-tauri/src/sync_net/connection.rs`, `src-tauri/src/sync_files.rs`, `src-tauri/src/snapshot/codec.rs`, `src-tauri/src/snapshot/restore.rs`, `src-tauri/src/sync_daemon/snapshot_transfer.rs`.
+- **Backend tests (3):** `src-tauri/src/sync_files/tests.rs`, `src-tauri/src/snapshot/tests.rs`, `src-tauri/src/integration_tests.rs`. Plus the inline `mod tests` block in `snapshot_transfer.rs`.
+- **Backend benches (1):** `src-tauri/benches/snapshot_bench.rs`.
+- **Docs (this session):** `REVIEW-LATER.md` (M-51 + L-67 entries deleted; summary line + previously-resolved counter bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after one cargo-fmt autofix round).
+
+- Backend full nextest: **3365 / 3365** (3 skipped). 11 new tests on top of session 592's 3354 baseline (7 `_m51` + 4 `_l67` = +11 net, exact match).
+- Backend: cargo fmt clean, cargo clippy clean (zero new warnings; the 14 pre-existing baseline lint sites unchanged), cargo deny / cargo machete clean, sqlx cache clean.
+- Frontend full vitest: 8993 / 8993 (no frontend changes).
+- TypeScript / biome: clean.
+
+**Commit plan:** feat commit for code, then docs commit for SESSION-LOG.md. Not pushed.
+
+---
+
 ## Session 592 — 3-subagent parallel batch: M-19 cache-rebuild streaming (2026-05-01)
 
 **M-19 closed across all three rebuild paths in one parallel session.** Three build subagents migrated `block_tag_refs`, `agenda`, and `projected_agenda` cache rebuilds away from full-vault `Vec` / `HashMap` materialisation to bounded-memory streaming. Peak Rust-heap on a full-vault rebuild drops from `O(N)` (every block + every cache row + every projection) to `O(batch_size)` (~500 rows for `block_tag_refs`, ~333 for `agenda`, 10 000 for `projected_agenda`).
