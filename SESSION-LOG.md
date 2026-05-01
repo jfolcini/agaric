@@ -1,5 +1,68 @@
 # Session Log
 
+## Session 589 — 3-subagent batch: FEAT-3p4 Spaces Phase 4 closure (2026-05-01)
+
+**FEAT-3p4 fully closed in one big commit.** Three sequential build subagents + orchestrator-level frontend store work threaded `space_id` through every remaining cross-space query surface, promoted `space_id` from `Option<String>` to required `String` on `list_blocks` / `search_blocks`, and added the per-space `useNavigationStore.currentView` slice with space-switch flush/pull plumbing. The per-space `currentView` makes the user's last view stick per space (Search in Personal, Pages in Work, default `page-editor` for fresh spaces) instead of bleeding across the boundary. **Frontend callsites of all 13 affected commands now thread `currentSpaceId` through.** The `space_id` required-promotion at the type system + tauri-specta layer prevents new callers from leaking silently.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 20 → **19** (FEAT-3p4 row + detail block deleted).
+- **FEAT-3 umbrella row:** updated to "Phases 1 + 2 + 3 + 4 shipped; Phases 5–11 split into FEAT-3p5..FEAT-3p11" — Phase 4 is no longer in the remaining-work list.
+- **FEAT-3p9 dependency note:** updated to reflect that `list_projected_agenda_inner` is now space-aware (the connector still passes `None` deliberately; FEAT-3p9 will branch by space).
+- **Previously-resolved counter:** 850+ → 851+ across 555 → 556 sessions.
+
+**Items closed:**
+
+| Item | Subsystem / files | Change |
+|---|---|---|
+| **FEAT-3p4 — Spaces Phase 4** (subagents A + B + C + orchestrator) | Backend + frontend | See per-subagent breakdown below. |
+
+**Per-subagent breakdown:**
+
+- **Subagent A (backend reads, agent_id `ee4e50f5`)** — Threaded `space_id: Option<String>` through 7 read commands: `get_backlinks` + `pagination::list_backlinks`, `query_backlinks_filtered` + `eval_backlink_query`, `list_backlinks_grouped` + `eval_backlink_query_grouped`, `list_unlinked_references` + `eval_unlinked_references` (bonus, related), `count_agenda_batch`, `count_agenda_batch_by_source`, `list_page_links` (graph view; AND-of-both-endpoints filter — both source and target page must belong to the space). MCP `list_backlinks` tool gained `space_id`. **32 new `_feat3p4` tests** (4 per command × 7 commands + 4 helper edges). **3325 / 3325 backend tests pass.** Drift fixes: prior batch had missed updating 5 bench files (`agenda_bench.rs`, `backlink_query_bench.rs`, `graph_bench.rs`, `pagination_bench.rs`, `tag_query_bench.rs`) for the FEAT-3p4 signature changes — the subagent caught + fixed mechanically. Prior batch had also missed promoting the MCP `get_agenda.space_id` schema in `tool_descriptions.snap` and missed `#[allow(clippy::too_many_arguments)]` on two inner fns — both fixed.
+
+- **Subagent B (backend promote, agent_id `e44c8f90`)** — Promoted `list_blocks_inner` + `search_blocks_inner` `space_id: Option<String>` → `String` (required). Removed the `space_id is not supported on agenda or tag filters yet (FEAT-3 Phase 4)` rejection guard now that those paths support scoping. Threaded `space_id: Option<&str>` into `pagination::list_agenda`, `pagination::list_agenda_range`, `pagination::list_by_tag` (the agenda + tag dispatch helpers `list_blocks_inner` calls). **Migrated ~93 callsites** across 10 test files + 2 bench files: each replaced trailing `None` with `TEST_SPACE_ID.into()` and added an `assign_all_to_test_space(&pool).await;` call after seeding (new shared helper in `commands/tests/common.rs` + mirrored in `command_integration_tests/common.rs`). MCP `search` tool's `space_id` arg is now required (top-level + JSON schema `required` array + snapshot promoted). 3 obsolete tests deleted from `block_cmd_tests.rs` (`list_blocks_rejects_space_id_with_agenda_date` / `_with_agenda_date_range` / `_with_tag_id`) since the rejection guard they exercised was removed by spec — replacing them with success-path tests would just duplicate the prior batch's `_feat3p4` coverage. **3322 / 3322 backend tests pass** (3325 – 3 deleted). The deletion is justified by spec; the orchestrator confirms.
+
+- **Orchestrator (frontend store, in-line)** — Added per-space `currentViewBySpace: Record<SpaceId, View>` to `useNavigationStore`, mirroring the `tabsBySpace` / `recentPagesBySpace` pattern. New `selectCurrentViewForSpace(state, spaceId)` selector. Persist version bumped 2 → 3 with v2→v3 migration that seeds `currentViewBySpace[__legacy__]` from the rehydrated flat `currentView`. New `createSpaceSubscriber` block at the bottom of `navigation.ts` that flushes the outgoing space's `currentView` into the per-space slice and pulls the incoming space's slice into the flat field on every `useSpaceStore.currentSpaceId` change. Default for fresh spaces is `page-editor` per the FEAT-3p4 spec. **6 new vitest tests** in the `FEAT-3p4 per-space currentView` describe block. **All 83 navigation store tests pass.**
+
+- **Subagent C (frontend callsites, agent_id `b058d172`)** — Updated all 13 wrappers in `src/lib/tauri.ts` (`listBlocks` + `searchBlocks` required; the other 11 optional). **Migrated ~30 frontend production files** to thread `currentSpaceId` through (`PageBrowser`, `PropertyRowEditor`, `SearchPanel`, `TrashView`, `ViewDispatcher`, `GraphView` + `helpers`, `LinkedReferences`, `UnlinkedReferences`, `TagFilterPanel`, `DonePanel`, `journal/JournalCalendarDropdown`, `journal/UnfinishedTasks`, `journal/AgendaView`, `TemplatesView`, `DataSettingsTab`, `useDuePanelData`, `useBatchCounts`, `useBlockTags`, `useBlockResolve`, `useBlockDatePicker`, `useCalendarPageDates`, `usePropertyDefForEdit`, `useQueryExecution`, `useTemplateSelection`, `useJournalBlockCreation`, `agenda-filters`, `template-utils`, `export-graph`, `page-blocks`, `resolve`). **13 new wrapper-forwards-spaceId tests** in `tauri.test.ts`. **3 new integration tests** in `space-scoping.integration.test.tsx` covering: `useDuePanelData` refetch on space switch, `fetchGraphData` IPC scoping, `TemplatesView` per-space templates. **8981 / 8981 frontend tests pass** (8960 → +21 net: +13 wrapper + +3 integration + +6 navigation store +5 deleted in `tauri.test.ts` for `listBlocks`/`searchBlocks` legacy "no params" cases that became invalid under required `spaceId`).
+
+**Process notes:**
+
+- **3 sequential subagents + orchestrator-led store work + verification.** A1 finished cleanly with drift fixes (prior batch's bench omissions + snapshot omission), A2 followed as a separate batch (its file overlaps with A1 in `queries.rs` were at different functions; safe to sequence), B (frontend) launched once A2's `bindings.ts` regen settled. Orchestrator handled the navigation store work in parallel with B since the store is independent of bindings. No subagent reverted any prior batch's work.
+- **One small bug fix during verification:** TS4111 (`currentViewBySpace.__legacy__` → `currentViewBySpace['__legacy__']`) on the new `navigation.test.ts` line 1354 — caught by `tsc --noEmit -p tsconfig.app.json` (the deeper check that the root tsconfig with `files: []` doesn't surface). Fixed in-place.
+- **`src/stores/navigation.ts` got incidental whitespace reformatting** by `biome check --write` during subagent C's verification (multi-line function signatures collapsed to single lines, two helper assignments inlined). Pure formatting; no behaviour change. Kept since biome would re-flag the original on next prek run.
+- **No prek autofix rounds needed** at orchestrator-level (subagents A and C ran biome / cargo fmt internally). One trailing-whitespace + EOF-newline auto-fix on `bindings.ts` during the first prek run; second run was clean.
+- **No `bindings.ts` regeneration manually** — `cargo test --quiet specta_tests -- --ignored` regenerated it inside subagents A and B.
+- **No FEATURE-MAP.md update** — internal IPC type changes with backward-compat consumer migration; user-visible behaviour is purely scoping (which was already the FEAT-3 promise).
+
+**Files touched (this session's batch):** ~109 files total in the working tree.
+
+- **Backend production (16):** `src-tauri/src/backlink/grouped.rs`, `src-tauri/src/backlink/query.rs`, `src-tauri/src/commands/agenda.rs`, `src-tauri/src/commands/blocks/queries.rs`, `src-tauri/src/commands/mod.rs`, `src-tauri/src/commands/pages.rs`, `src-tauri/src/commands/queries.rs`, `src-tauri/src/commands/tags.rs`, `src-tauri/src/gcal_push/connector.rs`, `src-tauri/src/mcp/tools_ro.rs`, `src-tauri/src/pagination/agenda.rs`, `src-tauri/src/pagination/links.rs`, `src-tauri/src/pagination/properties.rs`, `src-tauri/src/pagination/tags.rs`, `src-tauri/src/pagination/undated.rs`, `src-tauri/src/tag_query/query.rs`.
+- **Backend tests (12):** `src-tauri/src/backlink/tests.rs`, `src-tauri/src/cache/tests.rs`, `src-tauri/src/command_integration_tests/{backlink,block,common,lifecycle,page,property,trash}_integration.rs`, `src-tauri/src/commands/tests/{agenda_cmd,block_cmd,common,edge_case,mod,page_cmd,query_cmd,snapshot}_tests.rs`, `src-tauri/src/integration_tests.rs`, `src-tauri/src/mcp/tools_ro/tests.rs`, `src-tauri/src/pagination/tests.rs`.
+- **Backend benches (6):** `src-tauri/benches/{agenda,backlink_query,commands,graph,pagination,tag_query}_bench.rs`.
+- **Backend snapshot (1):** `src-tauri/src/mcp/tools_ro/snapshots/agaric_lib__mcp__tools_ro__tests__tool_descriptions.snap`.
+- **Backend sqlx cache:** 7 deleted (stale), 7 new — for `list_agenda`, `list_agenda_range`, `list_by_tag` SQL changes.
+- **Frontend production (~30):** `src/lib/tauri.ts`, `src/lib/{agenda-filters,template-utils,export-graph}.ts`, `src/stores/{navigation,page-blocks,resolve}.ts`, `src/components/{PageBrowser,PropertyRowEditor,SearchPanel,TrashView,ViewDispatcher,GraphView,GraphView.helpers,LinkedReferences,UnlinkedReferences,TagFilterPanel,DonePanel,TemplatesView,DataSettingsTab}.tsx`/`.ts`, `src/components/journal/{JournalCalendarDropdown,UnfinishedTasks,AgendaView}.tsx`, `src/hooks/{useDuePanelData,useBatchCounts,useBlockTags,useBlockResolve,useBlockDatePicker,useCalendarPageDates,usePropertyDefForEdit,useQueryExecution,useTemplateSelection,useJournalBlockCreation}.ts`.
+- **Frontend tests (13):** `src/lib/__tests__/{tauri,agenda-filters,template-utils,export-graph}.test.ts`, `src/stores/__tests__/navigation.test.ts`, `src/components/__tests__/{GraphView.helpers,LinkedReferences,UnlinkedReferences,TagFilterPanel,QueryResult,SortableBlock,TrashView}.test.{ts,tsx}`, `src/components/journal/__tests__/AgendaView.test.tsx`, `src/hooks/__tests__/{useBatchCounts,useBlockTags,useJournalBlockCreation,usePropertyDefForEdit}.test.{ts,tsx}`.
+- **Frontend new (1):** `src/__tests__/space-scoping.integration.test.tsx`.
+- **Generated (1):** `src/lib/bindings.ts` (auto-regenerated).
+- **Docs (this session):** `REVIEW-LATER.md` (FEAT-3p4 row + detail block deleted; FEAT-3 row updated to "Phases 1 + 2 + 3 + 4 shipped"; FEAT-3p9 dependency text updated; summary line + previously-resolved counter bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after 1 trivial autofix round for trailing whitespace + EOF newline on `bindings.ts`).
+
+- Backend full nextest: **3322 / 3322** (3 skipped). 3 fewer than session 588's 3325 — three obsolete rejection-guard tests intentionally deleted (justified above).
+- Backend: cargo fmt clean, cargo clippy clean (0 new warnings; 15 errors pre-existing on `main` HEAD `85b0a3c` are unchanged), cargo deny clean, cargo machete clean, cargo sqlx prepare clean.
+- Frontend full vitest: **8981 / 8981** across 376 files. (8960 → 8981, net +21.)
+- TypeScript: 0 errors (`tsc --noEmit` + `tsc --noEmit -p tsconfig.app.json` both clean).
+- Biome: 0 errors across 805 files.
+- Playwright discovery: 305 tests in 29 files.
+- 44 backend `_feat3p4` tests + 6 frontend `_feat3p4` tests + 16 frontend wrapper/integration tests = **66 new tests added across the FEAT-3p4 batches** (this session + prior batches).
+
+**Commit:** TBD — `feat(spaces): FEAT-3p4 — Spaces Phase 4 closure (space_id scoping on 11 read commands; required on list_blocks/search_blocks; per-space currentView)`. (Single big commit; not pushed.)
+
+---
+
 ## Session 588 — 1-subagent batch: M-25 cursor pagination on `list_projected_agenda` (2026-04-30)
 
 **One backend Medium item closed; one partially closed as a side effect.** Build subagent migrated `list_projected_agenda_inner` from a flat `Vec<ProjectedAgendaEntry>` (clamped to 500 silent-truncating) to the canonical `PageResponse<ProjectedAgendaEntry>` shape with cursor pagination, bringing the command into compliance with AGENTS.md invariant #3 ("Cursor-based pagination on ALL list queries"). The migration cascaded through Specta-generated `bindings.ts`, the `tauri.ts` wrapper, the `useDuePanelData` consumer, the GCal connector consumer, the MCP `get_agenda` tool, and 17 backend tests. **Bonus: M-85's `get_agenda` portion is now closed** because the MCP `get_agenda` tool wraps `list_projected_agenda_inner` and inherited the cursor support.
