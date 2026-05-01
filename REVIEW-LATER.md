@@ -979,6 +979,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Risk:** Medium (touches SyncServer plumbing)
 - **Impact:** Medium
 - **Recommendation:** Decide intent with the user. If the QR carries a real `host:port`, thread the SyncServer's bound `(local_ip, port)` into the wrapper; if not, drop those fields from `pairing_qr_payload` + `PairingInfo` and update §18. **Requires user approval per AGENTS.md Architectural Stability — wire-format choice between bind-address and rendezvous-string semantics.**
+- **Decision (user, session 591):** Drop both `host` and `port` from the QR. `PairingInfo` becomes `{passphrase}` only. mDNS owns discovery + address resolution end-to-end. ARCHITECTURE.md §18 simplifies to `{"passphrase":"..."}`.
 - **Pass-1 source:** 05/F19 (cross-ref 06/F2)
 - **Status:** Open
 
@@ -1019,6 +1020,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Risk:** Medium
 - **Impact:** Medium
 - **Recommendation:** Discuss with user — semantics decision. Options: (a) include conflict copies in the cascade (relaxes invariant #9 for `cascade_soft_delete` only); (b) re-parent conflict copies to the cascade's nearest non-deleted ancestor and log; (c) document the orphan state and add a "review orphans" UI surface. Any of these may need user approval per Architectural Stability.
+- **Decision (user, session 591):** Option (b) — re-parent conflict copies to the nearest non-deleted ancestor. Edge case: when no non-deleted ancestor exists (the entire chain is being deleted), set `parent_id = NULL` (top-level orphan, visible in the conflicts view). Replication: emit an op log entry per re-parent (synthesize `MoveBlock` or the existing equivalent op type, written in the same `BEGIN IMMEDIATE` transaction as the cascade) so peers replay the repair through normal sync. Log every re-parent at `tracing::warn` level with the conflict-copy id, the deleted ancestor that triggered it, and the new parent id (or `NULL`).
 - **Pass-1 source:** 08/F27
 - **Status:** Open
 
@@ -1033,6 +1035,7 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Risk:** Low (extending shared `*_inner` helpers must stay backward-compatible with frontend callers)
 - **Impact:** Medium
 - **Recommendation:** Extend the inners to return a `PageResponse<T>` with cursors (modeled on `list_pages_inner` + the `list_projected_agenda` migration in session 588) and surface them in the MCP schema. **Requires user approval per AGENTS.md Architectural Stability — adds cursor pagination to the public MCP tool surface.** Note: invariant #3 has a carve-out for "named small-cardinality lookups" (e.g. `list_property_keys` returns a fixed-size set bounded by user vocabulary). `list_tags` and `list_property_defs` arguably qualify — small finite cardinality bounded by user vocabulary, not data volume — so this might be reframed as a deliberate non-fix per the carve-out rather than a hard violation. Re-evaluate before fixing.
+- **Decision (user, session 591):** Fix anyway. Move `list_tags_inner` and `list_property_defs_inner` to return `PageResponse<T>`; surface `cursor` / `next_cursor` / `has_more` at the MCP layer too (both tool schemas + insta snapshot updated). All ~12 frontend callsites migrated to access `.items`. AGENTS.md invariant #3 carve-out (a) trimmed: drop `list_property_defs` and `list_tags` from the named list; keep `list_property_keys` and the clause itself (still permissive for any future small-cardinality lookups; `list_property_keys` is not paginated in this batch).
 - **Pass-1 source:** 09/F5
 - **Status:** Open. `get_agenda` portion closed in session 588 alongside M-25.
 
