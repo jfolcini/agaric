@@ -2316,12 +2316,15 @@ describe('delete_attachment', () => {
 // ---------------------------------------------------------------------------
 
 describe('list_projected_agenda', () => {
-  it('returns an empty array', () => {
+  it('returns an empty cursor-paginated page (M-25)', () => {
+    // The real backend returns `PageResponse<ProjectedAgendaEntry>` after
+    // M-25 cursor pagination. The mock must match — handlers that read
+    // `response.items` (e.g. `useDuePanelData`) crash on a bare-array stub.
     const result = invoke('list_projected_agenda', {
       startDate: '2026-01-01',
       endDate: '2026-12-31',
     })
-    expect(result).toEqual([])
+    expect(result).toEqual({ items: [], next_cursor: null, has_more: false })
   })
 })
 
