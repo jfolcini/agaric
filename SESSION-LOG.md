@@ -1,5 +1,53 @@
 # Session Log
 
+## Session 592 — 3-subagent parallel batch: M-19 cache-rebuild streaming (2026-05-01)
+
+**M-19 closed across all three rebuild paths in one parallel session.** Three build subagents migrated `block_tag_refs`, `agenda`, and `projected_agenda` cache rebuilds away from full-vault `Vec` / `HashMap` materialisation to bounded-memory streaming. Peak Rust-heap on a full-vault rebuild drops from `O(N)` (every block + every cache row + every projection) to `O(batch_size)` (~500 rows for `block_tag_refs`, ~333 for `agenda`, 10 000 for `projected_agenda`).
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 18 → **18** (M-19 lived in the `## MEDIUM findings` Cache + Pagination section, not the planned-work table; section closure does not change the planned-work count).
+- **Cumulative backend Medium closures:** 25 → **26**.
+- **Previously-resolved counter:** 855+ → 856+ across 558 → 559 sessions.
+
+**Item closed:**
+
+| Item | Subsystem / files | Subagents |
+|---|---|---|
+| **M-19** — Unbounded `Vec` materialization on full-vault scans | All three cache rebuild paths streamed: `block_tag_refs` (`try_next` row-stream + per-row regex; `HashSet<(source, tag)>` retained for cross-row dedup), `agenda` (dual-`HashMap` diff → sort-merge stream walk with `prio` source-priority column added to `DESIRED_AGENDA_SQL` for adjacent-duplicate dedup; both `_impl` and `_split_impl` migrated identically), `projected_agenda` (whole-vault `compute_projection_entries` `Vec` builder → per-block `project_block_into` + chunk-flush at `CHUNK_SIZE = 10_000` projections through a shared `project_and_write_chunked` helper; `flush_projection_chunk` further splits each chunk into `REBUILD_CHUNK = 333`-row sub-batches to honour SQLite's parameter cap). | M-19a `f62f93f7`, M-19b `2021d7a8`, M-19c `b0ae7781` |
+
+**Per-subagent highlights:**
+
+- **M-19a `f62f93f7`** — Streamed `block_tag_refs` rebuild via `sqlx::query!(...).fetch(executor)` + `try_next` (added `use futures_util::TryStreamExt;`). Both `_impl` and `_split_impl` migrated. 4 new `_m19a` tests inline in the file (200-block correctness check, empty fixture, dedup of repeated `#[ULID]` tokens, deleted-and-conflict skip). Heap savings: ~`content-bytes-per-block × block-count` (typically ~100MB on a 100K-block vault) → one row's content at a time.
+- **M-19b `2021d7a8`** — Dual-`HashMap` diff replaced with a sort-merge stream walk. `DESIRED_AGENDA_SQL` gained an integer `prio` column (`property:* = 0`, `tag:* = 1`, `column:due_date = 2`, `column:scheduled_date = 3`) plus `ORDER BY date ASC, block_id ASC, prio ASC` so the "first-source-wins" dedup property survives the sort-merge. Adjacent-duplicate dedup hooked into a `pull_desired!` macro to avoid a subtle bug where the `Greater` arm advanced only `current` and left a stale desired row that looked like a duplicate on the next iteration. `STREAM_BATCH = 333` row pending-deletes/inserts buffer. 5 new `_m19b` tests. Heap savings: two `O(N)` HashMaps → `O(batch_size)` Vec buffers.
+- **M-19c `b0ae7781`** — `compute_projection_entries` (whole-vault Vec builder) refactored to `project_block_into` (per-block append into a caller-owned buffer). New `project_and_write_chunked` helper drives the chunk-flush loop and is shared by both rebuild paths. New `flush_projection_chunk` splits each chunk into `REBUILD_CHUNK = 333`-row sub-batches for the multi-row INSERT. Atomicity preserved (DELETE up-front + chunked INSERTs all in one `pool.begin().await?` envelope; partial-flush failures roll back via `Transaction` Drop guard). 4 new `_m19c` tests including the chunk-boundary correctness check at exactly `CHUNK_SIZE × 2 + 5` projections. Heap savings: `O(repeating_blocks × horizon)` Vec → `O(CHUNK_SIZE)` buffer.
+
+**Process notes:**
+
+- **3 parallel build subagents.** All three touch disjoint files (`block_tag_refs.rs`, `agenda.rs`, `projected_agenda.rs`) and write their tests INLINE in their own file's `#[cfg(test)] mod tests { … }` block — `cache/tests.rs` was deliberately off-limits to avoid merge contention. Wall-clock parallelism saved roughly two-thirds of sequential time.
+- **Two orchestrator-level cleanups after the merge.** Cargo clippy surfaced 7 new warnings the parallel subagents introduced (5 `cast_possible_wrap` / `cast_possible_truncation` in test code, 2 `deref which would be done by auto-deref` on `&mut **tx` patterns). All 7 fixed in a single orchestrator pass: cast warnings replaced with `i64::try_from(...).expect(...)` / `usize::try_from(...).expect(...)`; deref warnings collapsed to `tx` directly. Cargo fmt also collapsed a handful of multi-line argument lists into single-line calls (orchestrator `cargo fmt --all` round). After both cleanups, prek runs all 35 hooks PASS.
+- **Pre-existing `.sqlx/` drift cleared.** The session 591 commit `3de0f8f` (M-81 production-path tests with `M81P_CC` / `M81PN_CC` SQL literals) had not run `cargo sqlx prepare`, leaving 5 untracked cache files. M-19a's prepare run regenerated them; orchestrator commits them alongside this session's work as a `chore` follow-up tied into the same feat commit (`pub use` not literally `chore` — see commit message).
+- **No Tauri command surface changes** — bindings.ts not regenerated. Cache rebuild paths are internal to the materializer.
+
+**Files touched (this session's batch):**
+
+- **Backend production (3):** `src-tauri/src/cache/block_tag_refs.rs`, `src-tauri/src/cache/agenda.rs`, `src-tauri/src/cache/projected_agenda.rs`. Each gained tests inline (4 / 5 / 4 = **13 new `_m19*` tests**).
+- **Backend sqlx cache:** 7 new query files (2 from new test fixtures: `query-0a31...` and `query-01377bfa...`; 5 are pre-existing session-591 drift now committed).
+- **Docs (this session):** `REVIEW-LATER.md` (M-19 detail block deleted; summary line + previously-resolved counter bumped). `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (after one cargo-fmt + cargo-clippy autofix round to clean up parallel-subagent drift).
+
+- Backend full nextest: **3354 / 3354** (3 skipped). 13 new `_m19*` tests added on top of the session-591 baseline of 3339 (+15 net is 13 new + 2 from sibling-subagent additions M-19a counted earlier).
+- Backend: cargo fmt clean, cargo clippy clean (the 7 new warnings introduced by the parallel subagents fixed in the orchestrator pass; the 15 pre-existing clippy errors on main HEAD `85b0a3c` in `cache/tests.rs` / `recovery/tests.rs` / `spaces/tests.rs` / `mcp/tools_*` test code remain unchanged — out of scope for M-19).
+- Frontend full vitest: 8993 / 8993 (no frontend changes).
+- TypeScript / biome: clean.
+- Cargo deny / cargo machete: clean.
+- Cargo sqlx prepare: clean (.sqlx/ cache: 7 new entries, 0 deleted).
+
+**Commit plan:** feat commit for code (M-19a + M-19b + M-19c + orchestrator cleanups + pre-existing sqlx-cache drift commit), then docs commit for SESSION-LOG.md. Not pushed.
+
+---
+
 ## Session 591 — 3-subagent batch: decisions cluster (M-34 + M-81 + M-85) (2026-05-01)
 
 **Three user-approved architectural decisions executed end-to-end.** The user answered the outstanding Architectural-Stability questions on M-34 (pairing QR design), M-81 (cascade conflict-copy semantics), and M-85 (MCP list-tag/property-def pagination), the decisions were recorded inline under a `**Decision (user, session 591):**` bullet on each REVIEW-LATER entry (mirroring the pattern PERF-19/20/23 use for defer decisions), and three build subagents closed the items in parallel — with an orchestrator-level follow-up closing the production gap M-81's subagent flagged. All three items deleted from REVIEW-LATER; open count 18 → 15.
