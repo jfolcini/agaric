@@ -15,6 +15,7 @@ import { formatDate, getTodayString } from '@/lib/date-utils'
 import { logger } from '../lib/logger'
 import type { BlockRow, PageResponse, ProjectedAgendaEntry, ResolvedBlock } from '../lib/tauri'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../lib/tauri'
+import { useSpaceStore } from '../stores/space'
 import { useBlockPropertyEvents } from './useBlockPropertyEvents'
 
 // ── ULID reference extraction (B-53) ──────────────────────────────────
@@ -96,12 +97,16 @@ export function buildTitleMap(resolved: ResolvedBlock[], fallback: string): Map<
  * Thin wrapper around `listBlocks` that encodes the agenda-specific
  * calling convention: `property:` collapses to a null source, and the
  * optional `cursor` arg is only included when defined.
+ *
+ * FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. Callers thread
+ * `currentSpaceId` (or `''` pre-bootstrap) so agenda views are space-scoped.
  */
 function listBlocksForAgenda(
   date: string,
   sourceFilter: string | null,
   cursor: string | undefined,
   limit: number,
+  spaceId: string,
 ): Promise<PageResponse<BlockRow>> {
   const effectiveSource = sourceFilter === 'property:' ? null : sourceFilter
   return listBlocks({
@@ -109,6 +114,7 @@ function listBlocksForAgenda(
     ...(effectiveSource != null && { agendaSource: effectiveSource }),
     ...(cursor != null && { cursor }),
     limit,
+    spaceId,
   })
 }
 
@@ -157,6 +163,7 @@ export function useDuePanelData({
   sourceFilter,
 }: UseDuePanelDataOptions): UseDuePanelDataReturn {
   const { t } = useTranslation()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const { invalidationKey } = useBlockPropertyEvents()
   const [blocks, setBlocks] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -192,7 +199,11 @@ export function useDuePanelData({
 
     async function fetchOverdue() {
       try {
-        const resp = await queryByProperty({ key: 'due_date', limit: 500 })
+        const resp = await queryByProperty({
+          key: 'due_date',
+          limit: 500,
+          spaceId: currentSpaceId,
+        })
         if (stale) return
 
         const overdue = resp.items.filter(
@@ -224,7 +235,7 @@ export function useDuePanelData({
     return () => {
       stale = true
     }
-  }, [isToday, date, invalidationKey])
+  }, [isToday, date, invalidationKey, currentSpaceId])
 
   // Fetch upcoming blocks (deadline approaching within warningDays)
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — refetch on property change (B-50/F-39)
@@ -237,7 +248,11 @@ export function useDuePanelData({
 
     async function fetchUpcoming() {
       try {
-        const resp = await queryByProperty({ key: 'due_date', limit: 500 })
+        const resp = await queryByProperty({
+          key: 'due_date',
+          limit: 500,
+          spaceId: currentSpaceId,
+        })
         if (stale) return
 
         // Filter: due_date is between tomorrow and today + warningDays
@@ -284,14 +299,17 @@ export function useDuePanelData({
     return () => {
       stale = true
     }
-  }, [isToday, warningDays, invalidationKey])
+  }, [isToday, warningDays, invalidationKey, currentSpaceId])
 
   // Fetch blocks due on the given date
   const fetchBlocks = useCallback(
     async (cursor?: string) => {
       setLoading(true)
       try {
-        const resp = await listBlocksForAgenda(date, sourceFilter, cursor, 50)
+        // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
+        // fallback is intentional pre-bootstrap behaviour: empty string
+        // forces a no-match SQL filter rather than a runtime null deref.
+        const resp = await listBlocksForAgenda(date, sourceFilter, cursor, 50, currentSpaceId ?? '')
         const nonEmptyItems = applySourceFilter(resp.items, date, sourceFilter)
         const newBlocks = cursor ? [...blocks, ...nonEmptyItems] : nonEmptyItems
         setBlocks(newBlocks)
@@ -322,7 +340,7 @@ export function useDuePanelData({
         setLoading(false)
       }
     },
-    [date, blocks, totalCount, pageTitles, sourceFilter],
+    [date, blocks, totalCount, pageTitles, sourceFilter, currentSpaceId],
   )
 
   // Fetch on mount and when date or sourceFilter changes
@@ -338,7 +356,14 @@ export function useDuePanelData({
     let cancelled = false
     const doFetch = async () => {
       try {
-        const resp = await listBlocksForAgenda(date, sourceFilter, undefined, 50)
+        // FEAT-3 Phase 4 — `?? ''` is the pre-bootstrap no-match fallback.
+        const resp = await listBlocksForAgenda(
+          date,
+          sourceFilter,
+          undefined,
+          50,
+          currentSpaceId ?? '',
+        )
         if (cancelled) return
         const nonEmptyItems = applySourceFilter(resp.items, date, sourceFilter)
         setBlocks(nonEmptyItems)
@@ -363,12 +388,14 @@ export function useDuePanelData({
     return () => {
       cancelled = true
     }
-  }, [date, sourceFilter, invalidationKey])
+  }, [date, sourceFilter, invalidationKey, currentSpaceId])
 
-  // Fetch projected agenda entries with caching (UX-114)
+  // Fetch projected agenda entries with caching (UX-114).
+  // FEAT-3 Phase 4 — cache key includes the active space so two
+  // spaces don't share entries.
   useEffect(() => {
     let stale = false
-    const cacheKey = date
+    const cacheKey = `${currentSpaceId ?? '__null__'}|${date}`
 
     // When invalidationKey changes, clear the projected cache so we refetch fresh data
     if (invalidationKey > 0) {
@@ -393,7 +420,12 @@ export function useDuePanelData({
     // needs today's projected entries, which fit comfortably under the
     // limit, so this hook is first-page-only by design — `next_cursor`
     // and `has_more` are intentionally ignored.
-    listProjectedAgenda({ startDate: date, endDate: date, limit: 20 })
+    listProjectedAgenda({
+      startDate: date,
+      endDate: date,
+      limit: 20,
+      spaceId: currentSpaceId,
+    })
       .then((response) => {
         if (!stale) {
           const entries = response.items
@@ -432,7 +464,7 @@ export function useDuePanelData({
     return () => {
       stale = true
     }
-  }, [date, t, invalidationKey])
+  }, [date, t, invalidationKey, currentSpaceId])
 
   const loadMore = useCallback(() => {
     if (nextCursor) {

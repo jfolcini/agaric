@@ -120,7 +120,7 @@ fn bench_resolve_tag_no_inheritance(c: &mut Criterion) {
         group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.to_async(&rt)
-                .iter(|| eval_tag_query(&pool, &expr, &page, false));
+                .iter(|| eval_tag_query(&pool, &expr, &page, false, None));
         });
     }
     group.finish();
@@ -147,7 +147,7 @@ fn bench_resolve_tag_with_inheritance(c: &mut Criterion) {
         group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.to_async(&rt)
-                .iter(|| eval_tag_query(&pool, &expr, &page, true));
+                .iter(|| eval_tag_query(&pool, &expr, &page, true, None));
         });
     }
     group.finish();
@@ -174,7 +174,7 @@ fn bench_inheritance_varying_depth(c: &mut Criterion) {
         group.throughput(Throughput::Elements(1_000));
         group.bench_with_input(BenchmarkId::new("depth", depth), &depth, |b, _| {
             b.to_async(&rt)
-                .iter(|| eval_tag_query(&pool, &expr, &page, true));
+                .iter(|| eval_tag_query(&pool, &expr, &page, true, None));
         });
     }
     group.finish();
@@ -203,7 +203,7 @@ fn bench_inheritance_wide_tree(c: &mut Criterion) {
         group.throughput(Throughput::Elements(total as u64));
         group.bench_with_input(BenchmarkId::new("width", width), &width, |b, _| {
             b.to_async(&rt)
-                .iter(|| eval_tag_query(&pool, &expr, &page, true));
+                .iter(|| eval_tag_query(&pool, &expr, &page, true, None));
         });
     }
     group.finish();
@@ -229,7 +229,7 @@ fn bench_eval_tag_query_paginated(c: &mut Criterion) {
     group.throughput(Throughput::Elements(10_000));
     group.bench_function("10k_inherited_page50", |b| {
         b.to_async(&rt)
-            .iter(|| eval_tag_query(&pool, &expr, &page, true));
+            .iter(|| eval_tag_query(&pool, &expr, &page, true, None));
     });
 
     group.finish();
@@ -283,7 +283,7 @@ fn bench_cte_vs_materialized(c: &mut Criterion) {
         // Materialized (uses precomputed block_tag_inherited table)
         group.bench_with_input(BenchmarkId::new("materialized", count), &count, |b, _| {
             b.to_async(&rt)
-                .iter(|| eval_tag_query(&pool, &expr, &page, true));
+                .iter(|| eval_tag_query(&pool, &expr, &page, true, None));
         });
 
         // CTE (old recursive approach — does NOT need the materialized table)

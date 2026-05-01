@@ -40,6 +40,7 @@ import {
   restoreBlock,
 } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
+import { useSpaceStore } from '../stores/space'
 import { TrashBatchPurgeDialog } from './TrashView/TrashBatchPurgeDialog'
 import { TrashBatchRestoreDialog } from './TrashView/TrashBatchRestoreDialog'
 import { TrashEmptyDialog } from './TrashView/TrashEmptyDialog'
@@ -51,10 +52,21 @@ export function TrashView(): React.ReactElement {
   const { t } = useTranslation()
   const callbacks = useRichContentCallbacks()
   const onTagClick = useTagClickHandler()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const queryFn = useCallback(
     (cursor?: string) =>
-      listBlocks({ showDeleted: true, ...(cursor != null && { cursor }), limit: 50 }),
-    [],
+      // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The trash
+      // surface is scoped to the active space (each space owns its
+      // own deletion set). The `?? ''` fallback is intentional
+      // pre-bootstrap behaviour: empty string forces a no-match SQL
+      // filter rather than a runtime null deref.
+      listBlocks({
+        showDeleted: true,
+        ...(cursor != null && { cursor }),
+        limit: 50,
+        spaceId: currentSpaceId ?? '',
+      }),
+    [currentSpaceId],
   )
   const {
     items: blocks,

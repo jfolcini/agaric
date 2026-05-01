@@ -29,7 +29,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip()
+    const blob = await exportGraphAsZip(null)
 
     expect(blob).toBeInstanceOf(Blob)
     expect(blob.size).toBeGreaterThan(0)
@@ -60,7 +60,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip()
+    const blob = await exportGraphAsZip(null)
     expect(blob).toBeInstanceOf(Blob)
 
     // Inspect the ZIP — a regression that collapsed duplicates into a single
@@ -83,7 +83,7 @@ describe('exportGraphAsZip', () => {
       has_more: false,
     })
 
-    const blob = await exportGraphAsZip()
+    const blob = await exportGraphAsZip(null)
     expect(blob).toBeInstanceOf(Blob)
   })
 })

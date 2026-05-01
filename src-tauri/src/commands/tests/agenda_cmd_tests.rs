@@ -32,6 +32,7 @@ async fn list_blocks_with_agenda_source_filter_due_date() {
         .unwrap();
 
     // Filter by column:due_date — should only return AG_DUE1
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -44,7 +45,7 @@ async fn list_blocks_with_agenda_source_filter_due_date() {
         Some("column:due_date".into()),
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -81,6 +82,7 @@ async fn list_blocks_with_agenda_source_filter_scheduled_date() {
         .unwrap();
 
     // Filter by column:scheduled_date — should only return AG_SCHED2
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -93,7 +95,7 @@ async fn list_blocks_with_agenda_source_filter_scheduled_date() {
         Some("column:scheduled_date".into()),
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -142,6 +144,7 @@ async fn list_blocks_with_agenda_no_source_returns_all() {
         .unwrap();
 
     // No source filter — should return all 3 items (backward compatible)
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -154,7 +157,7 @@ async fn list_blocks_with_agenda_no_source_returns_all() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -207,6 +210,7 @@ async fn list_blocks_with_date_range_returns_blocks_in_range() {
         .unwrap();
 
     // Query full January range — should return BLK1 and BLK2, not BLK3
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -219,7 +223,7 @@ async fn list_blocks_with_date_range_returns_blocks_in_range() {
         Some("column:due_date".into()),
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -261,6 +265,7 @@ async fn list_blocks_with_date_range_single_day() {
         .unwrap();
 
     // Range of a single day
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -273,7 +278,7 @@ async fn list_blocks_with_date_range_single_day() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -290,6 +295,7 @@ async fn list_blocks_with_date_range_validates_format() {
     let (pool, _dir) = test_pool().await;
 
     // Invalid date format
+    assign_all_to_test_space(&pool).await;
     let result = list_blocks_inner(
         &pool,
         None,
@@ -302,7 +308,7 @@ async fn list_blocks_with_date_range_validates_format() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
 
@@ -324,7 +330,7 @@ async fn list_blocks_with_date_range_validates_format() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
 
@@ -346,7 +352,7 @@ async fn list_blocks_with_date_range_validates_format() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
 
@@ -379,6 +385,7 @@ async fn list_blocks_date_range_with_source_filter() {
         .unwrap();
 
     // Range with source filter — only due_date source
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -391,7 +398,7 @@ async fn list_blocks_date_range_with_source_filter() {
         Some("column:due_date".into()),
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -419,7 +426,7 @@ async fn list_blocks_date_range_with_source_filter() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -438,7 +445,7 @@ async fn list_blocks_date_range_with_source_filter() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_empty_dates_returns_empty() {
     let (pool, _dir) = test_pool().await;
-    let result = count_agenda_batch_inner(&pool, vec![]).await.unwrap();
+    let result = count_agenda_batch_inner(&pool, vec![], None).await.unwrap();
     assert!(
         result.is_empty(),
         "empty dates input should return empty map"
@@ -484,6 +491,7 @@ async fn count_agenda_batch_returns_correct_counts() {
             "2025-06-02".into(),
             "2025-06-03".into(),
         ],
+        None,
     )
     .await
     .unwrap();
@@ -535,7 +543,7 @@ async fn count_agenda_batch_excludes_deleted_blocks() {
         .await
         .unwrap();
 
-    let result = count_agenda_batch_inner(&pool, vec!["2025-07-01".into()])
+    let result = count_agenda_batch_inner(&pool, vec!["2025-07-01".into()], None)
         .await
         .unwrap();
 
@@ -553,7 +561,7 @@ async fn count_agenda_batch_excludes_deleted_blocks() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_by_source_empty_dates_returns_empty() {
     let (pool, _dir) = test_pool().await;
-    let result = count_agenda_batch_by_source_inner(&pool, vec![])
+    let result = count_agenda_batch_by_source_inner(&pool, vec![], None)
         .await
         .unwrap();
     assert!(
@@ -592,7 +600,7 @@ async fn count_agenda_batch_by_source_returns_correct_breakdown() {
         .await
         .unwrap();
 
-    let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-09-01".into()])
+    let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-09-01".into()], None)
         .await
         .unwrap();
 
@@ -641,7 +649,7 @@ async fn count_agenda_batch_by_source_excludes_deleted() {
         .await
         .unwrap();
 
-    let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-09-02".into()])
+    let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-09-02".into()], None)
         .await
         .unwrap();
 
@@ -676,7 +684,7 @@ async fn count_agenda_batch_by_source_single_date_returns_expected_counts() {
         .await
         .unwrap();
 
-    let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-10-01".into()])
+    let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-10-01".into()], None)
         .await
         .unwrap();
 
@@ -711,6 +719,7 @@ async fn count_agenda_batch_by_source_missing_dates_not_in_result() {
             "2025-11-02".into(),
             "2025-11-03".into(),
         ],
+        None,
     )
     .await
     .unwrap();
@@ -765,7 +774,7 @@ async fn count_agenda_batch_by_source_large_input_beyond_sqlite_param_limit() {
     dates.push("2025-12-25".into());
     dates.push("2025-12-26".into());
 
-    let result = count_agenda_batch_by_source_inner(&pool, dates)
+    let result = count_agenda_batch_by_source_inner(&pool, dates, None)
         .await
         .unwrap();
 
@@ -848,7 +857,7 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
     let end = (today + chrono::Duration::days(28))
         .format("%Y-%m-%d")
         .to_string();
-    let entries = list_projected_agenda_inner(&pool, start, end, None, None)
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None, None)
         .await
         .unwrap()
         .items;
@@ -970,7 +979,7 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
     let end = (today + chrono::Duration::days(60))
         .format("%Y-%m-%d")
         .to_string();
-    let entries = list_projected_agenda_inner(&pool, start, end, None, None)
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None, None)
         .await
         .unwrap()
         .items;
@@ -1092,11 +1101,18 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
     let pinned_today = chrono::NaiveDate::from_ymd_opt(2026, 4, 6).unwrap();
     let range_start = chrono::NaiveDate::from_ymd_opt(2026, 4, 7).unwrap();
     let range_end = chrono::NaiveDate::from_ymd_opt(2026, 4, 30).unwrap();
-    let entries =
-        list_projected_agenda_on_the_fly(&pool, range_start, range_end, 200, pinned_today, None)
-            .await
-            .unwrap()
-            .items;
+    let entries = list_projected_agenda_on_the_fly(
+        &pool,
+        range_start,
+        range_end,
+        200,
+        pinned_today,
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .items;
 
     assert_eq!(
         entries.len(),
@@ -1152,11 +1168,17 @@ async fn projected_agenda_skips_done_blocks() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    let entries =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-05-04".into(), None, None)
-            .await
-            .unwrap()
-            .items;
+    let entries = list_projected_agenda_inner(
+        &pool,
+        "2026-04-07".into(),
+        "2026-05-04".into(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .items;
 
     // The original block is DONE, but set_todo_state may have created a new
     // TODO sibling with repeat. Filter to only entries from our block.
@@ -1174,18 +1196,30 @@ async fn projected_agenda_validates_date_range() {
     let (pool, _dir) = test_pool().await;
 
     // Invalid date format
-    let result =
-        list_projected_agenda_inner(&pool, "not-a-date".into(), "2026-04-30".into(), None, None)
-            .await;
+    let result = list_projected_agenda_inner(
+        &pool,
+        "not-a-date".into(),
+        "2026-04-30".into(),
+        None,
+        None,
+        None,
+    )
+    .await;
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "should reject invalid date"
     );
 
     // Start > end
-    let result =
-        list_projected_agenda_inner(&pool, "2026-05-01".into(), "2026-04-01".into(), None, None)
-            .await;
+    let result = list_projected_agenda_inner(
+        &pool,
+        "2026-05-01".into(),
+        "2026-04-01".into(),
+        None,
+        None,
+        None,
+    )
+    .await;
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "should reject start > end"
@@ -1196,11 +1230,17 @@ async fn projected_agenda_validates_date_range() {
 async fn projected_agenda_empty_when_no_repeating_blocks() {
     let (pool, _dir) = test_pool().await;
 
-    let entries =
-        list_projected_agenda_inner(&pool, "2026-04-01".into(), "2026-04-30".into(), None, None)
-            .await
-            .unwrap()
-            .items;
+    let entries = list_projected_agenda_inner(
+        &pool,
+        "2026-04-01".into(),
+        "2026-04-30".into(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .items;
 
     assert!(
         entries.is_empty(),
@@ -1261,7 +1301,7 @@ async fn projected_agenda_dot_plus_mode_projects_from_today() {
         .format("%Y-%m-%d")
         .to_string();
 
-    let entries = list_projected_agenda_inner(&pool, start, end, None, None)
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None, None)
         .await
         .unwrap()
         .items;
@@ -1335,7 +1375,7 @@ async fn projected_agenda_plus_plus_mode_catches_up_to_today() {
         .format("%Y-%m-%d")
         .to_string();
 
-    let entries = list_projected_agenda_inner(&pool, start, end, None, None)
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None, None)
         .await
         .unwrap()
         .items;
@@ -1408,11 +1448,17 @@ async fn projected_agenda_both_date_columns_produce_separate_entries() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    let entries =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-20".into(), None, None)
-            .await
-            .unwrap()
-            .items;
+    let entries = list_projected_agenda_inner(
+        &pool,
+        "2026-04-07".into(),
+        "2026-04-20".into(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .items;
 
     // Should have entries from both due_date and scheduled_date
     let due_entries: Vec<_> = entries.iter().filter(|e| e.source == "due_date").collect();
@@ -1506,11 +1552,17 @@ async fn projected_agenda_exhausted_count_returns_zero() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    let entries =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-30".into(), None, None)
-            .await
-            .unwrap()
-            .items;
+    let entries = list_projected_agenda_inner(
+        &pool,
+        "2026-04-07".into(),
+        "2026-04-30".into(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .items;
 
     let from_block: Vec<_> = entries.iter().filter(|e| e.block.id == resp.id).collect();
     assert!(
@@ -1572,6 +1624,7 @@ async fn projected_agenda_limit_caps_results() {
         "2027-04-06".into(),
         None,
         Some(5),
+        None,
     )
     .await
     .unwrap()
@@ -1669,11 +1722,17 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
     // Cache path: the materializer has populated `projected_agenda_cache`
     // for the repeating task.  With the template filter, nothing should
     // come back.
-    let entries =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-14".into(), None, None)
-            .await
-            .unwrap()
-            .items;
+    let entries = list_projected_agenda_inner(
+        &pool,
+        "2026-04-07".into(),
+        "2026-04-14".into(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .items;
     assert_eq!(
         entries.len(),
         0,
@@ -1686,11 +1745,17 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         .execute(&pool)
         .await
         .unwrap();
-    let entries_on_fly =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-14".into(), None, None)
-            .await
-            .unwrap()
-            .items;
+    let entries_on_fly = list_projected_agenda_inner(
+        &pool,
+        "2026-04-07".into(),
+        "2026-04-14".into(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .items;
     assert_eq!(
         entries_on_fly.len(),
         0,
@@ -1771,11 +1836,17 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
     mat.flush_background().await.unwrap();
 
     // Sanity: with the template property set, the task is filtered out.
-    let filtered =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-10".into(), None, None)
-            .await
-            .unwrap()
-            .items;
+    let filtered = list_projected_agenda_inner(
+        &pool,
+        "2026-04-07".into(),
+        "2026-04-10".into(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .items;
     assert_eq!(filtered.len(), 0);
 
     // Remove the template property and the task must re-enter the
@@ -1790,11 +1861,17 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         .await
         .unwrap();
 
-    let entries =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-10".into(), None, None)
-            .await
-            .unwrap()
-            .items;
+    let entries = list_projected_agenda_inner(
+        &pool,
+        "2026-04-07".into(),
+        "2026-04-10".into(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .items;
     assert_eq!(
         entries.len(),
         4,
@@ -1843,7 +1920,9 @@ async fn list_undated_tasks_returns_tasks_without_dates() {
         .await
         .unwrap();
 
-    let resp = list_undated_tasks_inner(&pool, None, None).await.unwrap();
+    let resp = list_undated_tasks_inner(&pool, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(
         resp.items.len(),
         1,
@@ -1886,7 +1965,9 @@ async fn list_undated_tasks_excludes_dated_tasks() {
         .await
         .unwrap();
 
-    let resp = list_undated_tasks_inner(&pool, None, None).await.unwrap();
+    let resp = list_undated_tasks_inner(&pool, None, None, None)
+        .await
+        .unwrap();
     assert!(
         resp.items.is_empty(),
         "tasks with due_date should be excluded"
@@ -1918,7 +1999,9 @@ async fn list_undated_tasks_excludes_deleted() {
         .await
         .unwrap();
 
-    let resp = list_undated_tasks_inner(&pool, None, None).await.unwrap();
+    let resp = list_undated_tasks_inner(&pool, None, None, None)
+        .await
+        .unwrap();
     assert!(resp.items.is_empty(), "deleted blocks should be excluded");
 
     mat.shutdown();
@@ -1948,7 +2031,7 @@ async fn list_undated_tasks_pagination() {
     }
 
     // Page 1: limit = 2
-    let page1 = list_undated_tasks_inner(&pool, None, Some(2))
+    let page1 = list_undated_tasks_inner(&pool, None, Some(2), None)
         .await
         .unwrap();
     assert_eq!(page1.items.len(), 2, "first page should contain 2 items");
@@ -1962,7 +2045,7 @@ async fn list_undated_tasks_pagination() {
     );
 
     // Page 2: use cursor
-    let page2 = list_undated_tasks_inner(&pool, page1.next_cursor, Some(2))
+    let page2 = list_undated_tasks_inner(&pool, page1.next_cursor, Some(2), None)
         .await
         .unwrap();
     assert_eq!(
@@ -2063,7 +2146,7 @@ async fn list_projected_agenda_returns_next_cursor_when_capped_m25() {
         .format("%Y-%m-%d")
         .to_string();
 
-    let page1 = list_projected_agenda_inner(&pool, start, end, None, Some(5))
+    let page1 = list_projected_agenda_inner(&pool, start, end, None, Some(5), None)
         .await
         .unwrap();
     assert_eq!(
@@ -2109,10 +2192,16 @@ async fn list_projected_agenda_walks_pages_correctly_m25() {
     loop {
         iterations += 1;
         assert!(iterations < 10, "pagination must terminate (loop guard)");
-        let page =
-            list_projected_agenda_inner(&pool, start.clone(), end.clone(), cursor, Some(page_size))
-                .await
-                .unwrap();
+        let page = list_projected_agenda_inner(
+            &pool,
+            start.clone(),
+            end.clone(),
+            cursor,
+            Some(page_size),
+            None,
+        )
+        .await
+        .unwrap();
         for entry in &page.items {
             walked.push((
                 entry.projected_date.clone(),
@@ -2160,4 +2249,564 @@ async fn list_projected_agenda_walks_pages_correctly_m25() {
     }
 
     mat.shutdown();
+}
+
+// ======================================================================
+// FEAT-3p4 — space scoping for list_undated_tasks_inner
+// ======================================================================
+//
+// These tests cover the `Some(space_id)` branch of
+// `list_undated_tasks_inner` so the shared
+// `(?N IS NULL OR COALESCE(b.page_id, b.id) IN (...))` filter is
+// verified end-to-end. They use raw `sqlx` inserts (via `insert_block`
+// + `assign_to_space`) instead of `create_block_inner` because the
+// command-layer path runs through `set_property_in_tx` which is
+// already exercised by other tests; here we want to pin the read-side
+// SQL filter only.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_undated_tasks_returns_only_current_space_blocks_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    // Two undated tasks: one in space A, one in space B.
+    insert_block(&pool, "U_A1", "content", "task A1", None, None).await;
+    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+        .bind("U_A1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assign_to_space(&pool, "U_A1", TEST_SPACE_ID).await;
+
+    insert_block(&pool, "U_B1", "content", "task B1", None, None).await;
+    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+        .bind("U_B1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assign_to_space(&pool, "U_B1", TEST_SPACE_B_ID).await;
+
+    let resp = list_undated_tasks_inner(&pool, None, None, Some(TEST_SPACE_ID.into()))
+        .await
+        .unwrap();
+    let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["U_A1"],
+        "space A filter must return exactly the A task; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_undated_tasks_with_none_space_id_returns_all_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "U_A1", "content", "task A1", None, None).await;
+    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+        .bind("U_A1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assign_to_space(&pool, "U_A1", TEST_SPACE_ID).await;
+
+    insert_block(&pool, "U_B1", "content", "task B1", None, None).await;
+    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+        .bind("U_B1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assign_to_space(&pool, "U_B1", TEST_SPACE_B_ID).await;
+
+    let resp = list_undated_tasks_inner(&pool, None, None, None)
+        .await
+        .unwrap();
+    let ids: std::collections::HashSet<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+    assert!(
+        ids.contains("U_A1"),
+        "None must surface A task; got {ids:?}"
+    );
+    assert!(
+        ids.contains("U_B1"),
+        "None must surface B task; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_undated_tasks_with_nonexistent_space_id_returns_empty_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    insert_block(&pool, "U_A1", "content", "task A1", None, None).await;
+    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+        .bind("U_A1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assign_to_space(&pool, "U_A1", TEST_SPACE_ID).await;
+
+    let resp = list_undated_tasks_inner(&pool, None, None, Some("DOES_NOT_EXIST".into()))
+        .await
+        .unwrap();
+    assert!(
+        resp.items.is_empty(),
+        "nonexistent space must return zero rows, not error; got {} items",
+        resp.items.len()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_undated_tasks_disjointness_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    // Multiple tasks per space to make the disjointness assertion meaningful.
+    for id in &["U_A1", "U_A2", "U_A3"] {
+        insert_block(&pool, id, "content", "a task", None, None).await;
+        sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assign_to_space(&pool, id, TEST_SPACE_ID).await;
+    }
+    for id in &["U_B1", "U_B2"] {
+        insert_block(&pool, id, "content", "b task", None, None).await;
+        sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assign_to_space(&pool, id, TEST_SPACE_B_ID).await;
+    }
+
+    let a = list_undated_tasks_inner(&pool, None, None, Some(TEST_SPACE_ID.into()))
+        .await
+        .unwrap();
+    let b = list_undated_tasks_inner(&pool, None, None, Some(TEST_SPACE_B_ID.into()))
+        .await
+        .unwrap();
+    let a_ids: std::collections::HashSet<&str> = a.items.iter().map(|b| b.id.as_str()).collect();
+    let b_ids: std::collections::HashSet<&str> = b.items.iter().map(|b| b.id.as_str()).collect();
+    assert!(
+        a_ids.is_disjoint(&b_ids),
+        "list_undated_tasks queries scoped to disjoint spaces must \
+         return disjoint result sets; intersection = {:?}",
+        a_ids.intersection(&b_ids).collect::<Vec<_>>()
+    );
+    assert_eq!(a_ids.len(), 3, "expected 3 A tasks; got {a_ids:?}");
+    assert_eq!(b_ids.len(), 2, "expected 2 B tasks; got {b_ids:?}");
+}
+
+// ======================================================================
+// FEAT-3p4 — space scoping for list_projected_agenda_inner
+// ======================================================================
+//
+// These tests pin the on-the-fly fallback's space filter (the cache
+// branch is exercised separately via the templates / template-page
+// regression tests above). The on-the-fly path is reached when the
+// cache is empty AND no cursor is supplied — using raw `sqlx` inserts
+// for the repeating block guarantees the materializer hasn't populated
+// `projected_agenda_cache`.
+
+/// Insert a content block with a `repeat = daily` property and the
+/// given due_date, so `list_projected_agenda_inner`'s on-the-fly
+/// fallback picks it up. Caller is responsible for seeding the space
+/// block + the `space` ref property if the test needs space scoping.
+async fn seed_repeating_task(pool: &sqlx::SqlitePool, id: &str, due_date: &str) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, due_date, todo_state) \
+         VALUES (?, 'content', 'repeating task', ?, 'TODO')",
+    )
+    .bind(id)
+    .bind(due_date)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'repeat', 'daily')",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_projected_agenda_returns_only_current_space_blocks_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    seed_repeating_task(&pool, "P_A1", "2026-04-07").await;
+    assign_to_space(&pool, "P_A1", TEST_SPACE_ID).await;
+
+    seed_repeating_task(&pool, "P_B1", "2026-04-07").await;
+    assign_to_space(&pool, "P_B1", TEST_SPACE_B_ID).await;
+
+    let resp = list_projected_agenda_inner(
+        &pool,
+        "2026-04-07".into(),
+        "2026-04-09".into(),
+        None,
+        Some(50),
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::HashSet<&str> =
+        resp.items.iter().map(|e| e.block.id.as_str()).collect();
+    assert!(
+        ids.contains("P_A1"),
+        "space A scope must include P_A1; got {ids:?}"
+    );
+    assert!(
+        !ids.contains("P_B1"),
+        "space A scope must exclude P_B1; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_projected_agenda_with_none_space_id_returns_all_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    seed_repeating_task(&pool, "P_A1", "2026-04-07").await;
+    assign_to_space(&pool, "P_A1", TEST_SPACE_ID).await;
+
+    seed_repeating_task(&pool, "P_B1", "2026-04-07").await;
+    assign_to_space(&pool, "P_B1", TEST_SPACE_B_ID).await;
+
+    let resp = list_projected_agenda_inner(
+        &pool,
+        "2026-04-07".into(),
+        "2026-04-09".into(),
+        None,
+        Some(50),
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::HashSet<&str> =
+        resp.items.iter().map(|e| e.block.id.as_str()).collect();
+    assert!(ids.contains("P_A1"), "None must include P_A1; got {ids:?}");
+    assert!(ids.contains("P_B1"), "None must include P_B1; got {ids:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_projected_agenda_with_nonexistent_space_id_returns_empty_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    seed_repeating_task(&pool, "P_A1", "2026-04-07").await;
+    assign_to_space(&pool, "P_A1", TEST_SPACE_ID).await;
+
+    let resp = list_projected_agenda_inner(
+        &pool,
+        "2026-04-07".into(),
+        "2026-04-09".into(),
+        None,
+        Some(50),
+        Some("DOES_NOT_EXIST".into()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        resp.items.is_empty(),
+        "nonexistent space must produce zero projections; got {} items",
+        resp.items.len()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_projected_agenda_disjointness_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    for id in &["P_A1", "P_A2"] {
+        seed_repeating_task(&pool, id, "2026-04-07").await;
+        assign_to_space(&pool, id, TEST_SPACE_ID).await;
+    }
+    seed_repeating_task(&pool, "P_B1", "2026-04-07").await;
+    assign_to_space(&pool, "P_B1", TEST_SPACE_B_ID).await;
+
+    let a = list_projected_agenda_inner(
+        &pool,
+        "2026-04-07".into(),
+        "2026-04-08".into(),
+        None,
+        Some(50),
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let b = list_projected_agenda_inner(
+        &pool,
+        "2026-04-07".into(),
+        "2026-04-08".into(),
+        None,
+        Some(50),
+        Some(TEST_SPACE_B_ID.into()),
+    )
+    .await
+    .unwrap();
+    let a_ids: std::collections::HashSet<&str> =
+        a.items.iter().map(|e| e.block.id.as_str()).collect();
+    let b_ids: std::collections::HashSet<&str> =
+        b.items.iter().map(|e| e.block.id.as_str()).collect();
+    assert!(
+        a_ids.is_disjoint(&b_ids),
+        "projected agenda queries scoped to disjoint spaces must \
+         return disjoint block sets; intersection = {:?}",
+        a_ids.intersection(&b_ids).collect::<Vec<_>>()
+    );
+    assert!(a_ids.contains("P_A1"));
+    assert!(a_ids.contains("P_A2"));
+    assert!(b_ids.contains("P_B1"));
+}
+
+// ======================================================================
+// FEAT-3p4 — space scoping for count_agenda_batch_inner
+// ======================================================================
+//
+// Seed agenda_cache rows for blocks in two distinct spaces. The
+// count map must reflect only the in-space blocks when scoped, and
+// both when unscoped.
+
+/// Seed an `agenda_cache` row for `block_id` on `date`.
+async fn insert_agenda_cache_row(pool: &sqlx::SqlitePool, date: &str, block_id: &str) {
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+        .bind(date)
+        .bind(block_id)
+        .bind("property:due_date")
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_agenda_batch_returns_only_current_space_blocks_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    // Two blocks on the same date, one per space.
+    insert_block(&pool, "CAB_A1", "content", "a", None, None).await;
+    assign_to_space(&pool, "CAB_A1", TEST_SPACE_ID).await;
+    insert_agenda_cache_row(&pool, "2025-08-01", "CAB_A1").await;
+
+    insert_block(&pool, "CAB_B1", "content", "b", None, None).await;
+    assign_to_space(&pool, "CAB_B1", TEST_SPACE_B_ID).await;
+    insert_agenda_cache_row(&pool, "2025-08-01", "CAB_B1").await;
+
+    let result =
+        count_agenda_batch_inner(&pool, vec!["2025-08-01".into()], Some(TEST_SPACE_ID.into()))
+            .await
+            .unwrap();
+    assert_eq!(
+        result.get("2025-08-01"),
+        Some(&1),
+        "space A scope must count exactly 1 block on 2025-08-01; got {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_agenda_batch_with_none_space_id_returns_all_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "CAB_A1", "content", "a", None, None).await;
+    assign_to_space(&pool, "CAB_A1", TEST_SPACE_ID).await;
+    insert_agenda_cache_row(&pool, "2025-08-01", "CAB_A1").await;
+
+    insert_block(&pool, "CAB_B1", "content", "b", None, None).await;
+    assign_to_space(&pool, "CAB_B1", TEST_SPACE_B_ID).await;
+    insert_agenda_cache_row(&pool, "2025-08-01", "CAB_B1").await;
+
+    let result = count_agenda_batch_inner(&pool, vec!["2025-08-01".into()], None)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.get("2025-08-01"),
+        Some(&2),
+        "None must count both blocks on 2025-08-01; got {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_agenda_batch_with_nonexistent_space_id_returns_empty_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    insert_block(&pool, "CAB_A1", "content", "a", None, None).await;
+    assign_to_space(&pool, "CAB_A1", TEST_SPACE_ID).await;
+    insert_agenda_cache_row(&pool, "2025-08-01", "CAB_A1").await;
+
+    let result = count_agenda_batch_inner(
+        &pool,
+        vec!["2025-08-01".into()],
+        Some("01NONEXISTENT0000000000000".into()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        result.is_empty(),
+        "nonexistent space must return empty map; got {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_agenda_batch_disjointness_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    for id in &["CAB_A1", "CAB_A2", "CAB_A3"] {
+        insert_block(&pool, id, "content", "a", None, None).await;
+        assign_to_space(&pool, id, TEST_SPACE_ID).await;
+        insert_agenda_cache_row(&pool, "2025-08-02", id).await;
+    }
+    for id in &["CAB_B1", "CAB_B2"] {
+        insert_block(&pool, id, "content", "b", None, None).await;
+        assign_to_space(&pool, id, TEST_SPACE_B_ID).await;
+        insert_agenda_cache_row(&pool, "2025-08-02", id).await;
+    }
+
+    let dates = vec!["2025-08-02".into()];
+    let a = count_agenda_batch_inner(&pool, dates.clone(), Some(TEST_SPACE_ID.into()))
+        .await
+        .unwrap();
+    let b = count_agenda_batch_inner(&pool, dates.clone(), Some(TEST_SPACE_B_ID.into()))
+        .await
+        .unwrap();
+    let unscoped = count_agenda_batch_inner(&pool, dates, None).await.unwrap();
+    assert_eq!(a.get("2025-08-02"), Some(&3));
+    assert_eq!(b.get("2025-08-02"), Some(&2));
+    assert_eq!(unscoped.get("2025-08-02"), Some(&5));
+}
+
+// ======================================================================
+// FEAT-3p4 — space scoping for count_agenda_batch_by_source_inner
+// ======================================================================
+
+/// Seed an `agenda_cache` row for `block_id` on `date` with an explicit
+/// `source` (e.g. "property:scheduled_date").
+async fn insert_agenda_cache_row_with_source(
+    pool: &sqlx::SqlitePool,
+    date: &str,
+    block_id: &str,
+    source: &str,
+) {
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+        .bind(date)
+        .bind(block_id)
+        .bind(source)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_agenda_batch_by_source_returns_only_current_space_blocks_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "CAS_A1", "content", "a", None, None).await;
+    assign_to_space(&pool, "CAS_A1", TEST_SPACE_ID).await;
+    insert_agenda_cache_row_with_source(&pool, "2025-09-15", "CAS_A1", "property:due_date").await;
+
+    insert_block(&pool, "CAS_B1", "content", "b", None, None).await;
+    assign_to_space(&pool, "CAS_B1", TEST_SPACE_B_ID).await;
+    insert_agenda_cache_row_with_source(&pool, "2025-09-15", "CAS_B1", "property:due_date").await;
+
+    let result = count_agenda_batch_by_source_inner(
+        &pool,
+        vec!["2025-09-15".into()],
+        Some(TEST_SPACE_ID.into()),
+    )
+    .await
+    .unwrap();
+    let inner = result
+        .get("2025-09-15")
+        .expect("date must be present in scoped result");
+    assert_eq!(inner.get("property:due_date"), Some(&1));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_agenda_batch_by_source_with_none_space_id_returns_all_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(&pool, "CAS_A1", "content", "a", None, None).await;
+    assign_to_space(&pool, "CAS_A1", TEST_SPACE_ID).await;
+    insert_agenda_cache_row_with_source(&pool, "2025-09-15", "CAS_A1", "property:due_date").await;
+
+    insert_block(&pool, "CAS_B1", "content", "b", None, None).await;
+    assign_to_space(&pool, "CAS_B1", TEST_SPACE_B_ID).await;
+    insert_agenda_cache_row_with_source(&pool, "2025-09-15", "CAS_B1", "property:due_date").await;
+
+    let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-09-15".into()], None)
+        .await
+        .unwrap();
+    let inner = result.get("2025-09-15").unwrap();
+    assert_eq!(inner.get("property:due_date"), Some(&2));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_agenda_batch_by_source_with_nonexistent_space_id_returns_empty_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    insert_block(&pool, "CAS_A1", "content", "a", None, None).await;
+    assign_to_space(&pool, "CAS_A1", TEST_SPACE_ID).await;
+    insert_agenda_cache_row_with_source(&pool, "2025-09-15", "CAS_A1", "property:due_date").await;
+
+    let result = count_agenda_batch_by_source_inner(
+        &pool,
+        vec!["2025-09-15".into()],
+        Some("01NONEXISTENT0000000000000".into()),
+    )
+    .await
+    .unwrap();
+    assert!(result.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_agenda_batch_by_source_disjointness_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    for id in &["CAS_A1", "CAS_A2", "CAS_A3"] {
+        insert_block(&pool, id, "content", "a", None, None).await;
+        assign_to_space(&pool, id, TEST_SPACE_ID).await;
+        insert_agenda_cache_row_with_source(&pool, "2025-09-16", id, "property:due_date").await;
+    }
+    for id in &["CAS_B1", "CAS_B2"] {
+        insert_block(&pool, id, "content", "b", None, None).await;
+        assign_to_space(&pool, id, TEST_SPACE_B_ID).await;
+        insert_agenda_cache_row_with_source(&pool, "2025-09-16", id, "property:due_date").await;
+    }
+
+    let dates = vec!["2025-09-16".into()];
+    let a = count_agenda_batch_by_source_inner(&pool, dates.clone(), Some(TEST_SPACE_ID.into()))
+        .await
+        .unwrap();
+    let b = count_agenda_batch_by_source_inner(&pool, dates.clone(), Some(TEST_SPACE_B_ID.into()))
+        .await
+        .unwrap();
+    let unscoped = count_agenda_batch_by_source_inner(&pool, dates, None)
+        .await
+        .unwrap();
+    assert_eq!(a["2025-09-16"]["property:due_date"], 3);
+    assert_eq!(b["2025-09-16"]["property:due_date"], 2);
+    assert_eq!(unscoped["2025-09-16"]["property:due_date"], 5);
 }

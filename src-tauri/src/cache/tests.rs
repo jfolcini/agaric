@@ -1186,7 +1186,7 @@ async fn block_links_skips_conflict_source_and_does_not_appear_in_backlinks() {
         after: None,
         limit: 50,
     };
-    let resp = list_backlinks(&pool, "01HZ00000000000000000000AB", &page)
+    let resp = list_backlinks(&pool, "01HZ00000000000000000000AB", &page, None)
         .await
         .unwrap();
     assert!(
@@ -2758,6 +2758,7 @@ async fn projected_agenda_cache_oracle_matches_on_the_fly() {
         end.clone(),
         None,
         Some(500),
+        None,
     )
     .await
     .unwrap();

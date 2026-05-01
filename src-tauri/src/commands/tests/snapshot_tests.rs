@@ -59,6 +59,7 @@ async fn snapshot_list_blocks_response() {
     insert_block(&pool, "SNAP_BLK1", "content", "first", None, Some(1)).await;
     insert_block(&pool, "SNAP_BLK2", "page", "second", None, Some(2)).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -71,7 +72,7 @@ async fn snapshot_list_blocks_response() {
         None,
         None,
         Some(10),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();

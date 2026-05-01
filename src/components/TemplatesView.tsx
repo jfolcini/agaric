@@ -38,6 +38,7 @@ interface TemplateItem {
 
 export function TemplatesView(): React.ReactElement {
   const { t } = useTranslation()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [templates, setTemplates] = useState<TemplateItem[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -48,11 +49,12 @@ export function TemplatesView(): React.ReactElement {
   const loadTemplates = useCallback(async () => {
     setLoading(true)
     try {
-      const pages = await loadTemplatePagesWithPreview()
+      const pages = await loadTemplatePagesWithPreview(currentSpaceId)
       const journalResp = await queryByProperty({
         key: 'journal-template',
         valueText: 'true',
         limit: 10,
+        spaceId: currentSpaceId,
       })
       const journalIds = new Set(journalResp.items.map((b) => b.id))
       setTemplates(
@@ -67,7 +69,7 @@ export function TemplatesView(): React.ReactElement {
       reportIpcError('TemplatesView', 'slash.templateLoadFailed', err, t)
     }
     setLoading(false)
-  }, [t])
+  }, [t, currentSpaceId])
 
   useEffect(() => {
     loadTemplates()

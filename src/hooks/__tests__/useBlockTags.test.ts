@@ -95,7 +95,10 @@ describe('useBlockTags allTags', () => {
       agenda: null,
       cursor: null,
       limit: null,
-      spaceId: null,
+      // FEAT-3 Phase 4 — `useBlockTags` threads `currentSpaceId` (null
+      // in this test fixture, no space seeded) and the wrapper falls
+      // back to `''` per the pre-bootstrap convention.
+      spaceId: '',
     })
   })
 

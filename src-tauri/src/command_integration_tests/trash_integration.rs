@@ -379,6 +379,7 @@ async fn list_trash_with_cascade_deleted_page_returns_only_root_and_restores_des
     assert_eq!(count, 3, "cascade must delete page + 2 children");
 
     // Trash view returns only the root page.
+    assign_all_to_test_space(&pool).await;
     let trash = list_blocks_inner(
         &pool,
         None,
@@ -391,7 +392,7 @@ async fn list_trash_with_cascade_deleted_page_returns_only_root_and_restores_des
         None,
         None,
         Some(10),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -446,7 +447,7 @@ async fn list_trash_with_cascade_deleted_page_returns_only_root_and_restores_des
         None,
         None,
         Some(10),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -489,6 +490,7 @@ async fn purge_root_from_trash_removes_descendants() {
         .unwrap();
 
     // Roots-only list returns just the root.
+    assign_all_to_test_space(&pool).await;
     let trash = list_blocks_inner(
         &pool,
         None,
@@ -501,7 +503,7 @@ async fn purge_root_from_trash_removes_descendants() {
         None,
         None,
         Some(10),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();

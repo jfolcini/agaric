@@ -48,6 +48,7 @@ pub async fn eval_backlink_query_grouped(
     filters: Option<Vec<BacklinkFilter>>,
     sort: Option<BacklinkSort>,
     page: &PageRequest,
+    space_id: Option<&str>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
     // 1. Get base backlink set.
     //    Exclude `source_id == block_id` self-links at the SQL layer so
@@ -57,14 +58,27 @@ pub async fn eval_backlink_query_grouped(
     //    grouped view we drop them so the user does not see "their own
     //    page" listed as a source group, mirroring the convention used by
     //    `eval_unlinked_references`.
+    //
+    //    FEAT-3p4 — the trailing `(?2 IS NULL OR COALESCE(...))` clause
+    //    mirrors `crate::space_filter_clause!`. Resolves the source
+    //    block to its owning page via `COALESCE(b.page_id, b.id)` and
+    //    intersects against `block_properties(key = 'space').value_ref`
+    //    when `space_id` is `Some`. Kept inline (not via the macro)
+    //    because this is dynamic SQL (`sqlx::query_scalar`). Applied
+    //    at the base-set step so `total_count` / `filtered_count`
+    //    reflect the post-space-filter universe.
     let base_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
         "SELECT bl.source_id FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id = ?1 \
            AND bl.source_id != ?1 \
-           AND b.deleted_at IS NULL AND b.is_conflict = 0",
+           AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?2))",
     )
     .bind(block_id)
+    .bind(space_id)
     .fetch_all(pool)
     .await?
     .into_iter()
@@ -324,6 +338,7 @@ pub async fn eval_unlinked_references(
     filters: Option<Vec<BacklinkFilter>>,
     sort: Option<BacklinkSort>,
     page: &PageRequest,
+    space_id: Option<&str>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
     // 1. Fetch the page title.
     //    Filter `is_conflict = 0` so a conflict-copy page id never resolves to a
@@ -398,6 +413,16 @@ pub async fn eval_unlinked_references(
     //    truncation drops it, `skip_while` consumes everything and pagination
     //    terminates early or loops). See I-Search-13 for the cursor-side
     //    cross-reference.
+    //
+    //    FEAT-3p4 — the `(?3 IS NULL OR COALESCE(...))` clause mirrors
+    //    `crate::space_filter_clause!`. Resolves the FTS-matched block
+    //    to its owning page via `COALESCE(b.page_id, b.id)` and
+    //    intersects against `block_properties(key = 'space').value_ref`
+    //    when `space_id` is `Some`. Kept inline (not via the macro)
+    //    because the FTS SQL is built with `format!` to splice in
+    //    `FTS_ROW_CAP + 1`, which precludes the `query_scalar!` macro.
+    //    Applied at the base-set step so `total_count` /
+    //    `filtered_count` reflect the post-space-filter universe.
     const FTS_ROW_CAP: usize = 10_000;
     let fts_sql = format!(
         "SELECT fb.block_id \
@@ -409,6 +434,9 @@ pub async fn eval_unlinked_references(
            AND fb.block_id NOT IN ( \
              SELECT source_id FROM block_links WHERE target_id = ?2 \
            ) \
+           AND (?3 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?3)) \
          ORDER BY fb.block_id \
          LIMIT {}",
         FTS_ROW_CAP + 1
@@ -416,6 +444,7 @@ pub async fn eval_unlinked_references(
     let fts_rows: Vec<String> = sqlx::query_scalar::<_, String>(&fts_sql)
         .bind(&fts_query)
         .bind(page_id)
+        .bind(space_id)
         .fetch_all(pool)
         .await?;
 

@@ -123,12 +123,13 @@ export function useJournalBlockCreation({
               useBlockStore.setState({ focusedBlockId: ids[0] ?? null })
             }
           } else {
-            const { template: journalTemplate, duplicateWarning } = await loadJournalTemplate()
+            const { template: journalTemplate, duplicateWarning } =
+              await loadJournalTemplate(currentSpaceId)
             if (duplicateWarning) {
               toast.warning(duplicateWarning)
             }
             if (journalTemplate) {
-              const ids = await insertTemplateBlocks(journalTemplate.id, pageId, {
+              const ids = await insertTemplateBlocks(journalTemplate.id, pageId, currentSpaceId, {
                 pageTitle: dateStr,
               })
               await pageBlockRegistry.get(pageId)?.getState().load()

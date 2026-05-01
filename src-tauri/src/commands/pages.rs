@@ -497,8 +497,20 @@ pub async fn import_markdown_inner(
 /// Returns edges where both source and target are non-deleted page blocks.
 /// Block-level links (where source is a content block) are rolled up to
 /// their parent page.
+///
+/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
+/// edges where **both** the source page (`COALESCE(sb.parent_id,
+/// bl.source_id)`) and the target page (`bl.target_id`) carry
+/// `space = ?space_id`. This is the policy enforcement point for
+/// "no live links between spaces, ever" in the graph view: an edge
+/// crossing space boundaries must not surface in either space's
+/// graph. `None` keeps the pre-FEAT-3 cross-space behaviour for
+/// callers that have not migrated.
 #[instrument(skip(pool), err)]
-pub async fn list_page_links_inner(pool: &SqlitePool) -> Result<Vec<PageLink>, AppError> {
+pub async fn list_page_links_inner(
+    pool: &SqlitePool,
+    space_id: Option<String>,
+) -> Result<Vec<PageLink>, AppError> {
     // For each block_link, find the parent page of the source block.
     // The target in block_links is already a page (since [[links]] point to pages).
     // The source might be a content block under a page — we need the page ancestor.
@@ -508,6 +520,16 @@ pub async fn list_page_links_inner(pool: &SqlitePool) -> Result<Vec<PageLink>, A
     //
     // P-15 optimized: JOIN tb first (smaller page-only set via idx_blocks_page_alive),
     // move LEFT JOIN conditions inline so pb.id IS NOT NULL replaces the WHERE filter.
+    //
+    // FEAT-3p4 — the trailing `(?1 IS NULL OR ... AND ...)` clause
+    // mirrors `crate::space_filter_clause!` applied to BOTH endpoints
+    // of the edge. The shape collapses to a single conjunction over
+    // the two `COALESCE(...) IN (...)` checks so the filter holds
+    // only when both source-page and target-page belong to the
+    // requested space. Kept inline (not via the macro) because this
+    // is dynamic SQL (`sqlx::query_as`) and we need two filtered
+    // sub-queries against `block_properties` rather than the single
+    // form most other call-sites use.
     let links = sqlx::query_as::<_, PageLink>(
         "SELECT
             COALESCE(sb.parent_id, bl.source_id) AS source_id,
@@ -527,8 +549,19 @@ pub async fn list_page_links_inner(pool: &SqlitePool) -> Result<Vec<PageLink>, A
              AND pb.is_conflict = 0
          WHERE COALESCE(sb.parent_id, bl.source_id) != bl.target_id
              AND (sb.parent_id IS NULL OR pb.id IS NOT NULL)
+             AND (?1 IS NULL OR (
+                 COALESCE(sb.parent_id, bl.source_id) IN (
+                     SELECT bp_src.block_id FROM block_properties bp_src
+                     WHERE bp_src.key = 'space' AND bp_src.value_ref = ?1
+                 )
+                 AND bl.target_id IN (
+                     SELECT bp_tgt.block_id FROM block_properties bp_tgt
+                     WHERE bp_tgt.key = 'space' AND bp_tgt.value_ref = ?1
+                 )
+             ))
          GROUP BY 1, 2",
     )
+    .bind(space_id.as_deref())
     .fetch_all(pool)
     .await?;
 
@@ -856,8 +889,11 @@ pub async fn import_markdown(
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
-pub async fn list_page_links(pool: State<'_, ReadPool>) -> Result<Vec<PageLink>, AppError> {
-    list_page_links_inner(&pool.0)
+pub async fn list_page_links(
+    pool: State<'_, ReadPool>,
+    space_id: Option<String>,
+) -> Result<Vec<PageLink>, AppError> {
+    list_page_links_inner(&pool.0, space_id)
         .await
         .map_err(sanitize_internal_error)
 }

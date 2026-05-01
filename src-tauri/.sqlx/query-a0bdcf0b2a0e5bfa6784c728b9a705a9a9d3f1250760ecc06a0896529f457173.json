@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT ac.date, COUNT(*) AS \"cnt!: i64\"\n         FROM agenda_cache ac\n         JOIN blocks b ON b.id = ac.block_id\n         WHERE ac.date IN (SELECT value FROM json_each(?1))\n           AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR COALESCE(b.page_id, b.id) IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?2))\n         GROUP BY ac.date",
+  "describe": {
+    "columns": [
+      {
+        "name": "date",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "cnt!: i64",
+        "ordinal": 1,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "a0bdcf0b2a0e5bfa6784c728b9a705a9a9d3f1250760ecc06a0896529f457173"
+}

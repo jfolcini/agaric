@@ -1086,7 +1086,7 @@ async fn list_page_links_returns_edges_between_pages() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool).await.unwrap();
+    let links = list_page_links_inner(&pool, None).await.unwrap();
 
     // Should have at least one link: p1 → p2 (rolled up from b1 → p2)
     let p1_to_p2 = links
@@ -1157,7 +1157,7 @@ async fn list_page_links_excludes_deleted_pages() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    let links = list_page_links_inner(&pool).await.unwrap();
+    let links = list_page_links_inner(&pool, None).await.unwrap();
     let has_deleted = links.iter().any(|l| l.target_id == p2.id);
     assert!(!has_deleted, "should not include links to deleted pages");
 
@@ -1204,7 +1204,7 @@ async fn list_page_links_excludes_self_links() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool).await.unwrap();
+    let links = list_page_links_inner(&pool, None).await.unwrap();
     let self_link = links.iter().find(|l| l.source_id == l.target_id);
     assert!(
         self_link.is_none(),
@@ -1217,7 +1217,7 @@ async fn list_page_links_excludes_self_links() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_links_empty_when_no_links() {
     let (pool, _dir) = test_pool().await;
-    let links = list_page_links_inner(&pool).await.unwrap();
+    let links = list_page_links_inner(&pool, None).await.unwrap();
     assert!(links.is_empty(), "should return empty when no links exist");
 }
 
@@ -1293,7 +1293,7 @@ async fn list_page_links_deduplicates_multiple_content_links() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool).await.unwrap();
+    let links = list_page_links_inner(&pool, None).await.unwrap();
 
     // Both b1 and b2 roll up to p1 → p2; GROUP BY should collapse to 1 edge
     let p1_to_p2_count = links
@@ -1367,7 +1367,7 @@ async fn list_page_links_single_link_has_ref_count_one() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool).await.unwrap();
+    let links = list_page_links_inner(&pool, None).await.unwrap();
     let edge = links
         .iter()
         .find(|l| l.source_id == p1.id && l.target_id == p2.id)
@@ -1434,7 +1434,7 @@ async fn list_page_links_excludes_links_with_deleted_parent_page() {
         .unwrap();
 
     // Verify link exists before deletion
-    let links_before = list_page_links_inner(&pool).await.unwrap();
+    let links_before = list_page_links_inner(&pool, None).await.unwrap();
     let has_link = links_before
         .iter()
         .any(|l| l.source_id == p1.id && l.target_id == p2.id);
@@ -1446,7 +1446,7 @@ async fn list_page_links_excludes_links_with_deleted_parent_page() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    let links_after = list_page_links_inner(&pool).await.unwrap();
+    let links_after = list_page_links_inner(&pool, None).await.unwrap();
     let has_deleted_source = links_after.iter().any(|l| l.source_id == p1.id);
     assert!(
         !has_deleted_source,
@@ -1624,7 +1624,7 @@ async fn list_page_links_optimized_matches_oracle() {
     }
 
     // -- Compare optimized vs oracle --
-    let mut optimized = list_page_links_inner(&pool).await.unwrap();
+    let mut optimized = list_page_links_inner(&pool, None).await.unwrap();
     optimized.sort();
 
     let oracle = list_page_links_oracle(&pool).await;

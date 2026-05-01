@@ -137,11 +137,15 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         let cursor: string | undefined
         let hasMore = true
         while (hasMore) {
+          // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
+          // fallback is intentional pre-bootstrap behaviour: empty
+          // string forces a no-match SQL filter rather than a runtime
+          // null deref.
           const pagesResp = await listBlocks({
             blockType: 'page',
             limit: 1000,
             cursor,
-            spaceId: spaceId ?? undefined,
+            spaceId: spaceId ?? '',
           })
           for (const p of pagesResp.items) {
             const title = p.content ?? 'Untitled'

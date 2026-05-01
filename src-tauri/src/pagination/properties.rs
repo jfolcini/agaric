@@ -63,6 +63,7 @@ pub async fn query_by_property(
     value_date: Option<&str>,
     operator: &str,
     page: &PageRequest,
+    space_id: Option<&str>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     // L-23: reject conflicting value filters at the boundary so both
     // routing branches behave identically wrt the value-filter contract.
@@ -89,6 +90,13 @@ pub async fn query_by_property(
         _ => "=", // default to equality
     };
 
+    // FEAT-3p4 — both branches gain the `(?N IS NULL OR
+    // COALESCE(b.page_id, b.id) IN (...))` space-filter clause. The
+    // literal mirrors `crate::space_filter_clause!` — kept inline
+    // because both branches are dynamic SQL (the `{sql_op}`
+    // interpolation precludes the `query_as!` macro). The `b.` alias is
+    // introduced on the reserved-column branch so the same clause shape
+    // applies to both queries.
     let rows = if is_reserved_property_key(key) {
         // Reserved keys live as columns on the blocks table, not in block_properties.
         // L-29: explicit Validation on a missed-update fall-through instead of
@@ -107,17 +115,20 @@ pub async fn query_by_property(
             }
         };
         let sql = format!(
-            "SELECT id, block_type, content, parent_id, position, \
-                    deleted_at, is_conflict, conflict_type, \
-                    todo_state, priority, due_date, scheduled_date, \
-                    page_id \
-             FROM blocks \
-             WHERE {col} IS NOT NULL \
-               AND deleted_at IS NULL \
-               AND is_conflict = 0 \
-               AND (?1 IS NULL OR {col} {sql_op} ?1) \
-               AND (?2 IS NULL OR id > ?3) \
-             ORDER BY id ASC \
+            "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
+                    b.deleted_at, b.is_conflict, b.conflict_type, \
+                    b.todo_state, b.priority, b.due_date, b.scheduled_date, \
+                    b.page_id \
+             FROM blocks b \
+             WHERE b.{col} IS NOT NULL \
+               AND b.deleted_at IS NULL \
+               AND b.is_conflict = 0 \
+               AND (?1 IS NULL OR b.{col} {sql_op} ?1) \
+               AND (?2 IS NULL OR b.id > ?3) \
+               AND (?5 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                    SELECT bp.block_id FROM block_properties bp \
+                    WHERE bp.key = 'space' AND bp.value_ref = ?5)) \
+             ORDER BY b.id ASC \
              LIMIT ?4"
         );
         // For date columns, use value_date; for text columns, use value_text.
@@ -130,6 +141,7 @@ pub async fn query_by_property(
             .bind(cursor_flag)
             .bind(cursor_id)
             .bind(fetch_limit)
+            .bind(space_id)
             .fetch_all(pool)
             .await?
     } else {
@@ -147,6 +159,9 @@ pub async fn query_by_property(
                AND (?2 IS NULL OR bp.value_text {sql_op} ?2) \
                AND (?3 IS NULL OR bp.value_date {sql_op} ?3) \
                AND (?4 IS NULL OR b.id > ?5) \
+               AND (?7 IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                    SELECT bp_sp.block_id FROM block_properties bp_sp \
+                    WHERE bp_sp.key = 'space' AND bp_sp.value_ref = ?7)) \
              ORDER BY b.id ASC \
              LIMIT ?6"
         );
@@ -157,6 +172,7 @@ pub async fn query_by_property(
             .bind(cursor_flag) // ?4
             .bind(cursor_id) // ?5
             .bind(fetch_limit) // ?6
+            .bind(space_id) // ?7
             .fetch_all(pool)
             .await?
     };

@@ -796,5 +796,10 @@ pub async fn get_block_history(
 // Tests
 // ---------------------------------------------------------------------------
 
+// Public under `#[cfg(test)]` so the sibling integration test modules
+// (`crate::integration_tests`, `crate::command_integration_tests::*`,
+// `crate::mcp::tools_ro::tests`) can reach into `tests::common` for the
+// shared helpers (`assign_all_to_test_space`, `TEST_SPACE_ID`, etc.).
+// Stays gated by `#[cfg(test)]` so production builds never see it.
 #[cfg(test)]
-mod tests;
+pub mod tests;

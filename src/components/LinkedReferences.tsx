@@ -24,6 +24,7 @@ import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '../lib/tauri'
 import { listBacklinksGrouped, listPropertyKeys, listTagsByPrefix } from '../lib/tauri'
+import { useSpaceStore } from '../stores/space'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
 import { BacklinkGroupRenderer } from './BacklinkGroupRenderer'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
@@ -44,6 +45,7 @@ export function LinkedReferences({
 }: LinkedReferencesProps): React.ReactElement | null {
   const { t } = useTranslation()
   const { invalidationKey } = useBlockPropertyEvents()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [groups, setGroups] = useState<BacklinkGroup[]>([])
   const [loading, setLoading] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -84,6 +86,7 @@ export function LinkedReferences({
           ...(sort != null && { sort }),
           limit: 50,
           ...(cursor != null && { cursor }),
+          spaceId: currentSpaceId,
         })
         if (cursor) {
           // Append: merge groups with same page_id
@@ -135,7 +138,16 @@ export function LinkedReferences({
         setLoading(false)
       }
     },
-    [pageId, filters, sort, sourcePageIncluded, sourcePageExcluded, t, invalidationKey],
+    [
+      pageId,
+      filters,
+      sort,
+      sourcePageIncluded,
+      sourcePageExcluded,
+      t,
+      invalidationKey,
+      currentSpaceId,
+    ],
   )
 
   // Load property keys on mount

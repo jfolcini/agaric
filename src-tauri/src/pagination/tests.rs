@@ -1539,7 +1539,7 @@ async fn list_by_tag_returns_only_tagged_blocks() {
     insert_tag_association(&pool, "BLOCK003", "TAG00001").await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_by_tag(&pool, "TAG00001", &page).await.unwrap();
+    let resp = list_by_tag(&pool, "TAG00001", &page, None).await.unwrap();
 
     assert_eq!(resp.items.len(), 2, "only tagged blocks must be returned");
     assert_eq!(resp.items[0].id, "BLOCK001", "first tagged block");
@@ -1557,9 +1557,14 @@ async fn list_by_tag_paginates_with_cursor() {
         insert_tag_association(&pool, &id, "TAG00001").await;
     }
 
-    let r1 = list_by_tag(&pool, "TAG00001", &PageRequest::new(None, Some(2)).unwrap())
-        .await
-        .unwrap();
+    let r1 = list_by_tag(
+        &pool,
+        "TAG00001",
+        &PageRequest::new(None, Some(2)).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(r1.items.len(), 2, "tag page 1 should return 2 items");
     assert!(r1.has_more, "tag page 1 should indicate more");
     assert_eq!(r1.items[0].id, "BLOCK001", "tag page 1 first item");
@@ -1569,6 +1574,7 @@ async fn list_by_tag_paginates_with_cursor() {
         &pool,
         "TAG00001",
         &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -1581,6 +1587,7 @@ async fn list_by_tag_paginates_with_cursor() {
         &pool,
         "TAG00001",
         &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -1606,7 +1613,7 @@ async fn list_by_tag_excludes_soft_deleted_blocks() {
     soft_delete_block(&pool, "BLOCK002", FIXED_DELETED_AT).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_by_tag(&pool, "TAG00001", &page).await.unwrap();
+    let resp = list_by_tag(&pool, "TAG00001", &page, None).await.unwrap();
 
     assert_eq!(resp.items.len(), 1, "soft-deleted block must be excluded");
     assert_eq!(
@@ -1622,7 +1629,9 @@ async fn list_by_tag_returns_empty_for_unknown_tag() {
     insert_block(&pool, "BLOCK001", "content", "untagged", None, None).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_by_tag(&pool, "NONEXISTENT_TAG", &page).await.unwrap();
+    let resp = list_by_tag(&pool, "NONEXISTENT_TAG", &page, None)
+        .await
+        .unwrap();
 
     assert!(resp.items.is_empty(), "unknown tag must return empty");
     assert!(!resp.has_more, "empty tag result should not indicate more");
@@ -1655,7 +1664,7 @@ async fn query_by_property_returns_matching_blocks() {
     insert_property(&pool, "BLOCK002", "todo", "DONE").await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = query_by_property(&pool, "todo", None, None, "eq", &page)
+    let resp = query_by_property(&pool, "todo", None, None, "eq", &page, None)
         .await
         .unwrap();
 
@@ -1681,7 +1690,7 @@ async fn query_by_property_filters_by_value() {
     insert_property(&pool, "BLOCK002", "todo", "DONE").await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = query_by_property(&pool, "todo", Some("TODO"), None, "eq", &page)
+    let resp = query_by_property(&pool, "todo", Some("TODO"), None, "eq", &page, None)
         .await
         .unwrap();
 
@@ -1706,6 +1715,7 @@ async fn query_by_property_paginates_with_cursor() {
         None,
         "eq",
         &PageRequest::new(None, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -1721,6 +1731,7 @@ async fn query_by_property_paginates_with_cursor() {
         None,
         "eq",
         &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -1736,6 +1747,7 @@ async fn query_by_property_paginates_with_cursor() {
         None,
         "eq",
         &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -1755,7 +1767,7 @@ async fn query_by_property_returns_empty_for_nonexistent_key() {
     insert_block(&pool, "BLOCK001", "content", "no props", None, None).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = query_by_property(&pool, "nonexistent_key", None, None, "eq", &page)
+    let resp = query_by_property(&pool, "nonexistent_key", None, None, "eq", &page, None)
         .await
         .unwrap();
 
@@ -1782,7 +1794,7 @@ async fn query_by_property_excludes_soft_deleted() {
     soft_delete_block(&pool, "BLOCK002", FIXED_DELETED_AT).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = query_by_property(&pool, "todo", None, None, "eq", &page)
+    let resp = query_by_property(&pool, "todo", None, None, "eq", &page, None)
         .await
         .unwrap();
 
@@ -1805,9 +1817,17 @@ async fn query_by_property_rejects_both_value_filters() {
     let page = PageRequest::new(None, Some(10)).unwrap();
 
     // Non-reserved key: AND-of-two-bindings shape used to silently empty.
-    let err = query_by_property(&pool, "todo", Some("TODO"), Some("2025-01-01"), "eq", &page)
-        .await
-        .expect_err("both value filters must be rejected");
+    let err = query_by_property(
+        &pool,
+        "todo",
+        Some("TODO"),
+        Some("2025-01-01"),
+        "eq",
+        &page,
+        None,
+    )
+    .await
+    .expect_err("both value filters must be rejected");
     match err {
         crate::error::AppError::Validation(msg) => {
             assert!(
@@ -1826,6 +1846,7 @@ async fn query_by_property_rejects_both_value_filters() {
         Some("2025-01-01"),
         "eq",
         &page,
+        None,
     )
     .await
     .expect_err("both value filters must be rejected on reserved-key path too");
@@ -1850,7 +1871,9 @@ async fn list_agenda_returns_blocks_for_matching_date() {
 
     let page = PageRequest::new(None, Some(10)).unwrap();
 
-    let resp = list_agenda(&pool, "2025-01-15", None, &page).await.unwrap();
+    let resp = list_agenda(&pool, "2025-01-15", None, &page, None)
+        .await
+        .unwrap();
     assert_eq!(resp.items.len(), 2, "only blocks for Jan 15");
     assert_eq!(
         resp.items[0].id, "BLOCK001",
@@ -1861,7 +1884,9 @@ async fn list_agenda_returns_blocks_for_matching_date() {
         "second agenda block for Jan 15"
     );
 
-    let resp2 = list_agenda(&pool, "2025-01-16", None, &page).await.unwrap();
+    let resp2 = list_agenda(&pool, "2025-01-16", None, &page, None)
+        .await
+        .unwrap();
     assert_eq!(resp2.items.len(), 1, "only blocks for Jan 16");
     assert_eq!(resp2.items[0].id, "BLOCK003", "agenda block for Jan 16");
 }
@@ -1871,7 +1896,9 @@ async fn list_agenda_returns_empty_for_date_with_no_entries() {
     let (pool, _dir) = test_pool().await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_agenda(&pool, "2025-12-31", None, &page).await.unwrap();
+    let resp = list_agenda(&pool, "2025-12-31", None, &page, None)
+        .await
+        .unwrap();
 
     assert!(
         resp.items.is_empty(),
@@ -1895,6 +1922,7 @@ async fn list_agenda_paginates_with_cursor() {
         "2025-01-15",
         None,
         &PageRequest::new(None, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -1908,6 +1936,7 @@ async fn list_agenda_paginates_with_cursor() {
         "2025-01-15",
         None,
         &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -1921,6 +1950,7 @@ async fn list_agenda_paginates_with_cursor() {
         "2025-01-15",
         None,
         &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -1948,7 +1978,9 @@ async fn list_agenda_excludes_soft_deleted() {
     soft_delete_block(&pool, "BLOCK002", FIXED_DELETED_AT).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_agenda(&pool, "2025-01-15", None, &page).await.unwrap();
+    let resp = list_agenda(&pool, "2025-01-15", None, &page, None)
+        .await
+        .unwrap();
 
     assert_eq!(
         resp.items.len(),
@@ -1985,7 +2017,7 @@ async fn list_agenda_range_returns_blocks_in_date_range() {
     }
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_agenda_range(&pool, "2025-01-11", "2025-01-13", None, &page)
+    let resp = list_agenda_range(&pool, "2025-01-11", "2025-01-13", None, &page, None)
         .await
         .unwrap();
 
@@ -2025,6 +2057,7 @@ async fn list_agenda_range_paginates_with_cursor() {
         "2025-02-03",
         None,
         &PageRequest::new(None, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -2039,6 +2072,7 @@ async fn list_agenda_range_paginates_with_cursor() {
         "2025-02-03",
         None,
         &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -2079,6 +2113,7 @@ async fn list_agenda_range_last_page_has_no_cursor() {
         "2025-03-03",
         None,
         &PageRequest::new(None, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -2088,6 +2123,7 @@ async fn list_agenda_range_last_page_has_no_cursor() {
         "2025-03-03",
         None,
         &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -2097,6 +2133,7 @@ async fn list_agenda_range_last_page_has_no_cursor() {
         "2025-03-03",
         None,
         &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -2112,7 +2149,7 @@ async fn list_agenda_range_returns_empty_for_range_with_no_entries() {
     let (pool, _dir) = test_pool().await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_agenda_range(&pool, "2025-06-01", "2025-06-30", None, &page)
+    let resp = list_agenda_range(&pool, "2025-06-01", "2025-06-30", None, &page, None)
         .await
         .unwrap();
 
@@ -2151,7 +2188,7 @@ async fn list_agenda_range_excludes_soft_deleted() {
     soft_delete_block(&pool, "SDBLK002", FIXED_DELETED_AT).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_agenda_range(&pool, "2025-04-10", "2025-04-10", None, &page)
+    let resp = list_agenda_range(&pool, "2025-04-10", "2025-04-10", None, &page, None)
         .await
         .unwrap();
 
@@ -2195,6 +2232,7 @@ async fn list_agenda_range_respects_source_filter() {
         "2025-05-02",
         Some("property:due_date"),
         &page,
+        None,
     )
     .await
     .unwrap();
@@ -2239,7 +2277,7 @@ async fn list_agenda_range_exhaustive_walk_returns_all_items_once() {
     let mut cursor = None;
     loop {
         let page = PageRequest::new(cursor, Some(3)).unwrap();
-        let resp = list_agenda_range(&pool, "2025-06-01", "2025-06-05", None, &page)
+        let resp = list_agenda_range(&pool, "2025-06-01", "2025-06-05", None, &page, None)
             .await
             .unwrap();
         all_ids.extend(resp.items.iter().map(|b| b.id.clone()));
@@ -2301,6 +2339,7 @@ async fn list_agenda_range_cursor_uses_ac_date_not_block_dates_h8() {
         "2025-03-31",
         None,
         &PageRequest::new(None, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -2331,6 +2370,7 @@ async fn list_agenda_range_cursor_uses_ac_date_not_block_dates_h8() {
         "2025-03-31",
         None,
         &PageRequest::new(Some(cursor_str), Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -2479,7 +2519,9 @@ async fn test_list_backlinks_basic() {
     insert_block_link(&pool, "SOURCE02", "TARGET01").await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_backlinks(&pool, "TARGET01", &page).await.unwrap();
+    let resp = list_backlinks(&pool, "TARGET01", &page, None)
+        .await
+        .unwrap();
 
     assert_eq!(resp.items.len(), 2, "only linked blocks must be returned");
     assert_eq!(resp.items[0].id, "SOURCE01", "first backlink source");
@@ -2503,9 +2545,14 @@ async fn test_list_backlinks_pagination() {
     }
 
     // Page 1
-    let r1 = list_backlinks(&pool, "TARGET01", &PageRequest::new(None, Some(2)).unwrap())
-        .await
-        .unwrap();
+    let r1 = list_backlinks(
+        &pool,
+        "TARGET01",
+        &PageRequest::new(None, Some(2)).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(r1.items.len(), 2, "backlinks page 1 should return 2 items");
     assert!(r1.has_more, "backlinks page 1 should indicate more");
     assert_eq!(r1.items[0].id, "SRC00001", "backlinks page 1 first item");
@@ -2516,6 +2563,7 @@ async fn test_list_backlinks_pagination() {
         &pool,
         "TARGET01",
         &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -2529,6 +2577,7 @@ async fn test_list_backlinks_pagination() {
         &pool,
         "TARGET01",
         &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -2561,7 +2610,9 @@ async fn test_list_backlinks_excludes_deleted() {
     soft_delete_block(&pool, "SOURCE02", FIXED_DELETED_AT).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_backlinks(&pool, "TARGET01", &page).await.unwrap();
+    let resp = list_backlinks(&pool, "TARGET01", &page, None)
+        .await
+        .unwrap();
 
     assert_eq!(
         resp.items.len(),
@@ -2615,7 +2666,9 @@ async fn list_agenda_and_backlinks_exclude_in_flight_conflict_blocks() {
     let page = PageRequest::new(None, Some(50)).unwrap();
 
     // list_agenda excludes the in-flight conflict.
-    let agenda = list_agenda(&pool, "2025-03-15", None, &page).await.unwrap();
+    let agenda = list_agenda(&pool, "2025-03-15", None, &page, None)
+        .await
+        .unwrap();
     let ids: Vec<&str> = agenda.items.iter().map(|b| b.id.as_str()).collect();
     assert_eq!(
         ids,
@@ -2624,7 +2677,7 @@ async fn list_agenda_and_backlinks_exclude_in_flight_conflict_blocks() {
     );
 
     // list_agenda_range likewise.
-    let range = list_agenda_range(&pool, "2025-03-01", "2025-03-31", None, &page)
+    let range = list_agenda_range(&pool, "2025-03-01", "2025-03-31", None, &page, None)
         .await
         .unwrap();
     let range_ids: Vec<&str> = range.items.iter().map(|b| b.id.as_str()).collect();
@@ -2645,7 +2698,9 @@ async fn list_agenda_and_backlinks_exclude_in_flight_conflict_blocks() {
         .await
         .unwrap();
 
-    let bl = list_backlinks(&pool, "TARGETXX", &page).await.unwrap();
+    let bl = list_backlinks(&pool, "TARGETXX", &page, None)
+        .await
+        .unwrap();
     let bl_ids: Vec<&str> = bl.items.iter().map(|b| b.id.as_str()).collect();
     assert_eq!(
         bl_ids,
@@ -2661,7 +2716,9 @@ async fn test_list_backlinks_empty() {
     insert_block(&pool, "TARGET01", "page", "target page", None, None).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_backlinks(&pool, "TARGET01", &page).await.unwrap();
+    let resp = list_backlinks(&pool, "TARGET01", &page, None)
+        .await
+        .unwrap();
 
     assert!(
         resp.items.is_empty(),
@@ -3164,7 +3221,7 @@ async fn list_by_tag_excludes_conflict_blocks() {
     set_conflict(&pool, "BLOCK002").await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_by_tag(&pool, "TAG00001", &page).await.unwrap();
+    let resp = list_by_tag(&pool, "TAG00001", &page, None).await.unwrap();
 
     assert_eq!(
         resp.items.len(),

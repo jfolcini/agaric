@@ -9,11 +9,17 @@ use crate::error::AppError;
 /// Uses index `idx_agenda_date(date)`.
 ///
 /// `date` must be in `YYYY-MM-DD` format.
+///
+/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to blocks
+/// whose owning page (`COALESCE(b.page_id, b.id)`) carries `space = ?space_id`.
+/// `None` keeps the pre-FEAT-3 behaviour (no filter). See
+/// [`crate::space_filter_clause`] for the shared SQL fragment definition.
 pub async fn list_agenda(
     pool: &SqlitePool,
     date: &str,
     source: Option<&str>,
     page: &PageRequest,
+    space_id: Option<&str>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
@@ -22,6 +28,11 @@ pub async fn list_agenda(
         None => (None, ""),
     };
 
+    // FEAT-3p4 — ?6 (space_id) drives the shared space-filter clause.
+    // The literal mirrors `crate::space_filter_clause!` — kept inline here
+    // because `sqlx::query_as!` requires a string literal and does not
+    // accept `concat!()`. Mirror any change to the filter SQL across
+    // every inlined copy.
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
@@ -33,6 +44,9 @@ pub async fn list_agenda(
          WHERE ac.date = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0
            AND (?2 IS NULL OR ac.source = ?2)
            AND (?3 IS NULL OR b.id > ?4)
+           AND (?6 IS NULL OR COALESCE(b.page_id, b.id) IN (
+                SELECT bp.block_id FROM block_properties bp
+                WHERE bp.key = 'space' AND bp.value_ref = ?6))
          ORDER BY b.id ASC
          LIMIT ?5"#,
         date,        // ?1
@@ -40,6 +54,7 @@ pub async fn list_agenda(
         cursor_flag, // ?3
         cursor_id,   // ?4
         fetch_limit, // ?5
+        space_id,    // ?6
     )
     .fetch_all(pool)
     .await?;
@@ -68,6 +83,7 @@ pub async fn list_agenda_range(
     end_date: &str,
     source: Option<&str>,
     page: &PageRequest,
+    space_id: Option<&str>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
@@ -83,6 +99,10 @@ pub async fn list_agenda_range(
     // also project `ac.date` — which is what `ORDER BY` keys on — and use
     // it directly to populate the cursor instead of guessing from
     // `b.due_date` / `b.scheduled_date`.
+    //
+    // FEAT-3p4 — ?8 (space_id) drives the shared space-filter clause.
+    // Mirrors `crate::space_filter_clause!` — kept inline because
+    // `sqlx::query!` requires a string literal directly.
     let raw_rows = sqlx::query!(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at, b.is_conflict as "is_conflict: bool",
@@ -94,6 +114,9 @@ pub async fn list_agenda_range(
            AND b.deleted_at IS NULL AND b.is_conflict = 0
            AND (?3 IS NULL OR ac.source = ?3)
            AND (?4 IS NULL OR (ac.date > ?5 OR (ac.date = ?5 AND b.id > ?6)))
+           AND (?8 IS NULL OR COALESCE(b.page_id, b.id) IN (
+                SELECT bp.block_id FROM block_properties bp
+                WHERE bp.key = 'space' AND bp.value_ref = ?8))
          ORDER BY ac.date ASC, b.id ASC
          LIMIT ?7"#,
         start_date,  // ?1
@@ -103,6 +126,7 @@ pub async fn list_agenda_range(
         cursor_date, // ?5
         cursor_id,   // ?6
         fetch_limit, // ?7
+        space_id,    // ?8
     )
     .fetch_all(pool)
     .await?;

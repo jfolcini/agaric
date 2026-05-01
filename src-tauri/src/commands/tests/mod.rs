@@ -1,6 +1,6 @@
 mod agenda_cmd_tests;
 mod block_cmd_tests;
-mod common;
+pub mod common;
 mod compaction_cmd_tests;
 mod edge_case_tests;
 mod gcal_hook_tests;

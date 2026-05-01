@@ -44,18 +44,33 @@ interface PagesResponse {
  * Server-side tag filter paths diverge (no tag / single tag / multi tag), so
  * we centralise the decision here.
  */
-function fetchPages(tagFilterIds: readonly string[]): Promise<PagesResponse> {
+function fetchPages(
+  tagFilterIds: readonly string[],
+  spaceId: string | null,
+): Promise<PagesResponse> {
+  // `listBlocks` requires `spaceId` after FEAT-3 Phase 4. `?? ''` is the
+  // intentional pre-bootstrap fallback: the empty string forces a no-match
+  // SQL filter (returning an empty page) instead of a runtime null deref.
   if (tagFilterIds.length === 0) {
-    return listBlocks({ blockType: 'page', limit: 5000 }) as Promise<PagesResponse>
+    return listBlocks({
+      blockType: 'page',
+      limit: 5000,
+      spaceId: spaceId ?? '',
+    }) as Promise<PagesResponse>
   }
   if (tagFilterIds.length === 1) {
-    return listBlocks({ tagId: tagFilterIds[0], limit: 5000 }) as Promise<PagesResponse>
+    return listBlocks({
+      tagId: tagFilterIds[0],
+      limit: 5000,
+      spaceId: spaceId ?? '',
+    }) as Promise<PagesResponse>
   }
   return queryByTags({
     tagIds: [...tagFilterIds],
     prefixes: [],
     mode: 'or',
     limit: 5000,
+    spaceId,
   }) as Promise<PagesResponse>
 }
 
@@ -104,12 +119,19 @@ function countBacklinks(
  *
  * The only server-side filter this applies is tag membership; every other
  * dimension is handled client-side via `applyGraphFilters`.
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, every IPC request is restricted
+ * to the active space. Pass `null` to keep the pre-FEAT-3 cross-space
+ * behaviour (used by tests that don't seed a space).
  */
-export async function fetchGraphData(tagFilterIds: readonly string[]): Promise<GraphFetchResult> {
+export async function fetchGraphData(
+  tagFilterIds: readonly string[],
+  spaceId: string | null,
+): Promise<GraphFetchResult> {
   const [pagesResp, links, templatesResp] = await Promise.all([
-    fetchPages(tagFilterIds),
-    listPageLinks(),
-    queryByProperty({ key: 'template', valueText: 'true', limit: 1000 }),
+    fetchPages(tagFilterIds, spaceId),
+    listPageLinks(spaceId),
+    queryByProperty({ key: 'template', valueText: 'true', limit: 1000, spaceId }),
   ])
 
   // When filtering by tag, the API may return non-page blocks — keep only pages.

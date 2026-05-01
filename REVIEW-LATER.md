@@ -17,16 +17,15 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-20 open items — 20 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 22 backend Medium findings closed + 26 MAINT closed (some partially) across sessions 549-588 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-588): MAINT-131 fully reduced to residual cleanup; **3 schema-integrity migrations landed in session 582** (M-30, M-93, M-90); **H-9 family closed across sessions 583-584**; **MAINT-162 closed in 585**; **C-2b closed in 586** (last CRITICAL backend code review finding); **MAINT-127 closed in 587** (navigation.ts split + new tabs.ts); **M-25 closed in 588 + M-85 partially closed** (cursor pagination on `list_projected_agenda` — covers M-25's user-facing surface AND M-85's `get_agenda` MCP tool; M-85's `list_tags` + `list_property_defs` remain open); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
+19 open items — 19 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 22 backend Medium findings closed + 26 MAINT closed (some partially) across sessions 549-588 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-589): MAINT-131 fully reduced to residual cleanup; **3 schema-integrity migrations landed in session 582** (M-30, M-93, M-90); **H-9 family closed across sessions 583-584**; **MAINT-162 closed in 585**; **C-2b closed in 586** (last CRITICAL backend code review finding); **MAINT-127 closed in 587** (navigation.ts split + new tabs.ts); **M-25 closed in 588 + M-85 partially closed** (cursor pagination on `list_projected_agenda` — covers M-25's user-facing surface AND M-85's `get_agenda` MCP tool; M-85's `list_tags` + `list_property_defs` remain open); **FEAT-3p4 closed in 589** (Spaces Phase 4 — `space_id` threaded through 11 read commands, promoted to required `String` on `list_blocks` + `search_blocks`, per-space `useNavigationStore.currentView` slice + frontend callsite migration); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
 
-Previously resolved: 850+ items across 555 sessions (per SESSION-LOG.md unique session count; latest is session 588).
+Previously resolved: 851+ items across 556 sessions (per SESSION-LOG.md unique session count; latest is session 589).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
-| FEAT-3 | FEAT | Spaces — parent / umbrella (Phases 1 + 2 + 3 shipped; Phases 4–11 split into FEAT-3p4..FEAT-3p11) | S |
-| FEAT-3p4 | FEAT | Spaces Phase 4: agenda / graph / backlinks / tags / properties scoping (+ promote `space_id` to required on `list_blocks` / `search_blocks`, page-membership check in `get_page_inner`, per-space `currentView`) | L |
+| FEAT-3 | FEAT | Spaces — parent / umbrella (Phases 1 + 2 + 3 + 4 shipped; Phases 5–11 split into FEAT-3p5..FEAT-3p11) | S |
 | FEAT-3p9 | FEAT | Spaces Phase 9: per-space external integrations — per-space GCal calendar IDs / OAuth / push pipeline + space-name prefix on OS notifications (FEAT-11 coupling) | L |
 | FEAT-4 | FEAT | Agent access: expose notes to external agents via an MCP server — parent / umbrella | L |
 | FEAT-4i | FEAT | MCP v3 — Mobile (HTTPS/LAN via mTLS reuse from `sync_cert.rs`, agent-pairing flow) — DEFERRED pending v2 | L |
@@ -163,43 +162,17 @@ Fresh installs and upgrades both run a boot-time Rust bootstrap (`src-tauri/src/
 - **First-boot UI:** LoadingSkeleton on space-scoped panels until `useSpaceStore.isReady === true`.
 - **Search operator:** the switcher is the only scoping surface — no `space:<name>` operator.
 
-**Cost:** S — this umbrella entry is now a tracker only. Each remaining phase is filed as its own item: FEAT-3p4 (agenda/graph/backlinks), FEAT-3p5 (journal), FEAT-3p6 (manage UI), FEAT-3p7 (broken-chip enforcement), FEAT-3p8 (history scoping), FEAT-3p9 (per-space integrations), FEAT-3p10 (visual identity), FEAT-3p11 (digit hotkeys). Schedule via the per-phase items, not this umbrella.
+**Cost:** S — this umbrella entry is now a tracker only. Each remaining phase is filed as its own item: FEAT-3p5 (journal), FEAT-3p6 (manage UI), FEAT-3p7 (broken-chip enforcement), FEAT-3p8 (history scoping), FEAT-3p9 (per-space integrations), FEAT-3p10 (visual identity), FEAT-3p11 (digit hotkeys). Schedule via the per-phase items, not this umbrella.
 
-**Recommended sequencing for "fully separated feel + easy/quick switching":** FEAT-3p10 + FEAT-3p11 + FEAT-3p7 first (one session each, low blast-radius, immediately unlock the user-visible goal). Then FEAT-3p4 (largest backend slice, closes the remaining query leaks). Then FEAT-3p5 / p6 / p8 / p9 in any order.
+**Recommended sequencing for "fully separated feel + easy/quick switching":** FEAT-3p10 + FEAT-3p11 + FEAT-3p7 first (one session each, low blast-radius, immediately unlock the user-visible goal). Then FEAT-3p5 / p6 / p8 / p9 in any order.
 
-**Status:** IN PROGRESS — Phases 1 + 2 + 3 shipped. Remaining work tracked under FEAT-3p4 / FEAT-3p5 / FEAT-3p6 / FEAT-3p7 / FEAT-3p8 / FEAT-3p9 / FEAT-3p10 / FEAT-3p11.
-
-### FEAT-3p4 — Spaces Phase 4: agenda / graph / backlinks / tags / properties scoping
-
-**Problem:** The remaining query commands still surface cross-space results. `list_undated_tasks`, `list_projected_agenda`, `query_by_tags`, `query_by_property`, `list_page_links`, `get_backlinks`, `list_backlinks_grouped`, `query_backlinks_filtered`, `count_agenda_batch`, `count_agenda_batch_by_source` all need `space_id: Option<String>` threaded through, with the `?N IS NULL OR COALESCE(b.page_id, b.id) IN (...)` filter pattern established in FEAT-3 Phase 2.
-
-**Backend scope:**
-- Thread `space_id` through every command in the list above. Reuse the `space_filter_clause!` macro and the FEAT-3 helper that resolves content blocks to their page ancestor via the `page_id` column + `space` ref property.
-- `AgendaQuery` struct already bundles the three agenda knobs to keep `list_blocks` under the tauri-specta 10-arg limit; reuse the same struct shape for the new agenda commands if any cross the limit.
-- For each command: happy path, cross-space exclusion, nonexistent `space_id` returns empty, exact-count assertions (`assert_eq!`, never `>=`).
-- Property test (`fast-check`): for any two non-empty spaces, their result sets are disjoint and their union equals the full non-space result set.
-
-**Frontend scope:**
-- Migrate every callsite of the listed commands to pass `currentSpaceId`: `useBlockTags`, `agenda-filters`, `GraphView.helpers`, `export-graph`, backlinks views, `TrashView`, `useResolveStore.preload()`, template helpers, property UI.
-- Status-bar chip showing the active space name (follows existing sync-status chip pattern).
-- Optional polish (P2 from UX review): a subtle "Pages in &lt;SpaceName&gt;" header on the link-picker suggestions so the current-space scoping isn't silent.
-
-**Recursive CTE invariants preserved:** `list_children`, cascade ops unchanged. Space is a query-time filter, not a structural partition. `is_conflict = 0` + `depth < 100` invariants stay where they are.
-
-**Additional scope (folded in from confirmed leakage findings):**
-
-- **Promote `space_id` from `Option<String>` to `String` (required) on `list_blocks_inner` + `search_blocks_inner`.** Phase 2 shipped these as `Option<String>` for backwards-compat during incremental rollout; the locked-in user decision was "required, not optional, to enforce 'nothing outside of spaces'". New callers can currently leak silently by omitting `spaceId`. Required signature blocks that at the type system + tauri-specta layer. Migrate every existing callsite in the same commit (no flag-day window with mixed signatures).
-- **`get_page_inner` page-membership check.** When called with a `space_id`, verify the requested page's `space` property matches; otherwise return `AppError::Validation("page not in current space")`. Defence in depth — without this, deep-link / legacy `[[ULID]]` paths can fetch foreign-space pages directly. Same check applied to `get_block_with_children_inner`. (Couples loosely with FEAT-3p7, which is the user-facing "no cross-space links" enforcement; this item is the backend-rejection corollary.)
-- **Per-space `useNavigationStore.currentView` slice.** Today `currentView: View` is global, so `Search` view in Personal stays `Search` when the user switches to Work. Add `currentViewBySpace: Record<SpaceId, View>` mirroring the `tabsBySpace` pattern; the Phase 3 space-switch subscriber gains one extra flush/pull pair. Vitest covers: switch from Personal-search → Work resets to Work's last view (or default `page-editor` for fresh spaces).
-
-**Cost:** L — biggest remaining FEAT-3 slice (10+ commands × backend + 7+ frontend areas + property tests + the three additional items above). Realistic estimate: 2 focused sessions.
-**Status:** Open. Depends on FEAT-3 Phases 1 + 2 + 3 (shipped). Independent of FEAT-3p5, FEAT-3p6, FEAT-3p7, FEAT-3p8, FEAT-3p9, FEAT-3p10, FEAT-3p11.
+**Status:** IN PROGRESS — Phases 1 + 2 + 3 + 4 shipped. Remaining work tracked under FEAT-3p5 / FEAT-3p6 / FEAT-3p7 / FEAT-3p8 / FEAT-3p9 / FEAT-3p10 / FEAT-3p11.
 
 ### FEAT-3p9 — Spaces Phase 9: per-space external integrations (GCal, OS notifications)
 
 **Problem:** Two integration surfaces leak across spaces today:
 
-1. **Google Calendar push** uses a single `calendar_id` in `GcalStatus` (`src-tauri/src/commands/gcal.rs:56-66`). The push pipeline (`gcal_push/connector.rs`) pulls agenda items via `list_projected_agenda_inner` — which is also unscoped today (FEAT-3p4 covers the read path) — and writes every item from every space into one calendar. A user with the integration on cannot keep their work calendar separate from their personal one.
+1. **Google Calendar push** uses a single `calendar_id` in `GcalStatus` (`src-tauri/src/commands/gcal.rs:56-66`). The push pipeline (`gcal_push/connector.rs`) pulls agenda items via `list_projected_agenda_inner` (space-aware after FEAT-3p4, but the connector still passes `None` so every space's agenda lands in one calendar) and writes every item from every space into one calendar. A user with the integration on cannot keep their work calendar separate from their personal one.
 2. **OS notifications** (FEAT-11, deferred): when adopted, due-task notifications will show task content with no space attribution. A Work task firing while the user is "in" Personal breaks context.
 
 **Locked-in policy:**

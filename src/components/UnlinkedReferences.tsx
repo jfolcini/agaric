@@ -23,6 +23,7 @@ import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '../lib/tauri'
 import { editBlock, listPropertyKeys, listTagsByPrefix, listUnlinkedReferences } from '../lib/tauri'
+import { useSpaceStore } from '../stores/space'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
 import { CollapsibleGroupList } from './CollapsibleGroupList'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
@@ -50,6 +51,7 @@ export function UnlinkedReferences({
   onNavigateToPage,
 }: UnlinkedReferencesProps): React.ReactElement | null {
   const { t } = useTranslation()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [groups, setGroups] = useState<BacklinkGroup[]>([])
   const [collapsed, setCollapsed] = useState(true)
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
@@ -74,6 +76,7 @@ export function UnlinkedReferences({
           sort,
           cursor: cursor ?? null,
           limit: 20,
+          spaceId: currentSpaceId,
         })
         // TEST-4a: some callers (notably App-level smoke tests that resolve
         // every `invoke` with a generic empty-page shape) return responses
@@ -109,7 +112,7 @@ export function UnlinkedReferences({
         setLoading(false)
       }
     },
-    [pageId, filters, sort, t],
+    [pageId, filters, sort, t, currentSpaceId],
   )
 
   // Fetch on mount and when pageId changes (eager — needed to know if we

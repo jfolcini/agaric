@@ -180,6 +180,7 @@ async fn f14_page_size_zero_clamped_to_one() {
     insert_block(&pool, "PS_BLK1", "content", "a", None, Some(1)).await;
     insert_block(&pool, "PS_BLK2", "content", "b", None, Some(2)).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -192,7 +193,7 @@ async fn f14_page_size_zero_clamped_to_one() {
         None,
         None,
         Some(0),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -212,6 +213,7 @@ async fn f14_page_size_negative_clamped_to_one() {
     insert_block(&pool, "PS_N1", "content", "a", None, Some(1)).await;
     insert_block(&pool, "PS_N2", "content", "b", None, Some(2)).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -224,7 +226,7 @@ async fn f14_page_size_negative_clamped_to_one() {
         None,
         None,
         Some(-1),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -245,6 +247,7 @@ async fn f14_page_size_1000_clamped_to_100() {
     insert_block(&pool, "PS_L2", "content", "b", None, Some(2)).await;
     insert_block(&pool, "PS_L3", "content", "c", None, Some(3)).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -257,7 +260,7 @@ async fn f14_page_size_1000_clamped_to_100() {
         None,
         None,
         Some(1000),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -277,9 +280,20 @@ async fn f14_page_size_none_uses_default() {
 
     insert_block(&pool, "PS_D1", "content", "a", None, Some(1)).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
-        &pool, None, None, None, None, None, None, None, None, None, None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();

@@ -30,6 +30,7 @@
 // Test helpers frequently cast small usize loop indices to i64 for SQL binds.
 #![allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
 
+use crate::commands::tests::common::{assign_all_to_test_space, TEST_SPACE_ID};
 use crate::commands::*;
 use crate::db::{init_pool, ReadPool};
 use crate::draft;
@@ -773,6 +774,7 @@ async fn purge_after_cascade_removes_entire_subtree() {
 async fn pagination_on_empty_database_returns_no_items() {
     let (pool, _dir) = test_pool().await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -785,7 +787,7 @@ async fn pagination_on_empty_database_returns_no_items() {
         None,
         None,
         Some(50),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -831,6 +833,7 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let live = list_blocks_inner(
         &pool,
         None,
@@ -843,7 +846,7 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
         None,
         None,
         Some(50),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -861,7 +864,7 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
         None,
         None,
         Some(50),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -901,6 +904,7 @@ async fn cursor_pagination_walks_all_blocks_without_duplicates() {
     let mut cursor: Option<String> = None;
     let mut page_count = 0;
     loop {
+        assign_all_to_test_space(&pool).await;
         let page = list_blocks_inner(
             &pool,
             None,
@@ -913,7 +917,7 @@ async fn cursor_pagination_walks_all_blocks_without_duplicates() {
             None,
             cursor,
             Some(PAGE_SIZE),
-            None, // FEAT-3 Phase 2: space_id unscoped
+            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .unwrap();
@@ -949,6 +953,7 @@ async fn pagination_with_exact_page_boundary_terminates_correctly() {
         create_content(&pool, &mat, &format!("block {i}"), None, Some(i + 1)).await;
     }
 
+    assign_all_to_test_space(&pool).await;
     let page = list_blocks_inner(
         &pool,
         None,
@@ -961,7 +966,7 @@ async fn pagination_with_exact_page_boundary_terminates_correctly() {
         None,
         None,
         Some(PAGE_SIZE),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1022,6 +1027,7 @@ async fn list_by_type_filters_to_matching_block_type() {
     .unwrap();
     settle_bg_tasks(&mat).await;
 
+    assign_all_to_test_space(&pool).await;
     let content_resp = list_blocks_inner(
         &pool,
         None,
@@ -1034,7 +1040,7 @@ async fn list_by_type_filters_to_matching_block_type() {
         None,
         None,
         Some(50),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1052,7 +1058,7 @@ async fn list_by_type_filters_to_matching_block_type() {
         None,
         None,
         Some(50),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1070,7 +1076,7 @@ async fn list_by_type_filters_to_matching_block_type() {
         None,
         None,
         Some(50),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1095,6 +1101,7 @@ async fn children_listed_in_position_order() {
     let c1 = create_content(&pool, &mat, "pos 1", Some(parent.id.clone()), Some(1)).await;
     let c2 = create_content(&pool, &mat, "pos 2", Some(parent.id.clone()), Some(2)).await;
 
+    assign_all_to_test_space(&pool).await;
     let children = list_blocks_inner(
         &pool,
         Some(parent.id.clone()),
@@ -1107,7 +1114,7 @@ async fn children_listed_in_position_order() {
         None,
         None,
         Some(50),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1488,9 +1495,18 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
     settle_bg_tasks(&mat).await;
 
     // Search for the original term — must find it
-    let results = search_blocks_inner(&pool, "quantum".into(), None, None, None, None, None)
-        .await
-        .unwrap();
+    assign_all_to_test_space(&pool).await;
+    let results = search_blocks_inner(
+        &pool,
+        "quantum".into(),
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         results.items.len(),
         1,
@@ -1514,18 +1530,34 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
     settle_bg_tasks(&mat).await;
 
     // Search for the OLD term — must NOT find it
-    let old_results = search_blocks_inner(&pool, "quantum".into(), None, None, None, None, None)
-        .await
-        .unwrap();
+    let old_results = search_blocks_inner(
+        &pool,
+        "quantum".into(),
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
     assert!(
         old_results.items.is_empty(),
         "FTS must NOT find the block by old term 'quantum' after edit"
     );
 
     // Search for the NEW term — must find it
-    let new_results = search_blocks_inner(&pool, "classical".into(), None, None, None, None, None)
-        .await
-        .unwrap();
+    let new_results = search_blocks_inner(
+        &pool,
+        "classical".into(),
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         new_results.items.len(),
         1,
@@ -1620,6 +1652,7 @@ async fn tag_prefix_query_returns_hierarchy_matches_only() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1650,6 +1683,7 @@ async fn tag_prefix_query_returns_hierarchy_matches_only() {
         vec![],
         vec!["work".into()],
         "or".into(),
+        None,
         None,
         None,
         None,

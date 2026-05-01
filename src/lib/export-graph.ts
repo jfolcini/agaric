@@ -5,12 +5,17 @@ import { exportPageMarkdown, listBlocks } from './tauri'
  * Export all pages as a ZIP of markdown files.
  * Each page becomes a .md file named after its content (title).
  * Returns a Blob containing the ZIP.
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, only pages in the active
+ * space are included in the export. Pass `null` for the legacy
+ * cross-space behaviour. The `?? ''` fallback at the call site is the
+ * pre-bootstrap no-match sentinel.
  */
-export async function exportGraphAsZip(): Promise<Blob> {
+export async function exportGraphAsZip(spaceId: string | null): Promise<Blob> {
   const zip = new JSZip()
 
   // Load all pages
-  const resp = await listBlocks({ blockType: 'page', limit: 1000 })
+  const resp = await listBlocks({ blockType: 'page', limit: 1000, spaceId: spaceId ?? '' })
   const pages = resp.items
 
   // Export each page to markdown

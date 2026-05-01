@@ -344,6 +344,7 @@ async fn get_batch_properties_does_not_affect_op_log() {
 async fn date_validation_invalid_month_13_returns_validation() {
     let (pool, _dir) = test_pool().await;
 
+    assign_all_to_test_space(&pool).await;
     let result = list_blocks_inner(
         &pool,
         None,
@@ -356,7 +357,7 @@ async fn date_validation_invalid_month_13_returns_validation() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -369,6 +370,7 @@ async fn date_validation_invalid_month_13_returns_validation() {
 async fn date_validation_short_format_returns_validation() {
     let (pool, _dir) = test_pool().await;
 
+    assign_all_to_test_space(&pool).await;
     let result = list_blocks_inner(
         &pool,
         None,
@@ -381,7 +383,7 @@ async fn date_validation_short_format_returns_validation() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -394,6 +396,7 @@ async fn date_validation_short_format_returns_validation() {
 async fn date_validation_two_digit_year_returns_validation() {
     let (pool, _dir) = test_pool().await;
 
+    assign_all_to_test_space(&pool).await;
     let result = list_blocks_inner(
         &pool,
         None,
@@ -406,7 +409,7 @@ async fn date_validation_two_digit_year_returns_validation() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -419,6 +422,7 @@ async fn date_validation_two_digit_year_returns_validation() {
 async fn date_validation_day_32_returns_validation() {
     let (pool, _dir) = test_pool().await;
 
+    assign_all_to_test_space(&pool).await;
     let result = list_blocks_inner(
         &pool,
         None,
@@ -431,7 +435,7 @@ async fn date_validation_day_32_returns_validation() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -444,6 +448,7 @@ async fn date_validation_day_32_returns_validation() {
 async fn date_validation_non_date_string_returns_validation() {
     let (pool, _dir) = test_pool().await;
 
+    assign_all_to_test_space(&pool).await;
     let result = list_blocks_inner(
         &pool,
         None,
@@ -456,7 +461,7 @@ async fn date_validation_non_date_string_returns_validation() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -564,7 +569,7 @@ async fn query_by_property_happy_path() {
     settle(&mat).await;
 
     // Query all blocks with 'todo' property (any value)
-    let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None, None)
+    let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None, None, None)
         .await
         .unwrap();
 
@@ -579,6 +584,7 @@ async fn query_by_property_happy_path() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -587,9 +593,18 @@ async fn query_by_property_happy_path() {
     assert_eq!(filtered.items[0].id, b1.id);
 
     // Query nonexistent key: empty
-    let empty = query_by_property_inner(&pool, "nonexistent".into(), None, None, None, None, None)
-        .await
-        .unwrap();
+    let empty = query_by_property_inner(
+        &pool,
+        "nonexistent".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert!(empty.items.is_empty(), "nonexistent key must return empty");
 }
@@ -892,6 +907,7 @@ async fn query_by_property_finds_reserved_key_in_blocks_column() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -989,6 +1005,7 @@ async fn set_todo_state_then_query_by_property_returns_match() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1035,6 +1052,7 @@ async fn set_due_date_then_query_by_property_returns_match() {
         &pool,
         "due_date".into(),
         Some("2026-06-01".into()),
+        None,
         None,
         None,
         None,

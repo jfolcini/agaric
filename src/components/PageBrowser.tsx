@@ -61,11 +61,16 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   const queryFn = useCallback(
     (cursor?: string) =>
+      // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
+      // fallback is intentional pre-bootstrap behaviour: the empty
+      // string forces a no-match SQL filter (returning an empty page)
+      // instead of a runtime null deref. The `enabled: spaceIsReady`
+      // gate below normally prevents this branch from firing.
       listBlocks({
         blockType: 'page',
         ...(cursor != null && { cursor }),
         limit: 50,
-        spaceId: currentSpaceId ?? undefined,
+        spaceId: currentSpaceId ?? '',
       }),
     [currentSpaceId],
   )

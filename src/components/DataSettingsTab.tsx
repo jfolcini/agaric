@@ -17,9 +17,11 @@ import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
 import { logger } from '../lib/logger'
 import type { ImportResult } from '../lib/tauri'
 import { importMarkdown } from '../lib/tauri'
+import { useSpaceStore } from '../stores/space'
 
 export function DataSettingsTab(): React.ReactElement {
   const { t } = useTranslation()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
@@ -85,7 +87,7 @@ export function DataSettingsTab(): React.ReactElement {
   const handleExportAll = useCallback(async () => {
     setExporting(true)
     try {
-      const blob = await exportGraphAsZip()
+      const blob = await exportGraphAsZip(currentSpaceId)
       const date = new Date().toISOString().slice(0, 10)
       downloadBlob(blob, `agaric-export-${date}.zip`)
       toast.success(t('data.exportSuccess'))
@@ -94,7 +96,7 @@ export function DataSettingsTab(): React.ReactElement {
       toast.error(t('data.exportFailed'))
     }
     setExporting(false)
-  }, [t])
+  }, [t, currentSpaceId])
 
   return (
     <div className="data-settings-tab space-y-4">

@@ -570,6 +570,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: 'cursor_page2',
         limit: 50,
+        spaceId: null,
       })
     })
 
@@ -650,6 +651,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 50,
+        spaceId: null,
       })
     })
 
@@ -676,6 +678,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 50,
+        spaceId: null,
       })
     })
   })
@@ -780,6 +783,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 50,
+        spaceId: null,
       })
     })
   })
@@ -999,6 +1003,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 50,
+        spaceId: null,
       })
     })
   })

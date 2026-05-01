@@ -157,12 +157,14 @@ export async function trashDescendantCounts(rootIds: string[]): Promise<Record<s
  * Rust `AgendaQuery` struct so the Tauri command stays under the
  * `tauri-specta` 10-arg limit after FEAT-3 Phase 2 added `spaceId`.
  *
- * `spaceId` (FEAT-3 Phase 2) — when set, the backend filters results to
- * blocks whose owning page carries `space = <spaceId>`. `undefined` (the
- * default) leaves the result set unscoped, matching the pre-FEAT-3
- * behaviour so existing callsites stay green.
+ * `spaceId` (FEAT-3 Phase 4) — required. The backend filters results to
+ * blocks whose owning page carries `space = <spaceId>`. Callers must
+ * resolve the active `currentSpaceId` (from `useSpaceStore`) before
+ * invoking; pre-bootstrap callers should pass `''` (empty string), which
+ * the backend treats as a no-match (returns an empty page) rather than
+ * crashing on a runtime null deref.
  */
-export async function listBlocks(params?: {
+export async function listBlocks(params: {
   parentId?: string | undefined
   blockType?: string | undefined
   tagId?: string | undefined
@@ -172,24 +174,45 @@ export async function listBlocks(params?: {
   agendaSource?: string | undefined
   cursor?: string | undefined
   limit?: number | undefined
-  spaceId?: string | undefined
+  spaceId: string
 }): Promise<PageResponse<BlockRow>> {
   const hasAgenda =
-    params?.agendaDate != null || params?.agendaDateRange != null || params?.agendaSource != null
+    params.agendaDate != null || params.agendaDateRange != null || params.agendaSource != null
   const agenda = hasAgenda
     ? {
-        date: params?.agendaDate ?? null,
-        dateRange: params?.agendaDateRange ?? null,
-        source: params?.agendaSource ?? null,
+        date: params.agendaDate ?? null,
+        dateRange: params.agendaDateRange ?? null,
+        source: params.agendaSource ?? null,
       }
     : null
   return unwrap(
     await commands.listBlocks(
-      params?.parentId ?? null,
-      params?.blockType ?? null,
-      params?.tagId ?? null,
-      params?.showDeleted ?? null,
+      params.parentId ?? null,
+      params.blockType ?? null,
+      params.tagId ?? null,
+      params.showDeleted ?? null,
       agenda,
+      params.cursor ?? null,
+      params.limit ?? null,
+      params.spaceId,
+    ),
+  )
+}
+
+/** List undated tasks (tasks with todo_state but no due/scheduled date).
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, restricts results to undated
+ * tasks whose owning page carries `space = <spaceId>`. `null` /
+ * `undefined` leaves the result set unscoped, matching the pre-FEAT-3
+ * behaviour for cross-space callers.
+ */
+export async function listUndatedTasks(params?: {
+  cursor?: string | undefined
+  limit?: number | undefined
+  spaceId?: string | null | undefined
+}): Promise<PageResponse<BlockRow>> {
+  return unwrap(
+    await commands.listUndatedTasks(
       params?.cursor ?? null,
       params?.limit ?? null,
       params?.spaceId ?? null,
@@ -197,25 +220,22 @@ export async function listBlocks(params?: {
   )
 }
 
-/** List undated tasks (tasks with todo_state but no due/scheduled date). */
-export async function listUndatedTasks(params?: {
-  cursor?: string | undefined
-  limit?: number | undefined
-}): Promise<PageResponse<BlockRow>> {
-  return unwrap(await commands.listUndatedTasks(params?.cursor ?? null, params?.limit ?? null))
-}
-
 /**
  * List projected future occurrences of repeating tasks for a date range.
  *
  * Cursor-paginated (M-25). Pass `cursor: response.next_cursor` to fetch
  * the next page; `has_more = false` indicates the final page.
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, restricts projections to
+ * blocks whose owning page carries `space = <spaceId>`. `null` /
+ * `undefined` leaves the result set unscoped.
  */
 export async function listProjectedAgenda(opts: {
   startDate: string
   endDate: string
   cursor?: string | undefined
   limit?: number | undefined
+  spaceId?: string | null | undefined
 }): Promise<PageResponse<ProjectedAgendaEntry>> {
   return unwrap(
     await commands.listProjectedAgenda(
@@ -223,6 +243,7 @@ export async function listProjectedAgenda(opts: {
       opts.endDate,
       opts.cursor ?? null,
       opts.limit ?? null,
+      opts.spaceId ?? null,
     ),
   )
 }
@@ -285,14 +306,25 @@ export async function removeTag(blockId: string, tagId: string): Promise<TagResp
   return unwrap(await commands.removeTag(blockId, tagId))
 }
 
-/** List blocks that link to the given block (backlinks), paginated. */
+/** List blocks that link to the given block (backlinks), paginated.
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, restricts the backlinks to
+ * source blocks whose owning page carries `space = <spaceId>`. `null` /
+ * `undefined` leaves the result set unscoped (cross-space view).
+ */
 export async function getBacklinks(params: {
   blockId: string
   cursor?: string | undefined
   limit?: number | undefined
+  spaceId?: string | null | undefined
 }): Promise<PageResponse<BlockRow>> {
   return unwrap(
-    await commands.getBacklinks(params.blockId, params.cursor ?? null, params.limit ?? null),
+    await commands.getBacklinks(
+      params.blockId,
+      params.cursor ?? null,
+      params.limit ?? null,
+      params.spaceId ?? null,
+    ),
   )
 }
 
@@ -317,26 +349,29 @@ export async function getConflicts(params?: {
 
 /** Full-text search across all blocks, paginated by relevance.
  *
- * `spaceId` (FEAT-3 Phase 2) — when set, restricts matches to blocks
- * whose owning page carries `space = <spaceId>`. `undefined` means
- * unscoped (pre-FEAT-3 behaviour).
+ * `spaceId` (FEAT-3 Phase 4) — required. Restricts matches to blocks
+ * whose owning page carries `space = <spaceId>`. Callers must resolve
+ * the active `currentSpaceId` (from `useSpaceStore`) before invoking;
+ * pre-bootstrap callers should pass `''` (empty string), which the
+ * backend treats as a no-match (returns an empty page) rather than
+ * crashing on a runtime null deref.
  */
-export async function searchBlocks(params?: {
+export async function searchBlocks(params: {
   query: string
   parentId?: string | undefined
   tagIds?: string[] | undefined
   cursor?: string | undefined
   limit?: number | undefined
-  spaceId?: string | undefined
+  spaceId: string
 }): Promise<PageResponse<BlockRow>> {
   return unwrap(
     await commands.searchBlocks(
-      params?.query ?? '',
-      params?.cursor ?? null,
-      params?.limit ?? null,
-      params?.parentId ?? null,
-      params?.tagIds ?? null,
-      params?.spaceId ?? null,
+      params.query,
+      params.cursor ?? null,
+      params.limit ?? null,
+      params.parentId ?? null,
+      params.tagIds ?? null,
+      params.spaceId,
     ),
   )
 }
@@ -346,7 +381,12 @@ export async function getStatus(): Promise<StatusInfo> {
   return unwrap(await commands.getStatus())
 }
 
-/** Query blocks by boolean tag expression (AND/OR mode), paginated. */
+/** Query blocks by boolean tag expression (AND/OR mode), paginated.
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, restricts matches to blocks
+ * whose owning page carries `space = <spaceId>`. `null` / `undefined`
+ * leaves the result set unscoped (cross-space view).
+ */
 export async function queryByTags(params: {
   tagIds: string[]
   prefixes: string[]
@@ -354,6 +394,7 @@ export async function queryByTags(params: {
   includeInherited?: boolean | undefined
   cursor?: string | undefined
   limit?: number | undefined
+  spaceId?: string | null | undefined
 }): Promise<PageResponse<BlockRow>> {
   return unwrap(
     await commands.queryByTags(
@@ -363,6 +404,7 @@ export async function queryByTags(params: {
       params.includeInherited ?? null,
       params.cursor ?? null,
       params.limit ?? null,
+      params.spaceId ?? null,
     ),
   )
 }
@@ -433,18 +475,30 @@ export async function getBatchProperties(
 // Batch count commands (#604)
 // ---------------------------------------------------------------------------
 
-/** Batch-count agenda items per date. Returns a map of date -> count. */
+/** Batch-count agenda items per date. Returns a map of date -> count.
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, restricts counts to agenda
+ * items whose owning page carries `space = <spaceId>`. `null` /
+ * `undefined` leaves the counts cross-space.
+ */
 export async function countAgendaBatch(params: {
   dates: string[]
+  spaceId?: string | null | undefined
 }): Promise<Record<string, number>> {
-  return unwrap(await commands.countAgendaBatch(params.dates))
+  return unwrap(await commands.countAgendaBatch(params.dates, params.spaceId ?? null))
 }
 
-/** Batch-count agenda items per (date, source). Returns nested map: date -> source -> count. */
+/** Batch-count agenda items per (date, source). Returns nested map: date -> source -> count.
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, restricts counts to agenda
+ * items whose owning page carries `space = <spaceId>`. `null` /
+ * `undefined` leaves the counts cross-space.
+ */
 export async function countAgendaBatchBySource(params: {
   dates: string[]
+  spaceId?: string | null | undefined
 }): Promise<Record<string, Record<string, number>>> {
-  return unwrap(await commands.countAgendaBatchBySource(params.dates))
+  return unwrap(await commands.countAgendaBatchBySource(params.dates, params.spaceId ?? null))
 }
 
 /** Batch-count backlinks per target page. Returns a map of pageId -> count. */
@@ -503,11 +557,16 @@ export async function listPageHistory(params: {
   )
 }
 
-/** List all page-to-page links for graph visualization. */
-export async function listPageLinks(): Promise<
-  Array<{ source_id: string; target_id: string; ref_count: number }>
-> {
-  return unwrap(await commands.listPageLinks())
+/** List all page-to-page links for graph visualization.
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, restricts the link set to
+ * source pages whose `space = <spaceId>`. `null` / `undefined` leaves
+ * the graph cross-space (legacy behaviour).
+ */
+export async function listPageLinks(
+  spaceId?: string | null | undefined,
+): Promise<Array<{ source_id: string; target_id: string; ref_count: number }>> {
+  return unwrap(await commands.listPageLinks(spaceId ?? null))
 }
 
 /** Revert a batch of operations (by device_id + seq pairs). */
@@ -528,7 +587,12 @@ export async function restorePageToOp(params: {
   )
 }
 
-/** Query blocks by property key and optional value, with cursor pagination. */
+/** Query blocks by property key and optional value, with cursor pagination.
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, restricts matches to blocks
+ * whose owning page carries `space = <spaceId>`. `null` / `undefined`
+ * leaves the result set unscoped (cross-space view).
+ */
 export async function queryByProperty(params: {
   key: string
   valueText?: string | undefined
@@ -536,6 +600,7 @@ export async function queryByProperty(params: {
   operator?: string | undefined // 'eq', 'neq', 'lt', 'gt', 'lte', 'gte'
   cursor?: string | undefined
   limit?: number | undefined
+  spaceId?: string | null | undefined
 }): Promise<PageResponse<BlockRow>> {
   return unwrap(
     await commands.queryByProperty(
@@ -545,6 +610,7 @@ export async function queryByProperty(params: {
       params.operator ?? null,
       params.cursor ?? null,
       params.limit ?? null,
+      params.spaceId ?? null,
     ),
   )
 }
@@ -598,13 +664,19 @@ export async function computeEditDiff(params: {
 // Filtered backlink query commands
 // ---------------------------------------------------------------------------
 
-/** Query backlinks with composable filters, sort, and pagination. */
+/** Query backlinks with composable filters, sort, and pagination.
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, restricts the source set to
+ * blocks whose owning page carries `space = <spaceId>`. `null` /
+ * `undefined` leaves the result set unscoped (cross-space view).
+ */
 export async function queryBacklinksFiltered(params: {
   blockId: string
   filters?: BacklinkFilter[] | undefined
   sort?: BacklinkSort | undefined
   cursor?: string | undefined
   limit?: number | undefined
+  spaceId?: string | null | undefined
 }): Promise<BacklinkQueryResponse> {
   return unwrap(
     await commands.queryBacklinksFiltered(
@@ -613,17 +685,24 @@ export async function queryBacklinksFiltered(params: {
       params.sort ?? null,
       params.cursor ?? null,
       params.limit ?? null,
+      params.spaceId ?? null,
     ),
   )
 }
 
-/** Query backlinks grouped by source page, with filters and pagination. */
+/** Query backlinks grouped by source page, with filters and pagination.
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, restricts the source set to
+ * blocks whose owning page carries `space = <spaceId>`. `null` /
+ * `undefined` leaves the result set unscoped.
+ */
 export async function listBacklinksGrouped(params: {
   blockId: string
   filters?: BacklinkFilter[] | undefined
   sort?: BacklinkSort | undefined
   cursor?: string | undefined
   limit?: number | undefined
+  spaceId?: string | null | undefined
 }): Promise<GroupedBacklinkResponse> {
   return unwrap(
     await commands.listBacklinksGrouped(
@@ -632,17 +711,24 @@ export async function listBacklinksGrouped(params: {
       params.sort ?? null,
       params.cursor ?? null,
       params.limit ?? null,
+      params.spaceId ?? null,
     ),
   )
 }
 
-/** Query unlinked references grouped by source page, with filters, sort, and pagination. */
+/** Query unlinked references grouped by source page, with filters, sort, and pagination.
+ *
+ * `spaceId` (FEAT-3 Phase 4) — when set, restricts the candidate set
+ * to blocks whose owning page carries `space = <spaceId>`. `null` /
+ * `undefined` leaves the result set unscoped.
+ */
 export async function listUnlinkedReferences(params: {
   pageId: string
   filters?: BacklinkFilter[] | null | undefined
   sort?: BacklinkSort | null | undefined
   cursor?: string | null | undefined
   limit?: number | null | undefined
+  spaceId?: string | null | undefined
 }): Promise<GroupedBacklinkResponse> {
   return unwrap(
     await commands.listUnlinkedReferences(
@@ -651,6 +737,7 @@ export async function listUnlinkedReferences(params: {
       params.sort ?? null,
       params.cursor ?? null,
       params.limit ?? null,
+      params.spaceId ?? null,
     ),
   )
 }

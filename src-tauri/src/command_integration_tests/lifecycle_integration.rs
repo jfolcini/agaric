@@ -176,6 +176,7 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
     let mut pages = 0;
 
     loop {
+        assign_all_to_test_space(&pool).await;
         let page = list_blocks_inner(
             &pool,
             None,
@@ -188,7 +189,7 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
             None,
             cursor,
             Some(PAGE_SIZE),
-            None, // FEAT-3 Phase 2: space_id unscoped
+            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .unwrap();
@@ -258,6 +259,7 @@ async fn list_blocks_with_agenda_date_returns_matching_blocks() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -270,7 +272,7 @@ async fn list_blocks_with_agenda_date_returns_matching_blocks() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -295,6 +297,7 @@ async fn list_blocks_with_agenda_date_no_matches_returns_empty() {
 
     insert_block(&pool, "AG_EMPTY", "content", "block", None, Some(1)).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
         None,
@@ -307,7 +310,7 @@ async fn list_blocks_with_agenda_date_no_matches_returns_empty() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -373,6 +376,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         .unwrap();
 
     // 3. Verify tag via list_by_tag
+    assign_all_to_test_space(&pool).await;
     let tagged = list_blocks_inner(
         &pool,
         None,
@@ -385,7 +389,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -418,7 +422,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -582,6 +586,7 @@ async fn test_list_blocks_rejects_invalid_date() {
     let (pool, _dir) = test_pool().await;
 
     // Too short
+    assign_all_to_test_space(&pool).await;
     let result = list_blocks_inner(
         &pool,
         None,
@@ -594,7 +599,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -615,7 +620,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -636,7 +641,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -657,7 +662,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -678,7 +683,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -699,7 +704,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -720,7 +725,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -735,6 +740,7 @@ async fn test_list_blocks_accepts_valid_date() {
 
     // Valid dates should not return a Validation error — they may return
     // an empty result set (no agenda entries) but no error.
+    assign_all_to_test_space(&pool).await;
     let result = list_blocks_inner(
         &pool,
         None,
@@ -747,7 +753,7 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -768,7 +774,7 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -789,7 +795,7 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(

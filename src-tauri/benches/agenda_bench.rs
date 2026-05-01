@@ -136,7 +136,7 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
                     let dates = dates.clone();
-                    async move { count_agenda_batch_inner(&pool, dates).await.unwrap() }
+                    async move { count_agenda_batch_inner(&pool, dates, None).await.unwrap() }
                 })
             },
         );
@@ -177,7 +177,7 @@ fn bench_count_agenda_batch_by_source(c: &mut Criterion) {
                     let pool = pool.clone();
                     let dates = dates.clone();
                     async move {
-                        count_agenda_batch_by_source_inner(&pool, dates)
+                        count_agenda_batch_by_source_inner(&pool, dates, None)
                             .await
                             .unwrap()
                     }
@@ -218,6 +218,7 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
                             "2025-07-07".into(),
                             None,
                             Some(200),
+                            None,
                         )
                         .await
                         .unwrap()

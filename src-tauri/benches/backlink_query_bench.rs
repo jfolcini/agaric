@@ -221,7 +221,7 @@ fn bench_eval_query(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.to_async(&rt)
-                .iter(|| eval_backlink_query(&pool, "TARGET", None, None, &page));
+                .iter(|| eval_backlink_query(&pool, "TARGET", None, None, &page, None));
         });
     }
     group.finish();
@@ -247,7 +247,7 @@ fn bench_filter(c: &mut Criterion) {
             let filters = vec![BacklinkFilter::Contains {
                 query: "benchmark".into(),
             }];
-            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
     });
 
@@ -257,7 +257,7 @@ fn bench_filter(c: &mut Criterion) {
             let filters = vec![BacklinkFilter::BlockType {
                 block_type: "content".into(),
             }];
-            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
     });
 
@@ -267,7 +267,7 @@ fn bench_filter(c: &mut Criterion) {
             let filters = vec![BacklinkFilter::HasTag {
                 tag_id: "TAG01".into(),
             }];
-            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
     });
 
@@ -279,7 +279,7 @@ fn bench_filter(c: &mut Criterion) {
                 op: CompareOp::Eq,
                 value: "high".into(),
             }];
-            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
     });
 
@@ -296,7 +296,7 @@ fn bench_filter(c: &mut Criterion) {
                     },
                 ],
             }];
-            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
     });
 
@@ -315,7 +315,7 @@ fn bench_filter(c: &mut Criterion) {
                     },
                 ],
             }];
-            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
     });
 
@@ -327,7 +327,7 @@ fn bench_filter(c: &mut Criterion) {
                 op: CompareOp::Gt,
                 value: 50.0,
             }];
-            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
     });
 
@@ -339,7 +339,7 @@ fn bench_filter(c: &mut Criterion) {
                 op: CompareOp::Eq,
                 value: "2025-06-15".into(),
             }];
-            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
     });
 
@@ -349,7 +349,7 @@ fn bench_filter(c: &mut Criterion) {
             let filters = vec![BacklinkFilter::PropertyIsSet {
                 key: "priority".into(),
             }];
-            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
     });
 
@@ -359,7 +359,7 @@ fn bench_filter(c: &mut Criterion) {
             let filters = vec![BacklinkFilter::PropertyIsEmpty {
                 key: "nonexistent_key".into(),
             }];
-            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
     });
 
@@ -371,7 +371,7 @@ fn bench_filter(c: &mut Criterion) {
                     block_type: "tag".into(),
                 }),
             }];
-            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
     });
 
@@ -381,7 +381,7 @@ fn bench_filter(c: &mut Criterion) {
             let filters = vec![BacklinkFilter::HasTagPrefix {
                 prefix: "bench".into(),
             }];
-            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
     });
 
@@ -392,7 +392,7 @@ fn bench_filter(c: &mut Criterion) {
                 after: Some("2025-01-01T00:00:00Z".into()),
                 before: Some("2025-12-31T23:59:59Z".into()),
             }];
-            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
     });
 
@@ -402,7 +402,7 @@ fn bench_filter(c: &mut Criterion) {
             let filters = vec![BacklinkFilter::Contains {
                 query: "nonexistent_word_xyz".into(),
             }];
-            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
     });
 
@@ -427,7 +427,7 @@ fn bench_sort(c: &mut Criterion) {
     group.bench_function("created_asc", |b| {
         b.to_async(&rt).iter(|| {
             let sort = BacklinkSort::Created { dir: SortDir::Asc };
-            eval_backlink_query(&pool, "TARGET", None, Some(sort), &page)
+            eval_backlink_query(&pool, "TARGET", None, Some(sort), &page, None)
         });
     });
 
@@ -435,7 +435,7 @@ fn bench_sort(c: &mut Criterion) {
     group.bench_function("created_desc", |b| {
         b.to_async(&rt).iter(|| {
             let sort = BacklinkSort::Created { dir: SortDir::Desc };
-            eval_backlink_query(&pool, "TARGET", None, Some(sort), &page)
+            eval_backlink_query(&pool, "TARGET", None, Some(sort), &page, None)
         });
     });
 
@@ -446,7 +446,7 @@ fn bench_sort(c: &mut Criterion) {
                 key: "priority".into(),
                 dir: SortDir::Asc,
             };
-            eval_backlink_query(&pool, "TARGET", None, Some(sort), &page)
+            eval_backlink_query(&pool, "TARGET", None, Some(sort), &page, None)
         });
     });
 
@@ -457,7 +457,7 @@ fn bench_sort(c: &mut Criterion) {
                 key: "score".into(),
                 dir: SortDir::Asc,
             };
-            eval_backlink_query(&pool, "TARGET", None, Some(sort), &page)
+            eval_backlink_query(&pool, "TARGET", None, Some(sort), &page, None)
         });
     });
 
@@ -468,7 +468,7 @@ fn bench_sort(c: &mut Criterion) {
                 key: "due_date".into(),
                 dir: SortDir::Asc,
             };
-            eval_backlink_query(&pool, "TARGET", None, Some(sort), &page)
+            eval_backlink_query(&pool, "TARGET", None, Some(sort), &page, None)
         });
     });
 
@@ -491,7 +491,7 @@ fn bench_pagination(c: &mut Criterion) {
     let first_page = PageRequest::new(None, Some(20)).unwrap();
     group.bench_function("first_page", |b| {
         b.to_async(&rt)
-            .iter(|| eval_backlink_query(&pool, "TARGET", None, None, &first_page));
+            .iter(|| eval_backlink_query(&pool, "TARGET", None, None, &first_page, None));
     });
 
     // Sequential 3-page walk
@@ -501,21 +501,21 @@ fn bench_pagination(c: &mut Criterion) {
             async move {
                 // Page 1
                 let page1 = PageRequest::new(None, Some(20)).unwrap();
-                let resp1 = eval_backlink_query(&pool, "TARGET", None, None, &page1)
+                let resp1 = eval_backlink_query(&pool, "TARGET", None, None, &page1, None)
                     .await
                     .unwrap();
 
                 // Page 2
                 if let Some(cursor) = resp1.next_cursor {
                     let page2 = PageRequest::new(Some(cursor), Some(20)).unwrap();
-                    let resp2 = eval_backlink_query(&pool, "TARGET", None, None, &page2)
+                    let resp2 = eval_backlink_query(&pool, "TARGET", None, None, &page2, None)
                         .await
                         .unwrap();
 
                     // Page 3
                     if let Some(cursor2) = resp2.next_cursor {
                         let page3 = PageRequest::new(Some(cursor2), Some(20)).unwrap();
-                        eval_backlink_query(&pool, "TARGET", None, None, &page3)
+                        eval_backlink_query(&pool, "TARGET", None, None, &page3, None)
                             .await
                             .unwrap();
                     }
@@ -567,7 +567,7 @@ fn bench_scale(c: &mut Criterion) {
                     query: "benchmark".into(),
                 }];
                 let sort = BacklinkSort::Created { dir: SortDir::Asc };
-                eval_backlink_query(&pool, "TARGET", Some(filters), Some(sort), &page)
+                eval_backlink_query(&pool, "TARGET", Some(filters), Some(sort), &page, None)
             });
         });
     }
@@ -704,6 +704,7 @@ fn bench_list_unlinked_references(c: &mut Criterion) {
                     None,
                     None,
                     Some(50),
+                    None,
                 )
             });
         });

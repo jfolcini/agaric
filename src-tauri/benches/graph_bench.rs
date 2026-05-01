@@ -102,7 +102,7 @@ fn bench_list_page_links(c: &mut Criterion) {
             |b, _| {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
-                    async move { list_page_links_inner(&pool).await.unwrap() }
+                    async move { list_page_links_inner(&pool, None).await.unwrap() }
                 })
             },
         );

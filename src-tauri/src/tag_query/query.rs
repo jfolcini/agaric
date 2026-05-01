@@ -10,11 +10,19 @@ use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse};
 use crate::sql_utils::escape_like;
 
 /// Evaluate a boolean tag expression and return a paginated set of blocks.
+///
+/// `space_id` (FEAT-3p4) — when `Some`, the final projection restricts
+/// results to blocks whose owning page (`COALESCE(b.page_id, b.id)`)
+/// carries `space = ?space_id`. `None` is the unscoped (pre-FEAT-3)
+/// behaviour. The space filter is applied at the projection step (after
+/// the tag resolver) so the tag expression continues to operate on the
+/// full universe and only the visible result set is space-scoped.
 pub async fn eval_tag_query(
     pool: &SqlitePool,
     expr: &TagExpr,
     page: &PageRequest,
     include_inherited: bool,
+    space_id: Option<&str>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let block_ids: FxHashSet<String> = resolve_expr(pool, expr, include_inherited).await?;
     if block_ids.is_empty() {
@@ -58,20 +66,34 @@ pub async fn eval_tag_query(
     // accidentally surface a conflict copy in the response. Mirrors the
     // `is_conflict = 0` / `deleted_at IS NULL` filters used in
     // `cache::rebuild_tags_cache` and other production read paths.
+    //
+    // FEAT-3p4 — the trailing `(? IS NULL OR COALESCE(...))` clause
+    // mirrors `crate::space_filter_clause!`. Resolves the candidate
+    // block to its owning page via `COALESCE(b.page_id, b.id)` and
+    // intersects against `block_properties(key = 'space').value_ref`
+    // when `space_id` is `Some`. The single `?` is bound after the
+    // ID-list placeholders below.
     let query_str = format!(
         "SELECT id, block_type, content, parent_id, position, \
          deleted_at, is_conflict, conflict_type, \
          todo_state, priority, due_date, scheduled_date, page_id \
-         FROM blocks \
+         FROM blocks b \
          WHERE id IN ({placeholders}) \
            AND deleted_at IS NULL \
            AND is_conflict = 0 \
+           AND (? IS NULL OR COALESCE(b.page_id, b.id) IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?)) \
          ORDER BY id"
     );
     let mut query = sqlx::query_as::<_, BlockRow>(&query_str);
     for id in &actual_ids {
         query = query.bind(*id);
     }
+    // The trailing `?` placeholders for the space filter are bound twice
+    // (once for the NULL guard, once for the value comparison) so the
+    // dynamic-SQL form keeps the `(? IS NULL OR …)` short-circuit.
+    query = query.bind(space_id).bind(space_id);
     let items: Vec<BlockRow> = query.fetch_all(pool).await?;
     let next_cursor = if has_more {
         let last = items.last().expect("has_more implies non-empty");
@@ -179,18 +201,24 @@ mod tests {
         }
         let expr = TagExpr::Tag("TAG_X".into());
         let page1 = PageRequest::new(None, Some(2)).unwrap();
-        let resp1 = eval_tag_query(&pool, &expr, &page1, false).await.unwrap();
+        let resp1 = eval_tag_query(&pool, &expr, &page1, false, None)
+            .await
+            .unwrap();
         assert_eq!(resp1.items.len(), 2);
         assert_eq!(resp1.items[0].id, "BLK_A");
         assert_eq!(resp1.items[1].id, "BLK_B");
         assert!(resp1.has_more);
         let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
-        let resp2 = eval_tag_query(&pool, &expr, &page2, false).await.unwrap();
+        let resp2 = eval_tag_query(&pool, &expr, &page2, false, None)
+            .await
+            .unwrap();
         assert_eq!(resp2.items.len(), 2);
         assert_eq!(resp2.items[0].id, "BLK_C");
         assert_eq!(resp2.items[1].id, "BLK_D");
         let page3 = PageRequest::new(resp2.next_cursor, Some(2)).unwrap();
-        let resp3 = eval_tag_query(&pool, &expr, &page3, false).await.unwrap();
+        let resp3 = eval_tag_query(&pool, &expr, &page3, false, None)
+            .await
+            .unwrap();
         assert_eq!(resp3.items.len(), 1);
         assert_eq!(resp3.items[0].id, "BLK_E");
         assert!(!resp3.has_more);
@@ -201,7 +229,9 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let expr = TagExpr::Tag("NONEXISTENT".into());
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = eval_tag_query(&pool, &expr, &page, false).await.unwrap();
+        let resp = eval_tag_query(&pool, &expr, &page, false, None)
+            .await
+            .unwrap();
         assert!(resp.items.is_empty());
         assert!(!resp.has_more);
     }
@@ -213,7 +243,9 @@ mod tests {
         insert_tag_assoc(&pool, "BLK_1", "TAG_A").await;
         let expr = TagExpr::Tag("TAG_A".into());
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = eval_tag_query(&pool, &expr, &page, false).await.unwrap();
+        let resp = eval_tag_query(&pool, &expr, &page, false, None)
+            .await
+            .unwrap();
         assert_eq!(resp.items.len(), 1);
         let row = &resp.items[0];
         assert_eq!(row.id, "BLK_1");
@@ -239,7 +271,9 @@ mod tests {
         .encode()
         .unwrap();
         let page = PageRequest::new(Some(cursor), Some(10)).unwrap();
-        let resp = eval_tag_query(&pool, &expr, &page, false).await.unwrap();
+        let resp = eval_tag_query(&pool, &expr, &page, false, None)
+            .await
+            .unwrap();
         assert!(resp.items.is_empty());
         assert!(!resp.has_more);
     }
@@ -262,14 +296,20 @@ mod tests {
         crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
         let expr = TagExpr::Tag("TAG_PG".into());
         let page1 = PageRequest::new(None, Some(2)).unwrap();
-        let resp1 = eval_tag_query(&pool, &expr, &page1, true).await.unwrap();
+        let resp1 = eval_tag_query(&pool, &expr, &page1, true, None)
+            .await
+            .unwrap();
         assert_eq!(resp1.items.len(), 2);
         assert!(resp1.has_more);
         let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
-        let resp2 = eval_tag_query(&pool, &expr, &page2, true).await.unwrap();
+        let resp2 = eval_tag_query(&pool, &expr, &page2, true, None)
+            .await
+            .unwrap();
         assert_eq!(resp2.items.len(), 2);
         let page3 = PageRequest::new(resp2.next_cursor, Some(2)).unwrap();
-        let resp3 = eval_tag_query(&pool, &expr, &page3, true).await.unwrap();
+        let resp3 = eval_tag_query(&pool, &expr, &page3, true, None)
+            .await
+            .unwrap();
         assert_eq!(resp3.items.len(), 1);
         assert!(!resp3.has_more);
         let total = resp1.items.len() + resp2.items.len() + resp3.items.len();
@@ -390,7 +430,9 @@ mod tests {
 
         let expr = TagExpr::Tag("TAG_X".into());
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = eval_tag_query(&pool, &expr, &page, false).await.unwrap();
+        let resp = eval_tag_query(&pool, &expr, &page, false, None)
+            .await
+            .unwrap();
         let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
         assert_eq!(
             ids,

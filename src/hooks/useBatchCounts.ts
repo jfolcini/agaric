@@ -4,9 +4,11 @@ import { toast } from 'sonner'
 import type { DayEntry } from '../lib/date-utils'
 import { logger } from '../lib/logger'
 import { countAgendaBatchBySource, countBacklinksBatch } from '../lib/tauri'
+import { useSpaceStore } from '../stores/space'
 
 export function useBatchCounts(entries: DayEntry[]) {
   const { t } = useTranslation()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [agendaCounts, setAgendaCounts] = useState<Record<string, number>>({})
   const [agendaCountsBySource, setAgendaCountsBySource] = useState<
     Record<string, Record<string, number>>
@@ -20,7 +22,7 @@ export function useBatchCounts(entries: DayEntry[]) {
     let cancelled = false
     async function fetchCounts() {
       const [bySource, backlinks] = await Promise.all([
-        countAgendaBatchBySource({ dates }),
+        countAgendaBatchBySource({ dates, spaceId: currentSpaceId }),
         pageIds.length > 0
           ? countBacklinksBatch({ pageIds })
           : Promise.resolve({} as Record<string, number>),
@@ -43,7 +45,7 @@ export function useBatchCounts(entries: DayEntry[]) {
     return () => {
       cancelled = true
     }
-  }, [entries, t])
+  }, [entries, t, currentSpaceId])
 
   return { agendaCounts, agendaCountsBySource, backlinkCounts }
 }

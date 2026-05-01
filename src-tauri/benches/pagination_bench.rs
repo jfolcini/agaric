@@ -249,19 +249,21 @@ fn bench_list_by_tag(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("first_page", total), &total, |b, _| {
             let page = PageRequest::new(None, Some(50)).unwrap();
-            b.to_async(&rt).iter(|| list_by_tag(&pool, "TAG01", &page));
+            b.to_async(&rt)
+                .iter(|| list_by_tag(&pool, "TAG01", &page, None));
         });
 
         let mid_cursor = rt.block_on(async {
             let half = PageRequest::new(None, Some((total / 2) as i64)).unwrap();
-            let resp = list_by_tag(&pool, "TAG01", &half).await.unwrap();
+            let resp = list_by_tag(&pool, "TAG01", &half, None).await.unwrap();
             resp.next_cursor
         });
 
         if mid_cursor.is_some() {
             group.bench_with_input(BenchmarkId::new("cursor_page", total), &total, |b, _| {
                 let page = PageRequest::new(mid_cursor.clone(), Some(50)).unwrap();
-                b.to_async(&rt).iter(|| list_by_tag(&pool, "TAG01", &page));
+                b.to_async(&rt)
+                    .iter(|| list_by_tag(&pool, "TAG01", &page, None));
             });
         }
     }
@@ -282,19 +284,21 @@ fn bench_list_undated_tasks(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("first_page", total), &total, |b, _| {
             let page = PageRequest::new(None, Some(50)).unwrap();
-            b.to_async(&rt).iter(|| list_undated_tasks(&pool, &page));
+            b.to_async(&rt)
+                .iter(|| list_undated_tasks(&pool, &page, None));
         });
 
         let mid_cursor = rt.block_on(async {
             let half = PageRequest::new(None, Some((total / 2) as i64)).unwrap();
-            let resp = list_undated_tasks(&pool, &half).await.unwrap();
+            let resp = list_undated_tasks(&pool, &half, None).await.unwrap();
             resp.next_cursor
         });
 
         if mid_cursor.is_some() {
             group.bench_with_input(BenchmarkId::new("cursor_page", total), &total, |b, _| {
                 let page = PageRequest::new(mid_cursor.clone(), Some(50)).unwrap();
-                b.to_async(&rt).iter(|| list_undated_tasks(&pool, &page));
+                b.to_async(&rt)
+                    .iter(|| list_undated_tasks(&pool, &page, None));
             });
         }
     }

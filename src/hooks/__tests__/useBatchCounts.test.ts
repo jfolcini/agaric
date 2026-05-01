@@ -59,6 +59,7 @@ describe('useBatchCounts', () => {
     expect(result.current.backlinkCounts).toEqual({ 'page-1': 5, 'page-2': 2 })
     expect(mockedCountAgendaBatchBySource).toHaveBeenCalledWith({
       dates: ['2025-01-06', '2025-01-07'],
+      spaceId: null,
     })
     expect(mockedCountBacklinksBatch).toHaveBeenCalledWith({ pageIds: ['page-1', 'page-2'] })
   })
@@ -69,7 +70,7 @@ describe('useBatchCounts', () => {
     const { result } = renderHook(() => useBatchCounts([]))
 
     await waitFor(() => {
-      expect(mockedCountAgendaBatchBySource).toHaveBeenCalledWith({ dates: [] })
+      expect(mockedCountAgendaBatchBySource).toHaveBeenCalledWith({ dates: [], spaceId: null })
     })
 
     expect(result.current.agendaCounts).toEqual({})
