@@ -806,7 +806,7 @@ Force-directed page relationship graph using d3-force. Key UX patterns:
 
 File: `src/lib/keyboard-config.ts`, `src/components/KeyboardSettingsTab.tsx`
 
-All 40 shortcuts are configurable via Settings → Keyboard tab:
+All 77 shortcuts are configurable via Settings → Keyboard tab:
 
 - `DEFAULT_SHORTCUTS` defines all shortcuts with category/key metadata
 - `localStorage` persistence via `getCustomOverrides()`/`setCustomShortcut()`

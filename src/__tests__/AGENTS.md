@@ -37,13 +37,13 @@ src/
 │   ├── smoke.test.ts
 │   ├── boot-store.test.ts
 │   └── fixtures/index.ts         # Shared fixture factories (makeBlock, makePage, etc.)
-├── components/__tests__/         # Component tests (.test.tsx) — 136 files
+├── components/__tests__/         # Component tests (.test.tsx) — 147 files
 │   ├── App.test.tsx
 │   ├── PageBrowser.test.tsx
 │   ├── EditableBlock.test.tsx
 │   ├── SearchPanel.test.tsx
 │   └── ...
-├── editor/__tests__/             # Editor logic tests — 20 files
+├── editor/__tests__/             # Editor logic tests — 21 files
 │   ├── markdown-serializer.test.ts        # Example-based
 │   ├── markdown-serializer.property.test.ts # fast-check
 │   ├── extensions.test.ts
@@ -54,18 +54,18 @@ src/
 │   ├── page-blocks.test.ts
 │   ├── navigation.test.ts
 │   └── undo.test.ts
-├── hooks/__tests__/              # Hook tests — 90 files
+├── hooks/__tests__/              # Hook tests — 92 files
 │   ├── useViewportObserver.test.ts
 │   ├── useBlockCollapse.test.ts
 │   ├── useBlockZoom.test.ts
 │   └── ...
-├── lib/__tests__/                # Utility & wrapper tests — 42 files
+├── lib/__tests__/                # Utility & wrapper tests — 49 files
 │   ├── tauri.test.ts             # Invoke wrapper contract tests
 │   ├── tauri-mock.test.ts        # Mock layer tests
 │   ├── tree-utils.test.ts
 │   ├── date-utils.test.ts
 │   └── ...
-e2e/                              # 26 Playwright spec files
+e2e/                              # 29 Playwright spec files
 ├── smoke.spec.ts                 # App load, nav items, no console errors
 ├── editor-lifecycle.spec.ts      # CRUD blocks, navigation, deletion
 ├── undo-redo-blocks.spec.ts      # Page-level undo/redo flows
@@ -370,7 +370,7 @@ expect(store.getState().pages.get('PAGE_1')?.undoDepth).toBe(0) // rolled back
 
 ### Configuration
 
-- **Test dir:** `e2e/` — 26 spec files
+- **Test dir:** `e2e/` — 29 spec files
 - **Browser:** Chromium only
 - **Base URL:** `http://localhost:5173`
 - **Dev server:** auto-started via `npm run dev`, reused if already running
