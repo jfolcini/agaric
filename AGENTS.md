@@ -26,7 +26,7 @@ cargo tauri dev              # Dev mode with hot reload
 cargo tauri build            # Production build (per-platform)
 npm run test                 # Vitest (7300+ tests)
 cd src-tauri && cargo nextest run   # Rust tests (3000+ tests)
-npx playwright test          # E2E tests (26 spec files)
+npx playwright test          # E2E tests (29 spec files)
 cargo tauri android build --target aarch64 --debug   # Android debug APK
 cargo tauri android build --target aarch64            # Android release APK (~24 MB)
 prek run --all-files         # Pre-commit hooks
@@ -84,11 +84,11 @@ Agaric is a **single-user, multi-device, local-first** application with **no clo
 - **WAL mode**, foreign keys ON on every connection
 - **Pool:** 2 writers + 4 readers (6 total)
 - **Migrations:** `src-tauri/migrations/` — auto-run on pool init (append-only, never modify shipped migrations)
-- **Schema:** 18 tables + 1 FTS5 virtual table (`fts_blocks`, trigram tokenizer), 29 indexes, 2 triggers across 35 migrations
+- **Schema:** 18 application tables + 1 FTS5 virtual table (`fts_blocks`, trigram tokenizer) + ~5 internal/cache tables (`materializer_retry_queue`, `materializer_apply_cursor`, `gcal_settings`, `gcal_agenda_event_map`, `gcal_space_config`, `_op_log_mutation_allowed`); 32 indexes, 4 triggers across 41 migrations
 
 ## Frontend Architecture
 
-- **State:** 8 Zustand stores — `useBootStore`, `useBlockStore` (focus/selection only), `useNavigationStore`, `useJournalStore`, `usePageBlockStore` (per-page factory via `createPageBlockStore(pageId)` + `PageBlockContext` provider), `useResolveStore`, `useUndoStore`, `useSyncStore`
+- **State:** 11 Zustand stores — `useBootStore`, `useBlockStore` (focus/selection only), `useNavigationStore`, `useJournalStore`, `usePageBlockStore` (per-page factory via `createPageBlockStore(pageId)` + `PageBlockContext` provider), `useResolveStore`, `useUndoStore`, `useSyncStore`, `useSpaceStore` (active space + bootstrapped `Personal` / `Work`), `useTabsStore` (per-space tabs, split out from navigation in MAINT-127), `useRecentPagesStore` (per-space recent-pages MRU strip)
 - **Editor:** Single roving TipTap instance with 10 custom extensions (TagRef, BlockLink, BlockRef, ExternalLink, AtTagPicker, BlockLinkPicker, BlockRefPicker, PropertyPicker, CheckboxInputRule, SlashCommand)
 - **Serializer:** Custom Markdown serializer (`src/editor/markdown-serializer.ts`) — zero external deps, handles `#[ULID]` and `[[ULID]]` tokens
 - **Sync hooks:** `useSyncTrigger` (exponential backoff periodic sync), `useSyncEvents` (Tauri event listener), `useOnlineStatus` (navigator.onLine)

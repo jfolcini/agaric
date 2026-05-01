@@ -213,7 +213,7 @@ recovery (3), drafts (2), PRAGMAs (1), and misc (3 in soft_delete, peer_refs, me
 
 ### Schema
 
-18 tables + 1 FTS5 virtual table, 29 indexes across 30 migrations.
+18 application tables + 1 FTS5 virtual table, plus a handful of internal/cache tables (`materializer_retry_queue`, `materializer_apply_cursor`, `gcal_settings`, `gcal_agenda_event_map`, `gcal_space_config`, `_op_log_mutation_allowed`); 32 indexes, 4 triggers across 41 migrations.
 
 **Core tables:**
 

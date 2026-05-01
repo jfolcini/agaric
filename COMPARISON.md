@@ -266,7 +266,7 @@
 | **Undo/redo history** | Op-level undo/redo + HistoryView with multi-select batch revert, op-type filter, word-level diff display | Session-level undo only. No explicit undo history UI |
 | **Tag inheritance** | Materialized `block_tag_inherited` table: blocks automatically inherit ancestor tags, O(1) lookups, incrementally maintained on 7 op types | File version: no tag inheritance. DB version: `Extends` relationship (still beta) |
 | **Inline queries** | 3 query types (tag, property, backlinks) as live-updating embedded blocks with table/list rendering, click-to-navigate | `{{query}}` blocks with simple or Datalog syntax. More flexible but steeper learning curve |
-| **Accessibility** | ARIA coverage on core components, keyboard navigation, semantic HTML, axe a11y tests on 105+ components (6713 total tests: 1665 Rust + 5048 frontend) | Basic keyboard shortcuts, limited ARIA coverage |
+| **Accessibility** | ARIA coverage on core components, keyboard navigation, semantic HTML, axe a11y tests on 100+ components (~12,000+ total tests: ~3,400 Rust + ~8,700 frontend) | Basic keyboard shortcuts, limited ARIA coverage |
 
 ---
 

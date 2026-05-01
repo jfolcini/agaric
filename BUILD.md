@@ -175,7 +175,7 @@ cargo tauri android dev --target x86_64
 ### Frontend Tests (Vitest)
 
 ```bash
-npm test                    # Single run (~7300 tests)
+npm test                    # Single run (~8700 tests)
 npm run test:watch          # Watch mode
 npm run test:coverage       # With v8 coverage (thresholds: 80% lines/functions/statements, 75% branches)
 ```
