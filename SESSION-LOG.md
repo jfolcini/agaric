@@ -1,5 +1,63 @@
 # Session Log
 
+## Session 596 — FEAT-3p9 Milestone 1: per-space GCal config foundation (2026-05-01)
+
+**FEAT-3p9 partially closed (foundation in place).** One backend build subagent + one technical review subagent shipped the additive schema + per-space CRUD helpers + per-space keychain account format + one-shot legacy-config migration on the first pass. Purely additive work — no signature changes to existing oauth / lease / connector / commands code, no frontend changes, no `bindings.ts` regeneration. M2 (signature threading + per-space connector iteration + Settings accordion UI) and M3 (OS notification space-name prefix, blocked on FEAT-11) remain in REVIEW-LATER under FEAT-3p9.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 16 → **16** (FEAT-3p9 stays open, but transitions from full L item → "foundation done, remaining work is M"). Cost downgrade L → M reflected in both the table row and the Cost line of the detail block.
+- **FEAT-3 umbrella description cleaned up:** prior text "Phases 1+2+3+4 shipped; Phases 5–11 split into FEAT-3p5..FEAT-3p11" was stale (p5/p5b/p6/p7/p8/p10/p11 already shipped). Now reads "only FEAT-3p9 sub-phase remains open"; the body's Cost / Status / Recommended-sequencing paragraphs collapsed into a single "design archive + pointer to FEAT-3p9" wording.
+- **FEAT-3p9 detail block** restructured: "Backend scope (GCal)" split into "foundation in place" (the M1 deliverables — schema, models, keychain, migration, boot wiring) and "remaining" (signature threading + connector iteration + Settings UI). "Migration" sub-section retitled "Migration (in place)" with the chosen target (`SPACE_PERSONAL_ULID` deterministic seed, not "currently-active space" — the spec's ambiguity resolved in favor of determinism).
+- **Previously-resolved counter:** 858+ → 858+ (FEAT-3p9 not closed, just partially shipped) across 562 → 563 sessions.
+
+**Items closed (none — partial progress on FEAT-3p9):**
+
+| Item | What changed |
+|---|---|
+| **FEAT-3p9 (foundation, additive)** (subagent `804e0b3a`) | Backend (Rust only — no `bindings.ts` change) | See per-file breakdown below. |
+
+**Per-subagent breakdown:**
+
+- **Subagent A (backend foundation, agent_id `804e0b3a`)** — All Rust changes. New migration `0041_gcal_space_config.sql` (38 LOC) creating the per-space config table with 11 columns matching the FEAT-3p9 spec verbatim (space_id PRIMARY KEY, account_email, calendar_id, window_days INTEGER DEFAULT 30, privacy_mode DEFAULT 'full', last_push_at, last_error, push_lease_device_id, push_lease_expires_at, created_at, updated_at). New module `src-tauri/src/gcal_push/migration.rs` (656 LOC including 8 tests) implementing `migrate_legacy_gcal_to_personal_space()` — fast-path skip via `gcal_settings.gcal_per_space_migrated` flag, pre-flight nothing-to-migrate detection (calendar_id empty AND no token), DB upsert of legacy `gcal_settings` → `gcal_space_config[SPACE_PERSONAL_ULID]`, keychain entry rewrite from `oauth_tokens` to `oauth_tokens_<SPACE_PERSONAL_ULID>`, then flag set ONLY after every step succeeds (keychain-unavailable is non-fatal — DB row migrated, flag NOT set, next boot retries). Added 350 LOC to `models.rs`: `GcalSpaceConfig` sqlx::FromRow struct + `default_space_config(space_id, now)` helper + `get_space_config / upsert_space_config / delete_space_config / list_space_configs` async helpers (`upsert` uses `INSERT … ON CONFLICT(space_id) DO UPDATE` updating every column except `space_id` + `created_at`, always bumping `updated_at` server-side; `list` orders `space_id ASC` for deterministic test output; `delete` is silent on missing). Added 136 LOC to `keyring_store.rs`: `keyring_account_for_space(space_id) -> "oauth_tokens_<ULID>"` pure-format helper, `KeyringTokenStore::new_for_space(emitter, space_id)` constructor backed by a private `OsKeyringBackend::for_account()` helper (legacy `KEYRING_ACCOUNT = "oauth_tokens"` and `KeyringTokenStore::new()` preserved alongside via delegation), `MockTokenStore::inject_store_error()` test-only failure-injection. `lib.rs::run` (+41 LOC) wires the migration AFTER `bootstrap_spaces()` (which seeds `SPACE_PERSONAL_ULID`) and BEFORE `spawn_connector` — failure is non-fatal (log + continue). 21 new tests covering happy path / nothing-to-migrate / db-only / token-only / pre-existing-row / keychain-unavailable+retry / idempotency / fast-path. **3386 / 3386 backend tests pass** (`cargo nextest run`). 5 new `.sqlx/` cache files committed alongside their queries. `bindings.ts` unchanged (verified via `specta_tests::ts_bindings_up_to_date`).
+
+**Reviews (1 report — PASS with NITS-ONLY):**
+
+- **R1 (technical, agent_id `697a0402`)** — PASS. All 11 correctness checks (A1–A11) verified line-by-line: migration columns + defaults, FromRow alignment, upsert idempotency, get-on-missing returns None, delete silent on missing, list ordered, keyring format, keyring round-trip via `with_backend`, migration state-machine (steps 1-6) including the keychain-failure-leaves-flag-unset retry path, lib.rs ordering. All 4 build-subagent-declared deviations (new `KeyringTokenStore::new_for_space` + `OsKeyringBackend::for_account`, `MockTokenStore::inject_store_error`, `INSERT OR REPLACE` flag write, tracing levels) verified accurate and justified. 21 new tests covered every prompt-required edge. Conventions: `query!` / `query_as!` everywhere (no runtime `query`), no `unwrap()` outside tests, no dependency drift, fits within "Architectural Stability" (no new op types, no new materializer queues, no new sync messages — `gcal_space_config` is pure derived/configuration state). Two non-blocking nits surfaced: (1) no explicit test for legacy keychain `load()` failure (the `load()`-fails-leaves-flag-unset path is correct in code but not covered by a dedicated test — non-blocking because the personal-store-fails path IS tested with the same retry semantics, and the load path is symmetric); (2) six lines >100 chars in test code (acceptable per AGENTS.md test-style flexibility). Neither nit applied.
+
+**Files touched (this session):**
+
+- `src-tauri/migrations/0041_gcal_space_config.sql` (NEW, 38 LOC).
+- `src-tauri/src/gcal_push/migration.rs` (NEW, 656 LOC; 240 implementation + 416 tests + module docs).
+- `src-tauri/src/gcal_push/models.rs` (+347 LOC: struct + 4 CRUD helpers + 1 default helper + 10 tests).
+- `src-tauri/src/gcal_push/keyring_store.rs` (+136 LOC: `keyring_account_for_space` + `new_for_space` + `for_account` + `inject_store_error` + 3 tests).
+- `src-tauri/src/gcal_push/mod.rs` (+2 LOC: `pub(crate) mod migration;`).
+- `src-tauri/src/lib.rs` (+41 LOC: migration call wired into setup hook).
+- `src-tauri/.sqlx/` (5 new query cache files).
+- `REVIEW-LATER.md` (FEAT-3 umbrella description cleanup + FEAT-3p9 detail block restructured to foundation-in-place vs remaining; cost L → M).
+- `FEATURE-MAP.md` (Spaces section heading updated to include Phase 4 + 5b + Phase 9 foundation; new "GCal per-space config — foundation" bullet added at end of Spaces section).
+- `SESSION-LOG.md` (this entry).
+
+**Test count delta: +21 new backend tests** (10 in `models.rs`, 3 in `keyring_store.rs`, 8 in `migration.rs`).
+
+**Verification:**
+
+- `cd src-tauri && cargo nextest run` → **3386 tests run: 3386 passed, 3 skipped**.
+- `cd src-tauri && cargo sqlx prepare -- --tests` → 5 new cache files (committed).
+- `cd src-tauri && cargo test --lib specta_tests` → `ts_bindings_up_to_date` PASSES.
+- `prek run --all-files` → all 35 hooks PASS (one cargo-fmt auto-fix iteration on the migration.rs / models.rs whitespace; second run clean).
+
+**Process notes:**
+
+- **Conservative M1 framing held.** The user picked "Milestone 1 only" out of a 4-option clarifier; the orchestrator scoped that to "schema + per-space CRUD + per-space keychain account + legacy migration; no signature changes anywhere else." That kept the change purely additive and let the build subagent complete first-pass without the merge-conflict risk that a full FEAT-3p9 vertical would have introduced (12k LOC of tightly-coupled gcal_push code, with `models::*_setting` / `KeyringTokenStore::new` / `lease::*` / `run_cycle` signatures all coupled). The remaining work (M2 signature thread + M3 UI) sits cleanly behind a single review-later entry and can be picked up by future sessions in any order.
+- **One full-stack backend subagent + one reviewer is the right shape for additive Rust-only refactors.** The same pattern would have produced a single PASS report on FEAT-3p7's `batch_resolve_inner` work (session 500) if the prompt had been narrower — the two-subagent split there fired because the change crossed the IPC boundary with type-renames, not because the change was structurally complex. M1 here stayed below that threshold.
+- **Spec ambiguity resolved deterministically.** The spec said "migrates to the user's currently-active space at first run" — but "currently-active space" is a frontend concept that the boot-time bootstrap can't access. Resolved by migrating to `SPACE_PERSONAL_ULID` (deterministic seeded ULID, available on every device at every boot). Future M2 ships per-space connect/disconnect, at which point users can move their GCal config to a different space.
+- **Stale FEAT-3 umbrella text fixed orchestrator-direct.** During the build subagent's run, the orchestrator updated the FEAT-3 umbrella row + Cost/Status/sequencing paragraphs in REVIEW-LATER.md to drop the now-stale "Phases 5–11 split into FEAT-3p5..FEAT-3p11" wording — six of those phases (p5, p5b, p6, p7, p8, p10, p11) shipped in earlier sessions. PROMPT.md's "while subagents build, the orchestrator should not idle" guidance applied directly.
+
+**Commit plan:** single feature commit (all 1435 insertions / 14 deletions across 13 files together — backend foundation + .sqlx cache + REVIEW-LATER + FEATURE-MAP + SESSION-LOG). Not pushed.
+
+---
+
 ## Session 595 — docs-only cleanup: close FEAT-4 (shipped) + FEAT-4i (mobile-only, dropped) (2026-05-01)
 
 **Two related FEAT items deleted from REVIEW-LATER.** No code changes.
