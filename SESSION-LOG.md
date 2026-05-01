@@ -1,5 +1,43 @@
 # Session Log
 
+## Session 597 — docs-only cleanup: delete FEAT-3 + FEAT-5 umbrellas + MAINT-124; fix MAINT-114 drift (2026-05-01)
+
+**Three umbrella / watchpoint REVIEW-LATER items deleted; one pre-existing drift fixed.** No code changes.
+
+Per the file's own rules at the top of REVIEW-LATER ("remove resolved items entirely; no historical references; the git history is the audit trail — this file is not a changelog"):
+
+- **FEAT-3 umbrella** (Spaces — parent / umbrella) had only one remaining sub-phase, FEAT-3p9, which has its own row + detail block. Per the session-595 FEAT-4 precedent ("once the umbrella has zero remaining sub-phases that aren't otherwise tracked, delete it entirely"), the FEAT-3 row + ~100-line detail block (Problem / Model / Schema / Frontend summary / Backend summary / Journal / Per-space tabs / Per-space recents / Sync / Default-space bootstrapping / Testing / locked-in user decisions / Cost) deleted. The locked-in invariants ("no links between spaces, ever", "nothing outside of spaces", "no soft-delete", per-space journal / tabs / recents / view) are encoded in the production code paths (`commands/spaces.rs`, `useNavigationStore.tabsBySpace`, `useRecentPagesStore.recentPagesBySpace`, `useResolveStore` per-space cache keys, `delete_block_inner`'s is-space guard, FEAT-3p7's broken-chip enforcement, BUG-1's `create_block` IPC tightening) and described in the Spaces section of `FEATURE-MAP.md`. Git history holds the design archive.
+- **FEAT-5 umbrella** (Google Calendar daily-agenda digest push — parent / umbrella) had only one remaining sub-phase, FEAT-5g (Android, DEFERRED design sketch), which has its own row + detail block and is self-contained. Per the same precedent, the FEAT-5 row + ~200-line detail block (Problem / Rejected alternatives / locked-in user decisions / Architecture overview / Data source / Data model / Event content / Sync cycle / Rate limiting / Queue durability / Midnight rollover / Multi-device push-lease / Disconnect cleanup / Testing bar / Open questions / Dependencies / Rejected dependencies / Feature-flag alignment / Already in Cargo.toml table / Rollout phases / Implementation DAG / Cost / Status) deleted. The locked-in design (push-only one-direction; daily-digest not per-task; dedicated Agaric-owned calendar; one active pusher; all-day events only; off-by-default opt-in toggle) is encoded in `gcal_push/digest.rs` (digest is one-event-per-date), `gcal_push/connector.rs` (push-only loop; per-device lease enforced via `gcal_push/lease.rs`; calendar-create on first connect), `gcal_push/api.rs` (Agaric-owned calendar via `calendars.insert`), and `commands/gcal.rs` (settings tab toggle). Git history holds the design archive.
+- **MAINT-124** (`src/App.tsx` architectural watchpoint at 515L) was self-described as "Effectively closed; keep row open as an architectural watchpoint" — exactly the historical / watchpoint role the file rules forbid. The ≤600L guard is a useful informal convention but the right place for it is either AGENTS.md (changes need explicit user approval) or a pre-commit hook (a code change). Neither belongs in REVIEW-LATER. Row + detail block deleted; the convention can be re-filed as a concrete pre-commit hook check if a future App.tsx edit threatens the watermark.
+
+**Pre-existing drift fixed (orchestrator-direct):**
+
+- **MAINT-114** (Consolidation audit of `.github/workflows/`) had a detail block at line 178 but no corresponding summary-table row — drift introduced before this session. Re-added to the summary table in MAINT-order so the table and detail blocks line up again.
+
+**REVIEW-LATER impact:**
+
+- **Top-level open count (summary table):** 16 → **14** (-FEAT-3, -FEAT-5, -MAINT-124, +MAINT-114 row).
+- **Detail block count:** 19 → 18 (-FEAT-3, -FEAT-5, -MAINT-124).
+- **File delta:** REVIEW-LATER.md `+1 / -316` (one MAINT-114 row added; FEAT-3 + FEAT-5 + MAINT-124 detail blocks + their table rows removed).
+- **Previously-resolved counter:** 858+ → 858+ (no item closed by code work — three deferred-design or stale-watchpoint entries deleted per the file's own rules) across 563 → 564 sessions.
+
+**Files touched (this session):**
+
+- `REVIEW-LATER.md` only.
+- `SESSION-LOG.md` (this entry).
+
+**Verification:** `prek run --all-files` → all 35 hooks PASS (markdown linters + lychee link-check ran on the modified file; the rest skipped via `(no files to check)`).
+
+**Process notes:**
+
+- **The session-595 FEAT-4 precedent generalises cleanly.** When an umbrella entry has zero remaining sub-phases that aren't otherwise tracked, delete it. FEAT-3 had only FEAT-3p9 remaining; FEAT-5 had only FEAT-5g remaining; both umbrellas have nothing left to track.
+- **Watchpoint rows belong in code, not in REVIEW-LATER.** MAINT-124's "guard against regressing past 600L" convention is useful, but the right enforcement mechanism is a pre-commit hook or AGENTS.md invariant — both of which the file's own rules push toward by forbidding "watchpoint" entries here.
+- **Drift discovery happens during cleanup.** Found MAINT-114 missing from the summary table while sanity-checking detail-block-vs-table parity (`grep '^### [A-Z]' | wc -l` against `grep '^| [A-Z]' | wc -l`). Fixed in the same commit since the rule "the table and detail blocks must agree" is what the cleanup is trying to enforce.
+
+**Commit plan:** single docs commit (REVIEW-LATER edit + SESSION-LOG entry together, since this is a pure cleanup with no code surface). Not pushed.
+
+---
+
 ## Session 596 — FEAT-3p9 Milestone 1: per-space GCal config foundation (2026-05-01)
 
 **FEAT-3p9 partially closed (foundation in place).** One backend build subagent + one technical review subagent shipped the additive schema + per-space CRUD helpers + per-space keychain account format + one-shot legacy-config migration on the first pass. Purely additive work — no signature changes to existing oauth / lease / connector / commands code, no frontend changes, no `bindings.ts` regeneration. M2 (signature threading + per-space connector iteration + Settings accordion UI) and M3 (OS notification space-name prefix, blocked on FEAT-11) remain in REVIEW-LATER under FEAT-3p9.
