@@ -17,23 +17,19 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-16 open items — 16 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 27 backend Medium findings closed + 27 MAINT closed (some partially) across sessions 549-595 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-595): **3 schema-integrity migrations landed in session 582** (M-30, M-93, M-90); **H-9 family closed across sessions 583-584**; **MAINT-162 closed in 585**; **C-2b closed in 586** (last CRITICAL backend code review finding); **MAINT-127 closed in 587** (navigation.ts split + new tabs.ts); **M-25 closed in 588 + M-85's `get_agenda` portion** (cursor pagination on `list_projected_agenda`); **FEAT-3p4 closed in 589** (Spaces Phase 4 — `space_id` threaded through 11 read commands, promoted to required `String` on `list_blocks` + `search_blocks`, per-space `useNavigationStore.currentView` slice + frontend callsite migration); **MAINT-131 closed in 590** (`useBlockReschedule.reschedule()` absorbs duplicated `getBlock`-then-decide pattern + new `useBlockPropertyIpc` hook drops the last 5 presentational components' direct `lib/tauri` imports); **decisions cluster closed in 591** (M-34, M-81, M-85); **M-19 closed in 592** (cache rebuild streaming); **M-51 + L-67 closed in 593** (sync streaming via `impl Read`); **MAINT-111 spike closed in 594** (verdict: GO modest scope; reference impl behind `mcp_rmcp_spike` feature flag; 3-milestone migration plan recorded); **FEAT-4 + FEAT-4i closed in 595** (FEAT-4 v1 + v2 both shipped as FEAT-4a..h with RO socket + 9 read tools + RW socket + 6 write tools + activity-feed undo + per-session bulk revert; FEAT-4i was the deferred mobile-only HTTPS/LAN transport — removed since the user does not plan mobile MCP support and FEAT-4 has nothing else left to track); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining**.
-
-Previously resolved: 858+ items across 562 sessions (per SESSION-LOG.md unique session count; latest is session 595).
-
-> **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
+16 open items.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
-| FEAT-3 | FEAT | Spaces — parent / umbrella (Phases 1 + 2 + 3 + 4 shipped; Phases 5–11 split into FEAT-3p5..FEAT-3p11) | S |
+| FEAT-3 | FEAT | Spaces — parent / umbrella (only FEAT-3p9 sub-phase remains open) | S |
 | FEAT-3p9 | FEAT | Spaces Phase 9: per-space external integrations — per-space GCal calendar IDs / OAuth / push pipeline + space-name prefix on OS notifications (FEAT-11 coupling) | L |
 | FEAT-5 | FEAT | Google Calendar daily-agenda digest push (Agaric → dedicated GCal calendar) — parent / umbrella | L |
 | FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L |
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L |
-| MAINT-111 | MAINT | Migrate MCP server JSON-RPC framing onto `rmcp` 1.6 (post-spike, session 594 verdict: GO modest scope; reference impl behind `mcp_rmcp_spike` feature flag; 3 milestones, 12-14h end-to-end) | L |
+| MAINT-111 | MAINT | Migrate MCP server JSON-RPC framing onto `rmcp` 1.6 (reference impl behind `mcp_rmcp_spike` feature flag; 3 milestones, 12-14h end-to-end) | L |
 | MAINT-113 | MAINT | `ConflictFreeBlockId` newtype to lift invariant #9 (`is_conflict = 0` + `depth < 100` in every recursive CTE over `blocks`) into the type system — 220 `is_conflict = 0` SQL occurrences across 70 files. LOW-priority refactor for elegance, not correctness; the convention + review + documented invariant are already working. Do NOT do on a deadline. | L |
-| MAINT-124 | MAINT | Collapse `src/App.tsx` — 1444L baseline → 1139L (576 useAppKeyboardShortcuts) → 907L (577 AppSidebar) → 872L (578 useAppDialogs) → **515L** (579 ViewDispatcher + boot/lifecycle: `<ViewDispatcher>` to `src/components/ViewDispatcher.tsx` 260L + 20 tests, `useAppBootRecovery()` to `src/hooks/useAppBootRecovery.ts` 93L + 5 tests, `useAppSpaceLifecycle()` to `src/hooks/useAppSpaceLifecycle.ts` 74L + 7 tests, –357L from App.tsx). **0 extractions remaining**; 15L over the ≤500L stretch goal but residual is irreducible orchestrator glue (FEAT-12 quick-capture global hotkey explicitly out of scope, prop wiring, JSX shell, imports). Closing this row would require either reverting the "FEAT-12 stays in App.tsx" decision OR a substantial restructure of the prop-passing pattern — neither warranted for –15L. **Effectively closed; keep row open as an architectural watchpoint** so future App.tsx edits don't regress past 600L without a fresh extraction. | S–M |
-| MAINT-128 | MAINT | God-component decomposition batch — 1 of 9 components remaining after sessions 566-571. Remaining: `PropertyRowEditor.tsx` (539L — dispatch by `def.value_type`; deletes the `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` at L85; **rejected in session 563 inspection as design-heavy** — 5 typed editors share `localValue`, date hook state, select-options state (3 fields), ref-picker state (4 fields), 10+ callbacks; splitting would re-create the prop-chain problem the biome-ignore acknowledges). Closing this row requires a design discussion: either accept the existing `biome-ignore` permanently, or split each typed editor into its own component AND lift the shared state UP to a containing hook (substantial refactor). **Stretch-target gaps for partially-closed components:** SettingsView gap to ≤150L closes via `useSettingsTab` hook for localStorage+URL persistence (~50L drop); SortableBlock gap to ≤250L closes via JSX extraction `<SortableBlockBody>`; HistoryView gap to ≤250L closes via `useHistoryEntries` data-loading hook (~30L drop); ConflictList gap to ≤450L closes via 3 additional extractions (`useConflictDeviceNames`, `useConflictActions`, `<ConflictFilterBar>`); TrashView is at the firm ≤450L target (≤350L stretch deferred — would require collapsing 6 IPC handlers into a single-use hook); PageBrowser gap to ≤300L is irreducible orchestrator glue (~127L); BlockTree gap to ≤500L closes via 3-4 additional extractions but `handleFlush` is tightly coupled to `splitBlock`/`edit`/undo store; AddFilterRow at 290L (component body ~90L; remaining ~200L is module-level `build*Filter` helpers + `buildFilterForCategory` switch — could be moved to `categories/builders.ts` to shrink to ~120L but explicitly out of scope for that batch). All deferred. | L |
+| MAINT-124 | MAINT | `src/App.tsx` architectural watchpoint at 515L — guard against regressing past 600L without a fresh extraction. Residual is irreducible orchestrator glue (FEAT-12 quick-capture stays in App.tsx by decision, prop wiring, JSX shell). | S |
+| MAINT-128 | MAINT | God-component decomposition: `PropertyRowEditor.tsx` (539L) — design-heavy split (5 typed editors share `localValue`, date hook state, select-options state, ref-picker state, 10+ callbacks). Closing this row requires either accepting the existing `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` at L85 permanently, or splitting each typed editor into its own component AND lifting the shared state UP to a containing hook. | L |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
@@ -50,8 +46,6 @@ Previously resolved: 858+ items across 562 sessions (per SESSION-LOG.md unique s
 ## FEAT — Planned Feature Improvements
 
 ### FEAT-3 — Spaces: partition pages into user-defined contexts (work / personal)
-
-> **Navigation-cluster context (FEAT-7/8/9 already shipped):** the shell-level TabBar hoist, active-tab dropdown switcher, and Recent-pages strip landed against the global `useNavigationStore.tabs` + `useRecentPagesStore.recentPages` models. Phase 3 of FEAT-3 is what refactors both of those into per-space state: `tabs` → `tabsBySpace: Record<SpaceId, Tab[]>`, `recentPages` → `recentPagesBySpace: Record<SpaceId, string[]>`. The already-shipped component DOM + styling stays; only the selector / data source shifts. One-line swaps in `TabBar.tsx` + `RecentPagesStrip.tsx` + `keyboard-config.ts`.
 
 **Problem:** A user wants to partition notes into independent contexts (e.g. "work" and "personal") and switch between them quickly during the day without seeing cross-context data. The app currently presents a single undifferentiated vault: pages, tags, properties, agenda, graph, backlinks, tabs, and the journal all share one namespace.
 
@@ -121,7 +115,7 @@ AND COALESCE(b.page_id, b.id) IN (
 **Sync implications:**
 Space pages and `space` properties replicate as normal ops. Every device sees every space. Matches the AGENTS.md threat model (single-user, multi-device, no adversarial peers). Per-space sync meshes would be a separate, significant architectural change (multi-DB or sync-scope filtering) and require their own design approval.
 
-**Default-space bootstrapping (resolved — Phase 1 shipped):**
+**Default-space bootstrapping:**
 Fresh installs and upgrades both run a boot-time Rust bootstrap (`src-tauri/src/spaces/bootstrap.rs`) that creates two seeded spaces with reserved deterministic ULIDs — `SPACE_PERSONAL_ULID = "00000000000000000AGAR1CPER"` and `SPACE_WORK_ULID = "00000000000000000AGAR1CWRK"`. Each device emits its own CreateBlock + SetProperty(`is_space`=true) ops for both; op_log hashes differ per-device (device_id is part of the hash preimage, which is unavoidable under the current per-device hash-chain model) but the materializer's `INSERT OR IGNORE` on `blocks` converges every device on the same two rows. User-created spaces after that use normal per-device ULIDs — two "Project X" spaces on different devices stay distinct until manually reconciled. Upgrade path: every existing non-space page without a `space` property gets a local `set_property(page, 'space', PERSONAL_ULID)` op; non-deterministic timestamps are fine — `block_properties` UPSERTs on `(block_id, key)` converge. Bootstrap is idempotent (fast-path skip when both seeded blocks exist with `is_space = 'true'`) and partial-crash resumable (per-step commits).
 
 **Testing (per AGENTS.md):**
@@ -133,37 +127,21 @@ Fresh installs and upgrades both run a boot-time Rust bootstrap (`src-tauri/src/
 - Journal per-space lookup, including the transition from "no journal today" to "journal created in current space".
 - Recursive CTE walkers (`list_children`, cascade ops) unchanged — `is_conflict = 0` + `depth < 100` invariants preserved. Space is a query-time filter, not a structural partition.
 
-**Rollout phases (each independently shippable, gated by mandatory review subagent per AGENTS.md):**
-
-1. **Migration + model + wizard — SHIPPED.** Property definitions (migration 0035), boot-time Rust bootstrap emitting seeded spaces + upgrade ops, `src-tauri/src/spaces/` module, `list_spaces` command, `SpaceStore` (Zustand + persist), `SpaceSwitcher` (Radix Select in `SidebarHeader`).
-2. **List/search filtering — SHIPPED.** `list_blocks` + `search_blocks` accept `space_id: Option<String>` (threaded through `pagination::list_children` / `list_by_type` / `list_trash` + `fts::search_fts` via the `?N IS NULL OR COALESCE(b.page_id, b.id) IN (...)` filter pattern). PageBrowser + SearchPanel pass `currentSpaceId` and gate render on `useSpaceStore.isReady` via `LoadingSkeleton`. Link picker (`useBlockResolve`'s `searchPagesViaCache` / `searchPagesViaFts`) scoped to current space — current-space-only per user decision, no opt-in toggle. "Move to space" action in the PageHeader kebab menu uses the existing `setProperty` wrapper (no new Tauri command). New atomic command `create_page_in_space` wraps `CreateBlock` + `SetProperty('space')` in a single `BEGIN IMMEDIATE`; all top-level page-creation callsites (sidebar "New page", Ctrl+N, PageBrowser inline form, link picker "Create new page") route through it. `AgendaQuery` struct bundles the three agenda knobs to keep `list_blocks` under the tauri-specta 10-arg limit. `useResolveStore.clearPagesList()` fires on space switch so the link picker's short-query cache doesn't surface other-space pages.
-3. **Per-space tabs + per-space recent — SHIPPED.** Refactored `useNavigationStore` to `tabsBySpace` + `activeTabIndexBySpace` AND `useRecentPagesStore` to `recentPagesBySpace`. Subscriber on `useSpaceStore.currentSpaceId` flushes the outgoing space's flat fields into its slice, then pulls the incoming space's slice into the flat fields (`navigation.ts:489-548`, `recent-pages.ts:130-167`). `TabBar.tsx` and `RecentPagesStrip.tsx` consume the per-space selectors `selectTabsForSpace` / `selectRecentPagesForSpace`. Tests cover space-deletion corner case + rehydrate with stale `currentSpaceId` + cross-space MRU isolation.
-4. **Agenda / graph / backlinks / tags / properties — FEAT-3p4.** Remaining query commands gain the filter: `list_undated_tasks`, `list_projected_agenda`, `query_by_tags`, `query_by_property`, `list_page_links`, `get_backlinks`, `list_backlinks_grouped`, `query_backlinks_filtered`, `count_agenda_batch*`. Plus: promote `space_id` from `Option` to required on `list_blocks` / `search_blocks`; page-membership check in `get_page_inner`; per-space `useNavigationStore.currentView` slice. See FEAT-3p4 entry for full scope.
-5. **Per-space journal (J1) — FEAT-3p5.** Daily-page lookup by `(date, space)`. Per-space journal templates via a `journal_template` property on each space block. JournalPage's 4 internal `createBlock({blockType: 'page'})` callsites route through `createPageInSpace`. Per-space `useJournalStore.currentDate` slice. See FEAT-3p5 entry for full scope.
-6. **Manage-spaces UI — FEAT-3p6.** Rename, delete-only-if-empty (no soft-delete, no reassign-on-delete), accent-color picker (consumed by FEAT-3p10), onboarding for second space. *(Status-bar chip / collapsed-icon indicator / brand identity moved to FEAT-3p10; keyboard shortcuts split into FEAT-3p11.)*
-7. **Cross-space link enforcement — FEAT-3p7.** Resolve store + `get_page_inner` filter by current space. Cross-space `[[ULID]]` chips render via the existing broken-link UX. Defence-in-depth against legacy text + manual paste + post-"Move to space" stale references. **Implements the locked-in "no links between spaces, ever" decision.**
-8. **History view space scoping — FEAT-3p8.** History defaults to current space; "All spaces" toggle in `HistoryFilterBar` (off by default, not persisted).
-9. **Per-space external integrations — FEAT-3p9.** Per-space GCal calendar IDs / OAuth tokens / push pipeline. OS notification titles prefix `[<SpaceName>]` (FEAT-11 coupling).
-10. **Visual identity — FEAT-3p10.** Per-space accent color (CSS custom property override) + status-bar chip + window title prefix + collapsed-sidebar indicator. **Single highest-priority remaining FEAT-3 phase for the "fully separated feel" goal.**
-11. **Digit hotkeys — FEAT-3p11.** `Ctrl+1` … `Ctrl+9` (`Cmd+1` … `Cmd+9` on macOS) switch directly to the Nth space in alphabetical order. Additive to FEAT-3p6's popup-search and cycle bindings — fastest possible motion (one chord) for the common 2-space case.
+**Remaining work:** only FEAT-3p9 (per-space external integrations — per-space GCal config + OS notification space-name prefix when FEAT-11 lands). See the FEAT-3p9 entry below.
 
 **User decisions locked in (do NOT re-litigate):**
 
 - **Seeded spaces count:** 2 — "Personal" + "Work".
 - **Bootstrap:** deterministic genesis ops (two reserved ULIDs above) + local upgrade ops for existing pages.
 - **Space deletion:** forbid deleting a non-empty space (no soft-delete, no reassign-on-delete).
-- **Spaces are physically separate vaults from the user's perspective. NO live links between spaces, ever.** Picker is current-space-only (Phase 2 shipped). Resolve store and single-page fetch are current-space-only (FEAT-3p7). Any `[[ULID]]` whose target lives in another space — regardless of how it got there (legacy text written before Phase 2, post-"Move to space" stale references in the source space, manually-pasted ULIDs, sync replay of older content) — renders as a **broken-link chip via the existing broken-link UX** (`block-link-deleted` styling, "Broken link — click to remove" tooltip, click deletes the chip). **No auto-switch on click. No "show anyway" toggle. No developer override.** A single behaviour, period.
-- **Same page title in both spaces is allowed and stays distinct.** "Daily standup" in Personal and "Daily standup" in Work are two separate pages with two ULIDs. Titles are not a cross-space resolution surface. Title-based search is space-scoped (Phase 2 shipped); title collisions across spaces are invisible from inside any one space.
+- **Spaces are physically separate vaults from the user's perspective. NO live links between spaces, ever.** Picker is current-space-only. Resolve store and single-page fetch are current-space-only. Any `[[ULID]]` whose target lives in another space — regardless of how it got there (legacy text, post-"Move to space" stale references in the source space, manually-pasted ULIDs, sync replay of older content) — renders as a **broken-link chip via the existing broken-link UX** (`block-link-deleted` styling, "Broken link — click to remove" tooltip, click deletes the chip). **No auto-switch on click. No "show anyway" toggle. No developer override.** A single behaviour, period.
+- **Same page title in both spaces is allowed and stays distinct.** "Daily standup" in Personal and "Daily standup" in Work are two separate pages with two ULIDs. Titles are not a cross-space resolution surface. Title-based search is space-scoped; title collisions across spaces are invisible from inside any one space.
 - **Graph view:** no cross-space edges to render (follows from "no links between spaces").
 - **Export:** markdown export references only stay within the current space (follows from "no links between spaces"; cross-space `[[ULID]]` targets export as the same broken-chip placeholder that the UI renders).
 - **First-boot UI:** LoadingSkeleton on space-scoped panels until `useSpaceStore.isReady === true`.
 - **Search operator:** the switcher is the only scoping surface — no `space:<name>` operator.
 
-**Cost:** S — this umbrella entry is now a tracker only. Each remaining phase is filed as its own item: FEAT-3p5 (journal), FEAT-3p6 (manage UI), FEAT-3p7 (broken-chip enforcement), FEAT-3p8 (history scoping), FEAT-3p9 (per-space integrations), FEAT-3p10 (visual identity), FEAT-3p11 (digit hotkeys). Schedule via the per-phase items, not this umbrella.
-
-**Recommended sequencing for "fully separated feel + easy/quick switching":** FEAT-3p10 + FEAT-3p11 + FEAT-3p7 first (one session each, low blast-radius, immediately unlock the user-visible goal). Then FEAT-3p5 / p6 / p8 / p9 in any order.
-
-**Status:** IN PROGRESS — Phases 1 + 2 + 3 + 4 shipped. Remaining work tracked under FEAT-3p5 / FEAT-3p6 / FEAT-3p7 / FEAT-3p8 / FEAT-3p9 / FEAT-3p10 / FEAT-3p11.
+**Cost:** S — this umbrella entry is now a design archive + a pointer to the one remaining sub-phase. The locked-in user decisions above ("no links between spaces, ever", "nothing outside of spaces", "no soft-delete", per-space journal / tabs / recents / view, etc.) are project-level invariants that any future spaces-touching work must honor. The remaining engineering work is tracked under **FEAT-3p9**.
 
 ### FEAT-3p9 — Spaces Phase 9: per-space external integrations (GCal, OS notifications)
 
@@ -408,7 +386,7 @@ First wave (parallel): `5a` + `5d`. Second wave: `5b`. Third wave (parallel): `5
 
 **Cost:** L — spans one new backend module (~8 files), one new Settings tab, 4 new runtime crate deps + 1 new dev-dep, one migration, ~30 tests (Rust + frontend). Realistic estimate: **1–2 focused sessions** for v1 (a schema + digest + settings-UI session, then OAuth + API + connector). The daily-digest model is roughly 30–40 % less code than the rejected per-task shape.
 
-**Status:** IN PROGRESS — v1 (FEAT-5a..FEAT-5i, desktop daily-digest push: schema + OAuth + API client + digest + settings tab + connector + DirtyEvent materializer hook + local-command DirtyEvent producer) landing incrementally. v2 (FEAT-5g, Android) DEFERRED pending separate design approval. v3 (per-task / timed events) explicitly NOT planned.
+**Status:** IN PROGRESS — v1 (desktop daily-digest push) under active implementation. v2 (FEAT-5g, Android) DEFERRED pending separate design approval. v3 (per-task / timed events) explicitly NOT planned.
 
 ### FEAT-5g — GCal: Android OAuth + background connector (DEFERRED — design sketch only)
 
@@ -446,7 +424,7 @@ Part of the FEAT-5 family. **Not scheduled.** Blocked on explicit design-review 
 
 ### MAINT-111 — Migrate MCP server JSON-RPC framing onto `rmcp` (official Rust MCP SDK)
 
-**Status (post-spike, session 594):** spike complete; verdict **GO (modest scope)**. Reference implementation lives in `src-tauri/src/mcp/rmcp_spike.rs` (gated behind the off-by-default `mcp_rmcp_spike` Cargo feature) with 3 passing tests proving the integration points survive. Detailed assessment in `src-tauri/src/mcp/rmcp_spike.md`. Spike numbers (`rmcp 1.6`, default vs `mcp_rmcp_spike` build): +6 transitive crates, +1s cold compile, +32 bytes on the `agaric-mcp` stripped binary, +0 default-build warnings. All four spike questions returned **Pass**: ~250 LOC of pure framing/dispatch in `server.rs` collapses; `ToolRegistry` trait stays; activity-feed + `ActorContext` + `LAST_APPEND` integration points preserved (verified with tests); `rmcp` gives us protocol-version negotiation + `tools/listChanged` + cancel/progress + `_meta` + `ping` + `structuredContent` "for free".
+**Status:** verdict **GO (modest scope)**. Reference implementation lives in `src-tauri/src/mcp/rmcp_spike.rs` (gated behind the off-by-default `mcp_rmcp_spike` Cargo feature) with 3 passing tests proving the integration points survive. Detailed assessment in `src-tauri/src/mcp/rmcp_spike.md`. Spike numbers (`rmcp 1.6`, default vs `mcp_rmcp_spike` build): +6 transitive crates, +1s cold compile, +32 bytes on the `agaric-mcp` stripped binary, +0 default-build warnings. All four spike questions returned **Pass**: ~250 LOC of pure framing/dispatch in `server.rs` collapses; `ToolRegistry` trait stays; activity-feed + `ActorContext` + `LAST_APPEND` integration points preserved (verified with tests); `rmcp` gives us protocol-version negotiation + `tools/listChanged` + cancel/progress + `_meta` + `ping` + `structuredContent` "for free".
 
 **Migration plan (3 milestones, 12-14h end-to-end):**
 
@@ -458,7 +436,7 @@ Part of the FEAT-5 family. **Not scheduled.** Blocked on explicit design-review 
 
 **Risk-mitigation suggestion** (from the spike): a behind-flag shadow-mode (run both adapters in parallel, compare responses) during milestone 2 so any wire-format drift surfaces in CI before the hand-rolled path is removed.
 
-**Cost:** L (12-14h end-to-end across 3 milestones; spike portion at ~5h is closed).
+**Cost:** L (12-14h end-to-end across 3 milestones).
 **Risk:** Medium — wire format is identical (rmcp targets the same MCP spec we hand-roll) but every existing `mcp/server/tests.rs` / `tools_ro/tests.rs` / `tools_rw/tests.rs` test must still pass byte-equivalent.
 **Impact:** Medium — reduces framing boilerplate (~250 LOC), tracks the MCP spec upstream rather than reimplementing it, and unlocks several spec features we currently stub (protocol-version negotiation, listChanged, cancel/progress, _meta, ping, structuredContent).
 
@@ -522,51 +500,26 @@ The initial one-line recommendation was "4 → 2 (validate + release)". On inspe
 **Risk:** Low-to-medium — release pipeline is load-bearing. Test the merged workflow by dispatching against a throwaway tag (`0.0.0-test-consolidation`) on a fork or a draft release.
 **Impact:** S — one fewer file to navigate, slight simplification of the "how do I cut a release?" mental model. Not pressure relief.
 
-### MAINT-124 — Collapse `src/App.tsx` (1436L) god component
+### MAINT-124 — `src/App.tsx` architectural watchpoint
 
-**What:** `App.tsx` is the largest component in the tree at 1436L. It hosts:
+**What:** `App.tsx` sits at 515L. The residual is irreducible orchestrator glue: boot gate, dialog mounts, prop wiring, JSX shell. FEAT-12 quick-capture global hotkey lives here by decision and is explicitly out of scope for further extraction.
 
-- **20+ `useEffect`s** for independent concerns: global shortcut handlers × 5 (journal / global / space / tab / close-overlays), sync events, deep-link routing, draft recovery, priority-level loading, focus management, scroll restoration, view transitions, theme, online status.
-- **10+ event listeners** registered/deregistered across effects.
-- **5 dialog/modal open states** (`bugReportOpen`, `quickCaptureOpen`, `showNoPeersDialog`, `shortcutsOpen`, `bugReportPrefill`).
-- **4 different async patterns in one file** (`void (async () => ...)()` IIFE, `.then().catch()`, `.then/.catch` inside callback, `async/await + try/catch`).
-- **236-line inline sidebar tree** at L1159-1394 (`SidebarProvider` + `Sidebar` + header / menu / footer + `SidebarInset` + `TabBar` + `RecentPagesStrip` + `ScrollArea` + `ViewRouter`).
-- **3 silent `.catch(() => {})`** at L935-939 (`w.unminimize().catch(() => {})`, `w.show().catch(() => {})`, `w.setFocus().catch(() => {})`). The outer `try/catch` at L931-942 does NOT rescue these — each inner `.catch` resolves the rejected promise to `undefined` so `await` succeeds. Direct AGENTS.md §Anti-patterns violation.
+**Guard:** future App.tsx edits must not regress past **600L** without a fresh extraction. If the file grows, identify the new concern and extract it (hook or sibling component) rather than letting it accrete in App.tsx.
 
-**Fix:**
+**Cost:** S (only triggers when an edit threatens the watermark).
 
-1. Extract `useAppKeyboardShortcuts()` in `src/hooks/` — consolidate the 5 shortcut-handler effects into a single one. 5 effects → 1.
-2. Extract `useAppDialogs()` — owns the 5 open states + their handlers.
-3. Extract `<ViewDispatcher>` — the view-router switch that dispatches on `currentView`.
-4. Extract `<AppShell>` — the sidebar tree and main content wrapper.
-5. Fix the silent `.catch(() => {})` triplet by adding `logger.debug('App', 'best-effort window focus failed', { step }, err)` to each.
-6. Standardize on `async/await + try/catch` for async patterns.
+### MAINT-128 — God-component decomposition: `PropertyRowEditor.tsx`
 
-Target App.tsx ≤500 lines: boot gate, dialog mounts, the 4 extracted pieces, and composition.
+**What:** `PropertyRowEditor.tsx` is 539L and carries an explicit `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` at L85. The file dispatches on `def.value_type` (text/number/date/ref/select → 5 parallel JSX subtrees) but the 5 typed editors share `localValue`, date hook state, select-options state (3 fields), ref-picker state (4 fields), and 10+ callbacks — splitting naïvely re-creates the prop-chain problem that the `biome-ignore` acknowledges.
+
+**Closing this row requires a design discussion:**
+
+- **(a)** accept the existing `biome-ignore` permanently with a rationale comment, OR
+- **(b)** split each typed editor into its own component AND lift the shared state UP to a containing hook (substantial refactor — the hook owns local edit state, debounced save, and calls down into the per-type editor with a thin contract).
 
 **Cost:** L.
-**Risk:** Medium — the file is load-bearing. Migrate incrementally, one extraction per commit, running the existing App.test suite and e2e shortcut tests between each.
-**Impact:** L — biggest single-file cognitive-load reduction in the codebase.
-
-### MAINT-128 — God-component decomposition batch
-
-**What:** Nine components have grown well past the sibling-components + hook layer's "keep under 500L" norm, with concrete sub-pieces already visible in the code. All line counts validator-verified.
-
-| Component | LOC | Concrete extraction target |
-|---|---|---|
-| `src/components/PageBrowser.tsx` | 961 | `PageBrowserRowRenderer` (3 row kinds already exist as fns); `PageBrowserHeader` (form + search + sort dropdown); `usePageBrowserGrouping` hook (`buildSinglePageBranch`, `buildMultiPageBranch`, `sortTopLevelUnits`); `usePageBrowserSort` hook (localStorage pref + sort callback). Target ≤300. |
-| `src/components/BlockTree.tsx` | 899 | `useBlockLinkResolve` (cache + batch resolve at L336 + L401); `useBlockPropertiesBatch` (L424); `useBlockNavigateToLink` (60-line `handleNavigate` L539-597); hoist the 4 `*Ref` indirections (`handleBeforeCollapseRef` etc. L240-243) with their hooks. Target ≤500. Violates own "thin orchestrator" docstring. |
-| `src/components/TrashView.tsx` | 788 | `useTrashFilter`, `useTrashMultiSelect` hooks; row renderer to sibling; 4 inlined `ConfirmDialog`s can move to siblings. Target ≤350. |
-| `src/components/ConflictList.tsx` | 737 | Extract `useConflictFilters`, `useConflictSelection`; split 3 inline `ConfirmDialog`s to siblings. **Same commit removes the direct DOM-mutation anti-pattern at L287-300** where `item.setAttribute('role','option')` is called from a `useEffect` (React may overwrite on re-render; the comment at L287-289 admits the workaround). Target ≤350. |
-| `src/components/SettingsView.tsx` | 620 | 9 tab panels currently rendered inline from one switch (L532-614). Extract to `src/components/settings/{General,Properties,Appearance,Keyboard,Data,Sync,Agent,GoogleCalendar,Help}Tab.tsx`. Lift `AutostartRow` (L188-298, 110L) + `QuickCaptureRow` (L299-441, 142L) to siblings. Add `useSettingsTab()` hook for localStorage+URL persistence. Target SettingsView.tsx ≤150. |
-| `src/components/HistoryView.tsx` | 528 | `useHistorySelection` (wraps `useListMultiSelect` with HistoryView semantics); `useHistoryKeyboardNav`; `HistoryListView` presentational; `HistoryRevertDialog` + `HistoryRestoreDialog` siblings. Target ≤250. |
-| `src/components/PropertyRowEditor.tsx` | 539 | **Explicit `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` at L85** with a rationale that is invalidated by dispatching by `def.value_type` (text/number/date/ref/select → 5 parallel JSX subtrees). Split into 5 typed row editors + a dispatcher. The `biome-ignore` goes away. |
-| `src/components/SortableBlock.tsx` | 469 | `useAttachmentCount` (L150-165); `usePropertyDefForEdit` (L220-265); `useBlockContextMenu` (context-menu + edit state L138-147); touch-long-press + swipe-to-delete remain. Target ≤250. |
-| `src/components/backlink-filter/AddFilterRow.tsx` | 556 | **2.5× its parent `BacklinkFilterBuilder`** (218L). 14 state slots at L194-213 + 10 per-category JSX blocks. Extract one file per filter category; state slots move with their category. |
-
-**Cost:** L (stagger per file — do NOT land in one PR).
-**Risk:** Medium per file — most have test suites; run the matching test file between each commit.
-**Impact:** L — the 9 most expensive maintainability hotspots in the component tree become composable.
+**Risk:** Medium — has a test suite; run between each commit.
+**Impact:** M — removes the only `biome-ignore` for cognitive complexity and clarifies the typed-editor surface.
 
 ## PERF — Performance items
 
@@ -667,7 +620,7 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 
 ### PUB-5 — Tauri updater endpoint URL pinned; keypair + secrets remain user-only
 
-**Status:** the endpoint URL in `src-tauri/tauri.conf.json` now points at `https://github.com/jfolcini/agaric/releases/latest/download/latest.json` (session 488). The remaining work is purely user-side and cannot be agent-actioned:
+**Status:** the endpoint URL in `src-tauri/tauri.conf.json` points at `https://github.com/jfolcini/agaric/releases/latest/download/latest.json`. The remaining work is purely user-side and cannot be agent-actioned:
 
 1. **Generate the Minisign keypair** (`cargo tauri signer generate -w ~/.tauri/agaric.key`). Back up the private key offline — losing it means future updaters can't verify against the deployed pubkey, breaking the auto-update chain for installed users.
 2. **Paste the public key** into `tauri.conf.json` `updater.pubkey`.
@@ -708,112 +661,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 **Cost:** S (~15 min once you've decided what to use as DN).
 **Status:** ACTIONABLE — pure operations, no design decision pending.
 
----
-
-## Backend Code Review (Confirmed Findings) — Appended 2026-04-25
-
-> Output of a deep, two-pass parallel backend code review covering all of
-> `src-tauri/src/` (~128k LOC, 192 files). Pass 1: 10 domain reviewers.
-> Pass 2: 10 independent validators that cross-checked every finding
-> against the actual code. Hallucinations / out-of-scope claims dropped.
-> Severities reflect Pass-2 corrections.
->
-> All entries below are CONFIRMED issues. Already-tracked items
-> (PERF-19, PERF-20, PERF-23) are referenced but not duplicated.
->
-> Source artifacts: `/tmp/agaric-review/pass1/` (raw findings),
-> `/tmp/agaric-review/pass2/` (validator verdicts),
-> `/tmp/agaric-review/FINAL-CONSOLIDATED.md` (full report).
-
-**Scope:** All Rust backend code in `src-tauri/src/` (~128k LOC, 192 files, 35 migrations).
-**Method:** 10 parallel domain reviewers (Pass 1) + 10 independent validators (Pass 2) cross-checking every finding against the actual code, with hallucinations / out-of-scope claims dropped and over-stated severities corrected.
-
-> Threat model reminder (AGENTS.md): Agaric is a single-user, multi-device, local-network-only app. Findings recommending hardening against adversarial sync peers were rejected as out-of-scope. Findings about data integrity, accidental corruption, and robustness against the user's own buggy peer software ARE in scope.
-
----
-
-## Executive Summary
-
-| Metric | Count |
-|---|---|
-| Raw Pass 1 findings | 348 |
-| Dropped (hallucinated / out-of-scope / duplicate / wontfix-intentional) | 12 |
-| Severity-downgraded by Pass 2 | 49 |
-| Already-tracked in REVIEW-LATER (PERF-19, PERF-20, PERF-23) | 3 |
-| Net findings in this report | 317 |
-| **Critical** | **1** |
-| **High** | **4** |
-| **Medium** | **12** |
-| **Low** | **124** |
-| **Info / nits** | **125** |
-
-### Top-priority items (Impact ÷ Cost)
-
-1. **C-2b** — Boot-time op-log replay path for unmaterialized ops; op_log diverges from materialized state with no automatic remediation (<ref_file file="/home/javier/dev/agaric/src-tauri/src/materializer/consumer.rs" />). C-2a (divergence detection) shipped — divergence is now visible via `fg_apply_dropped` in `StatusInfo`; C-2b remains as the actual replay path. **Schema migration approval required**.
-
-### Findings by Domain × Severity
-
-| Domain | Crit | High | Med | Low | Info |
-|---|---|---|---|---|---|
-| Core data layer | 0 | 1 | 3 | 9 | 11 |
-| Materializer | 1 | 2 | 4 | 8 | 4 |
-| Cache + Pagination | 0 | 0 | 3 | 12 | 6 |
-| Commands (CRUD) | 0 | 1 | 4 | 9 | 13 |
-| Commands (System) | 0 | 2 | 8 | 13 | 6 |
-| Sync stack | 0 | 3 | 10 | 25 | 5 |
-| Search & Links | 0 | 2 | 4 | 16 | 19 |
-| Lifecycle / Snapshots | 0 | 0 | 14 | 16 | 8 |
-| MCP | 0 | 0 | 5 | 12 | 8 |
-| GCal / Spaces / Drafts | 0 | 0 | 6 | 11 | 9 |
-
-(Numbers approximate; some findings span domains and are listed under the primary one.)
-
-### Already tracked (NOT re-reported)
-
-- **PERF-19** — Backlink pagination cursor uses linear scan for non-Created sorts. Confirmed still applicable.
-- **PERF-20** — Backlink filter resolver `try_join_all` has no concurrency cap. Pass 2 confirmed **3 sites, not 2** as REVIEW-LATER.md claims — recommend updating that entry.
-- **PERF-23** — `read_attachment_file` buffers whole file before chunked send. Confirmed unchanged.
-
-### Patterns / Themes (cross-cutting systemic issues)
-
-1. **CQRS write path bypassed in several places.** `set_page_aliases_inner` (commands/pages.rs), `page_aliases` mutation, `update_last_address` (peer_refs.rs), and a handful of cache rebuilds write derived state without an op-log append. These create silent divergence between op_log and materialized tables.
-2. **Atomicity gaps in multi-op user actions.** `set_todo_state` + recurrence sibling, `set_page_aliases`, `flush_draft` + `prev_edit` read, `disconnect_gcal` (3 writes), `create_snapshot` (INSERT pending then UPDATE complete), `restore_page_to_op` (read outside write tx) — none use a single `BEGIN IMMEDIATE` even though all are "either both happen or neither" scenarios.
-3. **Backpressure silent-drops are wider than documented.** `try_enqueue_background` Full-arm doesn't increment `bg_dropped`; `apply_snapshot` cache-rebuild fan-outs use the same path; `enqueue_full_cache_rebuild` partial-success is invisible. Pass 2 downgraded the severity to Medium but the systemic pattern stands.
-4. **Recursive CTE invariants (is_conflict = 0 + depth < 100) are inconsistent.** Production paths in `tag_inheritance` and `pagination::children` are correct; `move_block_inner` cycle CTE, `cascade_soft_delete`, the `tag_query` and `backlink::resolve_root_pages` CTE oracles, and `reindex_block_links` all miss one or both predicates.
-5. **Split-pool invariant violated in 5+ places.** `*_split` cache variants (tags, pages, projected_agenda, page_ids), `materializer::sweep_once`, `fetch_link_metadata` (uses WritePool for read-heavy work), and a handful of background tasks ignore the read pool entirely.
-6. **Doc / code drift across AGENTS.md, ARCHITECTURE.md, and REVIEW-LATER.md.** AppError variants (11 vs 12 with Gcal); `find_lca` 10000-iter cap claim has no implementation; FTS tokenizer doc says unicode61 but code uses trigram; ARCHITECTURE.md §15 says DB/IO/JSON errors are sanitized but 5 command files skip the helper; REVIEW-LATER PERF-20 site count wrong; ARCHITECTURE.md doesn't mention MCP at all.
-7. **Sync hash chain identity is non-cryptographic.** Per `compute_op_hash`, the digest covers `device_id|seq|parent_seqs|op_type|payload` but **not** `prev_hash`. Pass 2 downgraded "data integrity" framing — within the single-user threat model the chain is a deterministic fingerprint, not a Merkle commitment. Filed as a documentation gap.
-8. **OAuth & filesystem secret hygiene is good but not perfect.** SecretString redaction tested, keychain-only storage; minor leakage paths exist via classify_refresh_error formatting upstream Display, JWT id_token signature unverified, and partial token leakage on serde error. Bug-report redaction allow-list only catches `$HOME` + local `device_id` — leaks GCal email, peer device IDs.
-
----
-
-## MEDIUM findings (37 — expanded)
-
-> Each entry is now a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status) ready to be picked up.
-
-### Materializer
-
-
-### Cache + Pagination
-
-
-### Commands (System)
-
-
-
-### Sync stack
-
-
-### Search & Links
-
-### Lifecycle / Snapshots / Merge / Recurrence
-
-
-### MCP
-
-
-### GCal / Spaces / Drafts
-
 ### M-95 — `recover_calendar_gone` does not also clear `oauth_account_email`
 - **Domain:** GCal / Spaces / Drafts
 - **Location:** `src-tauri/src/gcal_push/connector.rs:727-741`
@@ -826,12 +673,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F23
 - **Status:** Open
 
-## LOW findings (7 — expanded)
-
-> Each entry is a fully-detailed block (Domain / Location / What / Why / Cost / Risk / Impact / Recommendation / Pass-1 source / Status).
-
-### Materializer
-
 ### L-17 — `dispatch_op` enqueues fg+bg out of order
 - **Domain:** Materializer
 - **Location:** `src-tauri/src/materializer/dispatch.rs:98-102`
@@ -843,8 +684,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Recommendation:** Either (a) move the bg fan-out *into* the fg consumer so it runs only after `apply_op_tx` commits — making the consumer the single scheduler of per-op derived work; or (b) thread a `Notify` keyed on `(device_id, seq)` and have the bg side `notified().await` before running the rebuild it spawned. (a) is cleaner.
 - **Pass-1 source:** 02/F10
 - **Status:** Open
-
-### Commands System
 
 ### L-53 — `cancel_pairing` clears pairing slot whether or not a session exists
 - **Domain:** Commands (System)
@@ -869,18 +708,3 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Recommendation:** Acceptable as-is until profiling shows it is a bottleneck; lower priority than M-31 / L-41. If/when fixed, a single-pass `replace_n` over both needles avoids allocations.
 - **Pass-1 source:** 05/F35
 - **Status:** Open
-
-### Sync
-
-
-### Search & Links
-
----
-
-## Closing notes
-
-- The Pass-1 reviewers were unusually accurate: across 348 findings, only 2 outright hallucinations and 5 out-of-scope claims. Severity inflation was the dominant correction (49 downgrades).
-- The `sanitize_internal_error` doc/code drift in particular is a recurring pattern: ARCHITECTURE.md §15 over-claims; five command files actually skip the helper. Pass 2 was right to downgrade this from "Security/High" to "Docs/Low" — the helper's own docstring says it's UX-only.
-- The most consequential pattern is the **ApplyOp permanent-failure black hole** (C-2). Fixing it likely doesn't require new schema — a boot-time replay path against `op_log` would close the loop within the existing CQRS model — but it's the single most impactful change available.
-- **GCal connector dead code (C-1)** is fixable in a single afternoon if the `run_cycle` is genuinely correct (Pass 2 confirmed it is, per its tests). The fix is wiring, not redesign.
-- Fixing **C-3 (attachment file leak)**, **H-1 (pairing passphrase)**, **H-2 (MCP toggle)**, and **H-3 (create_page_in_space bypass)** together would close the four most user-visible behavioral defects in the codebase. None require architectural change beyond one carrying `fs_path` in `DeleteAttachment` (op log payload extension, allowed under Architectural Stability).
