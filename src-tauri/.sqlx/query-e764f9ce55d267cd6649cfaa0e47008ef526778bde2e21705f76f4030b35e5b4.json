@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT payload AS \"payload!\" FROM op_log WHERE device_id = ? AND op_type = 'move_block' ORDER BY seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "payload!",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e764f9ce55d267cd6649cfaa0e47008ef526778bde2e21705f76f4030b35e5b4"
+}

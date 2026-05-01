@@ -64,7 +64,11 @@ export function PropertyDefinitionsList(): React.ReactElement {
   const loadDefinitions = useCallback(async () => {
     setLoading(true)
     try {
-      const defs = await listPropertyDefs()
+      // M-85: `listPropertyDefs` is paginated. The settings panel is
+      // single-page-by-design — it surfaces the seeded vocabulary
+      // (~19 built-ins plus user-authored entries), which fits well
+      // under one page; we destructure `.items` and ignore the cursor.
+      const { items: defs } = await listPropertyDefs()
       setDefinitions(defs)
     } catch (error) {
       toast.error(t('property.errorLoad', { error: String(error) }))

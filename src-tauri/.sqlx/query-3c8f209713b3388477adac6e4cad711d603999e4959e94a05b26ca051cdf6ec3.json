@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT key, value_type, options, created_at FROM property_definitions ORDER BY key",
+  "query": "SELECT key, value_type, options, created_at\n         FROM property_definitions\n         WHERE (?1 IS NULL OR key > ?2)\n         ORDER BY key ASC\n         LIMIT ?3",
   "describe": {
     "columns": [
       {
@@ -25,7 +25,7 @@
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 3
     },
     "nullable": [
       false,
@@ -34,5 +34,5 @@
       false
     ]
   },
-  "hash": "58abe9e653824e7cd22b47f07705f2af0a1764e5648e7ca13a1ced9cd5f5937b"
+  "hash": "3c8f209713b3388477adac6e4cad711d603999e4959e94a05b26ca051cdf6ec3"
 }

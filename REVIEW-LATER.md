@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-18 open items — 18 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 22 backend Medium findings closed + 27 MAINT closed (some partially) across sessions 549-590 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-590): **3 schema-integrity migrations landed in session 582** (M-30, M-93, M-90); **H-9 family closed across sessions 583-584**; **MAINT-162 closed in 585**; **C-2b closed in 586** (last CRITICAL backend code review finding); **MAINT-127 closed in 587** (navigation.ts split + new tabs.ts); **M-25 closed in 588 + M-85 partially closed** (cursor pagination on `list_projected_agenda` — covers M-25's user-facing surface AND M-85's `get_agenda` MCP tool; M-85's `list_tags` + `list_property_defs` remain open); **FEAT-3p4 closed in 589** (Spaces Phase 4 — `space_id` threaded through 11 read commands, promoted to required `String` on `list_blocks` + `search_blocks`, per-space `useNavigationStore.currentView` slice + frontend callsite migration); **MAINT-131 closed in 590** (`useBlockReschedule.reschedule()` absorbs duplicated `getBlock`-then-decide pattern + new `useBlockPropertyIpc` hook drops the last 5 presentational components' direct `lib/tauri` imports); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
+18 open items — 18 planned work (FEAT/MAINT/PERF/PUB). All frontend test-quality items closed. All five LOW backend cleanup batches (MAINT-148..152) closed. **All INFO/nits closed (last 5 in session 547). All UX-* items closed (last 3 in session 548). 25 backend Medium findings closed + 27 MAINT closed (some partially) across sessions 549-591 — see SESSION-LOG.md for the full session-by-session sequence. Latest progress (sessions 572-591): **3 schema-integrity migrations landed in session 582** (M-30, M-93, M-90); **H-9 family closed across sessions 583-584**; **MAINT-162 closed in 585**; **C-2b closed in 586** (last CRITICAL backend code review finding); **MAINT-127 closed in 587** (navigation.ts split + new tabs.ts); **M-25 closed in 588 + M-85's `get_agenda` portion** (cursor pagination on `list_projected_agenda`); **FEAT-3p4 closed in 589** (Spaces Phase 4 — `space_id` threaded through 11 read commands, promoted to required `String` on `list_blocks` + `search_blocks`, per-space `useNavigationStore.currentView` slice + frontend callsite migration); **MAINT-131 closed in 590** (`useBlockReschedule.reschedule()` absorbs duplicated `getBlock`-then-decide pattern + new `useBlockPropertyIpc` hook drops the last 5 presentational components' direct `lib/tauri` imports); **decisions cluster closed in 591** (M-34 dropped `host`/`port` from the pairing QR so mDNS owns discovery end-to-end; M-81 re-parents orphan conflict copies to the nearest live ancestor — or `NULL` when none exists — emitting one `MoveBlock` op per repair so peers replay via sync, applied at both cascade sites including the production `delete_block` path; M-85 moved `list_tags_inner` + `list_property_defs_inner` + the matching MCP tools to `PageResponse<T>` cursor pagination and trimmed AGENTS.md invariant #3 carve-out (a) to keep only `list_property_keys`); **MAINT-124 progress: App.tsx 1444L → 515L (–929L, ~64% reduction), 0 extractions remaining (15L over ≤500L stretch goal — irreducible orchestrator glue)**.
 
-Previously resolved: 852+ items across 557 sessions (per SESSION-LOG.md unique session count; latest is session 590).
+Previously resolved: 855+ items across 558 sessions (per SESSION-LOG.md unique session count; latest is session 591).
 
 > **The "Backend Code Review" block near the end of this file (starting at `## Backend Code Review (Confirmed Findings) — Appended 2026-04-25`) is a large production-code review from a previous session. All 12 backend test-quality items (TEST-40..TEST-51) are now closed; the 5 remaining frontend test-quality items (TEST-56, TEST-61..64) closed in session 516.**
 
@@ -970,19 +970,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### Commands (System)
 
-### M-34 — `start_pairing_inner` builds a QR with `host=0.0.0.0, port=0`
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/sync_cmds.rs:91-109` (function), `src-tauri/src/commands/sync_cmds.rs:97` (QR payload), `src-tauri/src/commands/sync_cmds.rs:107` (`port: 0`)
-- **What:** The QR payload is `pairing_qr_payload(&passphrase, "0.0.0.0", 0)` and the returned `PairingInfo.port` is also `0`. ARCHITECTURE.md §18:1446 says the QR JSON is `{"passphrase":"...","host":"...","port":12345}`; the scanning device cannot use the QR to bootstrap a direct connection and must fall back to mDNS for both discovery and address resolution.
-- **Why it matters:** Either the QR-as-bootstrap design has been abandoned (in which case the host/port fields should be removed and §18 updated) or it is supposed to work and is broken. Both interpretations need a fix; the current state is doc/code drift.
-- **Cost:** M — wiring the live SyncServer port into managed state and through to `start_pairing_inner` is small, but the architectural question (do we need scan-bootstrapped pairing at all, or only passphrase + mDNS?) is a decision point per AGENTS.md "Architectural Stability".
-- **Risk:** Medium (touches SyncServer plumbing)
-- **Impact:** Medium
-- **Recommendation:** Decide intent with the user. If the QR carries a real `host:port`, thread the SyncServer's bound `(local_ip, port)` into the wrapper; if not, drop those fields from `pairing_qr_payload` + `PairingInfo` and update §18. **Requires user approval per AGENTS.md Architectural Stability — wire-format choice between bind-address and rendezvous-string semantics.**
-- **Decision (user, session 591):** Drop both `host` and `port` from the QR. `PairingInfo` becomes `{passphrase}` only. mDNS owns discovery + address resolution end-to-end. ARCHITECTURE.md §18 simplifies to `{"passphrase":"..."}`.
-- **Pass-1 source:** 05/F19 (cross-ref 06/F2)
-- **Status:** Open
-
 
 
 ### Sync stack
@@ -1011,33 +998,8 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 ### Lifecycle / Snapshots / Merge / Recurrence
 
 
-### M-81 — `cascade_soft_delete` ignores conflict copies — orphaned
-- **Domain:** Lifecycle
-- **Location:** `src-tauri/src/soft_delete/trash.rs:46-55`
-- **What:** The recursive CTE filters `b.is_conflict = 0` per invariant #9. A conflict copy whose source is in the cascade subtree is preserved (correct per the invariant), but its `parent_id` points into the now-soft-deleted subtree. After cascade, the conflict copy is reachable by direct lookup but invisible to any descendants walk that filters `deleted_at IS NULL` — orphan blocks floating with no parent context.
-- **Why it matters:** Conflict-copy lifecycle has no clear story when the source's subtree is deleted; Trash view excludes conflict copies, so users cannot manually clean them up.
-- **Cost:** M
-- **Risk:** Medium
-- **Impact:** Medium
-- **Recommendation:** Discuss with user — semantics decision. Options: (a) include conflict copies in the cascade (relaxes invariant #9 for `cascade_soft_delete` only); (b) re-parent conflict copies to the cascade's nearest non-deleted ancestor and log; (c) document the orphan state and add a "review orphans" UI surface. Any of these may need user approval per Architectural Stability.
-- **Decision (user, session 591):** Option (b) — re-parent conflict copies to the nearest non-deleted ancestor. Edge case: when no non-deleted ancestor exists (the entire chain is being deleted), set `parent_id = NULL` (top-level orphan, visible in the conflicts view). Replication: emit an op log entry per re-parent (synthesize `MoveBlock` or the existing equivalent op type, written in the same `BEGIN IMMEDIATE` transaction as the cascade) so peers replay the repair through normal sync. Log every re-parent at `tracing::warn` level with the conflict-copy id, the deleted ancestor that triggered it, and the new parent id (or `NULL`).
-- **Pass-1 source:** 08/F27
-- **Status:** Open
-
 ### MCP
 
-### M-85 — `list_tags` / `list_property_defs` lack cursor pagination
-- **Domain:** MCP
-- **Location:** `src-tauri/src/mcp/tools_ro.rs:384-401` (list_tags schema), `src-tauri/src/mcp/tools_ro.rs:403-413` (list_property_defs); inners `src-tauri/src/commands/tags.rs:257-262`, `src-tauri/src/commands/properties.rs:459-469`.
-- **What:** Two list-style RO tools return a flat `Vec<...>` with a server-side cap (100/500) and no `cursor` / `next_cursor` / `has_more` field, in violation of AGENTS.md invariant #3 ("Cursor-based pagination on ALL list queries — no offset pagination"). The other list tools (`list_pages`, `get_page`, `search`, `list_backlinks`, `get_agenda` via M-25 in session 588) do paginate, so the asymmetry is internal.
-- **Why it matters:** A power user with hundreds of tags or property-defs hits a silent ceiling; nothing in the response signals truncation. AGENTS.md invariant #3 is the contract.
-- **Cost:** M
-- **Risk:** Low (extending shared `*_inner` helpers must stay backward-compatible with frontend callers)
-- **Impact:** Medium
-- **Recommendation:** Extend the inners to return a `PageResponse<T>` with cursors (modeled on `list_pages_inner` + the `list_projected_agenda` migration in session 588) and surface them in the MCP schema. **Requires user approval per AGENTS.md Architectural Stability — adds cursor pagination to the public MCP tool surface.** Note: invariant #3 has a carve-out for "named small-cardinality lookups" (e.g. `list_property_keys` returns a fixed-size set bounded by user vocabulary). `list_tags` and `list_property_defs` arguably qualify — small finite cardinality bounded by user vocabulary, not data volume — so this might be reframed as a deliberate non-fix per the carve-out rather than a hard violation. Re-evaluate before fixing.
-- **Decision (user, session 591):** Fix anyway. Move `list_tags_inner` and `list_property_defs_inner` to return `PageResponse<T>`; surface `cursor` / `next_cursor` / `has_more` at the MCP layer too (both tool schemas + insta snapshot updated). All ~12 frontend callsites migrated to access `.items`. AGENTS.md invariant #3 carve-out (a) trimmed: drop `list_property_defs` and `list_tags` from the named list; keep `list_property_keys` and the clause itself (still permissive for any future small-cardinality lookups; `list_property_keys` is not paginated in this batch).
-- **Pass-1 source:** 09/F5
-- **Status:** Open. `get_agenda` portion closed in session 588 alongside M-25.
 
 ### GCal / Spaces / Drafts
 

@@ -79,11 +79,13 @@ export function QueryBuilderModal({
   const [knownPropertyKeys, setKnownPropertyKeys] = useState<string[]>([])
 
   // ---- Load known property definitions for datalist autocomplete + validation ----
+  // M-85: `listPropertyDefs` is paginated; the modal is single-page-by-design —
+  // datalist suggestions only need the first page worth of keys.
   useEffect(() => {
     if (!open) return
     let cancelled = false
     listPropertyDefs()
-      .then((defs) => {
+      .then(({ items: defs }) => {
         if (!cancelled) setKnownPropertyKeys(defs.map((d) => d.key))
       })
       .catch((err) => {

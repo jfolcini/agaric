@@ -1,8 +1,11 @@
 ---
-source: src/mcp/tools_ro.rs
+source: src/mcp/tools_ro/tests.rs
 expression: result
 ---
-- name: snap-tag
-  tag_id: "[ULID]"
-  updated_at: "[TIMESTAMP]"
-  usage_count: 0
+has_more: false
+items:
+  - name: snap-tag
+    tag_id: "[ULID]"
+    updated_at: "[TIMESTAMP]"
+    usage_count: 0
+next_cursor: "[CURSOR]"

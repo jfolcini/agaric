@@ -74,10 +74,12 @@ export function BlockPropertyDrawer({
   useEffect(() => {
     if (!blockId || !open) return
     setLoading(true)
+    // M-85: `listPropertyDefs` is paginated. The drawer is single-page-by-design —
+    // it shows the property-defs vocabulary picker, which fits well under one page.
     Promise.all([getProperties(blockId), listPropertyDefs()])
-      .then(([props, defs]) => {
+      .then(([props, defsPage]) => {
         setProperties(Array.isArray(props) ? props : [])
-        setDefinitions(Array.isArray(defs) ? defs : [])
+        setDefinitions(Array.isArray(defsPage.items) ? defsPage.items : [])
       })
       .catch((err: unknown) => {
         logger.error(

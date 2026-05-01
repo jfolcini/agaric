@@ -164,7 +164,17 @@ vi.mock('../BlockContextMenu', () => ({
 // now flows from BatchAttachmentCountsProvider. Tests render SortableBlock
 // without a provider, so attachmentCount falls back to 0 (no paperclip).
 const mockSetProperty = vi.fn().mockResolvedValue({})
-const mockListPropertyDefs = vi.fn().mockResolvedValue([])
+/**
+ * M-85: `list_property_defs` is now cursor-paginated. The hook under
+ * test (`usePropertyDefForEdit` via `SortableBlock`) destructures
+ * `.items` off the wire response, so test fixtures must wrap their
+ * arrays in the same `PageResponse` envelope.
+ */
+function pageOf<T>(items: T[]) {
+  return { items, next_cursor: null, has_more: false }
+}
+
+const mockListPropertyDefs = vi.fn().mockResolvedValue(pageOf([]))
 const mockListBlocks = vi.fn().mockResolvedValue({ items: [], next_cursor: null, has_more: false })
 vi.mock('../../lib/tauri', () => ({
   setProperty: (...args: unknown[]) => mockSetProperty(...args),
@@ -2969,14 +2979,16 @@ describe('SortableBlock property chip click-to-edit', () => {
     const user = userEvent.setup()
 
     // Mock listPropertyDefs to return a select-type definition for 'status'
-    mockListPropertyDefs.mockResolvedValue([
-      {
-        key: 'status',
-        value_type: 'select',
-        options: JSON.stringify(['Backlog', 'In Progress', 'Done']),
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
+    mockListPropertyDefs.mockResolvedValue(
+      pageOf([
+        {
+          key: 'status',
+          value_type: 'select',
+          options: JSON.stringify(['Backlog', 'In Progress', 'Done']),
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ]),
+    )
 
     render(
       <SortableBlock
@@ -3012,14 +3024,16 @@ describe('SortableBlock property chip click-to-edit', () => {
   it('clicking a select option calls setProperty and closes dropdown', async () => {
     const user = userEvent.setup()
 
-    mockListPropertyDefs.mockResolvedValue([
-      {
-        key: 'priority_level',
-        value_type: 'select',
-        options: JSON.stringify(['Low', 'Medium', 'High']),
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
+    mockListPropertyDefs.mockResolvedValue(
+      pageOf([
+        {
+          key: 'priority_level',
+          value_type: 'select',
+          options: JSON.stringify(['Low', 'Medium', 'High']),
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ]),
+    )
 
     render(
       <SortableBlock
@@ -3058,14 +3072,16 @@ describe('SortableBlock property chip click-to-edit', () => {
   it('highlights the currently selected option in the dropdown', async () => {
     const user = userEvent.setup()
 
-    mockListPropertyDefs.mockResolvedValue([
-      {
-        key: 'category',
-        value_type: 'select',
-        options: JSON.stringify(['Bug', 'Feature', 'Chore']),
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
+    mockListPropertyDefs.mockResolvedValue(
+      pageOf([
+        {
+          key: 'category',
+          value_type: 'select',
+          options: JSON.stringify(['Bug', 'Feature', 'Chore']),
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ]),
+    )
 
     render(
       <SortableBlock
@@ -3097,14 +3113,16 @@ describe('SortableBlock property chip click-to-edit', () => {
   it('shows text input for non-select property even when defs exist', async () => {
     const user = userEvent.setup()
 
-    mockListPropertyDefs.mockResolvedValue([
-      {
-        key: 'status',
-        value_type: 'select',
-        options: JSON.stringify(['Backlog', 'Done']),
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
+    mockListPropertyDefs.mockResolvedValue(
+      pageOf([
+        {
+          key: 'status',
+          value_type: 'select',
+          options: JSON.stringify(['Backlog', 'Done']),
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ]),
+    )
 
     render(
       <SortableBlock
@@ -3514,14 +3532,16 @@ describe('SortableBlock ref property picker', () => {
   it('ref property shows page picker instead of text input', async () => {
     const user = userEvent.setup()
 
-    mockListPropertyDefs.mockResolvedValue([
-      {
-        key: 'related',
-        value_type: 'ref',
-        options: null,
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
+    mockListPropertyDefs.mockResolvedValue(
+      pageOf([
+        {
+          key: 'related',
+          value_type: 'ref',
+          options: null,
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ]),
+    )
     mockListBlocks.mockResolvedValue({
       items: [
         { id: 'PAGE_1', content: 'Meeting Notes', block_type: 'page' },
@@ -3567,14 +3587,16 @@ describe('SortableBlock ref property picker', () => {
   it('ref picker search filters pages', async () => {
     const user = userEvent.setup()
 
-    mockListPropertyDefs.mockResolvedValue([
-      {
-        key: 'parent_page',
-        value_type: 'ref',
-        options: null,
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
+    mockListPropertyDefs.mockResolvedValue(
+      pageOf([
+        {
+          key: 'parent_page',
+          value_type: 'ref',
+          options: null,
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ]),
+    )
     mockListBlocks.mockResolvedValue({
       items: [
         { id: 'PAGE_A', content: 'Alpha Document', block_type: 'page' },
@@ -3621,14 +3643,16 @@ describe('SortableBlock ref property picker', () => {
   it('ref picker selects page and calls setProperty with valueRef', async () => {
     const user = userEvent.setup()
 
-    mockListPropertyDefs.mockResolvedValue([
-      {
-        key: 'linked',
-        value_type: 'ref',
-        options: null,
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
+    mockListPropertyDefs.mockResolvedValue(
+      pageOf([
+        {
+          key: 'linked',
+          value_type: 'ref',
+          options: null,
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ]),
+    )
     mockListBlocks.mockResolvedValue({
       items: [
         { id: 'PAGE_X', content: 'Design Doc', block_type: 'page' },
@@ -3674,14 +3698,16 @@ describe('SortableBlock ref property picker', () => {
   it('ref picker closes on Escape', async () => {
     const user = userEvent.setup()
 
-    mockListPropertyDefs.mockResolvedValue([
-      {
-        key: 'source',
-        value_type: 'ref',
-        options: null,
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
+    mockListPropertyDefs.mockResolvedValue(
+      pageOf([
+        {
+          key: 'source',
+          value_type: 'ref',
+          options: null,
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ]),
+    )
     mockListBlocks.mockResolvedValue({
       items: [{ id: 'PAGE_1', content: 'Some Page', block_type: 'page' }],
       next_cursor: null,
@@ -3719,14 +3745,16 @@ describe('SortableBlock ref property picker', () => {
   it('ref picker shows "No pages found" when search has no matches', async () => {
     const user = userEvent.setup()
 
-    mockListPropertyDefs.mockResolvedValue([
-      {
-        key: 'ref_prop',
-        value_type: 'ref',
-        options: null,
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
+    mockListPropertyDefs.mockResolvedValue(
+      pageOf([
+        {
+          key: 'ref_prop',
+          value_type: 'ref',
+          options: null,
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ]),
+    )
     mockListBlocks.mockResolvedValue({
       items: [{ id: 'PAGE_1', content: 'Only Page', block_type: 'page' }],
       next_cursor: null,
@@ -4055,14 +4083,16 @@ describe('SortableBlock error paths', () => {
     const user = userEvent.setup()
 
     // listPropertyDefs succeeds, returning a ref-type definition
-    mockListPropertyDefs.mockResolvedValueOnce([
-      {
-        key: 'related',
-        value_type: 'ref',
-        options: null,
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
+    mockListPropertyDefs.mockResolvedValueOnce(
+      pageOf([
+        {
+          key: 'related',
+          value_type: 'ref',
+          options: null,
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ]),
+    )
     // listBlocks rejects
     mockListBlocks.mockRejectedValueOnce(new Error('backend unavailable'))
 
@@ -4132,14 +4162,16 @@ describe('SortableBlock error paths', () => {
     const user = userEvent.setup()
 
     // First click: listPropertyDefs succeeds with select type
-    mockListPropertyDefs.mockResolvedValueOnce([
-      {
-        key: 'severity',
-        value_type: 'select',
-        options: JSON.stringify(['Low', 'Medium', 'High']),
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
+    mockListPropertyDefs.mockResolvedValueOnce(
+      pageOf([
+        {
+          key: 'severity',
+          value_type: 'select',
+          options: JSON.stringify(['Low', 'Medium', 'High']),
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ]),
+    )
 
     render(
       <SortableBlock

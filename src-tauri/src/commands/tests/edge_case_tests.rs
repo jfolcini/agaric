@@ -80,7 +80,7 @@ async fn f12_purge_already_purged_block_returns_not_found() {
     insert_block(&pool, "PURGE_TWICE", "content", "purge me", None, Some(1)).await;
 
     // Soft-delete first
-    soft_delete::cascade_soft_delete(&pool, "PURGE_TWICE")
+    soft_delete::cascade_soft_delete(&pool, DEV, "PURGE_TWICE")
         .await
         .unwrap();
 

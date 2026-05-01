@@ -762,9 +762,22 @@ export async function createPropertyDef(params: {
   )
 }
 
-/** List all property definitions. */
-export async function listPropertyDefs(): Promise<PropertyDefinition[]> {
-  return unwrap(await commands.listPropertyDefs())
+/** List all property definitions, paginated (M-85).
+ *
+ * Returns the canonical [`PageResponse`] envelope (`items`,
+ * `next_cursor`, `has_more`). Single-page consumers (the typical case
+ * for property-defs picker UIs — the seeded vocabulary fits well under
+ * a single page) destructure `.items` and ignore the cursor. Callers
+ * that genuinely walk every page must thread `next_cursor` back via
+ * `cursor` until `has_more === false`.
+ *
+ * Pre-M-85: `listPropertyDefs(): Promise<PropertyDefinition[]>`.
+ */
+export async function listPropertyDefs(opts?: {
+  cursor?: string | null | undefined
+  limit?: number | null | undefined
+}): Promise<PageResponse<PropertyDefinition>> {
+  return unwrap(await commands.listPropertyDefs(opts?.cursor ?? null, opts?.limit ?? null))
 }
 
 /** Update the options JSON for a select-type property definition. */
@@ -849,11 +862,15 @@ export interface SyncSessionInfo {
   ops_sent: number
 }
 
-/** Start the pairing flow — returns a passphrase, QR SVG, and listener port. */
+/** Start the pairing flow — returns a passphrase and QR SVG.
+ *
+ * M-34: the QR carries only the passphrase. mDNS owns discovery and
+ * address resolution end-to-end, so there is no `host`/`port` field on
+ * the returned payload.
+ */
 export async function startPairing(): Promise<{
   passphrase: string
   qr_svg: string
-  port: number
 }> {
   return unwrap(await commands.startPairing())
 }

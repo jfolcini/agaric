@@ -686,17 +686,24 @@ async fn list_property_defs_returns_all_ordered() {
         .await
         .unwrap();
 
-    let defs = list_property_defs_inner(&pool).await.unwrap();
+    // M-85: paginated; under the default limit all three defs fit on
+    // page 1 (no second page expected).
+    let page = list_property_defs_inner(&pool, None, None).await.unwrap();
+    let defs = &page.items;
     assert_eq!(defs.len(), 3);
     assert_eq!(defs[0].key, "alpha", "results must be sorted by key");
     assert_eq!(defs[1].key, "mid");
     assert_eq!(defs[2].key, "zeta");
+    assert!(!page.has_more);
+    assert!(page.next_cursor.is_none());
 }
 
 #[tokio::test]
 async fn list_property_defs_includes_seeded_defaults() {
     let (pool, _dir) = test_pool().await;
-    let defs = list_property_defs_inner(&pool).await.unwrap();
+    // M-85: thread no cursor; seeded defaults fit under the default limit.
+    let page = list_property_defs_inner(&pool, None, None).await.unwrap();
+    let defs = &page.items;
     let keys: Vec<&str> = defs.iter().map(|d| d.key.as_str()).collect();
     assert!(keys.contains(&"status"), "seeded 'status' must exist");
     assert!(keys.contains(&"due"), "seeded 'due' must exist");
@@ -737,9 +744,10 @@ async fn delete_property_def_removes_row() {
         .await
         .unwrap();
 
-    let defs = list_property_defs_inner(&pool).await.unwrap();
+    // M-85: paginated; consume the first page (only one fixture row remains).
+    let page = list_property_defs_inner(&pool, None, None).await.unwrap();
     assert!(
-        !defs.iter().any(|d| d.key == "temp"),
+        !page.items.iter().any(|d| d.key == "temp"),
         "deleted def must not appear in list"
     );
 }
@@ -1117,4 +1125,158 @@ async fn thin_commands_survive_delete_property_cycle() {
     );
 
     mat.shutdown();
+}
+
+// ======================================================================
+// list_property_defs_inner — cursor pagination (M-85)
+// ======================================================================
+//
+// `list_property_defs_inner` migrated from a flat `Vec<PropertyDefinition>`
+// to a `PageResponse<PropertyDefinition>` so the FEAT-4c MCP
+// `list_property_defs` tool exposes the canonical cursor surface
+// (AGENTS.md invariant #3). Ordered by `key ASC`. The keyset cursor
+// (`Cursor::for_id(key)`) stores the string `key` in the cursor's `id`
+// slot — the natural primary key on the table is a string, not a ULID,
+// so the keyset is plain lexicographic. These four tests pin the
+// contract end-to-end: limit-overflow → cursor; multi-page walk →
+// strict ordering, no dup; no-cursor first-page; empty fixture →
+// `has_more=false`.
+
+/// Helper: clear seeded migrations and seed `count` deterministic
+/// property defs (`m85_def_<NNN>`) so the keyset ordering is
+/// predictable. The default `init_pool` ships ~19 seeded defaults
+/// which would otherwise interleave with the test fixture.
+async fn seed_m85_property_defs(pool: &sqlx::SqlitePool, count: usize) -> Vec<String> {
+    sqlx::query("DELETE FROM property_definitions")
+        .execute(pool)
+        .await
+        .unwrap();
+    let mut keys = Vec::with_capacity(count);
+    for i in 0..count {
+        let key = format!("m85_def_{:03}", i);
+        create_property_def_inner(pool, key.clone(), "text".into(), None)
+            .await
+            .unwrap();
+        keys.push(key);
+    }
+    keys
+}
+
+#[tokio::test]
+async fn list_property_defs_returns_next_cursor_when_capped_m85() {
+    let (pool, _dir) = test_pool().await;
+    // Seed 8 defs; with limit=5 the first page must overflow and
+    // surface a cursor.
+    seed_m85_property_defs(&pool, 8).await;
+
+    let page = list_property_defs_inner(&pool, None, Some(5))
+        .await
+        .unwrap();
+    assert_eq!(
+        page.items.len(),
+        5,
+        "first page should contain exactly the requested 5 entries (got {})",
+        page.items.len()
+    );
+    assert!(
+        page.has_more,
+        "has_more must be true when more entries remain past the page cap (M-85)"
+    );
+    assert!(
+        page.next_cursor.is_some(),
+        "next_cursor must be populated when has_more is true so callers can page (M-85)"
+    );
+}
+
+#[tokio::test]
+async fn list_property_defs_walks_pages_correctly_m85() {
+    let (pool, _dir) = test_pool().await;
+    // Seed exactly 10 defs; with limit=4 we expect three pages: 4 + 4 + 2.
+    let keys = seed_m85_property_defs(&pool, 10).await;
+
+    let mut walked: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut iterations = 0;
+    loop {
+        iterations += 1;
+        assert!(iterations < 10, "pagination must terminate (loop guard)");
+        let page = list_property_defs_inner(&pool, cursor, Some(4))
+            .await
+            .unwrap();
+        for row in &page.items {
+            walked.push(row.key.clone());
+        }
+        if !page.has_more {
+            assert!(
+                page.next_cursor.is_none(),
+                "final page must not carry a next_cursor"
+            );
+            break;
+        }
+        cursor = page.next_cursor;
+        assert!(cursor.is_some(), "intermediate page must have next_cursor");
+    }
+
+    assert_eq!(
+        walked.len(),
+        keys.len(),
+        "walking all pages must yield exactly {} entries (one per seeded def), got {}",
+        keys.len(),
+        walked.len()
+    );
+
+    // Strictly increasing on key (lexicographic).
+    for window in walked.windows(2) {
+        assert!(
+            window[0] < window[1],
+            "pagination must yield strictly-increasing keys; \
+             saw {} → {}",
+            window[0],
+            window[1],
+        );
+    }
+
+    // No duplicates across pages.
+    let mut seen = std::collections::HashSet::new();
+    for key in &walked {
+        assert!(
+            seen.insert(key.clone()),
+            "duplicate key across pages: {key}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn list_property_defs_with_no_cursor_returns_first_page_m85() {
+    let (pool, _dir) = test_pool().await;
+    let keys = seed_m85_property_defs(&pool, 3).await;
+
+    let page = list_property_defs_inner(&pool, None, None).await.unwrap();
+    assert_eq!(
+        page.items.len(),
+        3,
+        "small fixture must fit on the first page under the default limit",
+    );
+    assert!(!page.has_more, "no second page expected for 3-row fixture");
+    assert!(page.next_cursor.is_none(), "no cursor when has_more=false");
+    // First page rows must match the seeded keys in monotonic order.
+    let returned: Vec<String> = page.items.iter().map(|r| r.key.clone()).collect();
+    assert_eq!(returned, keys, "first page rows must match seed order");
+}
+
+#[tokio::test]
+async fn list_property_defs_empty_result_returns_no_cursor_m85() {
+    let (pool, _dir) = test_pool().await;
+    // Clear seeded defaults so the result truly empty (the migration-
+    // seeded defs would otherwise mask the empty case).
+    sqlx::query("DELETE FROM property_definitions")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let page = list_property_defs_inner(&pool, None, Some(5))
+        .await
+        .unwrap();
+    assert_eq!(page.items.len(), 0, "no rows should yield an empty page");
+    assert!(page.next_cursor.is_none(), "empty result must not paginate");
+    assert!(!page.has_more, "empty result must report has_more=false");
 }

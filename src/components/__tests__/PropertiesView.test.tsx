@@ -35,13 +35,22 @@ function makePropDef(key: string, valueType = 'text', options: string | null = n
   }
 }
 
+/**
+ * M-85: `list_property_defs` returns a paginated `PageResponse<PropertyDefinition>`
+ * envelope. `pageOf` wraps a fixture array so `mockResolvedValueOnce(pageOf([...]))`
+ * mirrors the wire shape the component now consumes.
+ */
+function pageOf<T>(items: T[]) {
+  return { items, next_cursor: null, has_more: false }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
 })
 
 describe('PropertiesView', () => {
   it('renders title "Property Definitions"', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
+    mockedInvoke.mockResolvedValueOnce(pageOf([]))
 
     render(<PropertiesView />)
 
@@ -59,11 +68,13 @@ describe('PropertiesView', () => {
   })
 
   it('shows property definitions after loading', async () => {
-    mockedInvoke.mockResolvedValueOnce([
-      makePropDef('status', 'select', '["open","closed"]'),
-      makePropDef('priority', 'number'),
-      makePropDef('due', 'date'),
-    ])
+    mockedInvoke.mockResolvedValueOnce(
+      pageOf([
+        makePropDef('status', 'select', '["open","closed"]'),
+        makePropDef('priority', 'number'),
+        makePropDef('due', 'date'),
+      ]),
+    )
 
     render(<PropertiesView />)
 
@@ -81,7 +92,7 @@ describe('PropertiesView', () => {
   })
 
   it('shows empty state when no definitions', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
+    mockedInvoke.mockResolvedValueOnce(pageOf([]))
 
     render(<PropertiesView />)
 
@@ -91,7 +102,7 @@ describe('PropertiesView', () => {
   it('create button creates a new definition', async () => {
     const user = userEvent.setup()
     // Initial load — empty
-    mockedInvoke.mockResolvedValueOnce([])
+    mockedInvoke.mockResolvedValueOnce(pageOf([]))
 
     render(<PropertiesView />)
 
@@ -128,7 +139,7 @@ describe('PropertiesView', () => {
 
   it('delete button shows confirmation dialog', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce([makePropDef('to-delete', 'text')])
+    mockedInvoke.mockResolvedValueOnce(pageOf([makePropDef('to-delete', 'text')]))
 
     render(<PropertiesView />)
 
@@ -147,7 +158,7 @@ describe('PropertiesView', () => {
 
   it('confirming delete removes the definition', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce([makePropDef('to-delete', 'text')])
+    mockedInvoke.mockResolvedValueOnce(pageOf([makePropDef('to-delete', 'text')]))
 
     render(<PropertiesView />)
 
@@ -175,11 +186,13 @@ describe('PropertiesView', () => {
 
   it('search filters definitions by key', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce([
-      makePropDef('status', 'select'),
-      makePropDef('priority', 'number'),
-      makePropDef('due-date', 'date'),
-    ])
+    mockedInvoke.mockResolvedValueOnce(
+      pageOf([
+        makePropDef('status', 'select'),
+        makePropDef('priority', 'number'),
+        makePropDef('due-date', 'date'),
+      ]),
+    )
 
     render(<PropertiesView />)
 
@@ -199,10 +212,12 @@ describe('PropertiesView', () => {
   })
 
   it('shows edit options button for select-type properties', async () => {
-    mockedInvoke.mockResolvedValueOnce([
-      makePropDef('status', 'select', '["open","closed"]'),
-      makePropDef('priority', 'number'),
-    ])
+    mockedInvoke.mockResolvedValueOnce(
+      pageOf([
+        makePropDef('status', 'select', '["open","closed"]'),
+        makePropDef('priority', 'number'),
+      ]),
+    )
 
     render(<PropertiesView />)
 
@@ -213,10 +228,12 @@ describe('PropertiesView', () => {
   })
 
   it('has no a11y violations', async () => {
-    mockedInvoke.mockResolvedValueOnce([
-      makePropDef('status', 'select', '["open","closed"]'),
-      makePropDef('priority', 'number'),
-    ])
+    mockedInvoke.mockResolvedValueOnce(
+      pageOf([
+        makePropDef('status', 'select', '["open","closed"]'),
+        makePropDef('priority', 'number'),
+      ]),
+    )
 
     const { container } = render(<PropertiesView />)
 
@@ -227,7 +244,7 @@ describe('PropertiesView', () => {
   })
 
   it('does NOT render Task States section (UX-202: locked cycle, section removed)', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
+    mockedInvoke.mockResolvedValueOnce(pageOf([]))
 
     render(<PropertiesView />)
 
@@ -235,7 +252,7 @@ describe('PropertiesView', () => {
   })
 
   it('does NOT render default task state badges (UX-202: locked cycle, section removed)', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
+    mockedInvoke.mockResolvedValueOnce(pageOf([]))
 
     render(<PropertiesView />)
 
@@ -249,7 +266,7 @@ describe('PropertiesView', () => {
 
   it('disables create button when key matches existing definition', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce([makePropDef('status', 'text')])
+    mockedInvoke.mockResolvedValueOnce(pageOf([makePropDef('status', 'text')]))
 
     render(<PropertiesView />)
 
@@ -266,7 +283,7 @@ describe('PropertiesView', () => {
 
   it('shows duplicate key warning message', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce([makePropDef('status', 'text')])
+    mockedInvoke.mockResolvedValueOnce(pageOf([makePropDef('status', 'text')]))
 
     render(<PropertiesView />)
 
@@ -282,7 +299,7 @@ describe('PropertiesView', () => {
 
   it('enables create button when key is unique', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce([makePropDef('status', 'text')])
+    mockedInvoke.mockResolvedValueOnce(pageOf([makePropDef('status', 'text')]))
 
     render(<PropertiesView />)
 
@@ -298,10 +315,9 @@ describe('PropertiesView', () => {
   })
 
   it('displays formatted property names in the definitions list', async () => {
-    mockedInvoke.mockResolvedValueOnce([
-      makePropDef('created_at', 'date'),
-      makePropDef('my_custom_prop', 'text'),
-    ])
+    mockedInvoke.mockResolvedValueOnce(
+      pageOf([makePropDef('created_at', 'date'), makePropDef('my_custom_prop', 'text')]),
+    )
 
     render(<PropertiesView />)
 
@@ -338,7 +354,7 @@ describe('PropertiesView', () => {
   it('shows error toast when creating a definition fails', async () => {
     const user = userEvent.setup()
     // Initial load — empty
-    mockedInvoke.mockResolvedValueOnce([])
+    mockedInvoke.mockResolvedValueOnce(pageOf([]))
 
     render(<PropertiesView />)
 
@@ -373,7 +389,7 @@ describe('PropertiesView', () => {
 
   it('shows error toast when deleting a definition fails', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce([makePropDef('keep-me', 'text')])
+    mockedInvoke.mockResolvedValueOnce(pageOf([makePropDef('keep-me', 'text')]))
 
     render(<PropertiesView />)
 
@@ -405,7 +421,9 @@ describe('PropertiesView', () => {
 
   it('shows error toast when updating select options fails', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce([makePropDef('status', 'select', '["open","closed"]')])
+    mockedInvoke.mockResolvedValueOnce(
+      pageOf([makePropDef('status', 'select', '["open","closed"]')]),
+    )
 
     render(<PropertiesView />)
 

@@ -1074,7 +1074,7 @@ async fn restore_block_restores_block_and_descendants() {
     .await;
 
     // Cascade soft-delete directly
-    let (ts, _) = soft_delete::cascade_soft_delete(&pool, "RST_PAR")
+    let (ts, _) = soft_delete::cascade_soft_delete(&pool, DEV, "RST_PAR")
         .await
         .unwrap();
 
@@ -1128,7 +1128,7 @@ async fn restore_block_mismatched_deleted_at_returns_invalid_operation() {
     let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "MISMATCH1", "content", "test", None, Some(1)).await;
-    let (ts, _) = soft_delete::cascade_soft_delete(&pool, "MISMATCH1")
+    let (ts, _) = soft_delete::cascade_soft_delete(&pool, DEV, "MISMATCH1")
         .await
         .unwrap();
 
@@ -1158,7 +1158,7 @@ async fn purge_block_physically_removes_from_db() {
     insert_block(&pool, "PURGE1", "content", "doomed", None, Some(1)).await;
 
     // Soft-delete first (purge requires prior soft-delete)
-    soft_delete::cascade_soft_delete(&pool, "PURGE1")
+    soft_delete::cascade_soft_delete(&pool, DEV, "PURGE1")
         .await
         .unwrap();
 
@@ -1240,7 +1240,7 @@ async fn purge_block_inner_cleans_page_aliases() {
             .unwrap();
     assert_eq!(count, 1, "alias should exist before purge");
 
-    soft_delete::cascade_soft_delete(&pool, "PURGE_PA_CMD")
+    soft_delete::cascade_soft_delete(&pool, DEV, "PURGE_PA_CMD")
         .await
         .unwrap();
 
@@ -1286,7 +1286,7 @@ async fn purge_block_inner_cleans_projected_agenda_cache() {
         "projected_agenda_cache row should exist before purge"
     );
 
-    soft_delete::cascade_soft_delete(&pool, "PURGE_PAC_CMD")
+    soft_delete::cascade_soft_delete(&pool, DEV, "PURGE_PAC_CMD")
         .await
         .unwrap();
 

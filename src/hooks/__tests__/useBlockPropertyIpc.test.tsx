@@ -65,9 +65,12 @@ describe('useBlockPropertyIpc.getProperties', () => {
 })
 
 describe('useBlockPropertyIpc.listPropertyDefs', () => {
-  it('invokes list_property_defs with no args and returns the defs array', async () => {
+  it('invokes list_property_defs and returns the PageResponse envelope (M-85)', async () => {
+    // M-85: `list_property_defs` is now cursor-paginated, so the IPC
+    // response shape is `{ items, next_cursor, has_more }`.
     const defs = [{ key: 'effort', value_type: 'number', label: 'Effort', icon: null }]
-    mockedInvoke.mockResolvedValueOnce(defs)
+    const page = { items: defs, next_cursor: null, has_more: false }
+    mockedInvoke.mockResolvedValueOnce(page)
 
     const { result } = renderHook(() => useBlockPropertyIpc())
 
@@ -76,8 +79,13 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
       returned = await result.current.listPropertyDefs()
     })
 
-    expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs')
-    expect(returned).toEqual(defs)
+    // The wrapper threads `cursor` + `limit` (both null by default) so
+    // the bindings call site stays type-safe under the new signature.
+    expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs', {
+      cursor: null,
+      limit: null,
+    })
+    expect(returned).toEqual(page)
   })
 })
 

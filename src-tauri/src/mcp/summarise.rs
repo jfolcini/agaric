@@ -200,16 +200,28 @@ pub fn summarise_list_backlinks(args: &Value, result: &Value) -> String {
 
 /// `list_tags — N tag(s)`. Never includes tag display names — those are
 /// user-authored content even though the tag id is structural.
+///
+/// M-85: `list_tags_inner` is now cursor-paginated, so the result is a
+/// `PageResponse { items, next_cursor, has_more }` rather than a
+/// top-level array. Count via `array_len(result, "items")`, with a
+/// fall-back to the legacy top-level array shape so unit-test fixtures
+/// that hand-author flat arrays continue to summarise.
 pub fn summarise_list_tags(_args: &Value, result: &Value) -> String {
-    let n = root_array_len(result);
+    let n = array_len(result, "items").unwrap_or_else(|| root_array_len(result));
     format!("list_tags — {n} {}", if n == 1 { "tag" } else { "tags" })
 }
 
 /// `list_property_defs — N def(s)`. The keys themselves are schema and
 /// would be safe to include, but we keep the summary terse and just
 /// surface the count.
+///
+/// M-85: `list_property_defs_inner` is now cursor-paginated, so the
+/// result is a `PageResponse { items, next_cursor, has_more }` rather
+/// than a top-level array. Count via `array_len(result, "items")`, with
+/// a fall-back to the legacy top-level array shape so unit-test
+/// fixtures that hand-author flat arrays continue to summarise.
 pub fn summarise_list_property_defs(_args: &Value, result: &Value) -> String {
-    let n = root_array_len(result);
+    let n = array_len(result, "items").unwrap_or_else(|| root_array_len(result));
     format!(
         "list_property_defs — {n} {}",
         if n == 1 { "def" } else { "defs" }

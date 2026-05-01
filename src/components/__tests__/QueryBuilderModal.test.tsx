@@ -45,7 +45,8 @@ describe('QueryBuilderModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_property_defs') return []
+      // M-85: `list_property_defs` returns a paginated PageResponse envelope.
+      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
       return null
     })
   })
@@ -280,12 +281,17 @@ describe('QueryBuilderModal', () => {
   // -----------------------------------------------------------------------
   describe('property-key validation', () => {
     it('populates the datalist with known property definitions', async () => {
+      // M-85: paginated `list_property_defs` envelope.
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_property_defs') {
-          return [
-            { key: 'priority', value_type: 'number', options: null, created_at: '2026-01-01' },
-            { key: 'status', value_type: 'text', options: null, created_at: '2026-01-01' },
-          ]
+          return {
+            items: [
+              { key: 'priority', value_type: 'number', options: null, created_at: '2026-01-01' },
+              { key: 'status', value_type: 'text', options: null, created_at: '2026-01-01' },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
         }
         return null
       })
@@ -315,7 +321,11 @@ describe('QueryBuilderModal', () => {
     it('shows inline warning when entered key is not a known definition', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_property_defs') {
-          return [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }]
+          return {
+            items: [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }],
+            next_cursor: null,
+            has_more: false,
+          }
         }
         return null
       })
@@ -346,7 +356,11 @@ describe('QueryBuilderModal', () => {
     it('does NOT show warning for a known property key', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_property_defs') {
-          return [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }]
+          return {
+            items: [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }],
+            next_cursor: null,
+            has_more: false,
+          }
         }
         return null
       })
@@ -386,7 +400,11 @@ describe('QueryBuilderModal', () => {
     it('still allows submission of an unknown key (soft warning, not blocking)', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_property_defs') {
-          return [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }]
+          return {
+            items: [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }],
+            next_cursor: null,
+            has_more: false,
+          }
         }
         return null
       })
@@ -424,7 +442,11 @@ describe('QueryBuilderModal', () => {
     it('warning region has no a11y violations', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_property_defs') {
-          return [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }]
+          return {
+            items: [{ key: 'priority', value_type: 'number', options: null, created_at: 'x' }],
+            next_cursor: null,
+            has_more: false,
+          }
         }
         return null
       })

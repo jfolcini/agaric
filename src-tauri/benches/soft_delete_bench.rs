@@ -52,6 +52,12 @@ async fn seed_tree(pool: &sqlx::SqlitePool, depth: usize, width: usize) -> Strin
 
 const ROOT_ID: &str = "ROOT00000000000000000000";
 
+/// Device id stamped on M-81 re-parent op log entries that
+/// `cascade_soft_delete` may emit when the bench seeds conflict copies.
+/// The seeded trees here have no conflict copies, so no op log rows are
+/// written, but the parameter is required by the signature.
+const BENCH_DEVICE: &str = "soft-delete-bench-device";
+
 // ---------------------------------------------------------------------------
 // Benchmarks
 // ---------------------------------------------------------------------------
@@ -75,7 +81,7 @@ fn bench_cascade_soft_delete(c: &mut Criterion) {
                         });
                         (pool, dir)
                     },
-                    |(pool, _dir)| rt.block_on(cascade_soft_delete(&pool, ROOT_ID)),
+                    |(pool, _dir)| rt.block_on(cascade_soft_delete(&pool, BENCH_DEVICE, ROOT_ID)),
                     criterion::BatchSize::SmallInput,
                 );
             },
@@ -100,7 +106,9 @@ fn bench_purge_block(c: &mut Criterion) {
                             let p = init_pool(&dir.path().join("b.db")).await.unwrap();
                             seed_tree(&p, d, w).await;
                             // Soft-delete first so purge exercises the full path.
-                            cascade_soft_delete(&p, ROOT_ID).await.unwrap();
+                            cascade_soft_delete(&p, BENCH_DEVICE, ROOT_ID)
+                                .await
+                                .unwrap();
                             let m = Materializer::new(p.clone());
                             (p, m)
                         });
@@ -140,7 +148,9 @@ fn bench_restore_block(c: &mut Criterion) {
                         let (pool, ts) = rt.block_on(async {
                             let p = init_pool(&dir.path().join("b.db")).await.unwrap();
                             seed_tree(&p, d, w).await;
-                            let (ts, _) = cascade_soft_delete(&p, ROOT_ID).await.unwrap();
+                            let (ts, _) = cascade_soft_delete(&p, BENCH_DEVICE, ROOT_ID)
+                                .await
+                                .unwrap();
                             (p, ts)
                         });
                         (pool, dir, ts)

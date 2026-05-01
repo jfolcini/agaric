@@ -113,9 +113,15 @@ fn bench_list_property_defs(c: &mut Criterion) {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
                     async move {
-                        let rows = list_property_defs_inner(&pool).await.unwrap();
+                        // M-85: returns a `PageResponse<T>`; the bench
+                        // intentionally consumes only the first page —
+                        // pagination cost is constant per page and the
+                        // throughput metric tracks one page worth of work.
+                        let page = list_property_defs_inner(&pool, None, Some(200))
+                            .await
+                            .unwrap();
                         // count seeded + any built-in defs from migrations
-                        assert!(rows.len() >= count);
+                        assert!(page.items.len() >= count);
                     }
                 })
             },

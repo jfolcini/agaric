@@ -292,17 +292,50 @@ pub async fn list_tags_by_prefix_inner(
     tag_query::list_tags_by_prefix(pool, &prefix, limit).await
 }
 
-/// List every tag in the tag cache, up to `limit` entries (default
-/// matches `list_tags_by_prefix`'s internal default). Thin wrapper over
-/// [`list_tags_by_prefix_inner`] with the empty prefix — exposed under a
-/// shorter name for the FEAT-4c MCP `list_tags` tool where "list all"
-/// is the primary use case.
+/// List every tag in the tag cache with cursor-based pagination
+/// (M-85, AGENTS.md invariant #3).
+///
+/// Backs the FEAT-4c MCP `list_tags` tool. Ordered by `tag_id ASC`
+/// (ULIDs sort chronologically) so the keyset cursor encoded via
+/// [`Cursor::for_id`] is monotonic. `limit` is forwarded through
+/// [`pagination::PageRequest::new`] which clamps to the canonical
+/// `[1, MAX_PAGE_SIZE]` range; the MCP tool boundary applies its own
+/// `LIST_RESULT_CAP` clamp.
+///
+/// M-85: previously a thin wrapper over `list_tags_by_prefix_inner("")`
+/// returning a flat `Vec<TagCacheRow>`. Now returns a
+/// [`PageResponse<TagCacheRow>`] so the tool surface is consistent with
+/// the rest of the paginated read commands. The frontend `listTags()`
+/// wrapper destructures `.items`; MCP agents thread `cursor` /
+/// `next_cursor` / `has_more`.
 #[instrument(skip(pool), err)]
 pub async fn list_tags_inner(
     pool: &SqlitePool,
+    cursor: Option<String>,
     limit: Option<i64>,
-) -> Result<Vec<TagCacheRow>, AppError> {
-    list_tags_by_prefix_inner(pool, String::new(), limit).await
+) -> Result<PageResponse<TagCacheRow>, AppError> {
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
+        Some(c) => (Some(1), c.id.as_str()),
+        None => (None, ""),
+    };
+    let fetch_limit = page.limit + 1;
+    let rows = sqlx::query_as!(
+        TagCacheRow,
+        r#"SELECT tag_id, name, usage_count, updated_at
+         FROM tags_cache
+         WHERE (?1 IS NULL OR tag_id > ?2)
+         ORDER BY tag_id ASC
+         LIMIT ?3"#,
+        cursor_flag,
+        cursor_id,
+        fetch_limit,
+    )
+    .fetch_all(pool)
+    .await?;
+    pagination::build_page_response(rows, page.limit, |last| {
+        pagination::Cursor::for_id(last.tag_id.clone())
+    })
 }
 
 /// List all tag_ids currently associated with a block.

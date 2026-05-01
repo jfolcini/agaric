@@ -43,7 +43,8 @@ function makePage(id: string, content: string): BlockRow {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockListPropertyDefs.mockResolvedValue([])
+  // M-85: `listPropertyDefs` returns a paginated `PageResponse` envelope.
+  mockListPropertyDefs.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
   mockListBlocks.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
 })
 
@@ -58,14 +59,18 @@ describe('usePropertyDefForEdit', () => {
   })
 
   it('loads select options when value_type is select', async () => {
-    mockListPropertyDefs.mockResolvedValue([
-      {
-        key: 'severity',
-        value_type: 'select',
-        options: JSON.stringify(['Low', 'Medium', 'High']),
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
+    mockListPropertyDefs.mockResolvedValue({
+      items: [
+        {
+          key: 'severity',
+          value_type: 'select',
+          options: JSON.stringify(['Low', 'Medium', 'High']),
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
 
     const editingProp = { key: 'severity', value: 'Low' }
     const { result } = renderHook(() => usePropertyDefForEdit(editingProp))
@@ -78,14 +83,18 @@ describe('usePropertyDefForEdit', () => {
   })
 
   it('loads ref pages when value_type is ref', async () => {
-    mockListPropertyDefs.mockResolvedValue([
-      {
-        key: 'related',
-        value_type: 'ref',
-        options: null,
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
+    mockListPropertyDefs.mockResolvedValue({
+      items: [
+        {
+          key: 'related',
+          value_type: 'ref',
+          options: null,
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
     mockListBlocks.mockResolvedValue({
       items: [makePage('PAGE_1', 'Project A'), makePage('PAGE_2', 'Project B')],
       next_cursor: null,
@@ -124,14 +133,18 @@ describe('usePropertyDefForEdit', () => {
   })
 
   it('resets state when editingProp transitions back to null', async () => {
-    mockListPropertyDefs.mockResolvedValue([
-      {
-        key: 'severity',
-        value_type: 'select',
-        options: JSON.stringify(['Low', 'High']),
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
+    mockListPropertyDefs.mockResolvedValue({
+      items: [
+        {
+          key: 'severity',
+          value_type: 'select',
+          options: JSON.stringify(['Low', 'High']),
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
 
     const editingProp: { key: string; value: string } = { key: 'severity', value: 'Low' }
     const { result, rerender } = renderHook(

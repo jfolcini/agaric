@@ -1356,10 +1356,12 @@ describe('getDeviceId', () => {
 
 describe('startPairing', () => {
   it('invokes start_pairing and returns pairing info', async () => {
+    // M-34: PairingInfo carries only passphrase + qr_svg. mDNS owns
+    // discovery + address resolution end-to-end, so the response has no
+    // host/port fields.
     const expected = {
       passphrase: 'alpha bravo charlie delta',
       qr_svg: '<svg>...</svg>',
-      port: 8765,
     }
     mockedInvoke.mockResolvedValueOnce(expected)
     const result = await startPairing()
@@ -1920,8 +1922,9 @@ describe('createPropertyDef', () => {
 // ---------------------------------------------------------------------------
 
 describe('listPropertyDefs', () => {
-  it('invokes list_property_defs with no arguments', async () => {
-    const expected = [
+  it('invokes list_property_defs with cursor + limit and returns the PageResponse envelope (M-85)', async () => {
+    // M-85: `list_property_defs` is now cursor-paginated.
+    const defs = [
       {
         key: 'status',
         value_type: 'select',
@@ -1929,12 +1932,29 @@ describe('listPropertyDefs', () => {
         created_at: '2025-01-15T00:00:00Z',
       },
     ]
+    const expected = { items: defs, next_cursor: null, has_more: false }
     mockedInvoke.mockResolvedValueOnce(expected)
 
     const result = await listPropertyDefs()
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs')
+    expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs', {
+      cursor: null,
+      limit: null,
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('forwards explicit cursor + limit to the IPC layer (M-85)', async () => {
+    const expected = { items: [], next_cursor: 'next-page-cursor', has_more: true }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await listPropertyDefs({ cursor: 'opaque-cursor', limit: 10 })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs', {
+      cursor: 'opaque-cursor',
+      limit: 10,
+    })
     expect(result).toEqual(expected)
   })
 })

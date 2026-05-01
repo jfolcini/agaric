@@ -81,7 +81,7 @@ function setupMock(props: PropertyRow[] = [], defs: PropertyDefinition[] = []) {
   mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
     const a = args as Record<string, unknown> | undefined
     if (cmd === 'get_properties') return props
-    if (cmd === 'list_property_defs') return defs
+    if (cmd === 'list_property_defs') return { items: defs, next_cursor: null, has_more: false }
     if (cmd === 'set_property') return undefined
     if (cmd === 'delete_property') return undefined
     if (cmd === 'create_property_def') {
@@ -518,7 +518,8 @@ describe('PagePropertyTable add property flow', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
       const a = args as Record<string, unknown> | undefined
       if (cmd === 'get_properties') return [...props]
-      if (cmd === 'list_property_defs') return [...defs]
+      if (cmd === 'list_property_defs')
+        return { items: [...defs], next_cursor: null, has_more: false }
       if (cmd === 'create_property_def') {
         const newDef = makeDef(a?.['key'] as string, (a?.['valueType'] as string) ?? 'text')
         defs.push(newDef)
@@ -578,7 +579,8 @@ describe('PagePropertyTable add property flow', () => {
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_properties') return [...props]
-      if (cmd === 'list_property_defs') return [...defs]
+      if (cmd === 'list_property_defs')
+        return { items: [...defs], next_cursor: null, has_more: false }
       if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
       if (cmd === 'list_tags_for_block') return []
       return null
@@ -639,7 +641,8 @@ describe('PagePropertyTable error handling', () => {
     let callCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_properties') return [makeProp('author', { value_text: 'Alice' })]
-      if (cmd === 'list_property_defs') return [makeDef('author', 'text')]
+      if (cmd === 'list_property_defs')
+        return { items: [makeDef('author', 'text')], next_cursor: null, has_more: false }
       if (cmd === 'set_property') {
         callCount++
         if (callCount >= 1) throw new Error('save failed')
@@ -674,7 +677,8 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_properties') return [makeProp('author', { value_text: 'Alice' })]
-      if (cmd === 'list_property_defs') return [makeDef('author', 'text')]
+      if (cmd === 'list_property_defs')
+        return { items: [makeDef('author', 'text')], next_cursor: null, has_more: false }
       if (cmd === 'delete_property') throw new Error('backend delete error')
       return null
     })
@@ -707,7 +711,8 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return [makeDef('status', 'text')]
+      if (cmd === 'list_property_defs')
+        return { items: [makeDef('status', 'text')], next_cursor: null, has_more: false }
       if (cmd === 'set_property') throw new Error('backend set error')
       return null
     })
@@ -733,7 +738,8 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
         if (addPhase) throw new Error('backend reload error')
         return []
       }
-      if (cmd === 'list_property_defs') return [makeDef('status', 'text')]
+      if (cmd === 'list_property_defs')
+        return { items: [makeDef('status', 'text')], next_cursor: null, has_more: false }
       if (cmd === 'set_property') {
         addPhase = true
         return undefined
@@ -758,7 +764,7 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return []
+      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
       if (cmd === 'create_property_def') throw new Error('Duplicate key "status"')
       return null
     })
@@ -790,7 +796,7 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return []
+      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
       if (cmd === 'create_property_def') {
         const err: Record<string, unknown> = new Error() as unknown as Record<string, unknown>
         err['message'] = undefined
@@ -827,7 +833,7 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
       const a = args as Record<string, unknown> | undefined
       if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs') return []
+      if (cmd === 'list_property_defs') return { items: [], next_cursor: null, has_more: false }
       if (cmd === 'create_property_def')
         return makeDef((a?.['key'] as string) ?? 'myprop', (a?.['valueType'] as string) ?? 'text')
       if (cmd === 'set_property') throw new Error('set failed after create')
@@ -1147,7 +1153,12 @@ describe('PagePropertyTable edit select options', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_properties') return [makeProp('stage', { value_text: 'TODO' })]
-      if (cmd === 'list_property_defs') return [makeDef('stage', 'select', '["TODO","DOING"]')]
+      if (cmd === 'list_property_defs')
+        return {
+          items: [makeDef('stage', 'select', '["TODO","DOING"]')],
+          next_cursor: null,
+          has_more: false,
+        }
       if (cmd === 'update_property_def_options') throw new Error('backend error')
       if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
       if (cmd === 'list_tags_for_block') return []

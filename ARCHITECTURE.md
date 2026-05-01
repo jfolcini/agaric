@@ -1462,13 +1462,15 @@ transport via TLS WebSocket, protocol via op streaming with three-way merge.
 
 mDNS service type `_agaric._tcp.local.`. On announce: register service with TXT record
 `device_id=<UUID>`. On browse: receive `ServiceResolved` events, extract peer addresses and port.
+mDNS owns discovery and address resolution end-to-end — there is no scan-bootstrap path that
+threads `host:port` through the pairing QR.
 
 ### Pairing
 
 Per-session passphrase + QR code. Ephemeral — discarded after pairing or 5-minute timeout.
 
 1. Host generates a 4-word EFF large wordlist passphrase (~51.7 bits entropy, 7,776-word list).
-2. Host displays QR code (JSON: `{"passphrase":"...","host":"...","port":12345}`) and 4-word text.
+2. Host displays QR code (JSON: `{"passphrase":"..."}`, schema-versioned with `"v":1`) and 4-word text.
 3. Both sides derive a 32-byte session key via HKDF-SHA256:
    - Salt: sorted concatenation of local + remote device IDs (order-independent).
    - Info: `b"agaric-sync-v1"`.
