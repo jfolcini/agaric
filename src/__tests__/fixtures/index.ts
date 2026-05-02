@@ -5,6 +5,7 @@
  * sensible defaults, following the Partial<T> pattern.
  */
 
+import type { HistoryEntry } from '../../lib/bindings'
 import type { BlockRow } from '../../lib/tauri'
 import type { FlatBlock } from '../../lib/tree-utils'
 
@@ -91,3 +92,20 @@ export function makeDailyPage(overrides: Partial<BlockRow> = {}): BlockRow {
 
 /** Common empty paginated response. */
 export const emptyPage = { items: [], next_cursor: null, has_more: false }
+
+/** Create a HistoryEntry (op_log row) with positional defaults. */
+export function makeHistoryEntry(
+  seq: number,
+  opType: string,
+  payload: unknown,
+  createdAt = '2025-01-15T12:00:00Z',
+  deviceId = 'DEVICE01',
+): HistoryEntry {
+  return {
+    device_id: deviceId,
+    seq,
+    op_type: opType,
+    payload: JSON.stringify(payload),
+    created_at: createdAt,
+  }
+}

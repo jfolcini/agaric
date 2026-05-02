@@ -10,6 +10,19 @@ import { formatDate, getDateRangeForFilter } from './date-utils'
 import type { BlockRow } from './tauri'
 import { listBlocks, listTagsByPrefix, listUndatedTasks, queryByProperty } from './tauri'
 
+/**
+ * Pagination limit for agenda-driven IPC queries. The `listBlocks` /
+ * `queryByProperty` / `listUndatedTasks` calls driven from this module
+ * use this value so changes propagate consistently.
+ *
+ * Note: the `listTagsByPrefix` call inside `executeAgendaFilters` uses
+ * `limit: 50` deliberately (it's a typeahead-style tag lookup, not an
+ * agenda paginator) and is not affected by this constant.
+ *
+ * Added for FE-H-2.
+ */
+export const AGENDA_QUERY_LIMIT = 500
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -76,7 +89,7 @@ async function queryStatus(
     const resp = await queryByProperty({
       key: 'todo_state',
       valueText: value,
-      limit: 500,
+      limit: AGENDA_QUERY_LIMIT,
       spaceId,
     })
     for (const b of resp.items) {
@@ -96,7 +109,7 @@ async function queryPriority(
     const resp = await queryByProperty({
       key: 'priority',
       valueText: value,
-      limit: 500,
+      limit: AGENDA_QUERY_LIMIT,
       spaceId,
     })
     for (const b of resp.items) {
@@ -125,7 +138,7 @@ async function queryOverdueForColumn(
   spaceId: string | null,
 ): Promise<Map<string, BlockRow>> {
   const result = new Map<string, BlockRow>()
-  const resp = await queryByProperty({ key: columnKey, limit: 500, spaceId })
+  const resp = await queryByProperty({ key: columnKey, limit: AGENDA_QUERY_LIMIT, spaceId })
   for (const b of resp.items) {
     if (isOverdue(b, columnKey, todayStr)) {
       result.set(b.id, b)
@@ -153,8 +166,18 @@ async function queryPresetRangeForColumn(
   const agendaSource = `column:${columnKey}`
   const resp =
     range.start === range.end
-      ? await listBlocks({ agendaDate: range.start, agendaSource, limit: 500, spaceId })
-      : await listBlocks({ agendaDateRange: range, agendaSource, limit: 500, spaceId })
+      ? await listBlocks({
+          agendaDate: range.start,
+          agendaSource,
+          limit: AGENDA_QUERY_LIMIT,
+          spaceId,
+        })
+      : await listBlocks({
+          agendaDateRange: range,
+          agendaSource,
+          limit: AGENDA_QUERY_LIMIT,
+          spaceId,
+        })
   for (const b of resp.items) {
     result.set(b.id, b)
   }
@@ -213,7 +236,7 @@ async function queryPropertyDateDimension(
       const resp = await queryByProperty({
         key: propertyKey,
         valueDate: dateStr,
-        limit: 500,
+        limit: AGENDA_QUERY_LIMIT,
         spaceId,
       })
       for (const b of resp.items) {
@@ -232,7 +255,7 @@ async function queryTag(values: string[], spaceId: string): Promise<Map<string, 
     const candidates = await listTagsByPrefix({ prefix: value, limit: 50 })
     const match = candidates.find((t) => t.name.toLowerCase() === value.toLowerCase())
     if (!match) continue
-    const resp = await listBlocks({ tagId: match.tag_id, limit: 500, spaceId })
+    const resp = await listBlocks({ tagId: match.tag_id, limit: AGENDA_QUERY_LIMIT, spaceId })
     for (const b of resp.items) {
       result.set(b.id, b)
     }
@@ -253,7 +276,7 @@ async function queryPropertyDimension(
     const resp = await queryByProperty({
       key,
       ...(value != null && { valueText: value }),
-      limit: 500,
+      limit: AGENDA_QUERY_LIMIT,
       spaceId,
     })
     for (const b of resp.items) {
@@ -285,9 +308,9 @@ export async function executeAgendaFilters(
   if (filters.length === 0) {
     // Default: blocks with due_date or scheduled_date, plus undated tasks
     const [dueResp, schedResp, undatedResp] = await Promise.all([
-      queryByProperty({ key: 'due_date', limit: 500, spaceId }),
-      queryByProperty({ key: 'scheduled_date', limit: 500, spaceId }),
-      listUndatedTasks({ limit: 500, spaceId }),
+      queryByProperty({ key: 'due_date', limit: AGENDA_QUERY_LIMIT, spaceId }),
+      queryByProperty({ key: 'scheduled_date', limit: AGENDA_QUERY_LIMIT, spaceId }),
+      listUndatedTasks({ limit: AGENDA_QUERY_LIMIT, spaceId }),
     ])
     // Merge and deduplicate by id
     const seen = new Set<string>()

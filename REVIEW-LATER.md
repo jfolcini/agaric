@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 604 — Batch TEST-FIXUPS-1 closed: TEST-1, TEST-13, TEST-21, TEST-22, TEST-26)
+> **Last updated:** 2026-05-02 (Session 605 — Batch FRONTEND-FIXUPS-1 closed: TEST-FE-3, TEST-FE-4, TEST-FE-5, TEST-FE-7, FE-H-2)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-151 open items in the summary table; 198 detail entries (FE-* sub-tables don't appear in the summary).
+151 open items in the summary table; 193 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -923,39 +923,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Impact:** Medium-high in the action-handler / keyboard-shortcut files.
 - **Status:** Open.
 
-### TEST-FE-3 — `makeHistoryEntry` factory duplicated across two test files
-- **Domain:** Frontend test fixtures
-- **Location:**
-  - `src/components/__tests__/HistoryPanel.test.tsx:38-51`
-  - `src/components/__tests__/HistoryView.test.tsx:46-60`
-  - Should live in `src/__tests__/fixtures/index.ts`
-- **What:** Both files define a near-identical `makeHistoryEntry(seq, opType, payload, createdAt?, deviceId?)` constructing mock op-log history entries. The HistoryView variant adds an optional `deviceId` parameter; otherwise identical (same fields, same defaults, same JSON-stringified `payload`).
-- **Why it matters:** `src/__tests__/AGENTS.md` line 225 explicitly says: "When the shared factory doesn't exist yet, add it to `fixtures/index.ts` rather than defining it locally — the next test file will need it too." Forthcoming undo / op-log inspector tests will likely use the same factory.
-- **Cost:** Trivial — one factory + signature in fixtures, two deletions.
-- **Risk:** Low — pure refactor.
-- **Impact:** Low — small maintainability win.
-- **Status:** Open.
-
-### TEST-FE-4 — `vi.resetModules()` + `vi.doMock()` without try/finally guard in ViewDispatcher test
-- **Domain:** Frontend test infrastructure
-- **Location:** `src/components/__tests__/ViewDispatcher.test.tsx:167-213`
-- **What:** The Suspense-fallback test calls `vi.resetModules()` (line 167) and `vi.doMock('../StatusPanel', …)` / `vi.doMock('../JournalPage', …)` (lines 174–180), then unmocks at lines 211–212 in the bare test body. If any assertion between 195 and 209 fails, the unmocks never run, the module registry stays poisoned, and subsequent tests in the same worker that import `StatusPanel` / `JournalPage` see the deferred-import mocks.
-- **Why it matters:** Vitest's per-test isolation does not cover the dynamic module registry — it covers spies / mocked return values via `vi.clearAllMocks`, not `vi.doMock` calls. A flaky failure mid-test would corrupt the worker's module state and propagate failures.
-- **Cost:** Trivial — wrap the body in `try { ... } finally { vi.doUnmock('../StatusPanel'); vi.doUnmock('../JournalPage') }`.
-- **Risk:** Low.
-- **Impact:** Low (rarely triggers, but eliminates a real flake source when it does).
-- **Status:** Open.
-
-### TEST-FE-5 — `useBatchCounts` agendaCounts assertion can't distinguish `dateStr` vs `displayDate` key contract
-- **Domain:** Frontend test infrastructure
-- **Location:** `src/hooks/__tests__/useBatchCounts.test.ts:32-52`
-- **What:** The `makeDayEntry` fixture sets `displayDate === dateStr`. The hook contract is "`agendaCounts` is keyed by `dateStr`" (canonical date), but the test would also pass if a refactor accidentally changed it to use `displayDate` (timezone-formatted) — because they're the same value in the fixture. The two fields exist precisely to differ.
-- **Why it matters:** A real contract regression (hook switching to display-date as the cache key) would silently pass — exactly the silent-pass class AGENTS.md flags.
-- **Cost:** Trivial — make `displayDate` differ from `dateStr` in at least one fixture row, OR add `expect(Object.keys(result.current.agendaCounts)).toEqual(['2025-01-06', '2025-01-07'])`.
-- **Risk:** Low.
-- **Impact:** Low–medium — locks down the cache-key contract.
-- **Status:** Open.
-
 ### TEST-FE-6 — Local positional `makeBlock` helpers duplicate the shared `Partial<T>`-override factory
 - **Domain:** Frontend test fixtures
 - **Location:**
@@ -968,16 +935,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Cost:** Small — either inline `makeBlock({ id, content, parent_id: 'PAGE_1' })` at each call site, or add positional-arg variants to `fixtures/index.ts`.
 - **Risk:** Low.
 - **Impact:** Low — consistency and reduced drift surface.
-- **Status:** Open.
-
-### TEST-FE-7 — `AgendaResults.test.tsx` hardcoded `'2020-01-01'` overdue marker
-- **Domain:** Frontend test infrastructure
-- **Location:** `src/components/__tests__/AgendaResults.test.tsx:320, 332`
-- **What:** Two test cases hardcode `'2020-01-01'` as an overdue date marker. The date will always be in the past, so the test isn't actually flaky — but a relative date (e.g. `format(new Date(Date.now() - 30 * 86400000), 'yyyy-MM-dd')` or `format(subDays(new Date(), 30), 'yyyy-MM-dd')` if `subDays` is added as a new import — it isn't currently imported in this file) would express intent more clearly.
-- **Why it matters:** Hardcoded dates in tests drift from "intent matches code" over years. A relative-to-today expression captures "30 days overdue" rather than "Jan 1 2020 specifically".
-- **Cost:** Trivial — 2-line change (plus optional `subDays` import).
-- **Risk:** Low.
-- **Impact:** Low.
 - **Status:** Open.
 
 ### TEST-FE-8 — `PairingDialog.test.tsx` uses `document.querySelector('.pairing-error')` for portal content
@@ -1267,17 +1224,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** High — silent data loss in the default agenda view at scale.
 - **Recommendation:** Thread cursor pagination through the default branch like the filtered branches do, or document the carve-out explicitly per AGENTS invariant #3 if 500 is genuinely a safe upper bound.
 - **Source:** FE review 2026-05-02 / F014
-- **Status:** Open
-
-### FE-H-2 — `agenda-filters.ts`: hardcoded `limit: 500` repeated in 11 sites
-- **Domain:** Frontend / Agenda
-- **Location:** `src/lib/agenda-filters.ts:79, 99, 128, 156, 157, 216, 235, 256, 288, 289, 290`
-- **What:** A single magic number drives pagination in eleven call sites; missing one update silently truncates a query. Related to FE-H-1. (Note: line 232 is `limit: 50` for `listTagsByPrefix`, which is a different concern and not part of the AGENDA_QUERY_LIMIT cluster.)
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Recommendation:** Extract `const AGENDA_QUERY_LIMIT = 500` and reference it everywhere.
-- **Source:** FE review 2026-05-02 / F016
 - **Status:** Open
 
 ### FE-H-3 — `useScrollRestore` schedules a `requestAnimationFrame` with no cleanup
