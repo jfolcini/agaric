@@ -57,9 +57,10 @@ describe('BootGate', () => {
       </BootGate>,
     )
 
-    // boot() calls invoke('list_blocks', {})
+    // boot() calls invoke('list_blocks', { spaceId: '' }) — the
+    // pre-bootstrap convention documented in `src/lib/tauri.ts::listBlocks`.
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {})
+      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', { spaceId: '' })
     })
   })
 
@@ -303,7 +304,7 @@ describe('BootGate', () => {
       expect(screen.queryByText('First failure')).not.toBeInTheDocument()
       expect(screen.queryByText('App content')).not.toBeInTheDocument()
       expect(mockedInvoke).toHaveBeenCalledTimes(2)
-      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {})
+      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', { spaceId: '' })
     })
 
     it('transitions to ready when retry succeeds after initial failure', async () => {
