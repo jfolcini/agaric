@@ -77,32 +77,39 @@ pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result
         return Ok(());
     }
 
-    for target in &to_delete {
-        sqlx::query!(
-            "DELETE FROM block_tag_refs WHERE source_id = ? AND tag_id = ?",
-            block_id,
-            *target,
+    // PERF-24: batch DELETE/INSERT via `json_each` — one round-trip per
+    // side regardless of the number of changed targets, replacing the
+    // previous 2N round-trip per-target loops. Mirrors the
+    // `cache/block_links.rs` pattern.
+    if !to_delete.is_empty() {
+        let delete_json = serde_json::to_string(&to_delete)?;
+        sqlx::query(
+            "DELETE FROM block_tag_refs \
+             WHERE source_id = ? \
+               AND tag_id IN (SELECT value FROM json_each(?))",
         )
+        .bind(block_id)
+        .bind(&delete_json)
         .execute(&mut *tx)
         .await?;
     }
 
-    for target in &to_insert {
-        let t = *target;
+    if !to_insert.is_empty() {
         // INSERT ... SELECT ... WHERE EXISTS — only link to blocks that
         // are actually tags. Non-tag candidates (stray IDs that happen to
         // match the regex but point at content/page blocks) are silently
         // dropped. `INSERT OR IGNORE` handles the already-present case
         // if two insert passes race (shouldn't happen inside a tx, but
         // keeps the statement idempotent).
-        sqlx::query!(
+        let insert_json = serde_json::to_string(&to_insert)?;
+        sqlx::query(
             "INSERT OR IGNORE INTO block_tag_refs (source_id, tag_id) \
-             SELECT ?, ? WHERE EXISTS \
-                 (SELECT 1 FROM blocks WHERE id = ? AND block_type = 'tag')",
-            block_id,
-            t,
-            t,
+             SELECT ?, value FROM json_each(?) \
+             WHERE EXISTS \
+                 (SELECT 1 FROM blocks WHERE id = value AND block_type = 'tag')",
         )
+        .bind(block_id)
+        .bind(&insert_json)
         .execute(&mut *tx)
         .await?;
     }
@@ -157,28 +164,42 @@ pub async fn reindex_block_tag_refs_split(
 
     // Write phase on write_pool.
     let mut tx = write_pool.begin().await?;
-    for target in &to_delete {
-        sqlx::query!(
-            "DELETE FROM block_tag_refs WHERE source_id = ? AND tag_id = ?",
-            block_id,
-            *target,
+
+    // PERF-24: batch DELETE/INSERT via `json_each` — one round-trip per
+    // side regardless of the number of changed targets, replacing the
+    // previous 2N round-trip per-target loops. Mirrors the
+    // `cache/block_links.rs` pattern.
+    if !to_delete.is_empty() {
+        let delete_json = serde_json::to_string(&to_delete)?;
+        sqlx::query(
+            "DELETE FROM block_tag_refs \
+             WHERE source_id = ? \
+               AND tag_id IN (SELECT value FROM json_each(?))",
         )
+        .bind(block_id)
+        .bind(&delete_json)
         .execute(&mut *tx)
         .await?;
     }
-    for target in &to_insert {
-        let t = *target;
-        sqlx::query!(
+
+    if !to_insert.is_empty() {
+        // INSERT ... SELECT ... WHERE EXISTS — only link to blocks that
+        // are actually tags. Non-tag candidates (stray IDs that happen to
+        // match the regex but point at content/page blocks) are silently
+        // dropped.
+        let insert_json = serde_json::to_string(&to_insert)?;
+        sqlx::query(
             "INSERT OR IGNORE INTO block_tag_refs (source_id, tag_id) \
-             SELECT ?, ? WHERE EXISTS \
-                 (SELECT 1 FROM blocks WHERE id = ? AND block_type = 'tag')",
-            block_id,
-            t,
-            t,
+             SELECT ?, value FROM json_each(?) \
+             WHERE EXISTS \
+                 (SELECT 1 FROM blocks WHERE id = value AND block_type = 'tag')",
         )
+        .bind(block_id)
+        .bind(&insert_json)
         .execute(&mut *tx)
         .await?;
     }
+
     tx.commit().await?;
     Ok(())
 }

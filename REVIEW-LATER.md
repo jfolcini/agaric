@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 608 — Batch QUICK-WINS-2 closed: PERF-29, M-96, FE-H-18, TEST-9, TEST-20)
+> **Last updated:** 2026-05-02 (Session 609 — Batch PERF-CLUSTER-1 closed: PERF-24, PERF-25, PERF-26, PERF-27, PERF-28; FE-L-15 follow-up filed)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-146 open items in the summary table; 178 detail entries (FE-* sub-tables don't appear in the summary).
+141 open items in the summary table; 174 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -52,11 +52,6 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-193 | MAINT | zizmor baseline triage — 53 GitHub Actions findings suppressed by file:line in `.github/zizmor.yml` when the `zizmor` pre-commit hook was first wired in. Mix of policy-level (`unpinned-uses` × 35: tags vs SHAs) and real fixes (`template-injection` × 6 in `release-tag.yml` — pass `inputs.version` via `env:` instead of `${{ }}` interpolation; `excessive-permissions` × 1 in `release.yml`; `cache-poisoning` × 11; `artipacked` × 7). Triage off the baseline as fixes land. | M | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
-| PERF-24 | PERF | `cache/block_tag_refs.rs::reindex_block_tag_refs` issues per-target DELETE/INSERT in a loop; sibling `block_links.rs` already batches via `json_each` | S | — |
-| PERF-25 | PERF | `gcal_push/connector.rs::GcalSettingsSnapshot::read` issues 4 separate `SELECT`s every cycle; trivially batchable via `key IN (?, ?, ?, ?)` | S | — |
-| PERF-26 | PERF | `link_metadata/mod.rs::fetch_metadata` rebuilds `reqwest::Client` per call; should reuse a `OnceLock` like `gcal_push/api.rs` does | S | — |
-| PERF-27 | PERF | `backlink/filters.rs::PropertyText` filter fetches all rows for the property key then compares in Rust; push the operator into SQL `WHERE` | S | — |
-| PERF-28 | PERF | Frontend — `TagValuePicker.tsx:39-55` calls `listTagsByPrefix()` synchronously on every keystroke; sibling `TagFilterPanel.tsx:68-82` debounces 300 ms via `useDebouncedCallback`. Apply the same pattern | S | — |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
@@ -180,18 +175,8 @@ These can be tackled in a single session with low risk — listed for prioritiza
 - **MAINT-171** — extract `set_recurrence_property` helper to dedupe 8 call sites in `apply_recurrence_advance`
 - **PERF-19** — backlink pagination keyset for non-Created sorts (2 sites)
 - **PERF-20** — concurrency cap on `try_join_all` in backlink filter resolver
-- **PERF-23** — stream-send for `read_attachment_file` (receive side already streams)
-- **PERF-24** — batch `reindex_block_tag_refs` via `json_each` (mirror `block_links.rs`)
-- **PERF-25** — `models::get_settings_batch` + single `SELECT … WHERE key IN (...)`
-- **PERF-26** — `OnceLock<reqwest::Client>` in `link_metadata`
-- **PERF-27** — push `PropertyText` operator into SQL `WHERE`
-- **PERF-28** — debounce `TagValuePicker` searches (mirror `TagFilterPanel` pattern)
 - **MAINT-114** — workflow consolidation audit (spike-then-commit)
 - **MAINT-173** — batch-delete transitive-descendant filter in `useBlockMultiSelect` (HIGH-severity correctness)
-- **MAINT-179** — GCal Settings success-toast consistency (mirror `set_gcal_privacy_mode`)
-- **MAINT-182** — i18n leak in `useBlockKeyboardHandlers.ts:425` (one hardcoded English string)
-- **MAINT-187** — promote internal-property keys list to `INTERNAL_PROPERTY_KEYS` in `block-utils.ts`
-- **MAINT-188** — memoize breadcrumb segments in `PageHeader.tsx:524-542`
 - **MAINT-192** — UX.md / AGENTS.md additions (4 small doc inserts to reduce review false-positive churn)
 - **PUB-5** — Tauri updater wiring (user-only: keypair + 2 secrets + uncomment)
 - **PUB-8** — Android release keystore + 4 GH Actions secrets (CI wiring already shipped)
@@ -956,62 +941,6 @@ Or a simpler cap: reject filter lists longer than some reasonable limit (e.g., 1
 **Cost:** S
 **Status:** Deferred.
 
-
-### PERF-24 — `cache/block_tag_refs.rs::reindex_block_tag_refs` per-target DELETE/INSERT loop
-
-**Problem:** `src-tauri/src/cache/block_tag_refs.rs:80-88` (DELETE loop) and `:90-108` (INSERT loop) issue one statement per target. The split-pool variant `reindex_block_tag_refs_split` has the same shape. Sibling `cache/block_links.rs:66-93` already uses `json_each(?)` to batch deletes and inserts in two round-trips total.
-
-**Why it matters:** Realistic block-tag-ref counts are 1-10 per block, so the wall-clock impact is bounded. The value is consistency with `block_links` (same diff-and-apply semantics, two different implementations) and future-proofing if a block ever holds many tag refs (e.g. a block that aggregates tags from multiple sources).
-
-**Fix:** Match the `block_links` pattern. Two statements total per re-index. The `INSERT OR IGNORE ... WHERE EXISTS (... block_type='tag')` form is expressible as a single statement using `json_each` joined against `blocks`. Keep the existence check in the JOIN.
-
-**Cost:** S — straightforward port of the `block_links` pattern.
-**Risk:** Low — covered by existing reindex tests; the oracle is `block_links`'s already-shipped batched implementation.
-**Impact:** Low (bounded) but consistent with project performance conventions.
-**Status:** Open.
-
-### PERF-25 — `gcal_push/connector.rs::GcalSettingsSnapshot::read` issues 3 separate SELECTs
-
-**Problem:** `src-tauri/src/gcal_push/connector.rs:312-331` calls `models::get_setting` three times (`CalendarId` at L314, `PrivacyMode` at L317, `WindowDays` at L321). The `GcalSettingsSnapshot` struct (L306-310) declares exactly those three fields — no `AccountEmail`. Each call is a separate `SELECT … WHERE key = ?` round trip. Runs once per cycle (every 15-minute reconcile + every dirty-event burst).
-
-**Fix:** Add `models::get_settings_batch(pool, &[Key1, Key2, Key3])` returning `HashMap<GcalSettingKey, String>`. Single `SELECT … WHERE key IN (?, ?, ?)`. The pattern is already used in `lease.rs` for batched key reads.
-
-**Cost:** S — one helper; one call-site change.
-**Risk:** Low.
-**Impact:** Low (3 round trips → 1, on a 15-minute timer; not a hot path).
-**Status:** Open.
-
-### PERF-26 — `link_metadata/mod.rs::fetch_metadata` rebuilds `reqwest::Client` per call
-
-**Problem:** `src-tauri/src/link_metadata/mod.rs:51-57` constructs `reqwest::Client::builder()…build()` on every invocation. Each call rebuilds TLS state and discards the connection pool after a single request. Called from a hot path (link preview on every external link paste/edit).
-
-**Fix:** Move the client to a module-level `static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();` initialised lazily on first call. Pattern already used in `gcal_push/api.rs:757-769` (the `shared_client()` `OnceLock<reqwest::Client>` helper).
-
-**Cost:** S — 5-line change.
-**Risk:** Low — `reqwest::Client` is `Clone + Send + Sync` and explicitly designed for this use.
-**Impact:** Low-medium — eliminates per-call TLS handshake on the link-preview hot path. Particularly valuable when a user pastes a markdown block with many external links.
-**Status:** Open.
-
-### PERF-27 — `backlink/filters.rs::PropertyText` filter materialises before comparing
-
-**Problem:** `src-tauri/src/backlink/filters.rs:137-162` fetches all rows matching a property key (`SELECT … WHERE bp.key = ?1`), then applies the comparison operator (`=`, `LIKE`, `CONTAINS`, etc.) in Rust. For property keys with thousands of distinct values this materialises the full set into memory before filtering.
-
-**Fix:** Build the comparison clause dynamically (the existing operator enum already enumerates the cases) and let SQLite do the filtering. Pattern already exists in `pagination/properties.rs:100-140`.
-
-**Cost:** S — finite operator arms; query builder already in use elsewhere.
-**Risk:** Low — covered by existing filter-resolver tests.
-**Impact:** Low-medium — bounded by realistic property cardinality, but pushes work to the layer that should be doing it.
-**Status:** Open.
-
-### PERF-28 — `TagValuePicker` searches on every keystroke without debounce
-- **Domain:** Frontend (filter pickers)
-- **Location:** `src/components/TagValuePicker.tsx:39-55, 60-80`; reference impl `src/components/TagFilterPanel.tsx:68-82`.
-- **What:** `handleChange` calls `search(value.trim())` synchronously on every keystroke; `search` issues a `listTagsByPrefix({ prefix, limit: 20 })` IPC. Sibling `TagFilterPanel` debounces 300 ms via `useDebouncedCallback`. Single-keystroke users fire 5–10 IPCs per word.
-- **Cost:** S — wrap `search` in `useDebouncedCallback(_, 300)` matching the `TagFilterPanel` pattern.
-- **Risk:** Low.
-- **Impact:** Medium — visible UI thrashing on slow devices / large tag vocabularies.
-- **Status:** Open.
-
 ---
 
 
@@ -1456,6 +1385,17 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Risk:** Low.
 - **Impact:** Low.
 - **Source:** FE review 2026-05-02 / F068
+- **Status:** Open
+
+### FE-L-15 — `useDebouncedCallback` returns a new object every render
+- **Domain:** Frontend / Hooks
+- **Location:** `src/hooks/useDebouncedCallback.ts:52`
+- **What:** `return { schedule, cancel }` creates a fresh object on every render of the owning component, even though the underlying functions close over stable refs (`timerRef`, `callbackRef`) and therefore have semantically stable behavior. Consumers that put the returned object in a `useCallback` / `useMemo` dependency array will see the dependency change every render and recreate the downstream callback unnecessarily. Flagged by the PERF-28 reviewer: `TagValuePicker.handleChange` (`[onChange, debounced]`) recreates every render; the debounce logic is still correct, just the `useCallback` wrapper ends up being a no-op. `TagFilterPanel` sidesteps the issue by not wrapping the handler in `useCallback` at all — inconsistent pattern between two consumers of the same hook.
+- **Fix:** Wrap the return in `useMemo(() => ({ schedule, cancel }), [])`. Since both functions close over refs only (no closure captures of state or props), the empty dep array is safe. Alternatively, move the functions out of the hook body and have them receive `timerRef`/`callbackRef`/`delay` as args — but the `useMemo` version is less invasive.
+- **Cost:** Trivial — one `useMemo` wrap + re-run the hook's existing test.
+- **Risk:** Low — the returned identity was implicitly "per-render" before, but no known consumer relies on that behavior. A stable identity is the conventional React expectation.
+- **Impact:** Low — eliminates the downstream `useCallback` churn in `TagValuePicker` (and any future consumer that does the same). No user-visible change.
+- **Source:** PERF-28 reviewer flagged 2026-05-02 (session 609).
 - **Status:** Open
 
 ## UX — User-experience / usability / discoverability

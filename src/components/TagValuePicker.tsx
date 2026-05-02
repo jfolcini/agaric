@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { listTagsByPrefix } from '../lib/tauri'
 
 interface TagResult {
@@ -54,19 +55,24 @@ export function TagValuePicker({
     }
   }, [])
 
+  const debounced = useDebouncedCallback((value) => {
+    search(value)
+  }, 300)
+
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const value = e.target.value
       setQuery(value)
       onChange([])
+      debounced.cancel()
       if (value.trim()) {
-        search(value.trim())
+        debounced.schedule(value.trim())
       } else {
         setResults([])
         setOpen(false)
       }
     },
-    [onChange, search],
+    [onChange, debounced],
   )
 
   const handleSelect = useCallback(
