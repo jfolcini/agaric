@@ -65,7 +65,7 @@ export const commands = {
 	// Tauri command: get materializer queue status. Delegates to [`get_status_inner`].
 	getStatus: () => typedError<StatusInfo, AppErrorSchema>(__TAURI_INVOKE("get_status")),
 	// Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
-	searchBlocks: (query: string, cursor: string | null, limit: number | null, parentId: string | null, tagIds: string[] | null, spaceId: string) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, parentId, tagIds, spaceId })),
+	searchBlocks: (query: string, cursor: string | null, limit: number | null, parentId: string | null, tagIds: string[] | null, spaceId: string) => typedError<PageResponse<ActiveBlockRow>, AppErrorSchema>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, parentId, tagIds, spaceId })),
 	// Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`].
 	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit, spaceId })),
 	// Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
@@ -206,7 +206,7 @@ export const commands = {
 	 *  Cursor-paginated (M-25) — pass `cursor = next_cursor` from the previous
 	 *  response to fetch the next page.
 	 */
-	listProjectedAgenda: (startDate: string, endDate: string, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<ProjectedAgendaEntry>, AppErrorSchema>(__TAURI_INVOKE("list_projected_agenda", { startDate, endDate, cursor, limit, spaceId })),
+	listProjectedAgenda: (startDate: string, endDate: string, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<ActiveProjectedAgendaEntry>, AppErrorSchema>(__TAURI_INVOKE("list_projected_agenda", { startDate, endDate, cursor, limit, spaceId })),
 	// Tauri command: list undated tasks. Delegates to [`list_undated_tasks_inner`].
 	listUndatedTasks: (cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_undated_tasks", { cursor, limit, spaceId })),
 	/**
@@ -445,6 +445,62 @@ export const commands = {
 export type ActiveBlockId = string;
 
 /**
+ *  MAINT-113 M1.5 — Row returned by paginated block queries that filter
+ *  on `is_conflict = 0 AND deleted_at IS NULL` in their SQL.
+ *
+ *  Mirror of [`BlockRow`] except `id` is typed [`crate::ulid::ActiveBlockId`]
+ *  — a strict subset of the raw block-id space that has been verified
+ *  (by the helper's own SQL filter) to refer to a live, non-conflict
+ *  block. Helpers that intentionally surface conflict copies (`get_conflicts`)
+ *  or deleted rows (`list_trash`) keep returning `BlockRow`.
+ *
+ *  Specta emits this as a separate TypeScript type, but `id`'s emit is
+ *  `ActiveBlockId` which is itself a transparent alias for `string`. The
+ *  runtime wire format is byte-identical to `BlockRow` (same JSON shape,
+ *  same SQLite column types). Frontend code that consumed `BlockRow` from
+ *  active-filtering Tauri commands continues to compile because
+ *  TypeScript's structural typing accepts `ActiveBlockRow` wherever a
+ *  `BlockRow` is expected (and vice-versa) — both have `id: string`
+ *  at the wire level.
+ *
+ *  Construction is via `sqlx::query_as` with a column cast like
+ *  `id as "id: ActiveBlockId"` (see `fts/search.rs::search_fts` for an
+ *  example), or via [`ActiveBlockRow::from_block_row_unchecked`] at the
+ *  boundary of an internal helper that already filtered active rows.
+ */
+export type ActiveBlockRow = {
+	id: ActiveBlockId,
+	block_type: string,
+	content: string | null,
+	parent_id: string | null,
+	position: number | null,
+	deleted_at: string | null,
+	is_conflict: boolean,
+	conflict_type: string | null,
+	todo_state: string | null,
+	priority: string | null,
+	due_date: string | null,
+	scheduled_date: string | null,
+	page_id: string | null,
+};
+
+/**
+ *  MAINT-113 M1.5 — Active-id variant of [`ProjectedAgendaEntry`]. Used by
+ *  `commands::agenda::list_projected_agenda_inner` and its on-the-fly
+ *  fallback, both of which only emit projections of live, non-conflict
+ *  blocks (the projector reads from `block_properties` joined against
+ *  `blocks WHERE is_conflict = 0 AND deleted_at IS NULL`).
+ */
+export type ActiveProjectedAgendaEntry = {
+	// The source block (real, materialized, active block).
+	block: ActiveBlockRow,
+	// The projected date for this occurrence (YYYY-MM-DD).
+	projected_date: string,
+	// Which date column was used as the base for projection.
+	source: string,
+};
+
+/**
  *  Bundled agenda filter for the [`list_blocks`] Tauri command.
  *
  *  Exists purely to keep `list_blocks`'s argument count under the
@@ -526,7 +582,21 @@ export type BacklinkQueryResponse = {
 // Tagged union of sort modes for backlink queries.
 export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir };
 
-// Row returned by paginated block queries.
+/**
+ *  Row returned by paginated block queries.
+ *
+ *  MAINT-113 took the parallel-types path (over the explored
+ *  `BlockRow<Id = String>` generic, which collided with two
+ *  `specta-typescript` 0.0.11 constraints — no generic-default emit and
+ *  `PLACEHOLDER_Id` codegen dropping `Id: Clone` bounds through embedded
+ *  generic structs). `BlockRow` stays raw — used by polymorphic
+ *  dispatchers (`list_blocks_inner`'s show-deleted/agenda/tag/by-type/
+ *  children fan-out) and by helpers that intentionally surface conflict
+ *  or deleted rows (`get_block`, `get_conflicts`, `list_trash`). Helpers
+ *  whose SQL filters `is_conflict = 0 AND deleted_at IS NULL` return
+ *  [`ActiveBlockRow`] instead and lift the activeness invariant into
+ *  the type system at the helper signature.
+ */
 export type BlockRow = {
 	id: string,
 	block_type: string,
@@ -780,20 +850,6 @@ export type PeerRef = {
 	 *  Updated after each successful sync. Used when mDNS is unavailable.
 	 */
 	last_address: string | null,
-};
-
-/**
- *  A projected future occurrence of a repeating block.
- *
- *  Not stored in the database — computed on-the-fly from repeat rules.
- */
-export type ProjectedAgendaEntry = {
-	// The source block (real, materialized block).
-	block: BlockRow,
-	// The projected date for this occurrence (YYYY-MM-DD).
-	projected_date: string,
-	// Which date column was used as the base for projection.
-	source: string,
 };
 
 // A property definition from the schema registry.

@@ -15,7 +15,7 @@ use crate::error::AppError;
 use crate::fts;
 use crate::materializer::Materializer;
 use crate::materializer::StatusInfo;
-use crate::pagination::{self, BlockRow, PageResponse};
+use crate::pagination::{self, ActiveBlockRow, BlockRow, PageResponse};
 use crate::sync_scheduler::SyncScheduler;
 
 use super::*;
@@ -77,7 +77,7 @@ pub async fn search_blocks_inner(
     parent_id: Option<String>,
     tag_ids: Option<Vec<String>>,
     space_id: String,
-) -> Result<PageResponse<BlockRow>, AppError> {
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     if query.trim().is_empty() {
         return Ok(PageResponse {
             items: vec![],
@@ -338,7 +338,7 @@ pub async fn search_blocks(
     parent_id: Option<String>,
     tag_ids: Option<Vec<String>>,
     space_id: String,
-) -> Result<PageResponse<BlockRow>, AppError> {
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     search_blocks_inner(&pool.0, query, cursor, limit, parent_id, tag_ids, space_id)
         .await
         .map_err(sanitize_internal_error)

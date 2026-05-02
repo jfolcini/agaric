@@ -733,11 +733,15 @@ struct RepeatingBlockRow {
 }
 
 impl RepeatingBlockRow {
-    /// Extract the core [`BlockRow`] fields (used when building
-    /// [`ProjectedAgendaEntry`] values).
-    fn to_block_row(&self) -> BlockRow {
-        BlockRow {
-            id: self.id.clone(),
+    /// Extract the core [`crate::pagination::ActiveBlockRow`] fields
+    /// (used when building [`crate::pagination::ActiveProjectedAgendaEntry`]
+    /// values). The SQL that produced this row filters
+    /// `is_conflict = 0 AND deleted_at IS NULL` (see
+    /// `commands/agenda.rs::list_projected_agenda_on_the_fly`), so the
+    /// active claim is sound.
+    fn to_active_block_row(&self) -> crate::pagination::ActiveBlockRow {
+        crate::pagination::ActiveBlockRow {
+            id: crate::ulid::ActiveBlockId::from_trusted_active(&self.id),
             block_type: self.block_type.clone(),
             content: self.content.clone(),
             parent_id: self.parent_id.clone(),

@@ -9,7 +9,7 @@ use tauri::State;
 
 use crate::db::ReadPool;
 use crate::error::AppError;
-use crate::pagination::{Cursor, ProjectedAgendaEntry};
+use crate::pagination::{ActiveBlockRow, ActiveProjectedAgendaEntry, Cursor};
 
 use super::*;
 
@@ -171,7 +171,7 @@ pub async fn list_projected_agenda_inner(
     cursor: Option<String>,
     limit: Option<i64>,
     space_id: Option<String>,
-) -> Result<PageResponse<ProjectedAgendaEntry>, AppError> {
+) -> Result<PageResponse<ActiveProjectedAgendaEntry>, AppError> {
     let today = chrono::Local::now().date_naive();
     validate_date_format(&start_date)?;
     validate_date_format(&end_date)?;
@@ -291,29 +291,30 @@ pub async fn list_projected_agenda_inner(
         .await;
     }
 
-    let mut entries: Vec<ProjectedAgendaEntry> = cached
+    // MAINT-113 M1.5 — boundary cast: the cache query above joins
+    // `blocks` filtered to live, non-conflict rows, so every surviving
+    // block id is active. `from_trusted_active` records the claim in
+    // the type system without re-running the predicate.
+    let mut entries: Vec<ActiveProjectedAgendaEntry> = cached
         .into_iter()
-        .map(|row| {
-            use crate::pagination::BlockRow;
-            ProjectedAgendaEntry {
-                block: BlockRow {
-                    id: row.3,
-                    block_type: row.4,
-                    content: row.5,
-                    parent_id: row.6,
-                    position: row.7,
-                    deleted_at: row.8,
-                    is_conflict: row.9,
-                    conflict_type: row.10,
-                    todo_state: row.11,
-                    priority: row.12,
-                    due_date: row.13,
-                    scheduled_date: row.14,
-                    page_id: row.15,
-                },
-                projected_date: row.1,
-                source: row.2,
-            }
+        .map(|row| ActiveProjectedAgendaEntry {
+            block: ActiveBlockRow {
+                id: crate::ulid::ActiveBlockId::from_trusted_active(&row.3),
+                block_type: row.4,
+                content: row.5,
+                parent_id: row.6,
+                position: row.7,
+                deleted_at: row.8,
+                is_conflict: row.9,
+                conflict_type: row.10,
+                todo_state: row.11,
+                priority: row.12,
+                due_date: row.13,
+                scheduled_date: row.14,
+                page_id: row.15,
+            },
+            projected_date: row.1,
+            source: row.2,
         })
         .collect();
 
@@ -324,8 +325,11 @@ pub async fn list_projected_agenda_inner(
     let next_cursor = if has_more {
         let last = entries.last().expect("has_more implies non-empty");
         Some(
-            Cursor::for_id_and_deleted_at(last.block.id.clone(), Some(last.projected_date.clone()))
-                .encode()?,
+            Cursor::for_id_and_deleted_at(
+                last.block.id.clone().into(),
+                Some(last.projected_date.clone()),
+            )
+            .encode()?,
         )
     } else {
         None
@@ -372,7 +376,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     today: chrono::NaiveDate,
     after: Option<&Cursor>,
     space_id: Option<&str>,
-) -> Result<PageResponse<ProjectedAgendaEntry>, AppError> {
+) -> Result<PageResponse<ActiveProjectedAgendaEntry>, AppError> {
     // The compute below has no in-loop cap (with cursor pagination we need
     // every entry within the date range, regardless of page size). The
     // outer 10_000-step safety per (block × source) still bounds runaway
@@ -424,7 +428,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     .fetch_all(pool)
     .await?;
 
-    let mut entries: Vec<ProjectedAgendaEntry> = Vec::new();
+    let mut entries: Vec<ActiveProjectedAgendaEntry> = Vec::new();
 
     for block in &rows {
         // Get the repeat rule (pre-fetched via JOIN)
@@ -524,16 +528,16 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
             {
                 if let Some(until) = until_date {
                     if current <= until {
-                        entries.push(ProjectedAgendaEntry {
-                            block: block.to_block_row(),
+                        entries.push(ActiveProjectedAgendaEntry {
+                            block: block.to_active_block_row(),
                             projected_date: current.format("%Y-%m-%d").to_string(),
                             source: source_name.to_string(),
                         });
                         projected_count += 1;
                     }
                 } else {
-                    entries.push(ProjectedAgendaEntry {
-                        block: block.to_block_row(),
+                    entries.push(ActiveProjectedAgendaEntry {
+                        block: block.to_active_block_row(),
                         projected_date: current.format("%Y-%m-%d").to_string(),
                         source: source_name.to_string(),
                     });
@@ -566,8 +570,8 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
 
                 // Within range — add entry
                 if current >= range_start {
-                    entries.push(ProjectedAgendaEntry {
-                        block: block.to_block_row(),
+                    entries.push(ActiveProjectedAgendaEntry {
+                        block: block.to_active_block_row(),
                         projected_date: current.format("%Y-%m-%d").to_string(),
                         source: source_name.to_string(),
                     });
@@ -605,8 +609,11 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     let next_cursor = if has_more {
         let last = entries.last().expect("has_more implies non-empty");
         Some(
-            Cursor::for_id_and_deleted_at(last.block.id.clone(), Some(last.projected_date.clone()))
-                .encode()?,
+            Cursor::for_id_and_deleted_at(
+                last.block.id.clone().into(),
+                Some(last.projected_date.clone()),
+            )
+            .encode()?,
         )
     } else {
         None
@@ -662,7 +669,7 @@ pub async fn list_projected_agenda(
     cursor: Option<String>,
     limit: Option<i64>,
     space_id: Option<String>,
-) -> Result<PageResponse<ProjectedAgendaEntry>, AppError> {
+) -> Result<PageResponse<ActiveProjectedAgendaEntry>, AppError> {
     list_projected_agenda_inner(&pool.0, start_date, end_date, cursor, limit, space_id)
         .await
         .map_err(sanitize_internal_error)

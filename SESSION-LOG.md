@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 618 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 947+ items.
+**Sessions:** 1 – 619 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 947+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 619 (2026-05-02)** — MAINT-113 M1.5 closed: parallel-types path chosen for `BlockRow` retype (over the `BlockRow<Id = String>` generic that was blocked by `specta-typescript` 0.0.11 limitations). `ActiveBlockRow` + `ActiveProjectedAgendaEntry` mirror structs added to `pagination/mod.rs` with always-safe `From<Active*> for *Raw*` downcasts and an `ActiveBlockRow::from_block_row_unchecked` boundary-cast helper. Two of the three remaining M1 helpers retyped: `fts::search_fts` + `commands::queries::search_blocks_inner` + the `search_blocks` Tauri command now return `PageResponse<ActiveBlockRow>`; `commands::agenda::list_projected_agenda_inner` + `list_projected_agenda_on_the_fly` + the `list_projected_agenda` Tauri command return `PageResponse<ActiveProjectedAgendaEntry>`. `RepeatingBlockRow::to_active_block_row()` replaces `to_block_row()`. `gcal_push::connector` downcasts at the boundary because the digest pipeline only consumes row content. 5 test sites updated (`fts/tests`, `mcp/tools_ro/tests`, `cache/tests`, `agenda_cmd_tests`) with `.into()` widenings on `String` collection targets. **`list_children` retype deferred to M2** — blocked by the `commands::blocks::queries::list_blocks_inner` polymorphic dispatcher that fans `list_children` / `list_by_type` / `list_by_tag` / `list_agenda*` (active) AND `list_trash` (deleted blocks) into one return type; the dispatcher decision (split-off-trash vs. narrow-at-callsite) is M2-scope. 3429 backend + 9078 frontend tests pass; bindings regenerated; specta emits `ActiveBlockRow` and `ActiveProjectedAgendaEntry` as separate TS types but they're structurally compatible with `BlockRow` / `ProjectedAgendaEntry` (because `ActiveBlockId = string` alias) so no frontend code needed updating.
 - **Session 618 (2026-05-02)** — MAINT-113 M1 partial: `ActiveBlockId(String)` newtype + `verify_active(&BlockId) -> Result<ActiveBlockId>` SQL gate landed in `src-tauri/src/ulid.rs` with 13 unit tests (7 type-level + 6 DB-backed). `PageLink.source_id`/`target_id` retyped to `ActiveBlockId` (1 of the 4 helpers spec'd for M1). `soft_delete::get_descendants` removed — dead code with zero production callers. Specta emits `ActiveBlockId` as a transparent `string` alias, keeping every existing TypeScript consumer compatible (3429 backend + 9078 frontend tests pass, no semantic frontend ripple). The remaining 3 helpers (`list_children`, `list_projected_agenda_inner`, `search_blocks_inner`) are deferred to M1.5/M2 because the natural migration target — `BlockRow<Id = String>` — runs into two friction points with `specta-typescript` 0.0.11 (no Rust generic defaults emit; `specta::Type` derive's `PLACEHOLDER_Id` codegen drops `Id: Clone` bounds through embedded generic structs). Both findings documented in `pagination/mod.rs` header + REVIEW-LATER, with the M1.5 plan (decide between `ActiveBlockRow` parallel struct or a `specta-typescript` ≥ 0.0.12 update). Orchestrator-direct (per PROMPT.md "kitchen-sink refactors"). User picked spec-literal M1; partial close is the right shipping unit given the spec's 3-4h estimate undercounted the row-type retype cascade.
 - **Session 617 (2026-05-02)** — Batch FE-MAINT-CLUSTER-2 closed: MAINT-184, MAINT-185, TEST-FE-8 — three S-cost frontend cleanups; MAINT-183 (`markdown-serialize.ts` zero-dep cleanup) was canceled mid-flight by the user (4th batch in a row to see one cancellation: 613 MAINT-178, 614 TEST-6, 616 implicit cap, 617 MAINT-183). **MAINT-184** extracted twin module-private `resolveAndInsertBlockLink`/`resolveAndInsertBlockRef` helpers in `block-link-picker.ts` and `block-ref-picker.ts`; both InputRule and command call sites collapse to ~5-line wrappers (net −25 LOC across 2 files). All 4 branches (exact-match, onCreate fallback, plain-text fallback, error fallback) tested at both entry points via existing tests (52/52 pass). **MAINT-185** consolidated 16 `useCallback` deps in `use-block-keyboard.ts::handleKeyDown` to a single `useRef<BlockKeyboardCallbacks>` bag (assigned during render), reducing deps from 16 → 1 (just `editor`). 2 new tests pin (a) listener doesn't churn across re-renders via `addEventListener`/`removeEventListener` spy counts, and (b) latest closure is invoked via the bag (re-rendering with new `escV2` → `escV1` not called, `escV2` called). **TEST-FE-8** added `role="alert"` to the `.pairing-error` div in `PairingDialog.tsx` (preserving the existing `aria-live="polite"` so SR announcement remains polite) and converted 7 test sites from `document.querySelector('.pairing-error')` to `await screen.findByRole('alert')` + `toHaveTextContent(/regex/i)`. 4 build subagents launched (3 completed, 1 canceled) + 1 combined review subagent. All 3 closed items PASS first review with zero follow-ups.
 - **Session 616 (2026-05-02)** — Batch BACKEND-TEST-2 closed: TEST-27, TEST-30, TEST-31, TEST-FE-6 — four small S-cost test-quality items, all PASS on review with zero follow-ups. **TEST-27** swapped `count_set_property_ops_for_key`'s LIKE-on-JSON pattern for `json_extract(payload, '$.key') = ?` via `sqlx::query_scalar!` (compile-time validated; new `.sqlx/` cache entry committed). **TEST-30** closed the residual `now_rfc3339()` collision risk in `undo_redo_tests.rs:1525-1558` with explicit `2099-01-15` timestamps strictly newer than the surrounding block-creation calls. **TEST-31** extended `list_pages_cursor_pagination_roundtrip` to walk to page 3 and assert `ids1.len() + ids2.len() + ids3.len() == 5` — the previous test only checked per-page no-overlap and would have silently passed a "drops an item between pages" bug. **TEST-FE-6** removed 4 local positional `makeBlock(id, content, ...)` helpers across `PageOutline`, `PageMetadataBar`, `PageEditor`, and `TrashView` test files (140 test-block call sites converted to the shared `Partial<FlatBlock>`-override factory from `src/__tests__/fixtures/index.ts`). 2 build subagents (TEST-27, TEST-FE-6) + 2 orchestrator-direct (TEST-30, TEST-31) + 2 combined review subagents. All PASS on first review with zero follow-up REVIEW-LATER items needed.
@@ -49,6 +50,63 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 619 — MAINT-113 M1.5 closed: `ActiveBlockRow` parallel struct + 2 helpers retyped (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | orchestrator-only (refactor with cross-file dependencies; per PROMPT.md, kitchen-sink refactors are run orchestrator-direct) |
+| **Items closed** | — (MAINT-113 M1.5 closed; MAINT-113 remains open for M2) |
+| **Items modified** | MAINT-113 (M1.5 progress recorded in summary + detail; M2 plan refined with the `list_blocks_inner` dispatcher decision) |
+| **Tests added** | +4 backend (`pagination::tests::active_row_conversions::*`: byte-identity for `From<ActiveBlockRow> for BlockRow` and `From<ActiveProjectedAgendaEntry>`; uppercase normalisation + field preservation for `from_block_row_unchecked`). Plus 5 test-site `.into()` updates that don't change coverage. |
+| **Files touched** | 9 source + REVIEW-LATER + SESSION-LOG |
+
+**Summary:** Closed MAINT-113 M1.5 — the parallel-types path for the row-type retype that M1 deferred. Added `ActiveBlockRow` and `ActiveProjectedAgendaEntry` mirror structs to `pagination/mod.rs` with always-safe `From<Active*> for *Raw*` downcasts and a boundary-cast helper. Retyped two of the three remaining M1 helpers — `fts::search_fts` + `commands::queries::search_blocks_inner` + the `search_blocks` Tauri command (`PageResponse<ActiveBlockRow>`); `commands::agenda::list_projected_agenda_inner` + `list_projected_agenda_on_the_fly` + the `list_projected_agenda` Tauri command (`PageResponse<ActiveProjectedAgendaEntry>`). The third helper, `list_children`, deferred to M2 because it's a leaf of the polymorphic `list_blocks_inner` dispatcher that also fans into `list_trash` (deleted blocks); the dispatcher decision (split-off-trash vs. narrow-at-callsite) belongs in M2 before any code lands.
+
+**Design decision:** Parallel-types path chosen over the `BlockRow<Id = String>` generic that was experimented in M1. The generic ran into two `specta-typescript` 0.0.11 limitations (no Rust generic-default emit; `specta::Type` derive's `PLACEHOLDER_Id` codegen drops `Id: Clone` bounds through embedded structs). The parallel struct duplicates 13 fields but is structurally clean: `ActiveBlockRow` is a strict subset of `BlockRow`, with always-safe `From<ActiveBlockRow> for BlockRow`, and at the wire level both have `id: string` (TS structural typing accepts each in place of the other).
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 114 → 114 (no closure; MAINT-113 remains open with M1.5 closed and M2 next).
+- **Detail entries:** 149 → 149 (MAINT-113's milestone block rewritten in place; no add/remove).
+- **Previously resolved:** 947+ (unchanged).
+
+**Files touched (this session):**
+- `src-tauri/src/pagination/mod.rs` (+99 LOC; `ActiveBlockRow` + `ActiveProjectedAgendaEntry` structs, `From` conversions, doc rewrite explaining the parallel-types decision)
+- `src-tauri/src/fts/search.rs` (return type; boundary cast at the FtsSearchRow → ActiveBlockRow construction; import update)
+- `src-tauri/src/commands/queries.rs` (`search_blocks_inner` and `search_blocks` Tauri command return type; import update)
+- `src-tauri/src/commands/agenda.rs` (`list_projected_agenda_inner` + `list_projected_agenda_on_the_fly` + `list_projected_agenda` return types; cache-path and on-the-fly-path entry construction; 2 cursor encode `.into()` widenings; import update)
+- `src-tauri/src/commands/mod.rs` (`RepeatingBlockRow::to_block_row()` → `to_active_block_row()`)
+- `src-tauri/src/gcal_push/connector.rs` (boundary downcast: `entries: Vec<ProjectedAgendaEntry>` via `.into_iter().map(Into::into).collect()` since the digest pipeline only consumes row content)
+- `src-tauri/src/fts/tests.rs` (3 sites: 2 `all_ids.push(item.id.clone().into())` + 1 `Vec<&str>` rebuild from `id.as_str()`)
+- `src-tauri/src/mcp/tools_ro/tests.rs` (1 site: `b.id.clone().into()` for `Vec<String>` collection)
+- `src-tauri/src/cache/tests.rs` (1 site: `e.block.id.clone().into()` for tuple collection)
+- `src-tauri/src/commands/tests/agenda_cmd_tests.rs` (1 site: `entry.block.id.clone().into()` for tuple collection)
+- `src-tauri/src/pagination/tests.rs` (+143 LOC; 4 new `active_row_conversions::*` unit tests pinning the conversion contracts)
+- `src/lib/bindings.ts` (regenerated: `ActiveBlockRow` + `ActiveProjectedAgendaEntry` types added; `searchBlocks` and `listProjectedAgenda` return types updated; `ProjectedAgendaEntry` no longer emitted as no command references it directly)
+- `REVIEW-LATER.md` (MAINT-113 entry — summary row + detail block rewritten with M1.5 closed, M2 plan refined)
+- `SESSION-LOG.md` (this entry + Recent milestones bump)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3429 tests run, 3429 passed (3 skipped).
+- `npx vitest run` — 9078 frontend tests pass.
+- `cargo test -- specta_tests --ignored` — bindings regenerated; `ts_bindings_up_to_date` passes.
+- `npx tsc --noEmit` — 0 errors (frontend types fully accept the new bindings without changes).
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **The parallel-types path was the correct call.** The M1 generic experiment surfaced specta-typescript constraints that would have required either a frontend-wide rename (~69 files) or an upstream `specta-typescript` fix. Parallel structs give the same type-safety win at the producer signature with zero frontend ripple — the `ActiveBlockId = string` alias means `ActiveBlockRow` and `BlockRow` are TS-structurally compatible, so frontend code that explicitly types `BlockRow` continues to compile.
+- **Dispatcher refactors are M2-scope.** The `list_children` migration deferred to M2 because `list_blocks_inner` fans into both active and deleted-block paths. Migrating any one leaf forces the dispatcher to either split or narrow. PROMPT.md "Architectural Stability" warns against significant architectural changes without explicit user approval; the dispatcher split is exactly that kind of change.
+- **Boundary downcasts make trust transitions explicit.** `gcal_push::connector` consumes `ActiveProjectedAgendaEntry` from the agenda helper but feeds the digest pipeline that only cares about row content. The explicit `.into_iter().map(Into::into).collect()` downcast at the boundary is a documented trust transition rather than a hidden coercion — exactly the kind of code-review surface MAINT-113 wants to expose.
+
+**Lessons learned (for future sessions):**
+- **`From<Active*> for *Raw*` is the right asymmetry.** Active is a strict subset of Raw, so the always-safe direction is downcast (Active → Raw). The unsafe direction (`from_block_row_unchecked`) is documented as boundary-only. This matches the `BlockId` / `ActiveBlockId` asymmetry and is consistent throughout the codebase.
+- **TS structural typing with type-aliased newtypes is a free lunch.** `ActiveBlockId = string` means every Rust newtype that contains an `ActiveBlockId` is structurally compatible with the same struct shape using `string`. No frontend code changes required. This pattern should be the default for any future "tagged-but-wire-equivalent" newtype.
+- **Specta drops emitted types that aren't reachable from a command return type.** `ProjectedAgendaEntry` was removed from `bindings.ts` because no command returns it directly anymore. The frontend `src/lib/tauri.ts` keeps a manually-defined `ProjectedAgendaEntry` interface, which TS structural-types cleanly against the new `ActiveProjectedAgendaEntry`. No frontend update needed.
+
+**Commit plan:** single commit, not pushed.
 
 ---
 

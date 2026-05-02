@@ -6,7 +6,7 @@
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
-use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse};
+use crate::pagination::{ActiveBlockRow, Cursor, PageRequest, PageResponse};
 
 // ---------------------------------------------------------------------------
 // FTS5 search
@@ -175,7 +175,8 @@ pub(crate) fn sanitize_fts_query(query: &str) -> String {
     output_parts.join(" ")
 }
 
-/// Row from the FTS5 search query (private; mapped to BlockRow for response).
+/// Row from the FTS5 search query (private; mapped to `ActiveBlockRow` for
+/// response — the SQL filters `is_conflict = 0 AND deleted_at IS NULL`).
 #[derive(Debug, sqlx::FromRow)]
 struct FtsSearchRow {
     // Block fields
@@ -233,7 +234,7 @@ pub async fn search_fts(
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
     space_id: Option<&str>,
-) -> Result<PageResponse<BlockRow>, AppError> {
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     // Guard: empty/whitespace queries would cause an FTS5 syntax error.
     if query.trim().is_empty() {
         return Ok(PageResponse {
@@ -410,10 +411,14 @@ pub async fn search_fts(
     } else {
         None
     };
-    let mut block_rows: Vec<BlockRow> = rows
+    // MAINT-113 M1.5 — boundary cast: the SQL above filters
+    // `is_conflict = 0 AND deleted_at IS NULL` (line ~288), so every
+    // surviving row is active. `from_trusted_active` records the claim
+    // in the type system without re-running the predicate.
+    let mut block_rows: Vec<ActiveBlockRow> = rows
         .into_iter()
-        .map(|r| BlockRow {
-            id: r.id,
+        .map(|r| ActiveBlockRow {
+            id: crate::ulid::ActiveBlockId::from_trusted_active(&r.id),
             block_type: r.block_type,
             content: r.content,
             parent_id: r.parent_id,

@@ -586,20 +586,27 @@ async fn push_date(
     // anything beyond is truncated by design (a single GCal event has
     // a fixed digest payload). If `has_more` is set, the digest still
     // reflects the first-page subset.
-    let entries = crate::commands::list_projected_agenda_inner(
-        pool,
-        date_str.clone(),
-        date_str.clone(),
-        None,
-        Some(AGENDA_FETCH_LIMIT),
-        // FEAT-3p4 — `None` keeps the current cross-space behaviour for
-        // the single-calendar GCal push. FEAT-3p9 will branch by space
-        // and pass the per-space `space_id` here.
-        None,
-    )
-    .await
-    .map_err(DateFailure::Other)?
-    .items;
+    let entries: Vec<crate::pagination::ProjectedAgendaEntry> =
+        crate::commands::list_projected_agenda_inner(
+            pool,
+            date_str.clone(),
+            date_str.clone(),
+            None,
+            Some(AGENDA_FETCH_LIMIT),
+            // FEAT-3p4 — `None` keeps the current cross-space behaviour for
+            // the single-calendar GCal push. FEAT-3p9 will branch by space
+            // and pass the per-space `space_id` here.
+            None,
+        )
+        .await
+        .map_err(DateFailure::Other)?
+        .items
+        // MAINT-113 M1.5 — downcast from ActiveProjectedAgendaEntry to
+        // the raw form because `resolve_page_titles` / `digest_for_date`
+        // only consume row content, not typed IDs.
+        .into_iter()
+        .map(Into::into)
+        .collect();
 
     // Resolve page titles in bulk via a single json_each() query.
     let page_titles = resolve_page_titles(pool, &entries)

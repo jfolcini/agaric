@@ -1252,7 +1252,7 @@ proptest::proptest! {
 
             let tool_ids: Vec<String> = via_tool["items"].as_array().unwrap().iter()
                 .map(|i| i["id"].as_str().unwrap().to_string()).collect();
-            let inner_ids: Vec<String> = via_inner.items.iter().map(|b| b.id.clone()).collect();
+            let inner_ids: Vec<String> = via_inner.items.iter().map(|b| b.id.clone().into()).collect();
             assert_eq!(
                 tool_ids, inner_ids,
                 "MCP `search` tool must return the same ids in the same order \
