@@ -27,7 +27,9 @@ const mockedToastSuccess = vi.mocked(toast.success)
 
 // Mock open-url + download so the primary button path runs without touching
 // `@tauri-apps/plugin-shell` or the DOM download machinery.
-const openUrlMock = vi.fn<(url: string) => Promise<void>>()
+// MAINT-177: openUrl now returns Promise<boolean> reflecting whether the
+// browser actually opened — the mock signature follows.
+const openUrlMock = vi.fn<(url: string) => Promise<boolean>>()
 vi.mock('@/lib/open-url', () => ({
   openUrl: (url: string) => openUrlMock(url),
 }))
@@ -64,7 +66,9 @@ function setupDefaultIpcMocks() {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  openUrlMock.mockResolvedValue(undefined)
+  // MAINT-177: default to `true` (browser opened) so existing tests assert
+  // the success path. The MAINT-177 failure-path test below overrides this.
+  openUrlMock.mockResolvedValue(true)
   setupDefaultIpcMocks()
   // Re-arm the wrapper mock — `vi.clearAllMocks()` clears the default
   // resolution installed at module load.
@@ -234,6 +238,105 @@ describe('BugReportDialog', () => {
     expect(downloadBlobMock).not.toHaveBeenCalled()
     expect(mockedToastSuccess).toHaveBeenCalledWith(t('bugReport.submitted'))
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  // MAINT-177: when openUrl resolves false (Tauri shell errored AND
+  // window.open was popup-blocked), the dialog must surface an error,
+  // copy the issue URL to the clipboard as a manual escape hatch, and
+  // stay open instead of claiming success.
+  it('primary click with openUrl resolving false → error toast + clipboard fallback + stays open', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    openUrlMock.mockResolvedValueOnce(false)
+
+    // jsdom's `navigator.clipboard` is not a configurable accessor in every
+    // setup — install a writeText spy via `Object.defineProperty` if needed.
+    const originalClipboard = navigator.clipboard
+    const writeTextSpy = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: writeTextSpy },
+    })
+
+    try {
+      render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+
+      await screen.findByText(/## Description/)
+
+      await user.click(screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }))
+      await user.click(screen.getByRole('button', { name: t('bugReport.openIssue') }))
+
+      await waitFor(() => {
+        expect(openUrlMock).toHaveBeenCalledTimes(1)
+      })
+      const openCall = openUrlMock.mock.calls[0]
+      expect(openCall).toBeDefined()
+      const issueUrl = openCall?.[0] ?? ''
+      expect(issueUrl).toMatch(/^https:\/\/github\.com\/jfolcini\/agaric\/issues\/new\?/)
+
+      // Clipboard fallback called with the same URL openUrl received.
+      await waitFor(() => {
+        expect(writeTextSpy).toHaveBeenCalledWith(issueUrl)
+      })
+
+      // Error toast surfaced; success toast NOT called; dialog NOT closed.
+      expect(mockedToastError).toHaveBeenCalledWith(t('bugReport.browserOpenFailed'))
+      expect(mockedToastSuccess).not.toHaveBeenCalledWith(t('bugReport.submitted'))
+      expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: originalClipboard,
+      })
+    }
+  })
+
+  // MAINT-177 (reviewer follow-up): when openUrl resolves false AND the
+  // clipboard fallback also rejects, the user has no way to recover the
+  // URL — the error toast must switch to the no-clipboard variant so the
+  // wording directs them to the Copy report button rather than promising
+  // a clipboard paste that never happened.
+  it('primary click with openUrl=false AND clipboard.writeText reject → no-clipboard toast + stays open', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    openUrlMock.mockResolvedValueOnce(false)
+
+    const originalClipboard = navigator.clipboard
+    const writeTextSpy = vi
+      .fn<(text: string) => Promise<void>>()
+      .mockRejectedValue(new Error('clipboard unavailable'))
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: writeTextSpy },
+    })
+
+    try {
+      render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+
+      await screen.findByText(/## Description/)
+
+      await user.click(screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }))
+      await user.click(screen.getByRole('button', { name: t('bugReport.openIssue') }))
+
+      // Clipboard write was attempted (and rejected internally).
+      await waitFor(() => {
+        expect(writeTextSpy).toHaveBeenCalledTimes(1)
+      })
+
+      // No-clipboard toast surfaced; primary error toast NOT called;
+      // success toast NOT called; dialog NOT closed.
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(t('bugReport.browserOpenFailedNoClipboard'))
+      })
+      expect(mockedToastError).not.toHaveBeenCalledWith(t('bugReport.browserOpenFailed'))
+      expect(mockedToastSuccess).not.toHaveBeenCalledWith(t('bugReport.submitted'))
+      expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: originalClipboard,
+      })
+    }
   })
 
   it('renders the design-system Checkbox primitive (data-slot="checkbox") and toggles via onCheckedChange', async () => {

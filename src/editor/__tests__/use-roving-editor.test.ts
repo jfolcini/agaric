@@ -7,6 +7,7 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { common, createLowlight } from 'lowlight'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { logger } from '../../lib/logger'
 import { parse, serialize } from '../markdown-serializer'
 import type { DocNode } from '../types'
 import {
@@ -827,6 +828,113 @@ describe('useRovingEditor integration (renderHook)', () => {
     expect(fn1).not.toHaveBeenCalled()
 
     result.current.editor?.destroy()
+    unmountHook()
+  })
+})
+
+// -- MAINT-176 — suggestion-exit dispatch error handling ----------------------
+//
+// The suggestion-exit dispatch in mount() (use-roving-editor.ts:~397) can
+// throw when the editor view is torn down between block-switch frames. The
+// catch path must abort BEFORE the subsequent replaceDocSilently() runs,
+// since that would corrupt plugin state. isDestroyed distinguishes the
+// expected race (debug) from an unexpected throw on a live view (warn).
+
+describe('mount() suggestion-exit dispatch error handling (MAINT-176)', () => {
+  async function setup() {
+    const hook = renderHook(() => useRovingEditor())
+    await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
+    return hook
+  }
+
+  it('logs debug and aborts (no replaceDocSilently) when dispatch throws on a destroyed view', async () => {
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const { result, unmount: unmountHook } = await setup()
+    const editor = result.current.editor as Editor
+
+    // schema.nodeFromJSON is only called from replaceDocSilently — use it as
+    // a witness that the post-dispatch code path did NOT run.
+    const nodeFromJsonSpy = vi.spyOn(editor.schema, 'nodeFromJSON')
+
+    // Make the suggestion-exit dispatch throw, and pretend the view is gone.
+    vi.spyOn(editor.view, 'dispatch').mockImplementationOnce(() => {
+      throw new Error('view torn down')
+    })
+    Object.defineProperty(editor.view, 'isDestroyed', {
+      value: true,
+      configurable: true,
+    })
+
+    act(() => {
+      result.current.mount('block-destroyed', 'hello world')
+    })
+
+    expect(nodeFromJsonSpy).not.toHaveBeenCalled()
+    expect(debugSpy).toHaveBeenCalledWith(
+      'editor',
+      'suggestion-exit dispatch on destroyed view; aborting',
+      expect.objectContaining({ error: 'view torn down' }),
+    )
+    expect(warnSpy).not.toHaveBeenCalled()
+
+    debugSpy.mockRestore()
+    warnSpy.mockRestore()
+    editor.destroy()
+    unmountHook()
+  })
+
+  it('logs warn and aborts (no replaceDocSilently) when dispatch throws on a live view', async () => {
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const { result, unmount: unmountHook } = await setup()
+    const editor = result.current.editor as Editor
+
+    const nodeFromJsonSpy = vi.spyOn(editor.schema, 'nodeFromJSON')
+
+    const err = new Error('unexpected dispatch failure')
+    vi.spyOn(editor.view, 'dispatch').mockImplementationOnce(() => {
+      throw err
+    })
+    Object.defineProperty(editor.view, 'isDestroyed', {
+      value: false,
+      configurable: true,
+    })
+
+    act(() => {
+      result.current.mount('block-live', 'hello world')
+    })
+
+    expect(nodeFromJsonSpy).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(
+      'editor',
+      'suggestion-exit dispatch threw; aborting replaceDocSilently',
+      undefined,
+      err,
+    )
+
+    debugSpy.mockRestore()
+    warnSpy.mockRestore()
+    editor.destroy()
+    unmountHook()
+  })
+
+  it('runs replaceDocSilently on the happy path when dispatch succeeds', async () => {
+    const { result, unmount: unmountHook } = await setup()
+    const editor = result.current.editor as Editor
+
+    // schema.nodeFromJSON is the witness for replaceDocSilently running.
+    const nodeFromJsonSpy = vi.spyOn(editor.schema, 'nodeFromJSON')
+
+    act(() => {
+      result.current.mount('block-happy', 'hello world')
+    })
+
+    expect(nodeFromJsonSpy).toHaveBeenCalled()
+
+    editor.destroy()
     unmountHook()
   })
 })

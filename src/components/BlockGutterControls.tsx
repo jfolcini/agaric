@@ -115,6 +115,10 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
       ariaLabel={t('block.reorder')}
       testId="drag-handle"
       className="drag-handle cursor-grab hover:text-foreground"
+      // Stable focus-fallback target for `BlockContextMenu`'s
+      // `handleCloseWithFocus` (MAINT-174). The drag handle is the only
+      // gutter button guaranteed to render on every block.
+      data-context-trigger="true"
       {...dragAttributes}
       {...dragListeners}
     />

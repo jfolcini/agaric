@@ -11,6 +11,7 @@ import type { Editor } from '@tiptap/core'
 import type { PluginKey } from '@tiptap/pm/state'
 import { ReactRenderer } from '@tiptap/react'
 import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion'
+import { applySafePosition } from '../lib/floating-position'
 import { getShortcutKeys } from '../lib/keyboard-config'
 import { logger } from '../lib/logger'
 import { SuggestionList, type SuggestionListRef } from './SuggestionList'
@@ -91,12 +92,9 @@ async function updatePosition(
     middleware,
   })
 
-  Object.assign(el.style, {
-    position: 'fixed',
-    left: `${x}px`,
-    top: `${y}px`,
-    zIndex: '50',
-  })
+  // MAINT-175: shared helper applies coordinates; `position: 'fixed'` and
+  // `zIndex: '50'` are set during initial popup creation in `onStart`.
+  applySafePosition(el, { x, y })
 }
 
 /**
@@ -156,17 +154,21 @@ export function createSuggestionRenderer(label?: string, pluginKey?: PluginKey) 
       popup.dataset['testid'] = 'suggestion-popup'
       popup.setAttribute('role', 'region')
       popup.setAttribute('aria-label', label ?? 'Suggestions')
-      // Start off-screen to avoid flash at (0,0) before positioning settles
+      // Start off-screen to avoid flash at (0,0) before positioning settles.
+      // MAINT-175: shared helper for the off-screen fallback.
       Object.assign(popup.style, {
         position: 'fixed',
-        left: '-9999px',
-        top: '-9999px',
         zIndex: '50',
       })
+      applySafePosition(popup, null)
       document.body.appendChild(popup)
       popup.appendChild(renderer.element)
+      const popupRef = popup
       updatePosition(popup, props).catch((err: unknown) => {
         logger.warn('SuggestionRenderer', 'Position update failed', { label }, err)
+        // MAINT-175: keep popup off-screen on failure rather than at the
+        // last computed coordinates, which would orphan it mid-page.
+        applySafePosition(popupRef, null)
       })
 
       // Dismiss popup on outside click (capture phase, like BlockContextMenu).
@@ -224,10 +226,15 @@ export function createSuggestionRenderer(label?: string, pluginKey?: PluginKey) 
         return
       }
       renderer.updateProps(props)
-      if (popup)
-        updatePosition(popup, props).catch((err: unknown) => {
+      if (popup) {
+        const popupRef = popup
+        updatePosition(popupRef, props).catch((err: unknown) => {
           logger.warn('SuggestionRenderer', 'Position update failed', { label }, err)
+          // MAINT-175: keep popup off-screen on failure rather than at the
+          // last computed coordinates, which would orphan it mid-page.
+          applySafePosition(popupRef, null)
         })
+      }
     },
 
     onKeyDown({ event }: SuggestionKeyDownProps) {

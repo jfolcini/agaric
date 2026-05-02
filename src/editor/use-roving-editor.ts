@@ -388,7 +388,28 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
           suggTr.setMeta(key, { exit: true })
         }
         suggTr.setMeta('addToHistory', false)
-        editor.view.dispatch(suggTr)
+        // MAINT-176: dispatch can throw when the view is torn down between
+        // block-switch frames. On the catch path we abort BEFORE the
+        // replaceDocSilently below, since that would run against possibly
+        // corrupt plugin state. isDestroyed distinguishes the expected race
+        // (debug) from an unexpected throw on a live view (warn).
+        try {
+          editor.view.dispatch(suggTr)
+        } catch (err) {
+          if (editor.view.isDestroyed) {
+            logger.debug('editor', 'suggestion-exit dispatch on destroyed view; aborting', {
+              error: err instanceof Error ? err.message : String(err),
+            })
+          } else {
+            logger.warn(
+              'editor',
+              'suggestion-exit dispatch threw; aborting replaceDocSilently',
+              undefined,
+              err,
+            )
+          }
+          return
+        }
       }
 
       // B-77 fix layer 3: Remove any orphaned popup DOM elements that

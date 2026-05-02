@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 612 — Batch QUICK-WINS-4 closed: MAINT-169, MAINT-170, MAINT-173)
+> **Last updated:** 2026-05-02 (Session 613 — Batch FE-MAINT-CLUSTER-1 closed: MAINT-174, MAINT-175, MAINT-176, MAINT-177)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-132 open items in the summary table; 164 detail entries (FE-* sub-tables don't appear in the summary).
+128 open items in the summary table; 160 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -32,10 +32,6 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-128 | MAINT | God-component decomposition: `PropertyRowEditor.tsx` (550L) — split each typed editor (text/number/date/ref/select) into its own component AND lift the shared state (`localValue`, date hook, select-options, ref-picker, 10+ callbacks) UP into a containing hook. **SCHEDULED** — owner-prioritized; refactor path locked in. Removes the only `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` in the codebase (at L85). | L | — |
 | MAINT-168 | MAINT | Sync trigger / scheduler dual-backoff unification — `useSyncTrigger.ts` (60s → 600s) and `sync_scheduler.rs` (1s → 60s) run independent exponential backoffs that never coordinate. Not a correctness bug; the backend is the authoritative scheduler and silently rejects redundant `startSync` calls. Filed as a documented design note after this session's bird's-eye review. | M | — |
 | MAINT-172 | MAINT | Pagination/queries: space-filter SQL fragment inlined across 13+ files because `sqlx::query_as!` rejects `concat!()`; `space_filter_clause!` macro referenced in comments but unusable. Real maintenance hotspot, sqlx-constrained | M | sqlx upstream |
-| MAINT-174 | MAINT | Frontend — `BlockContextMenu` hardening cluster: action errors silently close the menu, first-item focus has empty deps and doesn't refocus when items change, close-fallback selector matches any button in the block | S | — |
-| MAINT-175 | MAINT | Frontend — `BlockPropertyEditor` leaves popup at last position on `computePosition` failure; `suggestion-renderer.ts` (off-screen fallback) is the better pattern. Extract a shared `applySafePosition` helper | S | — |
-| MAINT-176 | MAINT | Frontend — `use-roving-editor.ts:391` dispatches the suggestion-exit transaction without try/catch; `replaceDocSilently()` then runs against a possibly-corrupt plugin state if dispatch throws | S | — |
-| MAINT-177 | MAINT | Frontend — `BugReportDialog.handleSubmit` doesn't catch `openUrl()` failures; the dialog still closes with a success toast even when the GitHub issue page never opened. Add a copy-the-URL fallback on error | S | — |
 | MAINT-178 | MAINT | Frontend — `BootGate` error screen has only Retry; for unrecoverable failures (corrupted DB, permission denied, missing migration) the user is stuck. Add a diagnostics escape hatch (show `error.cause` chain, copy logs, launch bug-report) | S | — |
 | MAINT-180 | MAINT | Frontend — `SpaceManageDialog` — each `SpaceRowEditor` mount fires emptiness-probe + journal-template `listBlocks` IPCs with no dedup; reopening the dialog re-fetches the same data per row | S | — |
 | MAINT-181 | MAINT | Frontend — `PropertyRowEditor.handleOpenRefPicker` opens the picker even when `listBlocks` rejects; user sees an empty picker with no failure indicator. Move `setRefPickerOpen(true)` into `.then()` | S | — |
@@ -407,45 +403,6 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 > Methodology: 7 parallel discovery subagents covering all 438 frontend source files,
 > 3 parallel verification subagents reading the cited code to filter hallucinations.
 > Items below are the verified survivors. Known false positives are not listed.
-
-### MAINT-174 — `BlockContextMenu` hardening cluster (3 small bugs in one file)
-- **Domain:** Frontend (block context menu)
-- **Location:** `src/components/BlockContextMenu.tsx`
-- **What:** Three independent small bugs that share a single file and are best fixed in one session:
-  - **Action errors silently close the menu** (lines 249-255): `handleAction` calls `action?.(blockId)` then unconditionally `onClose()`. Sync or async action rejections are swallowed; the menu disappears with no feedback. Wrap in try/catch with `toast.error` + `logger.error` before closing.
-  - **First-item focus has empty deps** (lines 181-184): `useEffect(() => itemRefs.current[0]?.focus(), [])` runs once at mount. Items are conditional (zoom-in only when `hasChildren`, history only when `onShowHistory` is passed) — focus can land on an item that's no longer the first visible. Add `groups.length` (or a stable signature) to deps.
-  - **Close-fallback selector is overly broad** (lines 135-145): `[data-block-id="${blockId}"] [role="button"]` matches any button in the block (gutter, inline date chip, property chip). After a delete-from-context-menu, focus is unpredictable. Use a stable marker (`data-context-trigger="true"` on the gutter overflow button) and select that.
-- **Cost:** S — three small edits in one file.
-- **Risk:** Low.
-- **Impact:** Medium — improves keyboard UX and error feedback in a heavily-used menu.
-- **Status:** Open.
-
-### MAINT-175 — Floating UI position-failure recovery is inconsistent
-- **Domain:** Frontend (popups / floating UI)
-- **Location:** `src/components/BlockPropertyEditor.tsx:86-104`; reference impl in `src/editor/suggestion-renderer.ts:160-170`.
-- **What:** `BlockPropertyEditor` catches `computePosition()` rejections and logs them, but does not reposition the popup, so it stays at whatever its last `style.left/top` was — if the anchor scrolled, the popup floats orphaned. `suggestion-renderer.ts` is the better pattern: keep the popup at `(-9999px, -9999px)` on failure (off-screen, not broken).
-- **Cost:** S — extract a shared helper (e.g. `applySafePosition(popup, { x, y } | null)` in `src/lib/`) that applies coordinates if provided and applies the off-screen fallback otherwise. Use from both call sites.
-- **Risk:** Low.
-- **Impact:** Low–medium — eliminates a class of "popup stuck mid-page" visual bugs without changing happy-path behaviour.
-- **Status:** Open.
-
-### MAINT-176 — `use-roving-editor.ts` dispatches the suggestion-exit transaction without try/catch
-- **Domain:** Frontend (editor)
-- **Location:** `src/editor/use-roving-editor.ts:374-409` (dispatch at `:391`)
-- **What:** The dispatch at L391 has no try/catch; if `editor.view.dispatch()` throws (e.g. view torn down between block-switch frames), the subsequent `replaceDocSilently()` runs on possibly-corrupt plugin state. The only guard prior to dispatch is `if (!editor) return` at L376 — there is no `editor.view.isDestroyed` check anywhere in the file.
-- **Cost:** S — wrap the dispatch in try/catch with `logger.warn`; add an `editor.view.isDestroyed` check on the catch path (would need to be added, not re-added).
-- **Risk:** Low.
-- **Impact:** Low — the failure mode is rare in practice but its symptoms (stuck suggestion plugin, ghost popup) are hard to reproduce, so defensive logging is high-leverage.
-- **Status:** Open.
-
-### MAINT-177 — `BugReportDialog` swallows `openUrl` failure but reports success
-- **Domain:** Frontend (bug report)
-- **Location:** `src/components/BugReportDialog.tsx:239-253` ; `src/lib/open-url.ts` (14 lines total)
-- **What:** `await openUrl(issueUrl)` is followed by `toast.success(...)` and `onOpenChange(false)`. `openUrl` itself never rejects — on Tauri-shell error it falls back to `window.open(url, '_blank', 'noopener,noreferrer')` silently, and `window.open` returns `null` (it doesn't throw) on popup-block. Result: user has a ZIP on disk, sees a success toast, and no GitHub tab opened.
-- **Cost:** S — change `openUrl` to return `Promise<boolean>` reflecting whether the system browser actually opened (check the Tauri shell return + the `window.open(...)` return value); gate the success toast and `onOpenChange(false)` on the boolean. A localised try/catch in the dialog is *not* the fix — `openUrl` cannot reject, so try/catch can never fire.
-- **Risk:** Low.
-- **Impact:** Medium — the bug-report flow's whole point is for the user to land on the issue page; silently failing it defeats the feature.
-- **Status:** Open.
 
 ### MAINT-178 — `BootGate` error screen has only a Retry button (no diagnostics escape hatch)
 - **Domain:** Frontend (boot)

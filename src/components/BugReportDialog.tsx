@@ -244,7 +244,28 @@ export function BugReportDialog({
         const ok = await executeBuildZip({ redact, metadata })
         if (ok === undefined) return
       }
-      await openUrl(issueUrl)
+      // MAINT-177: openUrl resolves false when the Tauri shell errored AND
+      // window.open was popup-blocked / returned null. In that case neither
+      // path actually opened a tab, so we must NOT claim success — surface an
+      // error toast, copy the issue URL to the clipboard as a manual escape
+      // hatch, and leave the dialog open so the user can retry or copy the
+      // body via the existing Copy button.
+      const opened = await openUrl(issueUrl)
+      if (!opened) {
+        let copied = false
+        if (typeof navigator !== 'undefined' && navigator.clipboard != null) {
+          try {
+            await navigator.clipboard.writeText(issueUrl)
+            copied = true
+          } catch (err) {
+            logger.warn(MODULE, 'clipboard fallback failed', undefined, err)
+          }
+        }
+        toast.error(
+          t(copied ? 'bugReport.browserOpenFailed' : 'bugReport.browserOpenFailedNoClipboard'),
+        )
+        return
+      }
       toast.success(t('bugReport.submitted'))
       onOpenChange(false)
     } finally {
