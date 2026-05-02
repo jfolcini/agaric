@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 610 — Batch TEST-IMPROVEMENTS-1 closed: TEST-2, TEST-12, TEST-14, TEST-19, TEST-29)
+> **Last updated:** 2026-05-02 (Session 611 — Batch QUICK-WINS-3 closed: MAINT-171, TEST-7)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-136 open items in the summary table; 169 detail entries (FE-* sub-tables don't appear in the summary).
+135 open items in the summary table; 167 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -33,7 +33,6 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-168 | MAINT | Sync trigger / scheduler dual-backoff unification — `useSyncTrigger.ts` (60s → 600s) and `sync_scheduler.rs` (1s → 60s) run independent exponential backoffs that never coordinate. Not a correctness bug; the backend is the authoritative scheduler and silently rejects redundant `startSync` calls. Filed as a documented design note after this session's bird's-eye review. | M | — |
 | MAINT-169 | MAINT | GCal connector: `DateFailure::Skipped` per-date errors are logged but never persisted to `gcal_space_config.last_error` — Settings UI shows no feedback for transient per-date failures until the next reconcile clears the dirty set | S | — |
 | MAINT-170 | MAINT | Backlink: `eval_unlinked_references` collapses `total_count = filtered_count` (out of parity with `eval_backlink_query_grouped`); UI badge under-reports the unlinked-ref count when filters are active | S | — |
-| MAINT-171 | MAINT | Recurrence: 8 duplicated `set_property_in_tx` call sites in `apply_recurrence_advance` — extract a small helper to reduce copy-paste surface | S | — |
 | MAINT-172 | MAINT | Pagination/queries: space-filter SQL fragment inlined across 13+ files because `sqlx::query_as!` rejects `concat!()`; `space_filter_clause!` macro referenced in comments but unusable. Real maintenance hotspot, sqlx-constrained | M | sqlx upstream |
 | MAINT-173 | MAINT | Frontend — batch-delete in `useBlockMultiSelect` only filters direct children; transitive descendants are dispatched as redundant `deleteBlock` calls that race the cascade and surface as spurious "delete failed" toast counts | S | — |
 | MAINT-174 | MAINT | Frontend — `BlockContextMenu` hardening cluster: action errors silently close the menu, first-item focus has empty deps and doesn't refocus when items change, close-fallback selector matches any button in the block | S | — |
@@ -58,7 +57,6 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-3 | TEST | Brittle `err.to_string().contains(...)` / event-message `.contains(...)` assertions instead of `matches!(AppError::Variant(_))` (11 in `block_cmd_tests.rs`, 9 in `sync_daemon/tests.rs`) | S | — |
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
 | TEST-6 | TEST | Sync merge tests assert on counter only, not materialized state (`merge_resolves_property_conflict_lww` doesn't query `block_properties`; `merge_block_conflict_creates_copy` doesn't query `blocks` for the conflict copy) | S | — |
-| TEST-7 | TEST | Reverse tests don't verify batch ordering (newest-first by `created_at DESC, seq DESC`) or op-log append-only invariant (count increases by 1) | S | — |
 | TEST-8 | TEST | TOFU test only covers acceptance, not rejection on cert-hash mismatch on reconnect (`inmem_handle_incoming_sync_tofu_stores_cert_hash`) | S | — |
 | TEST-10 | TEST | Snapshot tests missing redactions of non-deterministic fields: `snapshot_history_entry_response` (cursor), `snapshot_list_blocks_response` (comment promises but no redaction call) | S | — |
 | TEST-11 | TEST | Missing error-path test coverage: `export_page_markdown_inner` has 6 happy-path tests + 0 error tests; `set_property_inner` integration tests miss invalid-key / type-mismatch Validation cases | S | — |
@@ -167,7 +165,6 @@ These can be tackled in a single session with low risk — listed for prioritiza
 
 - **MAINT-169** — gcal connector: persist `DateFailure::Skipped` reason to `gcal_space_config.last_error`
 - **MAINT-170** — backlink `eval_unlinked_references`: capture `total_count` before user filters
-- **MAINT-171** — extract `set_recurrence_property` helper to dedupe 8 call sites in `apply_recurrence_advance`
 - **PERF-19** — backlink pagination keyset for non-Created sorts (2 sites)
 - **PERF-20** — concurrency cap on `try_join_all` in backlink filter resolver
 - **MAINT-114** — workflow consolidation audit (spike-then-commit)
@@ -418,16 +415,6 @@ let total_count = filtered_count;
 **Risk:** Low — pure read-side count semantics.
 **Impact:** Low-medium — UX correctness for unlinked-references badge.
 
-### MAINT-171 — Recurrence: 8 duplicated `set_property_in_tx` call sites in `apply_recurrence_advance`
-
-**Problem:** `src-tauri/src/recurrence/compute.rs:239, 253, 282, 307, 324, 382, 396, 412` each call `set_property_in_tx(tx, device_id, block_id, key, value).await?` and then push the resulting `OpRecord` onto `ops`. The pattern is identical except for the key and value pair. Forgetting to push the op record (or capturing the wrong one) is a real copy-paste failure mode.
-
-**Fix:** Extract `async fn set_recurrence_property(tx, device_id, block_id, key, value, ops: &mut Vec<OpRecord>) -> Result<()>` and reduce the 8 sites to 8 one-liners.
-
-**Cost:** S — pure refactor; existing tests cover the behavior.
-**Risk:** Low.
-**Impact:** Low.
-
 ### MAINT-172 — Pagination/queries: space-filter SQL fragment inlined across 13+ files
 
 **Problem:** The fragment
@@ -641,15 +628,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Cost:** S — add `SELECT … FROM block_properties WHERE block_id = ? AND key = ?` and `SELECT content FROM blocks WHERE id = 'B1'` assertions.
 - **Risk:** Low.
 - **Impact:** Medium — these tests are the only coverage for LWW + conflict-copy semantics.
-- **Status:** Open.
-
-### TEST-7 — Reverse tests don't verify batch ordering or op-log append-only invariant
-- **Domain:** Reverse / Undo tests
-- **Location:** `src-tauri/src/reverse/tests.rs` (entire 1541-line file)
-- **What:** Per AGENTS.md "Undo/reverse testing": "Batch grouping: consecutive ops within 200ms by the same device are grouped — backend's `revert_ops` sorts newest-first (`created_at DESC, seq DESC`) before applying. Tests must verify this ordering." and "Reverse ops are appended to the op log (log remains append-only) — never assert that existing ops were mutated." Neither invariant is currently tested.
-- **Cost:** S — add (a) a test that appends 3+ ops with identical timestamps and verifies they reverse newest-first; (b) a test that counts `op_log` rows before/after `compute_reverse` and asserts the original op is still present and the count increased by 1.
-- **Risk:** Low.
-- **Impact:** Medium — closes a gap on two AGENTS.md-mandated invariants.
 - **Status:** Open.
 
 ### TEST-8 — TOFU rejection at the daemon entrypoint is uncovered (TLS-layer rejection IS covered)

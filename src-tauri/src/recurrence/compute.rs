@@ -236,7 +236,7 @@ pub(crate) async fn handle_recurrence_in_tx(
     op_records.push(op);
 
     // Set TODO state on new block
-    let (_, op) = set_property_in_tx(
+    set_recurrence_property(
         &mut *tx,
         device_id,
         new_block.id.clone(),
@@ -245,12 +245,12 @@ pub(crate) async fn handle_recurrence_in_tx(
         None,
         None,
         None,
+        &mut op_records,
     )
     .await?;
-    op_records.push(op);
 
     // Copy repeat property to new block
-    let (_, op) = set_property_in_tx(
+    set_recurrence_property(
         &mut *tx,
         device_id,
         new_block.id.clone(),
@@ -259,9 +259,9 @@ pub(crate) async fn handle_recurrence_in_tx(
         None,
         None,
         None,
+        &mut op_records,
     )
     .await?;
-    op_records.push(op);
 
     // Shift due_date if present.
     //
@@ -279,7 +279,7 @@ pub(crate) async fn handle_recurrence_in_tx(
                 "shifted due_date is not valid YYYY-MM-DD, skipping"
             );
         } else {
-            let (_, op) = set_property_in_tx(
+            set_recurrence_property(
                 &mut *tx,
                 device_id,
                 new_block.id.clone(),
@@ -288,9 +288,9 @@ pub(crate) async fn handle_recurrence_in_tx(
                 None,
                 Some(shifted),
                 None,
+                &mut op_records,
             )
             .await?;
-            op_records.push(op);
         }
     }
 
@@ -304,7 +304,7 @@ pub(crate) async fn handle_recurrence_in_tx(
                 "shifted scheduled_date is not valid YYYY-MM-DD, skipping"
             );
         } else {
-            let (_, op) = set_property_in_tx(
+            set_recurrence_property(
                 &mut *tx,
                 device_id,
                 new_block.id.clone(),
@@ -313,15 +313,15 @@ pub(crate) async fn handle_recurrence_in_tx(
                 None,
                 Some(shifted),
                 None,
+                &mut op_records,
             )
             .await?;
-            op_records.push(op);
         }
     }
 
     // Copy repeat-until to new block if present (M-77: propagate via `?`).
     if let Some(ref until_str) = repeat_until {
-        let (_, op) = set_property_in_tx(
+        set_recurrence_property(
             &mut *tx,
             device_id,
             new_block.id.clone(),
@@ -330,9 +330,9 @@ pub(crate) async fn handle_recurrence_in_tx(
             None,
             Some(until_str.clone()),
             None,
+            &mut op_records,
         )
         .await?;
-        op_records.push(op);
     }
 
     // Copy repeat-count and increment repeat-seq on new block.
@@ -379,7 +379,7 @@ pub(crate) async fn handle_recurrence_in_tx(
         let next_seq = current_seq + 1;
 
         // Copy repeat-count (M-77: propagate via `?`).
-        let (_, op) = set_property_in_tx(
+        set_recurrence_property(
             &mut *tx,
             device_id,
             new_block.id.clone(),
@@ -388,12 +388,12 @@ pub(crate) async fn handle_recurrence_in_tx(
             Some(count),
             None,
             None,
+            &mut op_records,
         )
         .await?;
-        op_records.push(op);
 
         // Set incremented repeat-seq (M-77: propagate via `?`).
-        let (_, op) = set_property_in_tx(
+        set_recurrence_property(
             &mut *tx,
             device_id,
             new_block.id.clone(),
@@ -402,14 +402,14 @@ pub(crate) async fn handle_recurrence_in_tx(
             Some(next_seq as f64),
             None,
             None,
+            &mut op_records,
         )
         .await?;
-        op_records.push(op);
     }
 
     // Set repeat-origin on new block (points to original block in chain)
     // (M-77: propagate via `?`).
-    let (_, op) = set_property_in_tx(
+    set_recurrence_property(
         &mut *tx,
         device_id,
         new_block.id.clone(),
@@ -418,9 +418,9 @@ pub(crate) async fn handle_recurrence_in_tx(
         None,
         None,
         Some(origin_id),
+        &mut op_records,
     )
     .await?;
-    op_records.push(op);
 
     // Enqueue all ops on the tx; the caller drives commit + dispatch.
     for op in op_records {
@@ -428,6 +428,31 @@ pub(crate) async fn handle_recurrence_in_tx(
     }
 
     Ok(true)
+}
+
+/// MAINT-171: thin wrapper over [`set_property_in_tx`] that captures the
+/// `let (_, op) = …; op_records.push(op);` pattern repeated at every
+/// property write inside [`handle_recurrence_in_tx`]. Kept module-private
+/// because the recurrence flow is the only caller that needs this exact
+/// shape (discard the returned `BlockRow`, append the op to a local vec).
+#[allow(clippy::too_many_arguments)]
+async fn set_recurrence_property(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: &str,
+    block_id: String,
+    key: &str,
+    value_text: Option<String>,
+    value_num: Option<f64>,
+    value_date: Option<String>,
+    value_ref: Option<String>,
+    op_records: &mut Vec<op_log::OpRecord>,
+) -> Result<(), crate::error::AppError> {
+    let (_, op) = set_property_in_tx(
+        tx, device_id, block_id, key, value_text, value_num, value_date, value_ref,
+    )
+    .await?;
+    op_records.push(op);
+    Ok(())
 }
 
 #[cfg(test)]
