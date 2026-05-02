@@ -13,6 +13,14 @@ hooks = [
     { id = "check-added-large-files", args = ["--maxkb=500"], exclude = "^docs/session-log/" },
     { id = "no-commit-to-branch", args = ["--branch=main"], stages = ["pre-push"] },
     { id = "detect-private-key", exclude = "^src-tauri/src/(sync_cert\\.rs|sync_net/tests\\.rs|sync_daemon/tests\\.rs)$|^SESSION-LOG\\.md$" },
+    # Catch the "I added a script but forgot chmod +x" / "I marked a non-executable as +x" class of mistake.
+    # scripts/ mixes .sh, .mjs, and .py files that all rely on shebangs + +x bits. `*.rs` is excluded
+    # because Rust's inner-attribute syntax `#![...]` looks like a shebang to this builtin and gives
+    # unactionable false positives on every test module under src-tauri/src/commands/tests/.
+    { id = "check-shebang-scripts-are-executable", exclude = "\\.rs$" },
+    { id = "check-executables-have-shebangs" },
+    # Normalise CRLF leakage from non-Linux contributors.
+    { id = "mixed-line-ending", args = ["--fix=lf"] },
 ]
 
 # Secret scanning (gitleaks)
@@ -364,6 +372,98 @@ entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo machete'"
 language = "system"
 pass_filenames = false
 files = "^src-tauri/Cargo\\.(toml|lock)$"
+
+# typos: language-agnostic typo checker (crate-ci/typos). Catches
+# misspellings in code, comments, identifiers, snapshot fixtures,
+# AGENTS.md, REVIEW-LATER.md — the surface markdownlint never
+# touches. Allow-list and excluded paths live in `_typos.toml`.
+# `pass_filenames = false` lets typos walk the repo itself and
+# apply its built-in binary detection (PNG/ICO icons, etc., which
+# typos would otherwise treat as text when explicitly handed
+# their paths).
+# Install: `cargo install typos-cli --locked`.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "typos"
+name = "typos"
+entry = "bash -c '. \"$HOME/.cargo/env\" && typos'"
+language = "system"
+pass_filenames = false
+
+# shellcheck: lint shell scripts under scripts/. `--severity=warning`
+# skips the `info` / `style` notices (e.g. SC2012 "use find instead
+# of ls", SC2001 "use ${var//pat/repl} instead of sed") which are
+# minor stylistic preferences; we still catch real bugs and probable
+# bugs. Out of scope: the inline `bash -c '...'` strings inside this
+# file (shellcheck cannot parse TOML-embedded bash).
+# Install via system package manager (e.g. `apt-get install shellcheck`).
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "shellcheck"
+name = "shellcheck"
+entry = "shellcheck --severity=warning"
+language = "system"
+files = "^scripts/.*\\.sh$"
+
+# Migration immutability — enforces the AGENTS.md "append-only,
+# never modify shipped migrations" invariant. The sqlx runtime
+# detects checksum drift via `_sqlx_migrations`, but only on the
+# next app boot; this hook fails fast at commit time. Allows
+# additions only; modifications, deletions, renames, copies, and
+# type changes under src-tauri/migrations/ are rejected.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "migrations-immutable"
+name = "migrations append-only"
+entry = "bash scripts/check-migrations-immutable.sh"
+language = "system"
+pass_filenames = false
+files = "^src-tauri/migrations/.*\\.sql$"
+
+# zizmor: GitHub Actions security audit. Complements actionlint
+# (which is style/correctness only) by catching unpinned `uses:`,
+# missing `persist-credentials: false`, env-injection in
+# `${{ github.* }}` interpolation, the `pull_request_target`
+# exfil class, and similar workflow-security smells. Existing
+# findings are baselined in `.github/zizmor.yml`; the hook fires
+# on new findings only.
+# Install: `cargo install zizmor --locked`.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "zizmor"
+name = "zizmor"
+entry = "bash -c '. \"$HOME/.cargo/env\" && zizmor \"$@\"' --"
+language = "system"
+files = "^\\.github/workflows/.*\\.ya?ml$"
+
+# taplo: TOML lint + format. The `check-toml` builtin only validates
+# parseability; taplo enforces consistent formatting across
+# prek.toml, src-tauri/Cargo.toml, src-tauri/deny.toml, lychee.toml,
+# .gitleaks.toml, and src-tauri/.config/nextest.toml. Repo-specific
+# style overrides live in `.taplo.toml` (4-space indent, 200-col
+# width, no auto-collapse). `fmt --check` is read-only — it never
+# rewrites the file in the index.
+# Install: `cargo install taplo-cli --locked`.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "taplo-fmt"
+name = "taplo fmt --check"
+entry = "bash -c '. \"$HOME/.cargo/env\" && taplo fmt --check \"$@\"' --"
+language = "system"
+types = ["toml"]
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "taplo-lint"
+name = "taplo lint"
+entry = "bash -c '. \"$HOME/.cargo/env\" && taplo lint \"$@\"' --"
+language = "system"
+types = ["toml"]
 
 # ─── pre-push only ────────────────────────────────────────────────
 #

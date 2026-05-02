@@ -1,0 +1,91 @@
+# Configuration for `typos`, a fast language-agnostic typo checker.
+# https://github.com/crate-ci/typos
+#
+# Wired into `prek.toml` as the `typos` pre-commit hook.
+#
+# Layering:
+#   - `[files] extend-exclude` skips paths typos must never scan
+#     (vendored / minified / generated / dev-journal content).
+#   - `[default.extend-words]` allow-lists tokens that look wrong but
+#     aren't (typically SQL keyword fragments split off by camelCase
+#     boundaries, project abbreviations, or deliberate test fixtures).
+#     Setting `key = "key"` (value identical to key) tells typos
+#     "this is fine, never suggest a correction."
+
+[files]
+extend-exclude = [
+    # Vendored, minified PDF.js worker — third-party, do not touch.
+    "public/pdf.worker.min.mjs",
+    "dist/",
+    # tauri-specta auto-generated; regenerated on every Rust type change.
+    "src/lib/bindings.ts",
+    # sqlx offline cache — checksums + serialized query AST, not prose.
+    ".sqlx/",
+    # Append-only dev journal; free-form notes, not user-facing copy.
+    "SESSION-LOG.md",
+    "docs/session-log/",
+]
+
+[default.extend-words]
+# SQL keyword fragments. `INSERTs`, `DELETEd`, `UPDATEd`, `SELECTs`,
+# `UNIONs`, `HEALTHy` are common in code comments and test names; the
+# camelCase boundary detector splits e.g. `INSERTs` into `INSER` + `Ts`,
+# and the leading uppercase fragment isn't a typo on its own.
+INSER = "INSER"
+DELET = "DELET"
+UPDAT = "UPDAT"
+SELEC = "SELEC"
+UNIO = "UNIO"
+HEALT = "HEALT"
+# `tag_inh_descendant_tags_full!()` and friends — abbreviation for
+# "inheritance" in the tag_inheritance module's macro names.
+inh = "inh"
+Inh = "Inh"
+# `mis-transforms` (vite.config.ts comment) — hyphenated compound,
+# `mis` is the prefix, not a typo.
+mis = "mis"
+# `Welcom` appears verbatim in e2e/block-ref-picker.spec.ts as a
+# deliberate test fixture (simulates a Backspace removing the 'e'
+# from "Welcome").
+Welcom = "Welcom"
+# `IIF(...)` is the SQLite immediate-if function used in queries.
+IIF = "IIF"
+# `NODEL` — appears in trash_integration tests as part of a test ULID
+# / token fixture, not the English word "model" / "nodal".
+NODEL = "NODEL"
+# Org-mode repeater syntax — `.+Nd`, `+Nw`, `+Nm` etc. (N days/weeks/
+# months) appear in `ARCHITECTURE.md`, `COMPARISON.md`, and the
+# `repeat`-property docs. `Nd` is also a valid Crockford-base32
+# character pair in deterministic test ULIDs.
+Nd = "Nd"
+ND = "ND"
+Nw = "Nw"
+Nm = "Nm"
+# `config.edn` — Logseq's Clojure EDN config file extension, cited
+# repeatedly in `COMPARISON.md` when comparing Logseq features.
+edn = "edn"
+# Test-ULID prefixes used as deterministic fixtures across the Rust
+# integration tests (`PURGE_ANC`, `M81PN_*`, `01TESTNONE…MISSNG`,
+# etc.). They look like 3-letter words on the camelCase split; they
+# aren't.
+ANC = "ANC"
+anc = "anc"
+PN = "PN"
+MISSNG = "MISSNG"
+# `result_ab` / `result_ba` variable pairs in commutativity tests
+# (e.g. `merge::tests::resolve_property_conflict_is_commutative`).
+ba = "ba"
+BA = "BA"
+# `tomor`, `hel` — deliberate partial-typing fixtures for debounce /
+# autocomplete tests (`useDateInput.test.ts`, `SearchPanel.test.tsx`)
+# that simulate mid-typing of "tomorrow" / "hello" character by char.
+tomor = "tomor"
+hel = "hel"
+# `val=ue` — test fixture in `query-utils.test.ts` for the
+# "property:key=val=ue" parser case (equals signs inside the value).
+ue = "ue"
+# Both spellings are valid English; the codebase has settled on
+# `unparseable` and `contextful`. Don't churn the surface for a
+# non-bug.
+unparseable = "unparseable"
+contextful = "contextful"

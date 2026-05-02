@@ -1,0 +1,29 @@
+# Configuration for `taplo`, the TOML formatter/linter.
+# https://taplo.tamasfe.dev/configuration/file.html
+#
+# Wired into `prek.toml` as the `taplo-fmt` (read-only `fmt --check`)
+# and `taplo-lint` hooks.
+#
+# Single deviation from taplo's defaults: 4-space array/inline-table
+# indentation, matching the existing style across `prek.toml`,
+# `src-tauri/Cargo.toml`, `src-tauri/deny.toml`, `lychee.toml`, etc.
+# Without this override, taplo would propose a no-op stylistic
+# reformat from 4→2 spaces on every TOML file in the repo.
+
+include = ["**/*.toml"]
+exclude = ["node_modules/**", "target/**", "src-tauri/target/**", "dist/**", ".sqlx/**"]
+
+[formatting]
+indent_string = "    "
+# The repo style is "single-line per logical entry", with comment
+# annotations that often carry long regex exclusion patterns. Default
+# 80-column wrapping fights the existing prek.toml + Cargo.toml
+# layout; 200 lets the existing hand-formatted lines survive while
+# still flagging genuinely unbounded entries.
+column_width = 200
+# Preserve the repo's hand-tuned multi-line array layout. Several
+# `hooks = [...]` arrays and `accept = [...]` / `targets = [...]`
+# lists are intentionally vertical for readability and per-line git
+# blame, even when they would fit on one line. Default `true`
+# collapses them; we want to keep the author's choice.
+array_auto_collapse = false
