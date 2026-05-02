@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 609 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 919+ items.
+**Sessions:** 1 – 610 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 924+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 610 (2026-05-02)** — Batch TEST-IMPROVEMENTS-1 closed: TEST-2, TEST-12, TEST-14, TEST-19, TEST-29 — five S-cost backend test-quality items. TEST-2 replaced 3 inequality assertions with exact counts (`bg == 7` via 6 dispatched tasks + 1 Barrier; `entries.len() == 5` weekly projection across `[today, today+28]`; `draft_errors.len() == 2` from dropped `op_log` + BEFORE-DELETE trigger). TEST-12 snapshots the full `OpRecord` pre-fork-detection via a test-local `OpRecordSnapshot` projection (no production `PartialEq` added). TEST-14 added `list_blocks_inner_isolates_blocks_by_space_id` exercising the IPC boundary with 2 Personal + 2 Work pages. TEST-19 strengthened 4 MCP weak-shape assertions (GroupedBacklinkResponse 4-field contract, PageResponse 3-field contract, `error.message.contains("Not found"/"Validation error")` substring checks). TEST-29 parallelized 50 sequential block creates via `futures_util::future::try_join_all`. All 5 reviews PASS; 10/10 targeted tests pass.
 - **Session 609 (2026-05-02)** — Batch PERF-CLUSTER-1 closed: PERF-24, PERF-25, PERF-26, PERF-27, PERF-28 — five S-cost performance items, each with an existing reference implementation to mirror (block_links json_each, lease.rs key-IN batch, gcal_push/api shared_client, pagination/properties dynamic-operator SQL, TagFilterPanel debounce). All 5 reviews PASS (PERF-28 CONDITIONAL PASS, follow-up FE-L-15 filed for the unstable-object return in `useDebouncedCallback`). Also cleaned 4 stale Quick-wins bullets (MAINT-179/182/187/188, PERF-23 — already resolved in earlier sessions).
 - **Session 608 (2026-05-02)** — Batch QUICK-WINS-2 closed: PERF-29, M-96, FE-H-18, TEST-9, TEST-20 — five trivial mixed front/back cleanups (cache eviction batched slice, COUNT-query error logging via `inspect_err`, slash-command auto-execute destroyed-view guard + try/catch, sync materialization verification, sync file-transfer skipped-counter assertions). All 5 reviews PASS; TEST-9 flake-check 5/5; TEST-9 flush needed both `flush_foreground` + `flush_background` (originally spec'd only the background).
 - **Session 607 (2026-05-02)** — Batch QUICK-WINS-1 closed: L-62, FE-L-10, FE-L-11, TEST-5, TEST-17 — five trivial mixed front/back cleanups (Rust `unreachable!()` mirror follow-up, redundant optional chain removal, defensive StorageEvent field completeness, op_log count assertion, within-batch seq-ordering assertion). All 5 reviews PASS with no mid-session orchestrator fixes needed.
@@ -40,6 +41,58 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 610 — Batch TEST-IMPROVEMENTS-1: five backend test-quality items (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 5 build + 5 technical review (all PASS; zero mid-session orchestrator fixes) |
+| **Items closed** | TEST-2, TEST-12, TEST-14, TEST-19, TEST-29 |
+| **Items added** | — |
+| **Tests added** | +1 new test (TEST-14 `list_blocks_inner_isolates_blocks_by_space_id`) + assertion strengthenings in 9 existing tests (TEST-2 ×3, TEST-12 ×1, TEST-19 ×4, TEST-29 parallelization) |
+| **Files touched** | 10 (8 Rust test files + REVIEW-LATER + SESSION-LOG) |
+
+**Summary:** Closed 5 S-cost backend test-quality items across 8 disjoint Rust test files, exercising different parts of the stack. TEST-2 replaced 3 inequality assertions with exact-count assertions (all three counts derived from reading production code paths: 6 dispatched background tasks + 1 Barrier = 7; 5 projected weekly entries in `[today, today+28]`; 2 draft errors from dropped op_log + BEFORE-DELETE trigger). TEST-12 added a test-local `OpRecordSnapshot` struct with `From<OpRecord>` projection to snapshot the full pre-fork-detection row, then `assert_eq!` after — without touching the production `OpRecord` type. TEST-14 added a new `list_blocks_inner_isolates_blocks_by_space_id` test that creates 2 pages in Personal + 2 in Work via `create_page_in_space_inner`, then asserts `list_blocks_inner(space_id=X)` returns only X's pages (8 assertions total with offending-id messages). TEST-19 strengthened 4 MCP weak-shape assertions: the 4-field `GroupedBacklinkResponse` contract (`groups`, `next_cursor`, `has_more`, `total_count`), the 3-field `PageResponse<T>` contract (`total_count` intentionally omitted per pagination/mod.rs docs), and stable `error.message.contains("Not found"/"Validation error")` substring checks backed by `display_*_prefixes_message` unit tests in `error.rs`. TEST-29 parallelized 50 sequential block creates via `futures_util::future::try_join_all`, confirmed safe because the test's only assertions are count + uniqueness (HashSet) + page count — no ordering dependency.
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 141 → 136 (−5 — all five TEST-* items were in summary).
+- **Detail entries:** 174 → 169 (−5).
+- **Previously-resolved counter:** 919+ → 924+ across 609 → 610 sessions.
+
+**Per-item verification (from review subagents):**
+- **TEST-2** — Site 1 (`integration_tests.rs:1177-1186`): `assert_eq!(bg, 7, ...)` derived by reading `materializer/dispatch.rs:140-165` (page create emits `RebuildPagesCache` + `UpdateFtsBlock` + `ReindexBlockTagRefs` + `RebuildTagInheritanceCache` + `RebuildProjectedAgendaCache` + `RebuildPageIds` = 6 distinct tasks, `dedup_tasks` preserves all) plus the `flush_background()` Barrier enqueue (counted as processed, per `materializer/tests.rs:1330-1334` oracle). Site 2 (`agenda_cmd_tests.rs:865-873`): `entries.len() == 5` for `[today, today+28]` inclusive window with weekly projection starting from `today - 21d` yielding `today, +7, +14, +21, +28`. Site 3 (`recovery/tests.rs:687-699`): `draft_errors.len() == 2` from `recover_single_draft` failure (dropped `op_log`) + `delete_draft` failure (BEFORE-DELETE trigger). All 3 tests pass with exact counts.
+- **TEST-12** (`sync_protocol/tests.rs:4121-4247`): test-local `OpRecordSnapshot` struct (indented inside the test function, not module-level) with `#[derive(Debug, PartialEq, Eq)]` + `From<OpRecord>` projection captures all 8 fields (`device_id`, `seq`, `parent_seqs`, `hash`, `op_type`, `payload`, `created_at`, `block_id`). Production `OpRecord` at `op_log.rs:40` untouched. Pre-read before `apply_remote_ops`, post-read after; `assert_eq!(pre, post, "op_log row must not be mutated during fork detection (append-only)")`. Existing `stored_hash`/`hash_a` assertion preserved, not replaced.
+- **TEST-14** (`spaces/tests.rs:876-1007`): plain `#[tokio::test]` (matches sibling pattern); `bootstrap_spaces(&pool, DEV)` for setup, 4× `create_page_in_space_inner` (the exact function the frontend `PageBrowser` calls via `createPageInSpace`), 2× `list_blocks_inner(space_id=X, block_type=Some("page"), limit=Some(50), ...)` covers the IPC boundary. 8 assertions: (a+b) each space's 2 pages present, (c+d) each space's pages ABSENT from the other query. All messages include the offending-id set for debuggability. Space filtering in `pagination/hierarchy.rs:96-136` confirmed correct via `?5 IS NULL OR COALESCE(b.page_id, b.id) IN (SELECT bp.block_id FROM block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?5)`.
+- **TEST-19** — Site 1 (`tools_ro/tests.rs:~700`): added `groups` array + empty, `next_cursor` field present, `has_more == false`, `total_count == 0` assertions; all 4 fields canonical per `backlink/types.rs:135-145`. Site 2 (`tools_ro/tests.rs:~1272` stress test): added `items` array + `has_more` bool + `next_cursor` field present on every iteration's `PageResponse<T>`; `total_count` intentionally not asserted because `PageResponse` omits it by design (`pagination/mod.rs:196-201`). Sites 3+4 (`mcp/server/tests.rs:~1107-1111 and ~1156-1160`): added `error.message.contains("Not found")` / `contains("Validation error")` backed by stable `#[error("Not found: {0}")]` / `#[error("Validation error: {0}")]` prefixes in `error.rs` with matching `display_*_prefixes_message` pinning tests.
+- **TEST-29** (`lifecycle_integration.rs:160-174`): sequential loop → `futures_util::future::try_join_all(creates).await.unwrap()`. Downstream assertions verified to be purely order-independent: `all_ids.len() == TOTAL` (count), `HashSet::from_iter(...).len() == TOTAL` (uniqueness), `pages == expected_pages` (page count). 3 consecutive runs passed (0.182s / 0.146s / 0.142s). No deadlock risk: `begin_immediate_logged` acquires write conn and starts `BEGIN IMMEDIATE`; no reader lock held while waiting for writer; SQLite WAL serializes writes internally. Added TEST-29 comment explaining parallelization safety.
+
+**Files touched (this session):**
+- `src-tauri/src/integration_tests.rs` (+5 / -1 — TEST-2 site 1 with derivation comment)
+- `src-tauri/src/commands/tests/agenda_cmd_tests.rs` (+4 / -1 — TEST-2 site 2 with derivation comment)
+- `src-tauri/src/recovery/tests.rs` (+6 / -1 — TEST-2 site 3 with derivation comment)
+- `src-tauri/src/sync_protocol/tests.rs` (+54 — TEST-12 `OpRecordSnapshot` + pre/post reads + assert_eq)
+- `src-tauri/src/spaces/tests.rs` (+141 — TEST-14 new test `list_blocks_inner_isolates_blocks_by_space_id`)
+- `src-tauri/src/mcp/tools_ro/tests.rs` (+26 — TEST-19 sites 1+2: GroupedBacklinkResponse + PageResponse contracts)
+- `src-tauri/src/mcp/server/tests.rs` (+10 — TEST-19 sites 3+4: Display-prefix substring assertions)
+- `src-tauri/src/command_integration_tests/lifecycle_integration.rs` (+11 / -5 — TEST-29 `try_join_all` + safety comment)
+- `REVIEW-LATER.md` (net shrink — 5 detail blocks + 5 summary rows removed)
+- `SESSION-LOG.md` (this entry + Recent milestones bump)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run -p agaric --filter-expr 'test(/materializer_processes_background_tasks_after_page_create|projected_agenda_returns_future_weekly_occurrences|recover_at_boot_records_errors_when_draft_processing_fails|apply_remote_ops_detects_fork_with_same_seq_different_hash|list_blocks_inner_isolates_blocks_by_space_id|list_backlinks_happy_path|concurrent_clients_exact_success_count|tools_call_not_found_still_returns_minus_32001_error|tools_call_validation_error_still_returns_minus_32602_error|create_50_blocks_paginate_through_all_verify_count/)'` — **10 tests run, 10 passed, 3391 skipped**.
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **Derivation-by-reading-production-code paid off.** Each TEST-2 exact count was derived by reading the actual dispatch/projection/recovery code paths, not by running the test and using whatever count came out. This is slower but more defensible: if the count ever disagrees in the future, we know which side has the bug (test vs. production). Multi-line comments at each site capture the derivation so future readers don't have to re-run the archaeology.
+- **Test-local projection struct beats production-type churn.** TEST-12 needed `PartialEq` on `OpRecord` for the `assert_eq!` call, but adding derives to a production type (just for a test's convenience) would broaden the type's semantic contract. The test-local `OpRecordSnapshot` + `From<OpRecord>` trick gives the exact same ergonomics without production-type churn. Pattern to reuse whenever a test needs `PartialEq` on a non-`PartialEq` production type.
+- **Filter-regex reality check.** Two subagents (TEST-2, TEST-19) reported that the nextest filter regex I supplied in the prompt didn't match the actual test function names — `recovery.*draft_errors` vs `recover_at_boot_records_errors_when_draft_processing_fails`; `mcp.*stress` vs `concurrent_clients_exact_success_count`. They compensated by finding the tests via `grep` + explicit-name filters. Good subagent discipline; also a reminder to prefer function-name filters over topic-keyword regex in future build prompts.
+- **IPC-boundary testing is not the same as property-level testing.** TEST-14's premise — existing `spaces/tests.rs` coverage at the `block_properties` table level, new test at the `list_blocks_inner` IPC level — highlighted that two tests can both "cover space isolation" while leaving the same query path the frontend uses untested. Worth generalizing as a review-checklist item.
+- **Parallelization safety requires reading the assertion code.** TEST-29's subagent explicitly verified that all 3 downstream assertions (count/uniqueness/page-count) were order-independent before parallelizing. If any assertion had been `assert_eq!(all_ids[0], expected_first)`, parallelization would have silently introduced flakiness. The subagent self-offered Option (a) — leave sequential — if ordering was load-bearing, which is the right reflex.
+
+**Commit plan:** single commit, not pushed.
 
 ---
 

@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 609 — Batch PERF-CLUSTER-1 closed: PERF-24, PERF-25, PERF-26, PERF-27, PERF-28; FE-L-15 follow-up filed)
+> **Last updated:** 2026-05-02 (Session 610 — Batch TEST-IMPROVEMENTS-1 closed: TEST-2, TEST-12, TEST-14, TEST-19, TEST-29)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-141 open items in the summary table; 174 detail entries (FE-* sub-tables don't appear in the summary).
+136 open items in the summary table; 169 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -55,7 +55,6 @@ Items flagged during development that need revisiting. Organized by section with
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
-| TEST-2 | TEST | Inequality count assertions where exact count is known (3 sites: integration_tests `bg >= 1`, agenda projection `entries.len() >= 3`, recovery `draft_errors.len() >= 2`) | S | — |
 | TEST-3 | TEST | Brittle `err.to_string().contains(...)` / event-message `.contains(...)` assertions instead of `matches!(AppError::Variant(_))` (11 in `block_cmd_tests.rs`, 9 in `sync_daemon/tests.rs`) | S | — |
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
 | TEST-6 | TEST | Sync merge tests assert on counter only, not materialized state (`merge_resolves_property_conflict_lww` doesn't query `block_properties`; `merge_block_conflict_creates_copy` doesn't query `blocks` for the conflict copy) | S | — |
@@ -63,17 +62,13 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-8 | TEST | TOFU test only covers acceptance, not rejection on cert-hash mismatch on reconnect (`inmem_handle_incoming_sync_tofu_stores_cert_hash`) | S | — |
 | TEST-10 | TEST | Snapshot tests missing redactions of non-deterministic fields: `snapshot_history_entry_response` (cursor), `snapshot_list_blocks_response` (comment promises but no redaction call) | S | — |
 | TEST-11 | TEST | Missing error-path test coverage: `export_page_markdown_inner` has 6 happy-path tests + 0 error tests; `set_property_inner` integration tests miss invalid-key / type-mismatch Validation cases | S | — |
-| TEST-12 | TEST | `apply_remote_ops_detects_fork_with_same_seq_different_hash` queries hash but not full `OpRecord` (payload, op_type) — won't catch row mutation outside the hash field | S | — |
-| TEST-14 | TEST | Spaces tests don't verify isolation between Personal/Work spaces — no test creates pages in both and asserts queries return correct subset for each | S | — |
 | TEST-16 | TEST | Recurrence integration tests don't exercise year-boundary transitions (Dec 31 + 1 day → Jan 1 next year) — only unit tests cover DST/leap year | S | — |
 | TEST-18 | TEST | Backlink non-grouped tests use `setup_backlinks()` orphan sources (no parent_id), so they never exercise self-reference filtering; sort tests don't assert `total_count`/`filtered_count` | S | — |
-| TEST-19 | TEST | MCP weak-shape assertions: `list_backlinks_happy_path` checks only `is_object()`; stress test bare `is_ok()` (line 1272); error-response tests check `result.is_none()` but not error code/message shape | S | — |
 | TEST-23 | TEST | 6 copy-pasted `*_paginates_with_cursor` tests in `pagination/tests.rs` (lines 720, 877, 1550, 1702, 1911, 2032) — identical 3-page-loop pattern | S | — |
 | TEST-24 | TEST | 13 `tokio::time::sleep(Duration::from_millis(2))` for op-log timestamp separation in `undo_redo_tests.rs` — replace with deterministic `op_log::append_local_op_at` calls | S | — |
 | TEST-25 | TEST | ~12 near-identical FEAT-3p4 space-scoping tests in `agenda_cmd_tests.rs` (lines 2268–2812) — extract `seed_two_spaces` helper | S | — |
 | TEST-27 | TEST | `count_set_property_ops_for_key` helper uses `LIKE '%"key":"X"%'` on JSON payloads — fragile to JSON whitespace changes | S | — |
 | TEST-28 | TEST | `test_connection_pair()` bypasses real TLS (in-memory duplex with `peer_cert_hash_val: None`) — needs documenting so callers don't think they're testing mTLS | S | — |
-| TEST-29 | TEST | `create_50_blocks_paginate_through_all_verify_count` creates 50 blocks sequentially in a loop — could parallelize with `futures::join_all` | S | — |
 | TEST-30 | TEST | `now_rfc3339()` collision risk in `undo_redo_tests.rs` lines 1187, 1311, 1525 — siblings have sleep guards but these don't | S | — |
 | TEST-31 | TEST | MCP pagination roundtrip test asserts `!ids1.contains(id)` for no overlap but never sums lengths across pages to verify nothing is lost | S | — |
 | TEST-FE-1 | TEST | Bare `setTimeout` waits in tests (24 occurrences across 13 files; the dangerous subset is bare 50ms waits before `not.toHaveBeenCalledWith` negatives — `BlockTree.test.tsx`, `TagFilterPanel.test.tsx`, `useBlockTreeEventListeners.test.ts`, `GraphView.test.tsx`) — AGENTS.md explicitly forbids `await sleep(n)`; replace with `waitFor` or fake timers | M | — |
@@ -615,18 +610,6 @@ Items in this section are test-quality improvements identified during a thorough
 
 > **Format:** test items use the compact L-style block. None of these are blocking; they are code-quality investments.
 
-### TEST-2 — Inequality count assertions where exact count is known (3 sites)
-- **Domain:** Test infrastructure
-- **Location:**
-  - `src-tauri/src/integration_tests.rs:1177-1180` (`materializer_processes_background_tasks_after_page_create` — `assert!(bg >= 1, ...)`)
-  - `src-tauri/src/commands/tests/agenda_cmd_tests.rs:865-869` (`entries.len() >= 3` for weekly projection across 28 days)
-  - `src-tauri/src/recovery/tests.rs:687-695` (`report.draft_errors.len() >= 2`)
-- **What:** Per AGENTS.md: "Prefer exact counts — use `assert_eq!(count, 5)` not `assert!(count >= 1)`. Inequality assertions hide subtle bugs."
-- **Cost:** Trivial — compute exact expected value (the page-create test should expect exactly the dispatched task set; the agenda projection should compute `weeks_in_28_days(today)`; the recovery test knows the corrupted-fixture count).
-- **Risk:** Low.
-- **Impact:** Medium — closes silent-pass holes for materializer-task accounting and recovery-error counting.
-- **Status:** Open.
-
 ### TEST-3 — Brittle `err.to_string().contains(...)` and `.contains(...)` on event messages
 - **Domain:** Test infrastructure
 - **Location:**
@@ -700,25 +683,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Impact:** Medium — Validation paths are easy to break silently when refactoring.
 - **Status:** Open.
 
-### TEST-12 — Fork-detection test only checks hash, not full row
-- **Domain:** Sync protocol tests
-- **Location:** `src-tauri/src/sync_protocol/tests.rs:4109-4181` (`apply_remote_ops_detects_fork_with_same_seq_different_hash`)
-- **What:** Test queries the local hash post-fork-detection but doesn't snapshot the full `OpRecord` (payload, op_type, parent_seqs, etc.) pre-detection and assert immutability. A regression that mutates fields outside the hashed bytes would not be caught.
-- **Cost:** Trivial — capture the full pre-fork `OpRecord`, then `assert_eq!` after.
-- **Risk:** Low.
-- **Impact:** Low-medium — defends the append-only invariant on the most adversarial sync path.
-- **Status:** Open.
-
-### TEST-14 — Space isolation test exists at the property level but not at the `list_blocks_inner` IPC boundary
-- **Domain:** Spaces tests
-- **Location:** `src-tauri/src/spaces/tests.rs:773-865` already covers the property-table side via `property_every_page_has_space_after_bootstrap_under_mixed_create_paths` (creates pages in both Personal and Work, then queries `block_properties` directly to assert per-space membership at lines 837-852, plus `personal_pages.contains(&p1)` / `work_pages.contains(&p2)` / leaked-page backfill assertions at L853-864).
-- **What:** No test creates pages in both spaces and runs `list_blocks_inner` (the IPC the frontend uses) with `space_id` filter; isolation IS verified through raw `block_properties` SELECT, so the gap is at the IPC boundary.
-- **Cost:** S — add a test that creates pages in both spaces, calls `list_blocks_inner(space_id=Personal)` and `list_blocks_inner(space_id=Work)`, and asserts each returns only its own pages.
-- **Risk:** Low.
-- **Impact:** Medium — locks down a core invariant at the IPC layer the frontend actually depends on.
-- **Status:** Open.
-
-
 ### TEST-16 — Recurrence integration tests don't exercise year-boundary transitions
 - **Domain:** Recurrence tests
 - **Location:** `src-tauri/src/recurrence/tests.rs:521-1036` (integration tests section)
@@ -737,15 +701,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Cost:** S — add a non-grouped test that creates sources with `parent_id` on the target page; extend sort tests with `total_count` / `filtered_count` assertions.
 - **Risk:** Low.
 - **Impact:** Low-medium.
-- **Status:** Open.
-
-### TEST-19 — MCP weak-shape assertions
-- **Domain:** MCP tests
-- **Location:** `src-tauri/src/mcp/tools_ro/tests.rs:700` (`list_backlinks_happy_path` — only `result.is_object()`); `src-tauri/src/mcp/tools_ro/tests.rs:1272` (stress test bare `is_ok()`); `src-tauri/src/mcp/server/tests.rs:1093-1101, 1134-1141` (error-response tests check `result.is_none()` and `error.code` but not `error.message` text shape)
-- **What:** Tests verify type/presence and (for error responses) the JSON-RPC error code, but not the broader response contract (`groups`, `next_cursor`, `has_more`, `total_count` on success; `error.message` text on errors).
-- **Cost:** S — add field-presence and type assertions per response contract; pin a stable substring for `error.message`.
-- **Risk:** Low.
-- **Impact:** Low-medium — tighter contract enforcement on the MCP boundary.
 - **Status:** Open.
 
 ### TEST-23 — 6 copy-pasted `*_paginates_with_cursor` tests
@@ -791,15 +746,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Cost:** Trivial — add a doc-comment to `test_connection_pair` clarifying that callers needing mTLS verification must use `SyncServer::start()` + `connect_to_peer()` instead.
 - **Risk:** Low.
 - **Impact:** Low — documentation precision; prevents future false confidence.
-- **Status:** Open.
-
-### TEST-29 — `create_50_blocks_paginate_through_all_verify_count` creates blocks sequentially
-- **Domain:** Test infrastructure
-- **Location:** `src-tauri/src/command_integration_tests/lifecycle_integration.rs:160-172`
-- **What:** Test creates 50 blocks in a sequential `for` loop; could parallelize with `futures::future::join_all` to reduce test runtime.
-- **Cost:** Trivial.
-- **Risk:** Low — parallel creates exercise the writer pool concurrency, which is also useful coverage; verify the test still asserts deterministic page ordering.
-- **Impact:** Low — minor test-suite speedup.
 - **Status:** Open.
 
 ### TEST-30 — One residual `now_rfc3339()` collision risk in `undo_redo_tests.rs:1525`

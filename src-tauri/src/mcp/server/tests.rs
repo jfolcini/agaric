@@ -1099,6 +1099,16 @@ async fn tools_call_not_found_still_returns_minus_32001_error() {
         "error responses must not carry a `result` field (FEAT-4j keeps the \
          FEAT-4c split intact for protocol-level failures)",
     );
+    // `app_error_to_jsonrpc` passes `AppError::Display` through as the
+    // JSON-RPC `error.message`; `NotFound` renders as `"Not found: …"`
+    // (see `#[error(...)]` attr on `AppError::NotFound`). Pin the
+    // stable prefix — not the full message — so the substring only
+    // changes if the error semantics actually change.
+    let msg = response["error"]["message"].as_str().unwrap_or("");
+    assert!(
+        msg.contains("Not found"),
+        "error.message must carry the `AppError::NotFound` Display prefix, got {msg:?}",
+    );
 
     drop(w);
     drop(reader);
@@ -1138,6 +1148,15 @@ async fn tools_call_validation_error_still_returns_minus_32602_error() {
     assert!(
         response.get("result").is_none(),
         "error responses must not carry a `result` field",
+    );
+    // `AppError::Validation` renders as `"Validation error: …"` (see
+    // `#[error(...)]` attr on the variant). Pin the stable prefix
+    // only — anything past the colon is the caller-supplied detail
+    // and may change independently.
+    let msg = response["error"]["message"].as_str().unwrap_or("");
+    assert!(
+        msg.contains("Validation error"),
+        "error.message must carry the `AppError::Validation` Display prefix, got {msg:?}",
     );
 
     drop(w);
