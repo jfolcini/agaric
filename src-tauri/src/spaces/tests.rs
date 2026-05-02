@@ -1067,13 +1067,12 @@ async fn assign_to_personal(pool: &SqlitePool, page_id: &str) {
 /// payload key matches the supplied filter. Used to verify exactly N
 /// `space` rebind ops were emitted by the migration.
 async fn count_set_property_ops_for_key(pool: &SqlitePool, key: &str) -> i64 {
-    let pattern = format!("%\"key\":\"{}\"%", key);
-    sqlx::query_scalar::<_, i64>(
+    sqlx::query_scalar!(
         r#"SELECT COUNT(*) FROM op_log
            WHERE op_type = 'set_property'
-             AND payload LIKE ?"#,
+             AND json_extract(payload, '$.key') = ?"#,
+        key,
     )
-    .bind(pattern)
     .fetch_one(pool)
     .await
     .unwrap()

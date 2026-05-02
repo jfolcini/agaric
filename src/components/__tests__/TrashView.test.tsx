@@ -24,6 +24,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { emptyPage, makeBlock } from '../../__tests__/fixtures'
 import { keyFor, useResolveStore } from '../../stores/resolve'
 import { useSpaceStore } from '../../stores/space'
 import { TrashView } from '../TrashView'
@@ -47,20 +48,6 @@ vi.mock('../../lib/announcer', () => ({
 }))
 
 const mockedInvoke = vi.mocked(invoke)
-
-function makeBlock(id: string, content: string, deletedAt: string, parentId: string | null = null) {
-  return {
-    id,
-    block_type: 'content',
-    content,
-    parent_id: parentId,
-    position: null,
-    deleted_at: deletedAt,
-    is_conflict: false,
-  }
-}
-
-const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 /**
  * Helper: mock invoke to return items on list_blocks and empty [] on batch_resolve.
@@ -126,8 +113,8 @@ describe('TrashView', () => {
 
   it('renders deleted blocks with restore and purge buttons', async () => {
     mockListAndResolve([
-      makeBlock('B1', 'deleted item 1', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'deleted item 2', '2025-01-14T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'deleted item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'deleted item 2', deleted_at: '2025-01-14T00:00:00Z' }),
     ])
 
     render(<TrashView />)
@@ -147,7 +134,7 @@ describe('TrashView', () => {
 
   it('restore calls restoreBlock with correct deleted_at_ref', async () => {
     const user = userEvent.setup()
-    const block = makeBlock('B1', 'item', '2025-01-15T12:00:00Z')
+    const block = makeBlock({ id: 'B1', content: 'item', deleted_at: '2025-01-15T12:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -171,7 +158,7 @@ describe('TrashView', () => {
 
   it('purge requires two-click confirmation', async () => {
     const user = userEvent.setup()
-    const block = makeBlock('B1', 'to purge', '2025-01-15T00:00:00Z')
+    const block = makeBlock({ id: 'B1', content: 'to purge', deleted_at: '2025-01-15T00:00:00Z' })
     mockListAndResolve([block])
 
     render(<TrashView />)
@@ -193,7 +180,7 @@ describe('TrashView', () => {
   // UX-259: destructive dialogs must not confirm on a reflex Enter on open.
   it('UX-259: reflex Enter on purge dialog dismisses without calling purgeBlock', async () => {
     const user = userEvent.setup()
-    const block = makeBlock('B1', 'to purge', '2025-01-15T00:00:00Z')
+    const block = makeBlock({ id: 'B1', content: 'to purge', deleted_at: '2025-01-15T00:00:00Z' })
     mockListAndResolve([block])
 
     render(<TrashView />)
@@ -216,7 +203,7 @@ describe('TrashView', () => {
 
   it('pressing Escape dismisses the purge confirmation', async () => {
     const user = userEvent.setup()
-    const block = makeBlock('B1', 'to purge', '2025-01-15T00:00:00Z')
+    const block = makeBlock({ id: 'B1', content: 'to purge', deleted_at: '2025-01-15T00:00:00Z' })
     mockListAndResolve([block])
 
     render(<TrashView />)
@@ -235,7 +222,7 @@ describe('TrashView', () => {
 
   it('purge executes on confirmation Yes click', async () => {
     const user = userEvent.setup()
-    const block = makeBlock('B1', 'to purge', '2025-01-15T00:00:00Z')
+    const block = makeBlock({ id: 'B1', content: 'to purge', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -259,7 +246,10 @@ describe('TrashView', () => {
   })
 
   it('shows Load More button when has_more is true', async () => {
-    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')], true)
+    mockListAndResolve(
+      [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
+      true,
+    )
 
     render(<TrashView />)
 
@@ -270,12 +260,12 @@ describe('TrashView', () => {
   it('loads next page with cursor when Load More is clicked', async () => {
     const user = userEvent.setup()
     const page1 = {
-      items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+      items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
       next_cursor: 'cursor_page2',
       has_more: true,
     }
     const page2 = {
-      items: [makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z')],
+      items: [makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' })],
       next_cursor: null,
       has_more: false,
     }
@@ -324,7 +314,7 @@ describe('TrashView', () => {
 
   it('removes block from list after successful restore', async () => {
     const user = userEvent.setup()
-    const block = makeBlock('B1', 'to restore', '2025-01-15T00:00:00Z')
+    const block = makeBlock({ id: 'B1', content: 'to restore', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -366,7 +356,7 @@ describe('TrashView', () => {
 
   it('handles failed restore gracefully', async () => {
     const user = userEvent.setup()
-    const block = makeBlock('B1', 'item', '2025-01-15T00:00:00Z')
+    const block = makeBlock({ id: 'B1', content: 'item', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -392,7 +382,7 @@ describe('TrashView', () => {
 
   it('handles failed purge gracefully', async () => {
     const user = userEvent.setup()
-    const block = makeBlock('B1', 'item', '2025-01-15T00:00:00Z')
+    const block = makeBlock({ id: 'B1', content: 'item', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -423,7 +413,7 @@ describe('TrashView', () => {
 
   it('shows success toast after successful restore', async () => {
     const user = userEvent.setup()
-    const block = makeBlock('B1', 'to restore', '2025-01-15T00:00:00Z')
+    const block = makeBlock({ id: 'B1', content: 'to restore', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -443,7 +433,7 @@ describe('TrashView', () => {
 
   it('shows success toast after successful purge', async () => {
     const user = userEvent.setup()
-    const block = makeBlock('B1', 'to purge', '2025-01-15T00:00:00Z')
+    const block = makeBlock({ id: 'B1', content: 'to purge', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -469,7 +459,7 @@ describe('TrashView', () => {
   it('updates resolve cache when restoring a page block', async () => {
     const user = userEvent.setup()
     const block = {
-      ...makeBlock('P1', 'My Page', '2025-01-15T12:00:00Z'),
+      ...makeBlock({ id: 'P1', content: 'My Page', deleted_at: '2025-01-15T12:00:00Z' }),
       block_type: 'page',
     }
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
@@ -492,7 +482,11 @@ describe('TrashView', () => {
 
   it('does not update resolve cache when restoring a content block', async () => {
     const user = userEvent.setup()
-    const block = makeBlock('C1', 'content text', '2025-01-15T12:00:00Z')
+    const block = makeBlock({
+      id: 'C1',
+      content: 'content text',
+      deleted_at: '2025-01-15T12:00:00Z',
+    })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -520,8 +514,8 @@ describe('TrashView', () => {
 
   it('renders checkboxes on each trash item', async () => {
     mockListAndResolve([
-      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
     ])
 
     render(<TrashView />)
@@ -537,7 +531,9 @@ describe('TrashView', () => {
 
   it('click on checkbox toggles selection', async () => {
     const user = userEvent.setup()
-    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -555,7 +551,9 @@ describe('TrashView', () => {
 
   it('clicking a row toggles selection', async () => {
     const user = userEvent.setup()
-    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -569,9 +567,9 @@ describe('TrashView', () => {
   it('Shift+Click range-selects items', async () => {
     const user = userEvent.setup()
     mockListAndResolve([
-      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
-      makeBlock('B3', 'item 3', '2025-01-13T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
+      makeBlock({ id: 'B3', content: 'item 3', deleted_at: '2025-01-13T00:00:00Z' }),
     ])
 
     render(<TrashView />)
@@ -597,8 +595,8 @@ describe('TrashView', () => {
   it('selection toolbar appears with correct count', async () => {
     const user = userEvent.setup()
     mockListAndResolve([
-      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
     ])
 
     render(<TrashView />)
@@ -624,7 +622,9 @@ describe('TrashView', () => {
 
   it('selection toolbar has Select all, Deselect all, Restore selected, Purge selected buttons', async () => {
     const user = userEvent.setup()
-    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -641,8 +641,8 @@ describe('TrashView', () => {
   it('batch restore calls restoreBlock for each selected', async () => {
     const user = userEvent.setup()
     const blocks = [
-      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
@@ -684,8 +684,8 @@ describe('TrashView', () => {
   it('batch purge shows confirmation dialog then calls purgeBlock for each', async () => {
     const user = userEvent.setup()
     const blocks = [
-      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
@@ -727,7 +727,9 @@ describe('TrashView', () => {
 
   it('Deselect all clears selection and hides toolbar', async () => {
     const user = userEvent.setup()
-    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -747,8 +749,8 @@ describe('TrashView', () => {
   it('Select all selects all visible items', async () => {
     const user = userEvent.setup()
     mockListAndResolve([
-      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
     ])
 
     render(<TrashView />)
@@ -773,7 +775,14 @@ describe('TrashView', () => {
   // ── Original location breadcrumbs ───────────────────────────────────
 
   it('renders breadcrumbs with parent page title', async () => {
-    const blocks = [makeBlock('B1', 'child block', '2025-01-15T00:00:00Z', 'P1')]
+    const blocks = [
+      makeBlock({
+        id: 'B1',
+        content: 'child block',
+        deleted_at: '2025-01-15T00:00:00Z',
+        parent_id: 'P1',
+      }),
+    ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve')
@@ -789,7 +798,14 @@ describe('TrashView', () => {
   })
 
   it('shows "(deleted page)" when parent is deleted', async () => {
-    const blocks = [makeBlock('B1', 'orphan block', '2025-01-15T00:00:00Z', 'P_DELETED')]
+    const blocks = [
+      makeBlock({
+        id: 'B1',
+        content: 'orphan block',
+        deleted_at: '2025-01-15T00:00:00Z',
+        parent_id: 'P_DELETED',
+      }),
+    ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve')
@@ -804,7 +820,14 @@ describe('TrashView', () => {
   })
 
   it('shows "(deleted page)" when parent is not found in batch resolve', async () => {
-    const blocks = [makeBlock('B1', 'orphan block', '2025-01-15T00:00:00Z', 'P_MISSING')]
+    const blocks = [
+      makeBlock({
+        id: 'B1',
+        content: 'orphan block',
+        deleted_at: '2025-01-15T00:00:00Z',
+        parent_id: 'P_MISSING',
+      }),
+    ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return [] // parent not found
@@ -818,7 +841,14 @@ describe('TrashView', () => {
   })
 
   it('does not render breadcrumb when block has no parent_id', async () => {
-    mockListAndResolve([makeBlock('B1', 'root block', '2025-01-15T00:00:00Z', null)])
+    mockListAndResolve([
+      makeBlock({
+        id: 'B1',
+        content: 'root block',
+        deleted_at: '2025-01-15T00:00:00Z',
+        parent_id: null,
+      }),
+    ])
 
     render(<TrashView />)
 
@@ -829,7 +859,9 @@ describe('TrashView', () => {
   // ── a11y ────────────────────────────────────────────────────────────
 
   it('trash items use responsive stacking for mobile', async () => {
-    mockListAndResolve([makeBlock('B1', 'responsive item', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'responsive item', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -839,7 +871,9 @@ describe('TrashView', () => {
   })
 
   it('has no a11y violations', async () => {
-    mockListAndResolve([makeBlock('B1', 'accessible item', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'accessible item', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -853,7 +887,9 @@ describe('TrashView', () => {
 
   it('has no a11y violations with selection toolbar visible', async () => {
     const user = userEvent.setup()
-    mockListAndResolve([makeBlock('B1', 'accessible item', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'accessible item', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -872,7 +908,9 @@ describe('TrashView', () => {
   // ── Filter / search ─────────────────────────────────────────────────
 
   it('renders filter input when items exist', async () => {
-    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -892,9 +930,9 @@ describe('TrashView', () => {
   it('typing filters items by content match', async () => {
     const user = userEvent.setup()
     mockListAndResolve([
-      makeBlock('B1', 'apple pie', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'banana split', '2025-01-14T00:00:00Z'),
-      makeBlock('B3', 'cherry tart', '2025-01-13T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'apple pie', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'banana split', deleted_at: '2025-01-14T00:00:00Z' }),
+      makeBlock({ id: 'B3', content: 'cherry tart', deleted_at: '2025-01-13T00:00:00Z' }),
     ])
 
     render(<TrashView />)
@@ -913,8 +951,8 @@ describe('TrashView', () => {
   it('empty filter shows all items', async () => {
     const user = userEvent.setup()
     mockListAndResolve([
-      makeBlock('B1', 'apple pie', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'banana split', '2025-01-14T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'apple pie', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'banana split', deleted_at: '2025-01-14T00:00:00Z' }),
     ])
 
     render(<TrashView />)
@@ -937,7 +975,9 @@ describe('TrashView', () => {
 
   it('no-match shows empty state with clear button', async () => {
     const user = userEvent.setup()
-    mockListAndResolve([makeBlock('B1', 'apple pie', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'apple pie', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -953,7 +993,9 @@ describe('TrashView', () => {
 
   it('clear button resets filter', async () => {
     const user = userEvent.setup()
-    mockListAndResolve([makeBlock('B1', 'apple pie', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'apple pie', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -979,8 +1021,8 @@ describe('TrashView', () => {
   it('SearchInput clear (✕) button resets filter and list', async () => {
     const user = userEvent.setup()
     mockListAndResolve([
-      makeBlock('B1', 'apple pie', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'banana split', '2025-01-14T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'apple pie', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'banana split', deleted_at: '2025-01-14T00:00:00Z' }),
     ])
 
     const { container } = render(<TrashView />)
@@ -1020,9 +1062,9 @@ describe('TrashView', () => {
   it('filtered count shows correctly', async () => {
     const user = userEvent.setup()
     mockListAndResolve([
-      makeBlock('B1', 'apple pie', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'apple tart', '2025-01-14T00:00:00Z'),
-      makeBlock('B3', 'banana split', '2025-01-13T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'apple pie', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'apple tart', deleted_at: '2025-01-14T00:00:00Z' }),
+      makeBlock({ id: 'B3', content: 'banana split', deleted_at: '2025-01-13T00:00:00Z' }),
     ])
 
     render(<TrashView />)
@@ -1040,8 +1082,8 @@ describe('TrashView', () => {
   it('filter is case-insensitive', async () => {
     const user = userEvent.setup()
     mockListAndResolve([
-      makeBlock('B1', 'Apple Pie', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'banana split', '2025-01-14T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'Apple Pie', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'banana split', deleted_at: '2025-01-14T00:00:00Z' }),
     ])
 
     render(<TrashView />)
@@ -1059,8 +1101,8 @@ describe('TrashView', () => {
   it('has no a11y violations with filter input', async () => {
     const user = userEvent.setup()
     mockListAndResolve([
-      makeBlock('B1', 'apple pie', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'banana split', '2025-01-14T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'apple pie', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'banana split', deleted_at: '2025-01-14T00:00:00Z' }),
     ])
 
     render(<TrashView />)
@@ -1080,8 +1122,8 @@ describe('TrashView', () => {
   it('filter matches Turkish İstanbul when query is lowercase istanbul', async () => {
     const user = userEvent.setup()
     mockListAndResolve([
-      makeBlock('B1', 'İstanbul trip notes', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'Ankara notes', '2025-01-14T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'İstanbul trip notes', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'Ankara notes', deleted_at: '2025-01-14T00:00:00Z' }),
     ])
 
     render(<TrashView />)
@@ -1099,7 +1141,9 @@ describe('TrashView', () => {
   // ── Empty Trash / Restore All header buttons ───────────────────────
 
   it('renders Empty Trash and Restore All header buttons when items exist', async () => {
-    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -1120,7 +1164,9 @@ describe('TrashView', () => {
 
   it('opens confirmation dialog when Empty Trash is clicked', async () => {
     const user = userEvent.setup()
-    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -1138,7 +1184,9 @@ describe('TrashView', () => {
   // UX-341: confirmation dialog shows the count of items that will be purged.
   it('UX-341: empty-trash dialog uses singular form when 1 item is loaded', async () => {
     const user = userEvent.setup()
-    mockListAndResolve([makeBlock('B1', 'only item', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'only item', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -1156,9 +1204,9 @@ describe('TrashView', () => {
   it('UX-341: empty-trash dialog uses plural form when multiple items are loaded', async () => {
     const user = userEvent.setup()
     mockListAndResolve([
-      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
-      makeBlock('B3', 'item 3', '2025-01-13T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
+      makeBlock({ id: 'B3', content: 'item 3', deleted_at: '2025-01-13T00:00:00Z' }),
     ])
 
     render(<TrashView />)
@@ -1177,8 +1225,8 @@ describe('TrashView', () => {
     const user = userEvent.setup()
     mockListAndResolve(
       [
-        makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
-        makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+        makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+        makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
       ],
       true, // hasMore = true
     )
@@ -1205,7 +1253,7 @@ describe('TrashView', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks')
         return {
-          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
         }
@@ -1234,7 +1282,7 @@ describe('TrashView', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks')
         return {
-          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
         }
@@ -1259,7 +1307,7 @@ describe('TrashView', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks')
         return {
-          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
         }
@@ -1281,7 +1329,9 @@ describe('TrashView', () => {
 
   it('opens confirmation dialog when Restore All header is clicked', async () => {
     const user = userEvent.setup()
-    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -1300,7 +1350,7 @@ describe('TrashView', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks')
         return {
-          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
         }
@@ -1330,7 +1380,7 @@ describe('TrashView', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks')
         return {
-          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
         }
@@ -1356,7 +1406,7 @@ describe('TrashView', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks')
         return {
-          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
         }
@@ -1379,7 +1429,9 @@ describe('TrashView', () => {
 
   it('relabeled batch buttons say Restore Selected / Purge Selected', async () => {
     const user = userEvent.setup()
-    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -1397,8 +1449,16 @@ describe('TrashView', () => {
   // ── UX-243: descendant-count badge ──────────────────────────────
 
   it('fetches descendant counts for every visible trash root', async () => {
-    const block1 = makeBlock('R1', 'root with kids', '2025-01-15T00:00:00Z')
-    const block2 = makeBlock('R2', 'lonely root', '2025-01-14T00:00:00Z')
+    const block1 = makeBlock({
+      id: 'R1',
+      content: 'root with kids',
+      deleted_at: '2025-01-15T00:00:00Z',
+    })
+    const block2 = makeBlock({
+      id: 'R2',
+      content: 'lonely root',
+      deleted_at: '2025-01-14T00:00:00Z',
+    })
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks')
         return { items: [block1, block2], next_cursor: null, has_more: false }
@@ -1421,8 +1481,16 @@ describe('TrashView', () => {
   })
 
   it('renders +N blocks badge only on roots with cascade-deleted descendants', async () => {
-    const blockWithKids = makeBlock('R1', 'root with kids', '2025-01-15T00:00:00Z')
-    const lonelyBlock = makeBlock('R2', 'lonely root', '2025-01-14T00:00:00Z')
+    const blockWithKids = makeBlock({
+      id: 'R1',
+      content: 'root with kids',
+      deleted_at: '2025-01-15T00:00:00Z',
+    })
+    const lonelyBlock = makeBlock({
+      id: 'R2',
+      content: 'lonely root',
+      deleted_at: '2025-01-14T00:00:00Z',
+    })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks')
         return {
@@ -1446,7 +1514,7 @@ describe('TrashView', () => {
   })
 
   it('renders singular "+1 block" for roots with exactly one descendant', async () => {
-    const single = makeBlock('R1', 'root + 1', '2025-01-15T00:00:00Z')
+    const single = makeBlock({ id: 'R1', content: 'root + 1', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: [single], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -1461,7 +1529,7 @@ describe('TrashView', () => {
   })
 
   it('renders no batch-count badge when counts returns empty map', async () => {
-    const block = makeBlock('R1', 'root', '2025-01-15T00:00:00Z')
+    const block = makeBlock({ id: 'R1', content: 'root', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -1477,7 +1545,11 @@ describe('TrashView', () => {
 
   it('per-row restore fires with the root id when badge is visible', async () => {
     const user = userEvent.setup()
-    const block = makeBlock('R1', 'root with kids', '2025-01-15T00:00:00Z')
+    const block = makeBlock({
+      id: 'R1',
+      content: 'root with kids',
+      deleted_at: '2025-01-15T00:00:00Z',
+    })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -1501,7 +1573,7 @@ describe('TrashView', () => {
   })
 
   it('logs warning and keeps list usable when count fetch fails', async () => {
-    const block = makeBlock('R1', 'root', '2025-01-15T00:00:00Z')
+    const block = makeBlock({ id: 'R1', content: 'root', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -1523,8 +1595,8 @@ describe('TrashView screen reader announcements (UX-282)', () => {
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
     const blocks = [
-      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
@@ -1550,8 +1622,8 @@ describe('TrashView screen reader announcements (UX-282)', () => {
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
     const blocks = [
-      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
@@ -1580,7 +1652,7 @@ describe('TrashView screen reader announcements (UX-282)', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks')
         return {
-          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
         }
@@ -1606,7 +1678,7 @@ describe('TrashView screen reader announcements (UX-282)', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_blocks')
         return {
-          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })],
           next_cursor: null,
           has_more: false,
         }
@@ -1634,7 +1706,11 @@ describe('TrashView screen reader announcements (UX-282)', () => {
 describe('TrashView UX-275 batch toolbar interaction', () => {
   // -- sub-fix 2: badge testid + nowrap utility ----------------------------
   it('descendant badge carries the stable testid and whitespace-nowrap', async () => {
-    const block = makeBlock('R1', 'root with kids', '2025-01-15T00:00:00Z')
+    const block = makeBlock({
+      id: 'R1',
+      content: 'root with kids',
+      deleted_at: '2025-01-15T00:00:00Z',
+    })
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -1655,8 +1731,8 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
   it('Shift+R triggers batch restore (gated by the >5 confirm)', async () => {
     const user = userEvent.setup()
     const blocks = [
-      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
-      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' }),
+      makeBlock({ id: 'B2', content: 'item 2', deleted_at: '2025-01-14T00:00:00Z' }),
     ]
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
@@ -1695,7 +1771,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
 
   it('Shift+Delete opens the batch purge confirmation dialog', async () => {
     const user = userEvent.setup()
-    const blocks = [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')]
+    const blocks = [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })]
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -1718,7 +1794,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
 
   it('toolbar shortcuts do nothing when nothing is selected', async () => {
     const user = userEvent.setup()
-    const blocks = [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')]
+    const blocks = [makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })]
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -1741,7 +1817,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
 
   it('aria-keyshortcuts are advertised on the batch action buttons', async () => {
     const user = userEvent.setup()
-    const block = makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')
+    const block = makeBlock({ id: 'B1', content: 'item 1', deleted_at: '2025-01-15T00:00:00Z' })
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
@@ -1768,7 +1844,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
   it('large batch restore (>5) opens a confirmation dialog before restoring', async () => {
     const user = userEvent.setup()
     const blocks = Array.from({ length: 6 }, (_, i) =>
-      makeBlock(`B${i}`, `item ${i}`, '2025-01-15T00:00:00Z'),
+      makeBlock({ id: `B${i}`, content: `item ${i}`, deleted_at: '2025-01-15T00:00:00Z' }),
     )
     let restoreCalls = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -1808,7 +1884,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
   it('small batch restore (<=5) skips the confirmation dialog', async () => {
     const user = userEvent.setup()
     const blocks = Array.from({ length: 3 }, (_, i) =>
-      makeBlock(`B${i}`, `item ${i}`, '2025-01-15T00:00:00Z'),
+      makeBlock({ id: `B${i}`, content: `item ${i}`, deleted_at: '2025-01-15T00:00:00Z' }),
     )
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
@@ -1842,7 +1918,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
   it('cancelling the large-batch restore dialog leaves selection untouched', async () => {
     const user = userEvent.setup()
     const blocks = Array.from({ length: 6 }, (_, i) =>
-      makeBlock(`B${i}`, `item ${i}`, '2025-01-15T00:00:00Z'),
+      makeBlock({ id: `B${i}`, content: `item ${i}`, deleted_at: '2025-01-15T00:00:00Z' }),
     )
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
@@ -1875,7 +1951,9 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
 describe('TrashView UX-342 purge button tooltip', () => {
   it('purge button is wrapped in a Tooltip and shows the localised content on hover', async () => {
     const user = userEvent.setup()
-    mockListAndResolve([makeBlock('B1', 'deleted item', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'deleted item', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -1888,7 +1966,9 @@ describe('TrashView UX-342 purge button tooltip', () => {
 
   it('purge tooltip mentions "cannot be undone"', async () => {
     const user = userEvent.setup()
-    mockListAndResolve([makeBlock('B1', 'deleted item', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'deleted item', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 
@@ -1901,7 +1981,9 @@ describe('TrashView UX-342 purge button tooltip', () => {
 
   it("restore button's existing tooltip is unchanged", async () => {
     const user = userEvent.setup()
-    mockListAndResolve([makeBlock('B1', 'deleted item', '2025-01-15T00:00:00Z')])
+    mockListAndResolve([
+      makeBlock({ id: 'B1', content: 'deleted item', deleted_at: '2025-01-15T00:00:00Z' }),
+    ])
 
     render(<TrashView />)
 

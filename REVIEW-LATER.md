@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 615 — Batch QUICK-WINS-MIX-1 closed: TEST-16, TEST-28, MAINT-181, MAINT-190; L-137 filed as MAINT-190 follow-up)
+> **Last updated:** 2026-05-02 (Session 616 — Batch BACKEND-TEST-2 closed: TEST-27, TEST-30, TEST-31, TEST-FE-6)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-121 open items in the summary table; 156 detail entries (FE-* sub-tables don't appear in the summary).
+117 open items in the summary table; 152 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -52,15 +52,11 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-18 | TEST | Backlink non-grouped tests use `setup_backlinks()` orphan sources (no parent_id), so they never exercise self-reference filtering; sort tests don't assert `total_count`/`filtered_count` | S | — |
 | TEST-23 | TEST | 6 copy-pasted `*_paginates_with_cursor` tests in `pagination/tests.rs` (lines 720, 877, 1550, 1702, 1911, 2032) — identical 3-page-loop pattern | S | — |
 | TEST-25 | TEST | ~12 near-identical FEAT-3p4 space-scoping tests in `agenda_cmd_tests.rs` (lines 2268–2812) — extract `seed_two_spaces` helper | S | — |
-| TEST-27 | TEST | `count_set_property_ops_for_key` helper uses `LIKE '%"key":"X"%'` on JSON payloads — fragile to JSON whitespace changes | S | — |
-| TEST-30 | TEST | `now_rfc3339()` collision risk in `undo_redo_tests.rs` lines 1187, 1311, 1525 — siblings have sleep guards but these don't | S | — |
-| TEST-31 | TEST | MCP pagination roundtrip test asserts `!ids1.contains(id)` for no overlap but never sums lengths across pages to verify nothing is lost | S | — |
 | TEST-FE-1 | TEST | Bare `setTimeout` waits in tests (24 occurrences across 13 files; the dangerous subset is bare 50ms waits before `not.toHaveBeenCalledWith` negatives — `BlockTree.test.tsx`, `TagFilterPanel.test.tsx`, `useBlockTreeEventListeners.test.ts`, `GraphView.test.tsx`) — AGENTS.md explicitly forbids `await sleep(n)`; replace with `waitFor` or fake timers | M | — |
 | TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `BlockContextMenu` (19), `FormattingToolbar` (16), `useBlockKeyboardHandlers` (10), `GraphView` (8), `BlockPropertyEditor` (7), `HeadingLevelSelector` (7), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently | M | — |
 | TEST-FE-3 | TEST | `makeHistoryEntry` helper duplicated across `HistoryPanel.test.tsx` and `HistoryView.test.tsx` — move to `src/__tests__/fixtures/index.ts` | S | — |
 | TEST-FE-4 | TEST | `ViewDispatcher.test.tsx` Suspense-fallback test calls `vi.resetModules()` + `vi.doMock()` then unmocks at end of bare test body — assertion failure mid-test would leak module mocks to subsequent tests in the same worker | S | — |
 | TEST-FE-5 | TEST | `useBatchCounts` test fixture sets `displayDate === dateStr`, so a regression that keys `agendaCounts` by `displayDate` instead of `dateStr` would silently pass | S | — |
-| TEST-FE-6 | TEST | Local positional `makeBlock(id, content, ...)` helpers in `PageOutline`, `PageMetadataBar`, `PageEditor`, `TrashView` test files duplicate the shared `Partial<T>`-override factory — converge | S | — |
 | TEST-FE-7 | TEST | `AgendaResults.test.tsx` hardcodes `'2020-01-01'` as overdue marker (lines 320, 332) when file already imports `subDays` and uses dynamic `new Date()` for "today" | S | — |
 | TEST-FE-8 | TEST | `PairingDialog.test.tsx` uses `document.querySelector('.pairing-error')` for portal content (lines 314-318, 542-546, 850-854) — couples test to CSS class name; accessible queries preferred | S | — |
 | UX-300 | UX | Code-block language selector lacks search/filter | S | — |
@@ -556,33 +552,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Impact:** Low — reduces a copy-paste surface that grows with each new space-aware list query.
 - **Status:** Open.
 
-### TEST-27 — `count_set_property_ops_for_key` uses LIKE on JSON
-- **Domain:** Spaces tests
-- **Location:** `src-tauri/src/spaces/tests.rs:931-942`
-- **What:** Helper uses `format!("%\"key\":\"{}\"%", key)` LIKE pattern against JSON payloads. Fragile to whitespace or key-order changes in the JSON serializer (`"key" : "value"` vs `"key":"value"` would both currently match by accident, but a future formatter change could break the pattern).
-- **Cost:** S — parse JSON in a SQL function or in Rust after `fetch_all` (or use SQLite's `json_extract`).
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### TEST-30 — One residual `now_rfc3339()` collision risk in `undo_redo_tests.rs:1525`
-- **Domain:** Test infrastructure
-- **Location:** `src-tauri/src/commands/tests/undo_redo_tests.rs:1525` (next call at L1558, no sleep between)
-- **What:** Originally flagged 3 sites (1187, 1311, 1525); 2 of those already have 2ms sleep guards (line 1224 between L1187 and L1227; line 1348 between L1311 and L1352). Only line 1525 → 1558 has consecutive `now_rfc3339()` without a guard. Consider folding into TEST-24 as a 14th site rather than maintaining as standalone.
-- **Cost:** Trivial — replace with explicit `append_local_op_at` (preferred) or add the same sleep guard.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### TEST-31 — MCP pagination roundtrip doesn't sum lengths across pages
-- **Domain:** MCP tests
-- **Location:** `src-tauri/src/mcp/tools_ro/tests.rs:1007-1012`
-- **What:** Test asserts `!ids1.contains(id)` for no overlap between pages but doesn't sum `ids1.len() + ids2.len() + ids3.len()` and assert it equals the original total. A pagination bug that drops items would still pass.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ## TEST-FE — Frontend test improvements
 
 Items in this section are test-quality improvements identified during a thorough frontend test review (8 parallel review subagents covering 366 test files under `src/**/__tests__/`, 3 verification subagents to filter hallucinations, plus direct grep + spot-reads on cross-cutting patterns). All items below are verified — known false positives (e.g., axe audits the reviewer thought were missing because they only read the first 471 lines of a longer file) are not listed.
@@ -627,20 +596,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Cost:** M — audit the listed files (excluding BlockContextMenu, which already complies) and tighten high-value cases to `toHaveBeenCalledWith(expect.objectContaining({...}))`. The remaining ~50 files are a separate pass.
 - **Risk:** Low — additive specificity in assertions.
 - **Impact:** Medium-high in the action-handler / keyboard-shortcut files.
-- **Status:** Open.
-
-### TEST-FE-6 — Local positional `makeBlock` helpers duplicate the shared `Partial<T>`-override factory
-- **Domain:** Frontend test fixtures
-- **Location:**
-  - `src/components/__tests__/PageOutline.test.tsx:34-51`
-  - `src/components/__tests__/PageMetadataBar.test.tsx:21-35`
-  - `src/components/__tests__/PageEditor.test.tsx:115-130`
-  - `src/components/__tests__/TrashView.test.tsx:51-70`
-- **What:** Four files define their own positional `makeBlock(id, content, ...)` helper that fully reconstructs a `FlatBlock`/`BlockRow` rather than spreading on top of the shared factory. They don't add component-specific fields — they're just positional-arg sugar over the shared `makeBlock`.
-- **Why it matters:** AGENTS.md line 225 endorses the shared `Partial<T>`-override pattern. Picking one approach (positional-arg shared helper OR named-override shared helper) reduces drift in defaults — a future field added to `FlatBlock` must currently be added to four local copies, and divergence is invisible at the call site.
-- **Cost:** Small — either inline `makeBlock({ id, content, parent_id: 'PAGE_1' })` at each call site, or add positional-arg variants to `fixtures/index.ts`.
-- **Risk:** Low.
-- **Impact:** Low — consistency and reduced drift surface.
 - **Status:** Open.
 
 ### TEST-FE-8 — `PairingDialog.test.tsx` uses `document.querySelector('.pairing-error')` for portal content

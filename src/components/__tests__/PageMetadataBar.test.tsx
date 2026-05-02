@@ -15,27 +15,8 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
-import type { FlatBlock } from '../../lib/tree-utils'
+import { makeBlock } from '../../__tests__/fixtures'
 import { countWords, PageMetadataBar } from '../PageMetadataBar'
-
-function makeBlock(id: string, content: string | null, parentId: string | null = null): FlatBlock {
-  return {
-    id,
-    block_type: 'content',
-    content,
-    parent_id: parentId,
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-    depth: 0,
-  }
-}
 
 // A valid ULID encoding 2026-04-09 timestamp.
 // ULID timestamp = first 10 chars of Crockford base32.
@@ -51,7 +32,10 @@ const TEST_ULID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
 describe('PageMetadataBar', () => {
   describe('countWords', () => {
     it('counts words across multiple blocks', () => {
-      const blocks = [makeBlock('1', 'hello world'), makeBlock('2', 'foo bar baz')]
+      const blocks = [
+        makeBlock({ id: '1', content: 'hello world' }),
+        makeBlock({ id: '2', content: 'foo bar baz' }),
+      ]
       expect(countWords(blocks)).toBe(5)
     })
 
@@ -60,17 +44,20 @@ describe('PageMetadataBar', () => {
     })
 
     it('handles blocks with null content', () => {
-      const blocks = [makeBlock('1', null), makeBlock('2', 'one two')]
+      const blocks = [
+        makeBlock({ id: '1', content: null }),
+        makeBlock({ id: '2', content: 'one two' }),
+      ]
       expect(countWords(blocks)).toBe(2)
     })
 
     it('handles blocks with empty string content', () => {
-      const blocks = [makeBlock('1', ''), makeBlock('2', '  ')]
+      const blocks = [makeBlock({ id: '1', content: '' }), makeBlock({ id: '2', content: '  ' })]
       expect(countWords(blocks)).toBe(0)
     })
 
     it('handles blocks with extra whitespace', () => {
-      const blocks = [makeBlock('1', '  hello   world  ')]
+      const blocks = [makeBlock({ id: '1', content: '  hello   world  ' })]
       expect(countWords(blocks)).toBe(2)
     })
   })
@@ -87,7 +74,10 @@ describe('PageMetadataBar', () => {
 
     it('expands on click and shows metadata', async () => {
       const user = userEvent.setup()
-      const blocks = [makeBlock('1', 'hello world'), makeBlock('2', 'foo bar baz')]
+      const blocks = [
+        makeBlock({ id: '1', content: 'hello world' }),
+        makeBlock({ id: '2', content: 'foo bar baz' }),
+      ]
 
       render(<PageMetadataBar blocks={blocks} pageId={TEST_ULID} />)
 
@@ -101,7 +91,10 @@ describe('PageMetadataBar', () => {
 
     it('renders correct word count when expanded', async () => {
       const user = userEvent.setup()
-      const blocks = [makeBlock('1', 'one two three'), makeBlock('2', 'four five')]
+      const blocks = [
+        makeBlock({ id: '1', content: 'one two three' }),
+        makeBlock({ id: '2', content: 'four five' }),
+      ]
 
       render(<PageMetadataBar blocks={blocks} pageId={TEST_ULID} />)
 
@@ -113,7 +106,7 @@ describe('PageMetadataBar', () => {
 
     it('renders singular word count', async () => {
       const user = userEvent.setup()
-      const blocks = [makeBlock('1', 'hello')]
+      const blocks = [makeBlock({ id: '1', content: 'hello' })]
 
       render(<PageMetadataBar blocks={blocks} pageId={TEST_ULID} />)
 
@@ -125,7 +118,11 @@ describe('PageMetadataBar', () => {
 
     it('renders correct block count when expanded', async () => {
       const user = userEvent.setup()
-      const blocks = [makeBlock('1', 'a'), makeBlock('2', 'b'), makeBlock('3', 'c')]
+      const blocks = [
+        makeBlock({ id: '1', content: 'a' }),
+        makeBlock({ id: '2', content: 'b' }),
+        makeBlock({ id: '3', content: 'c' }),
+      ]
 
       render(<PageMetadataBar blocks={blocks} pageId={TEST_ULID} />)
 
@@ -137,7 +134,7 @@ describe('PageMetadataBar', () => {
 
     it('renders singular block count', async () => {
       const user = userEvent.setup()
-      const blocks = [makeBlock('1', 'hello')]
+      const blocks = [makeBlock({ id: '1', content: 'hello' })]
 
       render(<PageMetadataBar blocks={blocks} pageId={TEST_ULID} />)
 
@@ -152,7 +149,9 @@ describe('PageMetadataBar', () => {
     it('renders created date from ULID', async () => {
       const user = userEvent.setup()
 
-      render(<PageMetadataBar blocks={[makeBlock('1', 'hi')]} pageId={TEST_ULID} />)
+      render(
+        <PageMetadataBar blocks={[makeBlock({ id: '1', content: 'hi' })]} pageId={TEST_ULID} />,
+      )
 
       await user.click(screen.getByRole('button', { name: /(expand|collapse) info/i }))
 
@@ -178,7 +177,11 @@ describe('PageMetadataBar', () => {
 
     it('handles blocks with null/empty content when expanded', async () => {
       const user = userEvent.setup()
-      const blocks = [makeBlock('1', null), makeBlock('2', ''), makeBlock('3', 'hello')]
+      const blocks = [
+        makeBlock({ id: '1', content: null }),
+        makeBlock({ id: '2', content: '' }),
+        makeBlock({ id: '3', content: 'hello' }),
+      ]
 
       render(<PageMetadataBar blocks={blocks} pageId={TEST_ULID} />)
 
@@ -192,7 +195,7 @@ describe('PageMetadataBar', () => {
     it('does not render created date for invalid ULID', async () => {
       const user = userEvent.setup()
 
-      render(<PageMetadataBar blocks={[makeBlock('1', 'hi')]} pageId="short" />)
+      render(<PageMetadataBar blocks={[makeBlock({ id: '1', content: 'hi' })]} pageId="short" />)
 
       await user.click(screen.getByRole('button', { name: /(expand|collapse) info/i }))
 
@@ -228,7 +231,7 @@ describe('PageMetadataBar', () => {
 
     it('has no a11y violations when expanded', async () => {
       const user = userEvent.setup()
-      const blocks = [makeBlock('1', 'hello world')]
+      const blocks = [makeBlock({ id: '1', content: 'hello world' })]
       const { container } = render(<PageMetadataBar blocks={blocks} pageId={TEST_ULID} />)
 
       await user.click(screen.getByRole('button', { name: /(expand|collapse) info/i }))

@@ -1031,6 +1031,50 @@ async fn list_pages_cursor_pagination_roundtrip() {
             "page2 must not repeat page1 items; found overlap on {id}",
         );
     }
+
+    // TEST-31: previous test asserted page1/page2 didn't overlap but never
+    // walked to the end of pagination — a bug that DROPPED an item between
+    // pages would still pass. Page through to page3 (the 5th item, with
+    // `has_more = false`) and assert the union covers the full input set.
+    assert_eq!(
+        page2["has_more"], true,
+        "page2 must still flag more pages — 5 items total, 4 seen so far"
+    );
+    let cursor2 = page2["next_cursor"]
+        .as_str()
+        .expect("page2 cursor")
+        .to_string();
+
+    let page3 = tools
+        .call_tool(
+            "list_pages",
+            json!({"limit": 2, "cursor": cursor2}),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    let items3 = page3["items"].as_array().unwrap();
+    assert_eq!(
+        items3.len(),
+        1,
+        "page3 must contain the final item (5 total / page-size 2)"
+    );
+    assert_eq!(page3["has_more"], false, "page3 must NOT flag more pages");
+    let ids3: Vec<&str> = items3.iter().map(|i| i["id"].as_str().unwrap()).collect();
+    for id in &ids3 {
+        assert!(
+            !ids1.contains(id) && !ids2.contains(id),
+            "page3 must not repeat page1 or page2 items; found overlap on {id}",
+        );
+    }
+
+    // The full union must equal the original input set: 5 distinct pages.
+    let total = ids1.len() + ids2.len() + ids3.len();
+    assert_eq!(
+        total, 5,
+        "pagination union must equal original input count of 5; got {total} \
+         (a missing item between pages would silently slip through the per-page no-overlap check)",
+    );
 }
 
 // -------------------------------------------------------------------
