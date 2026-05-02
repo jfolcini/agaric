@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 602 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 884+ items.
+**Sessions:** 1 – 603 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 889+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 603 (2026-05-02)** — Batch MAINT-FIXUPS-1 closed: MAINT-182, MAINT-186, MAINT-187, MAINT-188, MAINT-191 — five trivial frontend cleanups (i18n leak, explicit touch-target classname, `INTERNAL_PROPERTY_KEYS` shared const, breadcrumb `useMemo`, IPC-bridge clarification comment). 5 build + 5 review subagents.
 - **Session 602 (2026-05-02)** — Batch BACKEND-CLEANUP-1 closed: L-56, L-57, L-58, L-59, L-60 — five trivial Rust commands cleanups (release-build size guard, `unreachable!()` → structured error, mutex-poison helper extraction, shared `text_utils::truncate_at_char_boundary`, `find_missing_attachments` NotFound-vs-other-IO split). 5 build + 5 review subagents. New follow-up L-62 filed for the mirror `unreachable!()` in `delete_property_in_tx` flagged by the L-57 reviewer.
 - **Session 601 (2026-05-02)** — Batch FE-LOGGER-1 closed: FE-H-8, FE-H-9, FE-H-10, FE-H-11, FE-H-12, FE-H-13 — six silent-catch logger backfills (AGENTS' "no silent catch" rule). 6 build + 6 review subagents (max parallelism per PROMPT.md); FE-H-13 source change broke a pre-existing `console.warn` regression test → fixed orchestrator-direct by mocking `'../logger'` at the integration test layer. New follow-up FE-H-14 filed for the second bare `catch {}` in PdfViewerDialog cleanup function (out-of-scope for FE-H-11).
 - **Session 600 (2026-05-02)** — Batch UX-FB-1 closed: UX-303, UX-329, UX-341, UX-360, MAINT-179 — five toast-feedback additions for previously-silent operations (recovery, settings change, destructive confirm, rename, GCal config). 5 build + 5 review subagents; reviewer-caught pagination caveat on UX-341 fixed orchestrator-direct (paginated-copy variant + new test). After this commit, no ready-made batches remain pre-staged.
@@ -33,6 +34,58 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 603 — Batch MAINT-FIXUPS-1: trivial frontend cleanups (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 5 build + 5 technical review |
+| **Items closed** | MAINT-182, MAINT-186, MAINT-187, MAINT-188, MAINT-191 |
+| **Items added** | — |
+| **Tests added** | +6 frontend (1 useBlockKeyboardHandlers update + 1 SuggestionList + 3 block-utils + a11y audit) / +0 backend |
+| **Files touched** | 9 (5 source + 4 test + i18n key + REVIEW-LATER cleanup) |
+
+**Summary:** Closed all 5 items in a fresh "trivial MAINT" frontend batch. Each is a small cleanup — i18n leak in a discard-toast (MAINT-182), explicit `min-h-[44px]` classname matching UX.md spec verbatim (MAINT-186), `INTERNAL_PROPERTY_KEYS` shared `ReadonlySet<string>` for the 5-key internal-property filter (MAINT-187), breadcrumb-segments `useMemo` replacing an inline IIFE (MAINT-188), and an IPC-bridge clarification comment in PairingDialog cleanup (MAINT-191). All non-overlapping files; all reviews PASS without follow-ups.
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 161 → 156 (−5).
+- **Detail entries:** 208 → 203 (−5).
+- **Previously-resolved counter:** 884+ → 889+ across 602 → 603 sessions.
+
+**Per-item verification (from review subagents):**
+- **MAINT-182** (`useBlockKeyboardHandlers.ts:425` + `i18n/block.ts`): `toast('Changes discarded', { duration: 2000 })` → `toast(t('blockTree.changesDiscarded'), { duration: 2000 })`. New i18n key sits next to `blockTree.*` siblings. `t` was already a hook param (line 78); added to `useCallback` deps array on line 441. Existing test assertion updated (not duplicated) to expect the localized key. 54/54 file tests pass. Confirmed: only 1 `toast()` call in this file; no other hardcoded English remains.
+- **MAINT-186** (`SuggestionList.tsx:157`): added explicit `[@media(pointer:coarse)]:min-h-[44px]` alongside the existing `touch-target` utility class — belt-and-suspenders matching UX.md "Touch Target Sizing" spec verbatim while preserving the utility class for any other styling it provides. New test asserts BOTH classes are on every `role="option"` element + axe a11y audit. 39/39 file tests pass.
+- **MAINT-187** (NEW `INTERNAL_PROPERTY_KEYS` in `block-utils.ts` + `SortableBlock.tsx:271-278`): exported `ReadonlySet<string>` containing exactly the 5 internal keys (`repeat`, `created_at`, `completed_at`, `repeat-seq`, `repeat-origin`). JSDoc explicitly distinguishes it from `NON_DELETABLE_PROPERTIES` (separate, broader 11-member set in `property-save-utils.ts` mirroring backend `is_builtin_property_key`). `SortableBlock.tsx` filter callback simplified to `!INTERNAL_PROPERTY_KEYS.has(p.key)`. 3 new tests assert size=5, membership of `'repeat'`, non-membership of `'todo_state'` (which lives in `NON_DELETABLE_PROPERTIES`). 11/11 block-utils + 188/188 SortableBlock tests pass.
+- **MAINT-188** (`PageHeader.tsx`): added `useMemo` to React imports (line 10), built `breadcrumbItems = useMemo<BreadcrumbCrumb[]>(() => { ... }, [title, navigateToNamespace])` near the related `navigateToNamespace` callback (lines 76-87), JSX now reads `{breadcrumbItems.length > 0 && <Breadcrumb items={breadcrumbItems} ... />}` (lines 538-544). The conditional render preserves the original `title.includes('/')` check via the memo returning `[]` for non-namespaced titles. Output shape (`{ id, label, onSelect? }`) is byte-identical to the previous IIFE. 87/87 file tests pass — all 4 breadcrumb-specific tests + a11y audit unchanged.
+- **MAINT-191** (`PairingDialog.tsx:147-167`): expanded the one-line cleanup-effect comment from `// Cancel any in-progress pairing when the dialog closes or unmounts` to a 3-line clarification distinguishing the IPC bridge boundary (the in-flight payload may already have crossed) from the server-side session state (which is what's actually invalidated). Comment-only change — `executeCancelPairingCleanup()` call and dependency array byte-identical. 43/43 file tests pass.
+
+**Files touched (this session):**
+- `src/hooks/useBlockKeyboardHandlers.ts` (+2 / -1)
+- `src/lib/i18n/block.ts` (+1)
+- `src/editor/SuggestionList.tsx` (+1 / -1)
+- `src/lib/block-utils.ts` (+22 — new const + JSDoc)
+- `src/components/SortableBlock.tsx` (+1 / -1 — import + filter predicate)
+- `src/components/PageHeader.tsx` (+13 / -8 — useMemo + JSX simplification)
+- `src/components/PairingDialog.tsx` (+3 / -1 — comment only)
+- `src/hooks/__tests__/useBlockKeyboardHandlers.test.ts` (+1 / -1 — assertion update)
+- `src/editor/__tests__/SuggestionList.test.tsx` (+18)
+- `src/lib/__tests__/block-utils.test.ts` (+18)
+- `REVIEW-LATER.md` (-58 net — 5 detail blocks + 5 summary rows; count + Last-updated header refreshed)
+- `SESSION-LOG.md` (this entry + Recent milestones bump)
+
+**Verification:**
+- `npx vitest run` on all 6 touched test files together — **422/422 pass** (54 useBlockKeyboardHandlers + 39 SuggestionList + 11 block-utils + 188 SortableBlock + 87 PageHeader + 43 PairingDialog).
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **Cleanest batch in the recent series.** All 5 reviewers returned PASS without flagging any follow-ups. No mid-session orchestrator-direct fixes were needed. No subagent attempted to edit `REVIEW-LATER.md`.
+- **`INTERNAL_PROPERTY_KEYS` is a building block for future filter sites.** Future "internal property" additions (e.g., `updated_at`, future `repeat-*` keys) can be added in one place. The JSDoc explicitly cross-references the broader, distinct `NON_DELETABLE_PROPERTIES` so future contributors don't conflate the two sets.
+- **MAINT-186 chose the codebase fix over the doc fix.** REVIEW-LATER offered "either make explicit or update UX.md." The orchestrator picked the explicit-classname route so the codebase matches the documented spec verbatim; the `touch-target` utility stays as belt-and-suspenders.
+
+**Commit plan:** single commit. Not pushed.
 
 ---
 

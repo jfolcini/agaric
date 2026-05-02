@@ -154,7 +154,7 @@ export const SuggestionList = ({ ref, items, command, label }: SuggestionListPro
       key={item.id}
       id={`suggestion-${item.id}`}
       className={cn(
-        'suggestion-item flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 touch-target focus-outline',
+        'suggestion-item flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 [@media(pointer:coarse)]:min-h-[44px] touch-target focus-outline',
         index === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
         item.isCreate && 'border-t border-border bg-accent/5',
       )}

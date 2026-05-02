@@ -789,7 +789,7 @@ describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
 
     expect(params.rovingEditor.unmount).toHaveBeenCalled()
     expect(params.setFocused).toHaveBeenCalledWith(null)
-    expect(vi.mocked(toast)).toHaveBeenCalledWith('Changes discarded', { duration: 2000 })
+    expect(vi.mocked(toast)).toHaveBeenCalledWith('blockTree.changesDiscarded', { duration: 2000 })
   })
 
   it('does not show toast when no changes', () => {

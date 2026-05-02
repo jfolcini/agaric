@@ -165,7 +165,9 @@ export function PairingDialog({
 
     return () => {
       cancelled = true
-      // Cancel any in-progress pairing when the dialog closes or unmounts
+      // Cancel the pairing session on the backend when the dialog closes or
+      // unmounts. The in-flight IPC payload itself may already have crossed
+      // the bridge; this only invalidates the server-side session state.
       void executeCancelPairingCleanup()
     }
   }, [open, init, executeCancelPairingCleanup])
