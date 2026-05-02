@@ -44,6 +44,7 @@ use tokio::sync::{mpsc, Notify};
 
 use crate::error::{AppError, GcalErrorKind};
 use crate::pagination::ProjectedAgendaEntry;
+use crate::spaces::bootstrap::SPACE_PERSONAL_ULID;
 
 use super::api::{EventPatch, GcalApi};
 use super::digest::{self, DigestResult, Event, PrivacyMode};
@@ -499,6 +500,11 @@ pub async fn run_cycle(
                 return Ok(CycleOutcome::HardFailure(GcalErrorKind::Forbidden(msg)));
             }
             Err(DateFailure::Skipped(reason)) => {
+                // MAINT-169: surface the per-date transient failure on
+                // the Settings UI's `last_error` channel before the
+                // tracing log absorbs it.  No-op when the per-space
+                // row is absent (fresh install with no migration yet).
+                models::set_space_config_last_error(pool, SPACE_PERSONAL_ULID, &reason).await?;
                 tracing::warn!(
                     target: "gcal",
                     date = %date,
@@ -1877,6 +1883,120 @@ mod tests {
             .unwrap()
             .expect("date B must have a map row");
         assert_eq!(map_b.gcal_event_id, "evt_DATE_B");
+    }
+
+    // ── MAINT-169 — Skipped per-date failures persist last_error ───
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn skipped_date_persists_reason_to_gcal_space_config_last_error() {
+        // MAINT-169: a `DateFailure::Skipped` (here: 503 ServerError)
+        // must update `gcal_space_config.last_error` so the Settings
+        // tab reflects the transient failure instead of staying NULL.
+        let (pool, _dir) = test_pool().await;
+
+        // Seed the per-space row so the focused setter has something
+        // to UPDATE (mirrors a device that has connected at least once
+        // and had its row populated by the FEAT-3p9 M1 migration).
+        let seed = models::default_space_config(SPACE_PERSONAL_ULID, t0());
+        models::upsert_space_config(&pool, &seed).await.unwrap();
+        let before = models::get_space_config(&pool, SPACE_PERSONAL_ULID)
+            .await
+            .unwrap()
+            .expect("seed row must exist");
+        assert_eq!(
+            before.last_error, "",
+            "seed row starts with empty last_error"
+        );
+
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        // Single dirty date — its insert returns 503, which classifies
+        // as `DateFailure::Skipped("server_error: HTTP 503")`.
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+
+        seed_block_due_on(&pool, "Transient", "2026-04-22").await;
+        let mut dirty = DirtySet::new();
+        dirty.insert(fixed_date());
+
+        // Sleep so the seed row's `updated_at` is strictly older than
+        // the wall-clock now() the setter will stamp.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+        let outcome = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
+        assert_eq!(
+            outcome,
+            CycleOutcome::Ok,
+            "transient skip must not surface as a hard cycle failure"
+        );
+
+        let after = models::get_space_config(&pool, SPACE_PERSONAL_ULID)
+            .await
+            .unwrap()
+            .expect("Personal-space row must still exist");
+        assert_eq!(
+            after.last_error, "server_error: HTTP 503",
+            "Skipped reason must be persisted verbatim to last_error"
+        );
+        assert_ne!(
+            after.updated_at, before.updated_at,
+            "set_space_config_last_error must bump updated_at"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn skipped_date_with_no_per_space_row_does_not_fail_cycle() {
+        // MAINT-169 contract: the focused setter is a no-op when the
+        // per-space row is absent.  A fresh-install device that never
+        // ran the FEAT-3p9 M1 migration must still complete the cycle
+        // cleanly — the Skipped arm must not error out on the missing
+        // row, and no row must be conjured into existence as a side
+        // effect.
+        let (pool, _dir) = test_pool().await;
+
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+
+        seed_block_due_on(&pool, "Transient", "2026-04-22").await;
+        let mut dirty = DirtySet::new();
+        dirty.insert(fixed_date());
+
+        let outcome = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
+        assert_eq!(outcome, CycleOutcome::Ok);
+
+        // No row was conjured into existence by the no-op UPDATE.
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM gcal_space_config")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count.0, 0,
+            "Skipped arm must not insert a per-space row when none exists"
+        );
     }
 
     // ── Midnight rollover (window advances, old dates untouched) ───

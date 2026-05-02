@@ -463,6 +463,42 @@ pub async fn upsert_space_config(
     Ok(())
 }
 
+/// MAINT-169 — overwrite just the `last_error` column (and bump
+/// `updated_at`) on the per-space config row.
+///
+/// Issues a single `UPDATE gcal_space_config SET last_error = ?,
+/// updated_at = ? WHERE space_id = ?` and returns `Ok(())` regardless
+/// of how many rows were affected. **No-op if the row is absent —
+/// caller is responsible for ensuring the per-space row exists if
+/// persistence is required.** This deliberately does NOT upsert: the
+/// per-space row is created on connect (FEAT-3p9 M1 migration) and a
+/// transient skip on a fresh-install device that never connected does
+/// not warrant materialising a row of defaults.
+///
+/// Used by [`super::connector`]'s `DateFailure::Skipped` arm so the
+/// Settings-tab `last_error` surface reflects transient per-date
+/// failures (rate-limit / 5xx / transport) instead of staying NULL
+/// while the tracing log fills up with warnings.
+///
+/// # Errors
+/// [`AppError::Database`] on SQL errors.
+pub async fn set_space_config_last_error(
+    pool: &SqlitePool,
+    space_id: &str,
+    reason: &str,
+) -> Result<(), AppError> {
+    let updated_at = now_rfc3339();
+    sqlx::query!(
+        "UPDATE gcal_space_config SET last_error = ?, updated_at = ? WHERE space_id = ?",
+        reason,
+        updated_at,
+        space_id,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Delete the per-space config row, silent on a missing row.
 ///
 /// # Errors
@@ -1107,6 +1143,77 @@ mod tests {
         assert_eq!(got.push_lease_expires_at, "2026-04-22T11:31:00Z");
         // created_at is preserved across upsert.
         assert_eq!(got.created_at, cfg.created_at);
+    }
+
+    #[tokio::test]
+    async fn set_space_config_last_error_overwrites_column_and_bumps_updated_at() {
+        // MAINT-169: the focused setter must persist the reason string
+        // to `last_error` and bump `updated_at`, leaving the rest of
+        // the row alone.
+        let (pool, _dir) = test_pool().await;
+
+        // Seed a Personal-space row with `last_error: ""` and a
+        // sentinel `updated_at` we can compare against.
+        let cfg = default_space_config(SPACE_A, fixed_now());
+        upsert_space_config(&pool, &cfg).await.unwrap();
+        let before = get_space_config(&pool, SPACE_A).await.unwrap().unwrap();
+        assert_eq!(
+            before.last_error, "",
+            "seed row must start with empty last_error"
+        );
+
+        // `now_rfc3339()` is millisecond-resolution; without this nap
+        // the upsert and the setter could legitimately produce the
+        // same timestamp string and the `assert_ne!` below would
+        // false-positive.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+        set_space_config_last_error(&pool, SPACE_A, "rate-limited")
+            .await
+            .unwrap();
+
+        let after = get_space_config(&pool, SPACE_A).await.unwrap().unwrap();
+        assert_eq!(
+            after.last_error, "rate-limited",
+            "last_error must be overwritten"
+        );
+        assert_ne!(
+            after.updated_at, before.updated_at,
+            "updated_at must advance after set_space_config_last_error"
+        );
+        // Other columns must be untouched.
+        assert_eq!(after.account_email, before.account_email);
+        assert_eq!(after.calendar_id, before.calendar_id);
+        assert_eq!(after.window_days, before.window_days);
+        assert_eq!(after.privacy_mode, before.privacy_mode);
+        assert_eq!(after.last_push_at, before.last_push_at);
+        assert_eq!(after.push_lease_device_id, before.push_lease_device_id);
+        assert_eq!(after.push_lease_expires_at, before.push_lease_expires_at);
+        assert_eq!(after.created_at, before.created_at);
+    }
+
+    #[tokio::test]
+    async fn set_space_config_last_error_is_noop_when_row_absent() {
+        // Contract: caller is responsible for ensuring the per-space
+        // row exists.  A fresh-install device that never connected
+        // has no row — the UPDATE affects 0 rows and we still return
+        // Ok(()).  No row is inserted as a side effect.
+        let (pool, _dir) = test_pool().await;
+
+        set_space_config_last_error(&pool, SPACE_A, "rate-limited")
+            .await
+            .unwrap();
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM gcal_space_config")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count.0, 0,
+            "set_space_config_last_error must NOT insert a row when none exists"
+        );
+        let got = get_space_config(&pool, SPACE_A).await.unwrap();
+        assert_eq!(got, None, "no row must be visible after the no-op UPDATE");
     }
 
     #[tokio::test]

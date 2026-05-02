@@ -320,18 +320,22 @@ pub async fn eval_backlink_query_grouped(
 /// 2. Sanitize title for FTS5.
 /// 3. FTS5 query to find blocks mentioning the title, excluding blocks
 ///    that have a `block_links` row with `target_id = page_id`.
-/// 4. Apply `filters` (if any) to the FTS match set using the shared
+/// 4. Resolve root pages for the entire FTS match set (used both for
+///    the pre-filter `total_count` and the post-filter grouping step).
+/// 5. Capture `total_count` from the FTS match set after dropping
+///    orphans and self-references — mirrors
+///    `eval_backlink_query_grouped:128`.
+/// 6. Apply `filters` (if any) to the FTS match set using the shared
 ///    filter resolver — AND semantics at the top level.
-/// 5. Resolve root pages for all matching blocks.
-/// 6. Exclude blocks whose root page is the target page itself.
-/// 7. Apply `sort` (if any) across the filtered block IDs using the shared
+/// 7. Group by source page, sort groups alphabetically by `page_title`.
+/// 8. Apply cursor pagination on groups.
+/// 9. Apply `sort` (if any) across the filtered block IDs using the shared
 ///    sort helper. Defaults to `Created { Asc }` (ULID order).
-/// 8. Group by source page, sort groups alphabetically by `page_title`.
-/// 9. Apply cursor pagination on groups.
 /// 10. Fetch full `BlockRow` data for the paginated groups.
-/// 11. Return `GroupedBacklinkResponse`. `total_count` and `filtered_count`
-///     reflect the post-filter (self-reference-excluded) block count, per
-///     the `total_count` contract in AGENTS.md (backend pattern #4).
+/// 11. Return `GroupedBacklinkResponse`. `total_count` is the pre-filter,
+///     post-self-reference-exclusion count (parity with
+///     `eval_backlink_query_grouped:128`); `filtered_count` is the
+///     post-filter, post-grouping sum.
 pub async fn eval_unlinked_references(
     pool: &SqlitePool,
     page_id: &str,
@@ -466,7 +470,31 @@ pub async fn eval_unlinked_references(
         });
     }
 
-    // 4. Apply filters (AND semantics at top level) — mirrors
+    // 4. Resolve root pages for the entire FTS match set up front so we
+    //    can capture `total_count` *before* user filters apply. This
+    //    mirrors `eval_backlink_query_grouped` (see line 128 in this
+    //    file): both functions expose a pre-filter,
+    //    post-self-reference-exclusion `total_count`, so the UI badge
+    //    reports the same base regardless of the active filter
+    //    expression. The cost is bounded — `matching_ids` is capped at
+    //    `FTS_ROW_CAP` rows above. Reusing this `root_map` downstream
+    //    also avoids a second pass over the database during grouping.
+    let root_map = resolve_root_pages(pool, &matching_ids).await?;
+
+    // 5. Capture `total_count` = matches whose root page resolves and is
+    //    *not* the target page. Orphans (no resolvable root page) and
+    //    self-references (root page == target) are dropped here so the
+    //    count matches what the grouping step at #7 would produce on the
+    //    unfiltered set.
+    let total_count: usize = matching_ids
+        .iter()
+        .filter(|bid| match root_map.get(bid.as_str()) {
+            Some((root_page_id, _)) => root_page_id != page_id,
+            None => false,
+        })
+        .count();
+
+    // 6. Apply filters (AND semantics at top level) — mirrors
     //    eval_backlink_query_grouped step #2. Filters are resolved
     //    concurrently and intersected with the FTS match set.
     let filtered_matching: FxHashSet<String> = if let Some(ref filter_list) = filters {
@@ -494,16 +522,15 @@ pub async fn eval_unlinked_references(
             groups: vec![],
             next_cursor: None,
             has_more: false,
-            total_count: 0,
+            total_count,
             filtered_count: 0,
             truncated,
         });
     }
 
-    // 5. Resolve root pages for all filtered IDs
-    let root_map = resolve_root_pages(pool, &filtered_matching).await?;
-
-    // 6. Group blocks by root page, excluding blocks whose root page is the target page
+    // 7a. Group filtered blocks by root page, excluding blocks whose root
+    //     page is the target page. `root_map` covers `matching_ids ⊇
+    //     filtered_matching` from step #4, so no second resolve is needed.
     let mut page_groups: std::collections::HashMap<String, (Option<String>, Vec<String>)> =
         std::collections::HashMap::new();
     for block_id_item in &filtered_matching {
@@ -520,12 +547,14 @@ pub async fn eval_unlinked_references(
         }
     }
 
-    // `total_count` and `filtered_count` reflect the post-filter,
-    // post-self-reference-exclusion count (AGENTS.md "Backend Patterns" #4).
+    // `total_count` was captured pre-filter at step #5 (parity with
+    // `eval_backlink_query_grouped:128`). `filtered_count` is the
+    // post-filter, post-self-reference, post-grouping sum — i.e. the
+    // number of blocks the user actually sees after their filter
+    // expression has been applied.
     let filtered_count = page_groups.values().map(|(_, blocks)| blocks.len()).sum();
-    let total_count = filtered_count;
 
-    // 7. Sort groups alphabetically by page_title (None sorts last)
+    // 7b. Sort groups alphabetically by page_title (None sorts last)
     let mut group_list: Vec<(String, Option<String>, Vec<String>)> = page_groups
         .into_iter()
         .map(|(pid, (title, blocks))| (pid, title, blocks))
