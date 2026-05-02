@@ -303,6 +303,46 @@ describe('GoogleCalendarSettingsTab — window size', () => {
     })
   })
 
+  it('fires toast.success after a successful window-days save', async () => {
+    const user = userEvent.setup()
+    setupInvoke(makeStatus({ window_days: 30 }))
+    render(<GoogleCalendarSettingsTab />)
+
+    const input = (await screen.findByTestId('gcal-window-input')) as HTMLInputElement
+    await user.clear(input)
+    await user.type(input, '45')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalledWith('Window size updated')
+    })
+  })
+
+  it('blur-with-clamp fires both the clamp info toast and the success toast', async () => {
+    const user = userEvent.setup()
+    setupInvoke(makeStatus({ window_days: 30 }))
+    render(<GoogleCalendarSettingsTab />)
+
+    const input = (await screen.findByTestId('gcal-window-input')) as HTMLInputElement
+    await user.clear(input)
+    await user.type(input, '100')
+    await user.tab()
+
+    // Clamp info toast fires when typed value is out of range.
+    await waitFor(() => {
+      expect(mockedToastInfo).toHaveBeenCalledWith(
+        expect.stringMatching(/value was clamped|clamped to/i),
+      )
+    })
+    // The clamped value (90) is then persisted, which triggers onSuccess.
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_gcal_window_days', { n: 90 })
+    })
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalledWith('Window size updated')
+    })
+  })
+
   it('clamps below-minimum values to 7 on blur', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus({ window_days: 30 }))
@@ -358,6 +398,8 @@ describe('GoogleCalendarSettingsTab — window size', () => {
       )
     })
     expect(mockedToastError).toHaveBeenCalledWith('Failed to save window size')
+    // Regression guard: error path must not also fire the success toast.
+    expect(mockedToastSuccess).not.toHaveBeenCalledWith('Window size updated')
   })
 })
 

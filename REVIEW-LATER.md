@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 599 — Batch UX-DISC-1 closed: UX-301, UX-342, UX-356, UX-361, UX-396)
+> **Last updated:** 2026-05-02 (Session 600 — Batch UX-FB-1 closed: UX-303, UX-329, UX-341, UX-360, MAINT-179)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-166 open items in the summary table; 222 detail entries (FE-* sub-tables don't appear in the summary).
+161 open items in the summary table; 217 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -41,7 +41,6 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-176 | MAINT | Frontend — `use-roving-editor.ts:391` dispatches the suggestion-exit transaction without try/catch; `replaceDocSilently()` then runs against a possibly-corrupt plugin state if dispatch throws | S | — |
 | MAINT-177 | MAINT | Frontend — `BugReportDialog.handleSubmit` doesn't catch `openUrl()` failures; the dialog still closes with a success toast even when the GitHub issue page never opened. Add a copy-the-URL fallback on error | S | — |
 | MAINT-178 | MAINT | Frontend — `BootGate` error screen has only Retry; for unrecoverable failures (corrupted DB, permission denied, missing migration) the user is stuck. Add a diagnostics escape hatch (show `error.cause` chain, copy logs, launch bug-report) | S | — |
-| MAINT-179 | MAINT | Frontend — GCal Settings success-toast asymmetry: `set_gcal_window_days` shows error toast but no success toast, while `set_gcal_privacy_mode` does both. Standardise via the existing `useIpcCommand` `onSuccess` callback | S | — |
 | MAINT-180 | MAINT | Frontend — `SpaceManageDialog` — each `SpaceRowEditor` mount fires emptiness-probe + journal-template `listBlocks` IPCs with no dedup; reopening the dialog re-fetches the same data per row | S | — |
 | MAINT-181 | MAINT | Frontend — `PropertyRowEditor.handleOpenRefPicker` opens the picker even when `listBlocks` rejects; user sees an empty picker with no failure indicator. Move `setRefPickerOpen(true)` into `.then()` | S | — |
 | MAINT-182 | MAINT | Frontend i18n leak — `useBlockKeyboardHandlers.ts:425` toasts hardcoded English `'Changes discarded'`; only such occurrence in `src/hooks/` | S | — |
@@ -107,7 +106,6 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-FE-8 | TEST | `PairingDialog.test.tsx` uses `document.querySelector('.pairing-error')` for portal content (lines 314-318, 542-546, 850-854) — couples test to CSS class name; accessible queries preferred | S | — |
 | UX-300 | UX | Code-block language selector lacks search/filter | S | — |
 | UX-302 | UX | Multi-selection has no visible feedback on selected blocks | S | — |
-| UX-303 | UX | Draft autosave recovery on boot is silent | S | — |
 | UX-304 | UX | Swipe-to-delete (mobile) has no visual affordance or threshold cue | S | — |
 | UX-305 | UX | Drag handle on touch has 250 ms long-press requirement, no hint | S | — |
 | UX-306 | UX | Touch gutter "More actions" menu doesn't preview hidden actions | S | — |
@@ -131,7 +129,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-324 | UX | Due Panel filter pills (All / Due / Scheduled / Properties) are unlabelled | S | — |
 | UX-325 | UX | `F-37` "DONE warning when block has `blocked_by`" is documented but not implemented | S | — |
 | UX-327 | UX | Calendar dot fetch is silent (no skeleton / no busy state) | S | — |
-| UX-329 | UX | Week-start toggle (Monday/Sunday) silently re-renders affected views | S | — |
 | UX-330 | UX | Daily-view empty state doesn't mention `/` or templates | S | — |
 | UX-332 | UX | PageBrowser sort preference persists silently — no UI cue | S | — |
 | UX-333 | UX | "+" button on namespace folders hidden until hover on desktop | S | — |
@@ -141,7 +138,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-338 | UX | Search placeholder doesn't mention minimum character count | S | — |
 | UX-339 | UX | Property definition options editor has no JSON validation feedback | S | — |
 | UX-340 | UX | Tag filter loading state hidden when stale results present | S | — |
-| UX-341 | UX | "Empty trash" confirm dialog doesn't show item count | S | — |
 | UX-343 | UX | Trash batch-restore confirmation threshold (5) is undiscoverable | S | — |
 | UX-344 | UX | Property definition delete button hidden until hover (desktop) | S | — |
 | UX-345 | UX | History "Restore to here" vs "Revert selected" terminology overlaps | S | — |
@@ -156,7 +152,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-357 | UX | Graph node labels truncated at 20 chars without `<title>` tooltip | S | — |
 | UX-358 | UX | `PageHeaderMenu` mixes benign and destructive actions in one popover | S | — |
 | UX-359 | UX | Page title in rich-display mode (with chips) lacks edit affordance | S | — |
-| UX-360 | UX | Page rename on blur has no toast / visible confirmation | S | — |
 | UX-362 | UX | Block zoom has no visible "Exit zoom" affordance (Escape only) | S | — |
 | UX-363 | UX | `LinkedReferences` / `UnlinkedReferences` filter trigger has no visible label | S | — |
 | UX-364 | UX | `SpaceSwitcher` trigger reads as a label, not a switcher | S | — |
@@ -552,15 +547,6 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Cost:** S — add a "Show details / Copy diagnostics" secondary action that opens a textarea with `error.cause` chain + platform info, plus a "Open bug report" link.
 - **Risk:** Low.
 - **Impact:** Medium — turns an unrecoverable error from "please reinstall" into "here is enough information to file a bug".
-- **Status:** Open.
-
-### MAINT-179 — GCal Settings success-toast asymmetry between commands
-- **Domain:** Frontend (settings)
-- **Location:** `src/components/GoogleCalendarSettingsTab.tsx:211-224` (`set_gcal_window_days`); contrast with line 295-301 (`set_gcal_privacy_mode`).
-- **What:** `set_gcal_window_days` configures `useIpcCommand` with optimistic update + `onError` toast but no `onSuccess`. `set_gcal_privacy_mode` does both. Users typing a new value into the window-days input get no confirmation that it was accepted. The window-blur clamp path (lines 256-277) has the same gap — it shows `toast.info` only on out-of-range clamping, never a success toast.
-- **Cost:** S — add `onSuccess: () => toast.success(t('gcal.windowUpdated'))` to the hook config; covers both code paths.
-- **Risk:** Low.
-- **Impact:** Low–medium — settings consistency, no behaviour change.
 - **Status:** Open.
 
 ### MAINT-180 — `SpaceManageDialog` rows fire IPCs without dedup or cancellation
@@ -1910,15 +1896,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-303 — Draft autosave recovery on boot is silent
-- **Domain:** Frontend / Editor
-- **Location:** `src/hooks/useAppBootRecovery.ts:24-48`
-- **What:** Orphaned drafts are flushed at boot with only `logger.info()`. If the app crashed mid-edit, the user has no idea their work was recovered.
-- **Cost:** Trivial — `toast.info('Recovered N unsaved drafts')` after the flush completes (count > 0).
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-304 — Swipe-to-delete (mobile) has no visual affordance or threshold cue
 - **Domain:** Frontend / Editor
 - **Location:** `src/hooks/useBlockSwipeActions.ts:1-111` (thresholds at lines 4, 7) ; `src/components/SortableBlock.tsx:350-370`
@@ -2128,15 +2105,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Status:** Open.
 
 
-### UX-329 — Week-start toggle (Monday/Sunday) silently re-renders affected views
-- **Domain:** Frontend / Settings
-- **Location:** `src/components/settings/AppearanceTab.tsx:106-112` (`handleWeekStartChange`)
-- **What:** No toast / `aria-live` announcement; user changes preference and the only visible cue is the calendar grid silently re-laying out.
-- **Cost:** Trivial — `toast.success(t('settings.weekStartUpdated'))` or polite live-region announcement.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ### UX-330 — Daily-view empty state doesn't mention `/` or templates
 - **Domain:** Frontend / Journal
 - **Location:** `src/components/journal/DaySection.tsx:208-223`
@@ -2219,16 +2187,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
-
-### UX-341 — "Empty trash" confirm dialog doesn't show item count
-- **Domain:** Frontend / Trash
-- **Location:** `src/components/TrashView.tsx:334-342, 249-264` ; `TrashEmptyDialog.tsx:24-34`
-- **What:** Destructive dialog with no scope ("are you sure you want to permanently delete X items?"). Count is only known after the success toast.
-- **Cost:** Trivial — pass count prop into the dialog; render in description.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 
 ### UX-343 — Trash batch-restore confirmation threshold (5) is undiscoverable
 - **Domain:** Frontend / Trash
@@ -2358,16 +2316,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
-
-### UX-360 — Page rename on blur has no toast / visible confirmation
-- **Domain:** Frontend / Page editor
-- **Location:** `src/components/PageHeader.tsx:374-396`
-- **What:** Aria-live announcement happens but no `toast.success` and no flash on the title — users second-guess whether the rename took.
-- **Cost:** Trivial — `toast.success(t('pageHeader.renamed'))`.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 
 ### UX-362 — Block zoom has no visible "Exit zoom" affordance (Escape only)
 - **Domain:** Frontend / Page editor
@@ -2676,9 +2624,4 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 
 Pre-grouped item clusters identified during the 2-pass audit. Each batch is sized for one PROMPT.md session — 5 trivial-cost items in non-overlapping files, splittable across 5 parallel subagents. **Remove the batch entry from this list when its items are resolved.**
 
-
-
-### Batch UX-FB-1 — Toast feedback for silent operations
-- **Items:** UX-303, UX-329, UX-341, UX-360, MAINT-179
-- **Cost:** 5× Trivial–S. **Files:** 5 (`useAppBootRecovery.ts`, `AppearanceTab.tsx`, `TrashEmptyDialog.tsx` + `TrashView.tsx`, `PageHeader.tsx`, `GoogleCalendarSettingsTab.tsx`).
-- **Why pick:** Each fixes a silent-operation gap (recovery, settings change, destructive confirm, rename, GCal config) with a single `toast.*` call. Crosses domains, so a single batch ships parity across boot / settings / page / trash / GCal in one go.
+_None currently pre-staged — all batches identified during the 2-pass audit have been consumed. Pick the next session's items ad-hoc from the summary table or re-audit if a fresh sweep is wanted._

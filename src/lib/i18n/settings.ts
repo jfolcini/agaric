@@ -171,6 +171,7 @@ export const settings: Record<string, string> = {
   'gcal.pushingToCalendar': 'Pushing to calendar: Agaric Agenda',
   'gcal.windowLabel': 'Sync days forward from today',
   'gcal.windowHelp': 'Agaric will mirror the next N days of agenda entries. Range: 7\u201390 days.',
+  'gcal.windowUpdated': 'Window size updated',
   'gcal.windowFailed': 'Failed to save window size',
   'gcal.privacyLabel': 'Hide agenda content (sync dates only)',
   'gcal.privacyHelp':
@@ -206,5 +207,6 @@ export const settings: Record<string, string> = {
   'settings.weekStartLabel': 'Week starts on',
   'settings.weekStartMonday': 'Monday',
   'settings.weekStartSunday': 'Sunday',
+  'settings.weekStartUpdated': 'Week now starts on {{day}}',
   'settings.valueClamped': 'Value clamped to {{min}}–{{max}}',
 }

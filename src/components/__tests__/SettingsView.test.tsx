@@ -484,6 +484,28 @@ describe('SettingsView', () => {
       await openAppearance()
       expect(screen.getByLabelText(t('settings.weekStartLabel'))).toHaveValue('0')
     })
+
+    // UX-329 — week-start change must produce a user-visible toast that
+    // names the chosen day, otherwise the only cue is calendar grids
+    // silently re-laying out.
+    it('shows a success toast naming the chosen day on change', async () => {
+      const user = await openAppearance()
+      const select = screen.getByLabelText(t('settings.weekStartLabel'))
+
+      await user.selectOptions(select, '0')
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith(
+          t('settings.weekStartUpdated', { day: t('settings.weekStartSunday') }),
+        )
+      })
+
+      await user.selectOptions(select, '1')
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith(
+          t('settings.weekStartUpdated', { day: t('settings.weekStartMonday') }),
+        )
+      })
+    })
   })
 
   it('font size selector updates localStorage and CSS variable', async () => {

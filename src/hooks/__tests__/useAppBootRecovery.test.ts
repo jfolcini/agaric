@@ -7,6 +7,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { renderHook, waitFor } from '@testing-library/react'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { logger } from '../../lib/logger'
 import { __resetPriorityLevelsForTests, getPriorityLevels } from '../../lib/priority-levels'
@@ -16,6 +17,15 @@ vi.mock('../../lib/logger', () => ({
   logger: {
     info: vi.fn(),
     warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
+
+vi.mock('sonner', () => ({
+  toast: {
+    info: vi.fn(),
+    success: vi.fn(),
+    warning: vi.fn(),
     error: vi.fn(),
   },
 }))
@@ -75,6 +85,89 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
         undefined,
         expect.any(Error),
       )
+    })
+  })
+
+  // UX-303: orphan-draft flush is no longer silent. Recovery emits a
+  // localised toast when count > 0; zero recoveries stay silent so we
+  // don't spam users on a clean boot.
+  it('fires toast.info with the recovered count when ≥1 draft is flushed', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_drafts') {
+        return [{ block_id: 'B1' }, { block_id: 'B2' }, { block_id: 'B3' }]
+      }
+      if (cmd === 'flush_draft') return undefined
+      if (cmd === 'list_property_defs') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+
+    renderHook(() => useAppBootRecovery())
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.info)).toHaveBeenCalledTimes(1)
+    })
+    // The string is i18n-rendered via i18next; pluralisation picks
+    // `_other` for count !== 1. Match the literal English the catalog
+    // ships for the `boot.recoveredDrafts_other` key.
+    expect(vi.mocked(toast.info)).toHaveBeenCalledWith('Recovered 3 unsaved drafts')
+  })
+
+  it('uses singular form when exactly one draft is recovered', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_drafts') return [{ block_id: 'B1' }]
+      if (cmd === 'flush_draft') return undefined
+      if (cmd === 'list_property_defs') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+
+    renderHook(() => useAppBootRecovery())
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.info)).toHaveBeenCalledWith('Recovered 1 unsaved draft')
+    })
+  })
+
+  it('does NOT fire any toast when zero drafts are pending', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_drafts') return []
+      if (cmd === 'list_property_defs') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+
+    renderHook(() => useAppBootRecovery())
+
+    // Wait for the list_drafts promise to settle, then assert silence.
+    await waitFor(() => {
+      const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_drafts')
+      expect(calls.length).toBeGreaterThanOrEqual(1)
+    })
+    expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+  })
+
+  // Regression guard: the original `logger.info('boot', …)` line must
+  // continue to fire alongside the new toast — the pre-existing log
+  // sink is what powers offline diagnostics.
+  it('still emits logger.info with the recovered count (regression guard)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_drafts') return [{ block_id: 'B1' }, { block_id: 'B2' }]
+      if (cmd === 'flush_draft') return undefined
+      if (cmd === 'list_property_defs') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+
+    renderHook(() => useAppBootRecovery())
+
+    await waitFor(() => {
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('boot', 'Recovered 2 unsaved draft(s)')
     })
   })
 })

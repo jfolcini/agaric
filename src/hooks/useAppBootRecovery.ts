@@ -17,6 +17,8 @@
  */
 
 import { useEffect } from 'react'
+import { toast } from 'sonner'
+import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import { setPriorityLevels } from '../lib/priority-levels'
 import { flushDraft, listDrafts, listPropertyDefs } from '../lib/tauri'
@@ -40,6 +42,10 @@ export function useAppBootRecovery(): void {
         }
         if (drafts.length > 0) {
           logger.info('boot', `Recovered ${drafts.length} unsaved draft(s)`)
+          // UX-303: surface the recovery to the user — silent recovery
+          // means crashed-mid-edit users have no clue their work was
+          // saved. Stay silent on count === 0 (no announcement needed).
+          toast.info(i18n.t('boot.recoveredDrafts', { count: drafts.length }))
         }
       })
       .catch((err: unknown) => {

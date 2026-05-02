@@ -385,6 +385,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         useTabsStore.getState().replacePage(pageId, newTitle)
         useResolveStore.getState().set(pageId, newTitle, false)
         announce(t('announce.pageRenamed'))
+        toast.success(t('pageHeader.pageRenamed'))
       } catch (err) {
         logger.error('PageHeader', 'Failed to rename page', { pageId }, err)
         toast.error(t('pageHeader.renameFailed'))

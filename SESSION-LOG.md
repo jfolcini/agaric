@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 599 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 868+ items.
+**Sessions:** 1 – 600 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 873+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 600 (2026-05-02)** — Batch UX-FB-1 closed: UX-303, UX-329, UX-341, UX-360, MAINT-179 — five toast-feedback additions for previously-silent operations (recovery, settings change, destructive confirm, rename, GCal config). 5 build + 5 review subagents; reviewer-caught pagination caveat on UX-341 fixed orchestrator-direct (paginated-copy variant + new test). After this commit, no ready-made batches remain pre-staged.
 - **Session 599 (2026-05-02)** — Batch UX-DISC-1 closed: UX-301, UX-342, UX-356, UX-361, UX-396 — five tooltip / label / shortcut-hint additions (5 build + 5 review subagents; 1 build redone orchestrator-direct due to parallel-agent write contention).
 - **Session 598 (2026-05-02)** — Batch UX-A11Y-1 closed: UX-326, UX-328, UX-331, UX-335, UX-377 — five a11y missing-attribute fixes (5 build + 5 review subagents).
 - **Session 596 (2026-05-01)** — FEAT-3p9 M1: per-space GCal config foundation (additive schema + per-space CRUD + per-space keychain).
@@ -30,6 +31,65 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 600 — Batch UX-FB-1: toast feedback for silent operations (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 5 build + 5 technical review (reviewer flagged UX-341 pagination caveat → fixed orchestrator-direct) |
+| **Items closed** | UX-303, UX-329, UX-341, UX-360, MAINT-179 |
+| **Items modified** | — |
+| **Tests added** | +12 frontend (4 useAppBootRecovery + 1 SettingsView/UX-9 + 3 TrashView + 3 PageHeader + 1 GoogleCalendarSettingsTab) / +0 backend |
+| **Files touched** | 14 (5 source/component edits + 1 component prop-thread + 5 test + 3 i18n) |
+
+**Summary:** Closed all 5 items in the pre-staged "Batch UX-FB-1" cluster — pure additive `toast.*(...)` calls plugging silent-operation gaps across boot recovery, week-start preference, empty-trash confirmation, page rename, and GCal window-days save. UX-341's reviewer caught a real correctness issue introduced by the trivial fix (the new "Permanently delete N items?" copy understates the actual purge whenever the trash list is paginated, since `purge_all_deleted` ignores pagination); resolved orchestrator-direct by threading `hasMore` from `TrashView` through the dialog and switching to a "Permanently delete every trashed item ({{count}} loaded, more available)?" copy when `hasMore = true`. Zero behaviour change otherwise.
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 166 → **161** (-5).
+- **Detail entries:** 222 → 217 (-5).
+- **Ready-made batches:** 1 → **0** (UX-FB-1 entry removed; no batches remain pre-staged — flagged in REVIEW-LATER's batch section).
+- **Previously-resolved counter:** 868+ → 873+ across 599 → 600 sessions.
+
+**Per-item verification (from review subagents + post-fix re-test):**
+- **UX-303** (`useAppBootRecovery.ts`): added `toast.info(i18n.t('boot.recoveredDrafts', { count }))` inside the existing `if (drafts.length > 0)` guard, alongside the pre-existing `logger.info`. New plural keys `boot.recoveredDrafts_one` / `_other` in `src/lib/i18n/common.ts`. Uses standalone `i18n.t()` (matches `useSyncEvents` / `useSyncTrigger` async-hook pattern). 4 new assertions (count=3 plural, count=1 singular, count=0 silent, regression guard for logger.info); 9/9 file tests pass.
+- **UX-329** (`AppearanceTab.tsx`): added `toast.success(t('settings.weekStartUpdated', { day: t('settings.weekStartSunday' | 'Monday') }))` to both branches of `handleWeekStartChange`. Nested-`t()` pattern for translated day name. New i18n key `settings.weekStartUpdated`. 1 new assertion in the existing UX-9 describe block (asserts both branches via sequential select changes); 51/51 file tests pass.
+- **UX-341** (`TrashEmptyDialog.tsx` + `TrashView.tsx`): added `itemCount: number` prop, plural-aware description via new keys `trash.emptyTrashDescription_one` / `_other`; `TrashView.tsx:451` passes `itemCount={blocks.length}`. **Reviewer-caught fix:** added optional `hasMore?: boolean` prop and new keys `trash.emptyTrashDescriptionPaginated_one` / `_other` ("Permanently delete every trashed item ({{count}} loaded, more available)? This cannot be undone."); `TrashView` threads `hasMore` from `useTrashList`. 3 new assertions (singular, plural, paginated); 82/82 file tests pass.
+- **UX-360** (`PageHeader.tsx:388`): added `toast.success(t('pageHeader.pageRenamed'))` after `editBlock()` succeeds, alongside the existing `announce()` aria-live. New i18n key `pageHeader.pageRenamed: 'Page renamed'` (past-tense convention matches sibling `pageDeleted` / `templateSaved`). 3 new assertions (success path with announce regression guard, no-change blur silent, IPC-rejection silent); 87/87 file tests pass.
+- **MAINT-179** (`GoogleCalendarSettingsTab.tsx:220-222`): added `onSuccess: () => toast.success(t('gcal.windowUpdated'))` to the `useIpcCommand` config for `set_gcal_window_days`. New i18n key `gcal.windowUpdated: 'Window size updated'` (no `{{days}}` interpolation — mirrors `gcal.privacyUpdated` sibling pattern). 1 new assertion + 1 regression guard ("error path must not also fire success toast"); 34/34 file tests pass.
+
+**Files touched (this session):**
+- `src/hooks/useAppBootRecovery.ts` (+4 / -0)
+- `src/components/settings/AppearanceTab.tsx` (+9 / -3)
+- `src/components/TrashView/TrashEmptyDialog.tsx` (+13 / -3)
+- `src/components/TrashView.tsx` (+1 — `hasMore={hasMore}` prop)
+- `src/components/PageHeader.tsx` (+1 / -0)
+- `src/components/GoogleCalendarSettingsTab.tsx` (+3 / -0)
+- `src/lib/i18n/common.ts` (+2 — `boot.recoveredDrafts_one` / `_other`)
+- `src/lib/i18n/settings.ts` (+2 — `settings.weekStartUpdated` + `gcal.windowUpdated`)
+- `src/lib/i18n/conflicts.ts` (+5 — `trash.emptyTrashDescription_one`/`_other` + `_Paginated_one`/`_other`)
+- `src/lib/i18n/pages.ts` (+1 — `pageHeader.pageRenamed`)
+- `src/hooks/__tests__/useAppBootRecovery.test.ts` (+79)
+- `src/components/__tests__/SettingsView.test.tsx` (+18)
+- `src/components/__tests__/TrashView.test.tsx` (+86)
+- `src/components/__tests__/PageHeader.test.tsx` (+74)
+- `src/components/__tests__/GoogleCalendarSettingsTab.test.tsx` (+39)
+- `REVIEW-LATER.md` (-46 net — 5 detail blocks, 5 summary rows, 1 batch entry; count + Last-updated header refreshed; "no batches pre-staged" note added)
+
+**Verification:**
+- `npx vitest run` on all 5 touched test files together — 263/263 pass (51 SettingsView + 82 TrashView + 87 PageHeader + 34 GoogleCalendarSettingsTab + 9 useAppBootRecovery).
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **Reviewer caught a real regression I would have shipped.** UX-341's "show count in dialog" was specified as a trivial fix, but pasting `{{count}} items` into the destructive confirm dialog created an inconsistency with `purge_all_deleted` which ignores pagination and wipes everything. The reviewer flagged this with concrete evidence (existing test at line 1184 already showed dialog says "1 item" while backend returns `affected_count: 5`). Resolution required a 1-prop thread (`hasMore`) and a paginated-copy variant. Worth ~10 minutes total but would have been a real bug otherwise. Reinforces that "trivial UX text changes" still warrant a reviewer pass.
+- **Parallel-agent contention quieter this session.** All 15 working-tree files modified by the build subagents persisted cleanly (no UX-342-style write-vanishes). The other `devin` process appears to have moved off `main`.
+- **Pattern consistency confirmed.** `useAppBootRecovery` (async hook → `i18n.t()` directly) and `AppearanceTab` (component → `useTranslation()` `t`) demonstrate the two correct toast-i18n call sites — async/event-driven code uses the standalone `i18n.t()` (matches `useSyncEvents`); render-tree code uses the hook.
+
+**Forward-looking note:** **No ready-made batches remain pre-staged** in `REVIEW-LATER.md`. The 2-pass UX audit's three pre-grouped clusters (UX-A11Y-1 → session 598, UX-DISC-1 → session 599, UX-FB-1 → this session) have all been consumed. Future sessions either pick items ad-hoc from the summary table or trigger a fresh audit sweep. Surface to user as a "what next?" decision point after this commit.
+
+**Commit plan:** single commit. Not pushed.
 
 ---
 

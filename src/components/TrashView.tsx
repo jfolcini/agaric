@@ -448,6 +448,8 @@ export function TrashView(): React.ReactElement {
 
       <TrashEmptyDialog
         open={confirmEmptyTrash}
+        itemCount={blocks.length}
+        hasMore={hasMore}
         onOpenChange={setConfirmEmptyTrash}
         onConfirm={handleEmptyTrash}
       />
