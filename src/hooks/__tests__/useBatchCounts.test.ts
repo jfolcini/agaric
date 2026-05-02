@@ -16,10 +16,21 @@ const mockedCountBacklinksBatch = vi.mocked(countBacklinksBatch)
 const mockedToastError = vi.mocked(toast.error)
 
 function makeDayEntry(dateStr: string, pageId: string | null = null): DayEntry {
+  // TEST-FE-5: `displayDate` is intentionally rendered to a HUMAN-FACING format
+  // distinct from `dateStr` so any test asserting on `agendaCounts` keys would
+  // FAIL if the hook were ever refactored to key by `displayDate` instead of
+  // the canonical `dateStr`. Option B from the REVIEW-LATER item — pairs with
+  // the explicit `Object.keys(...).toEqual([...])` assertion below.
+  const date = new Date(dateStr)
+  const displayDate = date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  })
   return {
-    date: new Date(dateStr),
+    date,
     dateStr,
-    displayDate: dateStr,
+    displayDate,
     pageId,
   }
 }
@@ -51,6 +62,11 @@ describe('useBatchCounts', () => {
     await waitFor(() => {
       expect(result.current.agendaCounts).toEqual({ '2025-01-06': 3, '2025-01-07': 1 })
     })
+
+    // Lock cache-key contract: agendaCounts is keyed by canonical `dateStr`,
+    // not the timezone-formatted `displayDate`. Pinning the exact keys here
+    // documents the contract for future refactors.
+    expect(Object.keys(result.current.agendaCounts)).toEqual(['2025-01-06', '2025-01-07'])
 
     expect(result.current.agendaCountsBySource).toEqual({
       '2025-01-06': { 'column:due_date': 2, 'column:scheduled_date': 1 },

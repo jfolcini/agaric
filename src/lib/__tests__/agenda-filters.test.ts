@@ -8,7 +8,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeBlock } from '../../__tests__/fixtures'
-import { executeAgendaFilters, toFutureDatePreset, toPastDatePreset } from '../agenda-filters'
+import {
+  AGENDA_QUERY_LIMIT,
+  executeAgendaFilters,
+  toFutureDatePreset,
+  toPastDatePreset,
+} from '../agenda-filters'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -26,6 +31,12 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 // Preset mapping helpers
 // ---------------------------------------------------------------------------
+
+describe('AGENDA_QUERY_LIMIT', () => {
+  it('is 500 (FE-H-2: shared agenda IPC pagination limit)', () => {
+    expect(AGENDA_QUERY_LIMIT).toBe(500)
+  })
+})
 
 describe('toFutureDatePreset', () => {
   it('maps known labels to presets', () => {

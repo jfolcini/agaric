@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 604 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 894+ items.
+**Sessions:** 1 – 605 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 899+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 605 (2026-05-02)** — Batch FRONTEND-FIXUPS-1 closed: TEST-FE-3, TEST-FE-4, TEST-FE-5, TEST-FE-7, FE-H-2 — five trivial frontend cleanups (`makeHistoryEntry` shared fixture, try/finally guard around `vi.doMock`, lock `dateStr` cache-key contract via Option A + Option B, hardcoded date → relative-to-today, extract `AGENDA_QUERY_LIMIT` from 11 sites). TEST-FE-5 reviewer correctly flagged that Option A alone was insufficient → Option B applied orchestrator-direct. FE-H-2 reviewer flagged a stale line-number comment → fixed orchestrator-direct.
 - **Session 604 (2026-05-02)** — Batch TEST-FIXUPS-1 closed: TEST-1, TEST-13, TEST-21, TEST-22, TEST-26 — five trivial backend test improvements (remove stale workaround, typed `serde_json::from_str` instead of substring `contains`, hash-mismatch error message assertion, no-DB-side-effects assertion, magic-string → constants). 5 build + 5 review subagents. All-PASS, no follow-ups.
 - **Session 603 (2026-05-02)** — Batch MAINT-FIXUPS-1 closed: MAINT-182, MAINT-186, MAINT-187, MAINT-188, MAINT-191 — five trivial frontend cleanups (i18n leak, explicit touch-target classname, `INTERNAL_PROPERTY_KEYS` shared const, breadcrumb `useMemo`, IPC-bridge clarification comment). 5 build + 5 review subagents.
 - **Session 602 (2026-05-02)** — Batch BACKEND-CLEANUP-1 closed: L-56, L-57, L-58, L-59, L-60 — five trivial Rust commands cleanups (release-build size guard, `unreachable!()` → structured error, mutex-poison helper extraction, shared `text_utils::truncate_at_char_boundary`, `find_missing_attachments` NotFound-vs-other-IO split). 5 build + 5 review subagents. New follow-up L-62 filed for the mirror `unreachable!()` in `delete_property_in_tx` flagged by the L-57 reviewer.
@@ -35,6 +36,56 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 605 — Batch FRONTEND-FIXUPS-1: trivial frontend test + lib cleanups (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 5 build + 5 technical review |
+| **Items closed** | TEST-FE-3, TEST-FE-4, TEST-FE-5, TEST-FE-7, FE-H-2 |
+| **Items added** | — |
+| **Tests added** | +1 frontend (1 new `AGENDA_QUERY_LIMIT === 500` assertion); 4 are improvements to existing tests |
+| **Files touched** | 8 (5 source/test edits + 1 shared fixtures + 2 test-import-only) |
+
+**Summary:** Closed all 5 items in a fresh "frontend trivials" batch covering 4 test improvements + 1 magic-number extraction. Notable mid-session fixes: TEST-FE-5's reviewer correctly flagged that the build subagent's Option A (explicit `Object.keys(...).toEqual([...])` assertion) was insufficient on its own because the existing fixture had `displayDate === dateStr` — orchestrator applied Option B (make `displayDate` differ via `toLocaleDateString`) so the combined fix becomes a true runtime contract lock. FE-H-2's reviewer flagged a stale "line 232" reference in the new constant's JSDoc — fixed orchestrator-direct by replacing the line-number reference with a function-name reference (`listTagsByPrefix call inside executeAgendaFilters`) which won't drift across future refactors.
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 151 → 151 (unchanged — TEST-FE-* and FE-H-* are sub-table items).
+- **Detail entries:** 198 → 193 (−5).
+- **Previously-resolved counter:** 894+ → 899+ across 604 → 605 sessions.
+
+**Per-item verification (from review subagents):**
+- **TEST-FE-3** (`__tests__/fixtures/index.ts` + `HistoryPanel.test.tsx` + `HistoryView.test.tsx`): added `makeHistoryEntry(seq, opType, payload, createdAt = '2025-01-15T12:00:00Z', deviceId = 'DEVICE01'): HistoryEntry` to the shared fixtures module (with `import type { HistoryEntry } from '../../lib/bindings'`). Both test files now import the shared factory; their local copies (formerly L38-51 in HistoryPanel and L46-60 in HistoryView) are deleted. The unified signature accepts all 92 existing call sites (26 HistoryPanel + 66 HistoryView) without changes. Both tests' local `emptyPage` consts deliberately left untouched (out-of-scope for TEST-FE-3). 86/86 file tests pass.
+- **TEST-FE-4** (`ViewDispatcher.test.tsx:182-214`): wrapped the Suspense-fallback test body in `try { ... } finally { vi.doUnmock('../StatusPanel'); vi.doUnmock('../JournalPage') }`. The `vi.doMock(...)` calls remain OUTSIDE the try (must run before the dynamic import, per Vitest hoisting). The `try` opens at line 182 (after the doMocks); the `finally` at line 211 contains exactly the two unmocks symmetric with the two doMocks. 20/20 file tests pass.
+- **TEST-FE-5** (`useBatchCounts.test.ts`): combined fix — Option A (build subagent): added `expect(Object.keys(result.current.agendaCounts)).toEqual(['2025-01-06', '2025-01-07'])` assertion at L66-69. Option B (orchestrator-direct after reviewer flagged the gap): modified `makeDayEntry` (L18-36) so `displayDate` is now formatted via `date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })` — yielding distinct strings like `"Mon, Jan 6"` vs canonical `'2025-01-06'`. With both options, a hook refactor to key by `displayDate` would FAIL both the existing object-shape `toEqual` AND the new `Object.keys` assertion. Comments in fixture and assertion explain the interaction. 6/6 file tests pass.
+- **TEST-FE-7** (`AgendaResults.test.tsx:318/321 + 332/334`): replaced hardcoded `'2020-01-01'` with `const overdueDate = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)` declared per-test (no module-level hoist). No `date-fns` import added — used native `Date` API since the file didn't already use it. The format `'YYYY-MM-DD'` matches the component's `isOverdue` string-comparison logic. 29/29 file tests pass.
+- **FE-H-2** (`agenda-filters.ts` + `__tests__/agenda-filters.test.ts`): new `export const AGENDA_QUERY_LIMIT = 500` with JSDoc explaining the constant + the `listTagsByPrefix:50` exception. Replaced all 11 hardcoded `limit: 500` sites (now at lines 92, 112, 141, 169, 170, 229, 248, 269, 301, 302, 303 after the +13 line shift). Line 245's `limit: 50` for `listTagsByPrefix` preserved. **Reviewer-caught fix:** the original JSDoc said "line 232 uses limit: 50" but the actual line is now 245 — orchestrator-direct edit replaced the line-number reference with a function-name reference (`the listTagsByPrefix call inside executeAgendaFilters`) so the comment doesn't drift on future refactors. New 1-line test asserts `AGENDA_QUERY_LIMIT === 500`. Pre-existing IPC-payload tests at L246/286/602 deliberately keep the literal `500` (they validate runtime payload, not source constants). 40/40 file tests pass.
+
+**Files touched (this session):**
+- `src/__tests__/fixtures/index.ts` (+22 — new `makeHistoryEntry` factory + `HistoryEntry` import)
+- `src/components/__tests__/HistoryPanel.test.tsx` (-13 / +1 — local factory deleted, import added)
+- `src/components/__tests__/HistoryView.test.tsx` (-15 / +1 — local factory deleted, import added)
+- `src/components/__tests__/ViewDispatcher.test.tsx` (+3 / -0 — try/finally structure)
+- `src/hooks/__tests__/useBatchCounts.test.ts` (+18 / -3 — Option A assertion + Option B fixture rewrite)
+- `src/components/__tests__/AgendaResults.test.tsx` (+4 / -2 — relative-date `const` in 2 tests)
+- `src/lib/agenda-filters.ts` (+12 / -11 — new const + JSDoc + 11 site replacements)
+- `src/lib/__tests__/agenda-filters.test.ts` (+6 — import + assertion)
+- `REVIEW-LATER.md` (-43 net — 5 detail blocks; count + Last-updated header refreshed)
+- `SESSION-LOG.md` (this entry + Recent milestones bump)
+
+**Verification:**
+- `npx vitest run` on all 6 touched test files together — **181/181 pass** (31 HistoryPanel + 55 HistoryView + 20 ViewDispatcher + 6 useBatchCounts + 29 AgendaResults + 40 agenda-filters).
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **Two reviewer-caught issues in one batch.** TEST-FE-5's "Option A alone is insufficient" caveat was technically correct — the build subagent did exactly what I asked, but my prompt's preference was wrong. The fix (apply Option B to make the test fixture differ) was the right corrective. FE-H-2's stale line-number reference is a milder issue but a real one — comments referencing line numbers drift, function/feature names don't. Both reviewer flags were honest signal, not nitpicks.
+- **Unifying signature for shared factories pays off.** TEST-FE-3's `makeHistoryEntry(seq, opType, payload, createdAt?, deviceId?)` accepted ALL 92 existing call sites without per-site edits. Defaulting `createdAt` and `deviceId` to sensible values lets the call sites that don't care omit them.
+- **Local consts vs hoisted consts in tests.** TEST-FE-7's `const overdueDate = ...` is computed PER test rather than hoisted to the describe block. This matches the existing pattern in test 1 (which already computes `now` and `todayStr` per-test) and keeps each test self-contained for grep/jump-to-definition. Hoisting can be done later if the same expression appears in 5+ tests.
+
+**Commit plan:** single commit. Not pushed.
 
 ---
 

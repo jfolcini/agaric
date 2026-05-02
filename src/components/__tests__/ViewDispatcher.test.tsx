@@ -179,37 +179,39 @@ describe('ViewDispatcher — Suspense fallback', () => {
       GlobalDateControls: () => <div />,
     }))
 
-    const { ViewDispatcher: IsolatedDispatcher } = await import('../ViewDispatcher')
+    try {
+      const { ViewDispatcher: IsolatedDispatcher } = await import('../ViewDispatcher')
 
-    render(
-      <IsolatedDispatcher
-        currentView="status"
-        activePage={null}
-        onPageSelect={vi.fn()}
-        onBack={vi.fn()}
-        navigateToPage={vi.fn()}
-      />,
-    )
+      render(
+        <IsolatedDispatcher
+          currentView="status"
+          activePage={null}
+          onPageSelect={vi.fn()}
+          onBack={vi.fn()}
+          navigateToPage={vi.fn()}
+        />,
+      )
 
-    // Fallback present while the lazy import is unresolved.
-    expect(await screen.findByTestId('view-fallback')).toBeInTheDocument()
-    expect(screen.queryByTestId('status-panel-real')).not.toBeInTheDocument()
+      // Fallback present while the lazy import is unresolved.
+      expect(await screen.findByTestId('view-fallback')).toBeInTheDocument()
+      expect(screen.queryByTestId('status-panel-real')).not.toBeInTheDocument()
 
-    // Resolve the deferred module — fallback should disappear and the
-    // resolved component should mount.
-    await act(async () => {
-      resolveStatus({
-        StatusPanel: () => <div data-testid="status-panel-real">status-loaded</div>,
+      // Resolve the deferred module — fallback should disappear and the
+      // resolved component should mount.
+      await act(async () => {
+        resolveStatus({
+          StatusPanel: () => <div data-testid="status-panel-real">status-loaded</div>,
+        })
       })
-    })
 
-    await waitFor(() => {
-      expect(screen.getByTestId('status-panel-real')).toBeInTheDocument()
-    })
-    expect(screen.queryByTestId('view-fallback')).not.toBeInTheDocument()
-
-    vi.doUnmock('../StatusPanel')
-    vi.doUnmock('../JournalPage')
+      await waitFor(() => {
+        expect(screen.getByTestId('status-panel-real')).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('view-fallback')).not.toBeInTheDocument()
+    } finally {
+      vi.doUnmock('../StatusPanel')
+      vi.doUnmock('../JournalPage')
+    }
   })
 })
 

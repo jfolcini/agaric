@@ -26,6 +26,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
+import { makeHistoryEntry } from '../../__tests__/fixtures'
 import { useSpaceStore } from '../../stores/space'
 import { HistoryView } from '../HistoryView'
 
@@ -42,22 +43,6 @@ vi.mock('../../lib/announcer', () => ({
 // (see src/__tests__/mocks/ui-select.tsx).
 
 const mockedInvoke = vi.mocked(invoke)
-
-function makeHistoryEntry(
-  seq: number,
-  opType: string,
-  payload: Record<string, unknown>,
-  createdAt = '2025-01-15T12:00:00Z',
-  deviceId = 'DEVICE01',
-) {
-  return {
-    device_id: deviceId,
-    seq,
-    op_type: opType,
-    payload: JSON.stringify(payload),
-    created_at: createdAt,
-  }
-}
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }
 

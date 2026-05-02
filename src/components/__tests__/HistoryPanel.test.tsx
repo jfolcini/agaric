@@ -18,6 +18,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { makeHistoryEntry } from '../../__tests__/fixtures'
 import { HistoryPanel } from '../HistoryPanel'
 
 vi.mock('../../hooks/useRichContentCallbacks', () => ({
@@ -34,21 +35,6 @@ vi.mock('../../hooks/useRichContentCallbacks', () => ({
 // (see src/__tests__/mocks/ui-select.tsx).
 
 const mockedInvoke = vi.mocked(invoke)
-
-function makeHistoryEntry(
-  seq: number,
-  opType: string,
-  payload: Record<string, unknown>,
-  createdAt = '2025-01-15T12:00:00Z',
-) {
-  return {
-    device_id: 'DEVICE01',
-    seq,
-    op_type: opType,
-    payload: JSON.stringify(payload),
-    created_at: createdAt,
-  }
-}
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }
 
