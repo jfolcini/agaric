@@ -5,6 +5,19 @@ import { i18n } from '../lib/i18n'
 import { listPeerRefs, startSync } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
 
+// Frontend periodic-sync cadence and exponential-backoff caps.
+//
+// NOTE on dual schedulers: the backend (`src-tauri/src/sync_scheduler.rs`)
+// runs its own per-peer exponential backoff (1s → 60s) and is the
+// authoritative scheduler — it owns retries, per-peer mutexes, jitter,
+// and silent rejection of redundant invocations. This frontend trigger
+// is a coarse "wake the scheduler" hint at a slower cadence
+// (60s → 600s on failure). The two schedulers do not coordinate: when
+// the backend is mid-backoff, calling `startSync()` from here is a
+// no-op on the wire — it just resolves quickly. That is fine; do not
+// add cross-scheduler coordination here without first reading
+// `sync_scheduler.rs` end-to-end. See MAINT-168 in REVIEW-LATER for
+// the deferred unification design note.
 const BASE_INTERVAL_MS = 60_000
 const MAX_INTERVAL_MS = 600_000 // 10 minutes
 const SYNC_TIMEOUT_MS = 60_000
