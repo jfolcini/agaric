@@ -9,6 +9,7 @@ use super::types::{BacklinkFilter, CompareOp};
 use super::SMALL_IN_LIMIT;
 use crate::error::AppError;
 use crate::fts::sanitize_fts_query;
+use crate::sql_utils::escape_like;
 use crate::tag_query::{resolve_tag_leaves, resolve_tag_prefix_leaves};
 
 // ---------------------------------------------------------------------------
@@ -132,36 +133,44 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
         }
         match filter {
             BacklinkFilter::PropertyText { key, op, value } => {
-                // Fetch all block_ids with the given property key and text value,
-                // then apply the comparison operator in Rust.
-                let rows = sqlx::query_as::<_, (String, Option<String>)>(
-                    "SELECT bp.block_id, bp.value_text \
+                // PERF-27: build the comparison clause dynamically so SQLite
+                // filters by operator rather than materialising every row
+                // with this key and filtering in Rust.  Mirrors the pattern
+                // in `pagination/properties.rs::query_by_property`.
+                //
+                // For LIKE-based operators (`Contains` / `StartsWith`) the
+                // user-supplied `value` is escaped via `escape_like` and
+                // the SQL uses `ESCAPE '\'` so `%` / `_` / `\` in the user
+                // input match literally.
+                let (sql_op, needs_escape) = match op {
+                    CompareOp::Eq => ("=", false),
+                    CompareOp::Neq => ("<>", false),
+                    CompareOp::Lt => ("<", false),
+                    CompareOp::Gt => (">", false),
+                    CompareOp::Lte => ("<=", false),
+                    CompareOp::Gte => (">=", false),
+                    CompareOp::Contains | CompareOp::StartsWith => ("LIKE", true),
+                };
+                let bind_value: String = match op {
+                    CompareOp::Contains => format!("%{}%", escape_like(value)),
+                    CompareOp::StartsWith => format!("{}%", escape_like(value)),
+                    _ => value.clone(),
+                };
+                let escape_clause = if needs_escape { " ESCAPE '\\'" } else { "" };
+                let sql = format!(
+                    "SELECT bp.block_id \
                      FROM block_properties bp \
                      JOIN blocks b ON b.id = bp.block_id \
                      WHERE bp.key = ?1 AND bp.value_text IS NOT NULL \
-                       AND b.deleted_at IS NULL AND b.is_conflict = 0",
-                )
-                .bind(key)
-                .fetch_all(pool)
-                .await?;
-
-                Ok(rows
-                    .into_iter()
-                    .filter(|(_, v)| {
-                        let v = v.as_deref().unwrap_or("");
-                        match op {
-                            CompareOp::Eq => v == value.as_str(),
-                            CompareOp::Neq => v != value.as_str(),
-                            CompareOp::Lt => v < value.as_str(),
-                            CompareOp::Gt => v > value.as_str(),
-                            CompareOp::Lte => v <= value.as_str(),
-                            CompareOp::Gte => v >= value.as_str(),
-                            CompareOp::Contains => v.contains(value.as_str()),
-                            CompareOp::StartsWith => v.starts_with(value.as_str()),
-                        }
-                    })
-                    .map(|(id, _)| id)
-                    .collect())
+                       AND bp.value_text {sql_op} ?2{escape_clause} \
+                       AND b.deleted_at IS NULL AND b.is_conflict = 0"
+                );
+                let rows = sqlx::query_scalar::<_, String>(&sql)
+                    .bind(key)
+                    .bind(&bind_value)
+                    .fetch_all(pool)
+                    .await?;
+                Ok(rows.into_iter().collect())
             }
 
             BacklinkFilter::PropertyNum { key, op, value } => {

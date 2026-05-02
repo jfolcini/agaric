@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 608 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 914+ items.
+**Sessions:** 1 – 609 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 919+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 609 (2026-05-02)** — Batch PERF-CLUSTER-1 closed: PERF-24, PERF-25, PERF-26, PERF-27, PERF-28 — five S-cost performance items, each with an existing reference implementation to mirror (block_links json_each, lease.rs key-IN batch, gcal_push/api shared_client, pagination/properties dynamic-operator SQL, TagFilterPanel debounce). All 5 reviews PASS (PERF-28 CONDITIONAL PASS, follow-up FE-L-15 filed for the unstable-object return in `useDebouncedCallback`). Also cleaned 4 stale Quick-wins bullets (MAINT-179/182/187/188, PERF-23 — already resolved in earlier sessions).
 - **Session 608 (2026-05-02)** — Batch QUICK-WINS-2 closed: PERF-29, M-96, FE-H-18, TEST-9, TEST-20 — five trivial mixed front/back cleanups (cache eviction batched slice, COUNT-query error logging via `inspect_err`, slash-command auto-execute destroyed-view guard + try/catch, sync materialization verification, sync file-transfer skipped-counter assertions). All 5 reviews PASS; TEST-9 flake-check 5/5; TEST-9 flush needed both `flush_foreground` + `flush_background` (originally spec'd only the background).
 - **Session 607 (2026-05-02)** — Batch QUICK-WINS-1 closed: L-62, FE-L-10, FE-L-11, TEST-5, TEST-17 — five trivial mixed front/back cleanups (Rust `unreachable!()` mirror follow-up, redundant optional chain removal, defensive StorageEvent field completeness, op_log count assertion, within-batch seq-ordering assertion). All 5 reviews PASS with no mid-session orchestrator fixes needed.
 - **Session 606 (2026-05-02)** — Batch FE-H-FIXUPS-1 closed: FE-H-3, FE-H-14, FE-H-19, FE-H-20 fixed + FE-H-16 rejected as false-positive. FE-H-16's proposed fix (add stable `useState` setters to `useMemo` deps) was reverted after biome's `useExhaustiveDependencies` rule correctly flagged it as over-specification — the fix was filed with a "defensive correctness" framing but is actively against project convention. FE-H-19 build subagent stalled → orchestrator-direct; FE-H-19 reviewer caught that memoizing `flatItems` alone was insufficient because `grouped` (its upstream) was also unmemoized → applied both fixes orchestrator-direct.
@@ -39,6 +40,61 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 609 — Batch PERF-CLUSTER-1: five S-cost performance items (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 5 build + 5 technical review (4 PASS, 1 CONDITIONAL PASS on PERF-28 → follow-up FE-L-15 filed) |
+| **Items closed** | PERF-24, PERF-25, PERF-26, PERF-27, PERF-28 |
+| **Items added** | FE-L-15 (unstable-object return in `useDebouncedCallback`) |
+| **Tests added** | +3 Rust (PERF-25 ×2 batch helper tests; PERF-27 ×1 `Contains` escape test) + 2 frontend (PERF-28 debounce-window + cancel-on-clear) |
+| **Files touched** | 9 (5 Rust source + 1 Rust test + 1 frontend source + 1 frontend test + REVIEW-LATER + SESSION-LOG + 2 .sqlx deletions + 1 .sqlx addition) |
+
+**Summary:** Closed 5 S-cost performance items in a single batch, each with a concrete existing reference implementation inside the repo to mirror verbatim. PERF-24 replaced per-target `DELETE`/`INSERT OR IGNORE` loops in `cache/block_tag_refs.rs::reindex_block_tag_refs` + `_split` variants with `json_each(?)` batched statements (mirror of `cache/block_links.rs:66-93`). PERF-25 added a new `gcal_push::models::get_settings_batch` helper and collapsed 3 sequential `get_setting` calls in `GcalSettingsSnapshot::read` into a single `SELECT … WHERE key IN (?, ?, ?)` (pattern from `gcal_push/lease.rs`). PERF-26 replaced per-call `reqwest::Client::builder()...build()` in `link_metadata/mod.rs::fetch_metadata` with a module-level `OnceLock<reqwest::Client>` + `shared_client()` accessor (mirror of `gcal_push/api.rs:757-769`). PERF-27 pushed `PropertyText` operator comparison in `backlink/filters.rs` into SQL (`=`/`<>`/`<`/`>`/`<=`/`>=`/`LIKE ... ESCAPE '\\'`) using `sql_utils::escape_like` for the `%`/`_`/`\\` escape contract (mirror of `pagination/properties.rs:100-140` + `tag_query/resolve.rs`). PERF-28 wrapped `TagValuePicker::handleChange`'s `search(value.trim())` in `useDebouncedCallback(_, 300)` with `schedule`/`cancel` + empty-input cancel (mirror of `TagFilterPanel.tsx:68-82`).
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 146 → 141 (−5 — all five PERF-* items were in summary).
+- **Detail entries:** 178 → 174 (−5 closed + 1 added = −4; also filed FE-L-15 follow-up → net 174).
+- **Previously-resolved counter:** 914+ → 919+ across 608 → 609 sessions.
+
+**Per-item verification (from review subagents):**
+- **PERF-24** (`cache/block_tag_refs.rs`): both `reindex_block_tag_refs` (lines 42-119) and `reindex_block_tag_refs_split` (lines 126-205) now use `DELETE FROM block_tag_refs WHERE source_id = ? AND tag_id IN (SELECT value FROM json_each(?))` and `INSERT OR IGNORE ... SELECT ?, value FROM json_each(?) WHERE EXISTS (SELECT 1 FROM blocks WHERE id = value AND block_type = 'tag')`. Both variants preserve the empty-set guards (skip SQL when sets empty). `.sqlx/` cache: 2 old per-row queries deleted (`query-21828bc...` DELETE, `query-c1c741f...` INSERT), 0 new entries added (runtime `sqlx::query` doesn't need cache). The `reindex_block_tag_refs_diff_adds_and_removes` test (tests.rs:3557) — which exercises partial-update semantics (A+B → A+C) — passes; this test would fail if the DELETE overreached.
+- **PERF-25** (`gcal_push/{models,connector}.rs`): new `pub async fn get_settings_batch(pool, keys: &[GcalSettingKey]) -> Result<HashMap<GcalSettingKey, String>, AppError>` helper (models.rs:172-199) with empty-slice short-circuit, dynamic placeholder string sized to `keys.len()`, runtime `sqlx::query(&sql)`, missing rows absent from HashMap (matches `get_setting`'s `Ok(None)` semantics, NOT inserted as empty strings). `GcalSettingsSnapshot::read` (connector.rs:313-347) now issues one `get_settings_batch` call and reads each value with `.get().cloned().unwrap_or_default()` (preserves "missing row → empty string" behavior). 2 new tests: `get_settings_batch_returns_every_requested_key_when_all_present` and `get_settings_batch_omits_missing_keys_but_returns_the_rest` (the latter deletes a row and asserts `!got.contains_key(&key)`, proving absent-not-empty semantics).
+- **PERF-26** (`link_metadata/mod.rs`): `shared_client()` helper (lines 56-71) with `static CELL: OnceLock<reqwest::Client>`, early-exit fast path on cache hit, `get_or_init(|| built).clone()` for benign-race safety. Builder config preserved verbatim: `.timeout(Duration::from_secs(10))`, `.redirect(Policy::limited(5))`, `.user_agent("Agaric/1.0")`. `fetch_metadata` signature unchanged. Pattern matches `gcal_push/api.rs::shared_client()`.
+- **PERF-27** (`backlink/filters.rs`): all 8 `CompareOp` variants (`Eq`/`Neq`/`Lt`/`Gt`/`Lte`/`Gte`/`Contains`/`StartsWith`) mapped to SQL operators via exhaustive match. `Contains`/`StartsWith` use `escape_like(value)` + `%...%` / `...%` formatting + `ESCAPE '\\'` clause. New test `filter_property_text_contains_pushed_into_sql` (tests.rs:348-386) inserts `"alpha-foo-bar"`, `"alpha-baz-bar"`, `"50% off"` then asserts: (a) `Contains "foo"` matches only `SRC_A`; (b) `Contains "%"` matches only `SRC_C` — proving `%` is escaped to a literal, not a wildcard. 625 total Rust tests pass.
+- **PERF-28** (`TagValuePicker.tsx`): new `const debounced = useDebouncedCallback((value) => search(value), 300)`; `handleChange` now calls `debounced.cancel()` unconditionally, then `debounced.schedule(value.trim())` on non-empty input or `setResults([])` + `setOpen(false)` on empty. 2 new tests in a scoped `describe('debounce')` block using `vi.useFakeTimers({ shouldAdvanceTime: true })`: (a) typing 3 chars within 300ms fires exactly 1 IPC after `vi.advanceTimersByTimeAsync(300)`; (b) typing 3 chars then clearing the input fires 0 IPCs even after the 300ms window. 21/21 `TagValuePicker` tests pass; 37/37 `TagFilterPanel` tests pass (unchanged).
+
+**Files touched (this session):**
+- `src-tauri/src/cache/block_tag_refs.rs` (+73 / -25 — 2 json_each statements × 2 variants + preserved existence check)
+- `src-tauri/src/gcal_push/models.rs` (+139 — new helper + 2 tests)
+- `src-tauri/src/gcal_push/connector.rs` (+24 / -9 — batched call site)
+- `src-tauri/src/link_metadata/mod.rs` (+25 / -3 — OnceLock + shared_client)
+- `src-tauri/src/backlink/filters.rs` (+63 / -27 — operator→SQL mapping + escape_like)
+- `src-tauri/src/backlink/tests.rs` (+46 — `filter_property_text_contains_pushed_into_sql` test)
+- `src/components/TagValuePicker.tsx` (+10 / -2 — useDebouncedCallback wiring)
+- `src/components/__tests__/TagValuePicker.test.tsx` (+60 / -2 — scoped `describe('debounce')` block)
+- `src-tauri/.sqlx/` (2 deleted, 1 added — regenerated via `cargo sqlx prepare -- --tests`)
+- `REVIEW-LATER.md` (net −1: 5 detail blocks + 5 summary rows + 5 Quick-wins bullets removed; 1 new detail block for FE-L-15)
+- `SESSION-LOG.md` (this entry + Recent milestones bump)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run -p agaric --filter-expr 'test(/block_tag_refs|gcal_push|connector|settings_snapshot|link_metadata|backlink|filter|property_text/)'` — **625 tests run, 625 passed, 2775 skipped**.
+- `npx vitest run src/components/__tests__/TagValuePicker.test.tsx src/components/__tests__/TagFilterPanel.test.tsx` — **58 tests passed** (21 TagValuePicker + 37 TagFilterPanel).
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **Batch sized exactly for parallelism.** Five items, five non-overlapping files — 5 build subagents + 5 review subagents ran in parallel with zero contention. Wall-clock: ~15 minutes from plan to all reviews in.
+- **Reference-implementation-first spec.** Each item's REVIEW-LATER detail cited an exact file:line of an existing pattern to mirror. Build subagents reported reading the reference first and matching it line-by-line. This eliminates the "two consumers of the same hook diverge in pattern" problem that session 606 hit. Worth replicating for future perf-cluster batches: never ship a REVIEW-LATER perf item without citing the existing reference pattern.
+- **PERF-28's CONDITIONAL PASS — `useDebouncedCallback` return instability.** The reviewer correctly flagged that `useDebouncedCallback` returns a fresh `{ schedule, cancel }` object each render, which makes the downstream `handleChange` `useCallback` a no-op (`[onChange, debounced]` changes every render). The `useCallback` wrapper on `handleChange` was pre-existing (we did not introduce it), so the minimum PERF-28 fix leaves it alone. Cleaner fix: wrap the hook's return in `useMemo(() => ({ schedule, cancel }), [])`. Out of scope for PERF-28 since it modifies a shared hook used by `TagFilterPanel` too. Filed as FE-L-15 follow-up. Pattern for future sessions: when a review subagent flags an out-of-scope improvement that modifies a *shared* primitive, file the follow-up rather than expand the current item.
+- **`.sqlx/` cache regeneration discipline.** PERF-24 (new `json_each` queries via runtime `sqlx::query`, not `query!`) dropped 2 entries (old per-row DELETE + INSERT), no new entries. PERF-25 (new batched helper via runtime `sqlx::query`, not `query!`) also added no entries. PERF-27 (dynamic operator SQL via runtime `sqlx::query_scalar`) added no entries. This session's net `.sqlx/` change is 2 deletions + 1 unrelated addition (`query-8159321...` for session 607's `TEST-5` delete_block COUNT — was untracked before we committed, got added by the regen pass). AGENTS.md invariant #6 requires regenerating after SQL changes; we ran `cargo sqlx prepare --check -- --tests` and confirmed in-sync.
+- **Clippy baseline unchanged.** All 5 reviewers independently noted 16-17 pre-existing clippy errors in unrelated test files (`cache/tests.rs`, `commands/tests/tag_cmd_tests.rs`, `mcp/tools_{ro,rw}/tests.rs`, `recovery/tests.rs`, `spaces/tests.rs`). These are `cast_sign_loss` / `cast_possible_wrap` / `needless_borrow` nits pre-existing on `main`. prek runs clippy but not in `-D warnings` mode, so they don't block commits. Future work to clean these up can land as a separate MAINT-* item, not in this batch.
+- **Quick-wins-bullets hygiene cleanup.** Before dispatching builds I noticed the top-level "Quick wins" bullet list in REVIEW-LATER.md still referenced 4 items that had been resolved in earlier sessions (MAINT-179 session 600, MAINT-182/187/188 session 603, PERF-23 earlier). Pruned them out-of-band. No cost to this batch.
+
+**Commit plan:** single commit, not pushed.
 
 ---
 

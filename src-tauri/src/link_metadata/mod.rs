@@ -10,6 +10,8 @@
 //!   `LinkMetadata` type. Re-exports the public parsing API from
 //!   `html_parser` to preserve the original single-file API surface.
 
+use std::sync::OnceLock;
+
 use serde::Serialize;
 use specta::Type;
 use sqlx::SqlitePool;
@@ -47,14 +49,31 @@ pub struct LinkMetadata {
 /// Maximum response body size (512 KB).
 const MAX_BODY_SIZE: usize = 512 * 1024;
 
-/// Fetch metadata for a URL by downloading the page and parsing HTML.
-pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
-    let client = reqwest::Client::builder()
+/// Return the process-global `reqwest::Client`, lazily built on first
+/// use. `reqwest::Client` is `Arc`-backed, so cloning is cheap; the
+/// `OnceLock` keeps us from re-building (a ~ms operation that would
+/// thrash connection pooling if done per `fetch_metadata()` call).
+fn shared_client() -> Result<reqwest::Client, AppError> {
+    static CELL: OnceLock<reqwest::Client> = OnceLock::new();
+    if let Some(existing) = CELL.get() {
+        return Ok(existing.clone());
+    }
+    let built = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::limited(5))
         .user_agent("Agaric/1.0")
         .build()
         .map_err(|e| AppError::InvalidOperation(format!("HTTP client error: {e}")))?;
+    // Benign race: two threads may both get into `build()` on first
+    // call; whichever `get_or_init`s first wins, the other's client
+    // is dropped. Either way the stored client is a valid shared
+    // handle.
+    Ok(CELL.get_or_init(|| built).clone())
+}
+
+/// Fetch metadata for a URL by downloading the page and parsing HTML.
+pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
+    let client = shared_client()?;
 
     let response =
         client.get(url).send().await.map_err(|e| {

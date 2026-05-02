@@ -311,17 +311,34 @@ pub(crate) struct GcalSettingsSnapshot {
 
 impl GcalSettingsSnapshot {
     pub(crate) async fn read(pool: &SqlitePool) -> Result<Self, AppError> {
-        let calendar_id = models::get_setting(pool, GcalSettingKey::CalendarId)
-            .await?
+        // PERF-25: fetch all three settings in a single SELECT instead
+        // of issuing three sequential `get_setting` calls. Missing rows
+        // are absent from the map and fall back to an empty-string
+        // default — matches the prior `get_setting` + `unwrap_or_default`
+        // behaviour.
+        let settings = models::get_settings_batch(
+            pool,
+            &[
+                GcalSettingKey::CalendarId,
+                GcalSettingKey::PrivacyMode,
+                GcalSettingKey::WindowDays,
+            ],
+        )
+        .await?;
+        let calendar_id = settings
+            .get(&GcalSettingKey::CalendarId)
+            .cloned()
             .unwrap_or_default();
-        let privacy_mode_raw = models::get_setting(pool, GcalSettingKey::PrivacyMode)
-            .await?
+        let privacy_mode_raw = settings
+            .get(&GcalSettingKey::PrivacyMode)
+            .map(String::as_str)
             .unwrap_or_default();
-        let privacy_mode = PrivacyMode::from_setting(&privacy_mode_raw);
-        let window_raw = models::get_setting(pool, GcalSettingKey::WindowDays)
-            .await?
+        let privacy_mode = PrivacyMode::from_setting(privacy_mode_raw);
+        let window_raw = settings
+            .get(&GcalSettingKey::WindowDays)
+            .map(String::as_str)
             .unwrap_or_default();
-        let window_days = parse_window_days(&window_raw);
+        let window_days = parse_window_days(window_raw);
         Ok(Self {
             calendar_id,
             privacy_mode,

@@ -16,9 +16,11 @@
 //! events, or touches the materializer — it is pure persistence for a
 //! local-device connector.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 
 use crate::error::AppError;
 use crate::now_rfc3339;
@@ -148,6 +150,52 @@ pub async fn get_setting(
         .fetch_optional(pool)
         .await?;
     Ok(row.map(|r| r.value))
+}
+
+/// Read multiple typed settings in a single round-trip.
+///
+/// Issues one `SELECT key, value FROM gcal_settings WHERE key IN (?, …)`
+/// with a dynamically-built placeholder list sized to `keys.len()`,
+/// then returns a map from the requested [`GcalSettingKey`] to its
+/// stored value.  Missing rows (deleted seeds) are simply absent from
+/// the returned map — callers get `None` on lookup, matching the
+/// `Ok(None)` semantics of [`get_setting`].  Duplicate entries in
+/// `keys` collapse to a single map entry.  An empty slice short-circuits
+/// to an empty map without touching the database.
+///
+/// PERF-25: replaces N sequential `get_setting` calls in hot readers
+/// (e.g. [`super::connector::GcalSettingsSnapshot::read`]) with a
+/// single query.
+///
+/// # Errors
+/// [`AppError::Database`] on SQL errors.
+pub async fn get_settings_batch(
+    pool: &SqlitePool,
+    keys: &[GcalSettingKey],
+) -> Result<HashMap<GcalSettingKey, String>, AppError> {
+    if keys.is_empty() {
+        return Ok(HashMap::new());
+    }
+    // Build `?, ?, …` sized to the slice.  Using `sqlx::query` (not the
+    // `query!` macro) because the number of placeholders is only known
+    // at runtime; the SQL shape and column types are still trivially
+    // fixed so the loss of compile-time validation is acceptable here.
+    let placeholders = vec!["?"; keys.len()].join(", ");
+    let sql = format!("SELECT key, value FROM gcal_settings WHERE key IN ({placeholders})");
+    let mut q = sqlx::query(&sql);
+    for key in keys {
+        q = q.bind(key.as_str());
+    }
+    let rows = q.fetch_all(pool).await?;
+    let mut out = HashMap::with_capacity(keys.len());
+    for row in rows {
+        let row_key: String = row.try_get("key")?;
+        let row_value: String = row.try_get("value")?;
+        if let Some(key) = keys.iter().find(|k| k.as_str() == row_key) {
+            out.insert(*key, row_value);
+        }
+    }
+    Ok(out)
 }
 
 /// Write a typed setting by key, on an arbitrary `sqlx::Executor`.
@@ -692,6 +740,95 @@ mod tests {
         assert_eq!(
             got, None,
             "get_setting must return Ok(None) for a missing seed row"
+        );
+    }
+
+    // ── get_settings_batch (PERF-25) ────────────────────────────────
+
+    #[tokio::test]
+    async fn get_settings_batch_returns_every_requested_key_when_all_present() {
+        let (pool, _dir) = test_pool().await;
+
+        // Seed distinct, non-default values for the three keys the
+        // connector snapshot reads so the assertions pin exact values
+        // instead of migration defaults.
+        set_setting(&pool, GcalSettingKey::CalendarId, "cal-123")
+            .await
+            .unwrap();
+        set_setting(&pool, GcalSettingKey::PrivacyMode, "minimal")
+            .await
+            .unwrap();
+        set_setting(&pool, GcalSettingKey::WindowDays, "14")
+            .await
+            .unwrap();
+
+        let keys = [
+            GcalSettingKey::CalendarId,
+            GcalSettingKey::PrivacyMode,
+            GcalSettingKey::WindowDays,
+        ];
+        let got = get_settings_batch(&pool, &keys).await.unwrap();
+
+        assert_eq!(got.len(), 3, "all three keys must round-trip");
+        assert_eq!(
+            got.get(&GcalSettingKey::CalendarId).map(String::as_str),
+            Some("cal-123")
+        );
+        assert_eq!(
+            got.get(&GcalSettingKey::PrivacyMode).map(String::as_str),
+            Some("minimal")
+        );
+        assert_eq!(
+            got.get(&GcalSettingKey::WindowDays).map(String::as_str),
+            Some("14")
+        );
+    }
+
+    #[tokio::test]
+    async fn get_settings_batch_omits_missing_keys_but_returns_the_rest() {
+        let (pool, _dir) = test_pool().await;
+
+        set_setting(&pool, GcalSettingKey::CalendarId, "cal-123")
+            .await
+            .unwrap();
+        set_setting(&pool, GcalSettingKey::PrivacyMode, "minimal")
+            .await
+            .unwrap();
+        set_setting(&pool, GcalSettingKey::WindowDays, "14")
+            .await
+            .unwrap();
+
+        // Delete one seeded row to simulate corruption / manual deletion.
+        sqlx::query("DELETE FROM gcal_settings WHERE key = 'privacy_mode'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let keys = [
+            GcalSettingKey::CalendarId,
+            GcalSettingKey::PrivacyMode,
+            GcalSettingKey::WindowDays,
+        ];
+        let got = get_settings_batch(&pool, &keys).await.unwrap();
+
+        assert_eq!(
+            got.len(),
+            2,
+            "deleted row must be absent from the returned map"
+        );
+        assert!(
+            !got.contains_key(&GcalSettingKey::PrivacyMode),
+            "missing key must NOT be present in the map"
+        );
+        assert_eq!(
+            got.get(&GcalSettingKey::CalendarId).map(String::as_str),
+            Some("cal-123"),
+            "other rows must still be returned"
+        );
+        assert_eq!(
+            got.get(&GcalSettingKey::WindowDays).map(String::as_str),
+            Some("14"),
+            "other rows must still be returned"
         );
     }
 

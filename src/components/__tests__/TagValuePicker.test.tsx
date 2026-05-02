@@ -12,9 +12,9 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { TagValuePicker } from '../TagValuePicker'
 
@@ -314,6 +314,62 @@ describe('TagValuePicker', () => {
 
     await waitFor(() => {
       expect(input).toHaveAttribute('aria-expanded', 'true')
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Debounce (PERF-28)
+  // -----------------------------------------------------------------------
+  describe('debounce', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    const countListCalls = () =>
+      mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_tags_by_prefix').length
+
+    it('fires at most one IPC when 3 chars are typed within the 300ms window', async () => {
+      mockTagSearch()
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      renderPicker()
+
+      await user.type(screen.getByLabelText('Tag name'), 'wor')
+
+      // Debounce timer has not yet fired — no IPC issued per keystroke
+      expect(countListCalls()).toBe(0)
+
+      // Advance past the 300ms debounce and flush microtasks
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300)
+      })
+
+      // Exactly one IPC fired with the final prefix, not one per keystroke
+      expect(countListCalls()).toBe(1)
+      expect(mockedInvoke).toHaveBeenLastCalledWith('list_tags_by_prefix', {
+        prefix: 'wor',
+        limit: 20,
+      })
+    })
+
+    it('cancels the pending debounce when the input is cleared', async () => {
+      mockTagSearch()
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      renderPicker()
+
+      const input = screen.getByLabelText('Tag name')
+      await user.type(input, 'wor')
+      await user.clear(input)
+
+      // Advancing past the debounce window must NOT fire an IPC
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300)
+      })
+
+      expect(countListCalls()).toBe(0)
     })
   })
 })

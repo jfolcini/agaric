@@ -339,6 +339,55 @@ async fn filter_property_text_gte() {
     assert!(set.contains("SRC_B"), "beta is >= beta");
 }
 
+// PERF-27: `Contains` and `StartsWith` are pushed down to SQL via `LIKE
+// ? ESCAPE '\'`.  The test below covers `Contains` and also verifies
+// that `%` / `_` in the user input are treated literally (not as LIKE
+// wildcards) via `escape_like`, so callers cannot accidentally or
+// maliciously match more rows than intended.
+#[tokio::test]
+async fn filter_property_text_contains_pushed_into_sql() {
+    let (pool, _dir) = test_pool().await;
+    setup_backlinks(&pool).await;
+    // SRC_A's tag contains the literal substring "foo".
+    // SRC_B's tag does not.
+    // SRC_C's tag contains "%" literally — used to prove that the
+    // escape logic prevents a naive `LIKE '%%%'` from matching SRC_A/SRC_B.
+    insert_property(&pool, "SRC_A", "tag", Some("alpha-foo-bar"), None, None).await;
+    insert_property(&pool, "SRC_B", "tag", Some("alpha-baz-bar"), None, None).await;
+    insert_property(&pool, "SRC_C", "tag", Some("50% off"), None, None).await;
+
+    // Plain substring match.
+    let filter = BacklinkFilter::PropertyText {
+        key: "tag".into(),
+        op: CompareOp::Contains,
+        value: "foo".into(),
+    };
+    let set = resolve_filter(&pool, &filter, 0).await.unwrap();
+    assert!(set.contains("SRC_A"), "alpha-foo-bar contains 'foo'");
+    assert!(
+        !set.contains("SRC_B"),
+        "alpha-baz-bar does not contain 'foo'"
+    );
+    assert!(!set.contains("SRC_C"), "50% off does not contain 'foo'");
+
+    // `%` in the needle must match literally, not as a LIKE wildcard.
+    let filter_pct = BacklinkFilter::PropertyText {
+        key: "tag".into(),
+        op: CompareOp::Contains,
+        value: "%".into(),
+    };
+    let set_pct = resolve_filter(&pool, &filter_pct, 0).await.unwrap();
+    assert!(set_pct.contains("SRC_C"), "50% off contains literal '%'");
+    assert!(
+        !set_pct.contains("SRC_A"),
+        "alpha-foo-bar has no literal '%' — must not match an unescaped '%' wildcard"
+    );
+    assert!(
+        !set_pct.contains("SRC_B"),
+        "alpha-baz-bar has no literal '%' — must not match an unescaped '%' wildcard"
+    );
+}
+
 // ======================================================================
 // PropertyNum filter
 // ======================================================================
