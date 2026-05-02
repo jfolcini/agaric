@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (UX audit — feature-map sweep, UX-300 through UX-397)
+> **Last updated:** 2026-05-02 (UX audit + REVIEW-LATER 2-pass cleanup — 13 items closed, ~30 items rewritten)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-182 open items.
+176 open items in the summary table; 232 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -57,14 +57,12 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-192 | MAINT | Documentation — UX.md / AGENTS.md additions to reduce false-positive churn on future reviews: (a) UX.md Common-Pitfall "`setState` after unmount in React 18+ is no longer a defect"; (b) UX.md Lesson-Learned "Reading store state inside callbacks via `useStore.getState()` is intentional"; (c) AGENTS.md mandatory-pattern: picker debouncing convention; (d) AGENTS.md reference `INTERNAL_PROPERTY_KEYS` (see MAINT-187) | S | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
-| PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S | — |
 | PERF-24 | PERF | `cache/block_tag_refs.rs::reindex_block_tag_refs` issues per-target DELETE/INSERT in a loop; sibling `block_links.rs` already batches via `json_each` | S | — |
 | PERF-25 | PERF | `gcal_push/connector.rs::GcalSettingsSnapshot::read` issues 4 separate `SELECT`s every cycle; trivially batchable via `key IN (?, ?, ?, ?)` | S | — |
 | PERF-26 | PERF | `link_metadata/mod.rs::fetch_metadata` rebuilds `reqwest::Client` per call; should reuse a `OnceLock` like `gcal_push/api.rs` does | S | — |
 | PERF-27 | PERF | `backlink/filters.rs::PropertyText` filter fetches all rows for the property key then compares in Rust; push the operator into SQL `WHERE` | S | — |
 | PERF-28 | PERF | Frontend — `TagValuePicker.tsx:39-55` calls `listTagsByPrefix()` synchronously on every keystroke; sibling `TagFilterPanel.tsx:68-82` debounces 300 ms via `useDebouncedCallback`. Apply the same pattern | S | — |
 | PERF-29 | PERF | Frontend — `src/stores/resolve.ts:204-211` (and 249-253) cache eviction loops `cache.keys().next()` per excess key; replace with `Array.from(cache.keys()).slice(0, excess).forEach(k => cache.delete(k))` | S | — |
-| PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S | Identity decision |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
@@ -82,7 +80,6 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-12 | TEST | `apply_remote_ops_detects_fork_with_same_seq_different_hash` queries hash but not full `OpRecord` (payload, op_type) — won't catch row mutation outside the hash field | S | — |
 | TEST-13 | TEST | Draft tests use `record.payload.contains(BLOCK_A)` on raw JSON — a substring match that could pass with the ID in the wrong field | S | — |
 | TEST-14 | TEST | Spaces tests don't verify isolation between Personal/Work spaces — no test creates pages in both and asserts queries return correct subset for each | S | — |
-| TEST-15 | TEST | `propagate_multi_level` (tag inheritance) doesn't cover transitive case where intermediate node (CHILD) is deleted but tag still propagates from PAGE to GRANDCHILD | S | — |
 | TEST-16 | TEST | Recurrence integration tests don't exercise year-boundary transitions (Dec 31 + 1 day → Jan 1 next year) — only unit tests cover DST/leap year | S | — |
 | TEST-17 | TEST | `opbatch_streaming_sends_in_chunks` verifies chunk sizes (1000/1000/500) but not seq-ordering within each batch | S | — |
 | TEST-18 | TEST | Backlink non-grouped tests use `setup_backlinks()` orphan sources (no parent_id), so they never exercise self-reference filtering; sort tests don't assert `total_count`/`filtered_count` | S | — |
@@ -155,12 +152,10 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-345 | UX | History "Restore to here" vs "Revert selected" terminology overlaps | S | — |
 | UX-346 | UX | Vim-style `j`/`k` nav has no touch alternative | S | — |
 | UX-347 | UX | Conflict "Keep Incoming" / "Discard Incoming" is ambiguous | S | — |
-| UX-348 | UX | Compaction confirmation copy too soft for an irreversible action | S | — |
 | UX-349 | UX | Conflict type badges differ only by colour | S | — |
 | UX-350 | UX | History op-type filter has no in-UI explanation | S | — |
 | UX-351 | UX | Non-reversible history entries marked only by `opacity-50` + lock icon | S | — |
 | UX-352 | UX | `CompactionCard` collapsed by default at top of HistoryView | S | — |
-| UX-353 | UX | Conflict list help text disappears under filters | S | — |
 | UX-354 | UX | Graph filter bar has no on-touch affordance | S | — |
 | UX-355 | UX | Graph node Enter/Space activation is undocumented | S | — |
 | UX-356 | UX | Graph zoom buttons don't show keyboard shortcut bindings | S | — |
@@ -174,7 +169,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-364 | UX | `SpaceSwitcher` trigger reads as a label, not a switcher | S | — |
 | UX-365 | UX | Spaces onboarding banner only inside `SpaceManageDialog` | S | — |
 | UX-366 | UX | Cross-space `[[link]]` chips render with literal "Broken link" tooltip | S | — |
-| UX-367 | UX | "Move to space" is silent — no confirm, no toast | S | — |
 | UX-368 | UX | Digit hotkeys (Ctrl+1..9) hint only inside dropdown rows | S | — |
 | UX-369 | UX | History "All spaces" toggle resets every session | S | — |
 | UX-370 | UX | Space delete-when-empty signalled only via tooltip | S | — |
@@ -243,7 +237,7 @@ These can be tackled in a single session with low risk — listed for prioritiza
 
 **Problem:** Two integration surfaces leak across spaces today:
 
-1. **Google Calendar push** uses a single `calendar_id` in `GcalStatus` (`src-tauri/src/commands/gcal.rs:56-66`). The push pipeline (`gcal_push/connector.rs`) pulls agenda items via `list_projected_agenda_inner` (space-aware after FEAT-3p4, but the connector still passes `None` so every space's agenda lands in one calendar) and writes every item from every space into one calendar. A user with the integration on cannot keep their work calendar separate from their personal one.
+1. **Google Calendar push** uses a single `calendar_id` in `GcalStatus` (`src-tauri/src/commands/gcal.rs:58-68`). The push pipeline (`gcal_push/connector.rs`) pulls agenda items via `list_projected_agenda_inner` (space-aware after FEAT-3p4, but the connector still passes `None` so every space's agenda lands in one calendar) and writes every item from every space into one calendar. A user with the integration on cannot keep their work calendar separate from their personal one.
 2. **OS notifications** (FEAT-11, deferred): when adopted, due-task notifications will show task content with no space attribution. A Work task firing while the user is "in" Personal breaks context.
 
 **Locked-in policy:**
@@ -311,11 +305,12 @@ Part of the FEAT-5 family. **Not scheduled.** Blocked on explicit design-review 
 
 **Problem:** The app has agenda + due dates + scheduled dates + repeat properties + projected agenda + the Google Calendar push connector (FEAT-5), but zero OS-level notification path. A user with "buy groceries — DUE 09:00" cannot be notified by the OS unless the GCal push has already fired and their calendar app shows it. Org-mode / Logseq users expect "10 minutes before scheduled" and "due now" to surface as native notifications.
 
-**Fix:** Adopt `@tauri-apps/plugin-notification` + `tauri-plugin-notification`. New backend module `src-tauri/src/notifier/mod.rs` schedules notifications based on `due_date` + `scheduled_date` + property events from the materializer (analogous to `gcal_push::DirtyEvent`). Reuses the existing `agenda_view` queries to find blocks within the next-24h window on boot and on every materialize commit. Frontend: a Settings tab toggle + per-property filter. Mobile permissions: request `POST_NOTIFICATIONS` on Android 13+ via the plugin's permission API. Coupled stack — bump with the rest of the Tauri plugins.
+**Fix:** Adopt `@tauri-apps/plugin-notification` + `tauri-plugin-notification`. New backend module `src-tauri/src/notifier/mod.rs` schedules notifications based on `due_date` + `scheduled_date` + property events from the materializer (analogous to `gcal_push::DirtyEvent`). Reuses the existing agenda projection queries (`commands/agenda.rs::list_projected_agenda_inner`) to find blocks within the next-24h window on boot and on every materialize commit. Frontend: a Settings tab toggle + per-property filter. Mobile permissions: request `POST_NOTIFICATIONS` on Android 13+ via the plugin's permission API. Coupled stack — bump with the rest of the Tauri plugins.
 
 **Cost:** L — design (which events fire? how to dedupe? snooze semantics?), backend scheduler (~6 files), one Settings sub-tab, mobile permission flow, ~25 tests.
 **Risk:** M — wrong-time notifications and notification spam are both real failure modes; needs careful dedupe and "do not re-fire on materialize replay" guard.
 **Impact:** L — closes a recognised feature gap with Org-mode / Logseq parity; especially valuable on mobile where the user is unlikely to have the app foregrounded when a task is due.
+**Status:** Open.
 
 ## MAINT — Maintenance / cleanup
 
@@ -389,9 +384,9 @@ Query helpers that return "active" blocks (`list_children`, `get_descendants`, `
 
 | File | Trigger | Jobs |
 |---|---|---|
-| `.github/workflows/_validate.yml` (135 LOC) | `workflow_call` | prek-equivalent (lint + fmt + clippy + nextest + vitest + playwright + sqlx offline check + MCP smoke) |
+| `.github/workflows/_validate.yml` (143 LOC) | `workflow_call` | prek-equivalent (lint + fmt + clippy + nextest + vitest + playwright + sqlx offline check + MCP smoke) |
 | `.github/workflows/ci.yml` (288 LOC) | push (non-tag) + PR | calls `_validate.yml` → desktop build matrix (ubuntu / windows / macos) + android aarch64/x86_64 build |
-| `.github/workflows/release.yml` (~450 LOC) | push `v*` tag | calls `_validate.yml` → verify-version → desktop build matrix + sign + android APK + draft GitHub Release |
+| `.github/workflows/release.yml` (~464 LOC) | push `v*` tag | calls `_validate.yml` → verify-version → desktop build matrix + sign + android APK + draft GitHub Release |
 | `.github/workflows/release-tag.yml` (78 LOC) | `workflow_dispatch` only (`-f version=…`) | runs `scripts/bump-version.sh --commit --tag --push`; the tag push then re-triggers `release.yml` |
 
 The initial one-line recommendation was "4 → 2 (validate + release)". On inspection that is too aggressive. `ci.yml` and `release.yml` have genuinely different reasons to exist (per-push non-tag build vs. per-tag signed-release pipeline), and `release-tag.yml` is a thin entry-point wrapper around `bump-version.sh` that exists so the maintainer does not have to type the bump + tag + push dance manually.
@@ -410,7 +405,7 @@ The initial one-line recommendation was "4 → 2 (validate + release)". On inspe
 
 ### MAINT-128 — God-component decomposition: `PropertyRowEditor.tsx`
 
-**What:** `PropertyRowEditor.tsx` is 550L and carries an explicit `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` at L85. The file dispatches on `def.value_type` (text/number/date/ref/select → 5 parallel JSX subtrees) but the 5 typed editors share `localValue`, date hook state, select-options state (3 fields), ref-picker state (4 fields), and 10+ callbacks — splitting naïvely re-creates the prop-chain problem that the `biome-ignore` acknowledges.
+**What:** `PropertyRowEditor.tsx` is 550L and carries an explicit `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` at L92. The file dispatches on `def.value_type` (text/number/date/ref/select → 5 parallel JSX subtrees) but the 5 typed editors share `localValue`, date hook state, select-options state (3 fields), ref-picker state (4 fields), and 10+ callbacks — splitting naïvely re-creates the prop-chain problem that the `biome-ignore` acknowledges.
 
 **Refactor path (locked in):** Split each typed editor into its own component AND lift the shared state UP into a containing hook. The hook owns local edit state, debounced save, and calls down into the per-type editor through a thin contract. The alternative — accepting the existing `biome-ignore` permanently with a rationale comment — was considered and rejected.
 
@@ -502,7 +497,9 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 
 **Cost:** M — design + implementation + verifying the 13 sites still produce identical query plans.
 **Risk:** Medium — touching every list query is high blast-radius; needs careful test coverage.
+**Impact:** Medium — eliminates a recurring drift hotspot; closes a long-tail correctness foot-gun.
 **Decision:** Defer until the cost of drift becomes visible (a real bug shipped because one site got out of sync). Until then, the comment-based "mirror any change" convention is acceptable.
+**Status:** Deferred.
 
 > **MAINT-173 through MAINT-192 below were filed from a frontend-wide UX review.**
 > Methodology: 7 parallel discovery subagents covering all 438 frontend source files,
@@ -541,18 +538,18 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 
 ### MAINT-176 — `use-roving-editor.ts` dispatches the suggestion-exit transaction without try/catch
 - **Domain:** Frontend (editor)
-- **Location:** `src/editor/use-roving-editor.ts:385-392`
-- **What:** The "exit suggestion plugins before `replaceDocSilently()`" sequence dispatches a transaction that can throw if the view is destroyed between the earlier `editor.view.isDestroyed` check and the dispatch. The subsequent `replaceDocSilently()` then runs against a possibly-corrupt plugin state.
-- **Cost:** S — wrap the dispatch in try/catch with `logger.warn` + an `editor.view.isDestroyed` re-check on the catch path.
+- **Location:** `src/editor/use-roving-editor.ts:374-409` (dispatch at `:391`)
+- **What:** The dispatch at L391 has no try/catch; if `editor.view.dispatch()` throws (e.g. view torn down between block-switch frames), the subsequent `replaceDocSilently()` runs on possibly-corrupt plugin state. The only guard prior to dispatch is `if (!editor) return` at L376 — there is no `editor.view.isDestroyed` check anywhere in the file.
+- **Cost:** S — wrap the dispatch in try/catch with `logger.warn`; add an `editor.view.isDestroyed` check on the catch path (would need to be added, not re-added).
 - **Risk:** Low.
 - **Impact:** Low — the failure mode is rare in practice but its symptoms (stuck suggestion plugin, ghost popup) are hard to reproduce, so defensive logging is high-leverage.
 - **Status:** Open.
 
 ### MAINT-177 — `BugReportDialog` swallows `openUrl` failure but reports success
 - **Domain:** Frontend (bug report)
-- **Location:** `src/components/BugReportDialog.tsx:239-253`
-- **What:** `await openUrl(issueUrl)` is followed by `toast.success(...)` and `onOpenChange(false)`. If `openUrl` rejects (browser blocked, no default browser), the success toast still fires (in the surrounding `try/finally`, the `finally` runs but the success path can already have been observed) and the dialog still closes. The user has a ZIP on disk and no GitHub tab open.
-- **Cost:** S — wrap `openUrl` in a localised try/catch, surface a "URL copied to clipboard, please open manually" fallback toast, keep the dialog open.
+- **Location:** `src/components/BugReportDialog.tsx:239-253` ; `src/lib/open-url.ts` (14 lines total)
+- **What:** `await openUrl(issueUrl)` is followed by `toast.success(...)` and `onOpenChange(false)`. `openUrl` itself never rejects — on Tauri-shell error it falls back to `window.open(url, '_blank', 'noopener,noreferrer')` silently, and `window.open` returns `null` (it doesn't throw) on popup-block. Result: user has a ZIP on disk, sees a success toast, and no GitHub tab opened.
+- **Cost:** S — change `openUrl` to return `Promise<boolean>` reflecting whether the system browser actually opened (check the Tauri shell return + the `window.open(...)` return value); gate the success toast and `onOpenChange(false)` on the boolean. A localised try/catch in the dialog is *not* the fix — `openUrl` cannot reject, so try/catch can never fire.
 - **Risk:** Low.
 - **Impact:** Medium — the bug-report flow's whole point is for the user to land on the issue page; silently failing it defeats the feature.
 - **Status:** Open.
@@ -613,7 +610,7 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 
 ### MAINT-184 — Picker async-resolve duplication between InputRule and command paths
 - **Domain:** Frontend (editor extensions)
-- **Location:** `src/editor/extensions/block-link-picker.ts:48-104` (command) vs `113-173` (input rule); same shape in `block-ref-picker.ts:44-104` vs `104-160`.
+- **Location:** `src/editor/extensions/block-link-picker.ts:48-104` (command) vs `:113-173` (input rule); same shape in `block-ref-picker.ts:44-97` (command) vs `:99-157` (input rule).
 - **What:** Each picker has two entry points (input rule when typed, command when invoked from selection) that share ~70% of logic: async items lookup, exact-match check, `onCreate` fallback, plain-text fallback, error handling. Bug fixes need to land in two places per picker.
 - **Cost:** S — extract `resolveAndInsertBlockLink(editor, opts, items, onCreate, insertPos)` (and twin for refs) into a small shared helper. Both entry points become 5-line wrappers.
 - **Risk:** Low.
@@ -638,13 +635,13 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Impact:** Low — doc/code parity, no behaviour change.
 - **Status:** Open.
 
-### MAINT-187 — Hardcoded internal-property keys list duplicated across components
+### MAINT-187 — Hardcoded internal-property keys list (single site, but no shared constant)
 - **Domain:** Frontend (block properties)
-- **Location:** `src/components/SortableBlock.tsx:271-278` (`['repeat', 'created_at', 'completed_at', 'repeat-seq', 'repeat-origin']`); same shape elsewhere.
-- **What:** The list of "internal" property keys (filtered out of UI display) is hardcoded at every site that filters properties. Adding a new internal key (e.g. `updated_at`) requires hunting them all down.
-- **Cost:** Trivial — define `INTERNAL_PROPERTY_KEYS: ReadonlySet<string>` in `src/lib/block-utils.ts`, import everywhere. Reference from AGENTS.md (covered by MAINT-192).
+- **Location:** Single hardcoded site at `src/components/SortableBlock.tsx:271-278` (`['repeat', 'created_at', 'completed_at', 'repeat-seq', 'repeat-origin']`).
+- **What:** The list of "internal" property keys filtered out of UI display lives only at this site today. Adding a new internal key (e.g. `updated_at`) means future filter sites would need to either find this list or duplicate it.
+- **Cost:** Trivial — promote to `INTERNAL_PROPERTY_KEYS: ReadonlySet<string>` in `src/lib/block-utils.ts` so future filter sites can import rather than duplicate. Reference from AGENTS.md (covered by MAINT-192). Note: a related but distinct `NON_DELETABLE_PROPERTIES` Set exists at `src/lib/property-save-utils.ts:21-33` (backend deletion guard, mirrors `is_builtin_property_key` in `src-tauri/src/op.rs`); keep separate — its 11 members include the 5 above plus `todo_state`, `priority`, `due_date`, `scheduled_date`, `repeat-until`, `repeat-count`.
 - **Risk:** Low.
-- **Impact:** Low — single source of truth.
+- **Impact:** Low — single source of truth, pre-empts duplication.
 - **Status:** Open.
 
 ### MAINT-188 — `PageHeader` rebuilds breadcrumb segments in inline IIFE on every render
@@ -656,22 +653,22 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Impact:** Low — micro-perf + readability.
 - **Status:** Open.
 
-### MAINT-189 — `PropertyValuePicker` fetches property keys per component mount with no shared cache
-- **Domain:** Frontend (filter pickers)
-- **Location:** `src/components/PropertyValuePicker.tsx:42-49`
-- **What:** `useEffect(() => { listPropertyKeys()... }, [])` fires on every mount. Multiple instances on the same view (e.g. multiple filter rows) each call the IPC. The data is small and rarely changes — perfect candidate for a shared cache.
-- **Cost:** S — extract `usePropertyKeysCache` (Zustand or context) keyed on `currentSpaceId`; invalidate on relevant materializer events.
+### MAINT-189 — `listPropertyKeys()` fetched per-mount in 3 components with no shared cache
+- **Domain:** Frontend (filter pickers + backlink panels)
+- **Location:** `src/components/PropertyValuePicker.tsx:42-49` ; `src/components/UnlinkedReferences.tsx:147-148` ; `src/components/LinkedReferences.tsx:155-156`
+- **What:** All three components call `listPropertyKeys()` from a `useEffect` with empty deps. Multiple instances on the same view (e.g. multiple filter rows + linked + unlinked panels open at once) each call the IPC. The data is small and rarely changes — perfect candidate for a shared cache.
+- **Cost:** S — extract `usePropertyKeysCache` (Zustand or context) keyed on `currentSpaceId`; replace 3 per-mount `useEffect` fetches with a single shared cache; invalidate on relevant materializer events.
 - **Risk:** Low.
 - **Impact:** Low — minor IPC reduction; not user-visible.
 - **Status:** Open.
 
-### MAINT-190 — `FilterPillRow` uses `key={index}` because `getFilterKey()` can collide
+### MAINT-190 — `FilterPillRow` `key={index}` is over-cautious (already prevented by add-time dedup)
 - **Domain:** Frontend (filter UI)
-- **Location:** `src/components/FilterPillRow.tsx:104-105`
-- **What:** Existing `biome-ignore lint/suspicious/noArrayIndexKey` comment acknowledges that `getFilterKey()` can return duplicates for structurally different filters. `key={index}` works but is fragile under reorder.
-- **Cost:** S — make `getFilterKey()` collision-free (include filter type + a content hash, or stamp a stable per-add counter).
+- **Location:** `src/components/FilterPillRow.tsx:104-105` ; `src/components/BacklinkFilterBuilder.tsx:42-67` (`getFilterKey`), `:88-102` (`handleAddFilter`)
+- **What:** Optional cleanup. The `biome-ignore` comment is defensive — `getFilterKey` already discriminates by all data fields (`PropertyText:${key}:${op}:${value}`, `HasTag:${tag_id}`, etc., with `JSON.stringify(filter)` fallback), and `handleAddFilter` rejects exact duplicates before they reach `FilterPillRow` (`filters.some((f) => getFilterKey(f) === key)`). A genuine collision would require two byte-identical filters past that guard — which the dedup blocks. Note: this overlaps with FE-L-14 in the FE review.
+- **Cost:** S — could be removed by stamping a per-add monotonic `id` on each filter at add-time and using that as the React key, but the current biome-ignore is defensible. Low priority.
 - **Risk:** Low.
-- **Impact:** Low — pre-empts future bugs around filter reorder / animation.
+- **Impact:** Low — pre-empts future bugs around filter reorder / animation only.
 - **Status:** Open.
 
 ### MAINT-191 — `PairingDialog` cleanup comment doesn't clarify which side cancellation applies to
@@ -702,15 +699,13 @@ Items in this section are test-quality improvements identified during a thorough
 
 > **Format:** test items use the compact L-style block. None of these are blocking; they are code-quality investments.
 
-### TEST-1 — `delete_block_inner` calls `now_rfc3339()` twice (production timestamp-mismatch)
-- **Domain:** Commands (Block lifecycle)
-- **Location:** `src-tauri/src/commands/blocks/crud.rs` (`delete_block_inner`); workaround visible in `src-tauri/src/commands/tests/undo_redo_tests.rs:1843-1868`
-- **What:** `delete_block_inner` calls `now_rfc3339()` separately for the `op_log` row and the `blocks.deleted_at` UPDATE. The two timestamps differ at sub-millisecond resolution but render as the same string most of the time, so the bug is silent. The `revert_delete_block_restores_with_descendants` test exposes it explicitly and works around it by manually constructing the op with a single hardcoded timestamp `"2025-06-15T12:00:00Z"`.
-- **Why it matters:** Sub-ms timestamp drift between op_log and blocks rows can confuse history queries that reconstruct prior state by joining on `created_at`. Discovered during test code review; the fact that a test actively works around this is a strong signal.
-- **Cost:** Trivial — compute `let now = now_rfc3339();` once at the top of `delete_block_inner` and reuse for both writes.
+### TEST-1 — Stale test workaround in `revert_delete_block_restores_with_descendants` (production fix already shipped)
+- **Domain:** Test infrastructure (Block lifecycle)
+- **Location:** `src-tauri/src/commands/tests/undo_redo_tests.rs:1843-1868`
+- **What:** The production bug (two separate `now_rfc3339()` calls in `delete_block_inner`) has been fixed: `src-tauri/src/commands/blocks/crud.rs:608` is now a single `let now = now_rfc3339();` reused at L611 (op_log) and L638 (blocks.deleted_at), with an explicit comment at L606-607 documenting the invariant. The stale test workaround that constructs the op manually with hardcoded timestamp `"2025-06-15T12:00:00Z"` (and a misleading comment claiming "delete_block_inner uses two separate now_rfc3339() calls") is still present.
+- **Cost:** Trivial — remove the workaround at lines 1843-1868 and the stale comment at 1844-1846; call `delete_block_inner` directly.
 - **Risk:** Low.
-- **Impact:** Low (silent in practice today, but a correctness latent).
-- **Recommendation:** Fix `delete_block_inner` to compute `now` once; then simplify the test to call `delete_block_inner` directly instead of constructing the op manually.
+- **Impact:** Low — test cleanup only; production already correct.
 - **Status:** Open.
 
 ### TEST-2 — Inequality count assertions where exact count is known (3 sites)
@@ -729,16 +724,16 @@ Items in this section are test-quality improvements identified during a thorough
 - **Domain:** Test infrastructure
 - **Location:**
   - `src-tauri/src/commands/tests/block_cmd_tests.rs` lines 241-244, 336-338, 378-380, 405-407, 897-899, 1143-1145, 1209-1211, 1982-1984, 2006-2008, 2069-2071, 2198-2200 (11 sites)
-  - `src-tauri/src/sync_daemon/tests.rs` lines 885, 979, 1063, 1231, 1563, 1622, 1691, 1820, 1902 (9 sites on `SyncEvent::Error.message`)
+  - `src-tauri/src/sync_daemon/tests.rs` lines 885, 979, 1231, 1563, 1622, 1691, 1820, 1902 (8 sites on `SyncEvent::Error.message`) plus line 1063 (`err.to_string().contains("sync cancelled by user")` — error string, not event message)
 - **What:** Tests use `.contains("substring")` on error/event message strings instead of `matches!(AppError::Variant(_))` or pinned message equality. If the message text is refactored or i18n-localized, the test silently passes against a different error.
 - **Cost:** S — mechanical replace per AGENTS.md convention.
 - **Risk:** Low — if a substring check still adds value, keep it but combine with `matches!()` on the error variant (sync_daemon path requires keeping `.contains()` because the event carries an unstructured `message: String`; the block_cmd path can fully migrate to `matches!`).
 - **Impact:** Medium — turns silent-pass regressions into hard failures.
 - **Status:** Open.
 
-### TEST-4 — Sync daemon tests use 18 fixed sleeps as race-prone "barriers"
+### TEST-4 — Sync daemon tests use 21 fixed sleeps as race-prone "barriers"
 - **Domain:** Sync / Test infrastructure
-- **Location:** `src-tauri/src/sync_daemon/tests.rs` lines 2601, 2607, 2639, 2643, 2702, 2706, 2755, 2770, 2828, 2847, 2909, 3151, 3208, 3281, 3345, 3388, 3395, 3398
+- **Location:** `src-tauri/src/sync_daemon/tests.rs` lines 2601, 2607, 2639, 2643, 2702, 2706, 2755, 2770, 2781, 2828, 2847, 2862, 2909, 2919, 3151, 3208, 3281, 3345, 3388, 3395, 3398
 - **What:** Tests use `tokio::time::sleep(Duration::from_millis(50..800))` to wait for daemon state changes. Unlike the materializer (which exposes `flush_background()`, `wait_for_initial_block_count_cache()`, `wait_for_pending_block_count_refreshes()`), the sync daemon and `SyncScheduler` have no equivalent sync-barrier helper, so tests sleep and hope.
 - **Why it matters:** Real flake risk on loaded CI. The 800ms sleeps in particular are pessimistic guesses that could still be too short under load.
 - **Cost:** M — design + implement a `wait_for_state(scheduler, predicate)` polling helper or expose `Notify`-based barriers on `SyncDaemon`.
@@ -756,13 +751,13 @@ Items in this section are test-quality improvements identified during a thorough
 - **Impact:** Low-medium — closes a silent gap on cascade-delete op accounting.
 - **Status:** Open.
 
-### TEST-6 — Sync merge tests assert on counter only, not materialized state
+### TEST-6 — Sync merge tests assert on counter / conflict-copy block but not the original
 - **Domain:** Sync / Merge tests
 - **Location:**
   - `src-tauri/src/sync_protocol/tests.rs:1115-1171` (`merge_resolves_property_conflict_lww`) — asserts `results.property_lww > 0` but never queries `block_properties` to confirm the LWW winning value is stored
-  - `src-tauri/src/merge/tests.rs:1016-1113` (`merge_block_conflict_creates_copy`) — verifies `is_conflict=1` and `conflict_source` on the merge op but never queries `blocks` to confirm both rows (original + conflict copy) exist with correct content
-- **What:** Tests verify the merge engine's counter outputs but stop short of confirming the database actually reflects the resolution. A regression that updates the counter but skips the DB write would pass.
-- **Cost:** S — add `SELECT … FROM block_properties` / `SELECT … FROM blocks` assertions after each merge.
+  - `src-tauri/src/merge/tests.rs:1016-1113` (`merge_block_conflict_creates_copy`) — queries the conflict-copy block via `blocks` (lines 1094-1109) and verifies the original block's text via `dag::text_at` (lines 1078-1090), but never asserts `SELECT content FROM blocks WHERE id = 'B1'` (the original) — so a bug that mutated the original block's row content (instead of leaving it intact) would slip through
+- **What:** Tests verify the merge engine's counter outputs and the conflict-copy row, but stop short of confirming the *original* row is untouched and that LWW writes actually land in `block_properties`.
+- **Cost:** S — add `SELECT … FROM block_properties WHERE block_id = ? AND key = ?` and `SELECT content FROM blocks WHERE id = 'B1'` assertions.
 - **Risk:** Low.
 - **Impact:** Medium — these tests are the only coverage for LWW + conflict-copy semantics.
 - **Status:** Open.
@@ -776,10 +771,10 @@ Items in this section are test-quality improvements identified during a thorough
 - **Impact:** Medium — closes a gap on two AGENTS.md-mandated invariants.
 - **Status:** Open.
 
-### TEST-8 — TOFU test only covers acceptance, not rejection
+### TEST-8 — TOFU rejection at the daemon entrypoint is uncovered (TLS-layer rejection IS covered)
 - **Domain:** Sync (TLS / pairing)
 - **Location:** `src-tauri/src/sync_daemon/tests.rs:1930-2049` (`inmem_handle_incoming_sync_tofu_stores_cert_hash`)
-- **What:** Test verifies cert hash is stored on first connection, but never reconnects with a *different* cert hash to verify the mismatch is rejected. The negative path is the actual security-relevant behavior of TOFU.
+- **What:** The daemon-entrypoint TOFU test only stores the cert hash on first connection; it never reconnects with a *different* cert hash to verify rejection through `handle_incoming_sync`. TLS-layer rejection IS exercised in `src-tauri/src/sync_net/tests.rs:1250` (`mtls_reconnection_with_wrong_cert_hash_fails`) and `:1281` (`mtls_tofu_store_and_verify_round_trip` — `assert!(result.is_err())` at L1336-1338). The application-level rejection path through `handle_incoming_sync` is the actual gap.
 - **Cost:** S — extend the test with a second connection attempt using a mismatched hash; assert connection is rejected.
 - **Risk:** Low.
 - **Impact:** Medium — TOFU behavior is asymmetric (acceptance is trivial; rejection is the property worth verifying).
@@ -805,12 +800,12 @@ Items in this section are test-quality improvements identified during a thorough
 - **Impact:** Low — prevents snapshot flakes (the second site is a latent flake).
 - **Status:** Open.
 
-### TEST-11 — Missing error-path test coverage (export_page_markdown + set_property_inner)
+### TEST-11 — Missing error-path coverage on `export_page_markdown_inner` + `set_property_inner`
 - **Domain:** Commands / integration tests
 - **Location:**
   - `src-tauri/src/commands/tests/page_cmd_tests.rs:326-722` (6 happy-path tests for `export_page_markdown_inner`, 0 error tests)
-  - `src-tauri/src/command_integration_tests/property_integration.rs` (covers nonexistent-block NotFound but not invalid-key / type-mismatch Validation)
-- **What:** Per AGENTS.md, every command needs error coverage: nonexistent ID → NotFound, deleted block → NotFound, invalid input → Validation.
+  - `src-tauri/src/command_integration_tests/property_integration.rs:9` (only the happy-path `set_property_writes_op_log_entry`; broader Validation coverage exists at `:273` `get_batch_properties_empty_ids_returns_validation_error`, `:343-475` date-validation tests on `list_blocks_inner`, `:760-867` `create_property_def_*_returns_validation` tests, and `:124, :172` `delete_property_on_*` NotFound coverage on `delete_property_inner` — but `set_property_inner` itself has no direct error tests)
+- **What:** Per AGENTS.md, every command needs error coverage: nonexistent ID → NotFound, deleted block → NotFound, invalid input → Validation. The narrow gap is direct error tests on `set_property_inner` (invalid key / type mismatch / nonexistent block) plus all error coverage on `export_page_markdown_inner`.
 - **Cost:** S — add tests with nonexistent page IDs, deleted pages, and invalid property keys / type mismatches.
 - **Risk:** Low.
 - **Impact:** Medium — Validation paths are easy to break silently when refactoring.
@@ -834,23 +829,15 @@ Items in this section are test-quality improvements identified during a thorough
 - **Impact:** Low — small but real precision improvement.
 - **Status:** Open.
 
-### TEST-14 — Spaces tests don't verify isolation between Personal/Work
+### TEST-14 — Space isolation test exists at the property level but not at the `list_blocks_inner` IPC boundary
 - **Domain:** Spaces tests
-- **Location:** `src-tauri/src/spaces/tests.rs:157-865` (entire test suite)
-- **What:** Tests verify space creation, property assignment, and bootstrap behavior, but no test creates pages in BOTH Personal and Work spaces and asserts that scoped queries return the correct subset for each. Space isolation is a core feature; the absence of an end-to-end isolation test is a coverage gap.
-- **Cost:** S — add a single test that creates pages in both spaces, runs `list_blocks(spaceId=Personal)` and `list_blocks(spaceId=Work)`, asserts each returns only its own pages.
+- **Location:** `src-tauri/src/spaces/tests.rs:773-865` already covers the property-table side via `property_every_page_has_space_after_bootstrap_under_mixed_create_paths` (creates pages in both Personal and Work, then queries `block_properties` directly to assert per-space membership at lines 837-852, plus `personal_pages.contains(&p1)` / `work_pages.contains(&p2)` / leaked-page backfill assertions at L853-864).
+- **What:** No test creates pages in both spaces and runs `list_blocks_inner` (the IPC the frontend uses) with `space_id` filter; isolation IS verified through raw `block_properties` SELECT, so the gap is at the IPC boundary.
+- **Cost:** S — add a test that creates pages in both spaces, calls `list_blocks_inner(space_id=Personal)` and `list_blocks_inner(space_id=Work)`, and asserts each returns only its own pages.
 - **Risk:** Low.
-- **Impact:** Medium — locks down a core invariant.
+- **Impact:** Medium — locks down a core invariant at the IPC layer the frontend actually depends on.
 - **Status:** Open.
 
-### TEST-15 — Tag inheritance: missing transitive case (deletion of intermediate)
-- **Domain:** Tag inheritance tests
-- **Location:** `src-tauri/src/tag_inheritance/tests.rs:186-205` (`propagate_multi_level`)
-- **What:** Test creates PAGE → CHILD → GRANDCHILD and verifies tag propagation. But does not cover the case where CHILD (intermediate) is deleted — should GRANDCHILD still inherit the tag from PAGE? Behavior is currently uncovered.
-- **Cost:** Trivial — extend the test or add a sibling that soft-deletes CHILD and re-runs `recompute_subtree_inheritance`.
-- **Risk:** Low.
-- **Impact:** Low-medium — defines (and pins) behavior for an underspecified edge case.
-- **Status:** Open.
 
 ### TEST-16 — Recurrence integration tests don't exercise year-boundary transitions
 - **Domain:** Recurrence tests
@@ -883,9 +870,9 @@ Items in this section are test-quality improvements identified during a thorough
 
 ### TEST-19 — MCP weak-shape assertions
 - **Domain:** MCP tests
-- **Location:** `src-tauri/src/mcp/tools_ro/tests.rs:700` (`list_backlinks_happy_path` — only `result.is_object()`); `src-tauri/src/mcp/tools_ro/tests.rs:1272` (stress test bare `is_ok()`); `src-tauri/src/mcp/server/tests.rs:1098-1101, 1138-1141` (error-response tests check `result.is_none()` but not error code/message shape)
-- **What:** Tests verify type/presence but not the response contract (`groups`, `next_cursor`, `has_more`, `total_count`; or for errors, `error.code`, `error.message`).
-- **Cost:** S — add field-presence and type assertions per response contract.
+- **Location:** `src-tauri/src/mcp/tools_ro/tests.rs:700` (`list_backlinks_happy_path` — only `result.is_object()`); `src-tauri/src/mcp/tools_ro/tests.rs:1272` (stress test bare `is_ok()`); `src-tauri/src/mcp/server/tests.rs:1093-1101, 1134-1141` (error-response tests check `result.is_none()` and `error.code` but not `error.message` text shape)
+- **What:** Tests verify type/presence and (for error responses) the JSON-RPC error code, but not the broader response contract (`groups`, `next_cursor`, `has_more`, `total_count` on success; `error.message` text on errors).
+- **Cost:** S — add field-presence and type assertions per response contract; pin a stable substring for `error.message`.
 - **Risk:** Low.
 - **Impact:** Low-medium — tighter contract enforcement on the MCP boundary.
 - **Status:** Open.
@@ -935,10 +922,10 @@ Items in this section are test-quality improvements identified during a thorough
 - **Impact:** Low — eliminates a category of CI flake risk.
 - **Status:** Open.
 
-### TEST-25 — ~12 near-identical FEAT-3p4 space-scoping tests in `agenda_cmd_tests.rs`
+### TEST-25 — 16 near-identical FEAT-3p4 space-scoping tests in `agenda_cmd_tests.rs`
 - **Domain:** Test infrastructure
-- **Location:** `src-tauri/src/commands/tests/agenda_cmd_tests.rs:2268-2812`
-- **What:** Multiple `*_feat3p4` tests follow the same fixture-and-assert pattern (seed two spaces, insert blocks, assign to spaces, call command, assert space filtering). The setup is copy-pasted across ~12 tests.
+- **Location:** `src-tauri/src/commands/tests/agenda_cmd_tests.rs:2268-2812` — 4 `list_undated_tasks_*_feat3p4` (L2268, 2302, 2338, 2361) + 4 `list_projected_agenda_*_feat3p4` (L2439, 2473, 2501, 2526) + 4 `count_agenda_batch_*_feat3p4` (L2593, 2619, 2643, 2665) + 4 `count_agenda_batch_by_source_*_feat3p4` (L2716, 2743, 2764, 2783) = 16 tests total.
+- **What:** Sixteen `*_feat3p4` tests follow the same fixture-and-assert pattern (seed two spaces, insert blocks, assign to spaces, call command, assert space filtering). The setup is copy-pasted across all 16 tests.
 - **Cost:** S — extract `async fn seed_two_space_blocks(...)` helper.
 - **Risk:** Low.
 - **Impact:** Low — reduces a copy-paste surface that grows with each new space-aware list query.
@@ -946,7 +933,7 @@ Items in this section are test-quality improvements identified during a thorough
 
 ### TEST-26 — `find_lca_after_compaction_returns_clear_error` hardcodes magic strings
 - **Domain:** DAG tests
-- **Location:** `src-tauri/src/dag/tests.rs:868-870`
+- **Location:** `src-tauri/src/dag/tests.rs:971-977` (the `INSERT INTO log_snapshots ... VALUES ('SNAP01', 'complete', 'fakehash', ...)` statement inside `find_lca_after_compaction_returns_clear_error` at L952)
 - **What:** Test inserts a snapshot row with hardcoded `'SNAP01'` and `'fakehash'` directly in the SQL string. If the snapshot row schema or hash format ever changes, the test silently breaks.
 - **Cost:** Trivial — extract to module constants.
 - **Risk:** Low.
@@ -980,10 +967,10 @@ Items in this section are test-quality improvements identified during a thorough
 - **Impact:** Low — minor test-suite speedup.
 - **Status:** Open.
 
-### TEST-30 — `now_rfc3339()` collision risk in three undo_redo_tests sites
+### TEST-30 — One residual `now_rfc3339()` collision risk in `undo_redo_tests.rs:1525`
 - **Domain:** Test infrastructure
-- **Location:** `src-tauri/src/commands/tests/undo_redo_tests.rs` lines 1187, 1311, 1525
-- **What:** Three sites call `now_rfc3339()` consecutively without the 2ms sleep guard that sibling tests use. Same flake risk as TEST-24 but smaller scale.
+- **Location:** `src-tauri/src/commands/tests/undo_redo_tests.rs:1525` (next call at L1558, no sleep between)
+- **What:** Originally flagged 3 sites (1187, 1311, 1525); 2 of those already have 2ms sleep guards (line 1224 between L1187 and L1227; line 1348 between L1311 and L1352). Only line 1525 → 1558 has consecutive `now_rfc3339()` without a guard. Consider folding into TEST-24 as a 14th site rather than maintaining as standalone.
 - **Cost:** Trivial — replace with explicit `append_local_op_at` (preferred) or add the same sleep guard.
 - **Risk:** Low.
 - **Impact:** Low.
@@ -1007,12 +994,18 @@ Items in this section are test-quality improvements identified during a thorough
 ### TEST-FE-1 — Bare `setTimeout` waits in tests as the only "wait" before negative assertions
 - **Domain:** Frontend test infrastructure
 - **Location:**
-  - `src/components/__tests__/BlockTree.test.tsx:1246, 3661, 3756, 3779, 3898, 4039, 4861` (7 bare 50ms waits before `not.toHaveBeenCalledWith` negatives)
+  - `src/components/__tests__/BlockTree.test.tsx:1246, 3661, 3756, 3779, 3898, 4039, 4861, 5732, 5780, 5798, 5834` (11 bare waits, several before `not.toHaveBeenCalledWith` negatives)
+  - `src/components/__tests__/SpaceManageDialog.test.tsx:575, 590, 609, 639` (4)
+  - `src/components/__tests__/JournalPage.test.tsx:2826, 2848, 2875` (3)
+  - `src/hooks/__tests__/useGraphSimulation.test.ts:349, 368` (2)
+  - `src/editor/extensions/__tests__/checkbox-input-rule.test.ts:192, 193` (2)
   - `src/components/__tests__/TagFilterPanel.test.tsx:945` (350ms wall-clock for debounce, with explicit comment "without fake timers")
-  - `src/hooks/__tests__/useBlockTreeEventListeners.test.ts:115` (50ms)
   - `src/components/__tests__/GraphView.test.tsx:960` (0ms tick, bare)
-  - 9 additional sites where the same `await new Promise(r => setTimeout(r, N))` pattern appears (most legitimate, wrapped in `act(async)` per the React 19 timing convention)
-- **What:** `src/__tests__/AGENTS.md` lines 187, 254, 261 explicitly forbid `await sleep(n)` patterns in tests ("the flake only looks fixed"). 24 occurrences across 13 files; the dangerous subset is bare 50ms waits used as the only "wait" before `expect(invoke).not.toHaveBeenCalledWith(...)` negatives — a 50ms wait passes trivially if the side effect ever takes longer than 50ms, so the test cannot tell broken from slow.
+  - `src/hooks/__tests__/useGraphWorkerSimulation.test.ts:174` (1)
+  - `src/components/__tests__/ErrorBoundary.test.tsx:138` (1)
+  - `src/components/__tests__/ViewHeader.test.tsx:143` (1)
+  - `src/hooks/__tests__/useBlockTreeEventListeners.test.ts:115` (50ms)
+- **What:** `src/__tests__/AGENTS.md` lines 187, 254, 261 explicitly forbid `await sleep(n)` patterns in tests ("the flake only looks fixed"). 28 occurrences across 11 files; the dangerous subset is bare 50ms waits used as the only "wait" before `expect(invoke).not.toHaveBeenCalledWith(...)` negatives — a 50ms wait passes trivially if the side effect ever takes longer than 50ms, so the test cannot tell broken from slow.
 - **Why it matters:** Negative-assertion tests with bare timeouts give false confidence. Wall-clock waits for debounce (TagFilterPanel:945) waste 350ms per run and add cross-worker timing variance — pitfall #5 in AGENTS.md says exactly this.
 - **Cost:** S–M — for negative assertions, await an observable signal first (`await waitFor(() => expect(invoke).toHaveBeenCalledWith('positive_signal', ...))`) then assert absence of the negative one; for debounce, `vi.useFakeTimers()` + `vi.advanceTimersByTime()`. ~13 files to touch.
 - **Risk:** Low — converting wall-clock waits to deterministic `waitFor` strictly improves robustness.
@@ -1022,18 +1015,18 @@ Items in this section are test-quality improvements identified during a thorough
 ### TEST-FE-2 — Weak `toHaveBeenCalled()` assertions in hot files
 - **Domain:** Frontend test infrastructure
 - **Location:**
-  - `src/components/__tests__/BlockContextMenu.test.tsx` (19 occurrences, e.g. lines 115–195: action handlers tested without verifying which block id they receive)
+  - `src/components/__tests__/BlockContextMenu.test.tsx` (19 occurrences total — but this file is **NOT** the canonical violator: action handlers DO use `toHaveBeenCalledWith('BLOCK_01')` at lines 114, 124, 134, 144, 154, 164, 174, 184, 194; the 9 bare `toHaveBeenCalled()` calls are on `props.onClose`, which legitimately takes no arguments)
   - `src/components/__tests__/FormattingToolbar.test.tsx` (16)
-  - `src/hooks/__tests__/useBlockKeyboardHandlers.test.ts` (10)
+  - `src/hooks/__tests__/useBlockKeyboardHandlers.test.ts` (10) — likely candidate for genuine violations
   - `src/components/__tests__/GraphView.test.tsx` (8)
-  - `src/components/__tests__/BlockPropertyEditor.test.tsx` (7)
+  - `src/components/__tests__/BlockPropertyEditor.test.tsx` (7) — likely candidate for genuine violations
   - `src/components/__tests__/HeadingLevelSelector.test.tsx` (7)
   - `src/hooks/__tests__/useUndoShortcuts.test.ts` (6)
   - `src/components/__tests__/UnlinkedReferences.test.tsx` (5)
   - 175 total occurrences across 61 files (many legitimate "did fire at all"; high-frequency files most likely contain real cases)
-- **What:** `src/__tests__/AGENTS.md` line 582: "Meaningful assertions — `toHaveBeenCalledWith` with exact args, not just `toHaveBeenCalled`." In `BlockContextMenu.test.tsx:115–195`, 9 parallel "it calls X" tests verify the action handler fired but not which block id it received — a wrong-block regression would silently pass.
+- **What:** `src/__tests__/AGENTS.md` line 582: "Meaningful assertions — `toHaveBeenCalledWith` with exact args, not just `toHaveBeenCalled`." Find genuine violators in the higher-count files (`useBlockKeyboardHandlers`, `BlockPropertyEditor`) before tightening.
 - **Why it matters:** A documented quality standard. Concentration in hot files (action handlers, keyboard shortcuts) means real correctness regressions could slip through.
-- **Cost:** M — audit the 8 listed files (~88 occurrences) and tighten high-value cases to `toHaveBeenCalledWith(expect.objectContaining({...}))`. The remaining ~50 files are a separate pass.
+- **Cost:** M — audit the listed files (excluding BlockContextMenu, which already complies) and tighten high-value cases to `toHaveBeenCalledWith(expect.objectContaining({...}))`. The remaining ~50 files are a separate pass.
 - **Risk:** Low — additive specificity in assertions.
 - **Impact:** Medium-high in the action-handler / keyboard-shortcut files.
 - **Status:** Open.
@@ -1088,17 +1081,17 @@ Items in this section are test-quality improvements identified during a thorough
 ### TEST-FE-7 — `AgendaResults.test.tsx` hardcoded `'2020-01-01'` overdue marker
 - **Domain:** Frontend test infrastructure
 - **Location:** `src/components/__tests__/AgendaResults.test.tsx:320, 332`
-- **What:** Two test cases hardcode `'2020-01-01'` as an overdue date marker. The date will always be in the past, so the test isn't actually flaky — but the file already imports `subDays` from `date-fns` and uses dynamic `new Date()` for the "today" row. A relative date (`format(subDays(new Date(), 30), 'yyyy-MM-dd')`) would express intent more clearly and match the rest of the file's style.
-- **Why it matters:** Mixing hardcoded-and-dynamic dates in the same test file is a small clarity tax. Consistency would make future date-relative refactors safer.
-- **Cost:** Trivial — 2-line change.
+- **What:** Two test cases hardcode `'2020-01-01'` as an overdue date marker. The date will always be in the past, so the test isn't actually flaky — but a relative date (e.g. `format(new Date(Date.now() - 30 * 86400000), 'yyyy-MM-dd')` or `format(subDays(new Date(), 30), 'yyyy-MM-dd')` if `subDays` is added as a new import — it isn't currently imported in this file) would express intent more clearly.
+- **Why it matters:** Hardcoded dates in tests drift from "intent matches code" over years. A relative-to-today expression captures "30 days overdue" rather than "Jan 1 2020 specifically".
+- **Cost:** Trivial — 2-line change (plus optional `subDays` import).
 - **Risk:** Low.
 - **Impact:** Low.
 - **Status:** Open.
 
 ### TEST-FE-8 — `PairingDialog.test.tsx` uses `document.querySelector('.pairing-error')` for portal content
 - **Domain:** Frontend test infrastructure
-- **Location:** `src/components/__tests__/PairingDialog.test.tsx:314-318, 542-546, 850-854`
-- **What:** Three sites use `document.querySelector('.pairing-error')` to reach error content rendered inside a Radix Portal (outside the React tree). This works (the Portal escapes the React tree, `document.querySelector` reaches it) but couples the test to the CSS class name.
+- **Location:** `src/components/__tests__/PairingDialog.test.tsx:314, 344, 543, 745, 775, 813, 851` (7 sites total — 5 `.pairing-error` at L314/344/745/775/813 and 2 `.pairing-error p` at L543/851)
+- **What:** Seven sites across six tests use `document.querySelector('.pairing-error')` (or `.pairing-error p`) to reach error content rendered inside a Radix Portal (outside the React tree). This works (the Portal escapes the React tree, `document.querySelector` reaches it) but couples the tests to the CSS class name.
 - **Why it matters:** Per AGENTS.md, accessible queries (`screen.findByText(...)` / `findByRole('alert')`) are preferred. They survive a class-name refactor and express intent better. Worth a quick check that each `.pairing-error` element exposes a stable accessible role/text first — if not, a one-line attribute add to the production component is the right precondition.
 - **Cost:** Small — verify accessible-name surface, then swap selectors.
 - **Risk:** Low.
@@ -1107,11 +1100,12 @@ Items in this section are test-quality improvements identified during a thorough
 
 ## PERF — Performance items
 
-### PERF-19 — Backlink pagination cursor uses linear scan for non-Created sorts (2 sites)
+### PERF-19 — Backlink pagination cursor uses linear scan for non-Created sorts (3 sites)
 
-**Problem:** Two backlink pagination paths locate the cursor position with a linear scan when results are sorted by something other than block creation (e.g., due_date, priority, property value):
-- `src-tauri/src/backlink/query.rs:112-128` — uses `.position(|s| s.as_str() == after_id)` on `sorted_ids`
-- `src-tauri/src/backlink/grouped.rs:125-136` — uses `.skip_while(|(pid, _, _)| pid.as_str() != after_id)` on `group_list`
+**Problem:** Three backlink pagination paths locate the cursor position with a linear scan when results are sorted by something other than block creation (e.g., due_date, priority, property value):
+- `src-tauri/src/backlink/query.rs:178-185` — uses `.position(|s| s.as_str() == after_id)` on `sorted_ids`
+- `src-tauri/src/backlink/grouped.rs:215-221` — uses `.skip_while(|(pid, _, _)| pid.as_str() != after_id)` on `group_list`
+- `src-tauri/src/backlink/grouped.rs:547-553` — second `skip_while(...)` on the same shape
 
 For `Created` sort, both already use binary search on lexicographic ULID order (correct, O(log n)). The linear-scan fallback is used because property sorts reorder by value, so binary search on ID is invalid — but the fallback is O(n) in the filtered result set.
 
@@ -1122,10 +1116,16 @@ For `Created` sort, both already use binary search on lexicographic ULID order (
 **Decision:** Defer — keep tracked in REVIEW-LATER as a deliberate non-fix. Revisit only if page size grows past ~500 or saved-query features ship.
 
 **Cost:** S
+**Status:** Deferred.
 
-### PERF-20 — Backlink filter resolver has no concurrency cap on `try_join_all`
+### PERF-20 — Backlink filter resolver has no concurrency cap on `try_join_all` (3 sites)
 
-**Problem:** `src-tauri/src/backlink/query.rs:80-82` fires every top-level filter concurrently via `try_join_all(filter_list.iter().map(|f| resolve_filter(pool, f, 0)))`. The read pool has 4 connections; if a user ever ends up with a filter expression holding 20+ OR-ed top-level filters, they all enqueue at once.
+**Problem:** Three production call sites fire every top-level filter concurrently via `try_join_all` over `resolve_filter_with_candidates` (the candidate-scoped variant of `resolve_filter`):
+- `src-tauri/src/backlink/query.rs:122-123` — top-level
+- `src-tauri/src/backlink/grouped.rs:152-153` — grouped variant
+- `src-tauri/src/backlink/grouped.rs:480-481` — unlinked variant (uses `Some(&matching_ids)`)
+
+The read pool has 4 connections; if a user ever ends up with a filter expression holding 20+ OR-ed top-level filters, they all enqueue at once.
 
 **Why it's LOW:** sqlx's `SqlitePool` queues gracefully when all connections are busy — it doesn't fail, it just waits. Realistic filter counts from the UI (`BacklinkFilterBuilder`) are 2–4. No known path to generate 20+ concurrent filters from normal usage. Flagging here in case a future "saved query library" or automation feature ever produces pathological inputs.
 
@@ -1136,7 +1136,7 @@ let futures = filter_list.iter().map(|f| {
     let sem = semaphore.clone();
     async move {
         let _permit = sem.acquire().await.ok()?;
-        resolve_filter(pool, f, 0).await
+        resolve_filter_with_candidates(pool, f, 0, Some(&base_ids)).await
     }
 });
 let results = try_join_all(futures).await?;
@@ -1147,22 +1147,8 @@ Or a simpler cap: reject filter lists longer than some reasonable limit (e.g., 1
 **Decision:** Defer — keep tracked in REVIEW-LATER as a deliberate non-fix. Revisit only if saved-query / automation features ship that can produce pathological filter counts.
 
 **Cost:** S
+**Status:** Deferred.
 
-### PERF-23 — `read_attachment_file` buffers whole file before chunked send
-
-**Problem:** `src-tauri/src/sync_files.rs:182` (`read_attachment_file`) loads the full attachment into a `Vec<u8>` with `std::fs::read(path)` and hashes the complete buffer, then the caller at `src-tauri/src/sync_files.rs:294-300` iterates through `FILE_CHUNK_SIZE` (5 MB, defined at `sync_files.rs:34`) slices of that in-memory buffer for transmission. Peak memory per attachment is the file size (not N-additive — the loop is sequential).
-
-**Why it's LOW:** For a personal notes app with typical attachments under 10 MB this is fine. Listed so that if the product ever intentionally targets large media (e.g., video notes), the correct fix is obvious.
-
-**Fix (only if large attachments become a supported use case):** stream-hash and stream-chunk. Open a `tokio::fs::File`, wrap it in a `BufReader`, and in one pass:
-- `blake3::Hasher::new()` → `update()` per buffer
-- Collect chunk-size slices directly into the send queue without retaining the full buffer
-
-This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>` + hash together) and requires threading the streaming semantics through the sender loop. The chunk transport on the wire is already chunked, so no sync-protocol change is needed.
-
-**Decision:** Defer — keep tracked in REVIEW-LATER as a deliberate non-fix. Revisit only if large media (video notes, high-bit-depth images) becomes a supported use case.
-
-**Cost:** S–M
 
 ### PERF-24 — `cache/block_tag_refs.rs::reindex_block_tag_refs` per-target DELETE/INSERT loop
 
@@ -1175,26 +1161,29 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 **Cost:** S — straightforward port of the `block_links` pattern.
 **Risk:** Low — covered by existing reindex tests; the oracle is `block_links`'s already-shipped batched implementation.
 **Impact:** Low (bounded) but consistent with project performance conventions.
+**Status:** Open.
 
-### PERF-25 — `gcal_push/connector.rs::GcalSettingsSnapshot::read` issues 4 separate SELECTs
+### PERF-25 — `gcal_push/connector.rs::GcalSettingsSnapshot::read` issues 3 separate SELECTs
 
-**Problem:** `src-tauri/src/gcal_push/connector.rs:313-324` calls `models::get_setting` four times (CalendarId, PrivacyMode, WindowDays, AccountEmail). Each is a separate `SELECT … WHERE key = ?` round trip. Runs once per cycle (every 15-minute reconcile + every dirty-event burst).
+**Problem:** `src-tauri/src/gcal_push/connector.rs:312-331` calls `models::get_setting` three times (`CalendarId` at L314, `PrivacyMode` at L317, `WindowDays` at L321). The `GcalSettingsSnapshot` struct (L306-310) declares exactly those three fields — no `AccountEmail`. Each call is a separate `SELECT … WHERE key = ?` round trip. Runs once per cycle (every 15-minute reconcile + every dirty-event burst).
 
-**Fix:** Add `models::get_settings_batch(pool, &[Key1, Key2, Key3, Key4])` returning `HashMap<GcalSettingKey, String>`. Single `SELECT … WHERE key IN (?, ?, ?, ?)`. The pattern is already used in `lease.rs` for batched key reads.
+**Fix:** Add `models::get_settings_batch(pool, &[Key1, Key2, Key3])` returning `HashMap<GcalSettingKey, String>`. Single `SELECT … WHERE key IN (?, ?, ?)`. The pattern is already used in `lease.rs` for batched key reads.
 
 **Cost:** S — one helper; one call-site change.
 **Risk:** Low.
-**Impact:** Low (4 round trips → 1, on a 15-minute timer; not a hot path).
+**Impact:** Low (3 round trips → 1, on a 15-minute timer; not a hot path).
+**Status:** Open.
 
 ### PERF-26 — `link_metadata/mod.rs::fetch_metadata` rebuilds `reqwest::Client` per call
 
 **Problem:** `src-tauri/src/link_metadata/mod.rs:51-57` constructs `reqwest::Client::builder()…build()` on every invocation. Each call rebuilds TLS state and discards the connection pool after a single request. Called from a hot path (link preview on every external link paste/edit).
 
-**Fix:** Move the client to a module-level `static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();` initialised lazily on first call. Pattern already used in `gcal_push/api.rs:49`.
+**Fix:** Move the client to a module-level `static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();` initialised lazily on first call. Pattern already used in `gcal_push/api.rs:757-769` (the `shared_client()` `OnceLock<reqwest::Client>` helper).
 
 **Cost:** S — 5-line change.
 **Risk:** Low — `reqwest::Client` is `Clone + Send + Sync` and explicitly designed for this use.
 **Impact:** Low-medium — eliminates per-call TLS handshake on the link-preview hot path. Particularly valuable when a user pastes a markdown block with many external links.
+**Status:** Open.
 
 ### PERF-27 — `backlink/filters.rs::PropertyText` filter materialises before comparing
 
@@ -1205,6 +1194,7 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 **Cost:** S — finite operator arms; query builder already in use elsewhere.
 **Risk:** Low — covered by existing filter-resolver tests.
 **Impact:** Low-medium — bounded by realistic property cardinality, but pushes work to the layer that should be doing it.
+**Status:** Open.
 
 ### PERF-28 — `TagValuePicker` searches on every keystroke without debounce
 - **Domain:** Frontend (filter pickers)
@@ -1234,29 +1224,10 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 
 ---
 
-### PUB-2 — Git author email across all history is corporate (`javier.folcini@avature.net`)
-
-**Problem:** `git log --format='%ae %an' | sort -u` across all 1,400+ commits returns a single corporate email address. If the project is published under a personal identity (or the user later wants to avoid tying the repo to a specific employer), the history will still expose the corporate address on every commit, including to anyone who clones.
-
-**Options:**
-1. **Rewrite history with `git filter-repo`** using a mailmap to replace `javier.folcini@avature.net` with a personal email across all commits. This changes every commit SHA — must be done before any public push or before any collaborator clones.
-2. **Add a `.mailmap`** that re-maps the author in views (`git log`/`git shortlog`) without rewriting history. Cosmetic only; the underlying commit objects still carry the corporate email.
-3. **Leave as-is.** Accept the provenance signal. Defensible if the project is legitimately personal and the corporate email was simply the active git config at the time.
-
-**If option 1 is chosen:**
-- Take a full backup of `.git` before running `git filter-repo`.
-- Script: `git filter-repo --mailmap mailmap.txt` with an entry like
-  `Your Name <personal@example.com> <javier.folcini@avature.net>`.
-- Re-verify signatures if any commits are GPG-signed.
-- Do this before the first public push. Rewriting published history is disruptive.
-
-**Cost:** S
-**Decision:** Defer the identity/history choice until the publish target (PUB-5) and publish timing are concrete. No `.mailmap` added and no history rewrite performed in this session.
-**Status:** DEFERRED — revisit alongside PUB-5 when a publish target and identity are locked in.
 
 ### PUB-3 — Employer IP clearance before public release
 
-**Problem:** Most employment agreements in AR/US/EU include IP-assignment clauses that cover work done on company devices, on company time, or in the employer's line of business. The committed corporate email in the git history (see PUB-2) makes provenance visible to anyone who clones. Even for a side project unrelated to the employer's business, publishing substantial software without checking the employment contract carries legal risk that a coding agent cannot assess.
+**Problem:** Most employment agreements in AR/US/EU include IP-assignment clauses that cover work done on company devices, on company time, or in the employer's line of business. (Note: the corporate-email-in-history concern that PUB-2 originally tracked is no longer present — `git log --all --format='%ae' | sort -u` returns only the personal email — but the underlying IP-clearance question stands independently.) Even for a side project unrelated to the employer's business, publishing substantial software without checking the employment contract carries legal risk that a coding agent cannot assess.
 
 **Options:**
 1. **Review the employment contract** (and any IP-assignment addenda signed during onboarding) for clauses covering personal projects. Common concerns: "on company time", "using company equipment", "related to the employer's business", "during the term of employment".
@@ -1279,12 +1250,13 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 3. **Add two GH Actions secrets** at `Settings → Secrets and variables → Actions`:
    - `TAURI_SIGNING_PRIVATE_KEY` — contents of the generated `.key` file
    - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the passphrase used at generation time
-4. **Uncomment** the two `TAURI_SIGNING_PRIVATE_KEY*` env lines in `release.yml:93-95` (under the `# PUB-5: Uncomment …` comment). The agent intentionally left these commented because uncommenting before the secrets exist + pubkey is set causes tauri-action to attempt signing with empty inputs.
+4. **Uncomment** the two `TAURI_SIGNING_PRIVATE_KEY*` env lines in `release.yml:138-140` (under the `# PUB-5: Uncomment …` comment). The agent intentionally left these commented because uncommenting before the secrets exist + pubkey is set causes tauri-action to attempt signing with empty inputs.
 5. **Tag a release** to verify: tauri-action will produce `*.sig` files alongside each bundle (`.dmg.sig`, `.AppImage.sig`, `.msi.sig`, etc.), which the in-app updater fetches and verifies against the embedded pubkey.
 
 **Alternative (skip the updater):** remove the `updater` block from `tauri.conf.json` and the `tauri-plugin-updater` dependency from `src-tauri/Cargo.toml`. Users would update by manually downloading new releases.
 
 **Cost:** S (~30 min of user work once the keypair is generated).
+**Status:** DEFERRED — user-only. Agent action is none.
 
 ### PUB-8 — Android release keystore + 4 GH Actions secrets
 
@@ -1349,8 +1321,8 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### L-17 — `dispatch_op` enqueues fg+bg out of order
 - **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/dispatch.rs:98-102`
-- **What:** `dispatch_op` calls `enqueue_foreground(ApplyOp(record))` then `enqueue_background_tasks(record, None)`. The two queues have independent consumers — the bg consumer can pull e.g. `RebuildTagsCache` and execute it before the fg consumer has applied the `CreateBlock(tag)` to `blocks`. The cache rebuild then reads pre-op state and `tags_cache` stays stale until the next op happens to re-enqueue the rebuild. Production paths use `dispatch_background_or_warn` *after* the command has committed the op, so this race is mostly limited to test code (and `sync_daemon/snapshot_transfer.rs:451`, which is itself a test helper); it is downgraded from Medium for that reason.
+- **Location:** `src-tauri/src/materializer/dispatch.rs:128-132`
+- **What:** `dispatch_op` calls `enqueue_foreground(ApplyOp(record))` then `enqueue_background_tasks(record, None)`. The two queues have independent consumers — the bg consumer can pull e.g. `RebuildTagsCache` and execute it before the fg consumer has applied the `CreateBlock(tag)` to `blocks`. The cache rebuild then reads pre-op state and `tags_cache` stays stale until the next op happens to re-enqueue the rebuild. Production paths use `dispatch_background_or_warn` *after* the command has committed the op, so this race is mostly limited to test code (and `sync_daemon/snapshot_transfer.rs:651`, the `seed_one_block` test helper); it is downgraded from Medium for that reason.
 - **Why it matters:** For the test paths (and the snapshot-transfer test helper) it shrinks the window of correctness for the very-first op of its kind. If `dispatch_op` is ever adopted on a production code path it becomes a real correctness hazard ("created a tag, search doesn't find it" until I create another).
 - **Cost:** M (2-8h)
 - **Risk:** Medium
@@ -1359,22 +1331,11 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 02/F10
 - **Status:** Open
 
-### L-53 — `cancel_pairing` clears pairing slot whether or not a session exists
-- **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/sync_cmds.rs:152-158`
-- **What:** `cancel_pairing_inner` sets the slot to `None` unconditionally and returns `Ok(())`; there is no error if no session was active. Combined with the lack of validation in `confirm_pairing_inner` (Pass-1 F16), the entire `pairing_state` slot is effectively write-only — only `start_pairing` writes it; `confirm_pairing` and `cancel_pairing` always overwrite with `None`.
-- **Why it matters:** Symptom of broader pairing-state ownership confusion. Once the F16 fix lands (`confirm_pairing` actually validates against the slot), this becomes the natural "no-op if absent" path; until then, the slot has no observable effect.
-- **Cost:** N/A (closes alongside the F16 fix tracked elsewhere as a High in REVIEW-LATER)
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Bundle into the F16 / confirm_pairing fix; once `confirm_pairing` reads and validates the slot, `cancel_pairing` can keep its current "no-op if empty" semantics with a debug log.
-- **Pass-1 source:** 05/F32
-- **Status:** Open
 
 ### L-55 — `redact_log` newline split-and-rejoin is O(n²) in the worst case
 - **Domain:** Commands (System)
-- **Location:** `src-tauri/src/commands/bug_report.rs:229-242` (`redact_log`), `src-tauri/src/commands/bug_report.rs:202-226` (`redact_line`)
-- **What:** `redact_log` iterates `split_inclusive('\n')`, calls `redact_line` (which does two `String::replace` calls — each a linear scan with allocation: home, then device_id), then pushes back into `out`. For a 2 MB file this is two full-buffer linear scans per line, multiplied by the line count. `MAX_LINE_BYTES` truncation happens *after* the replace, so the replace itself sees the original full-length line.
+- **Location:** `src-tauri/src/commands/bug_report.rs:772-784` (`redact_log`), `src-tauri/src/commands/bug_report.rs:760-765` (`redact_line`), `src-tauri/src/commands/bug_report.rs:687-721` (`apply_allow_list`)
+- **What:** `redact_log` iterates `split_inclusive('\n')`, calls `redact_line` (which first tries `redact_json_line` and falls back to `apply_allow_list`), then pushes back into `out`. `apply_allow_list` does ≥4 sequential `String::replace` calls (home, device_id, gcal_email, then a `for peer in ctx.peer_device_ids` loop) plus an `EMAIL_REGEX.replace_all` pass — each a linear scan with allocation. For a 2 MB file this is many full-buffer linear scans per line, multiplied by the line count. `MAX_LINE_BYTES` truncation via `cap_line_length` runs *after* the replace, so the replace itself sees the original full-length line.
 - **Why it matters:** A bug report on a workstation with thousands of large stack-trace lines could take seconds. Mitigated by the 2 MB file cap.
 - **Cost:** M — switch to a single-pass replacer (e.g. `aho_corasick` or a hand-written matcher over the static needles).
 - **Risk:** Low
@@ -1414,12 +1375,12 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 ### L-59 — UTF-8-safe truncation duplicated between `commands/logging.rs` and `commands/bug_report.rs`
 - **Domain:** Commands (Logging / Bug report)
-- **Location:** `src-tauri/src/commands/logging.rs:26-40` and `src-tauri/src/commands/bug_report.rs:213-224`
-- **What:** Both implement char-boundary-safe string truncation. Different signatures and message formats but identical core logic.
+- **Location:** `src-tauri/src/commands/logging.rs:26-40` (`truncate_log_field`) and `src-tauri/src/commands/bug_report.rs:726-741` (`cap_line_length`)
+- **What:** Both implement char-boundary-safe string truncation (`is_char_boundary` walk-back + `truncate` + `…[truncated N …]` formatting). Different signatures and message formats but identical core logic. Note: the `logging.rs:19` doc-comment cross-references the wrong location (`bug_report.rs:213-224`, which is inside the `STABLE_MESSAGES` const) — sweep that doc-comment when this lands.
 - **Cost:** Trivial.
 - **Risk:** Low.
 - **Impact:** Low.
-- **Recommendation:** Move to a small `crate::text_utils::truncate_at_char_boundary` helper; reuse from both call sites.
+- **Recommendation:** Move to a small `crate::text_utils::truncate_at_char_boundary` helper; reuse from both call sites and update the `logging.rs:19` doc-comment to point at the new helper.
 - **Status:** Open
 
 ### L-60 — `sync_files.rs::find_missing_attachments` collapses all `metadata` errors into "missing"
@@ -1455,10 +1416,10 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F014
 - **Status:** Open
 
-### FE-H-2 — `agenda-filters.ts`: hardcoded `limit: 500` repeated in 6 sites
+### FE-H-2 — `agenda-filters.ts`: hardcoded `limit: 500` repeated in 11 sites
 - **Domain:** Frontend / Agenda
-- **Location:** `src/lib/agenda-filters.ts:79, 99, 128, 156, 232, 290`
-- **What:** A single magic number drives pagination in six call sites; missing one update silently truncates a query. Related to FE-H-1.
+- **Location:** `src/lib/agenda-filters.ts:79, 99, 128, 156, 157, 216, 235, 256, 288, 289, 290`
+- **What:** A single magic number drives pagination in eleven call sites; missing one update silently truncates a query. Related to FE-H-1. (Note: line 232 is `limit: 50` for `listTagsByPrefix`, which is a different concern and not part of the AGENDA_QUERY_LIMIT cluster.)
 - **Cost:** Trivial.
 - **Risk:** Low.
 - **Impact:** Medium.
@@ -1476,37 +1437,8 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F043
 - **Status:** Open
 
-### FE-H-4 — `useBlockPropertyIpc` callbacks have no unmount guard
-- **Domain:** Frontend / Hooks
-- **Location:** `src/hooks/useBlockPropertyIpc.ts:57-65`
-- **What:** Three `useCallback` wrappers around IPC functions have no `cancelled` flag. Promise resolution after unmount can fire setState on consumer components.
-- **Cost:** S — adopt the `cancelled`-flag pattern that `useBacklinkResolution` already uses.
-- **Risk:** Low.
-- **Impact:** Medium — prevents React warnings and stale renders during property-drawer churn.
-- **Source:** FE review 2026-05-02 / F028
-- **Status:** Open
 
-### FE-H-5 — `usePropertyDefForEdit` initiates nested IPC without checking stale flag first
-- **Domain:** Frontend / Hooks
-- **Location:** `src/hooks/usePropertyDefForEdit.ts:75-82`
-- **What:** Outer `listPropertyDefs()` then-block kicks off `listBlocks()` without first checking `if (stale) return`. If unmount happens between outer-resolve and inner-call, the nested promise still runs and its own stale check fires too late.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low — race window is narrow.
-- **Recommendation:** Gate the nested call with `if (stale) return` before initiating it.
-- **Source:** FE review 2026-05-02 / F044
-- **Status:** Open
 
-### FE-H-6 — `useDuePanelData` projected-cache mutation not gated by stale flag
-- **Domain:** Frontend / Due panel
-- **Location:** `src/hooks/useDuePanelData.ts:393-467`
-- **What:** Outer `if (!stale)` guards setState calls, but the `projectedCache.set(cacheKey, ...)` mutation itself is unguarded. Rapid date changes (which clear the cache via `invalidationKey`) can race with an in-flight resolve and silently repopulate the cache with stale data.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Medium — silent stale-data display in the projected agenda after fast date changes.
-- **Recommendation:** Move the cache mutation inside the `if (!stale)` block, or add an explicit guard around it.
-- **Source:** FE review 2026-05-02 / F036
-- **Status:** Open
 
 ### FE-H-7 — `useCheckboxSyntax`: optimistic update has no rollback on IPC rejection
 - **Domain:** Frontend / Editor
@@ -1584,17 +1516,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F022
 - **Status:** Open
 
-### FE-H-14 — `className` is silently dropped from `Button`, `Spinner`, `Label` (CVA misuse)
-- **Domain:** Frontend / UI primitives (cross-cutting)
-- **Location:** `src/components/ui/button.tsx:59`, `src/components/ui/spinner.tsx:37`, `src/components/ui/label.tsx:38`
-- **What:** All three pass `className` as a CVA variant key — `buttonVariants({ variant, size, className })` — but CVA does not consume `className`. The caller's `className` is silently dropped. Correct pattern is in `badge.tsx:42`: `cn(buttonVariants({ variant, size }), className)`.
-- **Why it matters:** Button is at the top of the design system pyramid; every place that thought it was customizing a button has been silently overridden. Visible regressions cannot be tracked back without scanning every consumer.
-- **Cost:** Trivial — 3 single-line edits.
-- **Risk:** Low — fixes a silent regression; consumers that relied on the broken behavior would expose visual diffs that are themselves bugs.
-- **Impact:** High — restores the entire design system's customization escape hatch.
-- **Recommendation:** Replace each with `className={cn(buttonVariants({ variant, size }), className)}` etc. Consider adding a Biome rule or typed `cn-cva` helper to prevent regression.
-- **Source:** FE review 2026-05-02 / F024
-- **Status:** Open
 
 ### FE-H-15 — Sidebar rail drag handler leaks `pointermove`/`pointerup` listeners on unmount-during-drag
 - **Domain:** Frontend / UI primitives
@@ -1649,25 +1570,25 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F059
 - **Status:** Open
 
-### FE-H-20 — `SearchPanel` and `TagFilterPanel`: parent-IDs array recomputed every render → redundant `batchResolve`
-- **Domain:** Frontend / Performance / Search
-- **Location:** `src/components/SearchPanel.tsx:136-154`, `src/components/TagFilterPanel.tsx:135-150`
-- **What:** Both compute `const parentIds = results.map((b) => b.page_id).filter(...)` on every render and use it as an effect dep, firing `batchResolve` more often than needed.
+### FE-H-20 — `SearchPanel` doesn't dedupe `parentIds` before `batchResolve`
+- **Domain:** Frontend / Search
+- **Location:** `src/components/SearchPanel.tsx:136-154`
+- **What:** `parentIds = results.map((b) => b.page_id).filter(...)` is computed inside the effect body (deps are `[results]`, so the effect only fires when `results` reference changes; the `useMemo` recommendation in earlier framings of this item would be a no-op). The genuine bug is missing dedupe — `SearchPanel` can hand `batchResolve` a list with duplicates, while `TagFilterPanel.tsx:137` already wraps with `[...new Set(...)]`.
 - **Cost:** Trivial.
 - **Risk:** Low.
-- **Impact:** Medium — extra IPC calls on every search keystroke / filter change.
-- **Recommendation:** `useMemo(() => results.map(...).filter(...), [results])`.
+- **Impact:** Low–medium — slightly redundant IPC payload on duplicated parent ids; only `SearchPanel` is affected.
+- **Recommendation:** `const parentIds = [...new Set(results.map((b) => b.page_id).filter(notNullish))]` in `SearchPanel.tsx`. Demote severity to FE-M.
 - **Source:** FE review 2026-05-02 / F060 + F061
 - **Status:** Open
 
-### FE-H-21 — `Resolve` store `pendingVersionBump` debouncing relies on closure variable across `set()` calls
+### FE-H-21 — `Resolve` store: asymmetric version-bump policy between `set` and `batchSet`
 - **Domain:** Frontend / Resolve store
-- **Location:** `src/stores/resolve.ts:118-130, 220-235`
-- **What:** A module-level `let pendingVersionBump = false` is checked + flipped + scheduled-via-microtask. Multiple rapid `set()` calls (sync batch updates, undo bursts) can interleave: the microtask runs after only some of the pending mutations have been committed, leading to renders that observe a fresh `version` while the cache is mid-update.
+- **Location:** `src/stores/resolve.ts:122` (closure flag declaration), `:226-232` (debounce in `set`), `:235-257` (`batchSet` bumps inline at L255)
+- **What:** `set` debounces `version` bumps via a closure flag (`pendingVersionBump` declared at L122) plus a microtask. `batchSet` bumps `version` inline (L255) and never touches the flag. The cache mutations themselves are synchronous and fresh-Map per call, so renders cannot observe mid-update state in either path; the substantive issue is the asymmetric policy between the two writers, not a load-bearing race.
 - **Cost:** S.
-- **Risk:** Medium — the debouncing is load-bearing for re-render economics; changing it incorrectly causes subscriber storms.
-- **Impact:** Medium — subtle but real cache/version desync window.
-- **Recommendation:** Bump `version` inside the same `set()` callback that mutates the cache, or move the flag into the Zustand state itself so it's serialized with the rest of the state.
+- **Risk:** Low.
+- **Impact:** Low–medium — pick one policy. Demote severity from FE-H to FE-M (the speculative race the original framing described is not reproducible against the synchronous cache code).
+- **Recommendation:** Choose one of (a) make `batchSet` use the same closure-flag debounce, or (b) drop the closure-flag debounce and have `set` bump inline like `batchSet`. (b) is simpler.
 - **Source:** FE review 2026-05-02 / F001
 - **Status:** Open
 
@@ -1712,11 +1633,11 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F040
 - **Status:** Open
 
-### FE-M-4 — `useHistoryDiffToggle`: `diffCache` in deps causes callback churn
+### FE-M-4 — `useHistoryDiffToggle`: `expandedKeys` and `diffCache` in deps cause callback churn
 - **Domain:** Frontend / History
-- **Location:** `src/hooks/useHistoryDiffToggle.ts:49-52`
-- **What:** `diffCache` is only read; including it in the callback's deps recreates the callback on every cache mutation.
-- **Cost:** Trivial — drop `diffCache` from the deps array.
+- **Location:** `src/hooks/useHistoryDiffToggle.ts:51` (deps: `[expandedKeys, diffCache, keyFn]`); reads at `:20` (`expandedKeys.has(key)`) and `:29` (`diffCache.has(key)`)
+- **What:** Both `expandedKeys` and `diffCache` are read inside the callback. Naively dropping them from the deps array (the obvious-looking fix) creates a stale-closure bug — the `.has(...)` reads at L20, L29 would freeze on the values at the time the callback was last created, so the L29 short-circuit (`if (diffCache.has(key)) return`) would no longer prevent re-fetching. The functional-setState forms (`setExpandedKeys((prev) => ...)`) on L21, L28, L38 already avoid the *write-after-stale-read* hazard, but the *reads* still need fresh state.
+- **Cost:** Trivial — mirror `expandedKeys` and `diffCache` into refs (`expandedKeysRef`, `diffCacheRef`), read `.has(...)` from `*Ref.current`, and drop both from the deps array. Pattern already used in `useListMultiSelect.ts:51-52`.
 - **Risk:** Low.
 - **Impact:** Low.
 - **Source:** FE review 2026-05-02 / F041
@@ -1732,14 +1653,13 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F045
 - **Status:** Open
 
-### FE-M-6 — `useBlockSlashCommands` attach handler: incomplete error handling around `<input>.click()`
+### FE-M-6 — `useBlockSlashCommands` attach handler: `input.click()` not wrapped in try/catch
 - **Domain:** Frontend / Editor
 - **Location:** `src/hooks/useBlockSlashCommands.ts:368-396`
-- **What:** Three small gaps: `input.click()` (line 395) not wrapped, the `onchange` callback's exit-without-file path is silent, and the `addAttachment` chain has no `void` marker.
-- **Cost:** Trivial.
+- **What:** The single residual issue is `input.click()` at L395 not wrapped in try/catch. (The earlier framing mentioned two other concerns that don't hold: (b) the `if (!file) return` at L372-373 is the user dismissing the file-dialog — a deliberate cancel path, not an error path; (c) `await addAttachment(...)` at L383 is awaited inside the `async onchange` handler — there is nothing to `void`.)
+- **Cost:** Trivial — try/catch around `input.click()`; on error, surface a toast and clean up the input element.
 - **Risk:** Low.
-- **Impact:** Low.
-- **Recommendation:** try/catch around `input.click()`; `void` the fire-and-forget `addAttachment(...)`.
+- **Impact:** Low. Demote severity from FE-M to FE-L (single trivial concern).
 - **Source:** FE review 2026-05-02 / F032
 - **Status:** Open
 
@@ -1753,10 +1673,10 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F029
 - **Status:** Open
 
-### FE-M-8 — Property pickers: IPC failures are log-only or use `String(error)`
+### FE-M-8 — Property pickers: PropertyValuePicker has no user-facing toast; PropertyDefinitionsList uses `String(error)`
 - **Domain:** Frontend / Properties
-- **Location:** `src/components/PropertyValuePicker.tsx:42-49`, `src/components/PropertyDefinitionsList.tsx:64-77`
-- **What:** PropertyValuePicker silently empties the dropdown on backend error. PropertyDefinitionsList toasts `String(error)` which produces `[object Object]` for non-Error values.
+- **Location:** `src/components/PropertyValuePicker.tsx:42-49`, `src/components/PropertyDefinitionsList.tsx:73-74, 93-94, 106-108`
+- **What:** PropertyValuePicker logs the failure via `logger.warn` at L46 (so it is *not* silent to the logger) but surfaces no user-facing toast — the dropdown silently empties from the user's perspective. PropertyDefinitionsList toasts `t('property.errorLoad', { error: String(error) })` etc. — `String({})` is `"[object Object]"` for plain objects (Tauri IPC rejections arrive as plain objects via `serializeError`), so the toast is unhelpful in practice.
 - **Cost:** Trivial.
 - **Risk:** Low.
 - **Impact:** Low.
@@ -1774,15 +1694,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F063
 - **Status:** Open
 
-### FE-M-10 — `keyboard-config/tiptap.ts`: split delimiter mismatch (`'+'` vs `' + '`)
-- **Domain:** Frontend / Keyboard config
-- **Location:** `src/lib/keyboard-config/tiptap.ts:10-15`
-- **What:** `configKey.split('+')` while the canonical format produced by `match.ts` and stored in `catalog.ts` is `' + '` (with spaces). Works today because everything goes through `match.ts`; breaks the moment someone passes a string like `'Ctrl+E'`.
-- **Cost:** Trivial — `configKey.split(' + ')`.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F023
-- **Status:** Open
 
 ### FE-M-11 — `tree-utils.getProjection`: `splice(activeIndex, ...)` not bounds-checked
 - **Domain:** Frontend / Tree utilities
@@ -1826,20 +1737,20 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F015
 - **Status:** Open
 
-### FE-M-15 — Picker extensions capture `insertPos` before async resolution
+### FE-M-15 — Picker extensions: validate `insertPos` against current doc before inserting
 - **Domain:** Frontend / Editor
-- **Location:** `src/editor/extensions/block-link-picker.ts:59-102`, `src/editor/extensions/block-ref-picker.ts:58-95`, `src/editor/extensions/at-tag-picker.ts:49-87`
-- **What:** `insertPos` is captured pre-deletion; user can edit between then and async resolution; `insertContentAt(insertPos, ...)` then targets a stale offset.
+- **Location:** `src/editor/extensions/block-link-picker.ts:61-100` (already has try/catch + `logger.warn` fallback), `src/editor/extensions/block-ref-picker.ts:60-91` (same), `src/editor/extensions/at-tag-picker.ts:49-87` (verify before generalising)
+- **What:** `insertPos` is captured pre-deletion; user can edit between then and async resolution; `insertContentAt(insertPos, ...)` then targets a stale offset. The basic try/catch + `logger.warn` recommendation is **already implemented** at all three picker sites — `block-link-picker.ts` and `block-ref-picker.ts` wrap `insertContentAt` and fall back to plain text on error. The remaining gap is that `insertContentAt` with a stale offset is more likely to silently *clamp* than to throw, so the existing try/catch may not actually fire.
 - **Cost:** S.
 - **Risk:** Low.
 - **Impact:** Low — race window is narrow.
-- **Recommendation:** Wrap `insertContentAt(insertPos, ...)` in try/catch with `logger.warn`. Better: validate the position against the current doc state before inserting.
+- **Recommendation:** Before calling `insertContentAt(insertPos, ...)`, validate `insertPos <= editor.state.doc.content.size` and skip the inline insert (fall back to plain text at the current cursor) if the doc has shrunk past it. Verify `at-tag-picker.ts:49-87` follows the same try/catch pattern as the other two before generalising the fix.
 - **Source:** FE review 2026-05-02 / F011
 - **Status:** Open
 
 ### FE-L-1 — `Undo` store: `new Map(state.pages)` boilerplate repeated 9 times
 - **Domain:** Frontend / Undo store
-- **Location:** `src/stores/undo.ts:127, 145, 191, 216, 289, 332, 358, 366`
+- **Location:** `src/stores/undo.ts:127, 145, 163, 191, 216, 289, 332, 358, 366`
 - **What:** Nine sites copy `new Map(state.pages)` then `.set()` then setState. Boilerplate is simple, not error-prone, but extracting a `setPageState(pageId, updates)` helper would cut ~40 lines.
 - **Cost:** Trivial.
 - **Risk:** Low.
@@ -1847,13 +1758,13 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F003
 - **Status:** Open
 
-### FE-L-2 — `Resolve` store cache eviction relies on Map insertion-order semantics with no comment
+### FE-L-2 — `Resolve` store: dedupe the two eviction loops into a helper
 - **Domain:** Frontend / Resolve store
-- **Location:** `src/stores/resolve.ts:204-211, 246-253`
-- **What:** Map insertion order is spec-guaranteed; the lack of comment is the only real cost. Add one or extract a helper.
-- **Cost:** Trivial.
+- **Location:** `src/stores/resolve.ts:204-211` (eviction in `set`), `:246-253` (eviction in `batchSet`)
+- **What:** The "Delete oldest entries (first N entries in Map iteration order)" comment is **already present** at L205 and L247 — the original framing of "no comment" is stale. The remaining cleanup is the duplication of the 6-line eviction loop across `set` and `batchSet`.
+- **Cost:** Trivial — extract `evictOldest(cache, MAX_CACHE_SIZE)` and call from both writers.
 - **Risk:** Low.
-- **Impact:** Low.
+- **Impact:** Low — pure refactor.
 - **Source:** FE review 2026-05-02 / F004
 - **Status:** Open
 
@@ -1908,15 +1819,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F013
 - **Status:** Open
 
-### FE-L-8 — `useBatchAttachments` / `useBatchAttachmentCounts`: `stableKey` + `biome-ignore` is fragile but documented
-- **Domain:** Frontend / Hooks
-- **Location:** `src/hooks/useBatchAttachmentCounts.tsx:35-45`, `src/hooks/useBatchAttachments.tsx:55-65`
-- **What:** Pattern is correct. Splitting `stableKey` into its own `useMemo([blockIds])` removes the need for the `biome-ignore`.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F031
-- **Status:** Open
 
 ### FE-L-9 — `useBlockNavigateToLink` ref-indirection contract not documented at the consumer side
 - **Domain:** Frontend / Hooks
@@ -1958,13 +1860,14 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F021
 - **Status:** Open
 
-### FE-L-13 — `UnlinkedReferences`: in-place push inside `setState` callback
+### FE-L-13 — `UnlinkedReferences` mutates a shared `BacklinkGroup` object inside `setGroups` updater
 - **Domain:** Frontend / References
-- **Location:** `src/components/UnlinkedReferences.tsx:85-105`
-- **What:** Works (React commits the new array reference) but stylistically off. Use spread.
+- **Location:** `src/components/UnlinkedReferences.tsx:89-100` (inside `setGroups((prev) => { ... })`)
+- **What:** Inside the `cursor`-append branch, `merged = [...prev]` (L90) is a shallow array copy — the `BacklinkGroup` objects inside `merged` are still shared with `prev`. `existing = merged.find((g) => g.page_id === newGroup.page_id)` (L92) gets a reference to a shared object, and `existing.blocks = [...existing.blocks, ...newGroup.blocks]` (L94) reassigns a property on that shared object — `prev`'s view of the same group now also has the new `blocks` array. (The previous "in-place push" framing of this item was incorrect — no `Array.prototype.push` is called on `existing.blocks`; L94 reassigns with a fresh array. The bug is property reassignment on a shared reference, not an in-place push.)
 - **Cost:** Trivial.
 - **Risk:** Low.
-- **Impact:** Low.
+- **Impact:** Low — visible only if anything else still holds a reference to `prev`.
+- **Recommendation:** Replace `existing.blocks = ...` with a copy: `const idx = merged.findIndex(g => g.page_id === newGroup.page_id); if (idx >= 0) merged[idx] = { ...merged[idx], blocks: [...merged[idx].blocks, ...newGroup.blocks] }; else merged.push(newGroup);`.
 - **Source:** FE review 2026-05-02 / F065
 - **Status:** Open
 
@@ -2000,13 +1903,13 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-302 — Multi-selection has no visible feedback on selected blocks
+### UX-302 — Multi-selection styling exists for the static path but not the focused (mounted-editor) path
 - **Domain:** Frontend / Editor
-- **Location:** `src/components/SortableBlock.tsx:327-335` — `isSelected` is plumbed into `EditableBlock` but does not drive any border/background change.
-- **What:** Ctrl+Click / Shift+Click / Ctrl+A multi-selection is functional but invisible — user has no idea what is selected.
-- **Cost:** Trivial — apply `bg-primary/10` or a left accent bar to selected blocks; honour `[data-selected]` attribute.
+- **Location:** `src/components/StaticBlock.tsx:249` (selection styling: `isSelected && 'ring-2 ring-primary/50 bg-primary/5'`); `src/components/EditableBlock.tsx:257` (plumbs `isSelected` into `StaticBlock`); `src/components/EditableBlock.tsx:265-…` (focused / mounted-editor branch — no selection styling)
+- **What:** Non-focused selected blocks get a 2-px primary ring + 5%-primary tint via `StaticBlock`. The mounted-editor branch (focused block) does not apply selection styling. In practice the focused block is rarely also "selected" (selection mostly applies to non-focused siblings) so this gap is small. Original framing — "isSelected does not drive any border/background change" — was wrong; only the focused-path is unstyled.
+- **Cost:** Trivial — apply matching `ring`/`bg` classes to the focused branch in `EditableBlock`, or leave as-is and close the item if "focused-and-selected" is judged too rare.
 - **Risk:** Low.
-- **Impact:** Medium.
+- **Impact:** Low.
 - **Status:** Open.
 
 ### UX-303 — Draft autosave recovery on boot is silent
@@ -2056,8 +1959,8 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 
 ### UX-308 — New attachment count badge isn't animated on drop/paste
 - **Domain:** Frontend / Editor
-- **Location:** `src/components/AttachmentList.tsx:107-109` ; `src/components/EditableBlock.tsx:224-244`
-- **What:** Toast confirms but the inline badge update is invisible — no flash/pulse to draw the eye to the just-attached file.
+- **Location:** `src/components/BlockInlineControls.tsx:326-345` (the `attachment-badge` button)
+- **What:** Toast confirms but the inline badge update at `BlockInlineControls.tsx:331` (`attachment-badge … bg-muted text-muted-foreground hover:bg-accent …`) has no animation tied to `attachmentCount` change — no flash/pulse to draw the eye to the just-attached file. (Original Locations cited `AttachmentList.tsx:107-109` (file-size span) and `EditableBlock.tsx:224-244` (drop/paste handlers) — neither contains the count badge; the actual badge lives in `BlockInlineControls`.)
 - **Cost:** Trivial — brief CSS animation on count change.
 - **Risk:** Low.
 - **Impact:** Low.
@@ -2065,7 +1968,7 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 
 ### UX-309 — Slash command palette is not discoverable to new users
 - **Domain:** Frontend / Editor
-- **Location:** `src/lib/slash-commands.ts` (61 commands across 8 categories) ; `src/editor/extensions/slash-command.ts:1-131`
+- **Location:** `src/lib/slash-commands.ts` (64 commands across 8 categories: SLASH_COMMANDS body 22 + PRIORITY 3 + HEADING 6 + REPEAT 11 + EFFORT 6 + ASSIGNEE 2 + LOCATION 4 + REPEAT_END 5 + CALLOUT 5; plus dynamic `table:RxC` synthesised at L479) ; `src/editor/extensions/slash-command.ts:1-131`
 - **What:** No in-editor hint that `/` opens a palette. New users find this only via `?` keyboard help or by accident.
 - **Cost:** Trivial — empty-block placeholder "Type / for commands…"; add a 4th highlight in `WelcomeModal` for reference / slash syntax.
 - **Risk:** Low.
@@ -2171,13 +2074,13 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-321 — Property "+N" overflow chip looks like a badge, not a button
+### UX-321 — Property "+N" overflow chip: tooltip mentions count, not the keyboard shortcut; no chevron icon
 - **Domain:** Frontend / Properties
-- **Location:** `src/components/BlockInlineControls.tsx:300-322`
-- **What:** Tooltip says "Show all properties", `cursor-pointer` is set, but no hover background and the visual styling matches the read-only badges.
-- **Cost:** Trivial — hover `bg-accent/50`, `aria-label` mentioning the keyboard shortcut, optional ChevronRight icon.
+- **Location:** `src/components/BlockInlineControls.tsx:305` (className includes `hover:bg-accent hover:text-foreground transition-colors` + `focus-visible:ring-[3px] focus-visible:ring-ring/50` + `active:scale-95`); `:307` (`aria-label={t('block.showAllProperties', { count })}`)
+- **What:** The hover background, focus ring, and `active:scale-95` are already present (so the original "no hover background" framing was wrong). The remaining gaps: (a) the tooltip / aria-label mentions the count rather than a keyboard shortcut hint; (b) no ChevronRight / disclosure icon to signal click-through; (c) the visual still resembles a badge more than a button.
+- **Cost:** Trivial — extend `aria-label` to include the keyboard shortcut, add a small ChevronRight icon next to the count.
 - **Risk:** Low.
-- **Impact:** Medium.
+- **Impact:** Low.
 - **Status:** Open.
 
 ### UX-322 — `useDateInput.isParsing` is exposed but never rendered in property drawer
@@ -2207,11 +2110,11 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-325 — `F-37` "DONE warning when block has `blocked_by`" is documented but not implemented
-- **Domain:** Frontend / Tasks (documentation drift)
-- **Location:** `FEATURE-MAP.md:670` claims "DONE warning when block has `blocked_by` dependencies (F-37)"; `src/components/DependencyIndicator.tsx:32-121` only renders the link icon. Grep across the codebase finds no warning fires when cycling a blocked task to DONE.
-- **What:** Either ship the warning (toast.warning on cycle to DONE if `blocked_by` is set), or remove the F-37 claim from `FEATURE-MAP.md`.
-- **Cost:** S — implementation lives next to `useBlockProperties.cycleTodoState`; one property fetch + `toast.warning`.
+### UX-325 — F-37 DONE-warning ships for `[x]` syntax + slash commands but not for the gutter-cycle path
+- **Domain:** Frontend / Tasks
+- **Location:** `src/hooks/useCheckboxSyntax.ts:41-55` (already fires `toast.warning(t('dependency.dependencyWarning'))` on `[x]` cycle to DONE); `src/hooks/useBlockSlashCommands.ts:160-169` (defines `warnIfBlocked`) and `:182-183` (invokes from `handleTodoState` when `state === 'DONE'`); `src/hooks/useBlockProperties.ts:60-92` (`handleToggleTodo` — gutter-cycle path) does **NOT** call `warnIfBlocked` ; `FEATURE-MAP.md:670` (the F-37 entry — accurate, F-37 ships)
+- **What:** F-37 is implemented in two of three code paths. Only the gutter-button cycle path (`handleToggleTodo`) bypasses the warning. The original framing — "documented but not implemented" — was wrong; `FEATURE-MAP.md:670` is accurate. Git log: `afb28b7 feat: F-37 — task dependency indicator + DONE warning`.
+- **Cost:** S — call `warnIfBlocked` from `useBlockProperties.handleToggleTodo` (mirror the slash-command path).
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
@@ -2297,11 +2200,11 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-335 — Search results count `aria-live` goes silent on zero results / clear
+### UX-335 — Search results count `aria-live` is silent on zero results / clear
 - **Domain:** Frontend / Search
-- **Location:** `src/components/SearchPanel.tsx:540-546`
-- **What:** Region only renders when `results.length > 0`. Cleared / empty searches produce no SR announcement.
-- **Cost:** Trivial — render the region always; toggle text between "N results" / "No results" / "Search cleared".
+- **Location:** `src/components/SearchPanel.tsx:540` (live-region wrapper with `role="status" aria-live="polite" aria-atomic="true"` — renders unconditionally) ; `:542-544` (inner `<span>` with `data-testid="search-results-count"` — only renders when `searched && !searchLoading && !error && results.length > 0`)
+- **What:** The live-region wrapper renders unconditionally; the inner count span is gated. End-result for SR users (silent on cleared / no-result searches) is the same as if the wrapper itself were missing, but the precise mechanism is "wrapper renders, content is empty".
+- **Cost:** Trivial — render explicit text inside the live-region for the zero / cleared cases ("No results" / "Search cleared").
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
@@ -2333,10 +2236,10 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-339 — Property definition options editor has no JSON validation feedback
+### UX-339 — Property definition options editor: single-line `<Input>` accepts JSON without inline validation
 - **Domain:** Frontend / Properties view
-- **Location:** `src/components/PropertyDefinitionsList.tsx:277-289`
-- **What:** Raw JSON input. Errors surface only on Save as a generic toast — no inline syntax warning while typing.
+- **Location:** `src/components/PropertyDefinitionsList.tsx:279-284` (single-line `<Input value={editOptionsValue} onChange={…} placeholder=… aria-label=…/>` — not a multi-line `<textarea>` or JSON editor)
+- **What:** The field is a single-line `<Input>` accepting JSON. There is no inline parse / disabled-Save / inline error UI; validation surfaces only on `handleSaveOptions` as a generic toast. (Original framing called it "raw JSON input" which is loose — it's a single-line Input field, not a JSON-editor pane.)
 - **Cost:** S — try/catch parse on every change; render a small red "Invalid JSON" line + disable Save until valid.
 - **Risk:** Low.
 - **Impact:** Medium.
@@ -2387,13 +2290,13 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-345 — History "Restore to here" vs "Revert selected" terminology overlaps
+### UX-345 — History: displayed label is already "Restore to this point"; only the i18n key name + the per-entry-vs-point-in-time terminology gap remains
 - **Domain:** Frontend / History
-- **Location:** `src/components/HistoryListItem.tsx:293` ; `HistoryRestoreDialog.tsx:70` ; `HistoryRevertDialog.tsx:61` ; `src/lib/i18n/conflicts.ts:74-75, 215-230`
-- **What:** "Restore to here" reverts every op AFTER the selected one (point-in-time); "Revert selected" creates inverse ops only for the selected entries. Labels read as synonyms.
-- **Cost:** Trivial — rename "Restore to here" → "Reset to this point" + dialog subtitle "This undoes every operation after this point — use 'Revert selected' for individual entries."
+- **Location:** `src/components/HistoryListItem.tsx:293` ; `HistoryRestoreDialog.tsx:70` ; `HistoryRevertDialog.tsx:61` ; `src/lib/i18n/conflicts.ts:215-230` (key `history.restoreToHereLabel` resolves to displayed string `"Restore to this point"`; tooltip `"Revert all operations after this point"`)
+- **What:** The displayed string is already "Restore to this point" — the original "Restore to here" framing was based on the i18n KEY name, which still says `restoreToHere`. The remaining concern is that "Restore to this point" and "Revert selected" still read as synonyms even though they do different things (point-in-time vs per-entry inverse ops).
+- **Cost:** Trivial — rename to "Reset to this point" (one word change) and add a clarifying subtitle: "Undoes every operation after this point — use 'Revert selected' for individual entries." Optionally rename the i18n key from `restoreToHereLabel` to `resetToPointLabel` to reduce future confusion.
 - **Risk:** Low.
-- **Impact:** Medium.
+- **Impact:** Low–medium.
 - **Status:** Open.
 
 ### UX-346 — Vim-style `j`/`k` nav has no touch alternative
@@ -2414,14 +2317,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-348 — Compaction confirmation copy too soft for an irreversible action
-- **Domain:** Frontend / Compaction
-- **Location:** `src/components/CompactionCard.tsx:101-118`
-- **What:** Description says "permanently remove eligible operations"; "eligible" is vague and "irreversible" is not emphasised.
-- **Cost:** Trivial — strengthen body copy: "**This cannot be undone.** Deleted operations cannot be recovered or viewed in history."
-- **Risk:** Low.
-- **Impact:** High.
-- **Status:** Open.
 
 ### UX-349 — Conflict type badges differ only by colour
 - **Domain:** Frontend / Conflicts
@@ -2459,19 +2354,11 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-353 — Conflict list help text disappears under filters
-- **Domain:** Frontend / Conflicts
-- **Location:** `src/components/ConflictList.tsx:443-456`
-- **What:** Help banner only when `blocks.length > 0`. Filtered-empty state shows the same UI as truly-empty — user can't tell whether it's filtered.
-- **Cost:** Trivial — render a "No conflicts match the current filters" message (string already exists in i18n at `conflict.noMatchingFilters`).
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
 
-### UX-354 — Graph filter bar has no on-touch affordance
+### UX-354 — Graph filter bar has no leading "Filters" label / on-touch affordance
 - **Domain:** Frontend / Graph
-- **Location:** `src/components/GraphFilterBar.tsx:358-505` ; `GraphView.tsx:179-191`
-- **What:** Bar is `absolute top-2 left-2`, single-line, easy to miss on phones / tablets.
+- **Location:** `src/components/GraphView.tsx:179-191` (wrapper className `'absolute top-2 left-2 right-2 z-10 max-w-[calc(100%-1rem)]'` — full-width, right-edge anchored, NOT just `top-2 left-2` as earlier framing said) ; `GraphFilterBar.tsx` (component body — too broad to cite the whole file)
+- **What:** The bar spans the full width of the graph view but has no leading "Filters" label or first-touch hint. Earlier framing described position as "absolute top-2 left-2 (single-line, easy to miss)" — incomplete; the bar IS full-width.
 - **Cost:** Trivial — small "Filters" label or info banner on first touch render.
 - **Risk:** Low.
 - **Impact:** Medium.
@@ -2504,11 +2391,11 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-358 — `PageHeaderMenu` mixes benign and destructive actions in one popover
+### UX-358 — `PageHeaderMenu` co-locates destructive Delete with benign actions in one popover
 - **Domain:** Frontend / Page editor
-- **Location:** `src/components/PageHeaderMenu.tsx:151-281`
-- **What:** 8 actions; "Delete page" sits one `<hr>` away from "Open in New Tab". A misclick on a tightly-packed mobile menu can be costly.
-- **Cost:** S — visually separate the destructive group (background tint or separate sub-section); enforce a confirmation dialog with type-to-confirm for Delete.
+- **Location:** `src/components/PageHeaderMenu.tsx:151-281` (popover entries top-to-bottom: Open in New Tab L162-174 → Add Alias → Add Tag → Add Property → `<hr>` → Toggle Template → Toggle Journal Template → `<hr>` → Export → `<hr>` (when `showMoveEntry`) → Move To submenu → `<hr>` L271 → Delete L272-279)
+- **What:** The Delete button sits at the **end** of the popover, after the Move-To submenu and a separator at L271 — Open in New Tab is at the **top** at L164, with multiple entries and `<hr>` separators between them. (Earlier framing — "one `<hr>` away from Open in New Tab" — was geographically wrong; they bookend the menu.) The structural concern (destructive + benign in one popover, easy to misclick on mobile) is still real.
+- **Cost:** S — visually separate the destructive Delete (background tint or separate sub-section); enforce a confirmation dialog with type-to-confirm for Delete.
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
@@ -2586,14 +2473,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-367 — "Move to space" is silent — no confirm, no toast
-- **Domain:** Frontend / Spaces
-- **Location:** `src/components/PageHeaderMenu.tsx:230-269`
-- **What:** Single `SetProperty` op fires; the page disappears from the current view with no feedback. Easy to misfire.
-- **Cost:** Trivial — `toast.success("Page moved to <SpaceName>")`; optional confirmation popover is heavier and probably not needed.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
 
 ### UX-368 — Digit hotkeys (Ctrl+1..9) hint only inside dropdown rows
 - **Domain:** Frontend / Spaces
@@ -2631,13 +2510,13 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-372 — `SpaceAccentBadge` click cycles silently with no hover affordance
+### UX-372 — `SpaceAccentBadge` visible `title` attribute shows only space name (no click-to-cycle hint)
 - **Domain:** Frontend / Spaces
-- **Location:** `src/components/SpaceAccentBadge.tsx:66-78, 93-99` ; `src/components/AppSidebar.tsx:138-142`
-- **What:** Collapsed-rail badge cycles to the next alphabetical space on click — invisible affordance.
-- **Cost:** Trivial — hover ring + Tooltip "Click to switch space".
+- **Location:** `src/components/SpaceAccentBadge.tsx:101-128` (className includes `'transition-shadow duration-fast hover:ring-2 hover:ring-ring/30'` at L123 and `'outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50'` at L119; `aria-label={t('space.accentBadge', { name: space.name })}` at L105 → resolves via `common.ts:72` to `'{{name}} space — click to switch'`; visible `title={space.name}` at L106) ; `src/components/AppSidebar.tsx:138-142`
+- **What:** Hover ring (`hover:ring-2 hover:ring-ring/30`) is **already present**. Aria-label already says "click to switch". Only the visible `title` attribute is silent on the action — sighted users without screen readers see only the bare space name. (Earlier framing — "no hover affordance" / "cycles silently" — was wrong.)
+- **Cost:** Trivial — extend the visible `title` attribute to include "click to switch" or similar (e.g. `title={t('space.accentBadgeTitle', { name: space.name })}`).
 - **Risk:** Low.
-- **Impact:** Medium.
+- **Impact:** Low.
 - **Status:** Open.
 
 ### UX-373 — Single-space state confusing
@@ -2766,11 +2645,11 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-387 — Sidebar theme button cycles 7 themes silently
+### UX-387 — Sidebar theme button cycles 3 themes (auto/dark/light) silently — Settings exposes the full 7
 - **Domain:** Frontend / Settings / Theme
-- **Location:** `src/components/AppSidebar.tsx:254-262` ; `src/components/settings/AppearanceTab.tsx:114-135`
-- **What:** Click cycles through auto / light / dark / solarized-light / solarized-dark / dracula / one-dark-pro with no current-theme tooltip.
-- **Cost:** Trivial — `Tooltip` showing the current theme + "click to cycle"; consider replacing the cycle with "open Appearance settings" given there are 7 themes.
+- **Location:** `src/hooks/useTheme.ts:54-55` (`/** Theme cycle for the sidebar toggle button (classic light/dark/auto only). */ const CYCLE: ThemePreference[] = ['auto', 'dark', 'light']`) ; `src/components/AppSidebar.tsx:254-263` (sidebar button calls `onToggleTheme`, tooltip is the generic `t('sidebar.toggleTheme')`) ; `src/components/settings/AppearanceTab.tsx:114-135` (full 7-theme Select: light, dark, auto, solarized-light, solarized-dark, dracula, one-dark-pro)
+- **What:** The sidebar cycles only 3 themes (auto/dark/light) — earlier framing claimed all 7. The full picker lives in Settings → Appearance. The remaining gap is that the sidebar tooltip says "Toggle theme" generically rather than announcing the current theme.
+- **Cost:** Trivial — change the sidebar tooltip to show the current theme name + "click to cycle". Optionally, replace the cycle with "open Appearance settings" given the user-discoverable choice space is 7, not 3.
 - **Risk:** Low.
 - **Impact:** Low.
 - **Status:** Open.
