@@ -176,6 +176,8 @@ export const references: Record<string, string> = {
   'search.loadingMessage': 'Loading...',
   'search.loadMoreButton': 'Load more',
   'search.resultsCount': '{{count}} results found',
+  'search.statusNoResults': 'No results',
+  'search.statusCleared': 'Search cleared',
   'search.addPage': '+ Page',
   'search.addTag': '+ Tag',
   'search.clearAll': 'Clear all',

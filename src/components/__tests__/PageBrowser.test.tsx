@@ -2294,6 +2294,72 @@ describe('PageBrowser', () => {
     })
   })
 
+  // ---------------------------------------------------------------------------
+  // UX-331: keyboard navigation exposes aria-activedescendant on the grid so
+  // screen readers can track arrow-key focus moves without the inner buttons
+  // having to receive DOM focus. Each rendered row also carries a stable id
+  // matching the activedescendant value.
+  // ---------------------------------------------------------------------------
+  describe('UX-331 aria-activedescendant on keyboard nav', () => {
+    it('grid container exposes aria-activedescendant matching the focused row id', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      // focusedIndex defaults to 0 → the first page row is the active
+      // descendant. The row carries `id="page-row-{ULID}"`, and the
+      // grid points at it via `aria-activedescendant`.
+      const grid = screen.getByRole('grid')
+      const focusedRow = document.querySelector(
+        '[data-page-item][aria-selected="true"]',
+      ) as HTMLElement | null
+      expect(focusedRow).not.toBeNull()
+      expect(focusedRow?.id).toBe('page-row-P1')
+      expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P1')
+    })
+
+    it('arrow-down updates aria-activedescendant to the next row id', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+          makePage({ id: 'P3', content: 'Cherry' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const grid = screen.getByRole('grid')
+      // Initial state — focus on first page (Apple).
+      expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P1')
+
+      // ArrowDown → focus moves to Banana. The grid's
+      // `aria-activedescendant` follows the focused row id.
+      await user.keyboard('{ArrowDown}')
+
+      expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P2')
+      const focusedAfter = document.querySelector(
+        '[data-page-item][aria-selected="true"]',
+      ) as HTMLElement | null
+      expect(focusedAfter?.id).toBe('page-row-P2')
+      // The id referenced by activedescendant exists in the DOM and
+      // matches the row currently flagged as selected.
+      expect(grid.getAttribute('aria-activedescendant')).toBe(focusedAfter?.id)
+    })
+  })
+
   describe('UX-198 header outlet migration', () => {
     // The create-page form + search/sort bar used to live inside a
     // `sticky top-0` wrapper div. It's now hoisted to the App-level outlet

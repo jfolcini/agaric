@@ -11,6 +11,7 @@
  * `focusSearch` `matchesShortcutBinding` branch — UX-260 sub-fix 6).
  */
 
+import type { TFunction } from 'i18next'
 import { Search, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -56,6 +57,35 @@ function hasCJK(text: string): boolean {
   )
 }
 
+/**
+ * UX-335 — Compute the live-region status text for the search results
+ * count. Extracted from SearchPanel JSX to keep the component under
+ * Biome's cognitive-complexity ceiling. Returns `null` when the region
+ * should stay empty (pre-search / loading).
+ */
+function getSearchStatusText(
+  args: {
+    searched: boolean
+    searchLoading: boolean
+    error: string | null
+    cleared: boolean
+    resultCount: number
+  },
+  t: TFunction,
+): string | null {
+  const { searched, searchLoading, error, cleared, resultCount } = args
+  if (searched && !searchLoading && !error && resultCount > 0) {
+    return t('search.resultsCount', { count: resultCount })
+  }
+  if (searched && !searchLoading && !error && resultCount === 0) {
+    return t('search.statusNoResults')
+  }
+  if (cleared && !searchLoading) {
+    return t('search.statusCleared')
+  }
+  return null
+}
+
 export function SearchPanel(): React.ReactElement {
   const { t } = useTranslation()
 
@@ -69,6 +99,10 @@ export function SearchPanel(): React.ReactElement {
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [searched, setSearched] = useState(false)
+  // UX-335 — `cleared` is true iff the user emptied the search input AFTER a
+  // search had been performed. Used to surface a "Search cleared"
+  // announcement in the aria-live status region (separate from pre-search).
+  const [cleared, setCleared] = useState(false)
   const [typing, setTyping] = useState(false)
   const [loadingResultId, setLoadingResultId] = useState<string | null>(null)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
@@ -213,6 +247,10 @@ export function SearchPanel(): React.ReactElement {
     debounced.cancel()
 
     if (!value.trim()) {
+      // UX-335 — if a search had been performed (or we were already in the
+      // cleared state and somehow re-emptied), keep `cleared` set so the
+      // aria-live region announces "Search cleared".
+      setCleared((prev) => prev || searched)
       setDebouncedQuery('')
       setItems([])
       setSearched(false)
@@ -222,6 +260,7 @@ export function SearchPanel(): React.ReactElement {
       return
     }
 
+    setCleared(false)
     setTyping(true)
     debounced.schedule(value)
   }
@@ -536,13 +575,25 @@ export function SearchPanel(): React.ReactElement {
       {/* UX-269 — Status region: announces results-count changes to SR
           users and renders the visible count. Sits ABOVE the listbox as
           a separate sibling (NOT wrapping it) so interactive options
-          aren't re-announced on every result-set change. */}
+          aren't re-announced on every result-set change.
+
+          UX-335 — also announce zero-result and search-cleared states so
+          the live region is never silent after a state change that
+          matters to SR users. Pre-search and loading states stay silent
+          intentionally (no relevant change to announce). */}
       <div role="status" aria-live="polite" aria-atomic="true" data-testid="search-results-status">
-        {searched && !searchLoading && !error && results.length > 0 ? (
-          <span className="text-xs text-muted-foreground" data-testid="search-results-count">
-            {t('search.resultsCount', { count: results.length })}
-          </span>
-        ) : null}
+        {(() => {
+          const statusText = getSearchStatusText(
+            { searched, searchLoading, error, cleared, resultCount: results.length },
+            t,
+          )
+          if (!statusText) return null
+          return (
+            <span className="text-xs text-muted-foreground" data-testid="search-results-count">
+              {statusText}
+            </span>
+          )
+        })()}
       </div>
 
       {searched && !searchLoading && results.length === 0 && !error && !aliasMatch && (

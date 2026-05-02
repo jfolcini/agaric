@@ -303,6 +303,21 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     virtualizer.scrollToIndex(rowIndex, { align: 'auto' })
   }, [focusedIndex, virtualizer, pageIndexToRowIndex])
 
+  // UX-331 — wire `aria-activedescendant` so screen readers can track
+  // arrow-key focus moves. The id pattern mirrors the row renderer:
+  // flat rows expose `page-row-${page.id}`; namespace-tree wrappers
+  // expose `page-row-${node.fullPath}` (see `PageBrowserRowRenderer`).
+  const activeDescendantId = useMemo<string | undefined>(() => {
+    if (focusedIndex < 0) return undefined
+    const rowIdx = pageIndexToRowIndex[focusedIndex]
+    if (rowIdx == null) return undefined
+    const row = groupedRows[rowIdx]
+    if (!row) return undefined
+    if (row.kind === 'page') return `page-row-${row.page.id}`
+    if (row.kind === 'tree-page') return `page-row-${row.node.fullPath}`
+    return undefined
+  }, [focusedIndex, pageIndexToRowIndex, groupedRows])
+
   const isFiltering = filterText.trim().length > 0
 
   return (
@@ -360,6 +375,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           role: 'grid',
           tabIndex: 0,
           'aria-label': hasStarred ? t('pageBrowser.pageListGrouped') : t('pageBrowser.pageList'),
+          // UX-331 — bind `aria-activedescendant` to the focused row's
+          // stable id so screen readers track arrow-key focus moves
+          // without the inner buttons having to receive DOM focus.
+          ...(activeDescendantId ? { 'aria-activedescendant': activeDescendantId } : {}),
           // Section presence flags exposed for tests / styling hooks.
           // FEAT-14 — the unified model means either or both can be
           // present independently; consumers that want section-aware

@@ -1926,4 +1926,67 @@ describe('SearchPanel', () => {
       expect(status.contains(count)).toBe(true)
     })
   })
+
+  // =========================================================================
+  // UX-335: aria-live region must produce text in zero-result and
+  // search-cleared states (not stay empty). Pre-search stays silent.
+  // =========================================================================
+  describe('UX-335 aria-live status text', () => {
+    it('announces "No results" when a search returns zero results', async () => {
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      typeAndSubmit(input, 'nothing-matches')
+
+      const status = await screen.findByTestId('search-results-status')
+
+      await waitFor(() => {
+        const count = screen.getByTestId('search-results-count')
+        expect(count).toHaveTextContent(t('search.statusNoResults'))
+        expect(status.contains(count)).toBe(true)
+      })
+    })
+
+    it('announces "Search cleared" after clearing a previous search', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makeSearchResult({ id: 'B1', content: 'previous result' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      typeAndSubmit(input, 'previous')
+
+      // Wait for the search to complete and the count to be announced.
+      await waitFor(() => {
+        expect(screen.getByTestId('search-results-count')).toHaveTextContent(
+          t('search.resultsCount', { count: 1 }),
+        )
+      })
+
+      // Clear the input — the live region should flip to "Search cleared".
+      fireEvent.change(input, { target: { value: '' } })
+
+      await waitFor(() => {
+        const count = screen.getByTestId('search-results-count')
+        expect(count).toHaveTextContent(t('search.statusCleared'))
+      })
+
+      const status = screen.getByTestId('search-results-status')
+      expect(status).toHaveAttribute('aria-live', 'polite')
+    })
+
+    it('keeps the live region empty before any search has been performed', () => {
+      render(<SearchPanel />)
+
+      const status = screen.getByTestId('search-results-status')
+      // No inner count node should be rendered pre-search.
+      expect(status.querySelector('[data-testid="search-results-count"]')).toBeNull()
+      expect(status).toHaveTextContent('')
+    })
+  })
 })

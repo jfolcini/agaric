@@ -9,9 +9,11 @@
 
 import { Copy, Pause } from 'lucide-react'
 import type React from 'react'
+import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 
@@ -44,6 +46,23 @@ export function PairingQrDisplay({
   pausedByTyping = false,
 }: PairingQrDisplayProps): React.ReactElement {
   const { t } = useTranslation()
+
+  // UX-377: The visual "Paused while typing…" indicator lives inside an
+  // aria-hidden countdown paragraph (see below), so SR users can't hear it.
+  // Mirror the pause/resume transitions through the shared `announce()`
+  // singleton — same pattern PairingDialog's handleTypingStateChange uses,
+  // so the announcer's coalescing window suppresses the duplicate on
+  // production renders driven by the parent.
+  const prevPausedRef = useRef(pausedByTyping)
+  useEffect(() => {
+    if (prevPausedRef.current === pausedByTyping) return
+    prevPausedRef.current = pausedByTyping
+    if (pausedByTyping) {
+      announce(t('announce.pairingCountdownPaused'))
+    } else {
+      announce(t('announce.pairingCountdownResumed'))
+    }
+  }, [pausedByTyping, t])
 
   return (
     <div className="flex flex-col sm:flex-row [@media(pointer:coarse)]:flex-col gap-4 items-center mb-4">

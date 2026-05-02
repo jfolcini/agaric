@@ -17,6 +17,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
 import { PairingQrDisplay } from '../PairingQrDisplay'
 
@@ -24,6 +25,12 @@ vi.mock('@/lib/clipboard', () => ({
   writeText: vi.fn().mockResolvedValue(undefined),
 }))
 const mockedWriteText = vi.mocked(writeText)
+
+// UX-377: capture announce() calls fired by the pause/resume transition effect
+vi.mock('@/lib/announcer', () => ({
+  announce: vi.fn(),
+}))
+const announceMock = vi.mocked(announce)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -229,5 +236,42 @@ describe('PairingQrDisplay', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // ── UX-377: pause/resume transitions are announced to SR users ──────
+  describe('SR pause/resume announcements (UX-377)', () => {
+    it('does not announce on initial mount when not paused', () => {
+      render(<PairingQrDisplay {...defaultProps} pausedByTyping={false} />)
+
+      expect(announceMock).not.toHaveBeenCalled()
+    })
+
+    it('announces "paused" when pausedByTyping flips false → true', () => {
+      const { rerender } = render(<PairingQrDisplay {...defaultProps} pausedByTyping={false} />)
+      announceMock.mockClear()
+
+      rerender(<PairingQrDisplay {...defaultProps} pausedByTyping={true} />)
+
+      expect(announceMock).toHaveBeenCalledWith('Pairing countdown paused while typing')
+    })
+
+    it('announces "resumed" when pausedByTyping flips true → false', () => {
+      const { rerender } = render(<PairingQrDisplay {...defaultProps} pausedByTyping={true} />)
+      announceMock.mockClear()
+
+      rerender(<PairingQrDisplay {...defaultProps} pausedByTyping={false} />)
+
+      expect(announceMock).toHaveBeenCalledWith('Pairing countdown resumed')
+    })
+
+    it('keeps the visual countdown paragraph aria-hidden', () => {
+      // Don't regress: the inline pause indicator stays inside the
+      // aria-hidden countdown <p>; the SR channel is the announce()
+      // helper, not this paragraph.
+      const { container } = render(<PairingQrDisplay {...defaultProps} pausedByTyping={true} />)
+
+      const countdown = container.querySelector('.pairing-countdown')
+      expect(countdown).toHaveAttribute('aria-hidden', 'true')
+    })
   })
 })
