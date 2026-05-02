@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Frontend code review)
+> **Last updated:** 2026-05-02 (Backend test code review — TEST-1 through TEST-31)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-23 open items.
+54 open items.
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -46,6 +46,37 @@ Items flagged during development that need revisiting. Organized by section with
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
+| TEST-1 | TEST | `delete_block_inner` calls `now_rfc3339()` twice — production timestamp-mismatch bug surfaced by hardcoded-timestamp workaround in `revert_delete_block_restores_with_descendants` | S | — |
+| TEST-2 | TEST | Inequality count assertions where exact count is known (3 sites: integration_tests `bg >= 1`, agenda projection `entries.len() >= 3`, recovery `draft_errors.len() >= 2`) | S | — |
+| TEST-3 | TEST | Brittle `err.to_string().contains(...)` / event-message `.contains(...)` assertions instead of `matches!(AppError::Variant(_))` (11 in `block_cmd_tests.rs`, 9 in `sync_daemon/tests.rs`) | S | — |
+| TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
+| TEST-5 | TEST | `delete_block_cascades_to_children` doesn't verify op_log entries (only checks response struct) | S | — |
+| TEST-6 | TEST | Sync merge tests assert on counter only, not materialized state (`merge_resolves_property_conflict_lww` doesn't query `block_properties`; `merge_block_conflict_creates_copy` doesn't query `blocks` for the conflict copy) | S | — |
+| TEST-7 | TEST | Reverse tests don't verify batch ordering (newest-first by `created_at DESC, seq DESC`) or op-log append-only invariant (count increases by 1) | S | — |
+| TEST-8 | TEST | TOFU test only covers acceptance, not rejection on cert-hash mismatch on reconnect (`inmem_handle_incoming_sync_tofu_stores_cert_hash`) | S | — |
+| TEST-9 | TEST | `two_device_create_sync_both_see_block` only checks op_log via `get_op_by_seq`, never queries `blocks` to verify materialization | S | — |
+| TEST-10 | TEST | Snapshot tests missing redactions of non-deterministic fields: `snapshot_history_entry_response` (cursor), `snapshot_list_blocks_response` (comment promises but no redaction call) | S | — |
+| TEST-11 | TEST | Missing error-path test coverage: `export_page_markdown_inner` has 6 happy-path tests + 0 error tests; `set_property_inner` integration tests miss invalid-key / type-mismatch Validation cases | S | — |
+| TEST-12 | TEST | `apply_remote_ops_detects_fork_with_same_seq_different_hash` queries hash but not full `OpRecord` (payload, op_type) — won't catch row mutation outside the hash field | S | — |
+| TEST-13 | TEST | Draft tests use `record.payload.contains(BLOCK_A)` on raw JSON — a substring match that could pass with the ID in the wrong field | S | — |
+| TEST-14 | TEST | Spaces tests don't verify isolation between Personal/Work spaces — no test creates pages in both and asserts queries return correct subset for each | S | — |
+| TEST-15 | TEST | `propagate_multi_level` (tag inheritance) doesn't cover transitive case where intermediate node (CHILD) is deleted but tag still propagates from PAGE to GRANDCHILD | S | — |
+| TEST-16 | TEST | Recurrence integration tests don't exercise year-boundary transitions (Dec 31 + 1 day → Jan 1 next year) — only unit tests cover DST/leap year | S | — |
+| TEST-17 | TEST | `opbatch_streaming_sends_in_chunks` verifies chunk sizes (1000/1000/500) but not seq-ordering within each batch | S | — |
+| TEST-18 | TEST | Backlink non-grouped tests use `setup_backlinks()` orphan sources (no parent_id), so they never exercise self-reference filtering; sort tests don't assert `total_count`/`filtered_count` | S | — |
+| TEST-19 | TEST | MCP weak-shape assertions: `list_backlinks_happy_path` checks only `is_object()`; stress test bare `is_ok()` (line 1272); error-response tests check `result.is_none()` but not error code/message shape | S | — |
+| TEST-20 | TEST | `protocol_initiator_requests_and_receives_files` asserts `files_sent/received` and `bytes_sent/received` but not `skipped_hash_mismatch` / `skipped_not_found` (== 0 in happy path) | S | — |
+| TEST-21 | TEST | `protocol_hash_mismatch_no_ack_returns_err` only asserts `is_err()` — a connection-drop error would also pass; assert error message mentions hash mismatch | S | — |
+| TEST-22 | TEST | `dispatch_op_unknown_op_type` asserts `is_ok()` but doesn't verify no DB side effects (row counts unchanged on `blocks` and `op_log`) | S | — |
+| TEST-23 | TEST | 6 copy-pasted `*_paginates_with_cursor` tests in `pagination/tests.rs` (lines 720, 877, 1550, 1702, 1911, 2032) — identical 3-page-loop pattern | S | — |
+| TEST-24 | TEST | 13 `tokio::time::sleep(Duration::from_millis(2))` for op-log timestamp separation in `undo_redo_tests.rs` — replace with deterministic `op_log::append_local_op_at` calls | S | — |
+| TEST-25 | TEST | ~12 near-identical FEAT-3p4 space-scoping tests in `agenda_cmd_tests.rs` (lines 2268–2812) — extract `seed_two_spaces` helper | S | — |
+| TEST-26 | TEST | `find_lca_after_compaction_returns_clear_error` hardcodes `'SNAP01'` / `'fakehash'` snapshot values inline — extract to module constants | S | — |
+| TEST-27 | TEST | `count_set_property_ops_for_key` helper uses `LIKE '%"key":"X"%'` on JSON payloads — fragile to JSON whitespace changes | S | — |
+| TEST-28 | TEST | `test_connection_pair()` bypasses real TLS (in-memory duplex with `peer_cert_hash_val: None`) — needs documenting so callers don't think they're testing mTLS | S | — |
+| TEST-29 | TEST | `create_50_blocks_paginate_through_all_verify_count` creates 50 blocks sequentially in a loop — could parallelize with `futures::join_all` | S | — |
+| TEST-30 | TEST | `now_rfc3339()` collision risk in `undo_redo_tests.rs` lines 1187, 1311, 1525 — siblings have sleep guards but these don't | S | — |
+| TEST-31 | TEST | MCP pagination roundtrip test asserts `!ids1.contains(id)` for no overlap but never sums lengths across pages to verify nothing is lost | S | — |
 
 ### Quick wins (S-cost, ready to grab)
 
@@ -336,6 +367,308 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 **Cost:** M — design + implementation + verifying the 13 sites still produce identical query plans.
 **Risk:** Medium — touching every list query is high blast-radius; needs careful test coverage.
 **Decision:** Defer until the cost of drift becomes visible (a real bug shipped because one site got out of sync). Until then, the comment-based "mirror any change" convention is acceptable.
+
+## TEST — Backend test improvements
+
+Items in this section are test-quality improvements identified during a thorough backend test review (10 parallel review subagents covering ~80K LOC of test code, 3 verification subagents to filter hallucinations). All items below are verified — known false positives are not listed.
+
+> **Format:** test items use the compact L-style block. None of these are blocking; they are code-quality investments.
+
+### TEST-1 — `delete_block_inner` calls `now_rfc3339()` twice (production timestamp-mismatch)
+- **Domain:** Commands (Block lifecycle)
+- **Location:** `src-tauri/src/commands/blocks/crud.rs` (`delete_block_inner`); workaround visible in `src-tauri/src/commands/tests/undo_redo_tests.rs:1843-1868`
+- **What:** `delete_block_inner` calls `now_rfc3339()` separately for the `op_log` row and the `blocks.deleted_at` UPDATE. The two timestamps differ at sub-millisecond resolution but render as the same string most of the time, so the bug is silent. The `revert_delete_block_restores_with_descendants` test exposes it explicitly and works around it by manually constructing the op with a single hardcoded timestamp `"2025-06-15T12:00:00Z"`.
+- **Why it matters:** Sub-ms timestamp drift between op_log and blocks rows can confuse history queries that reconstruct prior state by joining on `created_at`. Discovered during test code review; the fact that a test actively works around this is a strong signal.
+- **Cost:** Trivial — compute `let now = now_rfc3339();` once at the top of `delete_block_inner` and reuse for both writes.
+- **Risk:** Low.
+- **Impact:** Low (silent in practice today, but a correctness latent).
+- **Recommendation:** Fix `delete_block_inner` to compute `now` once; then simplify the test to call `delete_block_inner` directly instead of constructing the op manually.
+- **Status:** Open.
+
+### TEST-2 — Inequality count assertions where exact count is known (3 sites)
+- **Domain:** Test infrastructure
+- **Location:**
+  - `src-tauri/src/integration_tests.rs:1177-1180` (`materializer_processes_background_tasks_after_page_create` — `assert!(bg >= 1, ...)`)
+  - `src-tauri/src/commands/tests/agenda_cmd_tests.rs:865-869` (`entries.len() >= 3` for weekly projection across 28 days)
+  - `src-tauri/src/recovery/tests.rs:687-695` (`report.draft_errors.len() >= 2`)
+- **What:** Per AGENTS.md: "Prefer exact counts — use `assert_eq!(count, 5)` not `assert!(count >= 1)`. Inequality assertions hide subtle bugs."
+- **Cost:** Trivial — compute exact expected value (the page-create test should expect exactly the dispatched task set; the agenda projection should compute `weeks_in_28_days(today)`; the recovery test knows the corrupted-fixture count).
+- **Risk:** Low.
+- **Impact:** Medium — closes silent-pass holes for materializer-task accounting and recovery-error counting.
+- **Status:** Open.
+
+### TEST-3 — Brittle `err.to_string().contains(...)` and `.contains(...)` on event messages
+- **Domain:** Test infrastructure
+- **Location:**
+  - `src-tauri/src/commands/tests/block_cmd_tests.rs` lines 241-244, 336-338, 378-380, 405-407, 897-899, 1143-1145, 1209-1211, 1982-1984, 2006-2008, 2069-2071, 2198-2200 (11 sites)
+  - `src-tauri/src/sync_daemon/tests.rs` lines 885, 979, 1063, 1231, 1563, 1622, 1691, 1820, 1902 (9 sites on `SyncEvent::Error.message`)
+- **What:** Tests use `.contains("substring")` on error/event message strings instead of `matches!(AppError::Variant(_))` or pinned message equality. If the message text is refactored or i18n-localized, the test silently passes against a different error.
+- **Cost:** S — mechanical replace per AGENTS.md convention.
+- **Risk:** Low — if a substring check still adds value, keep it but combine with `matches!()` on the error variant (sync_daemon path requires keeping `.contains()` because the event carries an unstructured `message: String`; the block_cmd path can fully migrate to `matches!`).
+- **Impact:** Medium — turns silent-pass regressions into hard failures.
+- **Status:** Open.
+
+### TEST-4 — Sync daemon tests use 18 fixed sleeps as race-prone "barriers"
+- **Domain:** Sync / Test infrastructure
+- **Location:** `src-tauri/src/sync_daemon/tests.rs` lines 2601, 2607, 2639, 2643, 2702, 2706, 2755, 2770, 2828, 2847, 2909, 3151, 3208, 3281, 3345, 3388, 3395, 3398
+- **What:** Tests use `tokio::time::sleep(Duration::from_millis(50..800))` to wait for daemon state changes. Unlike the materializer (which exposes `flush_background()`, `wait_for_initial_block_count_cache()`, `wait_for_pending_block_count_refreshes()`), the sync daemon and `SyncScheduler` have no equivalent sync-barrier helper, so tests sleep and hope.
+- **Why it matters:** Real flake risk on loaded CI. The 800ms sleeps in particular are pessimistic guesses that could still be too short under load.
+- **Cost:** M — design + implement a `wait_for_state(scheduler, predicate)` polling helper or expose `Notify`-based barriers on `SyncDaemon`.
+- **Risk:** Low — additive helper.
+- **Impact:** Medium — eliminates a category of CI flakes.
+- **Recommendation:** Pattern after the materializer's `flush_background()` API. A polling helper `async fn wait_for(predicate: impl Fn() -> bool, timeout: Duration)` would suffice for most sites.
+- **Status:** Open.
+
+### TEST-5 — `delete_block_cascades_to_children` doesn't verify op_log entries
+- **Domain:** Test infrastructure (Commands tests)
+- **Location:** `src-tauri/src/commands/tests/block_cmd_tests.rs:935-977`
+- **What:** Test only checks the response struct (`descendants_affected`, `deleted_at`); never queries `op_log` to verify the `delete_block` op was appended with correct payload. Per AGENTS.md, every state-changing command should verify op-log entries.
+- **Cost:** Trivial — add a `SELECT COUNT(*) … WHERE op_type = 'delete_block'` assertion mirroring the pattern in `create_block_writes_op_to_op_log` (line 193).
+- **Risk:** Low.
+- **Impact:** Low-medium — closes a silent gap on cascade-delete op accounting.
+- **Status:** Open.
+
+### TEST-6 — Sync merge tests assert on counter only, not materialized state
+- **Domain:** Sync / Merge tests
+- **Location:**
+  - `src-tauri/src/sync_protocol/tests.rs:1115-1171` (`merge_resolves_property_conflict_lww`) — asserts `results.property_lww > 0` but never queries `block_properties` to confirm the LWW winning value is stored
+  - `src-tauri/src/merge/tests.rs:1016-1113` (`merge_block_conflict_creates_copy`) — verifies `is_conflict=1` and `conflict_source` on the merge op but never queries `blocks` to confirm both rows (original + conflict copy) exist with correct content
+- **What:** Tests verify the merge engine's counter outputs but stop short of confirming the database actually reflects the resolution. A regression that updates the counter but skips the DB write would pass.
+- **Cost:** S — add `SELECT … FROM block_properties` / `SELECT … FROM blocks` assertions after each merge.
+- **Risk:** Low.
+- **Impact:** Medium — these tests are the only coverage for LWW + conflict-copy semantics.
+- **Status:** Open.
+
+### TEST-7 — Reverse tests don't verify batch ordering or op-log append-only invariant
+- **Domain:** Reverse / Undo tests
+- **Location:** `src-tauri/src/reverse/tests.rs` (entire 1541-line file)
+- **What:** Per AGENTS.md "Undo/reverse testing": "Batch grouping: consecutive ops within 200ms by the same device are grouped — backend's `revert_ops` sorts newest-first (`created_at DESC, seq DESC`) before applying. Tests must verify this ordering." and "Reverse ops are appended to the op log (log remains append-only) — never assert that existing ops were mutated." Neither invariant is currently tested.
+- **Cost:** S — add (a) a test that appends 3+ ops with identical timestamps and verifies they reverse newest-first; (b) a test that counts `op_log` rows before/after `compute_reverse` and asserts the original op is still present and the count increased by 1.
+- **Risk:** Low.
+- **Impact:** Medium — closes a gap on two AGENTS.md-mandated invariants.
+- **Status:** Open.
+
+### TEST-8 — TOFU test only covers acceptance, not rejection
+- **Domain:** Sync (TLS / pairing)
+- **Location:** `src-tauri/src/sync_daemon/tests.rs:1930-2049` (`inmem_handle_incoming_sync_tofu_stores_cert_hash`)
+- **What:** Test verifies cert hash is stored on first connection, but never reconnects with a *different* cert hash to verify the mismatch is rejected. The negative path is the actual security-relevant behavior of TOFU.
+- **Cost:** S — extend the test with a second connection attempt using a mismatched hash; assert connection is rejected.
+- **Risk:** Low.
+- **Impact:** Medium — TOFU behavior is asymmetric (acceptance is trivial; rejection is the property worth verifying).
+- **Status:** Open.
+
+### TEST-9 — `two_device_create_sync_both_see_block` doesn't verify materialization
+- **Domain:** Sync integration tests
+- **Location:** `src-tauri/src/sync_integration_tests.rs:145-202`
+- **What:** Test verifies the synced op is readable in B via `get_op_by_seq()` but never queries the `blocks` table to verify materialization. If the materializer fails to apply the op on B, the test still passes.
+- **Cost:** Trivial — `materializer.flush_background().await` then `SELECT FROM blocks WHERE id = ?` assertion.
+- **Risk:** Low.
+- **Impact:** Low-medium — closes a gap in the most fundamental sync test.
+- **Status:** Open.
+
+### TEST-10 — Snapshot tests missing redactions of non-deterministic fields
+- **Domain:** Test infrastructure (insta snapshots)
+- **Location:**
+  - `src-tauri/src/pagination/tests.rs:3050-3075` (`snapshot_history_entry_response`) — `PageResponse` includes `next_cursor`; bare `insta::assert_yaml_snapshot!(resp)` will drift
+  - `src-tauri/src/commands/tests/snapshot_tests.rs:55-81` (`snapshot_list_blocks_response`) — comment says "Redacts `id` fields" but the actual call has no redaction block
+- **What:** Per AGENTS.md "Redaction patterns": cursors must be redacted with `[CURSOR]`, IDs with `[ULID]`, etc. Both sites violate this.
+- **Cost:** Trivial — add the redaction block.
+- **Risk:** Low.
+- **Impact:** Low — prevents snapshot flakes (the second site is a latent flake).
+- **Status:** Open.
+
+### TEST-11 — Missing error-path test coverage (export_page_markdown + set_property_inner)
+- **Domain:** Commands / integration tests
+- **Location:**
+  - `src-tauri/src/commands/tests/page_cmd_tests.rs:326-722` (6 happy-path tests for `export_page_markdown_inner`, 0 error tests)
+  - `src-tauri/src/command_integration_tests/property_integration.rs` (covers nonexistent-block NotFound but not invalid-key / type-mismatch Validation)
+- **What:** Per AGENTS.md, every command needs error coverage: nonexistent ID → NotFound, deleted block → NotFound, invalid input → Validation.
+- **Cost:** S — add tests with nonexistent page IDs, deleted pages, and invalid property keys / type mismatches.
+- **Risk:** Low.
+- **Impact:** Medium — Validation paths are easy to break silently when refactoring.
+- **Status:** Open.
+
+### TEST-12 — Fork-detection test only checks hash, not full row
+- **Domain:** Sync protocol tests
+- **Location:** `src-tauri/src/sync_protocol/tests.rs:4109-4181` (`apply_remote_ops_detects_fork_with_same_seq_different_hash`)
+- **What:** Test queries the local hash post-fork-detection but doesn't snapshot the full `OpRecord` (payload, op_type, parent_seqs, etc.) pre-detection and assert immutability. A regression that mutates fields outside the hashed bytes would not be caught.
+- **Cost:** Trivial — capture the full pre-fork `OpRecord`, then `assert_eq!` after.
+- **Risk:** Low.
+- **Impact:** Low-medium — defends the append-only invariant on the most adversarial sync path.
+- **Status:** Open.
+
+### TEST-13 — Brittle `payload.contains()` in draft tests
+- **Domain:** Draft tests
+- **Location:** `src-tauri/src/draft/tests.rs:307-308, 330-331`
+- **What:** Tests use `record.payload.contains(BLOCK_A)` and `record.payload.contains(DEVICE)` on the raw JSON-serialized payload string. The block_id or device string can appear anywhere in the JSON; the assertion doesn't prove it's in the correct field.
+- **Cost:** Trivial — `serde_json::from_str::<EditBlockPayload>(&record.payload)` and assert `.block_id == BLOCK_A`.
+- **Risk:** Low.
+- **Impact:** Low — small but real precision improvement.
+- **Status:** Open.
+
+### TEST-14 — Spaces tests don't verify isolation between Personal/Work
+- **Domain:** Spaces tests
+- **Location:** `src-tauri/src/spaces/tests.rs:157-865` (entire test suite)
+- **What:** Tests verify space creation, property assignment, and bootstrap behavior, but no test creates pages in BOTH Personal and Work spaces and asserts that scoped queries return the correct subset for each. Space isolation is a core feature; the absence of an end-to-end isolation test is a coverage gap.
+- **Cost:** S — add a single test that creates pages in both spaces, runs `list_blocks(spaceId=Personal)` and `list_blocks(spaceId=Work)`, asserts each returns only its own pages.
+- **Risk:** Low.
+- **Impact:** Medium — locks down a core invariant.
+- **Status:** Open.
+
+### TEST-15 — Tag inheritance: missing transitive case (deletion of intermediate)
+- **Domain:** Tag inheritance tests
+- **Location:** `src-tauri/src/tag_inheritance/tests.rs:186-205` (`propagate_multi_level`)
+- **What:** Test creates PAGE → CHILD → GRANDCHILD and verifies tag propagation. But does not cover the case where CHILD (intermediate) is deleted — should GRANDCHILD still inherit the tag from PAGE? Behavior is currently uncovered.
+- **Cost:** Trivial — extend the test or add a sibling that soft-deletes CHILD and re-runs `recompute_subtree_inheritance`.
+- **Risk:** Low.
+- **Impact:** Low-medium — defines (and pins) behavior for an underspecified edge case.
+- **Status:** Open.
+
+### TEST-16 — Recurrence integration tests don't exercise year-boundary transitions
+- **Domain:** Recurrence tests
+- **Location:** `src-tauri/src/recurrence/tests.rs:521-1036` (integration tests section)
+- **What:** Unit tests cover DST and leap-year edge cases, but no integration test exercises a daily/weekly recurrence that crosses Dec 31 → Jan 1 of the next year. A bug in year-component arithmetic would not be caught.
+- **Cost:** Trivial — `set_due_date_inner(..., "2025-12-31"); set_repeat_property("daily"); mark DONE; assert next.due_date == "2026-01-01"`.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### TEST-17 — `opbatch_streaming_sends_in_chunks` doesn't verify within-batch seq ordering
+- **Domain:** Sync protocol tests
+- **Location:** `src-tauri/src/sync_protocol/tests.rs:2812-2876`
+- **What:** Test verifies chunk sizes (1000, 1000, 500 ops) and `is_last` flags but doesn't assert that ops within each batch are in seq order. A reordering bug would be silent.
+- **Cost:** Trivial — assert `ops[i].seq < ops[i+1].seq` per batch.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### TEST-18 — Backlink non-grouped tests don't exercise self-reference filtering or count fields
+- **Domain:** Backlink tests
+- **Location:** `src-tauri/src/backlink/tests.rs`
+  - Self-reference filtering: `setup_backlinks()` (lines 109-117) creates orphan source blocks (no `parent_id`), so the non-grouped sort/pagination tests (lines 1130-1322) never exercise the self-reference-exclusion branch. Grouped tests cover this at line 3470+; non-grouped does not.
+  - `total_count` / `filtered_count` not asserted in `sort_created_desc`, `sort_property_text`, `sort_property_num`, `sort_property_date` (lines 1158-1263).
+- **What:** Per AGENTS.md pitfall #22, `total_count` must use post-filter count. The non-grouped sort tests only assert item ordering, leaving these fields unverified.
+- **Cost:** S — add a non-grouped test that creates sources with `parent_id` on the target page; extend sort tests with `total_count` / `filtered_count` assertions.
+- **Risk:** Low.
+- **Impact:** Low-medium.
+- **Status:** Open.
+
+### TEST-19 — MCP weak-shape assertions
+- **Domain:** MCP tests
+- **Location:** `src-tauri/src/mcp/tools_ro/tests.rs:700` (`list_backlinks_happy_path` — only `result.is_object()`); `src-tauri/src/mcp/tools_ro/tests.rs:1272` (stress test bare `is_ok()`); `src-tauri/src/mcp/server/tests.rs:1098-1101, 1138-1141` (error-response tests check `result.is_none()` but not error code/message shape)
+- **What:** Tests verify type/presence but not the response contract (`groups`, `next_cursor`, `has_more`, `total_count`; or for errors, `error.code`, `error.message`).
+- **Cost:** S — add field-presence and type assertions per response contract.
+- **Risk:** Low.
+- **Impact:** Low-medium — tighter contract enforcement on the MCP boundary.
+- **Status:** Open.
+
+### TEST-20 — `protocol_initiator_requests_and_receives_files` missing skipped-counter assertions
+- **Domain:** Sync files tests
+- **Location:** `src-tauri/src/sync_files/tests.rs:495-570`
+- **What:** Test asserts `files_sent/received` and `bytes_sent/received` but never asserts on `skipped_hash_mismatch` and `skipped_not_found`. Asserting `== 0` in the happy path catches future regressions in the skip accounting.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### TEST-21 — `protocol_hash_mismatch_no_ack_returns_err` only asserts `is_err()`
+- **Domain:** Sync files tests
+- **Location:** `src-tauri/src/sync_files/tests.rs:640-726`
+- **What:** Test asserts the operation errored but doesn't verify the error message mentions hash mismatch. A connection-drop error would also pass — the test would not actually verify hash-mismatch detection.
+- **Cost:** Trivial — `assert!(err.to_string().contains("hash"), …)`.
+- **Risk:** Low.
+- **Impact:** Low-medium.
+- **Status:** Open.
+
+### TEST-22 — `dispatch_op_unknown_op_type` doesn't verify no DB side effects
+- **Domain:** Materializer tests
+- **Location:** `src-tauri/src/materializer/tests.rs:841-850`
+- **What:** Test asserts `dispatch_op` returns `Ok(())` for an unknown op type but doesn't verify that no DB rows were written (blocks unchanged, op_log unchanged, no cache rebuild dispatched). A silent no-op is indistinguishable from a corrupt write.
+- **Cost:** Trivial — capture `SELECT COUNT(*)` before/after on `blocks` and `op_log` and assert equality.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### TEST-23 — 6 copy-pasted `*_paginates_with_cursor` tests
+- **Domain:** Pagination tests
+- **Location:** `src-tauri/src/pagination/tests.rs` lines 720, 877, 1550, 1702, 1911, 2032
+- **What:** Six tests follow an identical 3-page-loop pattern (create N items → page through → assert ordering and `has_more`). Only the calling function and variable names differ. A bug fix in one currently requires touching all six.
+- **Cost:** S — extract a generic helper `async fn assert_paginates_with_cursor<F, Fut>(list_fn: F, n: usize, page_size: usize)` or use a parameterized macro.
+- **Risk:** Low — pure refactor.
+- **Impact:** Low-medium — meaningful surface-area reduction.
+- **Status:** Open.
+
+### TEST-24 — 13 `tokio::time::sleep(Duration::from_millis(2))` for op-log timestamp separation
+- **Domain:** Test infrastructure
+- **Location:** `src-tauri/src/commands/tests/undo_redo_tests.rs` lines 599, 616, 704, 811, 940, 1066, 1073, 1224, 1245, 1348, 1371, 3846, 3933
+- **What:** Tests sleep 2ms to ensure `now_rfc3339()` produces distinct timestamps on consecutive ops. The same file already uses `op_log::append_local_op_at(... explicit_timestamp ...)` in other tests — that deterministic pattern should replace these timing-dependent sleeps.
+- **Cost:** S — mechanical replace.
+- **Risk:** Low.
+- **Impact:** Low — eliminates a category of CI flake risk.
+- **Status:** Open.
+
+### TEST-25 — ~12 near-identical FEAT-3p4 space-scoping tests in `agenda_cmd_tests.rs`
+- **Domain:** Test infrastructure
+- **Location:** `src-tauri/src/commands/tests/agenda_cmd_tests.rs:2268-2812`
+- **What:** Multiple `*_feat3p4` tests follow the same fixture-and-assert pattern (seed two spaces, insert blocks, assign to spaces, call command, assert space filtering). The setup is copy-pasted across ~12 tests.
+- **Cost:** S — extract `async fn seed_two_space_blocks(...)` helper.
+- **Risk:** Low.
+- **Impact:** Low — reduces a copy-paste surface that grows with each new space-aware list query.
+- **Status:** Open.
+
+### TEST-26 — `find_lca_after_compaction_returns_clear_error` hardcodes magic strings
+- **Domain:** DAG tests
+- **Location:** `src-tauri/src/dag/tests.rs:868-870`
+- **What:** Test inserts a snapshot row with hardcoded `'SNAP01'` and `'fakehash'` directly in the SQL string. If the snapshot row schema or hash format ever changes, the test silently breaks.
+- **Cost:** Trivial — extract to module constants.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### TEST-27 — `count_set_property_ops_for_key` uses LIKE on JSON
+- **Domain:** Spaces tests
+- **Location:** `src-tauri/src/spaces/tests.rs:931-942`
+- **What:** Helper uses `format!("%\"key\":\"{}\"%", key)` LIKE pattern against JSON payloads. Fragile to whitespace or key-order changes in the JSON serializer (`"key" : "value"` vs `"key":"value"` would both currently match by accident, but a future formatter change could break the pattern).
+- **Cost:** S — parse JSON in a SQL function or in Rust after `fetch_all` (or use SQLite's `json_extract`).
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### TEST-28 — `test_connection_pair()` bypasses real TLS — undocumented at the helper
+- **Domain:** Sync tests / documentation
+- **Location:** `src-tauri/src/sync_net/connection.rs:484` (`test_connection_pair` definition); used by `sync_daemon/tests.rs` lines 1527, 1589, 1658, 1718, 1775, 1854, 1972, 2089
+- **What:** `test_connection_pair()` creates an in-memory `tokio::io::duplex` with WebSocket wrappers — no real TLS handshake. Tests using it cannot verify mTLS cert verification. The helper does not document this, so callers may believe their tests cover TLS.
+- **Cost:** Trivial — add a doc-comment to `test_connection_pair` clarifying that callers needing mTLS verification must use `SyncServer::start()` + `connect_to_peer()` instead.
+- **Risk:** Low.
+- **Impact:** Low — documentation precision; prevents future false confidence.
+- **Status:** Open.
+
+### TEST-29 — `create_50_blocks_paginate_through_all_verify_count` creates blocks sequentially
+- **Domain:** Test infrastructure
+- **Location:** `src-tauri/src/command_integration_tests/lifecycle_integration.rs:160-172`
+- **What:** Test creates 50 blocks in a sequential `for` loop; could parallelize with `futures::future::join_all` to reduce test runtime.
+- **Cost:** Trivial.
+- **Risk:** Low — parallel creates exercise the writer pool concurrency, which is also useful coverage; verify the test still asserts deterministic page ordering.
+- **Impact:** Low — minor test-suite speedup.
+- **Status:** Open.
+
+### TEST-30 — `now_rfc3339()` collision risk in three undo_redo_tests sites
+- **Domain:** Test infrastructure
+- **Location:** `src-tauri/src/commands/tests/undo_redo_tests.rs` lines 1187, 1311, 1525
+- **What:** Three sites call `now_rfc3339()` consecutively without the 2ms sleep guard that sibling tests use. Same flake risk as TEST-24 but smaller scale.
+- **Cost:** Trivial — replace with explicit `append_local_op_at` (preferred) or add the same sleep guard.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### TEST-31 — MCP pagination roundtrip doesn't sum lengths across pages
+- **Domain:** MCP tests
+- **Location:** `src-tauri/src/mcp/tools_ro/tests.rs:1007-1012`
+- **What:** Test asserts `!ids1.contains(id)` for no overlap between pages but doesn't sum `ids1.len() + ids2.len() + ids3.len()` and assert it equals the original total. A pagination bug that drops items would still pass.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
 
 ## PERF — Performance items
 
