@@ -458,7 +458,11 @@ export function PairingDialog({
 
               {/* Error message with Retry button (#282) */}
               {error && (
-                <div className="pairing-error flex items-center gap-2 mb-4" aria-live="polite">
+                <div
+                  className="pairing-error flex items-center gap-2 mb-4"
+                  role="alert"
+                  aria-live="polite"
+                >
                   <p className="text-sm text-destructive flex-1">{error}</p>
                   <Button
                     variant="outline"

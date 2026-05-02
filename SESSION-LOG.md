@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 616 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 944+ items.
+**Sessions:** 1 – 617 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 947+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 617 (2026-05-02)** — Batch FE-MAINT-CLUSTER-2 closed: MAINT-184, MAINT-185, TEST-FE-8 — three S-cost frontend cleanups; MAINT-183 (`markdown-serialize.ts` zero-dep cleanup) was canceled mid-flight by the user (4th batch in a row to see one cancellation: 613 MAINT-178, 614 TEST-6, 616 implicit cap, 617 MAINT-183). **MAINT-184** extracted twin module-private `resolveAndInsertBlockLink`/`resolveAndInsertBlockRef` helpers in `block-link-picker.ts` and `block-ref-picker.ts`; both InputRule and command call sites collapse to ~5-line wrappers (net −25 LOC across 2 files). All 4 branches (exact-match, onCreate fallback, plain-text fallback, error fallback) tested at both entry points via existing tests (52/52 pass). **MAINT-185** consolidated 16 `useCallback` deps in `use-block-keyboard.ts::handleKeyDown` to a single `useRef<BlockKeyboardCallbacks>` bag (assigned during render), reducing deps from 16 → 1 (just `editor`). 2 new tests pin (a) listener doesn't churn across re-renders via `addEventListener`/`removeEventListener` spy counts, and (b) latest closure is invoked via the bag (re-rendering with new `escV2` → `escV1` not called, `escV2` called). **TEST-FE-8** added `role="alert"` to the `.pairing-error` div in `PairingDialog.tsx` (preserving the existing `aria-live="polite"` so SR announcement remains polite) and converted 7 test sites from `document.querySelector('.pairing-error')` to `await screen.findByRole('alert')` + `toHaveTextContent(/regex/i)`. 4 build subagents launched (3 completed, 1 canceled) + 1 combined review subagent. All 3 closed items PASS first review with zero follow-ups.
 - **Session 616 (2026-05-02)** — Batch BACKEND-TEST-2 closed: TEST-27, TEST-30, TEST-31, TEST-FE-6 — four small S-cost test-quality items, all PASS on review with zero follow-ups. **TEST-27** swapped `count_set_property_ops_for_key`'s LIKE-on-JSON pattern for `json_extract(payload, '$.key') = ?` via `sqlx::query_scalar!` (compile-time validated; new `.sqlx/` cache entry committed). **TEST-30** closed the residual `now_rfc3339()` collision risk in `undo_redo_tests.rs:1525-1558` with explicit `2099-01-15` timestamps strictly newer than the surrounding block-creation calls. **TEST-31** extended `list_pages_cursor_pagination_roundtrip` to walk to page 3 and assert `ids1.len() + ids2.len() + ids3.len() == 5` — the previous test only checked per-page no-overlap and would have silently passed a "drops an item between pages" bug. **TEST-FE-6** removed 4 local positional `makeBlock(id, content, ...)` helpers across `PageOutline`, `PageMetadataBar`, `PageEditor`, and `TrashView` test files (140 test-block call sites converted to the shared `Partial<FlatBlock>`-override factory from `src/__tests__/fixtures/index.ts`). 2 build subagents (TEST-27, TEST-FE-6) + 2 orchestrator-direct (TEST-30, TEST-31) + 2 combined review subagents. All PASS on first review with zero follow-up REVIEW-LATER items needed.
 - **Session 615 (2026-05-02)** — Batch QUICK-WINS-MIX-1 closed: TEST-16, TEST-28, MAINT-181, MAINT-190 — four small S-cost items spanning backend tests, sync-test docs, frontend popup behavior, and frontend React-key correctness. **TEST-16** added 2 integration tests to `recurrence/tests.rs` pinning year-component arithmetic across Dec 31 → Jan 1 (`handle_recurrence_daily_crosses_year_boundary`: `2025-12-31 + 1d = 2026-01-01`; `handle_recurrence_weekly_crosses_year_boundary`: `2025-12-30 (Tue) + 7d = 2026-01-06 (Tue)` — calendar-verified). **TEST-28** added a multi-paragraph doc-comment to `test_connection_pair()` in `sync_net/connection.rs` documenting that the helper bypasses real TLS (in-memory `tokio::io::duplex`, both ends have `peer_cert_hash_val: None`); reviewer confirmed the 10 caller sites and pointed users to `SyncServer::start()` + `connect_to_peer()` for tests needing real mTLS. **MAINT-181** moved `setRefPickerOpen(true)` into the `.then()` callback of `PropertyRowEditor.handleOpenRefPicker` and added an explicit `setRefPickerOpen(false)` on the `.catch()` path so a `listBlocks` rejection doesn't leave the user staring at an empty popover (Radix's `<PopoverTrigger asChild>` auto-opens the popover on trigger click; the `.catch()` close overrides that). Existing failure test extended to assert the popover stays closed via `screen.queryByLabelText(...).not.toBeInTheDocument()`. **MAINT-190** introduced `FilterWithKey = BacklinkFilter & { _addId: number }` in `FilterPillRow` and a module-scoped counter + WeakMap fallback in `BacklinkFilterBuilder` so React keys are now collision-free without the `biome-ignore lint/suspicious/noArrayIndexKey` workaround. The reviewer flagged a pre-existing `AddFilterRow` Apply-button double-fire bug (the button has both `onClick={handleApply}` AND lives in `<form onSubmit={handleApply}>`, so clicks fire `handleApply` twice; dedup blocks the duplicate effect but tests had to use `mock.calls.length` snapshots instead of exact-count assertions) — filed as L-137 follow-up. 2 build subagents (TEST-16 + MAINT-190) + 2 orchestrator-direct (TEST-28 + MAINT-181) + 2 combined review subagents. All PASS / CONDITIONAL PASS with the L-137 follow-up. Orchestrator-direct items have a different reviewer (per "no self-review" rule).
 - **Session 614 (2026-05-02)** — Batch BACKEND-TEST-1 closed: TEST-10, TEST-11, TEST-24 — three S-cost backend test-quality items; TEST-6 (sync merge materialized state) was canceled mid-flight by the user and dropped from this batch (stays in REVIEW-LATER). **TEST-10** added exhaustive `insta::assert_yaml_snapshot!` redaction blocks to `snapshot_history_entry_response` and `snapshot_list_blocks_response`, mapping every non-deterministic field (`id`, `parent_id`, `page_id`, `deleted_at`, `next_cursor`, `created_at`) to canonical placeholders (`[ULID]`, `[TIMESTAMP]`, `[CURSOR]`); both regenerated snapshot files committed; idempotency confirmed (snapshot does not regenerate on a second run). **TEST-11** added 7 error-path tests (4 for `export_page_markdown_inner` covering nonexistent ID → NotFound, non-page block → Validation, soft-deleted page pinning current `Ok(_)` shape, malformed ID → NotFound; 3 for `set_property_inner` covering nonexistent block → NotFound, empty key → Validation, type-mismatch → Validation), all using `matches!()` over `.contains()`. The build subagent surfaced 2 production findings while writing the tests, both filed orchestrator-direct as M-98 (`get_block_inner` returns soft-deleted blocks; leaks to `export_page_markdown_inner` and the public `get_block` IPC) and L-136 (`export_page_markdown_inner` doesn't validate ULID format upfront — malformed IDs map to NotFound instead of Validation). **TEST-24** removed all 13 `tokio::time::sleep(Duration::from_millis(2))` calls from `commands/tests/undo_redo_tests.rs` (the spec asked for replacement with `op_log::append_local_op_at(... explicit_ts ...)` but the build subagent found a cleaner path: every undo/redo query in this code path uses `(created_at, seq[, device_id])` lexicographic ordering, and `seq` is strictly monotonic per device under `BEGIN IMMEDIATE`, so equal timestamps are still totally ordered — the sleeps were defensive but unnecessary); 162 invocations across 3 runs all green. Reviewer suggested a header comment documenting the rationale; orchestrator added it. 3 build + 3 review subagents (1 PASS for TEST-10 / TEST-24; 1 CONDITIONAL PASS for TEST-11 → 2 production findings filed as follow-ups). Net REVIEW-LATER: −3 closed, +2 follow-ups filed = -1 in summary, -1 in detail.
@@ -47,6 +48,67 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 617 — Batch FE-MAINT-CLUSTER-2: three frontend cleanups (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 4 build (3 completed, 1 canceled) + 1 combined technical review (all PASS) |
+| **Items closed** | MAINT-184, MAINT-185, TEST-FE-8 |
+| **Items added** | — |
+| **Items dropped** | MAINT-183 (subagent canceled mid-flight; remains in REVIEW-LATER) |
+| **Tests added** | +2 frontend (`use-block-keyboard.test.ts` listener-stability + latest-closure-pickup); 7 PairingDialog test sites converted (no count change); MAINT-184 has no new tests (existing branch coverage at both entry points already exercises the helpers) |
+| **Files touched** | 6 (4 source + 2 test) + REVIEW-LATER + SESSION-LOG |
+
+**Summary:** Closed 3 S-cost frontend cleanups. The 4-into-3 reduction follows the now-established pattern from sessions 613 (MAINT-178), 614 (TEST-6), and 617 (MAINT-183) — each batch sees one subagent canceled by the user, and the orchestrator drops it rather than restarting. MAINT-183's `markdown-serialize.ts` zero-dep cleanup is left for a future session.
+
+MAINT-184 extracted twin module-private `resolveAndInsertBlockLink` and `resolveAndInsertBlockRef` helpers in their respective picker files. Each helper encapsulates the async items lookup, exact-match check, `onCreate` fallback, plain-text fallback, and error-fallback logic that was previously duplicated between the InputRule and command paths. Both call sites now collapse to ~5-line wrappers passing `(editor, text, insertPos, options, errorMessage)`. The `errorMessage` parameter preserves differentiated log strings the existing tests assert on (`'input rule'` vs `'resolveBlockRefFromSelection'`). Net −25 LOC across the 2 picker files. Per the spec, the helpers stayed as twins (one per picker file) rather than being genericized across pickers — that's a separate, larger refactor.
+
+MAINT-185 mirrored the refs-bag pattern from `use-roving-editor.ts:258-289` to `use-block-keyboard.ts`. The original `useCallback(handleKeyDown, [16 deps])` is now `useCallback(handleKeyDown, [editor])` — 16 → 1 deps. The 15 callbacks (plus `isLastBlock`) are stored in a single `useRef<BlockKeyboardCallbacks>` bag assigned during render (consolidating into one bag rather than 15 individual refs as in the reference pattern — a justified deviation since the hook already receives a typed `BlockKeyboardCallbacks` object). Two new tests pin the contract:
+- "keydown listener is not re-attached when callback identities change across re-renders" — uses `addEventListener`/`removeEventListener` spies on the listener target; counts unchanged across 3 renders with fresh callbacks.
+- "latest callback closure is invoked via the refs bag after a re-render" — `escV1` not called, `escV2` called after a re-render — proves the bag picks up the latest closure.
+
+The "stable handler identity" property the refactor establishes is observable through `addEventListener` counts (since the hook's public API returns `void`, not the handler itself). The build subagent's substitution of count-stability for strict `Object.is` is correct — the actual property is "listener doesn't churn", which the count test measures directly.
+
+TEST-FE-8 added `role="alert"` to the `<div className="pairing-error">` error container in `PairingDialog.tsx` (the element previously had only `aria-live="polite"`). Per WAI-ARIA, when both are present `aria-live` takes precedence — so the existing polite announcement behavior is preserved. The test side then converted all 7 `document.querySelector('.pairing-error')` (and `.pairing-error p`) sites to `await screen.findByRole('alert')` + `toHaveTextContent(/regex/i)`, removing 7 `waitFor(...)` wrappers (since `findByRole` already retries internally). Regex assertions like `/Failed to start pairing:.*network error/i` are case-insensitive and resilient to i18n key changes. The reviewer verified no `role="alert"` collision risk (PairingDialog tests render the dialog in isolation; the 12 other `role="alert"` elements in the codebase are not present in the test DOM).
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 117 → 114 (−3 closed; MAINT-183 stays open).
+- **Detail entries:** 152 → 149 (−3).
+- **Previously-resolved counter:** 944+ → 947+ across 616 → 617 sessions.
+
+**Per-item verification:**
+
+- **MAINT-184** (PASS): Both helpers are module-private `async function` declarations. Targeted: 52/52 picker tests pass. All 4 branches (exact-match / onCreate / plain-text / error) are exercised at both InputRule and command entry points via existing tests; no new helper-direct tests added.
+
+- **MAINT-185** (PASS): `useCallback` deps reduced from 16 → 1. 51/51 (49 existing + 2 new) tests pass in `use-block-keyboard.test.ts`. Reviewer verified the deviation from the reference pattern (single bag vs 15 individual refs) is justified by the hook's already-typed `BlockKeyboardCallbacks` interface.
+
+- **TEST-FE-8** (PASS): `role="alert"` addition is non-behavior-changing (`aria-live` overrides). All 7 sites use `findByRole('alert')` + `toHaveTextContent(/regex/i)`. 43/43 PairingDialog tests pass. Reviewer verified no SR-announcement regression and no collision risk.
+
+**Files touched (this session):**
+- `src/editor/extensions/block-link-picker.ts` (MAINT-184: −18 LOC; helper at top, both call sites are wrappers)
+- `src/editor/extensions/block-ref-picker.ts` (MAINT-184: −7 LOC; same pattern)
+- `src/editor/use-block-keyboard.ts` (MAINT-185: +14 / −53 LOC; refs-bag + deps reduction)
+- `src/editor/__tests__/use-block-keyboard.test.ts` (MAINT-185: +84 LOC; 2 new tests)
+- `src/components/PairingDialog.tsx` (TEST-FE-8: +1 attribute; `role="alert"` on the error div)
+- `src/components/__tests__/PairingDialog.test.tsx` (TEST-FE-8: 7 sites converted)
+- `REVIEW-LATER.md` (3 detail blocks + 3 summary rows removed; counts updated)
+- `SESSION-LOG.md` (this entry + Recent milestones bump)
+
+**Verification:**
+- `npx vitest run` — 9078 frontend tests pass across 368 files.
+- No backend changes.
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **Subagent cancellation rate is now ~25% per batch.** Sessions 613/614/617 each saw exactly one subagent canceled (MAINT-178, TEST-6, MAINT-183 respectively). The pattern looks intentional from the user's side — possibly cancellations are part of UX testing the orchestrator's recovery, possibly they reflect a slow / stuck subagent. Either way, the orchestrator's response (drop the canceled item, ship the rest) is the right call.
+- **Combined review subagents are efficient.** Three items reviewed in one combined-review subagent runs faster than launching 3 separate reviewers, with no loss of rigor (the reviewer addresses each item independently in its report).
+- **Refs-bag pattern is now a documented convention.** Sessions 617 (MAINT-185) and 613 (MAINT-176) both apply patterns from `use-roving-editor.ts`. Worth considering a small AGENTS.md addition pointing to `use-roving-editor.ts` as the canonical reference for "stable listener identity over a callback bag" — but that's for a future session (would touch AGENTS.md).
+
+**Commit plan:** single commit, not pushed.
 
 ---
 

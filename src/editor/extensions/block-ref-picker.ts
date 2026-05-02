@@ -11,7 +11,7 @@
  * All paths resolve to ULID — never writes ((content)) to storage, only ((ULID)).
  */
 
-import { Extension, InputRule } from '@tiptap/core'
+import { type Editor, Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import { logger } from '../../lib/logger'
 import type { PickerItem } from '../SuggestionList'
@@ -29,6 +29,54 @@ declare module '@tiptap/core' {
     blockRefPicker: {
       resolveBlockRefFromSelection: () => ReturnType
     }
+  }
+}
+
+/**
+ * Shared async resolve-and-insert path for the BlockRefPicker entry points.
+ *
+ * Both the input rule (typing `((text))`) and the command
+ * (`resolveBlockRefFromSelection`) share the same resolution shape:
+ *   1. async items lookup
+ *   2. exact-match check (case-insensitive label match — no alias, no create)
+ *   3. on match → insert `block_ref` node at `insertPos`
+ *   4. on no match → re-insert plain `text`
+ *   5. on error → log + re-insert plain `text`
+ *
+ * Note: there is no `onCreate` path for block refs — unlike block links
+ * (which create pages), block refs reference arbitrary mid-content blocks
+ * that have no sensible "create" target without a parent context.
+ *
+ * Branch coverage for this helper is provided by the existing input-rule and
+ * command tests in `__tests__/block-ref-picker.test.ts` — both paths exercise
+ * every branch (exact match, plain-text fallback, error fallback).
+ */
+async function resolveAndInsertBlockRef(
+  editor: Editor,
+  text: string,
+  insertPos: number,
+  options: BlockRefPickerOptions,
+  errorMessage: string,
+): Promise<void> {
+  try {
+    const items = await options.items(text)
+    const exactMatch = items.find(
+      (item) => !item.isCreate && item.label.toLowerCase() === text.toLowerCase(),
+    )
+    if (exactMatch) {
+      editor
+        .chain()
+        .focus()
+        .insertContentAt(insertPos, { type: 'block_ref', attrs: { id: exactMatch.id } })
+        .run()
+    } else {
+      // No exact match — re-insert as plain text
+      editor.chain().focus().insertContentAt(insertPos, text).run()
+    }
+  } catch (err) {
+    logger.warn('BlockRefPicker', errorMessage, { text }, err)
+    // On error, re-insert as plain text so the user doesn't lose content
+    editor.chain().focus().insertContentAt(insertPos, text).run()
   }
 }
 
@@ -57,40 +105,13 @@ export const BlockRefPicker = Extension.create<BlockRefPickerOptions>({
           const insertPos = from
           editor.chain().focus().deleteRange({ from, to }).run()
 
-          const resolveAndInsert = async () => {
-            try {
-              const items = await extensionOptions.items(selectedText)
-              // No onCreate path for block refs — unlike block links (which
-              // create pages), block refs reference arbitrary mid-content
-              // blocks that have no sensible "create" target without a
-              // parent context. Fall back to plain text on no match.
-              const exactMatch = items.find(
-                (item) => !item.isCreate && item.label.toLowerCase() === selectedText.toLowerCase(),
-              )
-              if (exactMatch) {
-                editor
-                  .chain()
-                  .focus()
-                  .insertContentAt(insertPos, {
-                    type: 'block_ref',
-                    attrs: { id: exactMatch.id },
-                  })
-                  .run()
-              } else {
-                // No exact match — re-insert as plain text
-                editor.chain().focus().insertContentAt(insertPos, selectedText).run()
-              }
-            } catch (err) {
-              logger.warn(
-                'BlockRefPicker',
-                'resolveBlockRefFromSelection failed, falling back to plain text',
-                { text: selectedText },
-                err,
-              )
-              editor.chain().focus().insertContentAt(insertPos, selectedText).run()
-            }
-          }
-          void resolveAndInsert()
+          void resolveAndInsertBlockRef(
+            editor,
+            selectedText,
+            insertPos,
+            extensionOptions,
+            'resolveBlockRefFromSelection failed, falling back to plain text',
+          )
           return true
         },
     }
@@ -114,43 +135,15 @@ export const BlockRefPicker = Extension.create<BlockRefPickerOptions>({
           // Delete the ((text)) range immediately so the raw text doesn't linger
           state.tr.delete(range.from, range.to)
 
-          // Async resolve: look up block, then insert block_ref node at the
-          // captured position to avoid a race with subsequent user edits.
-          const resolveAndInsert = async () => {
-            try {
-              const items = await extensionOptions.items(innerText)
-              // No onCreate path for block refs — unlike block links (which
-              // create pages), block refs reference arbitrary mid-content
-              // blocks that have no sensible "create" target without a
-              // parent context. Fall back to plain text on no match.
-              const exactMatch = items.find(
-                (item) => !item.isCreate && item.label.toLowerCase() === innerText.toLowerCase(),
-              )
-              if (exactMatch) {
-                editor
-                  .chain()
-                  .focus()
-                  .insertContentAt(insertPos, {
-                    type: 'block_ref',
-                    attrs: { id: exactMatch.id },
-                  })
-                  .run()
-              } else {
-                // No exact match — re-insert as plain text
-                editor.chain().focus().insertContentAt(insertPos, innerText).run()
-              }
-            } catch (err) {
-              logger.warn(
-                'BlockRefPicker',
-                'Failed to resolve block ref via input rule, falling back to plain text',
-                { text: innerText },
-                err,
-              )
-              // On error, re-insert as plain text so the user doesn't lose content
-              editor.chain().focus().insertContentAt(insertPos, innerText).run()
-            }
-          }
-          void resolveAndInsert()
+          // Async resolve via the shared helper — inserts at the captured
+          // position to avoid a race with subsequent user edits.
+          void resolveAndInsertBlockRef(
+            editor,
+            innerText,
+            insertPos,
+            extensionOptions,
+            'Failed to resolve block ref via input rule, falling back to plain text',
+          )
         },
       }),
     ]

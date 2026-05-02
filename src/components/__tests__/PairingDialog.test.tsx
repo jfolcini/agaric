@@ -334,12 +334,8 @@ describe('PairingDialog', () => {
     render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
 
     // Error text includes the backend error message
-    await waitFor(() => {
-      const errorEl = document.querySelector('.pairing-error')
-      expect(errorEl).toBeTruthy()
-      expect(errorEl?.textContent).toContain('Failed to start pairing:')
-      expect(errorEl?.textContent).toContain('network error')
-    })
+    const errorEl = await screen.findByRole('alert')
+    expect(errorEl).toHaveTextContent(/Failed to start pairing:.*network error/i)
   })
 
   it('shows error with backend message when confirmPairing fails', async () => {
@@ -364,12 +360,8 @@ describe('PairingDialog', () => {
     const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
     await user.click(pairBtn)
 
-    await waitFor(() => {
-      const errorEl = document.querySelector('.pairing-error')
-      expect(errorEl).toBeTruthy()
-      expect(errorEl?.textContent).toContain('Pairing failed:')
-      expect(errorEl?.textContent).toContain('invalid passphrase')
-    })
+    const errorEl = await screen.findByRole('alert')
+    expect(errorEl).toHaveTextContent(/Pairing failed:.*invalid passphrase/i)
   })
 
   it('shows loading state while initializing', async () => {
@@ -562,12 +554,9 @@ describe('PairingDialog', () => {
 
     render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
 
-    // Wait for error to appear (query via document to include Portal content)
-    await waitFor(() => {
-      const errorEl = document.querySelector('.pairing-error p')
-      expect(errorEl).toBeTruthy()
-      expect(errorEl?.textContent).toContain('network error')
-    })
+    // Wait for error to appear
+    const errorEl = await screen.findByRole('alert')
+    expect(errorEl).toHaveTextContent(/network error/i)
 
     // Retry button should be visible
     const retryBtn = screen.getByRole('button', { name: /Retry/i })
@@ -765,12 +754,8 @@ describe('PairingDialog', () => {
 
     render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
 
-    await waitFor(() => {
-      const errorEl = document.querySelector('.pairing-error')
-      expect(errorEl).toBeTruthy()
-      expect(errorEl?.textContent).toContain('Failed to start pairing:')
-      expect(errorEl?.textContent).toContain('db connection lost')
-    })
+    const errorEl = await screen.findByRole('alert')
+    expect(errorEl).toHaveTextContent(/Failed to start pairing:.*db connection lost/i)
   })
 
   it('shows error when deletePeerRef fails during unpair', async () => {
@@ -795,12 +780,8 @@ describe('PairingDialog', () => {
     const yesBtn = screen.getByRole('button', { name: /Yes, unpair/i })
     await user.click(yesBtn)
 
-    await waitFor(() => {
-      const errorEl = document.querySelector('.pairing-error')
-      expect(errorEl).toBeTruthy()
-      expect(errorEl?.textContent).toContain('Failed to unpair device:')
-      expect(errorEl?.textContent).toContain('peer not found')
-    })
+    const errorEl = await screen.findByRole('alert')
+    expect(errorEl).toHaveTextContent(/Failed to unpair device:.*peer not found/i)
 
     // Peer should still be in the list (not removed on failure)
     expect(screen.getByText('peer-abc-1234567890')).toBeInTheDocument()
@@ -833,12 +814,8 @@ describe('PairingDialog', () => {
     const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
     await user.click(pairBtn)
 
-    await waitFor(() => {
-      const errorEl = document.querySelector('.pairing-error')
-      expect(errorEl).toBeTruthy()
-      expect(errorEl?.textContent).toContain('Pairing failed:')
-      expect(errorEl?.textContent).toContain('refresh failed')
-    })
+    const errorEl = await screen.findByRole('alert')
+    expect(errorEl).toHaveTextContent(/Pairing failed:.*refresh failed/i)
   })
 
   it('shows toast error when cancelPairing fails on dialog close', async () => {
@@ -870,12 +847,9 @@ describe('PairingDialog', () => {
 
     render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
 
-    // Wait for error to appear (use document query for Portal content)
-    await waitFor(() => {
-      const errorEl = document.querySelector('.pairing-error p')
-      expect(errorEl).toBeTruthy()
-      expect(errorEl?.textContent).toContain('network error')
-    })
+    // Wait for error to appear
+    const errorEl = await screen.findByRole('alert')
+    expect(errorEl).toHaveTextContent(/network error/i)
 
     const retryBtn = screen.getByRole('button', { name: /Retry/i })
     expect(document.activeElement).toBe(retryBtn)
