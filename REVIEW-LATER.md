@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 606 — Batch FE-H-FIXUPS-1 closed: FE-H-3, FE-H-14, FE-H-19, FE-H-20 fixed + FE-H-16 rejected as false-positive per biome's useExhaustiveDependencies)
+> **Last updated:** 2026-05-02 (Session 607 — Batch QUICK-WINS-1 closed: L-62, FE-L-10, FE-L-11, TEST-5, TEST-17)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-151 open items in the summary table; 188 detail entries (FE-* sub-tables don't appear in the summary).
+149 open items in the summary table; 183 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -64,7 +64,6 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-2 | TEST | Inequality count assertions where exact count is known (3 sites: integration_tests `bg >= 1`, agenda projection `entries.len() >= 3`, recovery `draft_errors.len() >= 2`) | S | — |
 | TEST-3 | TEST | Brittle `err.to_string().contains(...)` / event-message `.contains(...)` assertions instead of `matches!(AppError::Variant(_))` (11 in `block_cmd_tests.rs`, 9 in `sync_daemon/tests.rs`) | S | — |
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
-| TEST-5 | TEST | `delete_block_cascades_to_children` doesn't verify op_log entries (only checks response struct) | S | — |
 | TEST-6 | TEST | Sync merge tests assert on counter only, not materialized state (`merge_resolves_property_conflict_lww` doesn't query `block_properties`; `merge_block_conflict_creates_copy` doesn't query `blocks` for the conflict copy) | S | — |
 | TEST-7 | TEST | Reverse tests don't verify batch ordering (newest-first by `created_at DESC, seq DESC`) or op-log append-only invariant (count increases by 1) | S | — |
 | TEST-8 | TEST | TOFU test only covers acceptance, not rejection on cert-hash mismatch on reconnect (`inmem_handle_incoming_sync_tofu_stores_cert_hash`) | S | — |
@@ -74,7 +73,6 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-12 | TEST | `apply_remote_ops_detects_fork_with_same_seq_different_hash` queries hash but not full `OpRecord` (payload, op_type) — won't catch row mutation outside the hash field | S | — |
 | TEST-14 | TEST | Spaces tests don't verify isolation between Personal/Work spaces — no test creates pages in both and asserts queries return correct subset for each | S | — |
 | TEST-16 | TEST | Recurrence integration tests don't exercise year-boundary transitions (Dec 31 + 1 day → Jan 1 next year) — only unit tests cover DST/leap year | S | — |
-| TEST-17 | TEST | `opbatch_streaming_sends_in_chunks` verifies chunk sizes (1000/1000/500) but not seq-ordering within each batch | S | — |
 | TEST-18 | TEST | Backlink non-grouped tests use `setup_backlinks()` orphan sources (no parent_id), so they never exercise self-reference filtering; sort tests don't assert `total_count`/`filtered_count` | S | — |
 | TEST-19 | TEST | MCP weak-shape assertions: `list_backlinks_happy_path` checks only `is_object()`; stress test bare `is_ok()` (line 1272); error-response tests check `result.is_none()` but not error code/message shape | S | — |
 | TEST-20 | TEST | `protocol_initiator_requests_and_receives_files` asserts `files_sent/received` and `bytes_sent/received` but not `skipped_hash_mismatch` / `skipped_not_found` (== 0 in happy path) | S | — |
@@ -670,15 +668,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Recommendation:** Pattern after the materializer's `flush_background()` API. A polling helper `async fn wait_for(predicate: impl Fn() -> bool, timeout: Duration)` would suffice for most sites.
 - **Status:** Open.
 
-### TEST-5 — `delete_block_cascades_to_children` doesn't verify op_log entries
-- **Domain:** Test infrastructure (Commands tests)
-- **Location:** `src-tauri/src/commands/tests/block_cmd_tests.rs:935-977`
-- **What:** Test only checks the response struct (`descendants_affected`, `deleted_at`); never queries `op_log` to verify the `delete_block` op was appended with correct payload. Per AGENTS.md, every state-changing command should verify op-log entries.
-- **Cost:** Trivial — add a `SELECT COUNT(*) … WHERE op_type = 'delete_block'` assertion mirroring the pattern in `create_block_writes_op_to_op_log` (line 193).
-- **Risk:** Low.
-- **Impact:** Low-medium — closes a silent gap on cascade-delete op accounting.
-- **Status:** Open.
-
 ### TEST-6 — Sync merge tests assert on counter / conflict-copy block but not the original
 - **Domain:** Sync / Merge tests
 - **Location:**
@@ -763,15 +752,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Location:** `src-tauri/src/recurrence/tests.rs:521-1036` (integration tests section)
 - **What:** Unit tests cover DST and leap-year edge cases, but no integration test exercises a daily/weekly recurrence that crosses Dec 31 → Jan 1 of the next year. A bug in year-component arithmetic would not be caught.
 - **Cost:** Trivial — `set_due_date_inner(..., "2025-12-31"); set_repeat_property("daily"); mark DONE; assert next.due_date == "2026-01-01"`.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### TEST-17 — `opbatch_streaming_sends_in_chunks` doesn't verify within-batch seq ordering
-- **Domain:** Sync protocol tests
-- **Location:** `src-tauri/src/sync_protocol/tests.rs:2812-2876`
-- **What:** Test verifies chunk sizes (1000, 1000, 500 ops) and `is_last` flags but doesn't assert that ops within each batch are in seq order. A reordering bug would be silent.
-- **Cost:** Trivial — assert `ops[i].seq < ops[i+1].seq` per batch.
 - **Risk:** Low.
 - **Impact:** Low.
 - **Status:** Open.
@@ -1204,16 +1184,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Decision:** No action. Filed for awareness only.
 - **Status:** Documented as deliberate.
 
-### L-62 — `commands/blocks/crud.rs::delete_property_in_tx` mirrors `delete_property_core`'s `unreachable!()` (L-57 follow-up)
-- **Domain:** Commands (Blocks / Properties)
-- **Location:** `src-tauri/src/commands/blocks/crud.rs:1645-1647` (inside `delete_property_in_tx`, which has comment at line 1619 stating `// Mirrors delete_property_core.`)
-- **What:** Same `unreachable!("is_reserved_property_key('{key}') returned true for an unrecognised key")` panic on the catch-all of the reserved-key match. L-57 closed this site in `delete_property_core` (now returns `AppError::InvalidOperation`); the mirror site in `delete_property_in_tx` was deliberately left out of L-57's scope to keep the diff narrow. When a future contributor adds a fifth reserved key, BOTH sites must be updated in lockstep — the L-57 fix alone leaves this transactional path still panicking.
-- **Cost:** Trivial — same fix as L-57: `_ => return Err(AppError::InvalidOperation(format!("unknown reserved property: {key}"))),` (preserve `return Err(...)` shape since the other arms produce `()`, not `Result`).
-- **Risk:** Low.
-- **Impact:** Low — defensive, forward-compat. Eliminates a panic path on a rarely-touched code surface.
-- **Source:** L-57 reviewer note (Session 602).
-- **Status:** Open.
-
 ### FE-H-1 — Cursor pagination violated in `executeAgendaFilters` default branch
 - **Domain:** Frontend / Agenda
 - **Location:** `src/lib/agenda-filters.ts:287-290`
@@ -1516,26 +1486,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Risk:** Low.
 - **Impact:** Low.
 - **Source:** FE review 2026-05-02 / F033
-- **Status:** Open
-
-### FE-L-10 — `useScrollRestore`: redundant optional chaining
-- **Domain:** Frontend / Hooks
-- **Location:** `src/hooks/useScrollRestore.ts:24-30`
-- **What:** `container?.scrollTop` after `if (!container) return` is dead defensiveness.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F048
-- **Status:** Open
-
-### FE-L-11 — `useWeekStart` synthetic StorageEvent missing fields
-- **Domain:** Frontend / Hooks
-- **Location:** `src/hooks/useWeekStart.ts:38-45`
-- **What:** Current listener only checks `e.key`; missing `oldValue`/`newValue`/`url` are not consumed today, but a defensive fix is cheap.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F047
 - **Status:** Open
 
 ### FE-L-12 — `agenda-filters.ts`: `spaceId ?? ''` applied inconsistently

@@ -2859,6 +2859,18 @@ async fn opbatch_streaming_sends_in_chunks() {
     assert_eq!(batch3_ops.len(), 500, "third batch should have 500 ops");
     assert!(batch3_last, "third batch SHOULD be last");
 
+    // Ops within each batch must be in ascending seq order. Chunk-size and
+    // is_last alone won't catch a reordering bug inside a batch (TEST-17).
+    for batch_ops in [&batch1_ops, &batch2_ops, &batch3_ops] {
+        for window in batch_ops.windows(2) {
+            assert!(
+                window[0].seq < window[1].seq,
+                "ops within a batch must be in ascending seq order (batch of {} ops)",
+                batch_ops.len()
+            );
+        }
+    }
+
     // No more batches
     assert!(
         orch.next_message().is_none(),

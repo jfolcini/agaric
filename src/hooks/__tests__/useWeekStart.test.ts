@@ -34,6 +34,27 @@ describe('useWeekStart', () => {
     const { result } = renderHook(() => useWeekStart())
     expect(result.current.weekStartsOn).toBe(1)
   })
+
+  it('dispatches a fully populated StorageEvent on setWeekStart', () => {
+    localStorage.setItem('week-start-preference', '1')
+    const events: StorageEvent[] = []
+    const listener = (e: StorageEvent) => events.push(e)
+    window.addEventListener('storage', listener)
+    try {
+      const { result } = renderHook(() => useWeekStart())
+      act(() => result.current.setWeekStart(0))
+      expect(events).toHaveLength(1)
+      const e = events[0]
+      if (!e) throw new Error('no StorageEvent dispatched')
+      expect(e.key).toBe('week-start-preference')
+      expect(e.oldValue).toBe('1')
+      expect(e.newValue).toBe('0')
+      expect(e.url).toBe(window.location.href)
+      expect(e.storageArea).toBe(window.localStorage)
+    } finally {
+      window.removeEventListener('storage', listener)
+    }
+  })
 })
 
 describe('getWeekStartDay', () => {

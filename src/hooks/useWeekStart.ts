@@ -36,9 +36,19 @@ export function useWeekStart(): {
   const weekStartsOn = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 
   const setWeekStart = useCallback((day: WeekStartDay) => {
-    localStorage.setItem(STORAGE_KEY, String(day))
+    const oldValue = localStorage.getItem(STORAGE_KEY)
+    const newValue = String(day)
+    localStorage.setItem(STORAGE_KEY, newValue)
     // Dispatch storage event for same-tab listeners
-    window.dispatchEvent(new StorageEvent('storage', { key: STORAGE_KEY }))
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: STORAGE_KEY,
+        oldValue,
+        newValue,
+        url: window.location.href,
+        storageArea: window.localStorage,
+      }),
+    )
   }, [])
 
   return { weekStartsOn, setWeekStart }

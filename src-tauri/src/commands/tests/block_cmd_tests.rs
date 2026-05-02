@@ -974,6 +974,18 @@ async fn delete_block_cascades_to_children() {
         !resp.deleted_at.is_empty(),
         "deleted_at timestamp should be set"
     );
+
+    let op_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND op_type = 'delete_block'",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        op_count, 1,
+        "delete_block_inner should append exactly one op regardless of descendant count"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
