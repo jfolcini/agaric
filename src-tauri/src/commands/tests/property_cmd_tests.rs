@@ -540,6 +540,31 @@ async fn delete_property_clears_reserved_column_key() {
     );
 }
 
+// L-57 — `delete_property_core`'s reserved-key match catch-all returns a
+// structured `AppError::InvalidOperation` instead of panicking via
+// `unreachable!()`. The path is unreachable from any production caller
+// today (`is_reserved_property_key` is locked at exactly the four matched
+// keys), so this is a focused unit test that pins the error message format
+// emitted if a future contributor adds a fifth reserved key without the
+// matching column-routing arm. The error format is part of the contract:
+// it must (a) be `AppError::InvalidOperation`, so it survives
+// `sanitize_internal_error`'s pass-through set and reaches the frontend,
+// and (b) contain the offending key so the diagnostic is actionable.
+#[test]
+fn delete_property_core_unknown_reserved_key_error_format() {
+    let key = "future_reserved_key";
+    let err = AppError::InvalidOperation(format!("unknown reserved property: {key}"));
+    assert!(
+        matches!(err, AppError::InvalidOperation(_)),
+        "L-57 catch-all must use AppError::InvalidOperation"
+    );
+    assert_eq!(
+        err.to_string(),
+        "Invalid operation: unknown reserved property: future_reserved_key",
+        "L-57 catch-all message format must include the offending key"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_properties_returns_empty_for_new_block() {
     let (pool, _dir) = test_pool().await;

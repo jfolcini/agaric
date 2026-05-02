@@ -1,7 +1,7 @@
 //! Sync Cmds command handlers.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use sqlx::SqlitePool;
 
@@ -17,6 +17,18 @@ use crate::peer_refs::{self, PeerRef};
 use crate::sync_scheduler::SyncScheduler;
 
 use super::*;
+
+/// L-58: Acquire the pairing-state mutex, mapping a poisoned-lock failure
+/// to a stable [`AppError::InvalidOperation`]. The error message is fixed
+/// at `"pairing state lock poisoned"` so callers and tests can pattern-match
+/// on it.
+fn lock_pairing_state(
+    pairing_state: &Mutex<Option<PairingSession>>,
+) -> Result<MutexGuard<'_, Option<PairingSession>>, AppError> {
+    pairing_state
+        .lock()
+        .map_err(|_| AppError::InvalidOperation("pairing state lock poisoned".into()))
+}
 
 /// List all known sync peers, ordered by most-recently-synced first.
 #[instrument(skip(pool), err)]
@@ -147,10 +159,7 @@ pub fn start_pairing_inner(
     let passphrase = session.passphrase.clone();
     let qr_svg = generate_qr_svg(&pairing_qr_payload(&passphrase))?;
 
-    *pairing_state
-        .lock()
-        .map_err(|_| AppError::InvalidOperation("pairing state lock poisoned".into()))? =
-        Some(session);
+    *lock_pairing_state(pairing_state)? = Some(session);
 
     Ok(PairingInfo { passphrase, qr_svg })
 }
@@ -192,9 +201,7 @@ pub async fn confirm_pairing_inner(
     // hostile — so we clone the field and drop the guard before the
     // network/db call below.
     let expected_passphrase = {
-        let guard = pairing_state
-            .lock()
-            .map_err(|_| AppError::InvalidOperation("pairing state lock poisoned".into()))?;
+        let guard = lock_pairing_state(pairing_state)?;
         guard
             .as_ref()
             .ok_or_else(|| AppError::Validation("pairing.no_active_session".into()))?
@@ -225,9 +232,7 @@ pub async fn confirm_pairing_inner(
     peer_refs::upsert_peer_ref(pool, &remote_device_id).await?;
 
     // Clear pairing session
-    *pairing_state
-        .lock()
-        .map_err(|_| AppError::InvalidOperation("pairing state lock poisoned".into()))? = None;
+    *lock_pairing_state(pairing_state)? = None;
 
     // PERF-25: Wake a dormant daemon (if any). Harmless if the daemon is
     // already active — `notify_change` is debounced by
@@ -242,9 +247,7 @@ pub async fn confirm_pairing_inner(
 /// Clears the stored session; no-op if no session is active.
 #[instrument(skip(pairing_state), err)]
 pub fn cancel_pairing_inner(pairing_state: &Mutex<Option<PairingSession>>) -> Result<(), AppError> {
-    *pairing_state
-        .lock()
-        .map_err(|_| AppError::InvalidOperation("pairing state lock poisoned".into()))? = None;
+    *lock_pairing_state(pairing_state)? = None;
     Ok(())
 }
 

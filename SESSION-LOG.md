@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 601 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 879+ items.
+**Sessions:** 1 – 602 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 884+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 602 (2026-05-02)** — Batch BACKEND-CLEANUP-1 closed: L-56, L-57, L-58, L-59, L-60 — five trivial Rust commands cleanups (release-build size guard, `unreachable!()` → structured error, mutex-poison helper extraction, shared `text_utils::truncate_at_char_boundary`, `find_missing_attachments` NotFound-vs-other-IO split). 5 build + 5 review subagents. New follow-up L-62 filed for the mirror `unreachable!()` in `delete_property_in_tx` flagged by the L-57 reviewer.
 - **Session 601 (2026-05-02)** — Batch FE-LOGGER-1 closed: FE-H-8, FE-H-9, FE-H-10, FE-H-11, FE-H-12, FE-H-13 — six silent-catch logger backfills (AGENTS' "no silent catch" rule). 6 build + 6 review subagents (max parallelism per PROMPT.md); FE-H-13 source change broke a pre-existing `console.warn` regression test → fixed orchestrator-direct by mocking `'../logger'` at the integration test layer. New follow-up FE-H-14 filed for the second bare `catch {}` in PdfViewerDialog cleanup function (out-of-scope for FE-H-11).
 - **Session 600 (2026-05-02)** — Batch UX-FB-1 closed: UX-303, UX-329, UX-341, UX-360, MAINT-179 — five toast-feedback additions for previously-silent operations (recovery, settings change, destructive confirm, rename, GCal config). 5 build + 5 review subagents; reviewer-caught pagination caveat on UX-341 fixed orchestrator-direct (paginated-copy variant + new test). After this commit, no ready-made batches remain pre-staged.
 - **Session 599 (2026-05-02)** — Batch UX-DISC-1 closed: UX-301, UX-342, UX-356, UX-361, UX-396 — five tooltip / label / shortcut-hint additions (5 build + 5 review subagents; 1 build redone orchestrator-direct due to parallel-agent write contention).
@@ -32,6 +33,60 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 602 — Batch BACKEND-CLEANUP-1: trivial Rust commands cleanups (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 5 build + 5 technical review |
+| **Items closed** | L-56, L-57, L-58, L-59, L-60 |
+| **Items added** | L-62 (mirror `unreachable!()` in `delete_property_in_tx`, flagged by L-57 reviewer) |
+| **Tests added** | +0 frontend / +9 backend (1 attachment size-mismatch + 1 delete_property_core unit + 4 text_utils + 1 find_missing ENOTDIR + 2 implicit via existing pairing/sync coverage) |
+| **Files touched** | 11 (5 Rust source + new `text_utils.rs` + `lib.rs` + 3 Rust test files + REVIEW-LATER cleanup) |
+
+**Summary:** Closed all 5 items in a fresh "quick-wins" Rust backend batch. Each is a small defensive or DRY cleanup — the main themes are (a) move debug-only invariants to runtime so release builds also catch them (L-56), (b) replace `unreachable!()` panics with structured `AppError::InvalidOperation` for forward-compat (L-57), (c) DRY a 4× repeated mutex-poison error into a helper (L-58), (d) extract shared UTF-8-safe truncation into a new `text_utils` module (L-59), and (e) split a catch-all `Err(_)` branch into NotFound-silent vs other-IO-warned to surface ops signals like antivirus quarantine without changing sync correctness (L-60). The L-57 reviewer caught a mirror `unreachable!()` in `delete_property_in_tx` (which has an explicit `// Mirrors delete_property_core.` comment) — filed as L-62 follow-up rather than expanding scope.
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 161 → 161 (unchanged — L-* sub-table items don't appear in summary).
+- **Detail entries:** 212 → 208 (−5 closed +1 follow-up L-62 = net −4).
+- **Previously-resolved counter:** 879+ → 884+ across 601 → 602 sessions.
+
+**Per-item verification (from review subagents):**
+- **L-56** (`commands/attachments.rs`): replaced `debug_assert_eq!(metadata.len(), size_bytes, ...)` with a runtime `if on_disk_len != size_bytes { return Err(AppError::Validation(...)) }` guard. Preserves `i64::try_from(metadata.len()).unwrap_or(i64::MAX)` saturation. Doc-comment `# Errors` section moved size-mismatch case from `AppError::Io` (debug-only) to `AppError::Validation` (always). 1 new test in `tests/block_cmd_tests.rs` writes a 32-byte file, calls with `size_bytes=64`, asserts `Err(AppError::Validation)` AND `SELECT COUNT(*) FROM attachments == 0` (transaction rollback verification). 71/71 attachment tests pass.
+- **L-57** (`commands/mod.rs`): `unreachable!()` catch-all in `delete_property_core`'s reserved-key match replaced with `_ => return Err(AppError::InvalidOperation(format!("unknown reserved property: {key}")))`. Required `return Err(...)` (not literal `_ => Err(...)`) because the other 4 arms produce `()` not `Result`. Confirmed `InvalidOperation` is in `sanitize_internal_error`'s pass-through set. 1 new sync `#[test]` pins both the variant `matches!(_, AppError::InvalidOperation(_))` AND the exact Display string. 28/28 delete_property tests pass. **Reviewer flagged mirror site** at `crud.rs:1645-1647` (in `delete_property_in_tx`, with explicit "Mirrors delete_property_core" comment) — filed as L-62 follow-up.
+- **L-58** (`commands/sync_cmds.rs`): added `MutexGuard` to import; extracted `lock_pairing_state(&Mutex<Option<PairingSession>>) -> Result<MutexGuard<'_, ...>, AppError>` helper near top of file; collapsed 4 inline `.lock().map_err(|_| ...)` sites at lines 162/204/235/250 into helper calls. Error message preserved verbatim ("pairing state lock poisoned"). 31/31 pairing tests pass. Pure refactor — no new test added.
+- **L-59** (`text_utils.rs` NEW + `lib.rs` + `commands/logging.rs` + `commands/bug_report.rs`): new `text_utils` module exposes `truncate_at_char_boundary(s, max_bytes, marker_fn)` with caller-controlled marker closure (preserves `…[truncated N bytes]` for logging path and `…[truncated N chars]` for bug-report path byte-for-byte). Module registered in `lib.rs` alphabetically between `task_locals` and `ulid`. Both `truncate_log_field` and `cap_line_length` are now thin 5-line wrappers delegating to the helper. Stale doc-comment cross-reference in `logging.rs:19` (was pointing to `bug_report.rs:213-224` inside `STABLE_MESSAGES`) fixed to point at the new helper. 4 new unit tests (short-pass, char-boundary on multi-byte 😀, marker-with-count, caller-controlled-marker). 78/78 truncate/text_utils tests pass.
+- **L-60** (`sync_files.rs` + `sync_files/tests.rs`): replaced catch-all `Err(_) => missing.push(...)` with two arms: `Err(e) if e.kind() == ErrorKind::NotFound => silent push` and `Err(e) => tracing::warn!(attachment_id, path, error_kind, error, ...) + push`. Field shape (`attachment_id`, `path`) matches the existing M-48 warn in the same function for consistent log structure. Behaviour preserved: still pushes to `missing` for sync correctness in both branches. 1 new `#[tokio::test]` creates a regular file at `<dir>/regular_file` then queries metadata for `<dir>/regular_file/under.png` (triggers ENOTDIR on Linux/macOS, hitting the new branch). 61/61 sync_files tests pass.
+
+**Files touched (this session):**
+- `src-tauri/src/commands/attachments.rs` (+9 / -7)
+- `src-tauri/src/commands/mod.rs` (+15 / -1)
+- `src-tauri/src/commands/sync_cmds.rs` (+15 / -8 — helper + 4 site replacements)
+- `src-tauri/src/commands/logging.rs` (+5 / -16 — wrapper + doc-comment)
+- `src-tauri/src/commands/bug_report.rs` (+5 / -16 — wrapper)
+- `src-tauri/src/sync_files.rs` (+25 / -2 — match-arm split + doc-comment addendum)
+- `src-tauri/src/lib.rs` (+1 — `pub mod text_utils;`)
+- `src-tauri/src/text_utils.rs` (NEW, +121 — module + 4 tests)
+- `src-tauri/src/commands/tests/block_cmd_tests.rs` (+65 — 1 new attachment-size-mismatch test)
+- `src-tauri/src/commands/tests/property_cmd_tests.rs` (+24 — 1 new delete_property_core test)
+- `src-tauri/src/sync_files/tests.rs` (+40 — 1 new ENOTDIR test)
+- `REVIEW-LATER.md` (-71 net — 5 detail blocks removed + 1 new L-62 entry; count + Last-updated header refreshed)
+- `SESSION-LOG.md` (this entry + Recent milestones bump)
+
+**Verification:**
+- `cargo nextest run -p agaric --filter-expr 'test(/attachment|delete_property|pairing|logging::|cap_line|text_utils|bug_report::|sync_files|find_missing/)'` — **239/239 pass** (3157 skipped) across all touched modules.
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **First Rust-only batch in the recent series.** Previous 5 batches (UX-A11Y-1, UX-DISC-1, UX-FB-1, FE-LOGGER-1, and the ad-hoc UX work) were frontend-focused. This one diversified to backend Rust commands — each item picked from the dedicated L-* "trivial-cost" sub-table. Wall-clock was comparable to FE batches (single nextest run is fast).
+- **Reviewer-flagged follow-up handled cleanly via L-62.** L-57's reviewer noticed the explicit `// Mirrors delete_property_core.` comment at `crud.rs:1619` and the identical `unreachable!()` at `:1645-1647`. Rather than expand L-57's scope mid-flight (which would have meant editing a different file under a different test surface), the orchestrator filed L-62 with the exact `unreachable!()` text and a coupling note ("future fifth reserved key requires lockstep updates"). This pattern (reviewer files follow-up, doesn't expand scope) keeps the build/review pipeline focused.
+- **One subagent self-reverted a REVIEW-LATER.md edit.** The L-58 build subagent's final report stated "REVIEW-LATER.md is back to its original state" — implying it briefly modified the file mid-build before reverting before exit. The behaviour was honest (the report flagged it explicitly) and the file ended up untouched on its end, so no orchestrator intervention was needed. The "Do NOT modify REVIEW-LATER.md" rule from session 601's prompts is working — but subagents still need to mention any temporary edits they undo so the orchestrator can verify.
+- **`text_utils` module is reusable.** The new `truncate_at_char_boundary(s, max_bytes, marker_fn)` API is general enough that future char-boundary-safe truncation needs (e.g., toast text limits, snippet truncation) can call it directly with their own marker closure. Module is `pub` in `lib.rs` so any consumer in `agaric` (or downstream test crates) can use it.
+
+**Commit plan:** single commit. Not pushed.
 
 ---
 

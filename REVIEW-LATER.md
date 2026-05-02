@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 601 — Batch FE-LOGGER-1 closed: FE-H-8, FE-H-9, FE-H-10, FE-H-11, FE-H-12, FE-H-13)
+> **Last updated:** 2026-05-02 (Session 602 — Batch BACKEND-CLEANUP-1 closed: L-56, L-57, L-58, L-59, L-60)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-161 open items in the summary table; 212 detail entries (FE-* sub-tables don't appear in the summary).
+161 open items in the summary table; 208 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -1336,55 +1336,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 05/F35
 - **Status:** Open
 
-### L-56 — `commands/attachments.rs::add_attachment_inner` uses `debug_assert_eq!` for file-size verification
-- **Domain:** Commands (Attachments)
-- **Location:** `src-tauri/src/commands/attachments.rs:122-130`
-- **What:** Verifies `metadata.len() == size_bytes` only in debug builds; release builds skip the check entirely. If the frontend's `@tauri-apps/plugin-fs` write fails silently (truncation, disk full) the attachment record is created with the wrong `size_bytes`. The sync layer's hash check provides secondary defense, but the early guard is intentional.
-- **Cost:** Trivial — convert to a runtime guard returning `AppError::Validation`.
-- **Risk:** Low.
-- **Impact:** Low — closes a release-build integrity gap.
-- **Status:** Open
-
-### L-57 — `commands/mod.rs::delete_property_core` panics on unknown reserved key via `unreachable!()`
-- **Domain:** Commands
-- **Location:** `src-tauri/src/commands/mod.rs:629-655`
-- **What:** Match arms cover `"todo_state"`, `"priority"`, `"due_date"`, `"scheduled_date"`; the catch-all is `unreachable!(...)`. Currently safe because `is_reserved_property_key` (`src-tauri/src/op.rs:343-348`) returns `true` for exactly those four keys — but a future addition without updating this match crashes the command instead of returning a proper error.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low — defensive change; converts a panic path into an error path.
-- **Recommendation:** Replace `unreachable!()` with `Err(AppError::InvalidOperation(format!("unknown reserved property: {key}")))`.
-- **Status:** Open
-
-### L-58 — `commands/sync_cmds.rs` repeats mutex-poison error mapping 4×
-- **Domain:** Commands (Pairing/Sync)
-- **Location:** `src-tauri/src/commands/sync_cmds.rs:152, 197, 230, 247`
-- **What:** Four `map_err(|_| AppError::InvalidOperation("pairing state lock poisoned"))` sites in `start_pairing_inner`, `confirm_pairing_inner`, and `cancel_pairing_inner`. Future changes to the message or logging require N coordinated edits.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low — small DRY improvement.
-- **Recommendation:** Extract a `lock_pairing_state(state) -> Result<MutexGuard<...>, AppError>` helper; collapse the 4 sites to 1.
-- **Status:** Open
-
-### L-59 — UTF-8-safe truncation duplicated between `commands/logging.rs` and `commands/bug_report.rs`
-- **Domain:** Commands (Logging / Bug report)
-- **Location:** `src-tauri/src/commands/logging.rs:26-40` (`truncate_log_field`) and `src-tauri/src/commands/bug_report.rs:726-741` (`cap_line_length`)
-- **What:** Both implement char-boundary-safe string truncation (`is_char_boundary` walk-back + `truncate` + `…[truncated N …]` formatting). Different signatures and message formats but identical core logic. Note: the `logging.rs:19` doc-comment cross-references the wrong location (`bug_report.rs:213-224`, which is inside the `STABLE_MESSAGES` const) — sweep that doc-comment when this lands.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Recommendation:** Move to a small `crate::text_utils::truncate_at_char_boundary` helper; reuse from both call sites and update the `logging.rs:19` doc-comment to point at the new helper.
-- **Status:** Open
-
-### L-60 — `sync_files.rs::find_missing_attachments` collapses all `metadata` errors into "missing"
-- **Domain:** Sync (Attachments)
-- **Location:** `src-tauri/src/sync_files.rs:179-195`
-- **What:** `Err(_) => missing.push(...)` treats EACCES, EPERM, EBUSY identically to ENOENT. The comment at L153-156 explicitly says "most defensive choice." A permission-denied attachment would be re-requested from the peer on every sync until fixed.
-- **Why it matters:** Realistic impact is low (app's own data dir should be readable on Linux/Windows). Logging the error kind separately costs nothing and surfaces a real ops failure mode (antivirus quarantine, read-only remount, sandbox denial).
-- **Cost:** Trivial — split the `Err` arm into `NotFound` vs other-with-warn.
-- **Risk:** Low.
-- **Impact:** Low — better diagnostics, no behaviour change.
-- **Status:** Open
-
 ### L-61 — `op_log.rs::extract_block_id_from_payload` warns and returns `None` on JSON parse failure (DELIBERATE — no action)
 - **Domain:** Op log
 - **Location:** `src-tauri/src/op_log.rs:344-367`
@@ -1395,6 +1346,16 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** N/A.
 - **Decision:** No action. Filed for awareness only.
 - **Status:** Documented as deliberate.
+
+### L-62 — `commands/blocks/crud.rs::delete_property_in_tx` mirrors `delete_property_core`'s `unreachable!()` (L-57 follow-up)
+- **Domain:** Commands (Blocks / Properties)
+- **Location:** `src-tauri/src/commands/blocks/crud.rs:1645-1647` (inside `delete_property_in_tx`, which has comment at line 1619 stating `// Mirrors delete_property_core.`)
+- **What:** Same `unreachable!("is_reserved_property_key('{key}') returned true for an unrecognised key")` panic on the catch-all of the reserved-key match. L-57 closed this site in `delete_property_core` (now returns `AppError::InvalidOperation`); the mirror site in `delete_property_in_tx` was deliberately left out of L-57's scope to keep the diff narrow. When a future contributor adds a fifth reserved key, BOTH sites must be updated in lockstep — the L-57 fix alone leaves this transactional path still panicking.
+- **Cost:** Trivial — same fix as L-57: `_ => return Err(AppError::InvalidOperation(format!("unknown reserved property: {key}"))),` (preserve `return Err(...)` shape since the other arms produce `()`, not `Result`).
+- **Risk:** Low.
+- **Impact:** Low — defensive, forward-compat. Eliminates a panic path on a rarely-touched code surface.
+- **Source:** L-57 reviewer note (Session 602).
+- **Status:** Open.
 
 ### FE-H-1 — Cursor pagination violated in `executeAgendaFilters` default branch
 - **Domain:** Frontend / Agenda

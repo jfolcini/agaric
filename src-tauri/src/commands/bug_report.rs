@@ -723,21 +723,15 @@ fn apply_allow_list(line: &str, ctx: &RedactionContext<'_>) -> String {
 /// Apply the per-line length cap from [`MAX_LINE_BYTES`] with UTF-8
 /// safety. Returns the input unchanged when its byte length is at or
 /// below the cap — no allocation in the common case.
+///
+/// L-59: delegates to [`crate::text_utils::truncate_at_char_boundary`].
+/// The marker wording (`…[truncated N chars]`) is owned here and must
+/// stay byte-for-byte identical — the bundled bug-report fixtures and
+/// the `redact_line_preserves_utf8_on_truncation` test assert on it.
 fn cap_line_length(out: String) -> String {
-    if out.len() <= MAX_LINE_BYTES {
-        return out;
-    }
-    let extra = out.len() - MAX_LINE_BYTES;
-    let mut out = out;
-    // Keep the first MAX_LINE_BYTES bytes — split on a char boundary to
-    // avoid producing invalid UTF-8 when the cut lands inside a codepoint.
-    let mut cut = MAX_LINE_BYTES;
-    while !out.is_char_boundary(cut) && cut > 0 {
-        cut -= 1;
-    }
-    out.truncate(cut);
-    out.push_str(&format!("…[truncated {extra} chars]"));
-    out
+    crate::text_utils::truncate_at_char_boundary(out, MAX_LINE_BYTES, |extra| {
+        format!("…[truncated {extra} chars]")
+    })
 }
 
 /// Redact a single log line via the H-9b deny-list pipeline.

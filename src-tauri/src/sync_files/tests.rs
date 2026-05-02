@@ -83,6 +83,51 @@ async fn find_missing_empty_db() {
     );
 }
 
+/// L-60: a non-`NotFound` `metadata()` error (here triggered by routing
+/// through a regular file as if it were a directory, which surfaces
+/// `ENOTDIR`) must still classify the entry as missing for sync
+/// correctness. The accompanying `tracing::warn!` is observed via the
+/// global subscriber when run with `RUST_LOG=warn`; this test asserts
+/// only the behavioural contract (missing-list inclusion) because
+/// `tracing` log capture is not wired into this crate's test harness.
+#[tokio::test]
+async fn find_missing_classifies_non_not_found_io_error_as_missing() {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    let pool = init_pool(&db_path).await.unwrap();
+
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('BLK1', 'content', 'test')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Place a regular file where the attachment's parent path expects a
+    // directory. `metadata()` on `<dir>/regular_file/under.png` then
+    // errors with `ENOTDIR` (kind ≠ `NotFound`) on Linux/macOS — the
+    // exact branch L-60 added the warn-level log for. On Windows the
+    // same path shape produces a non-`NotFound` error too (the kind
+    // varies by version), so the assertion intentionally checks the
+    // behavioural outcome rather than the error kind.
+    std::fs::write(dir.path().join("regular_file"), b"not a directory").unwrap();
+
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES ('ATT_ENOTDIR', 'BLK1', 'image/png', 'p.png', 1024, 'regular_file/under.png', '2025-01-15T12:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let missing = find_missing_attachments(&pool, dir.path()).await.unwrap();
+    assert_eq!(
+        missing.len(),
+        1,
+        "non-NotFound IO error must still be classified as missing"
+    );
+    assert_eq!(missing[0].id, "ATT_ENOTDIR");
+    assert_eq!(missing[0].fs_path, "regular_file/under.png");
+}
+
 // ── read_attachment_file ─────────────────────────────────────────────
 
 #[test]
