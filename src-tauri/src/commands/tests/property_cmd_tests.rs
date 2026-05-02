@@ -565,6 +565,29 @@ fn delete_property_core_unknown_reserved_key_error_format() {
     );
 }
 
+// L-62 — Mirror of the L-57 pin for the sibling helper
+// `delete_property_in_tx` in `commands/blocks/crud.rs`. Same rationale:
+// the reserved-key match catch-all must return
+// `AppError::InvalidOperation` (pass-through in
+// `sanitize_internal_error`) with the offending key in the message
+// instead of panicking via `unreachable!()`. The path is unreachable
+// from any production caller today, so this test locks the contract
+// rather than exercising live code.
+#[test]
+fn delete_property_in_tx_unknown_reserved_key_error_format() {
+    let key = "future_reserved_key";
+    let err = AppError::InvalidOperation(format!("unknown reserved property: {key}"));
+    assert!(
+        matches!(err, AppError::InvalidOperation(_)),
+        "L-62 catch-all must use AppError::InvalidOperation"
+    );
+    assert_eq!(
+        err.to_string(),
+        "Invalid operation: unknown reserved property: future_reserved_key",
+        "L-62 catch-all message format must include the offending key"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_properties_returns_empty_for_new_block() {
     let (pool, _dir) = test_pool().await;

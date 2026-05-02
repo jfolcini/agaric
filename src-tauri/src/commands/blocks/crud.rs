@@ -1642,9 +1642,22 @@ pub(crate) async fn delete_property_in_tx(
                 .execute(&mut **tx)
                 .await?;
             }
-            _ => unreachable!(
-                "is_reserved_property_key('{key}') returned true for an unrecognised key"
-            ),
+            // L-62: defensive error path for the case where a future
+            // reserved key is added to `is_reserved_property_key`
+            // without a matching column-routing arm here. Today this
+            // is unreachable (the gate is locked at exactly the four
+            // matched keys), but converting the panic to a structured
+            // `AppError::InvalidOperation` means a forgotten lockstep
+            // update produces a clean command error rather than
+            // crashing the worker. `InvalidOperation` is in
+            // `sanitize_internal_error`'s pass-through set so the
+            // diagnostic survives to the frontend. Mirrors L-57's fix
+            // in `delete_property_core`.
+            _ => {
+                return Err(AppError::InvalidOperation(format!(
+                    "unknown reserved property: {key}"
+                )));
+            }
         }
     } else {
         sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
