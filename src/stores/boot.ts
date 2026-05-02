@@ -25,7 +25,11 @@ export const useBootStore = create<BootStore>((set) => ({
       // Call list_blocks to verify the backend is live and DB is ready.
       // The backend runs crash recovery in setup(), so by the time this
       // succeeds the app is fully initialized.
-      await invoke('list_blocks', {})
+      // FEAT-3 Phase 4: `space_id` is required. Boot runs before
+      // `useSpaceStore` is hydrated, so pass `''` per the pre-bootstrap
+      // convention documented in `src/lib/tauri.ts::listBlocks` — the
+      // backend treats it as a no-match (empty page) instead of crashing.
+      await invoke('list_blocks', { spaceId: '' })
       set({ state: 'ready', error: null })
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e)
