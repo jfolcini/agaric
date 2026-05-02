@@ -172,7 +172,9 @@ describe('BacklinkFilterBuilder', () => {
       // Apply
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
-      expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'BlockType', block_type: 'page' }])
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        expect.objectContaining({ type: 'BlockType', block_type: 'page' }),
+      ])
     })
 
     it('adds a Status filter (shortcut for PropertyText key=todo)', async () => {
@@ -186,7 +188,7 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        { type: 'PropertyText', key: 'todo', op: 'Eq', value: 'DONE' },
+        expect.objectContaining({ type: 'PropertyText', key: 'todo', op: 'Eq', value: 'DONE' }),
       ])
     })
 
@@ -201,7 +203,7 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        { type: 'PropertyText', key: 'priority', op: 'Eq', value: '1' },
+        expect.objectContaining({ type: 'PropertyText', key: 'priority', op: 'Eq', value: '1' }),
       ])
     })
 
@@ -215,7 +217,9 @@ describe('BacklinkFilterBuilder', () => {
       await user.type(screen.getByLabelText('Contains text'), 'hello world')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
-      expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'Contains', query: 'hello world' }])
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        expect.objectContaining({ type: 'Contains', query: 'hello world' }),
+      ])
     })
 
     it('adds a Property filter (PropertyText)', async () => {
@@ -234,7 +238,7 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        { type: 'PropertyText', key: 'due', op: 'Eq', value: 'tomorrow' },
+        expect.objectContaining({ type: 'PropertyText', key: 'due', op: 'Eq', value: 'tomorrow' }),
       ])
     })
 
@@ -254,7 +258,7 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        { type: 'CreatedInRange', after: '2024-01-01', before: null },
+        expect.objectContaining({ type: 'CreatedInRange', after: '2024-01-01', before: null }),
       ])
     })
 
@@ -331,7 +335,7 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        { type: 'PropertyNum', key: 'todo', op: 'Eq', value: 42 },
+        expect.objectContaining({ type: 'PropertyNum', key: 'todo', op: 'Eq', value: 42 }),
       ])
     })
 
@@ -348,7 +352,12 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        { type: 'PropertyDate', key: 'todo', op: 'Eq', value: '2024-06-15' },
+        expect.objectContaining({
+          type: 'PropertyDate',
+          key: 'todo',
+          op: 'Eq',
+          value: '2024-06-15',
+        }),
       ])
     })
 
@@ -361,7 +370,9 @@ describe('BacklinkFilterBuilder', () => {
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property-set')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
-      expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'PropertyIsSet', key: 'todo' }])
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        expect.objectContaining({ type: 'PropertyIsSet', key: 'todo' }),
+      ])
     })
 
     it('adds a PropertyIsEmpty filter', async () => {
@@ -373,7 +384,9 @@ describe('BacklinkFilterBuilder', () => {
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property-empty')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
-      expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'PropertyIsEmpty', key: 'todo' }])
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        expect.objectContaining({ type: 'PropertyIsEmpty', key: 'todo' }),
+      ])
     })
 
     it('adds a HasTagPrefix filter', async () => {
@@ -386,7 +399,9 @@ describe('BacklinkFilterBuilder', () => {
       await user.type(screen.getByLabelText('Tag prefix'), 'work')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
-      expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'HasTagPrefix', prefix: 'work' }])
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        expect.objectContaining({ type: 'HasTagPrefix', prefix: 'work' }),
+      ])
     })
 
     it('shows toast error when PropertyNum has invalid number', async () => {
@@ -659,7 +674,7 @@ describe('BacklinkFilterBuilder', () => {
       expect(toast.error).not.toHaveBeenCalledWith('Filter already applied')
       expect(onFiltersChange).toHaveBeenCalledWith([
         { type: 'HasTag', tag_id: TAG_A },
-        { type: 'HasTag', tag_id: TAG_B },
+        expect.objectContaining({ type: 'HasTag', tag_id: TAG_B }),
       ])
     })
 
@@ -678,6 +693,134 @@ describe('BacklinkFilterBuilder', () => {
 
       expect(toast.error).toHaveBeenCalledWith('Filter already applied')
       expect(onFiltersChange).not.toHaveBeenCalled()
+    })
+  })
+
+  // ====================================================================
+  // MAINT-190 — `_addId` per-add monotonic React key on filter pills.
+  //
+  // Replaces the previous `key={index}` + biome-ignore workaround. Each
+  // add stamps a fresh `_addId`, so byte-identical filters that bypass
+  // the data-level dedup (or any future code that injects duplicates)
+  // still get distinct React identities — no "two children with the
+  // same key" warning.
+  //
+  // The reorder-preserves-identity scenario from the original brief
+  // does not apply here: `BacklinkFilterBuilder` exposes only add /
+  // remove / clear-all, no reorder UI. The collision-free key is still
+  // useful: it pre-empts a class of bugs around future filter
+  // reorder / animation work.
+  // ====================================================================
+  describe('per-add React key stamping (MAINT-190)', () => {
+    it('does not emit React duplicate-key warnings on rapid identical add', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        const user = userEvent.setup()
+        const onFiltersChange = vi.fn()
+        const { rerender } = renderBuilder({ onFiltersChange })
+
+        // First add — produces a stamped filter via handleAddFilter.
+        await user.click(screen.getByRole('button', { name: /Add filter/i }))
+        await user.selectOptions(screen.getByLabelText('Filter category'), 'type')
+        await user.selectOptions(screen.getByLabelText('Block type value'), 'page')
+        await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+        expect(onFiltersChange).toHaveBeenCalled()
+        const stamped = (onFiltersChange.mock.calls[0]?.[0] as BacklinkFilter[]) ?? []
+        // Reflect the parent's state update back into the controlled component.
+        rerender(
+          <BacklinkFilterBuilder
+            {...defaultProps}
+            filters={stamped}
+            onFiltersChange={onFiltersChange}
+          />,
+        )
+
+        // Snapshot call count after first add — the button defaults to
+        // `type="submit"` inside a form, so click + form submit can both
+        // invoke `handleApply`. The dedup guard below must block *all*
+        // invocation paths, so we only require the count to *not grow*.
+        const callsAfterFirstAdd = onFiltersChange.mock.calls.length
+
+        // Second add of the byte-identical filter — dedup must reject it.
+        await user.click(screen.getByRole('button', { name: /Add filter/i }))
+        await user.selectOptions(screen.getByLabelText('Filter category'), 'type')
+        await user.selectOptions(screen.getByLabelText('Block type value'), 'page')
+        await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+        expect(toast.error).toHaveBeenCalledWith('Filter already applied')
+        expect(onFiltersChange.mock.calls.length).toBe(callsAfterFirstAdd)
+
+        const keyWarnings = consoleErrorSpy.mock.calls.filter(
+          (call) =>
+            typeof call[0] === 'string' &&
+            call[0].includes('Encountered two children with the same key'),
+        )
+        expect(keyWarnings).toEqual([])
+      } finally {
+        consoleErrorSpy.mockRestore()
+      }
+    })
+
+    it('renders distinct list items with unique `_addId` keys for two filters', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        const user = userEvent.setup()
+        const onFiltersChange = vi.fn()
+        const { rerender } = renderBuilder({ onFiltersChange })
+
+        // Add filter A.
+        await user.click(screen.getByRole('button', { name: /Add filter/i }))
+        await user.selectOptions(screen.getByLabelText('Filter category'), 'contains')
+        await user.type(screen.getByLabelText('Contains text'), 'alpha')
+        await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+        const afterFirst = (onFiltersChange.mock.calls.at(-1)?.[0] as BacklinkFilter[]) ?? []
+        rerender(
+          <BacklinkFilterBuilder
+            {...defaultProps}
+            filters={afterFirst}
+            onFiltersChange={onFiltersChange}
+          />,
+        )
+
+        // Add filter B.
+        await user.click(screen.getByRole('button', { name: /Add filter/i }))
+        await user.selectOptions(screen.getByLabelText('Filter category'), 'contains')
+        await user.type(screen.getByLabelText('Contains text'), 'beta')
+        await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+        const afterSecond = (onFiltersChange.mock.calls.at(-1)?.[0] as BacklinkFilter[]) ?? []
+        rerender(
+          <BacklinkFilterBuilder
+            {...defaultProps}
+            filters={afterSecond}
+            onFiltersChange={onFiltersChange}
+          />,
+        )
+
+        // Both pills are mounted as distinct list items.
+        const list = screen.getByRole('list', { name: /Applied filters/i })
+        const items = list.querySelectorAll('li')
+        expect(items).toHaveLength(2)
+
+        // Each stamped filter has its own monotonic `_addId`; the values
+        // must differ so the React keys collide-free.
+        const stampedFilters = afterSecond as Array<BacklinkFilter & { _addId?: number }>
+        expect(stampedFilters).toHaveLength(2)
+        expect(typeof stampedFilters[0]?._addId).toBe('number')
+        expect(typeof stampedFilters[1]?._addId).toBe('number')
+        expect(stampedFilters[0]?._addId).not.toBe(stampedFilters[1]?._addId)
+
+        const keyWarnings = consoleErrorSpy.mock.calls.filter(
+          (call) =>
+            typeof call[0] === 'string' &&
+            call[0].includes('Encountered two children with the same key'),
+        )
+        expect(keyWarnings).toEqual([])
+      } finally {
+        consoleErrorSpy.mockRestore()
+      }
     })
   })
 
@@ -757,7 +900,7 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        { type: 'HasTag', tag_id: '01ARZTAGAAAAAAAAAAAAAAAAAA' },
+        expect.objectContaining({ type: 'HasTag', tag_id: '01ARZTAGAAAAAAAAAAAAAAAAAA' }),
       ])
     })
 
@@ -792,7 +935,9 @@ describe('BacklinkFilterBuilder', () => {
       const input = screen.getByLabelText('Contains text')
       await user.type(input, 'hello{Enter}')
 
-      expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'Contains', query: 'hello' }])
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        expect.objectContaining({ type: 'Contains', query: 'hello' }),
+      ])
     })
   })
 
@@ -912,7 +1057,7 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        { type: 'CreatedInRange', after: '2024-06-15', before: null },
+        expect.objectContaining({ type: 'CreatedInRange', after: '2024-06-15', before: null }),
       ])
       expect(toast.error).not.toHaveBeenCalled()
     })
@@ -981,7 +1126,11 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        { type: 'CreatedInRange', after: '2024-01-01', before: '2024-12-31' },
+        expect.objectContaining({
+          type: 'CreatedInRange',
+          after: '2024-01-01',
+          before: '2024-12-31',
+        }),
       ])
       expect(toast.error).not.toHaveBeenCalled()
     })
@@ -1006,7 +1155,12 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        { type: 'PropertyText', key: 'custom_key', op: 'Eq', value: 'val' },
+        expect.objectContaining({
+          type: 'PropertyText',
+          key: 'custom_key',
+          op: 'Eq',
+          value: 'val',
+        }),
       ])
       expect(toast.error).not.toHaveBeenCalled()
     })
@@ -1023,7 +1177,7 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        { type: 'PropertyText', key: 'due', op: 'Eq', value: 'tomorrow' },
+        expect.objectContaining({ type: 'PropertyText', key: 'due', op: 'Eq', value: 'tomorrow' }),
       ])
       expect(toast.error).not.toHaveBeenCalled()
     })
@@ -1153,7 +1307,9 @@ describe('BacklinkFilterBuilder', () => {
       // Click Apply
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
-      expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'HasTag', tag_id: '01TAG_REVW' }])
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        expect.objectContaining({ type: 'HasTag', tag_id: '01TAG_REVW' }),
+      ])
     }, 10000)
 
     it('shows "Select tag" label when no tags are available', async () => {

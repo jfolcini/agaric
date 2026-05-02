@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 614 — Batch BACKEND-TEST-1 closed: TEST-10, TEST-11, TEST-24; M-98 + L-136 filed as TEST-11 follow-ups)
+> **Last updated:** 2026-05-02 (Session 615 — Batch QUICK-WINS-MIX-1 closed: TEST-16, TEST-28, MAINT-181, MAINT-190; L-137 filed as MAINT-190 follow-up)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-125 open items in the summary table; 159 detail entries (FE-* sub-tables don't appear in the summary).
+121 open items in the summary table; 156 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -34,12 +34,10 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-172 | MAINT | Pagination/queries: space-filter SQL fragment inlined across 13+ files because `sqlx::query_as!` rejects `concat!()`; `space_filter_clause!` macro referenced in comments but unusable. Real maintenance hotspot, sqlx-constrained | M | sqlx upstream |
 | MAINT-178 | MAINT | Frontend — `BootGate` error screen has only Retry; for unrecoverable failures (corrupted DB, permission denied, missing migration) the user is stuck. Add a diagnostics escape hatch (show `error.cause` chain, copy logs, launch bug-report) | S | — |
 | MAINT-180 | MAINT | Frontend — `SpaceManageDialog` — each `SpaceRowEditor` mount fires emptiness-probe + journal-template `listBlocks` IPCs with no dedup; reopening the dialog re-fetches the same data per row | S | — |
-| MAINT-181 | MAINT | Frontend — `PropertyRowEditor.handleOpenRefPicker` opens the picker even when `listBlocks` rejects; user sees an empty picker with no failure indicator. Move `setRefPickerOpen(true)` into `.then()` | S | — |
 | MAINT-183 | MAINT | Frontend — `markdown-serialize.ts` header claims "zero external dependencies" but file imports `sonner`, `logger`, `i18n`. Either rewrite the header or move the toast/i18n side effect to a wrapper at the call site | S | — |
 | MAINT-184 | MAINT | Frontend — `block-link-picker.ts` and `block-ref-picker.ts` each duplicate ~70% of resolve-and-insert logic between their InputRule handler and their `resolve*FromSelection` command. Extract a shared helper | S | — |
 | MAINT-185 | MAINT | Frontend — `use-block-keyboard.ts:275-335` `handleKeyDown` callback has 16 deps; depends on parent-callback memoization. Switch to the refs-bag pattern already used in `use-roving-editor.ts:258-289` for stable listener identity | S | — |
 | MAINT-189 | MAINT | Frontend — `PropertyValuePicker.tsx:42-49` calls `listPropertyKeys()` once per component mount with no shared cache; multiple instances on the same view re-fetch. Add a `usePropertyKeysCache` hook | S | — |
-| MAINT-190 | MAINT | Frontend — `FilterPillRow.tsx:104-105` uses `key={index}` with a `biome-ignore` because `getFilterKey()` can collide; make the key collision-free instead of relying on the workaround | S | — |
 | MAINT-192 | MAINT | Documentation — UX.md / AGENTS.md additions to reduce false-positive churn on future reviews: (a) UX.md Common-Pitfall "`setState` after unmount in React 18+ is no longer a defect"; (b) UX.md Lesson-Learned "Reading store state inside callbacks via `useStore.getState()` is intentional"; (c) AGENTS.md mandatory-pattern: picker debouncing convention; (d) AGENTS.md reference `INTERNAL_PROPERTY_KEYS` (see MAINT-187) | S | — |
 | MAINT-193 | MAINT | zizmor baseline triage — 53 GitHub Actions findings suppressed by file:line in `.github/zizmor.yml` when the `zizmor` pre-commit hook was first wired in. Mix of policy-level (`unpinned-uses` × 35: tags vs SHAs) and real fixes (`template-injection` × 6 in `release-tag.yml` — pass `inputs.version` via `env:` instead of `${{ }}` interpolation; `excessive-permissions` × 1 in `release.yml`; `cache-poisoning` × 11; `artipacked` × 7). Triage off the baseline as fixes land. | M | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
@@ -51,12 +49,10 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
 | TEST-6 | TEST | Sync merge tests assert on counter only, not materialized state (`merge_resolves_property_conflict_lww` doesn't query `block_properties`; `merge_block_conflict_creates_copy` doesn't query `blocks` for the conflict copy) | S | — |
 | TEST-8 | TEST | TOFU test only covers acceptance, not rejection on cert-hash mismatch on reconnect (`inmem_handle_incoming_sync_tofu_stores_cert_hash`) | S | — |
-| TEST-16 | TEST | Recurrence integration tests don't exercise year-boundary transitions (Dec 31 + 1 day → Jan 1 next year) — only unit tests cover DST/leap year | S | — |
 | TEST-18 | TEST | Backlink non-grouped tests use `setup_backlinks()` orphan sources (no parent_id), so they never exercise self-reference filtering; sort tests don't assert `total_count`/`filtered_count` | S | — |
 | TEST-23 | TEST | 6 copy-pasted `*_paginates_with_cursor` tests in `pagination/tests.rs` (lines 720, 877, 1550, 1702, 1911, 2032) — identical 3-page-loop pattern | S | — |
 | TEST-25 | TEST | ~12 near-identical FEAT-3p4 space-scoping tests in `agenda_cmd_tests.rs` (lines 2268–2812) — extract `seed_two_spaces` helper | S | — |
 | TEST-27 | TEST | `count_set_property_ops_for_key` helper uses `LIKE '%"key":"X"%'` on JSON payloads — fragile to JSON whitespace changes | S | — |
-| TEST-28 | TEST | `test_connection_pair()` bypasses real TLS (in-memory duplex with `peer_cert_hash_val: None`) — needs documenting so callers don't think they're testing mTLS | S | — |
 | TEST-30 | TEST | `now_rfc3339()` collision risk in `undo_redo_tests.rs` lines 1187, 1311, 1525 — siblings have sleep guards but these don't | S | — |
 | TEST-31 | TEST | MCP pagination roundtrip test asserts `!ids1.contains(id)` for no overlap but never sums lengths across pages to verify nothing is lost | S | — |
 | TEST-FE-1 | TEST | Bare `setTimeout` waits in tests (24 occurrences across 13 files; the dangerous subset is bare 50ms waits before `not.toHaveBeenCalledWith` negatives — `BlockTree.test.tsx`, `TagFilterPanel.test.tsx`, `useBlockTreeEventListeners.test.ts`, `GraphView.test.tsx`) — AGENTS.md explicitly forbids `await sleep(n)`; replace with `waitFor` or fake timers | M | — |
@@ -419,15 +415,6 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Impact:** Low–medium — no user-visible bug today, but the IPC volume scales O(N spaces × M opens).
 - **Status:** Open.
 
-### MAINT-181 — `PropertyRowEditor` opens ref picker even when `listBlocks` rejects
-- **Domain:** Frontend (property editor)
-- **Location:** `src/components/PropertyRowEditor.tsx:237-249`
-- **What:** `setRefPickerOpen(true)` runs unconditionally; the IPC `.catch` only logs and toasts. User opens an empty picker labelled "Select page" with no indication anything went wrong.
-- **Cost:** S — move `setRefPickerOpen(true)` into the `.then` after `setRefPages(res.items)`.
-- **Risk:** Low.
-- **Impact:** Low — minor UX cleanup.
-- **Status:** Open.
-
 ### MAINT-183 — `markdown-serialize.ts` header claims zero-dep but file imports `sonner` / `logger` / `i18n`
 - **Domain:** Frontend (editor / serializer)
 - **Location:** `src/editor/markdown-serialize.ts:1-15`
@@ -462,15 +449,6 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Cost:** S — extract `usePropertyKeysCache` (Zustand or context) keyed on `currentSpaceId`; replace 3 per-mount `useEffect` fetches with a single shared cache; invalidate on relevant materializer events.
 - **Risk:** Low.
 - **Impact:** Low — minor IPC reduction; not user-visible.
-- **Status:** Open.
-
-### MAINT-190 — `FilterPillRow` `key={index}` is over-cautious (already prevented by add-time dedup)
-- **Domain:** Frontend (filter UI)
-- **Location:** `src/components/FilterPillRow.tsx:104-105` ; `src/components/BacklinkFilterBuilder.tsx:42-67` (`getFilterKey`), `:88-102` (`handleAddFilter`)
-- **What:** Optional cleanup. The `biome-ignore` comment is defensive — `getFilterKey` already discriminates by all data fields (`PropertyText:${key}:${op}:${value}`, `HasTag:${tag_id}`, etc., with `JSON.stringify(filter)` fallback), and `handleAddFilter` rejects exact duplicates before they reach `FilterPillRow` (`filters.some((f) => getFilterKey(f) === key)`). A genuine collision would require two byte-identical filters past that guard — which the dedup blocks. Note: this overlaps with FE-L-14 in the FE review.
-- **Cost:** S — could be removed by stamping a per-add monotonic `id` on each filter at add-time and using that as the React key, but the current biome-ignore is defensible. Low priority.
-- **Risk:** Low.
-- **Impact:** Low — pre-empts future bugs around filter reorder / animation only.
 - **Status:** Open.
 
 ### MAINT-192 — UX.md / AGENTS.md additions to reduce false-positive churn on future frontend reviews
@@ -549,15 +527,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Impact:** Medium — TOFU behavior is asymmetric (acceptance is trivial; rejection is the property worth verifying).
 - **Status:** Open.
 
-### TEST-16 — Recurrence integration tests don't exercise year-boundary transitions
-- **Domain:** Recurrence tests
-- **Location:** `src-tauri/src/recurrence/tests.rs:521-1036` (integration tests section)
-- **What:** Unit tests cover DST and leap-year edge cases, but no integration test exercises a daily/weekly recurrence that crosses Dec 31 → Jan 1 of the next year. A bug in year-component arithmetic would not be caught.
-- **Cost:** Trivial — `set_due_date_inner(..., "2025-12-31"); set_repeat_property("daily"); mark DONE; assert next.due_date == "2026-01-01"`.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ### TEST-18 — Backlink non-grouped tests don't exercise self-reference filtering or count fields
 - **Domain:** Backlink tests
 - **Location:** `src-tauri/src/backlink/tests.rs`
@@ -594,15 +563,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Cost:** S — parse JSON in a SQL function or in Rust after `fetch_all` (or use SQLite's `json_extract`).
 - **Risk:** Low.
 - **Impact:** Low.
-- **Status:** Open.
-
-### TEST-28 — `test_connection_pair()` bypasses real TLS — undocumented at the helper
-- **Domain:** Sync tests / documentation
-- **Location:** `src-tauri/src/sync_net/connection.rs:484` (`test_connection_pair` definition); used by `sync_daemon/tests.rs` lines 1527, 1589, 1658, 1718, 1775, 1854, 1972, 2089
-- **What:** `test_connection_pair()` creates an in-memory `tokio::io::duplex` with WebSocket wrappers — no real TLS handshake. Tests using it cannot verify mTLS cert verification. The helper does not document this, so callers may believe their tests cover TLS.
-- **Cost:** Trivial — add a doc-comment to `test_connection_pair` clarifying that callers needing mTLS verification must use `SyncServer::start()` + `connect_to_peer()` instead.
-- **Risk:** Low.
-- **Impact:** Low — documentation precision; prevents future false confidence.
 - **Status:** Open.
 
 ### TEST-30 — One residual `now_rfc3339()` collision risk in `undo_redo_tests.rs:1525`
@@ -886,6 +846,17 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Risk:** Low.
 - **Impact:** Low — improves error precision for malformed input; no behavior change for well-formed IDs.
 - **Recommendation:** Audit other page-accepting `inner` functions (`get_page_inner`, `delete_page_inner` if exists) for the same gap and fix in one pass.
+- **Status:** Open.
+
+### L-137 — `AddFilterRow` Apply button fires `handleApply` twice (form submit + button click)
+- **Domain:** Frontend (backlink filter UI)
+- **Location:** `src/components/backlink-filter/AddFilterRow.tsx:220-277` (the form wrapper + the Apply button).
+- **What:** The Apply button has both `onClick={handleApply}` AND lives inside a `<form onSubmit={handleApply}>`. Browsers default `<button>` inside a `<form>` to `type="submit"`, so a single click fires BOTH the click handler AND the form's submit handler — `handleApply` runs twice per click. Surfaced by MAINT-190's reviewer when a stricter `toHaveBeenCalledTimes(1)` test failed; the build subagent worked around it by snapshotting `mock.calls.length` rather than asserting an exact count, with an inline comment in `BacklinkFilterBuilder.test.tsx:739-752` documenting the workaround.
+- **Why it matters:** No user-facing impact — `BacklinkFilterBuilder.handleAddFilter`'s dedup guard (`filters.some((f) => getFilterKey(f) === key)`) blocks the second invocation's effect. But the workaround in tests is a maintenance liability: future readers see a loose `mock.calls.length` snapshot and don't know whether the looseness is necessary or accidental. Fixing the double-fire lets tests assert exact call counts again.
+- **Cost:** S — either (a) add `type="button"` to the Apply button so it doesn't auto-submit the form, or (b) drop the `onClick` and rely on form `onSubmit` alone. (a) is simpler and lower-risk.
+- **Risk:** Low — the dedup already blocks the double-effect; the fix only removes the redundant call.
+- **Impact:** Low — code-quality cleanup; lets MAINT-190's tests use exact `toHaveBeenCalledTimes(1)` assertions.
+- **Recommendation:** Fix as (a). Update `BacklinkFilterBuilder.test.tsx:739-752` to use exact-count assertions and remove the workaround comment when this lands.
 - **Status:** Open.
 
 ### FE-H-1 — Cursor pagination violated in `executeAgendaFilters` default branch

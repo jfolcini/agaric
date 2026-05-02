@@ -480,6 +480,19 @@ fn describe_message(msg: &Message) -> String {
 }
 
 /// Create an in-memory WebSocket pair for testing sync protocol flows.
+///
+/// **TEST-28: this helper bypasses real TLS.** The two `SyncConnection`s
+/// are wired through `tokio::io::duplex` (not `rustls`), and both ends
+/// have `peer_cert_hash_val: None` + `peer_cert_cn_val: None`. Tests
+/// using `test_connection_pair()` therefore CANNOT exercise mTLS cert
+/// verification, TOFU storage, or peer-cert-hash mismatch handling —
+/// the cert-hash check is short-circuited because the field is `None`.
+///
+/// **If your test needs to exercise real TLS / mTLS** (TOFU acceptance,
+/// reconnection-with-wrong-cert-hash rejection, cert-CN extraction,
+/// etc.), use `SyncServer::start()` + `connect_to_peer()` instead. See
+/// `sync_net/tests.rs::mtls_*` for examples (`mtls_reconnection_with_wrong_cert_hash_fails`,
+/// `mtls_tofu_store_and_verify_round_trip`).
 #[cfg(test)]
 pub async fn test_connection_pair() -> (SyncConnection, SyncConnection) {
     let (a, b) = tokio::io::duplex(64 * 1024);

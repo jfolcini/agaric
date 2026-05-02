@@ -18,17 +18,16 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
-import type { BacklinkFilter } from '../../lib/tauri'
-import { FilterPillRow, filterSummary } from '../FilterPillRow'
+import { FilterPillRow, type FilterWithKey, filterSummary } from '../FilterPillRow'
 
 beforeEach(() => {
   vi.clearAllMocks()
 })
 
 describe('FilterPillRow', () => {
-  const defaultFilters: BacklinkFilter[] = [
-    { type: 'BlockType', block_type: 'content' },
-    { type: 'Contains', query: 'test' },
+  const defaultFilters: FilterWithKey[] = [
+    { type: 'BlockType', block_type: 'content', _addId: 1 },
+    { type: 'Contains', query: 'test', _addId: 2 },
   ]
 
   it('renders nothing when filters array is empty', () => {
@@ -104,7 +103,7 @@ describe('FilterPillRow', () => {
 
   it('uses tagResolver for HasTag pill display text', () => {
     const tagResolver = (id: string) => (id === 'TAG_ID_123' ? 'Project' : id)
-    const filters: BacklinkFilter[] = [{ type: 'HasTag', tag_id: 'TAG_ID_123' }]
+    const filters: FilterWithKey[] = [{ type: 'HasTag', tag_id: 'TAG_ID_123', _addId: 1 }]
 
     render(<FilterPillRow filters={filters} onRemove={vi.fn()} tagResolver={tagResolver} />)
 
@@ -113,7 +112,9 @@ describe('FilterPillRow', () => {
   })
 
   it('truncates tag ID when no tagResolver is provided', () => {
-    const filters: BacklinkFilter[] = [{ type: 'HasTag', tag_id: '01ABCDEFGHIJKLMNOPQRSTUVWX' }]
+    const filters: FilterWithKey[] = [
+      { type: 'HasTag', tag_id: '01ABCDEFGHIJKLMNOPQRSTUVWX', _addId: 1 },
+    ]
 
     render(<FilterPillRow filters={filters} onRemove={vi.fn()} />)
 
@@ -121,13 +122,13 @@ describe('FilterPillRow', () => {
   })
 
   it('renders correct summary for various filter types', () => {
-    const filters: BacklinkFilter[] = [
-      { type: 'PropertyText', key: 'todo', op: 'Eq', value: 'DONE' },
-      { type: 'PropertyNum', key: 'priority', op: 'Gt', value: 2 },
-      { type: 'PropertyIsSet', key: 'due' },
-      { type: 'PropertyIsEmpty', key: 'assignee' },
-      { type: 'CreatedInRange', after: '2024-01-01', before: null },
-      { type: 'HasTagPrefix', prefix: 'work' },
+    const filters: FilterWithKey[] = [
+      { type: 'PropertyText', key: 'todo', op: 'Eq', value: 'DONE', _addId: 1 },
+      { type: 'PropertyNum', key: 'priority', op: 'Gt', value: 2, _addId: 2 },
+      { type: 'PropertyIsSet', key: 'due', _addId: 3 },
+      { type: 'PropertyIsEmpty', key: 'assignee', _addId: 4 },
+      { type: 'CreatedInRange', after: '2024-01-01', before: null, _addId: 5 },
+      { type: 'HasTagPrefix', prefix: 'work', _addId: 6 },
     ]
 
     render(<FilterPillRow filters={filters} onRemove={vi.fn()} />)

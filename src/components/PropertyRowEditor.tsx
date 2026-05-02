@@ -236,16 +236,30 @@ export function PropertyRowEditor({
 
   const handleOpenRefPicker = useCallback(() => {
     setRefSearch('')
-    setRefPickerOpen(true)
+    // MAINT-181: the `<Popover>` above is controlled via `refPickerOpen`
+    // but `<PopoverTrigger asChild>` makes Radix call `onOpenChange(true)`
+    // on the trigger button's click before this handler runs, so the
+    // popover is already open when we get here. The fix is twofold:
+    // (1) reaffirm `setRefPickerOpen(true)` only after a successful
+    // load so the open state is stable on success (also clears any
+    // half-mounted state from a prior fast-rejection); (2) on rejection
+    // close the popover explicitly so the user doesn't stare at an
+    // empty "Select page" list with no indication that the load failed.
+    // The toast + `logger.error` on the catch path remains the only
+    // failure surface the user sees.
     // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
     // fallback is intentional pre-bootstrap behaviour: empty string
     // forces a no-match SQL filter rather than a runtime null deref.
     listBlocks({ blockType: 'page', limit: 500, spaceId: currentSpaceId ?? '' })
-      .then((res) => setRefPages(res.items))
+      .then((res) => {
+        setRefPages(res.items)
+        setRefPickerOpen(true)
+      })
       .catch((err: unknown) => {
         logger.error('PropertyRowEditor', 'Failed to load pages for ref picker', undefined, err)
         toast.error(t('pageProperty.loadPagesFailed'))
         setRefPages([])
+        setRefPickerOpen(false)
       })
   }, [t, currentSpaceId])
 

@@ -16,7 +16,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import type { BacklinkFilter, BacklinkSort, SortDir } from '../lib/tauri'
 import { AddFilterRow } from './backlink-filter/AddFilterRow'
-import { FilterPillRow } from './FilterPillRow'
+import { FilterPillRow, type FilterWithKey } from './FilterPillRow'
 import { FilterSortControls } from './FilterSortControls'
 
 // ---------------------------------------------------------------------------
@@ -33,6 +33,37 @@ export interface BacklinkFilterBuilderProps {
   propertyKeys: string[]
   tags: Array<{ id: string; name: string }>
   tagResolver?: (id: string) => string
+}
+
+// ---------------------------------------------------------------------------
+// React-key stamping for filter pills (MAINT-190)
+//
+// Each filter added via `handleAddFilter` is stamped with a monotonic
+// `_addId`. `FilterPillRow` uses `_addId` as the React `key`, which gives
+// every pill a collision-free identity even for byte-identical filters
+// that bypass the data-level dedup guard (e.g. a future regression that
+// removed the dedup, or an external caller that injects duplicates).
+//
+// `_addId` is a frontend-only marker — never declared on the Rust
+// `BacklinkFilter` enum and never deserialised on the backend (Rust serde
+// tolerates extra fields, so the IPC layer ignores it). The fallback
+// `WeakMap` lazily assigns ids to filters that arrive from props without
+// one (e.g. test fixtures that bypass `handleAddFilter`); the WeakMap
+// keying preserves id stability across renders.
+// ---------------------------------------------------------------------------
+
+let nextFilterAddId = 0
+const filterAddIdFallback = new WeakMap<object, number>()
+
+function ensureAddId(filter: BacklinkFilter): FilterWithKey {
+  const candidate = filter as Partial<FilterWithKey>
+  if (typeof candidate._addId === 'number') return filter as FilterWithKey
+  let id = filterAddIdFallback.get(filter)
+  if (id === undefined) {
+    id = ++nextFilterAddId
+    filterAddIdFallback.set(filter, id)
+  }
+  return { ...filter, _addId: id }
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +125,12 @@ export function BacklinkFilterBuilder({
         setShowAddRow(false)
         return
       }
-      onFiltersChange([...filters, filter])
+      // Stamp a per-add monotonic React key (MAINT-190) so the pill row's
+      // `key={filter._addId}` is collision-free even past the data-level
+      // dedup above. `_addId` rides along on the filter object; the Rust
+      // serde layer silently drops the extra field on the IPC boundary.
+      const stamped: FilterWithKey = { ...filter, _addId: ++nextFilterAddId }
+      onFiltersChange([...filters, stamped])
       setShowAddRow(false)
       requestAnimationFrame(() => addFilterButtonRef.current?.focus())
     },
@@ -155,7 +191,11 @@ export function BacklinkFilterBuilder({
       <div className="flex flex-wrap items-center gap-1.5">
         <Filter className="h-3.5 w-3.5 text-muted-foreground" />
 
-        <FilterPillRow filters={filters} onRemove={handleRemoveFilter} tagResolver={tagResolver} />
+        <FilterPillRow
+          filters={filters.map(ensureAddId)}
+          onRemove={handleRemoveFilter}
+          tagResolver={tagResolver}
+        />
 
         <Button
           ref={addFilterButtonRef}

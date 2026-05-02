@@ -1034,3 +1034,137 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
 
     mat.shutdown();
 }
+
+// ==================================================================
+// TEST-16: year-boundary recurrence integration tests
+// ==================================================================
+//
+// Pin the year-component arithmetic in `shift_date` end-to-end through
+// the full recurrence flow (`set_todo_state_inner` -> `handle_recurrence`).
+// The earlier DST and leap-year tests in this file only exercise
+// `shift_date` at the function level; these two cases assert that the
+// integration path correctly carries the year rollover from the
+// `chrono::NaiveDate + Duration` result back into the new sibling's
+// `due_date` column.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_recurrence_daily_crosses_year_boundary() {
+    // TEST-16: daily recurrence on Dec 31 must shift to Jan 1 of the
+    // next year. Invariant: the year component increments when the day
+    // arithmetic carries past Dec 31.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "year-boundary daily task".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        Some("2025-12-31".into()),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_repeat_property(&pool, &mat, &block.id, "daily").await;
+    mat.flush_background().await.unwrap();
+
+    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let siblings = find_recurrence_siblings(&pool, &block.id).await;
+    assert_eq!(
+        siblings.len(),
+        1,
+        "daily recurrence across year boundary should create exactly one sibling"
+    );
+    assert_eq!(
+        siblings[0].due_date.as_deref(),
+        Some("2026-01-01"),
+        "daily shift from 2025-12-31 must roll into 2026-01-01 (year component +1)"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_recurrence_weekly_crosses_year_boundary() {
+    // TEST-16: weekly recurrence on Tuesday Dec 30, 2025 must shift to
+    // Tuesday Jan 6, 2026. Invariant: a 7-day shift that straddles
+    // Dec 31 -> Jan 1 advances the year exactly once and preserves the
+    // weekday (verified against calendar: Dec 30 2025 = Tuesday,
+    // Jan 6 2026 = Tuesday).
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "year-boundary weekly task".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        Some("2025-12-30".into()),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_repeat_property(&pool, &mat, &block.id, "weekly").await;
+    mat.flush_background().await.unwrap();
+
+    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let siblings = find_recurrence_siblings(&pool, &block.id).await;
+    assert_eq!(
+        siblings.len(),
+        1,
+        "weekly recurrence across year boundary should create exactly one sibling"
+    );
+    assert_eq!(
+        siblings[0].due_date.as_deref(),
+        Some("2026-01-06"),
+        "weekly shift from 2025-12-30 (Tue) must land on 2026-01-06 (Tue)"
+    );
+
+    mat.shutdown();
+}
