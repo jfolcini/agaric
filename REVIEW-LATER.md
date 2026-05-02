@@ -27,7 +27,7 @@ Items flagged during development that need revisiting. Organized by section with
 | FEAT-5g | FEAT | GCal: Android OAuth + background connector (DEFERRED — design sketch only) | L | Design review |
 | FEAT-11 | FEAT | Adopt `tauri-plugin-notification` — OS notifications for due tasks / scheduled events (Org-mode parity, especially on mobile) | L | — |
 | MAINT-111 | MAINT | Migrate MCP server JSON-RPC framing onto `rmcp` 1.6 (reference impl behind `mcp_rmcp_spike` feature flag; 3 milestones, 12-14h end-to-end) | L | — |
-| MAINT-113 | MAINT | `ConflictFreeBlockId` newtype to lift invariant #9 (`is_conflict = 0` + `depth < 100` in every recursive CTE over `blocks`) into the type system — 275 `is_conflict = 0` SQL occurrences across 52 files (count refreshed 2026-05-02; was 220/70 at filing). Surface area is *up* but fewer files → consolidation is healthy and the friction is real but stable. LOW-priority refactor for elegance, not correctness; the convention + review + documented invariant are already working. Do NOT do on a deadline. | L | — |
+| MAINT-113 | MAINT | `ConflictFreeBlockId` newtype to lift invariant #9 (`is_conflict = 0` + `depth < 100` in every recursive CTE over `blocks`) into the type system — 275 `is_conflict = 0` SQL occurrences across 52 files (count refreshed 2026-05-02). **SCHEDULED** — owner-prioritized, planned across 3 milestones (M1 newtype + 5 high-traffic helpers; M2 backlink/tag-inheritance/property paths; M3 cascade/move/delete + materializer). Eliminates an entire class of "forgot to filter conflicts" bugs at compile time. | L | — |
 | MAINT-114 | MAINT | Consolidation audit of `.github/workflows/` — fold `release-tag.yml` into `release.yml` as a `workflow_dispatch` job (4 → 3 files). Spike-then-commit; abandon if merged file isn't shorter than the sum. | S–M | — |
 | MAINT-128 | MAINT | God-component decomposition: `PropertyRowEditor.tsx` (550L) — design-heavy split (5 typed editors share `localValue`, date hook state, select-options state, ref-picker state, 10+ callbacks). Closing this row requires either accepting the existing `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` at L85 permanently, or splitting each typed editor into its own component AND lifting the shared state UP to a containing hook. | L | — |
 | MAINT-168 | MAINT | Sync trigger / scheduler dual-backoff unification — `useSyncTrigger.ts` (60s → 600s) and `sync_scheduler.rs` (1s → 60s) run independent exponential backoffs that never coordinate. Not a correctness bug; the backend is the authoritative scheduler and silently rejects redundant `startSync` calls. Filed as a documented design note after this session's bird's-eye review. | M | — |
@@ -175,20 +175,31 @@ pub struct ActiveBlockId(String);  // materialised AND is_conflict = 0 AND delet
 
 Query helpers that return "active" blocks (`list_children`, `get_descendants`, `list_page_links`, every recursive CTE wrapped behind a Rust fn) return `Vec<ActiveBlockId>`. Query helpers that accept only active input take `&ActiveBlockId`. Conversion `BlockId → ActiveBlockId` goes through a single checked gate (`verify_active(&BlockId) -> Result<ActiveBlockId>`) that runs the `is_conflict = 0 AND deleted_at IS NULL` predicate exactly once. Recursive CTEs hidden behind these helpers keep their `AND is_conflict = 0` in SQL — the newtype just prevents callers from accidentally feeding a raw `BlockId` into a path that assumes active.
 
-**Why this is a LOW-priority refactor:**
+**Context (background — why this sat as a design note before now):**
 
-- The invariant is already documented (AGENTS.md #9), already tested (the `block_tag_inherited` materialised cache has an oracle CTE that verifies the filter is honoured), and already flagged by review (session logs show "missing `is_conflict = 0`" is caught before merge).
-- No shipped HIGH/CRITICAL bug traces back to a missed filter in the last ~50 sessions. The tension is correctness-by-convention vs. correctness-by-types, not correctness vs. incorrectness.
+- The invariant is already documented (AGENTS.md #9), already tested (the `block_tag_inherited` materialised cache has an oracle CTE that verifies the filter is honoured), and already flagged by review.
+- No shipped HIGH/CRITICAL bug traces back to a missed filter in the last ~50 sessions. The tension is correctness-by-convention vs. correctness-by-types — the convention is working, but it does not scale to forever and the cognitive tax compounds with every new query.
 - Scope is genuinely large — 275 SQL sites are the *floor* (each one lives in a function with a Rust signature); the real work is touching **every** producer/consumer of `BlockId` and deciding whether it returns raw or active. Honest estimate: 52 files, hundreds of function signature changes, a `specta`-bindings ripple to the frontend (extra TS type), and a round of test fixture updates.
 - The serde wire format must stay `String` (both directions) so sync + IPC aren't affected — handled with `#[serde(transparent)]`.
 
-**Do not take this on a deadline.** Land only as opportunistic cleanup — e.g., when a specific module is already being rewritten for another reason, convert its signatures over and leave the rest of the codebase on `BlockId` for another session. The existing `is_conflict = 0` + `depth < 100` convention is **not broken**; it is **not elegant**.
+**Cost:** L (8h+ at minimum; realistically 2–4 sessions split across the milestones below).
+**Risk:** M — pervasive API change. Sync / MCP / specta bindings must round-trip identically. Mixing raw and active block IDs in a single data structure (e.g., `BlockTreeNode` with both active children and "recently-deleted" preview siblings) needs explicit policy (decided at the M2 boundary; see below).
+**Impact:** M — eliminates an entire class of "forgot to filter conflicts" bugs at compile time. Invariant #9 in AGENTS.md can then reference the type instead of a prose rule, and code review stops spending cycles on this single class of finding.
 
-**Cost:** L (8h+ at minimum; realistically 2–4 sessions if done wholesale).
-**Risk:** M — pervasive API change. Sync / MCP / specta bindings must round-trip identically. Mixing raw and active block IDs in a single data structure (e.g., `BlockTreeNode` with both active children and "recently-deleted" preview siblings) needs explicit policy.
-**Impact:** M (if shipped) — eliminates an entire class of "forgot to filter conflicts" bugs at compile time. Invariant #9 in AGENTS.md could reference the type instead of a prose rule.
+**Milestone plan (3 milestones, ~10–12h end-to-end):**
 
-**Decision:** Defer indefinitely. Revisit only if a future `is_conflict = 0` miss ships a user-visible regression. Keep in REVIEW-LATER as a filed design note so it is not reinvented from scratch next time.
+1. **M1 (S–M, ~3–4h)** — Introduce `ActiveBlockId` newtype + `verify_active(&BlockId) -> Result<ActiveBlockId>` gate (single SQL predicate `is_conflict = 0 AND deleted_at IS NULL`). Convert ~5 high-traffic helpers — `list_children`, `get_descendants`, `list_page_links`, agenda projection, FTS resolve — plus their direct callers. Recursive CTEs hidden behind these helpers keep their `AND is_conflict = 0` in SQL; the newtype prevents callers from accidentally feeding raw IDs into a path that assumes active. No wire-format change (`#[serde(transparent)]`). Behaviour change: nil. Tests: existing suite must keep passing; add a small unit test that `verify_active` rejects a known conflict-copy ULID.
+2. **M2 (M, ~4–6h)** — Convert backlink + tag-inheritance + property-resolution paths. This is the largest module-cluster by SQL site count. **Decide the `BlockTreeNode` mixing policy at the start of M2** before writing any code — pick one of: (a) split the struct into `ActiveBlockTreeNode` / `RawBlockTreeNode` (clean, more types); (b) keep mixed, type the children vector but leave the node's own `id` raw with a runtime gate at the few access points that care (less type churn, slightly less safety). Document the choice in the M2 commit message.
+3. **M3 (S–M, ~3–4h)** — Convert cascade/move/delete paths + materializer handlers. Remove the last raw-`BlockId` SQL sites that should have been `ActiveBlockId`. Update AGENTS.md invariant #9 to reference the newtype instead of the prose rule. Remove this row from REVIEW-LATER.
+
+**Per-milestone exit criteria:**
+
+- All `cargo nextest run` + `npx vitest run` pass; existing E2E specs pass.
+- No new `unsafe_code` or `biome-ignore`.
+- `specta` bindings regenerated; `ts_bindings_up_to_date` test passes.
+- Number of `is_conflict = 0` SQL sites strictly decreases at each milestone (sites that get hidden behind `ActiveBlockId`-returning helpers no longer count) — track in the commit message.
+
+**Decision:** **Scheduled** — owner-prioritized, planned across the 3 milestones above. Each milestone is one focused session and one focused commit; revert granularity is per-milestone. Land M1 first as a thin slice to validate the newtype shape against `specta` + sync round-trip before committing to M2's scope.
 
 ### MAINT-114 — Consolidation audit of `.github/workflows/`
 
