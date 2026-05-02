@@ -25,6 +25,7 @@ import { type BlockResolvers, useBlockResolvers } from '../hooks/useBlockResolve
 import { useBlockSwipeActions } from '../hooks/useBlockSwipeActions'
 import { useBlockTouchLongPress } from '../hooks/useBlockTouchLongPress'
 import { usePropertyDefForEdit } from '../hooks/usePropertyDefForEdit'
+import { INTERNAL_PROPERTY_KEYS } from '../lib/block-utils'
 import { cn } from '../lib/utils'
 import { AttachmentList } from './AttachmentList'
 import { BlockContextMenu } from './BlockContextMenu'
@@ -269,11 +270,7 @@ function SortableBlockInner({
   )
 
   const filteredProperties = useMemo(
-    () =>
-      (properties ?? []).filter(
-        (p) =>
-          !['repeat', 'created_at', 'completed_at', 'repeat-seq', 'repeat-origin'].includes(p.key),
-      ),
+    () => (properties ?? []).filter((p) => !INTERNAL_PROPERTY_KEYS.has(p.key)),
     [properties],
   )
 

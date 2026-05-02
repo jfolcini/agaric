@@ -422,7 +422,7 @@ export function useBlockKeyboardHandlers({
     discardDraft(focusedBlockId)
     const changed = rovingEditorRef.current.unmount()
     if (changed !== null) {
-      toast('Changes discarded', { duration: 2000 })
+      toast(t('blockTree.changesDiscarded'), { duration: 2000 })
     }
     // If the block was just created and the user made no edits (changed === null),
     // delete the empty block instead of leaving it around.
@@ -438,7 +438,7 @@ export function useBlockKeyboardHandlers({
       })
     }
     setFocused(null)
-  }, [focusedBlockId, setFocused, justCreatedBlockIds, remove, discardDraft])
+  }, [focusedBlockId, setFocused, justCreatedBlockIds, remove, discardDraft, t])
 
   return {
     handleFocusPrev,

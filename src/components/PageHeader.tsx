@@ -7,7 +7,7 @@
 
 import { ArrowLeft, Star } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
@@ -72,6 +72,19 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const navigateToNamespace = useCallback(() => {
     useNavigationStore.getState().setView('pages')
   }, [])
+
+  const breadcrumbItems = useMemo<BreadcrumbCrumb[]>(() => {
+    if (!title.includes('/')) return []
+    const segments = title.split('/')
+    return segments.map((segment, i) => {
+      const isLast = i === segments.length - 1
+      return {
+        id: `${i}-${segment}`,
+        label: segment,
+        ...(isLast ? {} : { onSelect: () => navigateToNamespace() }),
+      }
+    })
+  }, [title, navigateToNamespace])
 
   // --- Title editing ---
   const titleRef = useRef<HTMLDivElement>(null)
@@ -522,25 +535,13 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               shared `Breadcrumb` primitive — chevron separators, no
               `touch-target` per-crumb (the primitive handles 44 px hit-area
               on touch via `[@media(pointer:coarse)]:py-2`). */}
-          {title.includes('/') &&
-            (() => {
-              const segments = title.split('/')
-              const items: BreadcrumbCrumb[] = segments.map((segment, i) => {
-                const isLast = i === segments.length - 1
-                return {
-                  id: `${i}-${segment}`,
-                  label: segment,
-                  ...(isLast ? {} : { onSelect: () => navigateToNamespace() }),
-                }
-              })
-              return (
-                <Breadcrumb
-                  items={items}
-                  ariaLabel={t('pageHeader.breadcrumbLabel')}
-                  className="mt-1"
-                />
-              )
-            })()}
+          {breadcrumbItems.length > 0 && (
+            <Breadcrumb
+              items={breadcrumbItems}
+              ariaLabel={t('pageHeader.breadcrumbLabel')}
+              className="mt-1"
+            />
+          )}
 
           {/* Aliases */}
           <PageAliasSection

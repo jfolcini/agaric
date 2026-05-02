@@ -6,10 +6,11 @@
  * - DONE checkbox syntax detection (`- [x] ` and `- [X] `)
  * - No match returns original content with null state
  * - Partial/malformed checkbox patterns are not matched
+ * - INTERNAL_PROPERTY_KEYS membership (MAINT-187)
  */
 
 import { describe, expect, it } from 'vitest'
-import { processCheckboxSyntax } from '../block-utils'
+import { INTERNAL_PROPERTY_KEYS, processCheckboxSyntax } from '../block-utils'
 
 describe('processCheckboxSyntax', () => {
   it('detects TODO checkbox and strips prefix', () => {
@@ -59,5 +60,22 @@ describe('processCheckboxSyntax', () => {
     const result = processCheckboxSyntax('- [x]   extra spaces')
     // '- [x] ' is 6 chars, so content starts at index 6
     expect(result).toEqual({ cleanContent: '  extra spaces', todoState: 'DONE' })
+  })
+})
+
+describe('INTERNAL_PROPERTY_KEYS', () => {
+  it('contains exactly the 5 expected keys', () => {
+    expect(INTERNAL_PROPERTY_KEYS.size).toBe(5)
+    expect([...INTERNAL_PROPERTY_KEYS].sort()).toEqual(
+      ['repeat', 'created_at', 'completed_at', 'repeat-seq', 'repeat-origin'].sort(),
+    )
+  })
+
+  it('returns true for an internal key (`repeat`)', () => {
+    expect(INTERNAL_PROPERTY_KEYS.has('repeat')).toBe(true)
+  })
+
+  it('returns false for `todo_state` (lives in NON_DELETABLE_PROPERTIES, not here)', () => {
+    expect(INTERNAL_PROPERTY_KEYS.has('todo_state')).toBe(false)
   })
 })

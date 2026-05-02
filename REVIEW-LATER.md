@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 602 — Batch BACKEND-CLEANUP-1 closed: L-56, L-57, L-58, L-59, L-60)
+> **Last updated:** 2026-05-02 (Session 603 — Batch MAINT-FIXUPS-1 closed: MAINT-182, MAINT-186, MAINT-187, MAINT-188, MAINT-191)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-161 open items in the summary table; 208 detail entries (FE-* sub-tables don't appear in the summary).
+156 open items in the summary table; 203 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -43,16 +43,11 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-178 | MAINT | Frontend — `BootGate` error screen has only Retry; for unrecoverable failures (corrupted DB, permission denied, missing migration) the user is stuck. Add a diagnostics escape hatch (show `error.cause` chain, copy logs, launch bug-report) | S | — |
 | MAINT-180 | MAINT | Frontend — `SpaceManageDialog` — each `SpaceRowEditor` mount fires emptiness-probe + journal-template `listBlocks` IPCs with no dedup; reopening the dialog re-fetches the same data per row | S | — |
 | MAINT-181 | MAINT | Frontend — `PropertyRowEditor.handleOpenRefPicker` opens the picker even when `listBlocks` rejects; user sees an empty picker with no failure indicator. Move `setRefPickerOpen(true)` into `.then()` | S | — |
-| MAINT-182 | MAINT | Frontend i18n leak — `useBlockKeyboardHandlers.ts:425` toasts hardcoded English `'Changes discarded'`; only such occurrence in `src/hooks/` | S | — |
 | MAINT-183 | MAINT | Frontend — `markdown-serialize.ts` header claims "zero external dependencies" but file imports `sonner`, `logger`, `i18n`. Either rewrite the header or move the toast/i18n side effect to a wrapper at the call site | S | — |
 | MAINT-184 | MAINT | Frontend — `block-link-picker.ts` and `block-ref-picker.ts` each duplicate ~70% of resolve-and-insert logic between their InputRule handler and their `resolve*FromSelection` command. Extract a shared helper | S | — |
 | MAINT-185 | MAINT | Frontend — `use-block-keyboard.ts:275-335` `handleKeyDown` callback has 16 deps; depends on parent-callback memoization. Switch to the refs-bag pattern already used in `use-roving-editor.ts:258-289` for stable listener identity | S | — |
-| MAINT-186 | MAINT | Frontend — `SuggestionList.tsx:155-159` meets the 44 px touch target via the `touch-target` utility class but not via the explicit `min-h-[44px]` documented in `UX.md` "Touch Target Sizing" line 260; either make explicit or update the doc to reference the utility | S | — |
-| MAINT-187 | MAINT | Frontend — hardcoded internal-property keys list `['repeat','created_at','completed_at','repeat-seq','repeat-origin']` duplicated across `SortableBlock.tsx:271-278` and elsewhere; promote to `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts` | S | — |
-| MAINT-188 | MAINT | Frontend — `PageHeader.tsx:524-542` rebuilds breadcrumb segments in an inline IIFE on every render; wrap in `useMemo` keyed on `title` | S | — |
 | MAINT-189 | MAINT | Frontend — `PropertyValuePicker.tsx:42-49` calls `listPropertyKeys()` once per component mount with no shared cache; multiple instances on the same view re-fetch. Add a `usePropertyKeysCache` hook | S | — |
 | MAINT-190 | MAINT | Frontend — `FilterPillRow.tsx:104-105` uses `key={index}` with a `biome-ignore` because `getFilterKey()` can collide; make the key collision-free instead of relying on the workaround | S | — |
-| MAINT-191 | MAINT | Frontend — `PairingDialog.tsx:147-167` cleanup correctly cancels the pairing session, but the comment doesn't make clear that the IPC payload itself has already crossed the bridge. One-line clarification | S | — |
 | MAINT-192 | MAINT | Documentation — UX.md / AGENTS.md additions to reduce false-positive churn on future reviews: (a) UX.md Common-Pitfall "`setState` after unmount in React 18+ is no longer a defect"; (b) UX.md Lesson-Learned "Reading store state inside callbacks via `useStore.getState()` is intentional"; (c) AGENTS.md mandatory-pattern: picker debouncing convention; (d) AGENTS.md reference `INTERNAL_PROPERTY_KEYS` (see MAINT-187) | S | — |
 | MAINT-193 | MAINT | zizmor baseline triage — 53 GitHub Actions findings suppressed by file:line in `.github/zizmor.yml` when the `zizmor` pre-commit hook was first wired in. Mix of policy-level (`unpinned-uses` × 35: tags vs SHAs) and real fixes (`template-injection` × 6 in `release-tag.yml` — pass `inputs.version` via `env:` instead of `${{ }}` interpolation; `excessive-permissions` × 1 in `release.yml`; `cache-poisoning` × 11; `artipacked` × 7). Triage off the baseline as fixes land. | M | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
@@ -567,15 +562,6 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Impact:** Low — minor UX cleanup.
 - **Status:** Open.
 
-### MAINT-182 — i18n leak: hardcoded English `'Changes discarded'` toast
-- **Domain:** Frontend (i18n)
-- **Location:** `src/hooks/useBlockKeyboardHandlers.ts:425`
-- **What:** `toast('Changes discarded', { duration: 2000 })` — only hardcoded English string in `src/hooks/`. Per `UX.md` Common Pitfall #16 + AGENTS.md mandatory-pattern, all user-visible strings go through `t()`.
-- **Cost:** Trivial — replace with `toast(t('blockTree.changesDiscarded'), { duration: 2000 })` and add the i18n key to `src/lib/i18n/`.
-- **Risk:** Low.
-- **Impact:** Low — i18n consistency.
-- **Status:** Open.
-
 ### MAINT-183 — `markdown-serialize.ts` header claims zero-dep but file imports `sonner` / `logger` / `i18n`
 - **Domain:** Frontend (editor / serializer)
 - **Location:** `src/editor/markdown-serialize.ts:1-15`
@@ -603,33 +589,6 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Impact:** Low — most parents already memoize, so the bug rarely surfaces; this is mostly future-proofing.
 - **Status:** Open.
 
-### MAINT-186 — `SuggestionList` 44 px touch target satisfied by utility class, not the documented `min-h-[44px]`
-- **Domain:** Frontend (editor / accessibility)
-- **Location:** `src/editor/SuggestionList.tsx:155-159`
-- **What:** Item className has `[@media(pointer:coarse)]:py-3 touch-target` — the `touch-target` utility (defined in `src/index.css`) provides `min-height: 44px` on coarse pointer. `UX.md` "Touch Target Sizing" line 260 documents the spec as `py-3 min-h-[44px]`. The spec is met but the doc and code drift.
-- **Cost:** Trivial — either add the explicit `[@media(pointer:coarse)]:min-h-[44px]` to the className OR update `UX.md` to mention the `touch-target` utility as the canonical source.
-- **Risk:** Low.
-- **Impact:** Low — doc/code parity, no behaviour change.
-- **Status:** Open.
-
-### MAINT-187 — Hardcoded internal-property keys list (single site, but no shared constant)
-- **Domain:** Frontend (block properties)
-- **Location:** Single hardcoded site at `src/components/SortableBlock.tsx:271-278` (`['repeat', 'created_at', 'completed_at', 'repeat-seq', 'repeat-origin']`).
-- **What:** The list of "internal" property keys filtered out of UI display lives only at this site today. Adding a new internal key (e.g. `updated_at`) means future filter sites would need to either find this list or duplicate it.
-- **Cost:** Trivial — promote to `INTERNAL_PROPERTY_KEYS: ReadonlySet<string>` in `src/lib/block-utils.ts` so future filter sites can import rather than duplicate. Reference from AGENTS.md (covered by MAINT-192). Note: a related but distinct `NON_DELETABLE_PROPERTIES` Set exists at `src/lib/property-save-utils.ts:21-33` (backend deletion guard, mirrors `is_builtin_property_key` in `src-tauri/src/op.rs`); keep separate — its 11 members include the 5 above plus `todo_state`, `priority`, `due_date`, `scheduled_date`, `repeat-until`, `repeat-count`.
-- **Risk:** Low.
-- **Impact:** Low — single source of truth, pre-empts duplication.
-- **Status:** Open.
-
-### MAINT-188 — `PageHeader` rebuilds breadcrumb segments in inline IIFE on every render
-- **Domain:** Frontend (page header)
-- **Location:** `src/components/PageHeader.tsx:524-542`
-- **What:** `title.split('/')` and the `.map` to `BreadcrumbCrumb[]` run inside an IIFE inside JSX, so they execute on every render of `PageHeader` (which re-renders on space switches, tab changes, undo/redo, etc.). Cheap per-call, but it's also redundant.
-- **Cost:** Trivial — `useMemo(() => buildSegments(title), [title])`.
-- **Risk:** Low.
-- **Impact:** Low — micro-perf + readability.
-- **Status:** Open.
-
 ### MAINT-189 — `listPropertyKeys()` fetched per-mount in 3 components with no shared cache
 - **Domain:** Frontend (filter pickers + backlink panels)
 - **Location:** `src/components/PropertyValuePicker.tsx:42-49` ; `src/components/UnlinkedReferences.tsx:147-148` ; `src/components/LinkedReferences.tsx:155-156`
@@ -646,15 +605,6 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Cost:** S — could be removed by stamping a per-add monotonic `id` on each filter at add-time and using that as the React key, but the current biome-ignore is defensible. Low priority.
 - **Risk:** Low.
 - **Impact:** Low — pre-empts future bugs around filter reorder / animation only.
-- **Status:** Open.
-
-### MAINT-191 — `PairingDialog` cleanup comment doesn't clarify which side cancellation applies to
-- **Domain:** Frontend (pairing)
-- **Location:** `src/components/PairingDialog.tsx:147-167`
-- **What:** Cleanup correctly cancels the pairing session via `executeCancelPairingCleanup()`. The comment "Cancel any in-progress pairing when the dialog closes or unmounts" is correct but doesn't make clear that the in-flight IPC payload itself has already crossed the bridge — only the *server-side* session state is cancelled.
-- **Cost:** Trivial — one-line comment expansion.
-- **Risk:** Low.
-- **Impact:** Low — saves the next reader a context-switch.
 - **Status:** Open.
 
 ### MAINT-192 — UX.md / AGENTS.md additions to reduce false-positive churn on future frontend reviews

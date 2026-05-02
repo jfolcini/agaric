@@ -251,6 +251,25 @@ describe('SuggestionList', () => {
     expect(results).toHaveNoViolations()
   })
 
+  // -- MAINT-186: Touch target spec matches UX.md "Touch Target Sizing" --------
+
+  it('list items declare both [@media(pointer:coarse)]:min-h-[44px] and touch-target classes (MAINT-186)', async () => {
+    const command = vi.fn()
+    const { container } = render(<SuggestionList items={sampleItems} command={command} />)
+
+    // Every option carries the documented coarse-pointer 44px floor verbatim
+    // *and* keeps the `touch-target` utility for any other styling it provides.
+    const options = screen.getAllByRole('option')
+    expect(options.length).toBeGreaterThan(0)
+    for (const option of options) {
+      expect(option.className).toContain('[@media(pointer:coarse)]:min-h-[44px]')
+      expect(option.className).toContain('touch-target')
+    }
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
   it('scrolls the selected item into view on keyboard navigation', () => {
     const ref = createRef<SuggestionListRef>()
     const command = vi.fn()
