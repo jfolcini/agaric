@@ -19,6 +19,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { FlatBlock } from '../stores/page-blocks'
 import { usePageBlockStore } from '../stores/page-blocks'
@@ -69,11 +70,20 @@ export function PageOutline() {
 
   return (
     <Sheet>
-      <SheetTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label={t('pageHeader.openOutline')}>
-          <List className="h-4 w-4" />
-        </Button>
-      </SheetTrigger>
+      {/* UX-361: pair the icon-only outline trigger with a Tooltip so the
+          aria-label is also discoverable by sighted mouse users on hover.
+          Tooltip wraps SheetTrigger; both use Radix `Slot` (asChild) so the
+          hover and click handlers compose onto the same Button. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <SheetTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label={t('pageHeader.openOutline')}>
+              <List className="h-4 w-4" />
+            </Button>
+          </SheetTrigger>
+        </TooltipTrigger>
+        <TooltipContent>{t('pageHeader.openOutline')}</TooltipContent>
+      </Tooltip>
       <SheetContent side="right">
         <SheetHeader>
           <SheetTitle>{t('outline.title')}</SheetTitle>

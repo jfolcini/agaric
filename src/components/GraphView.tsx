@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useGraphSimulation } from '@/hooks/useGraphSimulation'
 import { applyGraphFilters, type GraphFilter } from '@/lib/graph-filters'
+import { getShortcutKeys } from '@/lib/keyboard-config'
 import { listTagsByPrefix } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
@@ -56,6 +57,16 @@ function getCacheKey(tagIds: readonly string[]): string {
 /** @internal — exported for test isolation only. */
 export function clearGraphCache(): void {
   graphCacheMap.clear()
+}
+
+/**
+ * UX-356: append the current keyboard shortcut binding (if any) to a label
+ * so icon-only buttons surface their hotkey via the accessible name. Returns
+ * the bare label when no binding is configured to avoid a stray "()".
+ */
+function withShortcut(label: string, shortcutId: string): string {
+  const keys = getShortcutKeys(shortcutId)
+  return keys ? `${label} (${keys})` : label
 }
 
 export function GraphView(): React.ReactElement {
@@ -227,13 +238,28 @@ export function GraphView(): React.ReactElement {
         data-testid="graph-svg"
       />
       <div className="absolute bottom-3 right-3 flex flex-col gap-1">
-        <Button variant="outline" size="icon" onClick={zoomIn} aria-label={t('graph.zoomIn')}>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={zoomIn}
+          aria-label={withShortcut(t('graph.zoomIn'), 'graphZoomIn')}
+        >
           <Plus className="h-4 w-4" />
         </Button>
-        <Button variant="outline" size="icon" onClick={zoomOut} aria-label={t('graph.zoomOut')}>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={zoomOut}
+          aria-label={withShortcut(t('graph.zoomOut'), 'graphZoomOut')}
+        >
           <Minus className="h-4 w-4" />
         </Button>
-        <Button variant="outline" size="icon" onClick={zoomReset} aria-label={t('graph.zoomReset')}>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={zoomReset}
+          aria-label={withShortcut(t('graph.zoomReset'), 'graphZoomReset')}
+        >
           <Maximize2 className="h-4 w-4" />
         </Button>
       </div>

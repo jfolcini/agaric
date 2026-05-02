@@ -130,6 +130,7 @@ export const conflicts: Record<string, string> = {
   'trash.restoreTooltip': 'Restore this block from trash',
   'trash.restoreButton': 'Restore',
   'trash.purgeButton': 'Purge',
+  'trash.purgeTooltip': 'Permanently delete (cannot be undone)',
   'trash.loadingMessage': 'Loading...',
   'trash.loadMoreButton': 'Load more',
   'trash.permanentlyDeleteTitle': 'Permanently delete?',

@@ -58,6 +58,19 @@ vi.mock('../ui/separator', () => ({
   ),
 }))
 
+// Mock Tooltip primitives — Radix portals tooltip content lazily; render
+// the label inline so tests can assert on tooltip text (UX-301).
+vi.mock('../ui/tooltip', () => ({
+  TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children: React.ReactNode; asChild?: boolean }) => (
+    <>{children}</>
+  ),
+  TooltipContent: ({ children }: { children: React.ReactNode }) => (
+    <span data-testid="tooltip-content">{children}</span>
+  ),
+}))
+
 // Mock Popover components — render children inline for testing
 let popoverIdx = 0
 vi.mock('../ui/popover', () => ({
@@ -1087,6 +1100,55 @@ describe('FormattingToolbar', () => {
       fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') }))
 
       expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+
+  // ── UX-301: Keyboard shortcuts surfaced in tooltips ────────────────────
+
+  describe('keyboard shortcut tooltips', () => {
+    /** Collect rendered tooltip strings (Radix Tooltip content is mocked above). */
+    function tooltipTexts(): string[] {
+      return screen.getAllByTestId('tooltip-content').map((el) => el.textContent ?? '')
+    }
+
+    it("Bold button's tooltip contains the bold keyboard shortcut binding", () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const boldTooltip = tooltipTexts().find((text) => /^Bold\b/.test(text))
+      expect(boldTooltip).toBeDefined()
+      // Existing i18n string already encodes Ctrl+B for the StarterKit default.
+      expect(boldTooltip).toMatch(/Ctrl\+B|⌘B/i)
+    })
+
+    it("Code button's tooltip appends the inlineCode keyboard binding", () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      // `toolbar.code` resolves to "Inline code" so the tooltip starts
+      // with `Inline code (` — anchoring lets us disambiguate from
+      // "Code block language (...)" which uses a different label key.
+      const codeTooltip = tooltipTexts().find((text) => /^Inline code \(/.test(text))
+      expect(codeTooltip).toBeDefined()
+      // Catalog default for `inlineCode` is "Ctrl + E" (with spaces).
+      expect(codeTooltip).toMatch(/Ctrl\s*\+\s*E\)/i)
+    })
+
+    it("External link button's tooltip appends the linkPopover keyboard binding", () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const linkTooltip = tooltipTexts().find((text) => /^External link\b/.test(text))
+      expect(linkTooltip).toBeDefined()
+      // Catalog default for `linkPopover` is "Ctrl + K".
+      expect(linkTooltip).toMatch(/Ctrl\s*\+\s*K\)/i)
+    })
+
+    it('does not render stray empty parens for buttons without a shortcut id', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      // No tooltip should end with empty `()` — that would mean we appended
+      // an empty binding string from `getShortcutKeys`.
+      for (const text of tooltipTexts()) {
+        expect(text).not.toMatch(/\(\s*\)\s*$/)
+      }
+      // Heading-level dropdown trigger has no shortcut id; verify it still
+      // renders its plain `t('toolbar.headingTip')` label intact.
+      const headingTooltip = tooltipTexts().find((text) => /^Heading\b/.test(text))
+      expect(headingTooltip).toBe(t('toolbar.headingTip'))
     })
   })
 })

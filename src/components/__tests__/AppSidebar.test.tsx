@@ -8,7 +8,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -141,5 +141,32 @@ describe('AppSidebar', () => {
     const { container } = renderSidebar()
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // UX-396 — the shortcuts button must surface the current keyboard
+  // binding in its tooltip so the affordance is discoverable without
+  // first opening the cheatsheet. The default binding is `?`.
+  it('shows the keyboard binding in the shortcuts button tooltip', async () => {
+    const user = userEvent.setup()
+    // Render with the sidebar collapsed so the SidebarMenuButton
+    // tooltip is not `hidden` (it is suppressed in the expanded state).
+    render(
+      <SidebarProvider defaultOpen={false}>
+        <AppSidebar {...defaultProps()} />
+      </SidebarProvider>,
+    )
+
+    const shortcutsButton = screen
+      .getByText(t('sidebar.shortcuts'))
+      .closest('[data-sidebar="menu-button"]') as HTMLElement
+    expect(shortcutsButton).not.toBeNull()
+
+    await user.hover(shortcutsButton)
+
+    await waitFor(() => {
+      const tooltip = screen.getByRole('tooltip')
+      expect(tooltip.textContent).toMatch(/\?/)
+      expect(tooltip.textContent).toContain(t('sidebar.shortcuts'))
+    })
   })
 })

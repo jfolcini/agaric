@@ -9,7 +9,7 @@
 export const toolbar: Record<string, string> = {
   'toolbar.bold': 'Bold',
   'toolbar.italic': 'Italic',
-  'toolbar.code': 'Code',
+  'toolbar.code': 'Inline code',
   'toolbar.strikethrough': 'Strikethrough',
   'toolbar.highlight': 'Highlight',
   'toolbar.link': 'External link',

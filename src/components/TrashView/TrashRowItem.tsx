@@ -150,16 +150,28 @@ export function TrashRowItem({
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
-        <Button
-          variant="destructive"
-          size="sm"
-          className="trash-purge-btn [@media(pointer:coarse)]:h-10"
-          data-testid="trash-purge-btn"
-          onClick={() => onRequestPurge(block.id)}
-          tabIndex={-1}
-        >
-          {t('trash.purgeButton')}
-        </Button>
+        {/* UX-342 — Tooltip on the destructive Purge button so users
+            understand "Purge" means permanent deletion. Mirrors the
+            Restore button's Tooltip structure above. */}
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="trash-purge-btn [@media(pointer:coarse)]:h-10"
+                data-testid="trash-purge-btn"
+                onClick={() => onRequestPurge(block.id)}
+                tabIndex={-1}
+              >
+                {t('trash.purgeButton')}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('trash.purgeTooltip')}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
     </div>
   )

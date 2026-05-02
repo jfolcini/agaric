@@ -495,9 +495,85 @@ describe('GraphView', () => {
       expect(screen.getByTestId('graph-view')).toBeInTheDocument()
     })
 
-    expect(screen.getByRole('button', { name: 'Zoom in' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Zoom out' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Fit to view' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Zoom in/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Zoom out/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Fit to view/ })).toBeInTheDocument()
+  })
+
+  // UX-356: zoom buttons must surface their keyboard shortcut binding via
+  // the accessible name so users know the hotkey without opening settings.
+  describe('zoom button shortcut bindings (UX-356)', () => {
+    const pagesResponse = {
+      items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+      next_cursor: null,
+      has_more: false,
+    }
+
+    function mockGraphData() {
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
+        return Promise.resolve(null)
+      })
+    }
+
+    it('zoom-in button accessible name contains the shortcut binding', async () => {
+      mockGraphData()
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      const button = screen.getByRole('button', { name: /Zoom in/ })
+      expect(button).toHaveAccessibleName(`${t('graph.zoomIn')} (+ / =)`)
+    })
+
+    it('zoom-out button accessible name contains the shortcut binding', async () => {
+      mockGraphData()
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      const button = screen.getByRole('button', { name: /Zoom out/ })
+      expect(button).toHaveAccessibleName(`${t('graph.zoomOut')} (-)`)
+    })
+
+    it('reset (fit-to-view) button accessible name contains the shortcut binding', async () => {
+      mockGraphData()
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      const button = screen.getByRole('button', { name: /Fit to view/ })
+      expect(button).toHaveAccessibleName(`${t('graph.zoomReset')} (0)`)
+    })
+
+    it('respects user-customised binding via getShortcutKeys', async () => {
+      localStorage.setItem(
+        'agaric-keyboard-shortcuts',
+        JSON.stringify({ graphZoomIn: 'Ctrl + Shift + Z' }),
+      )
+      try {
+        mockGraphData()
+        render(<GraphView />)
+
+        await waitFor(() => {
+          expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+        })
+
+        const button = screen.getByRole('button', { name: /Zoom in/ })
+        expect(button).toHaveAccessibleName(`${t('graph.zoomIn')} (Ctrl + Shift + Z)`)
+      } finally {
+        localStorage.removeItem('agaric-keyboard-shortcuts')
+      }
+    })
   })
 
   it('SVG has tabindex for keyboard focus', async () => {

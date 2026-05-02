@@ -20,6 +20,7 @@ import { createStore } from 'zustand'
 import type { FlatBlock } from '../../stores/page-blocks'
 import { PageBlockContext, type PageBlockState } from '../../stores/page-blocks'
 import { extractHeadings, PageOutline } from '../PageOutline'
+import { TooltipProvider } from '../ui/tooltip'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
@@ -75,7 +76,11 @@ function createTestStore(blocks: FlatBlock[]): StoreApi<PageBlockState> {
 function renderOutline(blocks: FlatBlock[]) {
   const store = createTestStore(blocks)
   return render(
-    createElement(PageBlockContext.Provider, { value: store }, createElement(PageOutline)),
+    createElement(
+      TooltipProvider,
+      null,
+      createElement(PageBlockContext.Provider, { value: store }, createElement(PageOutline)),
+    ),
   )
 }
 
@@ -223,5 +228,32 @@ describe('PageOutline', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // ── UX-361: trigger tooltip ────────────────────────────────────────────
+
+  describe('UX-361: trigger tooltip', () => {
+    it('shows a tooltip with the localised label when hovering the trigger', async () => {
+      const user = userEvent.setup()
+      renderOutline([makeBlock('b1', 'just text')])
+
+      const trigger = screen.getByRole('button', { name: 'Open outline' })
+      await user.hover(trigger)
+
+      const tooltip = await screen.findByRole('tooltip')
+      expect(tooltip).toHaveTextContent('Open outline')
+    })
+
+    it('does not show the tooltip until the user hovers, and wires Tooltip primitives onto the trigger', () => {
+      // No hover yet → no tooltip role in the document. The trigger Button
+      // itself is composed via Radix `Slot` with the design-system Tooltip
+      // primitive (data-slot="tooltip-trigger"), so we don't reinvent
+      // hover/un-hover behaviour — that's covered by the Tooltip's own tests.
+      renderOutline([makeBlock('b1', 'just text')])
+
+      const trigger = screen.getByRole('button', { name: 'Open outline' })
+      expect(trigger).toHaveAttribute('data-slot', 'tooltip-trigger')
+      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    })
   })
 })

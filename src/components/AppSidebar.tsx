@@ -17,6 +17,7 @@ import { ChevronsLeft, Keyboard, Moon, Plus, RefreshCw, Sun, WifiOff } from 'luc
 import type { ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatRelativeTime } from '../lib/format-relative-time'
+import { getShortcutKeys } from '../lib/keyboard-config'
 import type { SpaceRow } from '../lib/tauri'
 import { cn } from '../lib/utils'
 import type { View } from '../stores/navigation'
@@ -262,10 +263,22 @@ export function AppSidebar({
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <SidebarMenuButton tooltip={t('sidebar.shortcuts')} onClick={onShowShortcuts}>
-              <Keyboard />
-              <span>{t('sidebar.shortcuts')}</span>
-            </SidebarMenuButton>
+            {(() => {
+              // UX-396 — surface the current keyboard binding in the
+              // tooltip so users discover the shortcut without having
+              // to open the cheatsheet first. Falls back to the bare
+              // label when the binding is unset to avoid a stray "()".
+              const shortcutKeys = getShortcutKeys('showShortcuts')
+              const tooltip = shortcutKeys
+                ? `${t('sidebar.shortcuts')} (${shortcutKeys})`
+                : t('sidebar.shortcuts')
+              return (
+                <SidebarMenuButton tooltip={tooltip} onClick={onShowShortcuts}>
+                  <Keyboard />
+                  <span>{t('sidebar.shortcuts')}</span>
+                </SidebarMenuButton>
+              )
+            })()}
           </SidebarMenuItem>
         </SidebarMenu>
         <CollapseButton />
