@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-01 (Session 597)
+> **Last updated:** 2026-05-02 (Frontend code review)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -648,3 +648,538 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** N/A.
 - **Decision:** No action. Filed for awareness only.
 - **Status:** Documented as deliberate.
+
+### FE-H-1 — Cursor pagination violated in `executeAgendaFilters` default branch
+- **Domain:** Frontend / Agenda
+- **Location:** `src/lib/agenda-filters.ts:287-290`
+- **What:** Default branch (no filters) calls three queries with `limit: 500` and hardcoded `cursor: null`, and never paginates. Violates AGENTS invariant #3 ("Cursor-based pagination on ALL list queries").
+- **Why it matters:** A user with more than 500 due/scheduled blocks silently loses items.
+- **Cost:** S–M
+- **Risk:** Low
+- **Impact:** High — silent data loss in the default agenda view at scale.
+- **Recommendation:** Thread cursor pagination through the default branch like the filtered branches do, or document the carve-out explicitly per AGENTS invariant #3 if 500 is genuinely a safe upper bound.
+- **Source:** FE review 2026-05-02 / F014
+- **Status:** Open
+
+### FE-H-2 — `agenda-filters.ts`: hardcoded `limit: 500` repeated in 6 sites
+- **Domain:** Frontend / Agenda
+- **Location:** `src/lib/agenda-filters.ts:79, 99, 128, 156, 232, 290`
+- **What:** A single magic number drives pagination in six call sites; missing one update silently truncates a query. Related to FE-H-1.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Recommendation:** Extract `const AGENDA_QUERY_LIMIT = 500` and reference it everywhere.
+- **Source:** FE review 2026-05-02 / F016
+- **Status:** Open
+
+### FE-H-3 — `useScrollRestore` schedules a `requestAnimationFrame` with no cleanup
+- **Domain:** Frontend / Hooks
+- **Location:** `src/hooks/useScrollRestore.ts:36-47`
+- **What:** RAF callback captures `container`. If the component unmounts before the frame fires, the callback runs and writes `scrollTop` on a detached node.
+- **Cost:** Trivial — capture the RAF id and `cancelAnimationFrame(id)` in the cleanup.
+- **Risk:** Low.
+- **Impact:** Low — defensive fix.
+- **Source:** FE review 2026-05-02 / F043
+- **Status:** Open
+
+### FE-H-4 — `useBlockPropertyIpc` callbacks have no unmount guard
+- **Domain:** Frontend / Hooks
+- **Location:** `src/hooks/useBlockPropertyIpc.ts:57-65`
+- **What:** Three `useCallback` wrappers around IPC functions have no `cancelled` flag. Promise resolution after unmount can fire setState on consumer components.
+- **Cost:** S — adopt the `cancelled`-flag pattern that `useBacklinkResolution` already uses.
+- **Risk:** Low.
+- **Impact:** Medium — prevents React warnings and stale renders during property-drawer churn.
+- **Source:** FE review 2026-05-02 / F028
+- **Status:** Open
+
+### FE-H-5 — `usePropertyDefForEdit` initiates nested IPC without checking stale flag first
+- **Domain:** Frontend / Hooks
+- **Location:** `src/hooks/usePropertyDefForEdit.ts:75-82`
+- **What:** Outer `listPropertyDefs()` then-block kicks off `listBlocks()` without first checking `if (stale) return`. If unmount happens between outer-resolve and inner-call, the nested promise still runs and its own stale check fires too late.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low — race window is narrow.
+- **Recommendation:** Gate the nested call with `if (stale) return` before initiating it.
+- **Source:** FE review 2026-05-02 / F044
+- **Status:** Open
+
+### FE-H-6 — `useDuePanelData` projected-cache mutation not gated by stale flag
+- **Domain:** Frontend / Due panel
+- **Location:** `src/hooks/useDuePanelData.ts:393-467`
+- **What:** Outer `if (!stale)` guards setState calls, but the `projectedCache.set(cacheKey, ...)` mutation itself is unguarded. Rapid date changes (which clear the cache via `invalidationKey`) can race with an in-flight resolve and silently repopulate the cache with stale data.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Medium — silent stale-data display in the projected agenda after fast date changes.
+- **Recommendation:** Move the cache mutation inside the `if (!stale)` block, or add an explicit guard around it.
+- **Source:** FE review 2026-05-02 / F036
+- **Status:** Open
+
+### FE-H-7 — `useCheckboxSyntax`: optimistic update has no rollback on IPC rejection
+- **Domain:** Frontend / Editor
+- **Location:** `src/hooks/useCheckboxSyntax.ts:38-60`
+- **What:** Hook mutates `pageStore` optimistically (lines 58–60) before `setTodoStateCmd()` resolves. On rejection only a toast fires — the UI state stays out of sync with the backend.
+- **Cost:** S — capture prior `todo_state` before the optimistic update; revert on rejection.
+- **Risk:** Low.
+- **Impact:** Medium — user sees the new checkbox state even though the backend never accepted it.
+- **Source:** FE review 2026-05-02 / F037
+- **Status:** Open
+
+### FE-H-8 — `useCheckboxSyntax` silent catch: only `toast.error`, no `logger`
+- **Domain:** Frontend / Editor
+- **Location:** `src/hooks/useCheckboxSyntax.ts:55-60`
+- **What:** `.catch(() => toast.error(...))` violates AGENTS' "no silent catch" rule — production debugging blind spot.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Recommendation:** Add `logger.error('useCheckboxSyntax', 'setTodoState failed', { focusedBlockId, state }, err)` before the toast. Combine with FE-H-7.
+- **Source:** FE review 2026-05-02 / F034
+- **Status:** Open
+
+### FE-H-9 — `useHistoryDiffToggle` silent catch: only `toast.error`, no `logger`
+- **Domain:** Frontend / History
+- **Location:** `src/hooks/useHistoryDiffToggle.ts:33-38`
+- **What:** Same pattern as FE-H-8 — bare `catch { toast.error(...) }` swallows the error.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Recommendation:** Add `logger.warn('useHistoryDiffToggle', 'computeEditDiff failed', undefined, err)`.
+- **Source:** FE review 2026-05-02 / F035
+- **Status:** Open
+
+### FE-H-10 — `CompactionCard` silent catches in `fetchStatus` and `handleCompact`
+- **Domain:** Frontend / Compaction
+- **Location:** `src/components/CompactionCard.tsx:30-36, 50-55`
+- **What:** Both catch handlers show toast but no `logger` call.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low — production debugging blind spot for compaction failures.
+- **Recommendation:** Add `logger.warn('CompactionCard', 'getCompactionStatus failed', undefined, err)` and `logger.error('CompactionCard', 'compaction failed', undefined, err)`.
+- **Source:** FE review 2026-05-02 / F069 + F070
+- **Status:** Open
+
+### FE-H-11 — `PdfViewerDialog` render-task cancel uses bare `catch { }`
+- **Domain:** Frontend / PDF viewer
+- **Location:** `src/components/PdfViewerDialog.tsx:58-62`
+- **What:** Literal `catch {}` (no parameter, no log) violates AGENTS' "no silent catch" rule.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Recommendation:** `catch (err) { logger.warn('PdfViewerDialog', 'render task cancel threw', undefined, err) }`.
+- **Source:** FE review 2026-05-02 / F075
+- **Status:** Open
+
+### FE-H-12 — `PairingDialog.doInit()` promise has no `.catch`
+- **Domain:** Frontend / Pairing
+- **Location:** `src/components/PairingDialog.tsx:153-160`
+- **What:** `doInit().then(...)` has no `.catch`. Rejections become unhandled promise rejections.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Recommendation:** Chain `.catch((err) => logger.warn('PairingDialog', 'init failed', undefined, err))`.
+- **Source:** FE review 2026-05-02 / F074
+- **Status:** Open
+
+### FE-H-13 — Tauri-mock dispatcher uses `console.warn`, bypassing the logger
+- **Domain:** Frontend / Tauri mock
+- **Location:** `src/lib/tauri-mock/handlers.ts:1635-1640`
+- **What:** Bypasses the logger's rate-limiting, stack capture, and IPC bridge to the Rust side. Per AGENTS, `console.warn` is forbidden.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low — only affects dev/Storybook/E2E paths but undermines the "structured logging" guarantee.
+- **Recommendation:** `logger.warn('TauriMock', 'unhandled command', { command: cmd })`.
+- **Source:** FE review 2026-05-02 / F022
+- **Status:** Open
+
+### FE-H-14 — `className` is silently dropped from `Button`, `Spinner`, `Label` (CVA misuse)
+- **Domain:** Frontend / UI primitives (cross-cutting)
+- **Location:** `src/components/ui/button.tsx:59`, `src/components/ui/spinner.tsx:37`, `src/components/ui/label.tsx:38`
+- **What:** All three pass `className` as a CVA variant key — `buttonVariants({ variant, size, className })` — but CVA does not consume `className`. The caller's `className` is silently dropped. Correct pattern is in `badge.tsx:42`: `cn(buttonVariants({ variant, size }), className)`.
+- **Why it matters:** Button is at the top of the design system pyramid; every place that thought it was customizing a button has been silently overridden. Visible regressions cannot be tracked back without scanning every consumer.
+- **Cost:** Trivial — 3 single-line edits.
+- **Risk:** Low — fixes a silent regression; consumers that relied on the broken behavior would expose visual diffs that are themselves bugs.
+- **Impact:** High — restores the entire design system's customization escape hatch.
+- **Recommendation:** Replace each with `className={cn(buttonVariants({ variant, size }), className)}` etc. Consider adding a Biome rule or typed `cn-cva` helper to prevent regression.
+- **Source:** FE review 2026-05-02 / F024
+- **Status:** Open
+
+### FE-H-15 — Sidebar rail drag handler leaks `pointermove`/`pointerup` listeners on unmount-during-drag
+- **Domain:** Frontend / UI primitives
+- **Location:** `src/components/ui/sidebar.tsx:488-548` (registration: 542-543)
+- **What:** `onPointerDown` adds listeners to `document` and only removes them in the `pointerup` handler. If the sidebar component unmounts mid-drag (e.g., a route change), the listeners stay attached to `document` and reference stale state.
+- **Cost:** S — track active drag in a ref, remove listeners in a cleanup effect.
+- **Risk:** Low.
+- **Impact:** Medium — small but real memory leak + stale-state callback risk.
+- **Source:** FE review 2026-05-02 / F025
+- **Status:** Open
+
+### FE-H-16 — `SidebarProvider` `useMemo` deps array missing `setOpenMobile` / `setIsResizing`
+- **Domain:** Frontend / UI primitives
+- **Location:** `src/components/ui/sidebar.tsx:206-231`
+- **What:** Memoized context value object includes `setOpenMobile` (line 213) and `setIsResizing` (line 218) but the dependency array (lines 220–230) omits both. If either setter ever changes identity, consumers receive a stale closure.
+- **Cost:** Trivial — add both to the dependency array.
+- **Risk:** Low.
+- **Impact:** Low — current React guarantees that `useState` setters are stable, so the stale-closure risk is narrow today; included as a defensive correctness fix.
+- **Source:** FE review 2026-05-02 / F026
+- **Status:** Open
+
+### FE-H-17 — `BlockPropertyDrawer` / `PagePropertyTable`: `Promise.all` partial-failure handling
+- **Domain:** Frontend / Properties
+- **Location:** `src/components/BlockPropertyDrawer.tsx:79-90`, `src/components/PagePropertyTable.tsx:48-60`
+- **What:** Both use `Promise.all([getProperties(...), listPropertyDefs()])` then guard with `Array.isArray(props) ? props : []`. The defensive guard signals real uncertainty about response shape, and a single rejection rejects the whole load (catch logs but the user just sees an empty drawer with no specific feedback).
+- **Cost:** S.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Recommendation:** Use `Promise.allSettled` and report each failure individually via `reportIpcError`, or land the response-shape guarantee in the IPC layer so the defensive guards can come out.
+- **Source:** FE review 2026-05-02 / F049
+- **Status:** Open
+
+### FE-H-18 — Slash-command auto-execute timer doesn't guard against destroyed editor view
+- **Domain:** Frontend / Editor
+- **Location:** `src/editor/extensions/slash-command.ts:93-101`
+- **What:** A 200ms `setTimeout` calls `command(item)` later. If the editor view is destroyed between schedule and fire, the call runs on a destroyed view. AGENTS' Floating UI lifecycle logging rules require guarding callback invocations on stale state and logging the desync.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low — race window is narrow but visible in tests / fast keyboard navigation.
+- **Recommendation:** `if (editor.view.isDestroyed) { logger.warn('slash-command', 'skipping auto-execute — editor view destroyed'); return }` plus a try/catch around `command(item)`.
+- **Source:** FE review 2026-05-02 / F010
+- **Status:** Open
+
+### FE-H-19 — `DuePanel`: `flatItems` array recomputed every render, breaks `useListKeyboardNavigation` stability
+- **Domain:** Frontend / Performance / Due panel
+- **Location:** `src/components/DuePanel.tsx:149`
+- **What:** `const flatItems = [...grouped.flatMap((g) => g.items), ...uniqueProjected.map((e) => e.block)]` runs every render. The reference is read in keyboard-nav and effect deps, which makes the effect re-run on every parent render even when membership hasn't changed.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Medium — re-renders + effect runs on a hot path (the agenda surface).
+- **Recommendation:** `useMemo(() => [...], [grouped, uniqueProjected])`.
+- **Source:** FE review 2026-05-02 / F059
+- **Status:** Open
+
+### FE-H-20 — `SearchPanel` and `TagFilterPanel`: parent-IDs array recomputed every render → redundant `batchResolve`
+- **Domain:** Frontend / Performance / Search
+- **Location:** `src/components/SearchPanel.tsx:136-154`, `src/components/TagFilterPanel.tsx:135-150`
+- **What:** Both compute `const parentIds = results.map((b) => b.page_id).filter(...)` on every render and use it as an effect dep, firing `batchResolve` more often than needed.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Medium — extra IPC calls on every search keystroke / filter change.
+- **Recommendation:** `useMemo(() => results.map(...).filter(...), [results])`.
+- **Source:** FE review 2026-05-02 / F060 + F061
+- **Status:** Open
+
+### FE-H-21 — `Resolve` store `pendingVersionBump` debouncing relies on closure variable across `set()` calls
+- **Domain:** Frontend / Resolve store
+- **Location:** `src/stores/resolve.ts:118-130, 220-235`
+- **What:** A module-level `let pendingVersionBump = false` is checked + flipped + scheduled-via-microtask. Multiple rapid `set()` calls (sync batch updates, undo bursts) can interleave: the microtask runs after only some of the pending mutations have been committed, leading to renders that observe a fresh `version` while the cache is mid-update.
+- **Cost:** S.
+- **Risk:** Medium — the debouncing is load-bearing for re-render economics; changing it incorrectly causes subscriber storms.
+- **Impact:** Medium — subtle but real cache/version desync window.
+- **Recommendation:** Bump `version` inside the same `set()` callback that mutates the cache, or move the flag into the Zustand state itself so it's serialized with the rest of the state.
+- **Source:** FE review 2026-05-02 / F001
+- **Status:** Open
+
+### FE-H-22 — Resolve / page-blocks empty-string `spaceId` fallback is documented but ambiguous
+- **Domain:** Frontend / Spaces
+- **Location:** `src/stores/resolve.ts:140-150`, `src/stores/page-blocks.ts:170-180`
+- **What:** `useSpaceStore.getState().currentSpaceId ?? ''` is passed to `listBlocks` to force a no-match SQL filter during pre-bootstrap. The pattern relies on the backend treating `''` as no-match — there is no programmatic guarantee. A backend change that interprets `''` as wildcard would silently leak data across the no-bootstrap window. **Especially worth tightening because FEAT-3p9 is in flight and the cross-space barrier is the most important invariant.**
+- **Cost:** S — gate the call behind `if (!currentSpaceId) return` and skip the fetch, OR use a typed sentinel that the backend asserts on.
+- **Risk:** Low.
+- **Impact:** High — defensive correctness for the cross-space invariant.
+- **Source:** FE review 2026-05-02 / F002
+- **Status:** Open
+
+### FE-M-1 — `useDuePanelData`: bare catch blocks in overdue/upcoming fetches drop logger
+- **Domain:** Frontend / Due panel
+- **Location:** `src/hooks/useDuePanelData.ts:200-302` (sites at lines 229, 293)
+- **What:** Two of four catch blocks in this hook don't log; main + projected do. Inconsistent.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Recommendation:** Add `logger.warn` to both, matching the surrounding pattern.
+- **Source:** FE review 2026-05-02 / F038
+- **Status:** Open
+
+### FE-M-2 — `useDuePanelData`: nested `resolveAndMergeTitles().catch` runs after unmount
+- **Domain:** Frontend / Due panel
+- **Location:** `src/hooks/useDuePanelData.ts:437-453`
+- **What:** Inner `.catch` should `if (stale) return` before logging/toasting.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F039
+- **Status:** Open
+
+### FE-M-3 — `useBlockTreeEventListeners` deps include unstable `rovingEditor.editor`
+- **Domain:** Frontend / Hooks
+- **Location:** `src/hooks/useBlockTreeEventListeners.ts:131-137`
+- **What:** Effect re-registers listeners every render. `rovingEditorRef` already exists (lines 62–63) and is used by other effects in the same hook (140–161); use it here too.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Medium — listener thrash on a hot path.
+- **Source:** FE review 2026-05-02 / F040
+- **Status:** Open
+
+### FE-M-4 — `useHistoryDiffToggle`: `diffCache` in deps causes callback churn
+- **Domain:** Frontend / History
+- **Location:** `src/hooks/useHistoryDiffToggle.ts:49-52`
+- **What:** `diffCache` is only read; including it in the callback's deps recreates the callback on every cache mutation.
+- **Cost:** Trivial — drop `diffCache` from the deps array.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F041
+- **Status:** Open
+
+### FE-M-5 — `useListMultiSelect.toggleSelection`: `items` in deps causes hot churn
+- **Domain:** Frontend / Hooks
+- **Location:** `src/hooks/useListMultiSelect.ts:59-74`
+- **What:** Memoized children that consume `toggleSelection` re-render whenever `items` changes (which can be every paginated load).
+- **Cost:** Trivial — read `items` via a ref like the hook already does for `selected` (lines 51–52).
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Source:** FE review 2026-05-02 / F045
+- **Status:** Open
+
+### FE-M-6 — `useBlockSlashCommands` attach handler: incomplete error handling around `<input>.click()`
+- **Domain:** Frontend / Editor
+- **Location:** `src/hooks/useBlockSlashCommands.ts:368-396`
+- **What:** Three small gaps: `input.click()` (line 395) not wrapped, the `onchange` callback's exit-without-file path is silent, and the `addAttachment` chain has no `void` marker.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Recommendation:** try/catch around `input.click()`; `void` the fire-and-forget `addAttachment(...)`.
+- **Source:** FE review 2026-05-02 / F032
+- **Status:** Open
+
+### FE-M-7 — `useBlockDatePicker`: ref-capture pattern needs invariant doc
+- **Domain:** Frontend / Hooks
+- **Location:** `src/hooks/useBlockDatePicker.ts:189-200`
+- **What:** `rovingEditor` and `t` are read via refs that aren't in the deps array, with a `biome-ignore`. Pattern works today but is easy to break — the existing comment explains the *intent* but not the *invariant* (rovingEditor stable across the lifetime of the BlockTree mount).
+- **Cost:** Trivial — strengthen the comment to call out the invariant explicitly.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F029
+- **Status:** Open
+
+### FE-M-8 — Property pickers: IPC failures are log-only or use `String(error)`
+- **Domain:** Frontend / Properties
+- **Location:** `src/components/PropertyValuePicker.tsx:42-49`, `src/components/PropertyDefinitionsList.tsx:64-77`
+- **What:** PropertyValuePicker silently empties the dropdown on backend error. PropertyDefinitionsList toasts `String(error)` which produces `[object Object]` for non-Error values.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Recommendation:** Replace inline error formatting with the existing `reportIpcError(...)` helper from `src/lib/report-ipc-error.ts`.
+- **Source:** FE review 2026-05-02 / F054 + F058
+- **Status:** Open
+
+### FE-M-9 — `AgendaResults`: groups built from `sortedBlocks` only when `groupBy === 'page'`
+- **Domain:** Frontend / Agenda
+- **Location:** `src/components/AgendaResults.tsx:168-174`
+- **What:** Other `groupBy` values use unsorted `blocks`. The internal `groupByDate`/`groupByPriority`/`groupByState` helpers re-sort, making the work duplicate.
+- **Cost:** Trivial — sort once at the top, pass `sortedBlocks` to all branches.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F063
+- **Status:** Open
+
+### FE-M-10 — `keyboard-config/tiptap.ts`: split delimiter mismatch (`'+'` vs `' + '`)
+- **Domain:** Frontend / Keyboard config
+- **Location:** `src/lib/keyboard-config/tiptap.ts:10-15`
+- **What:** `configKey.split('+')` while the canonical format produced by `match.ts` and stored in `catalog.ts` is `' + '` (with spaces). Works today because everything goes through `match.ts`; breaks the moment someone passes a string like `'Ctrl+E'`.
+- **Cost:** Trivial — `configKey.split(' + ')`.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F023
+- **Status:** Open
+
+### FE-M-11 — `tree-utils.getProjection`: `splice(activeIndex, ...)` not bounds-checked
+- **Domain:** Frontend / Tree utilities
+- **Location:** `src/lib/tree-utils.ts:135-175`
+- **What:** Early-return guard at line 140-142 protects the splice today, but the indirection between guard and use makes future edits risky. `findIndex` returning `-1` and reaching `splice(-1, 1)` would silently remove the last item.
+- **Cost:** Trivial — add `if (activeIndex < 0 || overIndex < 0) return earlyResult` at function entry.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F017
+- **Status:** Open
+
+### FE-M-12 — `export-graph.ts`: per-page failure rejects the whole export
+- **Domain:** Frontend / Export
+- **Location:** `src/lib/export-graph.ts:18-31`
+- **What:** Loop calls `exportPageMarkdown(page.id)` without try/catch. One failure rejects the whole export.
+- **Cost:** Trivial — wrap in try/catch, log per-page failures, continue.
+- **Risk:** Low.
+- **Impact:** Medium — partial export is much more useful than no export.
+- **Source:** FE review 2026-05-02 / F018
+- **Status:** Open
+
+### FE-M-13 — `editor/extensions/block-link.ts` & `block-ref.ts`: hardcoded English titles for broken links
+- **Domain:** Frontend / Editor
+- **Location:** `src/editor/extensions/block-link.ts:98-105`, `src/editor/extensions/block-ref.ts:98-105`
+- **What:** `'Broken link — click to remove'` and `'Broken ref — target block deleted'` hardcoded; should use `t()` per AGENTS.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Recommendation:** `t('editor.brokenLink')` / `t('editor.brokenBlockRef')`.
+- **Source:** FE review 2026-05-02 / F012
+- **Status:** Open
+
+### FE-M-14 — `priority-levels.ts`: listener notification non-transactional, partial failures swallowed
+- **Domain:** Frontend / Priority levels
+- **Location:** `src/lib/priority-levels.ts:63-81`
+- **What:** Listener throw is logged but state has already mutated. Best-effort, but the comment doesn't say so.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Recommendation:** Document explicitly, or wrap in try/catch and roll back module state on the first throw.
+- **Source:** FE review 2026-05-02 / F015
+- **Status:** Open
+
+### FE-M-15 — Picker extensions capture `insertPos` before async resolution
+- **Domain:** Frontend / Editor
+- **Location:** `src/editor/extensions/block-link-picker.ts:59-102`, `src/editor/extensions/block-ref-picker.ts:58-95`, `src/editor/extensions/at-tag-picker.ts:49-87`
+- **What:** `insertPos` is captured pre-deletion; user can edit between then and async resolution; `insertContentAt(insertPos, ...)` then targets a stale offset.
+- **Cost:** S.
+- **Risk:** Low.
+- **Impact:** Low — race window is narrow.
+- **Recommendation:** Wrap `insertContentAt(insertPos, ...)` in try/catch with `logger.warn`. Better: validate the position against the current doc state before inserting.
+- **Source:** FE review 2026-05-02 / F011
+- **Status:** Open
+
+### FE-L-1 — `Undo` store: `new Map(state.pages)` boilerplate repeated 9 times
+- **Domain:** Frontend / Undo store
+- **Location:** `src/stores/undo.ts:127, 145, 191, 216, 289, 332, 358, 366`
+- **What:** Nine sites copy `new Map(state.pages)` then `.set()` then setState. Boilerplate is simple, not error-prone, but extracting a `setPageState(pageId, updates)` helper would cut ~40 lines.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F003
+- **Status:** Open
+
+### FE-L-2 — `Resolve` store cache eviction relies on Map insertion-order semantics with no comment
+- **Domain:** Frontend / Resolve store
+- **Location:** `src/stores/resolve.ts:204-211, 246-253`
+- **What:** Map insertion order is spec-guaranteed; the lack of comment is the only real cost. Add one or extract a helper.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F004
+- **Status:** Open
+
+### FE-L-3 — `page-blocks` registry race comment could be defensive
+- **Domain:** Frontend / Page blocks store
+- **Location:** `src/stores/page-blocks.ts:535-541`
+- **What:** Race is theoretical — React's commit ordering prevents it. Defensive guard `if (registry.get(pageId) === store) registry.delete(pageId)` is a 2-line cheap insurance.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F005
+- **Status:** Open
+
+### FE-L-4 — `Tabs` store `nextTabId` module-scoped counter
+- **Domain:** Frontend / Tabs store
+- **Location:** `src/stores/tabs.ts:40-50`
+- **What:** Single-threaded browser is the documented architecture; no actual bug. Either move into Zustand state or add a one-line comment.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F006
+- **Status:** Open
+
+### FE-L-5 — `Undo` store batch-undo silent fallback (no UX surface)
+- **Domain:** Frontend / Undo store
+- **Location:** `src/stores/undo.ts:280-290`
+- **What:** Graceful degradation, intentional. No UX surface when batch-history fetch fails.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Recommendation:** Optional: toast `'Batch undo unavailable; undid one op.'`.
+- **Source:** FE review 2026-05-02 / F009
+- **Status:** Open
+
+### FE-L-6 — `Journal` store `parseISODate` accepts wrap-around invalid dates
+- **Domain:** Frontend / Journal store
+- **Location:** `src/stores/journal.ts:80-88`
+- **What:** `new Date(year, month-1, day)` wraps `2026-13-45` to `2027-02-14`; `Number.isNaN(date.getTime())` doesn't catch this. The journal page is never the user's typed input today, so the wrap is harmless in practice.
+- **Cost:** Trivial — validate components before constructing the Date.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F008
+- **Status:** Open
+
+### FE-L-7 — `markdown-parse.ts`: silent depth-limit truncation
+- **Domain:** Frontend / Editor
+- **Location:** `src/editor/markdown-parse.ts:465-480`
+- **What:** Depth limit is intentional. One-line `logger.debug` would help diagnose pathological pastes.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F013
+- **Status:** Open
+
+### FE-L-8 — `useBatchAttachments` / `useBatchAttachmentCounts`: `stableKey` + `biome-ignore` is fragile but documented
+- **Domain:** Frontend / Hooks
+- **Location:** `src/hooks/useBatchAttachmentCounts.tsx:35-45`, `src/hooks/useBatchAttachments.tsx:55-65`
+- **What:** Pattern is correct. Splitting `stableKey` into its own `useMemo([blockIds])` removes the need for the `biome-ignore`.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F031
+- **Status:** Open
+
+### FE-L-9 — `useBlockNavigateToLink` ref-indirection contract not documented at the consumer side
+- **Domain:** Frontend / Hooks
+- **Location:** `src/hooks/useBlockNavigateToLink.ts:55-122`
+- **What:** Caller must always read `.current` at call time, never cache. Consider a stable wrapper that does the deref internally.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F033
+- **Status:** Open
+
+### FE-L-10 — `useScrollRestore`: redundant optional chaining
+- **Domain:** Frontend / Hooks
+- **Location:** `src/hooks/useScrollRestore.ts:24-30`
+- **What:** `container?.scrollTop` after `if (!container) return` is dead defensiveness.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F048
+- **Status:** Open
+
+### FE-L-11 — `useWeekStart` synthetic StorageEvent missing fields
+- **Domain:** Frontend / Hooks
+- **Location:** `src/hooks/useWeekStart.ts:38-45`
+- **What:** Current listener only checks `e.key`; missing `oldValue`/`newValue`/`url` are not consumed today, but a defensive fix is cheap.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F047
+- **Status:** Open
+
+### FE-L-12 — `agenda-filters.ts`: `spaceId ?? ''` applied inconsistently
+- **Domain:** Frontend / Agenda
+- **Location:** `src/lib/agenda-filters.ts:180-340`
+- **What:** Some functions normalize at call site, some don't. Centralize at the `executeAgendaFilters` boundary.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F021
+- **Status:** Open
+
+### FE-L-13 — `UnlinkedReferences`: in-place push inside `setState` callback
+- **Domain:** Frontend / References
+- **Location:** `src/components/UnlinkedReferences.tsx:85-105`
+- **What:** Works (React commits the new array reference) but stylistically off. Use spread.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F065
+- **Status:** Open
+
+### FE-L-14 — `FilterPillRow`: `key={index}` on filter list
+- **Domain:** Frontend / Filters
+- **Location:** `src/components/FilterPillRow.tsx:100-115`
+- **What:** Documented why (`getFilterKey` collisions). Real fix is a stable per-filter UUID; tactical fix is the index workaround that's already there.
+- **Cost:** S — depends on filter struct refactor.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Source:** FE review 2026-05-02 / F068
+- **Status:** Open
