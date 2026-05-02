@@ -143,6 +143,14 @@ describe('JournalCalendarDropdown', () => {
     expect(screen.getByRole('dialog', { name: /date picker/i })).toBeInTheDocument()
   })
 
+  it('marks the dialog as modal via aria-modal', () => {
+    render(<JournalCalendarDropdown {...defaultProps} />)
+    expect(screen.getByRole('dialog', { name: /date picker/i })).toHaveAttribute(
+      'aria-modal',
+      'true',
+    )
+  })
+
   it('renders the calendar component', () => {
     render(<JournalCalendarDropdown {...defaultProps} />)
     expect(screen.getByTestId('mock-calendar')).toBeInTheDocument()
@@ -152,6 +160,13 @@ describe('JournalCalendarDropdown', () => {
     render(<JournalCalendarDropdown {...defaultProps} />)
     const backdrop = document.querySelector('.fixed.inset-0')
     expect(backdrop).not.toBeNull()
+  })
+
+  it('marks the backdrop overlay with role="presentation"', () => {
+    render(<JournalCalendarDropdown {...defaultProps} />)
+    const backdrop = document.querySelector('.fixed.inset-0') as HTMLElement
+    expect(backdrop).not.toBeNull()
+    expect(backdrop).toHaveAttribute('role', 'presentation')
   })
 
   it('calls onClose when backdrop is clicked', async () => {
@@ -378,5 +393,23 @@ describe('JournalCalendarDropdown', () => {
     expect(within(legend).getByText('Due')).toBeInTheDocument()
     expect(within(legend).getByText('Scheduled')).toBeInTheDocument()
     expect(within(legend).getByText('Property')).toBeInTheDocument()
+  })
+
+  it('exposes the legend as a labelled list with one <li> per source', () => {
+    render(<JournalCalendarDropdown {...defaultProps} />)
+
+    // The legend container is the labelled list itself (role="list" → <ul>)
+    const legend = screen.getByRole('list', { name: /calendar dot legend/i })
+    expect(legend).toBe(screen.getByTestId('calendar-legend'))
+
+    // Four labelled <li> items, one per dot/label pair
+    const items = within(legend).getAllByRole('listitem')
+    expect(items).toHaveLength(4)
+    expect(items.map((li) => li.textContent?.trim())).toEqual([
+      'Page',
+      'Due',
+      'Scheduled',
+      'Property',
+    ])
   })
 })

@@ -181,12 +181,12 @@ export function JournalCalendarDropdown({
 
   return (
     <>
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
-      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div role="presentation" className="fixed inset-0 z-40" onClick={onClose} />
       <div
         ref={calRef}
         role="dialog"
+        aria-modal="true"
         aria-label={t('journal.datePickerLabel')}
         className={cn(
           'absolute right-0 z-50 rounded-md border bg-popover p-2 shadow-md',
@@ -213,27 +213,31 @@ export function JournalCalendarDropdown({
           components={{ DayButton: CalendarDayButton }}
         />
         {/* Color dot legend */}
-        <div
+        <ul
+          aria-label={t('journal.legendLabel')}
           className="flex flex-wrap items-center gap-3 px-3 pb-2 text-xs text-muted-foreground"
           data-testid="calendar-legend"
         >
-          <span className="flex items-center gap-1">
-            <span className="h-3 w-3 rounded-full bg-primary" />
+          <li className="flex items-center gap-1">
+            <span aria-hidden="true" className="h-3 w-3 rounded-full bg-primary" />
             {t('journal.legendPage')}
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-3 w-3 rounded-full bg-date-due-foreground" />
+          </li>
+          <li className="flex items-center gap-1">
+            <span aria-hidden="true" className="h-3 w-3 rounded-full bg-date-due-foreground" />
             {t('journal.legendDue')}
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-3 w-3 rounded-full bg-date-scheduled-foreground" />
+          </li>
+          <li className="flex items-center gap-1">
+            <span
+              aria-hidden="true"
+              className="h-3 w-3 rounded-full bg-date-scheduled-foreground"
+            />
             {t('journal.legendScheduled')}
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-3 w-3 rounded-full bg-date-property-foreground" />
+          </li>
+          <li className="flex items-center gap-1">
+            <span aria-hidden="true" className="h-3 w-3 rounded-full bg-date-property-foreground" />
             {t('journal.legendProperty')}
-          </span>
-        </div>
+          </li>
+        </ul>
       </div>
     </>
   )

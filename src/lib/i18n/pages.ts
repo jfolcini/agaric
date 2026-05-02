@@ -192,6 +192,7 @@ export const pages: Record<string, string> = {
   'pageHeader.breadcrumbLabel': 'Page breadcrumb',
   'templates.journalTooltip':
     'This template is automatically applied when creating new journal entries',
+  'journal.legendLabel': 'Calendar dot legend',
   'journal.legendPage': 'Page',
   'journal.legendDue': 'Due',
   'journal.legendScheduled': 'Scheduled',

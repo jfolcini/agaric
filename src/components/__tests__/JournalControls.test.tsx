@@ -101,6 +101,21 @@ describe('JournalControls', () => {
     expect(screen.getByRole('dialog', { name: /date picker/i })).toBeInTheDocument()
   })
 
+  // UX-328: SR users need a signal that the calendar trigger opens a popover
+  // and whether it is currently open.
+  it('calendar trigger has aria-haspopup="dialog" and aria-expanded reflects open state', async () => {
+    const user = userEvent.setup()
+    render(<JournalControls />)
+
+    const trigger = screen.getByRole('button', { name: /open calendar picker/i })
+    expect(trigger).toHaveAttribute('aria-haspopup', 'dialog')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(trigger)
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+  })
+
   it('fetches the page list once on mount', async () => {
     render(<JournalControls />)
 

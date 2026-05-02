@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 597 | **Latest entry:** 2026-05-01 | **Previously resolved counter:** 858+ items.
+**Sessions:** 1 – 598 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 863+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 598 (2026-05-02)** — Batch UX-A11Y-1 closed: UX-326, UX-328, UX-331, UX-335, UX-377 — five a11y missing-attribute fixes (5 build + 5 review subagents).
 - **Session 596 (2026-05-01)** — FEAT-3p9 M1: per-space GCal config foundation (additive schema + per-space CRUD + per-space keychain).
 - **Session 595 (2026-05-01)** — FEAT-4 closed (entire family shipped); FEAT-4i dropped (mobile-only).
 - **Session 594 (2026-05-01)** — MAINT-111 rmcp spike (verdict GO; 3-milestone migration plan).
@@ -28,6 +29,63 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 598 — Batch UX-A11Y-1: a11y missing-attribute fixes (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 5 build + 5 technical review (10 total, all parallel under PROMPT.md flow) |
+| **Items closed** | UX-326, UX-328, UX-331, UX-335, UX-377 |
+| **Items modified** | — |
+| **Tests added** | +14 frontend (3 JournalCalendarDropdown + 1 JournalControls + 1 GlobalDateControls + 2 PageBrowser + 3 SearchPanel + 4 PairingQrDisplay) / +0 backend |
+| **Files touched** | 16 (9 source + 6 test + REVIEW-LATER) |
+
+**Summary:** Closed all 5 items in the pre-staged "Batch UX-A11Y-1" cluster from session 597's batch addition — pure additive a11y attribute / structural changes (`aria-modal`, `aria-haspopup`, `aria-expanded`, `aria-activedescendant`, live-region content for empty states, SR pause/resume announcements). Zero behaviour change for sighted-pointer users; broad screen-reader / keyboard improvement. All changes verified by parallel review subagents before merge.
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 176 → **171** (-5).
+- **Detail entries:** 232 → 227 (-5).
+- **Ready-made batches:** 3 → 2 (UX-A11Y-1 entry removed; UX-DISC-1 + UX-FB-1 remain pre-staged).
+- **Previously-resolved counter:** 858+ → 863+ across 597 → 598 sessions.
+
+**Per-item verification (from review subagents):**
+- **UX-326** (`JournalCalendarDropdown`): `aria-modal="true"` on dialog, `role="presentation"` on backdrop, legend wrapped in `<ul>` with `aria-label` (new i18n key `journal.legendLabel`). 3 new assertions; 30/30 file tests pass.
+- **UX-328** (`JournalControls` + `GlobalDateControls`): both calendar trigger buttons gain `aria-haspopup="dialog"` + state-bound `aria-expanded`. 2 new assertions; 27/27 file tests pass.
+- **UX-331** (`PageBrowser`): grid container exposes `aria-activedescendant` bound to focused row id; flat rows use `page-row-${page.id}`, tree-page wrappers use `page-row-${node.fullPath}` (FEAT-14 starred-and-namespaced collision verified harmless via disjoint domains). 2 new assertions; 94/94 file tests pass.
+- **UX-335** (`SearchPanel`): live region announces `t('search.statusNoResults')` on zero results and `t('search.statusCleared')` on empty-after-search; new `cleared` boolean state correctly tracks the distinction. 3 new assertions; 70/70 file tests pass. Status-text logic extracted to `getSearchStatusText` helper above the component to keep complexity under Biome's 25-ceiling (was at 26 after the inline-ternary first attempt).
+- **UX-377** (`PairingQrDisplay`): pause/resume transitions trigger `announce()` calls; ref-guarded so initial mount is silent; visual countdown keeps `aria-hidden="true"`. Duplicate-announce risk vs `PairingDialog`'s parallel announce mitigated by `src/lib/announcer.ts:14, 41-56` 500 ms coalescing window (verified during review). 4 new assertions; 23/23 file tests pass + 42/42 sibling `PairingDialog` tests still green.
+
+**Files touched (this session):**
+- `src/components/journal/JournalCalendarDropdown.tsx` (+25 / -10)
+- `src/components/JournalControls.tsx` (+2)
+- `src/components/GlobalDateControls.tsx` (+2)
+- `src/components/PageBrowser.tsx` (+19)
+- `src/components/PageBrowser/PageBrowserRowRenderer.tsx` (+6)
+- `src/components/SearchPanel.tsx` (+63 / -14 — adds `getSearchStatusText` helper, `cleared` state, JSX rewrite, `TFunction` import)
+- `src/components/PairingQrDisplay.tsx` (+19)
+- `src/lib/i18n/pages.ts` (+1 — `journal.legendLabel`)
+- `src/lib/i18n/references.ts` (+2 — `search.statusNoResults`, `search.statusCleared`)
+- `src/components/__tests__/JournalCalendarDropdown.test.tsx` (+33)
+- `src/components/__tests__/JournalControls.test.tsx` (+15)
+- `src/components/__tests__/GlobalDateControls.test.tsx` (+15)
+- `src/components/__tests__/PageBrowser.test.tsx` (+66)
+- `src/components/__tests__/SearchPanel.test.tsx` (+63)
+- `src/components/__tests__/PairingQrDisplay.test.tsx` (+44)
+- `REVIEW-LATER.md` (-53 net — 5 detail blocks removed, 5 summary rows removed, batch entry removed, count + Last-updated header refreshed)
+
+**Verification:**
+- `npx vitest run` on the 6 touched component test files — 244/244 pass.
+- `prek run --all-files` — all 35 hooks pass after one round of biome auto-fix (one stray multi-line render call in `PairingQrDisplay.test.tsx` collapsed to one line) and one targeted edit (removed an unused `useKeyWithClickEvents` biome-ignore on the now-`role="presentation"`-bearing backdrop).
+
+**Process notes:**
+- **One genuine post-build flake on first prek attempt:** `SearchPanel.test.tsx` line 1015 ("Parent Page Title" vs "Untitled") in the cross-file vitest hook. Re-running the same file in isolation passed; re-running prek end-to-end also passed. Likely cross-file mock setup leakage rather than a real defect — not blocking, but worth flagging for future test-isolation review.
+- **Cognitive-complexity ceiling crossed mid-batch:** `SearchPanel.tsx` was at the 25 ceiling before UX-335 added 3 ternary branches → 26. Resolved by extracting `getSearchStatusText` helper above the component (PROMPT.md "fix what's there, don't gold-plate") rather than adding a `biome-ignore`. Same shape may bite on the next ternary added — worth a future split if SearchPanel keeps growing.
+- **PROMPT.md flow held up well:** 5 builds + 5 reviews + 0 fix-and-retry cycles in the build/review phase; only the post-merge prek pass needed two minor follow-ups (auto-format + suppression cleanup). Total active-subagent count peaked at 5 (3 builds running + 2 reviews launched as builds completed).
+
+**Commit plan:** single commit. Not pushed.
 
 ---
 

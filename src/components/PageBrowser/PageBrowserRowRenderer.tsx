@@ -142,6 +142,9 @@ function TreePageRow({
     // biome-ignore lint/a11y/useFocusableInteractive: row focus is delegated to inner button controls
     <div
       key={virtualRow.key}
+      // UX-331 — stable id so the grid container's `aria-activedescendant`
+      // can point at this row when keyboard nav lands on it.
+      id={`page-row-${node.fullPath}`}
       data-index={virtualRow.index}
       ref={measureElement}
       data-page-tree-row
@@ -199,6 +202,9 @@ function PageRow({
     // biome-ignore lint/a11y/useSemanticElements: ARIA grid row — no semantic HTML equivalent for nested-action rows
     <div
       key={virtualRow.key}
+      // UX-331 — stable id so the grid container's `aria-activedescendant`
+      // can point at this row when keyboard nav lands on it.
+      id={`page-row-${page.id}`}
       data-index={virtualRow.index}
       ref={measureElement}
       role="row"

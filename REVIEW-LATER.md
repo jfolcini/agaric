@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (UX audit + REVIEW-LATER 2-pass cleanup — 13 items closed, ~30 items rewritten)
+> **Last updated:** 2026-05-02 (Session 598 — Batch UX-A11Y-1 closed: UX-326, UX-328, UX-331, UX-335, UX-377)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-176 open items in the summary table; 232 detail entries (FE-* sub-tables don't appear in the summary).
+171 open items in the summary table; 227 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -130,16 +130,12 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-323 | UX | Agenda filter popover dense (8 dimensions × nested presets) | S | — |
 | UX-324 | UX | Due Panel filter pills (All / Due / Scheduled / Properties) are unlabelled | S | — |
 | UX-325 | UX | `F-37` "DONE warning when block has `blocked_by`" is documented but not implemented | S | — |
-| UX-326 | UX | Calendar dropdown a11y gaps (cluster) | S | — |
 | UX-327 | UX | Calendar dot fetch is silent (no skeleton / no busy state) | S | — |
-| UX-328 | UX | Calendar / nav buttons missing `aria-expanded` / `aria-haspopup` | S | — |
 | UX-329 | UX | Week-start toggle (Monday/Sunday) silently re-renders affected views | S | — |
 | UX-330 | UX | Daily-view empty state doesn't mention `/` or templates | S | — |
-| UX-331 | UX | PageBrowser keyboard navigation lacks `aria-activedescendant` | S | — |
 | UX-332 | UX | PageBrowser sort preference persists silently — no UI cue | S | — |
 | UX-333 | UX | "+" button on namespace folders hidden until hover on desktop | S | — |
 | UX-334 | UX | TemplatesView "remove template" × hidden until hover (destructive) | S | — |
-| UX-335 | UX | Search results count `aria-live` goes silent on zero results / clear | S | — |
 | UX-336 | UX | CJK search notice doesn't explain the 3-char workaround | S | — |
 | UX-337 | UX | Disabled `SearchablePopover` trigger has no tooltip explaining why | S | — |
 | UX-338 | UX | Search placeholder doesn't mention minimum character count | S | — |
@@ -178,7 +174,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-374 | UX | Onboarding banner not re-showable after dismiss | S | — |
 | UX-375 | UX | Per-space journal template variables undocumented in-app | S | — |
 | UX-376 | UX | Pairing dialog defaults to manual passphrase, no QR recommendation | S | — |
-| UX-377 | UX | Pairing pause indicator hidden from screen readers | S | — |
 | UX-378 | UX | Manual peer-address input has no real-time validation | S | — |
 | UX-379 | UX | Sidebar "last synced" timestamp hidden when sidebar collapses | S | — |
 | UX-380 | UX | Sync "no peers" gray indistinguishable from offline gray | S | — |
@@ -2119,14 +2114,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-326 — Calendar dropdown a11y gaps (cluster)
-- **Domain:** Frontend / Journal
-- **Location:** `src/components/journal/JournalCalendarDropdown.tsx`
-- **What:** (a) Dialog at `:189` has `role="dialog"` but no `aria-modal="true"`. (b) Backdrop at `:184-186` is non-interactive `<div>` with no `role="presentation"` / no announcement when Escape closes the calendar. (c) Legend at `:215-236` is a plain `<div>` with no `role`/`aria-label`/list semantics, dots have no association with their labels.
-- **Cost:** Trivial — add `aria-modal`, `role="presentation"` on backdrop, wrap legend in `<ul>` with proper `aria-label`.
-- **Risk:** Low.
-- **Impact:** Medium (composite).
-- **Status:** Open.
 
 ### UX-327 — Calendar dot fetch is silent (no skeleton / no busy state)
 - **Domain:** Frontend / Journal
@@ -2137,14 +2124,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-328 — Calendar / nav buttons missing `aria-expanded` / `aria-haspopup`
-- **Domain:** Frontend / Journal (a11y)
-- **Location:** `src/components/JournalControls.tsx:226-233` ; `src/components/GlobalDateControls.tsx:99-106`
-- **What:** Buttons toggle a dropdown but only carry `aria-label`. SR users get no signal that activation opens a popover.
-- **Cost:** Trivial — add the two attributes; bind to dropdown state.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
 
 ### UX-329 — Week-start toggle (Monday/Sunday) silently re-renders affected views
 - **Domain:** Frontend / Settings
@@ -2164,14 +2143,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-331 — PageBrowser keyboard navigation lacks `aria-activedescendant`
-- **Domain:** Frontend / Pages
-- **Location:** `src/components/PageBrowser.tsx:279-295`
-- **What:** Focus moves on arrow nav but the grid container has no `aria-activedescendant`; SR users can't track focus moves.
-- **Cost:** Trivial — assign stable `id` per row and bind `aria-activedescendant` to focused index.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
 
 ### UX-332 — PageBrowser sort preference persists silently — no UI cue
 - **Domain:** Frontend / Pages
@@ -2200,14 +2171,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-335 — Search results count `aria-live` is silent on zero results / clear
-- **Domain:** Frontend / Search
-- **Location:** `src/components/SearchPanel.tsx:540` (live-region wrapper with `role="status" aria-live="polite" aria-atomic="true"` — renders unconditionally) ; `:542-544` (inner `<span>` with `data-testid="search-results-count"` — only renders when `searched && !searchLoading && !error && results.length > 0`)
-- **What:** The live-region wrapper renders unconditionally; the inner count span is gated. End-result for SR users (silent on cleared / no-result searches) is the same as if the wrapper itself were missing, but the precise mechanism is "wrapper renders, content is empty".
-- **Cost:** Trivial — render explicit text inside the live-region for the zero / cleared cases ("No results" / "Search cleared").
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
 
 ### UX-336 — CJK search notice doesn't explain the 3-char workaround
 - **Domain:** Frontend / Search
@@ -2555,14 +2518,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-377 — Pairing pause indicator hidden from screen readers
-- **Domain:** Frontend / Sync (a11y)
-- **Location:** `src/components/PairingQrDisplay.tsx:94-104`
-- **What:** "Paused while typing…" is inside an `aria-hidden="true"` countdown paragraph; SR users hear the resume but never the pause.
-- **Cost:** Trivial — separate `aria-live="polite"` region announcing pause/resume transitions.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
 
 ### UX-378 — Manual peer-address input has no real-time validation
 - **Domain:** Frontend / Sync
@@ -2751,10 +2706,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 
 Pre-grouped item clusters identified during the 2-pass audit. Each batch is sized for one PROMPT.md session — 5 trivial-cost items in non-overlapping files, splittable across 5 parallel subagents. **Remove the batch entry from this list when its items are resolved.**
 
-### Batch UX-A11Y-1 — A11y missing-attribute fixes
-- **Items:** UX-326, UX-328, UX-331, UX-335, UX-377
-- **Cost:** 5× Trivial. **Files:** 6 (UX-328 spans `JournalControls.tsx` + `GlobalDateControls.tsx`; the other 4 are one file each).
-- **Why pick:** Pure additive attribute / i18n adds. Zero behaviour change. Broadest screen-reader / keyboard impact per LOC. All five items just landed in the audit at high confidence.
 
 ### Batch UX-DISC-1 — Discoverability via tooltip / label additions
 - **Items:** UX-301, UX-342, UX-356, UX-361, UX-396

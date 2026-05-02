@@ -227,6 +227,8 @@ export function JournalControls(): React.ReactElement {
             variant="ghost"
             size="icon-xs"
             aria-label={t('journal.openCalendar')}
+            aria-expanded={calendarOpen}
+            aria-haspopup="dialog"
             onClick={() => setCalendarOpen((o) => !o)}
           >
             <CalendarIcon className="h-4 w-4" />
