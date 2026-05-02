@@ -77,7 +77,18 @@ async fn snapshot_list_blocks_response() {
     .await
     .unwrap();
 
-    insta::assert_yaml_snapshot!(resp);
+    // TEST-10: exhaustive redactions covering every non-deterministic field
+    // surfaced by `PageResponse<BlockRow>` — block ids and ancestor refs are
+    // ULIDs, `deleted_at` is an RFC 3339 timestamp, `next_cursor` is an
+    // opaque base64 cursor. Each path is redacted unconditionally so the
+    // snapshot stays stable across runs even when these fields populate.
+    insta::assert_yaml_snapshot!(resp, {
+        ".items[].id"         => "[ULID]",
+        ".items[].parent_id"  => "[ULID]",
+        ".items[].page_id"    => "[ULID]",
+        ".items[].deleted_at" => "[TIMESTAMP]",
+        ".next_cursor"        => "[CURSOR]",
+    });
 }
 
 // ======================================================================

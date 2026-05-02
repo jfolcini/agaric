@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 613 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 933+ items.
+**Sessions:** 1 – 614 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 936+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 614 (2026-05-02)** — Batch BACKEND-TEST-1 closed: TEST-10, TEST-11, TEST-24 — three S-cost backend test-quality items; TEST-6 (sync merge materialized state) was canceled mid-flight by the user and dropped from this batch (stays in REVIEW-LATER). **TEST-10** added exhaustive `insta::assert_yaml_snapshot!` redaction blocks to `snapshot_history_entry_response` and `snapshot_list_blocks_response`, mapping every non-deterministic field (`id`, `parent_id`, `page_id`, `deleted_at`, `next_cursor`, `created_at`) to canonical placeholders (`[ULID]`, `[TIMESTAMP]`, `[CURSOR]`); both regenerated snapshot files committed; idempotency confirmed (snapshot does not regenerate on a second run). **TEST-11** added 7 error-path tests (4 for `export_page_markdown_inner` covering nonexistent ID → NotFound, non-page block → Validation, soft-deleted page pinning current `Ok(_)` shape, malformed ID → NotFound; 3 for `set_property_inner` covering nonexistent block → NotFound, empty key → Validation, type-mismatch → Validation), all using `matches!()` over `.contains()`. The build subagent surfaced 2 production findings while writing the tests, both filed orchestrator-direct as M-98 (`get_block_inner` returns soft-deleted blocks; leaks to `export_page_markdown_inner` and the public `get_block` IPC) and L-136 (`export_page_markdown_inner` doesn't validate ULID format upfront — malformed IDs map to NotFound instead of Validation). **TEST-24** removed all 13 `tokio::time::sleep(Duration::from_millis(2))` calls from `commands/tests/undo_redo_tests.rs` (the spec asked for replacement with `op_log::append_local_op_at(... explicit_ts ...)` but the build subagent found a cleaner path: every undo/redo query in this code path uses `(created_at, seq[, device_id])` lexicographic ordering, and `seq` is strictly monotonic per device under `BEGIN IMMEDIATE`, so equal timestamps are still totally ordered — the sleeps were defensive but unnecessary); 162 invocations across 3 runs all green. Reviewer suggested a header comment documenting the rationale; orchestrator added it. 3 build + 3 review subagents (1 PASS for TEST-10 / TEST-24; 1 CONDITIONAL PASS for TEST-11 → 2 production findings filed as follow-ups). Net REVIEW-LATER: −3 closed, +2 follow-ups filed = -1 in summary, -1 in detail.
 - **Session 613 (2026-05-02)** — Batch FE-MAINT-CLUSTER-1 closed: MAINT-174, MAINT-175, MAINT-176, MAINT-177 — four S-cost frontend hardening items from the post-MAINT-173 frontend review cluster, originally planned as a 5-item batch alongside MAINT-178; the BootGate diagnostics build subagent was canceled mid-flight by the user, so MAINT-178 was dropped from this batch and remains in REVIEW-LATER for a future session. **MAINT-174** hardened `BlockContextMenu` on three independent fronts (try/catch around `handleAction` so action errors leave the menu open with a toast + log; `[visibleItems.length]` deps on the first-item focus effect so focus refires when the conditional item set changes; replaced overly-broad `[role="button"]` close-fallback with `data-context-trigger="true"` anchored on the always-present drag handle in `BlockGutterControls.tsx`). **MAINT-175** extracted a shared `applySafePosition(element, { x, y } | null)` helper in `src/lib/floating-position.ts` and adopted it across three popups (BlockPropertyEditor value popup, BlockPropertyEditor key-rename popup, suggestion-renderer); the `BlockPropertyEditor` rejection paths now actively push popups off-screen instead of leaving them stuck at last coordinates. **MAINT-176** wrapped the suggestion-exit `editor.view.dispatch()` in `use-roving-editor.ts` in try/catch with a destroyed-view branch (debug log + early return) and a live-view branch (warn log + early return), preventing `replaceDocSilently()` from running on possibly-corrupt plugin state. **MAINT-177** widened `openUrl` from `Promise<void>` to `Promise<boolean>` (true when the Tauri shell or `window.open` succeeded; false when both failed); the BugReportDialog now gates success-vs-error feedback on the boolean and offers a clipboard fallback (`navigator.clipboard.writeText(issueUrl)`) when the browser failed to open, with a no-clipboard variant when the clipboard write also rejects. 4 build + 4 review subagents (3 PASS, 1 CONDITIONAL PASS on MAINT-177 → orchestrator-direct added a clipboard-rejection test; reviewer's optional follow-ups on MAINT-175 — NaN/Infinity guard + suggestion-renderer rejection-path test — left open as nice-to-haves not material to landing).
 - **Session 612 (2026-05-02)** — Batch QUICK-WINS-4 closed: MAINT-169, MAINT-170, MAINT-173 — three S-cost mixed back/front cleanups from the Quick-wins list. **MAINT-169** persists `DateFailure::Skipped(reason)` to `gcal_space_config[Personal].last_error` from the GCal connector and surfaces it through `get_gcal_status_inner` to the Settings UI. The reviewer caught that the original build only fixed the writer half; the orchestrator applied the reader-side fix directly (`get_gcal_status_inner` now reads `gcal_space_config[SPACE_PERSONAL_ULID].last_error`, collapses `""` → `None` via `optionalize`, and tolerates a missing row) plus three round-trip tests. **MAINT-170** restructures `eval_unlinked_references` to capture `total_count` BEFORE user filters apply but AFTER orphan + self-reference exclusion (parity with sister fn `eval_backlink_query_grouped:128`); 3 pre-existing buggy assertions corrected + 3 new regression tests. **MAINT-173** replaces a direct-parent-only filter in `useBlockMultiSelect.handleBatchDelete` with a `Map<id, parent_id>`-backed ancestor-walk filter (cycle-safe at depth 1000, orphan-tolerant), eliminating spurious "delete failed" toast counts on multi-level selections. 3 build + 3 review subagents (1 CONDITIONAL PASS on MAINT-169 → reader fix applied orchestrator-direct; the other two PASS).
 - **Session 611 (2026-05-02)** — Batch QUICK-WINS-3 closed: MAINT-171, TEST-7 — two S-cost backend cleanups left mid-flight by the previous agent (resumed and finished). MAINT-171 extracted a private `set_recurrence_property` helper in `recurrence/compute.rs` to dedupe the `let (_, op) = set_property_in_tx(...).await?; op_records.push(op);` pattern repeated at 8 property-write call sites in `handle_recurrence_in_tx` (8 sites → 8 one-liners; production behaviour unchanged, all 43 recurrence-related tests pass). TEST-7 added two contract-level tests in `reverse/tests.rs` pinning AGENTS.md "Undo/reverse testing" invariants at the `revert_ops_inner` boundary: (a) batch-ordering is newest-first by `(created_at DESC, seq DESC)` — three `SetProperty` ops with identical `created_at` reverse strictly seq-descending; (b) op_log is append-only — count increases by exactly 1 per input and the original `(device_id, seq)` row remains. Orchestrator-only finish: no new subagents launched (work was already in working tree).
@@ -44,6 +45,84 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 614 — Batch BACKEND-TEST-1: three backend test-quality items (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 3 build + 3 technical review (2 PASS, 1 CONDITIONAL PASS on TEST-11 → 2 production findings filed as M-98 / L-136) — original plan was 4 build + 4 review; TEST-6 build subagent was canceled mid-flight by the user, item left for a future session |
+| **Items closed** | TEST-10, TEST-11, TEST-24 |
+| **Items added** | M-98, L-136 (TEST-11 production-finding follow-ups) |
+| **Tests added** | +7 backend (4 `export_page_markdown_inner_with_*` + 3 `set_property_inner_with_*`); 0 net (TEST-10 strengthened existing tests; TEST-24 removed 13 sleeps without adding tests) |
+| **Files touched** | 7 (4 source/test + 2 regenerated snapshot files + 1 header-comment edit) + REVIEW-LATER + SESSION-LOG |
+
+**Summary:** Closed 3 S-cost backend test-quality items across 4 disjoint Rust test files, exercising distinct parts of the stack. TEST-6 (sync merge materialized state assertions) was canceled mid-flight by the user and dropped from the batch — same 5-becomes-4 pattern as session 613 (where MAINT-178 was canceled).
+
+TEST-10 audited two `insta::assert_yaml_snapshot!` call sites lacking redactions and applied exhaustive redaction blocks. The build subagent inventoried every field on the response structs (`HistoryEntryResponse`, `BlockRow`, `PageResponse<T>`) and mapped every non-deterministic field to canonical AGENTS.md placeholders (`[ULID]`, `[CURSOR]`, `[TIMESTAMP]`); deterministic fields (block_type, position, content, etc.) are populated from hardcoded fixtures and don't need redaction. Both regenerated snapshot files committed; the snapshot-redaction pre-commit script reports 0 unredacted values across 42 snapshot files.
+
+TEST-11 added 7 error-path tests across 2 files. The build subagent flagged 2 production findings while writing the tests:
+- **Finding #1 (filed as M-98)**: `get_block_inner` (`commands/blocks/queries.rs:115-131`) returns soft-deleted blocks. The doc-comment says "including soft-deleted blocks" — but `export_page_markdown_inner` (and the public `get_block` IPC) call it without an extra `deleted_at IS NULL` check, so a soft-deleted page exports as `# Title\n\n` (descendants filtered, page row leaks). Pinned by the new `export_page_markdown_inner_with_soft_deleted_page_pins_current_behavior` test asserting `Ok(_)`.
+- **Finding #2 (filed as L-136)**: `export_page_markdown_inner` doesn't validate ULID format upfront. Malformed inputs (`"not-a-ulid"`) bind directly to `WHERE id = ?` and return `NotFound` instead of `Validation`. Pinned by `export_page_markdown_inner_with_malformed_id_returns_not_found`.
+Both findings filed in REVIEW-LATER under the L/M number space (M-98 medium, L-136 low). Production behavior is intentionally unchanged in this session — fixing M-98 / L-136 is a separate audit pass.
+
+TEST-24 removed all 13 `tokio::time::sleep(Duration::from_millis(2))` calls from `commands/tests/undo_redo_tests.rs`. The spec asked for replacement with `op_log::append_local_op_at(... explicit_ts ...)` but the build subagent traced every undo/redo SQL query and found that all 5 timestamp-comparing queries in this code path use `(created_at, seq[, device_id])` lexicographic ordering, where `seq` is strictly monotonic per device under `BEGIN IMMEDIATE` — so equal millisecond timestamps are still totally ordered, and the sleeps were defensive but unnecessary. The reviewer verified the rationale by re-quoting each of the 5 queries' `WHERE` clauses and confirming the seq tiebreaker. 3 consecutive runs of the full undo_redo subset (162 invocations) all green. Reviewer suggested a 12-line header comment near the top of `undo_redo_tests.rs` documenting why the sleeps were removed — orchestrator added it directly so future engineers don't re-add the sleeps out of confusion.
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 128 → 125 (−3 closed; M-98 / L-136 are L/M-numbered detail-only items that don't appear in the summary).
+- **Detail entries:** 160 → 159 (−3 closed + 2 added = −1).
+- **Previously-resolved counter:** 933+ → 936+ across 613 → 614 sessions.
+
+**Per-item verification:**
+
+- **TEST-10** (PASS): Reviewer ran the snapshot tests twice in succession and confirmed no `.snap.new` files appeared (proves exhaustiveness). The snapshot-redaction pre-commit script reports `0 unredacted ULID/hash/timestamp/cursor values` across 42 `.snap` files. Redaction maps:
+  - `snapshot_history_entry_response`: `.items[].created_at → [TIMESTAMP]`, `.next_cursor → [CURSOR]`.
+  - `snapshot_list_blocks_response`: `.items[].id → [ULID]`, `.items[].parent_id → [ULID]`, `.items[].page_id → [ULID]`, `.items[].deleted_at → [TIMESTAMP]`, `.next_cursor → [CURSOR]`.
+  - No `hash` field on either response struct (verified via grep).
+
+- **TEST-11** (CONDITIONAL PASS → 2 production findings filed as follow-ups): All 7 tests use `matches!(result, Err(AppError::Variant(_)))` (no `.contains()` substring checks per AGENTS.md backend convention). Each test has a focused docstring citing TEST-11. 2 of the tests deliberately pin BUGGY current behavior (soft-deleted page exports as title-only; malformed ID returns NotFound instead of Validation) — the docstrings are explicit about this and flag the production gap; when M-98 / L-136 are eventually fixed, those test assertions will need to flip. Targeted: `cargo nextest run -E 'test(/export_page_markdown/) | test(/set_property/)'` → 88/88.
+
+- **TEST-24** (PASS): Build subagent's rationale verified by reviewer:
+  - `restore_page_to_op_inner` at `history.rs:362, 391` uses `(created_at, seq, device_id)` tiebreaker.
+  - `find_prior_text` at `block_ops.rs:123` uses `(created_at, seq)` tiebreaker.
+  - `find_prior_position` at `block_ops.rs:159` uses `(created_at, seq)` tiebreaker.
+  - `find_prior_property` at `property_ops.rs:95` uses `(created_at, seq)` tiebreaker.
+  - `undo_page_op_inner` at `history.rs:497` uses `ORDER BY ol.created_at DESC, ol.seq DESC LIMIT 1 OFFSET ?2`.
+  - The only timestamp-only query in the codebase that touches `op_log` (`find_prev_edit_in_tx` at `crud.rs:67`) is metadata-only and not on the undo/redo correctness path. `seq` monotonicity verified at `op_log.rs:174-180` (`COALESCE(MAX(seq), 0) + 1` under `BEGIN IMMEDIATE`).
+  - 3-run flake check: 162 invocations, 0 flakes.
+  - Header comment added orchestrator-direct (12 lines, cites TEST-24 + the seq-tiebreaker rationale).
+
+**M-98 entry text** (filed under MAINT-detail):
+> `get_block_inner` returns soft-deleted blocks; leaks to `export_page_markdown_inner` and the public `get_block` IPC. M cost (audit + fix). Recommendation: audit before fixing. If MAINT-113 (`ConflictFreeBlockId` newtype) lands first, this fix can ride on the `ActiveBlockId` typing rather than being a separate audit pass.
+
+**L-136 entry text** (filed under L-detail):
+> `export_page_markdown_inner` (and `get_page_inner`) don't validate ULID format upfront. Malformed inputs surface `NotFound` instead of `Validation`. S cost. One line `BlockId::from_string(page_id)?;` at the top of each function; the test pinning the current `NotFound` shape will need to flip to `Validation`.
+
+**Files touched (this session):**
+- `src-tauri/src/pagination/tests.rs` (TEST-10 redaction block at line 3070-3081)
+- `src-tauri/src/commands/tests/snapshot_tests.rs` (TEST-10 redaction block at line 80-91)
+- `src-tauri/src/pagination/snapshots/agaric_lib__pagination__tests__snapshot_history_entry_response.snap` (regenerated)
+- `src-tauri/src/commands/tests/snapshots/agaric_lib__commands__tests__snapshot_tests__snapshot_list_blocks_response.snap` (regenerated)
+- `src-tauri/src/commands/tests/page_cmd_tests.rs` (TEST-11 +165 lines / 4 new tests at 723-886)
+- `src-tauri/src/command_integration_tests/property_integration.rs` (TEST-11 +159 lines / 3 new tests at 119-278)
+- `src-tauri/src/commands/tests/undo_redo_tests.rs` (TEST-24 -13 lines / 13 sleeps removed; +12 lines header comment at top)
+- `REVIEW-LATER.md` (3 detail blocks + 3 summary rows removed; M-98 + L-136 detail entries added; counts updated)
+- `SESSION-LOG.md` (this entry + Recent milestones bump)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3417 tests run, 3417 passed (1 unrelated `sync_files` flaky retry pass), 3 skipped. (Was 3410 in session 613 → +7 from TEST-11.)
+- `cd src-tauri && cargo nextest run -E 'test(undo_redo)'` — 3 consecutive runs, 162 invocations, 0 flakes.
+- `npx vitest run` — not run (no frontend changes).
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **Reviewer-flagged production findings get filed as new REVIEW-LATER items, not bundled into the test PR.** TEST-11's reviewer correctly identified 2 production gaps the tests surfaced. The orchestrator's call: file them as M-98 / L-136 follow-ups rather than expand TEST-11's scope to fix the production bugs. Rationale: the bugs need an audit pass (especially M-98, which affects 9 call sites of `get_block_inner`), and bundling that into a test-PR violates the "surgical changes" principle. Tests pin the current buggy behavior with explicit docstrings flagging the gap.
+- **TEST-24's deeper insight: don't blindly follow the spec.** The REVIEW-LATER entry asked for replacement with `op_log::append_local_op_at`. The build subagent investigated and found that path was awkward (every site used `create_block_inner`/`edit_block_inner` for materializer side-effects, and there's no `*_at` variant). Instead, it traced the actual SQL queries and proved the sleeps were unnecessary because every query has a seq tiebreaker. The reviewer independently verified the proof. Net result: fewer lines, same correctness, better rationale. Pattern: when a REVIEW-LATER spec proposes Path A but the implementation reveals a cleaner Path B, take Path B and document the rationale.
+- **TEST-6 cancellation pattern, again.** Same pattern as session 613's MAINT-178 cancellation: a 5-into-4 batch reduction. For the next batch, consider planning at 4 to leave headroom; or treat the 5th as explicitly optional from the start.
+
+**Commit plan:** single commit, not pushed.
 
 ---
 

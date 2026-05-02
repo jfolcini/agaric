@@ -3,31 +3,31 @@ source: src/commands/tests/snapshot_tests.rs
 expression: resp
 ---
 items:
-  - id: SNAP_BLK1
+  - id: "[ULID]"
     block_type: content
     content: first
-    parent_id: ~
+    parent_id: "[ULID]"
     position: 1
-    deleted_at: ~
+    deleted_at: "[TIMESTAMP]"
     is_conflict: false
     conflict_type: ~
     todo_state: ~
     priority: ~
     due_date: ~
     scheduled_date: ~
-    page_id: ~
-  - id: SNAP_BLK2
+    page_id: "[ULID]"
+  - id: "[ULID]"
     block_type: page
     content: second
-    parent_id: ~
+    parent_id: "[ULID]"
     position: 2
-    deleted_at: ~
+    deleted_at: "[TIMESTAMP]"
     is_conflict: false
     conflict_type: ~
     todo_state: ~
     priority: ~
     due_date: ~
     scheduled_date: ~
-    page_id: ~
-next_cursor: ~
+    page_id: "[ULID]"
+next_cursor: "[CURSOR]"
 has_more: false

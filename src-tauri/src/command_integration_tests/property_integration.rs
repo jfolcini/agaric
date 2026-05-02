@@ -117,6 +117,167 @@ async fn delete_property_writes_op_log_entry() {
 }
 
 // ======================================================================
+// set_property — error paths (REVIEW-LATER TEST-11)
+// ======================================================================
+//
+// TEST-11 — Pre-fix `set_property_inner` had only the
+// `set_property_writes_op_log_entry` happy-path test in this file.
+// Validation/NotFound coverage for the broader properties surface
+// existed (e.g. `delete_property_on_deleted_block_returns_not_found`,
+// `create_property_def_*_returns_validation`) but `set_property_inner`
+// itself had no direct error pins.  The three tests below close that
+// gap, each pinning a specific error variant via `matches!()` per
+// AGENTS.md "Backend test patterns" (no `.contains("not found")` —
+// a reword of the message would slip past a substring check).
+
+/// TEST-11 — Pin the NotFound variant when the block_id does not
+/// exist.  `set_property_inner` -> `set_property_in_tx`'s TOCTOU-safe
+/// `SELECT ... WHERE id = ? AND deleted_at IS NULL` returns None and
+/// the function maps it to `AppError::NotFound`.  A future refactor
+/// that drops the existence guard (e.g. relies on FK failure for the
+/// `block_properties` insert, surfacing as `Database`/`Internal`)
+/// would slip past `delete_property_on_nonexistent_block_returns_not_found`
+/// (different command surface) — this pin is `set_property`-specific.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_inner_with_nonexistent_block_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Valid ULID format; no row exists in the DB.
+    let result = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        "01ZZZZZZZZZZZZZZZZZZZZZZZZ".into(),
+        "status".into(),
+        Some("active".into()),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "set_property on nonexistent block must return AppError::NotFound, got: {result:?}"
+    );
+}
+
+/// TEST-11 — Pin the Validation variant when the property key
+/// violates `validate_set_property`'s format rules (1-64 chars,
+/// alphanumeric + `_` + `-` only).  An empty key fires the
+/// `key.is_empty()` branch in `op::validate_set_property`, which
+/// runs *before* the DB existence check inside `set_property_in_tx`
+/// — so this test passes even with a real, live block_id.  Mirrors
+/// the `create_property_def_empty_key_returns_validation` pattern at
+/// `:760` for the parallel `create_property_def_inner` surface.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_inner_with_empty_key_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Create a real block so the test is unambiguously exercising the
+    // key-format validation, not the block existence check.
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "key-validation".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let result = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        // Empty key — fails the `1-64 characters` check in
+        // `op::validate_set_property` *before* any DB write happens.
+        "".into(),
+        Some("any".into()),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "empty property key must return AppError::Validation, got: {result:?}"
+    );
+}
+
+/// TEST-11 — Pin the Validation variant when the supplied value
+/// kind disagrees with the registered `property_definitions.value_type`.
+/// `set_property_in_tx` performs runtime type validation against
+/// `property_definitions` for non-reserved keys (block 1c/1d in
+/// `commands/blocks/crud.rs`); a `value_type='date'` definition with
+/// a `value_text` payload trips the explicit
+/// `"Property '{key}' expects type '{expected}', got '{actual}'"`
+/// branch.  This is the only test in the suite that exercises that
+/// type-mismatch arm directly — `create_property_def_*_returns_validation`
+/// covers the definition surface; `date_validation_*` covers
+/// `list_blocks_inner`'s ISO parsing; neither hits this code path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_inner_with_type_mismatch_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // 1. Register a `date`-typed property definition.  This is the
+    //    `property_definitions` row that `set_property_in_tx`
+    //    consults for the type-match arm.
+    create_property_def_inner(&pool, "deadline".into(), "date".into(), None)
+        .await
+        .unwrap();
+
+    // 2. Create a real block to set the property on.
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "type-mismatch".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // 3. Provide a `value_text` payload (wrong type for a `date`
+    //    definition).  `validate_set_property` accepts the call
+    //    (exactly one value, key format ok), but the type-match arm
+    //    inside `set_property_in_tx` rejects it with
+    //    `Validation("Property 'deadline' expects type 'date', got 'text'.")`.
+    let result = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "deadline".into(),
+        Some("not-a-date".into()),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "value-type mismatch (text vs date-typed definition) must return \
+         AppError::Validation, got: {result:?}"
+    );
+}
+
+// ======================================================================
 // delete_property on deleted block — error path
 // ======================================================================
 

@@ -9,6 +9,17 @@ use crate::op_log;
 // ======================================================================
 // Undo/Redo tests
 // ======================================================================
+//
+// TEST-24: Removed 13 `tokio::time::sleep(Duration::from_millis(2))` calls
+// that were used to ensure consecutive ops got distinct timestamps. They
+// are no longer necessary because every undo/redo query in this code path
+// uses `(created_at, seq[, device_id])` lexicographic ordering, and `seq`
+// is strictly monotonic per device (enforced by `COALESCE(MAX(seq), 0) + 1`
+// under `BEGIN IMMEDIATE` transactions in `op_log::append_local_op*`).
+// Equal timestamps therefore still produce a total order on
+// `(created_at, seq, device_id)`, so removing the sleep introduces no
+// non-determinism. Do NOT re-add sleep guards here without first checking
+// whether a new query path was added that compares `created_at` only.
 
 /// Helper: create a page with children and return (page_id, child_ids)
 async fn create_page_with_children(pool: &SqlitePool, mat: &Materializer) -> (String, Vec<String>) {
@@ -596,7 +607,6 @@ async fn restore_page_to_op_reverts_ops_after_target() {
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Record the seq after b1 edit — this will be our restore target
     let ops_after_b1 = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
@@ -613,7 +623,6 @@ async fn restore_page_to_op_reverts_ops_after_target() {
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     edit_block_inner(&pool, DEV, &mat, b3.id.clone(), "third-edited".into())
         .await
@@ -701,7 +710,6 @@ async fn restore_page_to_op_skips_non_reversible() {
         .await
         .unwrap();
     let target_seq = ops.last().unwrap().seq;
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Create another block, then purge it (non-reversible)
     let b2 = create_block_inner(
@@ -808,7 +816,6 @@ async fn restore_page_to_op_global_scope() {
         .await
         .unwrap();
     let target_seq = ops.last().unwrap().seq;
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Edit blocks on BOTH pages
     edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "changed-1".into())
@@ -937,7 +944,6 @@ async fn restore_page_to_op_includes_nested_blocks() {
         .await
         .unwrap();
     let target_seq = ops.last().unwrap().seq;
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Edit both the parent and the nested child
     edit_block_inner(&pool, DEV, &mat, parent.id.clone(), "parent-edited".into())
@@ -1063,14 +1069,12 @@ async fn restore_page_to_op_verifies_reverse_ops_in_op_log() {
         .await
         .unwrap();
     let target_seq = ops_before.last().unwrap().seq;
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Edit both blocks (these will be reverted)
     edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "alpha-edited".into())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     edit_block_inner(&pool, DEV, &mat, b2.id.clone(), "beta-edited".into())
         .await
@@ -1221,7 +1225,6 @@ async fn restore_page_to_op_skips_delete_attachment() {
         .await
         .unwrap();
     let target_seq = ops.last().unwrap().seq;
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Now delete the attachment AFTER the target (non-reversible op)
     let del_ts = now_rfc3339();
@@ -1242,7 +1245,6 @@ async fn restore_page_to_op_skips_delete_attachment() {
         .execute(&pool)
         .await
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Also edit the child block after target (this IS reversible)
     edit_block_inner(&pool, DEV, &mat, child.id.clone(), "child edited".into())
@@ -1345,7 +1347,6 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
         .await
         .unwrap();
     let target_seq = ops.last().unwrap().seq;
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Delete the attachment AFTER the target point (soft-delete, keeping the
     // row so the attachments-based EXISTS subquery can still resolve it).
@@ -1368,7 +1369,6 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
         .execute(&pool)
         .await
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Also edit the child block after target (reversible)
     edit_block_inner(&pool, DEV, &mat, child.id.clone(), "child edited".into())
@@ -3822,7 +3822,6 @@ async fn undo_page_op_ignores_ops_on_conflict_copy_descendants() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
     edit_block_inner(
         &pool,
         DEV,
@@ -3909,7 +3908,6 @@ async fn restore_page_to_op_ignores_ops_on_conflict_copy_descendants() {
         .await
         .unwrap();
     let target_seq = ops.last().unwrap().seq;
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Later real edit (reversible).
     edit_block_inner(

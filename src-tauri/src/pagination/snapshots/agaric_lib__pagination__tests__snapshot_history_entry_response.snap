@@ -1,6 +1,5 @@
 ---
-source: src/pagination.rs
-assertion_line: 1893
+source: src/pagination/tests.rs
 expression: resp
 ---
 items:
@@ -8,6 +7,6 @@ items:
     seq: 1
     op_type: create_block
     payload: "{\"block_id\":\"SNAP_HIS\",\"block_type\":\"content\",\"content\":\"snap\"}"
-    created_at: "2025-06-15T12:00:00Z"
-next_cursor: ~
+    created_at: "[TIMESTAMP]"
+next_cursor: "[CURSOR]"
 has_more: false

@@ -3071,7 +3071,14 @@ async fn snapshot_history_entry_response() {
     let page = PageRequest::new(None, Some(10)).unwrap();
     let resp = list_block_history(&pool, "SNAP_HIS", &page).await.unwrap();
 
-    insta::assert_yaml_snapshot!(resp);
+    // TEST-10: exhaustive redactions covering every non-deterministic field
+    // surfaced by `PageResponse<HistoryEntry>` — `created_at` is an RFC 3339
+    // timestamp and `next_cursor` is an opaque base64 cursor. Both must be
+    // redacted unconditionally so the snapshot stays stable across runs.
+    insta::assert_yaml_snapshot!(resp, {
+        ".items[].created_at" => "[TIMESTAMP]",
+        ".next_cursor"        => "[CURSOR]",
+    });
 }
 
 // ====================================================================

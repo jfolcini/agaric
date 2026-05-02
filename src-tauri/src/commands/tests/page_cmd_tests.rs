@@ -721,6 +721,171 @@ async fn export_page_markdown_handles_many_unrelated_tags() {
 }
 
 // ======================================================================
+// export_page_markdown — error paths (REVIEW-LATER TEST-11)
+// ======================================================================
+//
+// TEST-11 — Pre-fix `export_page_markdown_inner` had 6 happy-path tests
+// (above) and zero error coverage.  Per AGENTS.md "Backend test
+// patterns": every command needs at least nonexistent-id → NotFound
+// and invalid-input → Validation pins so a refactor cannot silently
+// reshape the error surface.  The three tests below close that gap by
+// pinning each variant via `matches!()` (no `.contains("not found")`
+// strings — a refactor that swaps `NotFound` for `Validation` while
+// preserving the message would slip past a substring check).
+//
+// Two of the three pins surface production findings that the parent
+// agent should triage as TEST-11 follow-ups (each is documented
+// inline, in the test it shows up in):
+//   1. Soft-deleted pages export as `# title\n\n` (Ok), not NotFound —
+//      `get_block_inner` does not filter `deleted_at`, and there is no
+//      explicit check inside `export_page_markdown_inner` either.
+//   2. Malformed page IDs (e.g. `"not-a-ulid"`) hit the
+//      `WHERE id = ?` path verbatim and fall through to NotFound,
+//      because the function never invokes `BlockId::from_string` to
+//      reject the input as Validation up front.
+
+/// TEST-11 — Pin the NotFound variant when the page id is absent.
+/// `export_page_markdown_inner` calls `get_block_inner` first, which
+/// returns `AppError::NotFound` for a `WHERE id = ?` miss; if a future
+/// refactor swaps that for an `Internal` (e.g. by ignoring the result
+/// and falling through to the markdown builder), this test fails.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_inner_with_nonexistent_id_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+
+    // Valid ULID format that is guaranteed not to exist in the DB.
+    let result = export_page_markdown_inner(&pool, "01ZZZZZZZZZZZZZZZZZZZZZZZZ").await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "nonexistent page id must return AppError::NotFound, got: {result:?}"
+    );
+}
+
+/// TEST-11 — Pin the variant when the supplied id refers to a
+/// non-page block (e.g. a `content` row).  The production code's
+/// explicit `if page.block_type != "page"` branch returns
+/// `AppError::Validation("not a page".into())`; pinning the variant
+/// guards against a refactor that drops or reshapes that guard (for
+/// instance, a future signature that relaxes the page-only contract
+/// would surface as a passing `Ok(_)` here, not a silent regression).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_inner_with_non_page_block_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+
+    // Insert a `content` block — explicitly NOT a page.  The export
+    // function's `block_type != "page"` branch must reject it.
+    insert_block(
+        &pool,
+        "01CONTENTBLK00000000000001",
+        "content",
+        "not a page",
+        None,
+        Some(0),
+    )
+    .await;
+
+    let result = export_page_markdown_inner(&pool, "01CONTENTBLK00000000000001").await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "non-page block id must return AppError::Validation, got: {result:?}"
+    );
+}
+
+/// TEST-11 — Pin the current behaviour when a soft-deleted page is
+/// exported.  Production finding (parent agent: triage as TEST-11
+/// follow-up): `export_page_markdown_inner` does **not** filter
+/// `deleted_at` on the page row — `get_block_inner`'s `SELECT ...
+/// WHERE id = ?` returns soft-deleted rows verbatim, and the only
+/// other guard inside the export function is `block_type != "page"`.
+/// As a result a soft-deleted page exports as `# Title\n\n` with no
+/// descendants (the descendant walk *does* filter `deleted_at IS
+/// NULL`, so the cascade-soft-deleted children are excluded).  This
+/// test pins that behaviour so a future fix that adds the
+/// `deleted_at IS NULL` check on the page row (and starts returning
+/// `NotFound`) is intentional and reviewed, not silent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_inner_with_soft_deleted_page_pins_current_behavior() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create a page and a child block via the canonical command path
+    // so `delete_block_inner` cascades correctly.
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Doomed Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let _child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child block".into(),
+        Some(page.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Soft-delete the page (sets `deleted_at IS NOT NULL` on the page
+    // row and cascades to the child).
+    delete_block_inner(&pool, DEV, &mat, page.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let result = export_page_markdown_inner(&pool, &page.id).await;
+
+    // PRODUCTION GAP: the export currently succeeds with just the
+    // title (descendants are cascade-deleted and filtered out).  An
+    // arguably-correct production behaviour would be `Err(NotFound)`
+    // — pinning the current `Ok` shape so the gap is visible.
+    let md = result.expect("soft-deleted page currently exports successfully (production gap)");
+    assert!(
+        md.starts_with("# Doomed Page\n\n"),
+        "soft-deleted page export currently emits the title only, got: {md:?}"
+    );
+    assert!(
+        !md.contains("child block"),
+        "cascade-soft-deleted descendants must not appear, got: {md:?}"
+    );
+}
+
+/// TEST-11 — Pin the variant returned for a malformed page id.
+/// The task spec requested `Err(Validation)` (an upfront
+/// `BlockId::from_string` reject), but production never invokes
+/// `BlockId::from_string` on `page_id`: the string is bound directly
+/// to `WHERE id = ?` in `get_block_inner`, so a malformed input
+/// simply misses every row and falls through the existing NotFound
+/// path.  Pinning the actual variant here guards against a future
+/// refactor that swaps NotFound for, say, an `Internal` from a
+/// downstream parse — and surfaces the missing upfront validation as
+/// a TEST-11 follow-up for the parent agent to triage.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_inner_with_malformed_id_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+
+    // Not a ULID — `BlockId::from_string("not-a-ulid")` would fail
+    // with `AppError::Ulid`, but the export function never calls it.
+    let result = export_page_markdown_inner(&pool, "not-a-ulid").await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "malformed page id currently maps to NotFound (no upfront ULID validation in \
+         export_page_markdown_inner) — got: {result:?}"
+    );
+}
+
+// ======================================================================
 // import_markdown — Logseq/Markdown import (#660)
 // ======================================================================
 

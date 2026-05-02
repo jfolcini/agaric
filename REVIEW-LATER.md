@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 613 — Batch FE-MAINT-CLUSTER-1 closed: MAINT-174, MAINT-175, MAINT-176, MAINT-177)
+> **Last updated:** 2026-05-02 (Session 614 — Batch BACKEND-TEST-1 closed: TEST-10, TEST-11, TEST-24; M-98 + L-136 filed as TEST-11 follow-ups)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-128 open items in the summary table; 160 detail entries (FE-* sub-tables don't appear in the summary).
+125 open items in the summary table; 159 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -51,12 +51,9 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
 | TEST-6 | TEST | Sync merge tests assert on counter only, not materialized state (`merge_resolves_property_conflict_lww` doesn't query `block_properties`; `merge_block_conflict_creates_copy` doesn't query `blocks` for the conflict copy) | S | — |
 | TEST-8 | TEST | TOFU test only covers acceptance, not rejection on cert-hash mismatch on reconnect (`inmem_handle_incoming_sync_tofu_stores_cert_hash`) | S | — |
-| TEST-10 | TEST | Snapshot tests missing redactions of non-deterministic fields: `snapshot_history_entry_response` (cursor), `snapshot_list_blocks_response` (comment promises but no redaction call) | S | — |
-| TEST-11 | TEST | Missing error-path test coverage: `export_page_markdown_inner` has 6 happy-path tests + 0 error tests; `set_property_inner` integration tests miss invalid-key / type-mismatch Validation cases | S | — |
 | TEST-16 | TEST | Recurrence integration tests don't exercise year-boundary transitions (Dec 31 + 1 day → Jan 1 next year) — only unit tests cover DST/leap year | S | — |
 | TEST-18 | TEST | Backlink non-grouped tests use `setup_backlinks()` orphan sources (no parent_id), so they never exercise self-reference filtering; sort tests don't assert `total_count`/`filtered_count` | S | — |
 | TEST-23 | TEST | 6 copy-pasted `*_paginates_with_cursor` tests in `pagination/tests.rs` (lines 720, 877, 1550, 1702, 1911, 2032) — identical 3-page-loop pattern | S | — |
-| TEST-24 | TEST | 13 `tokio::time::sleep(Duration::from_millis(2))` for op-log timestamp separation in `undo_redo_tests.rs` — replace with deterministic `op_log::append_local_op_at` calls | S | — |
 | TEST-25 | TEST | ~12 near-identical FEAT-3p4 space-scoping tests in `agenda_cmd_tests.rs` (lines 2268–2812) — extract `seed_two_spaces` helper | S | — |
 | TEST-27 | TEST | `count_set_property_ops_for_key` helper uses `LIKE '%"key":"X"%'` on JSON payloads — fragile to JSON whitespace changes | S | — |
 | TEST-28 | TEST | `test_connection_pair()` bypasses real TLS (in-memory duplex with `peer_cert_hash_val: None`) — needs documenting so callers don't think they're testing mTLS | S | — |
@@ -552,28 +549,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Impact:** Medium — TOFU behavior is asymmetric (acceptance is trivial; rejection is the property worth verifying).
 - **Status:** Open.
 
-### TEST-10 — Snapshot tests missing redactions of non-deterministic fields
-- **Domain:** Test infrastructure (insta snapshots)
-- **Location:**
-  - `src-tauri/src/pagination/tests.rs:3050-3075` (`snapshot_history_entry_response`) — `PageResponse` includes `next_cursor`; bare `insta::assert_yaml_snapshot!(resp)` will drift
-  - `src-tauri/src/commands/tests/snapshot_tests.rs:55-81` (`snapshot_list_blocks_response`) — comment says "Redacts `id` fields" but the actual call has no redaction block
-- **What:** Per AGENTS.md "Redaction patterns": cursors must be redacted with `[CURSOR]`, IDs with `[ULID]`, etc. Both sites violate this.
-- **Cost:** Trivial — add the redaction block.
-- **Risk:** Low.
-- **Impact:** Low — prevents snapshot flakes (the second site is a latent flake).
-- **Status:** Open.
-
-### TEST-11 — Missing error-path coverage on `export_page_markdown_inner` + `set_property_inner`
-- **Domain:** Commands / integration tests
-- **Location:**
-  - `src-tauri/src/commands/tests/page_cmd_tests.rs:326-722` (6 happy-path tests for `export_page_markdown_inner`, 0 error tests)
-  - `src-tauri/src/command_integration_tests/property_integration.rs:9` (only the happy-path `set_property_writes_op_log_entry`; broader Validation coverage exists at `:273` `get_batch_properties_empty_ids_returns_validation_error`, `:343-475` date-validation tests on `list_blocks_inner`, `:760-867` `create_property_def_*_returns_validation` tests, and `:124, :172` `delete_property_on_*` NotFound coverage on `delete_property_inner` — but `set_property_inner` itself has no direct error tests)
-- **What:** Per AGENTS.md, every command needs error coverage: nonexistent ID → NotFound, deleted block → NotFound, invalid input → Validation. The narrow gap is direct error tests on `set_property_inner` (invalid key / type mismatch / nonexistent block) plus all error coverage on `export_page_markdown_inner`.
-- **Cost:** S — add tests with nonexistent page IDs, deleted pages, and invalid property keys / type mismatches.
-- **Risk:** Low.
-- **Impact:** Medium — Validation paths are easy to break silently when refactoring.
-- **Status:** Open.
-
 ### TEST-16 — Recurrence integration tests don't exercise year-boundary transitions
 - **Domain:** Recurrence tests
 - **Location:** `src-tauri/src/recurrence/tests.rs:521-1036` (integration tests section)
@@ -601,15 +576,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Cost:** S — extract a generic helper `async fn assert_paginates_with_cursor<F, Fut>(list_fn: F, n: usize, page_size: usize)` or use a parameterized macro.
 - **Risk:** Low — pure refactor.
 - **Impact:** Low-medium — meaningful surface-area reduction.
-- **Status:** Open.
-
-### TEST-24 — 13 `tokio::time::sleep(Duration::from_millis(2))` for op-log timestamp separation
-- **Domain:** Test infrastructure
-- **Location:** `src-tauri/src/commands/tests/undo_redo_tests.rs` lines 599, 616, 704, 811, 940, 1066, 1073, 1224, 1245, 1348, 1371, 3846, 3933
-- **What:** Tests sleep 2ms to ensure `now_rfc3339()` produces distinct timestamps on consecutive ops. The same file already uses `op_log::append_local_op_at(... explicit_timestamp ...)` in other tests — that deterministic pattern should replace these timing-dependent sleeps.
-- **Cost:** S — mechanical replace.
-- **Risk:** Low.
-- **Impact:** Low — eliminates a category of CI flake risk.
 - **Status:** Open.
 
 ### TEST-25 — 16 near-identical FEAT-3p4 space-scoping tests in `agenda_cmd_tests.rs`
@@ -864,6 +830,17 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Recommendation:** Move the `fetch_optional` to inside the existing transaction so the validation and the eventual write share atomicity. No behaviour change in single-user usage; cleaner contract for future readers.
 - **Status:** Open
 
+### M-98 — `get_block_inner` returns soft-deleted blocks; leaks to `export_page_markdown_inner` and the public `get_block` IPC
+- **Domain:** Commands / queries
+- **Location:** `src-tauri/src/commands/blocks/queries.rs:115-131` (`get_block_inner`); leaks via `src-tauri/src/commands/pages.rs:204` (`export_page_markdown_inner`), `src-tauri/src/commands/pages.rs:648` (`get_page_inner`), `src-tauri/src/commands/blocks/queries.rs:273` (public `get_block` command).
+- **What:** `get_block_inner` intentionally returns soft-deleted blocks (the doc-comment at L115 reads "Fetch a single block by ID **(including soft-deleted blocks)**"). The descendant walk in `export_page_markdown_inner` (`pages.rs:237-261`) DOES filter `deleted_at IS NULL`, so children are excluded — but the page row itself slips through. Result: a soft-deleted page can be exported as `# Title\n\n` (title only, no descendants). Pinned by `commands/tests/page_cmd_tests.rs::export_page_markdown_inner_with_soft_deleted_page_pins_current_behavior` (the test asserts `Ok(_)` with title-only output, citing TEST-11). Same leak affects the public `get_block` IPC and `get_page_inner`.
+- **Why it matters:** Users can export soft-deleted pages that should appear in trash, not as exportable content. The frontend can also fetch soft-deleted blocks via the public `get_block` command, leading to UI inconsistency.
+- **Cost:** M — add `AND deleted_at IS NULL` to `get_block_inner` (or introduce a `get_active_block_inner` variant), then audit all 9 call sites to ensure no path (undo/redo, trash restore, snapshot recovery) was relying on the soft-deleted behavior. The test pinning the buggy `Ok(_)` shape will need to flip to `Err(AppError::NotFound(_))`.
+- **Risk:** Medium — pervasive usage; some call sites may legitimately need soft-deleted blocks (undo/redo flows, trash UI). Each must be reviewed individually.
+- **Impact:** Medium-high — fixes a real semantic gap exposed in the export and public-fetch surfaces.
+- **Recommendation:** Audit before fixing. If MAINT-113 (`ConflictFreeBlockId` newtype) lands first, this fix can ride on the `ActiveBlockId` typing rather than being a separate audit pass.
+- **Status:** Open
+
 ### L-17 — `dispatch_op` enqueues fg+bg out of order
 - **Domain:** Materializer
 - **Location:** `src-tauri/src/materializer/dispatch.rs:128-132`
@@ -899,6 +876,17 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** N/A.
 - **Decision:** No action. Filed for awareness only.
 - **Status:** Documented as deliberate.
+
+### L-136 — `export_page_markdown_inner` (and siblings) don't validate ULID format upfront
+- **Domain:** Commands / pages
+- **Location:** `src-tauri/src/commands/pages.rs:196-207` (`export_page_markdown_inner`); same pattern at `src-tauri/src/commands/pages.rs:648` (`get_page_inner`).
+- **What:** Neither function calls `BlockId::from_string(page_id)?` upfront. Malformed inputs (e.g. `"not-a-ulid"`) bind directly to `WHERE id = ?` in the SQL query, which simply returns no rows, so the function surfaces `AppError::NotFound` instead of the more precise `AppError::Validation`. Pinned by `commands/tests/page_cmd_tests.rs::export_page_markdown_inner_with_malformed_id_returns_not_found` (asserts the current `NotFound` shape, citing TEST-11). Other commands (e.g. `set_property_inner` via `validate_set_property`) DO validate input upfront.
+- **Why it matters:** The frontend usually validates ULIDs before sending, so this is rarely user-visible — but the imprecise error class makes diagnostics harder when something does go wrong (a malformed ID looks indistinguishable from a deleted page in the logs).
+- **Cost:** S — one line at the top of each function: `BlockId::from_string(page_id)?;`. The test pinning the current `NotFound` shape will need to flip to `Err(AppError::Validation(_))`.
+- **Risk:** Low.
+- **Impact:** Low — improves error precision for malformed input; no behavior change for well-formed IDs.
+- **Recommendation:** Audit other page-accepting `inner` functions (`get_page_inner`, `delete_page_inner` if exists) for the same gap and fix in one pass.
+- **Status:** Open.
 
 ### FE-H-1 — Cursor pagination violated in `executeAgendaFilters` default branch
 - **Domain:** Frontend / Agenda
