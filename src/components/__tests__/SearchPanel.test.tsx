@@ -973,7 +973,16 @@ describe('SearchPanel', () => {
   it('updates recent pages in localStorage when clicking a search result (child block)', async () => {
     const user = userEvent.setup()
 
-    mockedInvoke.mockResolvedValueOnce({
+    // Dispatch by command name rather than queue-order. SearchPanel's
+    // useEffect at `src/components/SearchPanel.tsx:170` fires
+    // `batchResolve(parentIds)` for breadcrumb resolution after results
+    // render, and the click handler then fires `get_block` for the
+    // parent fetch. Order between those two invokes is microtask-
+    // dependent, so a `mockResolvedValueOnce` queue races with vitest
+    // worker concurrency and flakes under cross-file runs (observed
+    // during prek's vitest hook even though the test passes in
+    // isolation). Mirrors the alias-match test at line 1874+.
+    const searchResults = {
       items: [
         makeSearchResult({
           id: 'CHILD1',
@@ -985,6 +994,21 @@ describe('SearchPanel', () => {
       ],
       next_cursor: null,
       has_more: false,
+    }
+    const parentBlock = {
+      id: 'PARENT1',
+      block_type: 'page',
+      content: 'Parent Page Title',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+      is_conflict: false,
+    }
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'search_blocks') return searchResults
+      if (cmd === 'get_block') return parentBlock
+      if (cmd === 'batch_resolve') return []
+      return emptyPage
     })
 
     render(<SearchPanel />)
@@ -994,16 +1018,6 @@ describe('SearchPanel', () => {
 
     await waitFor(() => {
       expect(screen.getByText(textContent('child content'))).toBeInTheDocument()
-    })
-
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'PARENT1',
-      block_type: 'page',
-      content: 'Parent Page Title',
-      parent_id: null,
-      position: 0,
-      deleted_at: null,
-      is_conflict: false,
     })
 
     await user.click(screen.getByText(textContent('child content')))
