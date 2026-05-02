@@ -7,7 +7,7 @@
  */
 
 import type { Editor } from '@tiptap/core'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 
 /**
@@ -254,23 +254,15 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
 ]
 
 export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboardCallbacks): void {
-  const {
-    onFocusPrev,
-    onFocusNext,
-    onDeleteBlock,
-    onIndent,
-    onDedent,
-    onFlush,
-    onMergeWithPrev,
-    onEnterSave,
-    onEscapeCancel,
-    onMoveUp,
-    onMoveDown,
-    onToggleTodo,
-    onToggleCollapse,
-    onShowProperties,
-    isLastBlock,
-  } = callbacks
+  // MAINT-185: stash the callbacks bag in a ref so `handleKeyDown`'s identity
+  // stays stable across renders even when parent components recreate any of
+  // the 15 callback closures. Mirrors the refs-bag pattern from
+  // `use-roving-editor.ts:258-289` — assign the latest values on every render
+  // and read them through `cbsRef.current` inside the handler. Without this,
+  // every callback prop entered the `useCallback` deps and the keydown
+  // listener detached/reattached on every parent render.
+  const cbsRef = useRef<BlockKeyboardCallbacks>(callbacks)
+  cbsRef.current = callbacks
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -290,23 +282,9 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         if (isSuggestionPopupVisible()) return // let ProseMirror / Suggestion plugin handle it
       }
 
-      handleBlockKeyDown(event, editor, {
-        onFocusPrev,
-        onFocusNext,
-        onDeleteBlock,
-        onIndent,
-        onDedent,
-        onFlush,
-        onMergeWithPrev,
-        onEnterSave,
-        onEscapeCancel,
-        onMoveUp,
-        onMoveDown,
-        onToggleTodo,
-        onToggleCollapse,
-        onShowProperties,
-        isLastBlock,
-      })
+      // Read callbacks via the ref so the handler's identity does not depend
+      // on callback identities (MAINT-185).
+      handleBlockKeyDown(event, editor, cbsRef.current)
       // When our handler called preventDefault(), also stop propagation so
       // ProseMirror's keydown handler on the editor DOM doesn't process the
       // same key (e.g. Enter creating an unwanted paragraph).
@@ -314,24 +292,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         event.stopPropagation()
       }
     },
-    [
-      editor,
-      onFocusPrev,
-      onFocusNext,
-      onDeleteBlock,
-      onIndent,
-      onDedent,
-      onFlush,
-      onMergeWithPrev,
-      onEnterSave,
-      onEscapeCancel,
-      onMoveUp,
-      onMoveDown,
-      onToggleTodo,
-      onToggleCollapse,
-      onShowProperties,
-      isLastBlock,
-    ],
+    [editor],
   )
 
   useEffect(() => {

@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 616 — Batch BACKEND-TEST-2 closed: TEST-27, TEST-30, TEST-31, TEST-FE-6)
+> **Last updated:** 2026-05-02 (Session 617 — Batch FE-MAINT-CLUSTER-2 closed: MAINT-184, MAINT-185, TEST-FE-8)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-117 open items in the summary table; 152 detail entries (FE-* sub-tables don't appear in the summary).
+114 open items in the summary table; 149 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -35,8 +35,6 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-178 | MAINT | Frontend — `BootGate` error screen has only Retry; for unrecoverable failures (corrupted DB, permission denied, missing migration) the user is stuck. Add a diagnostics escape hatch (show `error.cause` chain, copy logs, launch bug-report) | S | — |
 | MAINT-180 | MAINT | Frontend — `SpaceManageDialog` — each `SpaceRowEditor` mount fires emptiness-probe + journal-template `listBlocks` IPCs with no dedup; reopening the dialog re-fetches the same data per row | S | — |
 | MAINT-183 | MAINT | Frontend — `markdown-serialize.ts` header claims "zero external dependencies" but file imports `sonner`, `logger`, `i18n`. Either rewrite the header or move the toast/i18n side effect to a wrapper at the call site | S | — |
-| MAINT-184 | MAINT | Frontend — `block-link-picker.ts` and `block-ref-picker.ts` each duplicate ~70% of resolve-and-insert logic between their InputRule handler and their `resolve*FromSelection` command. Extract a shared helper | S | — |
-| MAINT-185 | MAINT | Frontend — `use-block-keyboard.ts:275-335` `handleKeyDown` callback has 16 deps; depends on parent-callback memoization. Switch to the refs-bag pattern already used in `use-roving-editor.ts:258-289` for stable listener identity | S | — |
 | MAINT-189 | MAINT | Frontend — `PropertyValuePicker.tsx:42-49` calls `listPropertyKeys()` once per component mount with no shared cache; multiple instances on the same view re-fetch. Add a `usePropertyKeysCache` hook | S | — |
 | MAINT-192 | MAINT | Documentation — UX.md / AGENTS.md additions to reduce false-positive churn on future reviews: (a) UX.md Common-Pitfall "`setState` after unmount in React 18+ is no longer a defect"; (b) UX.md Lesson-Learned "Reading store state inside callbacks via `useStore.getState()` is intentional"; (c) AGENTS.md mandatory-pattern: picker debouncing convention; (d) AGENTS.md reference `INTERNAL_PROPERTY_KEYS` (see MAINT-187) | S | — |
 | MAINT-193 | MAINT | zizmor baseline triage — 53 GitHub Actions findings suppressed by file:line in `.github/zizmor.yml` when the `zizmor` pre-commit hook was first wired in. Mix of policy-level (`unpinned-uses` × 35: tags vs SHAs) and real fixes (`template-injection` × 6 in `release-tag.yml` — pass `inputs.version` via `env:` instead of `${{ }}` interpolation; `excessive-permissions` × 1 in `release.yml`; `cache-poisoning` × 11; `artipacked` × 7). Triage off the baseline as fixes land. | M | — |
@@ -58,7 +56,6 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-FE-4 | TEST | `ViewDispatcher.test.tsx` Suspense-fallback test calls `vi.resetModules()` + `vi.doMock()` then unmocks at end of bare test body — assertion failure mid-test would leak module mocks to subsequent tests in the same worker | S | — |
 | TEST-FE-5 | TEST | `useBatchCounts` test fixture sets `displayDate === dateStr`, so a regression that keys `agendaCounts` by `displayDate` instead of `dateStr` would silently pass | S | — |
 | TEST-FE-7 | TEST | `AgendaResults.test.tsx` hardcodes `'2020-01-01'` as overdue marker (lines 320, 332) when file already imports `subDays` and uses dynamic `new Date()` for "today" | S | — |
-| TEST-FE-8 | TEST | `PairingDialog.test.tsx` uses `document.querySelector('.pairing-error')` for portal content (lines 314-318, 542-546, 850-854) — couples test to CSS class name; accessible queries preferred | S | — |
 | UX-300 | UX | Code-block language selector lacks search/filter | S | — |
 | UX-302 | UX | Multi-selection has no visible feedback on selected blocks | S | — |
 | UX-304 | UX | Swipe-to-delete (mobile) has no visual affordance or threshold cue | S | — |
@@ -420,24 +417,6 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Impact:** Low — maintainability + testability.
 - **Status:** Open.
 
-### MAINT-184 — Picker async-resolve duplication between InputRule and command paths
-- **Domain:** Frontend (editor extensions)
-- **Location:** `src/editor/extensions/block-link-picker.ts:48-104` (command) vs `:113-173` (input rule); same shape in `block-ref-picker.ts:44-97` (command) vs `:99-157` (input rule).
-- **What:** Each picker has two entry points (input rule when typed, command when invoked from selection) that share ~70% of logic: async items lookup, exact-match check, `onCreate` fallback, plain-text fallback, error handling. Bug fixes need to land in two places per picker.
-- **Cost:** S — extract `resolveAndInsertBlockLink(editor, opts, items, onCreate, insertPos)` (and twin for refs) into a small shared helper. Both entry points become 5-line wrappers.
-- **Risk:** Low.
-- **Impact:** Low–medium — duplication harms velocity and is a known foot-gun (one path was patched without the other in past sessions).
-- **Status:** Open.
-
-### MAINT-185 — `use-block-keyboard.ts` keydown callback has 16 deps (relies on parent memoization)
-- **Domain:** Frontend (editor)
-- **Location:** `src/editor/use-block-keyboard.ts:275-335`
-- **What:** `useCallback(handleKeyDown, [16 callbacks])` — listener identity changes whenever any parent callback prop is recreated. Reference pattern (refs-bag) already exists in `use-roving-editor.ts:258-289` — store latest callbacks in a ref, keep the keydown handler stable.
-- **Cost:** S — mirror the refs-bag pattern.
-- **Risk:** Low.
-- **Impact:** Low — most parents already memoize, so the bug rarely surfaces; this is mostly future-proofing.
-- **Status:** Open.
-
 ### MAINT-189 — `listPropertyKeys()` fetched per-mount in 3 components with no shared cache
 - **Domain:** Frontend (filter pickers + backlink panels)
 - **Location:** `src/components/PropertyValuePicker.tsx:42-49` ; `src/components/UnlinkedReferences.tsx:147-148` ; `src/components/LinkedReferences.tsx:155-156`
@@ -596,16 +575,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Cost:** M — audit the listed files (excluding BlockContextMenu, which already complies) and tighten high-value cases to `toHaveBeenCalledWith(expect.objectContaining({...}))`. The remaining ~50 files are a separate pass.
 - **Risk:** Low — additive specificity in assertions.
 - **Impact:** Medium-high in the action-handler / keyboard-shortcut files.
-- **Status:** Open.
-
-### TEST-FE-8 — `PairingDialog.test.tsx` uses `document.querySelector('.pairing-error')` for portal content
-- **Domain:** Frontend test infrastructure
-- **Location:** `src/components/__tests__/PairingDialog.test.tsx:314, 344, 543, 745, 775, 813, 851` (7 sites total — 5 `.pairing-error` at L314/344/745/775/813 and 2 `.pairing-error p` at L543/851)
-- **What:** Seven sites across six tests use `document.querySelector('.pairing-error')` (or `.pairing-error p`) to reach error content rendered inside a Radix Portal (outside the React tree). This works (the Portal escapes the React tree, `document.querySelector` reaches it) but couples the tests to the CSS class name.
-- **Why it matters:** Per AGENTS.md, accessible queries (`screen.findByText(...)` / `findByRole('alert')`) are preferred. They survive a class-name refactor and express intent better. Worth a quick check that each `.pairing-error` element exposes a stable accessible role/text first — if not, a one-line attribute add to the production component is the right precondition.
-- **Cost:** Small — verify accessible-name surface, then swap selectors.
-- **Risk:** Low.
-- **Impact:** Low.
 - **Status:** Open.
 
 ## PERF — Performance items

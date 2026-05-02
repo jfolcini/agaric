@@ -9,7 +9,7 @@
  * Both resolve to ULID, never writing [[title]] to storage.
  */
 
-import { Extension, InputRule } from '@tiptap/core'
+import { type Editor, Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import { logger } from '../../lib/logger'
 import type { PickerItem } from '../SuggestionList'
@@ -29,6 +29,59 @@ declare module '@tiptap/core' {
     blockLinkPicker: {
       resolveBlockLinkFromSelection: () => ReturnType
     }
+  }
+}
+
+/**
+ * Shared async resolve-and-insert path for the BlockLinkPicker entry points.
+ *
+ * Both the input rule (typing `[[text]]`) and the command
+ * (`resolveBlockLinkFromSelection`) share the same resolution shape:
+ *   1. async items lookup
+ *   2. exact-match check (case-insensitive label OR alias match)
+ *   3. on match → insert `block_link` node at `insertPos`
+ *   4. on no match + `onCreate` → create new page, insert link
+ *   5. on no match + no `onCreate` → re-insert plain `text`
+ *   6. on error → log + re-insert plain `text`
+ *
+ * Branch coverage for this helper is provided by the existing input-rule and
+ * command tests in `__tests__/block-link-picker.test.ts` — both paths exercise
+ * every branch (exact match, onCreate, plain-text fallback, error fallback).
+ */
+async function resolveAndInsertBlockLink(
+  editor: Editor,
+  text: string,
+  insertPos: number,
+  options: BlockLinkPickerOptions,
+  errorMessage: string,
+): Promise<void> {
+  try {
+    const items = await options.items(text)
+    // Look for an exact match (case-insensitive) or an alias match
+    const exactMatch = items.find(
+      (item) => !item.isCreate && (item.label.toLowerCase() === text.toLowerCase() || item.isAlias),
+    )
+    if (exactMatch) {
+      editor
+        .chain()
+        .focus()
+        .insertContentAt(insertPos, { type: 'block_link', attrs: { id: exactMatch.id } })
+        .run()
+    } else if (options.onCreate) {
+      const newId = await options.onCreate(text)
+      editor
+        .chain()
+        .focus()
+        .insertContentAt(insertPos, { type: 'block_link', attrs: { id: newId } })
+        .run()
+    } else {
+      // No match and no onCreate — re-insert as plain text
+      editor.chain().focus().insertContentAt(insertPos, text).run()
+    }
+  } catch (err) {
+    logger.warn('BlockLinkPicker', errorMessage, { text }, err)
+    // On error, re-insert as plain text so the user doesn't lose content
+    editor.chain().focus().insertContentAt(insertPos, text).run()
   }
 }
 
@@ -58,48 +111,13 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           const insertPos = from
           editor.chain().focus().deleteRange({ from, to }).run()
 
-          const resolveAndInsert = async () => {
-            try {
-              const items = await extensionOptions.items(selectedText)
-              const exactMatch = items.find(
-                (item) =>
-                  !item.isCreate &&
-                  (item.label.toLowerCase() === selectedText.toLowerCase() || item.isAlias),
-              )
-              if (exactMatch) {
-                editor
-                  .chain()
-                  .focus()
-                  .insertContentAt(insertPos, {
-                    type: 'block_link',
-                    attrs: { id: exactMatch.id },
-                  })
-                  .run()
-              } else if (extensionOptions.onCreate) {
-                const newId = await extensionOptions.onCreate(selectedText)
-                editor
-                  .chain()
-                  .focus()
-                  .insertContentAt(insertPos, {
-                    type: 'block_link',
-                    attrs: { id: newId },
-                  })
-                  .run()
-              } else {
-                // No match and no onCreate — re-insert as plain text
-                editor.chain().focus().insertContentAt(insertPos, selectedText).run()
-              }
-            } catch (err) {
-              logger.warn(
-                'BlockLinkPicker',
-                'resolveBlockLinkFromSelection failed, falling back to plain text',
-                { text: selectedText },
-                err,
-              )
-              editor.chain().focus().insertContentAt(insertPos, selectedText).run()
-            }
-          }
-          void resolveAndInsert()
+          void resolveAndInsertBlockLink(
+            editor,
+            selectedText,
+            insertPos,
+            extensionOptions,
+            'resolveBlockLinkFromSelection failed, falling back to plain text',
+          )
           return true
         },
     }
@@ -123,52 +141,15 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           // Delete the [[text]] range immediately so the raw text doesn't linger
           state.tr.delete(range.from, range.to)
 
-          // Async resolve: look up page, then insert block_link node at the
-          // captured position to avoid a race with subsequent user edits.
-          const resolveAndInsert = async () => {
-            try {
-              const items = await extensionOptions.items(innerText)
-              // Look for an exact match (case-insensitive) or an alias match
-              const exactMatch = items.find(
-                (item) =>
-                  !item.isCreate &&
-                  (item.label.toLowerCase() === innerText.toLowerCase() || item.isAlias),
-              )
-              if (exactMatch) {
-                editor
-                  .chain()
-                  .focus()
-                  .insertContentAt(insertPos, {
-                    type: 'block_link',
-                    attrs: { id: exactMatch.id },
-                  })
-                  .run()
-              } else if (extensionOptions.onCreate) {
-                const newId = await extensionOptions.onCreate(innerText)
-                editor
-                  .chain()
-                  .focus()
-                  .insertContentAt(insertPos, {
-                    type: 'block_link',
-                    attrs: { id: newId },
-                  })
-                  .run()
-              } else {
-                // No match and no onCreate — re-insert as plain text
-                editor.chain().focus().insertContentAt(insertPos, innerText).run()
-              }
-            } catch (err) {
-              logger.warn(
-                'BlockLinkPicker',
-                'Failed to resolve block link via input rule, falling back to plain text',
-                { text: innerText },
-                err,
-              )
-              // On error, re-insert as plain text so the user doesn't lose content
-              editor.chain().focus().insertContentAt(insertPos, innerText).run()
-            }
-          }
-          void resolveAndInsert()
+          // Async resolve via the shared helper — inserts at the captured
+          // position to avoid a race with subsequent user edits.
+          void resolveAndInsertBlockLink(
+            editor,
+            innerText,
+            insertPos,
+            extensionOptions,
+            'Failed to resolve block link via input rule, falling back to plain text',
+          )
         },
       }),
     ]
