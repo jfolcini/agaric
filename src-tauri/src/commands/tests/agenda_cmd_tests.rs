@@ -2209,7 +2209,7 @@ async fn list_projected_agenda_walks_pages_correctly_m25() {
         for entry in &page.items {
             walked.push((
                 entry.projected_date.clone(),
-                entry.block.id.clone(),
+                entry.block.id.clone().into(),
                 entry.source.clone(),
             ));
         }

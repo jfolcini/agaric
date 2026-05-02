@@ -1528,7 +1528,7 @@ async fn search_pagination_identical_ranks_no_duplicates_no_skips() {
             .unwrap();
 
         for item in &result.items {
-            all_ids.push(item.id.clone());
+            all_ids.push(item.id.clone().into());
         }
 
         pages += 1;
@@ -1640,13 +1640,10 @@ async fn search_cursor_round_trip_with_float_rank() {
 
     // Collect all IDs and verify completeness
     let all_ids: Vec<&str> = vec![
-        &result1.items[0].id,
-        &result2.items[0].id,
-        &result3.items[0].id,
-    ]
-    .into_iter()
-    .map(String::as_str)
-    .collect();
+        result1.items[0].id.as_str(),
+        result2.items[0].id.as_str(),
+        result3.items[0].id.as_str(),
+    ];
     let unique: std::collections::HashSet<&str> = all_ids.iter().copied().collect();
     assert_eq!(
         unique.len(),
@@ -1700,7 +1697,7 @@ async fn search_pagination_close_ranks_epsilon_boundary() {
             .unwrap();
 
         for item in &result.items {
-            all_ids.push(item.id.clone());
+            all_ids.push(item.id.clone().into());
         }
 
         pages += 1;

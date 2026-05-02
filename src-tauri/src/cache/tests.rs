@@ -2769,7 +2769,7 @@ async fn projected_agenda_cache_oracle_matches_on_the_fly() {
         .iter()
         .map(|e| {
             (
-                e.block.id.clone(),
+                e.block.id.clone().into(),
                 e.projected_date.clone(),
                 e.source.clone(),
             )

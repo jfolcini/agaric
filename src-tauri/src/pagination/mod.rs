@@ -106,37 +106,18 @@ pub(crate) const NULL_POSITION_SENTINEL: i64 = i64::MAX;
 // ---------------------------------------------------------------------------
 
 /// Row returned by paginated block queries.
-//
-// MAINT-113 M1 deliberately leaves `BlockRow` non-generic. The natural
-// migration target — `BlockRow<Id = String>` — runs into two friction
-// points that, together, make the change un-ergonomic for a single
-// session:
-//
-// 1. **`specta-typescript` 0.0.11 does NOT emit Rust generic defaults.**
-//    A `pub struct BlockRow<Id = String>` round-trips to TypeScript as
-//    `export type BlockRow<Id> = { id: Id, ... }` (no `Id = string`
-//    default). Every one of the ~69 frontend files that imports
-//    `BlockRow` as a bare name (without a type argument) would fail
-//    type-checking until each one is updated to `BlockRow<string>`.
-//
-// 2. **The `specta::Type` derive macro on a struct that embeds a generic
-//    `BlockRow<Id>` requires `Id: Clone` to be expressible in the macro's
-//    own placeholder bound — but the derive emits a `PLACEHOLDER_Id`
-//    type that doesn't carry the where-clause forward, so
-//    `ProjectedAgendaEntry<Id> { block: BlockRow<Id> }` fails to derive
-//    `specta::Type` when `Id: Clone` is bounded on the inner struct.
-//
-// The clean resolution belongs in MAINT-113 M2: either upstream a
-// specta-typescript change that emits generic defaults, or introduce a
-// parallel `ActiveBlockRow` struct (clear types, code duplication
-// limited to one struct shape). For now, helpers that filter active
-// rows keep returning `BlockRow` and the callers that need a typed id
-// can call `ActiveBlockId::from_trusted_active(&row.id)` at the
-// boundary — the activeness invariant is documented at the helper, not
-// enforced at the type level. The newly-introduced `ActiveBlockId` +
-// `verify_active` gate already covers the path where untrusted ids
-// enter the codebase (e.g., from command parameters), so the type-level
-// safety win lands today even without retyping every row.
+///
+/// MAINT-113 took the parallel-types path (over the explored
+/// `BlockRow<Id = String>` generic, which collided with two
+/// `specta-typescript` 0.0.11 constraints — no generic-default emit and
+/// `PLACEHOLDER_Id` codegen dropping `Id: Clone` bounds through embedded
+/// generic structs). `BlockRow` stays raw — used by polymorphic
+/// dispatchers (`list_blocks_inner`'s show-deleted/agenda/tag/by-type/
+/// children fan-out) and by helpers that intentionally surface conflict
+/// or deleted rows (`get_block`, `get_conflicts`, `list_trash`). Helpers
+/// whose SQL filters `is_conflict = 0 AND deleted_at IS NULL` return
+/// [`ActiveBlockRow`] instead and lift the activeness invariant into
+/// the type system at the helper signature.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 pub struct BlockRow {
     pub id: String,
@@ -165,6 +146,121 @@ pub struct ProjectedAgendaEntry {
     pub projected_date: String,
     /// Which date column was used as the base for projection.
     pub source: String, // "due_date" or "scheduled_date"
+}
+
+/// MAINT-113 M1.5 — Row returned by paginated block queries that filter
+/// on `is_conflict = 0 AND deleted_at IS NULL` in their SQL.
+///
+/// Mirror of [`BlockRow`] except `id` is typed [`crate::ulid::ActiveBlockId`]
+/// — a strict subset of the raw block-id space that has been verified
+/// (by the helper's own SQL filter) to refer to a live, non-conflict
+/// block. Helpers that intentionally surface conflict copies (`get_conflicts`)
+/// or deleted rows (`list_trash`) keep returning `BlockRow`.
+///
+/// Specta emits this as a separate TypeScript type, but `id`'s emit is
+/// `ActiveBlockId` which is itself a transparent alias for `string`. The
+/// runtime wire format is byte-identical to `BlockRow` (same JSON shape,
+/// same SQLite column types). Frontend code that consumed `BlockRow` from
+/// active-filtering Tauri commands continues to compile because
+/// TypeScript's structural typing accepts `ActiveBlockRow` wherever a
+/// `BlockRow` is expected (and vice-versa) — both have `id: string`
+/// at the wire level.
+///
+/// Construction is via `sqlx::query_as` with a column cast like
+/// `id as "id: ActiveBlockId"` (see `fts/search.rs::search_fts` for an
+/// example), or via [`ActiveBlockRow::from_block_row_unchecked`] at the
+/// boundary of an internal helper that already filtered active rows.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
+pub struct ActiveBlockRow {
+    pub id: crate::ulid::ActiveBlockId,
+    pub block_type: String,
+    pub content: Option<String>,
+    pub parent_id: Option<String>,
+    pub position: Option<i64>,
+    pub deleted_at: Option<String>,
+    pub is_conflict: bool,
+    pub conflict_type: Option<String>,
+    pub todo_state: Option<String>,
+    pub priority: Option<String>,
+    pub due_date: Option<String>,
+    pub scheduled_date: Option<String>,
+    pub page_id: Option<String>,
+}
+
+impl ActiveBlockRow {
+    /// Construct from a raw [`BlockRow`] without re-checking the active
+    /// invariant. Use ONLY at the boundary of a helper that has just
+    /// produced the row from an active-filtering SQL query
+    /// (`WHERE is_conflict = 0 AND deleted_at IS NULL`).
+    ///
+    /// For untrusted input (e.g., a `BlockRow` returned by a polymorphic
+    /// dispatcher that may have routed through `list_trash`), call
+    /// [`crate::ulid::verify_active`] on the id and reconstruct the row
+    /// instead.
+    pub fn from_block_row_unchecked(row: BlockRow) -> Self {
+        Self {
+            id: crate::ulid::ActiveBlockId::from_trusted_active(&row.id),
+            block_type: row.block_type,
+            content: row.content,
+            parent_id: row.parent_id,
+            position: row.position,
+            deleted_at: row.deleted_at,
+            is_conflict: row.is_conflict,
+            conflict_type: row.conflict_type,
+            todo_state: row.todo_state,
+            priority: row.priority,
+            due_date: row.due_date,
+            scheduled_date: row.scheduled_date,
+            page_id: row.page_id,
+        }
+    }
+}
+
+impl From<ActiveBlockRow> for BlockRow {
+    /// `ActiveBlockRow` is a strict subset of `BlockRow`; conversion is
+    /// always safe and infallible.
+    fn from(active: ActiveBlockRow) -> Self {
+        Self {
+            id: active.id.into_string(),
+            block_type: active.block_type,
+            content: active.content,
+            parent_id: active.parent_id,
+            position: active.position,
+            deleted_at: active.deleted_at,
+            is_conflict: active.is_conflict,
+            conflict_type: active.conflict_type,
+            todo_state: active.todo_state,
+            priority: active.priority,
+            due_date: active.due_date,
+            scheduled_date: active.scheduled_date,
+            page_id: active.page_id,
+        }
+    }
+}
+
+/// MAINT-113 M1.5 — Active-id variant of [`ProjectedAgendaEntry`]. Used by
+/// `commands::agenda::list_projected_agenda_inner` and its on-the-fly
+/// fallback, both of which only emit projections of live, non-conflict
+/// blocks (the projector reads from `block_properties` joined against
+/// `blocks WHERE is_conflict = 0 AND deleted_at IS NULL`).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct ActiveProjectedAgendaEntry {
+    /// The source block (real, materialized, active block).
+    pub block: ActiveBlockRow,
+    /// The projected date for this occurrence (YYYY-MM-DD).
+    pub projected_date: String,
+    /// Which date column was used as the base for projection.
+    pub source: String, // "due_date" or "scheduled_date"
+}
+
+impl From<ActiveProjectedAgendaEntry> for ProjectedAgendaEntry {
+    fn from(active: ActiveProjectedAgendaEntry) -> Self {
+        Self {
+            block: active.block.into(),
+            projected_date: active.projected_date,
+            source: active.source,
+        }
+    }
 }
 
 /// Row returned by block history queries (op_log entries for a block).

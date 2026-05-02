@@ -4847,3 +4847,145 @@ mod proptest_tests {
         }
     }
 }
+
+// ============================================================================
+// MAINT-113 M1.5 — ActiveBlockRow + ActiveProjectedAgendaEntry conversions
+// ============================================================================
+
+mod active_row_conversions {
+    use super::*;
+    use crate::ulid::ActiveBlockId;
+
+    /// Build a non-trivial `ActiveBlockRow` covering every field. The data
+    /// is intentionally noisy so any field-reordering in `From<ActiveBlockRow>
+    /// for BlockRow` would surface as a mismatched assertion.
+    fn fixture_active_row() -> ActiveBlockRow {
+        ActiveBlockRow {
+            id: ActiveBlockId::test_id("ACTROW01"),
+            block_type: "content".to_string(),
+            content: Some("hello".to_string()),
+            parent_id: Some("PAR_ABC".to_string()),
+            position: Some(42),
+            deleted_at: Some("2024-01-01T00:00:00Z".to_string()),
+            is_conflict: false,
+            conflict_type: Some("lww".to_string()),
+            todo_state: Some("TODO".to_string()),
+            priority: Some("A".to_string()),
+            due_date: Some("2024-12-31".to_string()),
+            scheduled_date: Some("2024-12-25".to_string()),
+            page_id: Some("PAGE_XYZ".to_string()),
+        }
+    }
+
+    /// Pin the always-safe `From<ActiveBlockRow> for BlockRow` conversion.
+    /// The conversion is the only documented downcast path used at the
+    /// `gcal_push::connector` boundary; a silent field-order mistake here
+    /// would corrupt that pipeline's input.
+    #[test]
+    fn from_active_block_row_preserves_every_field() {
+        let active = fixture_active_row();
+        let raw: BlockRow = active.clone().into();
+
+        // The id field changes type (ActiveBlockId -> String) but the
+        // underlying bytes must be identical.
+        assert_eq!(raw.id, active.id.as_str());
+        assert_eq!(raw.block_type, active.block_type);
+        assert_eq!(raw.content, active.content);
+        assert_eq!(raw.parent_id, active.parent_id);
+        assert_eq!(raw.position, active.position);
+        assert_eq!(raw.deleted_at, active.deleted_at);
+        assert_eq!(raw.is_conflict, active.is_conflict);
+        assert_eq!(raw.conflict_type, active.conflict_type);
+        assert_eq!(raw.todo_state, active.todo_state);
+        assert_eq!(raw.priority, active.priority);
+        assert_eq!(raw.due_date, active.due_date);
+        assert_eq!(raw.scheduled_date, active.scheduled_date);
+        assert_eq!(raw.page_id, active.page_id);
+    }
+
+    /// Pin the always-safe `From<ActiveProjectedAgendaEntry> for
+    /// ProjectedAgendaEntry` conversion. Same rationale as
+    /// `from_active_block_row_preserves_every_field` — the
+    /// `gcal_push::connector` downcast feeds the digest pipeline through
+    /// this exact path, one entry at a time.
+    #[test]
+    fn from_active_projected_agenda_entry_preserves_every_field() {
+        let active = ActiveProjectedAgendaEntry {
+            block: fixture_active_row(),
+            projected_date: "2024-12-25".to_string(),
+            source: "due_date".to_string(),
+        };
+
+        let raw: ProjectedAgendaEntry = active.clone().into();
+
+        assert_eq!(raw.block.id, active.block.id.as_str());
+        assert_eq!(raw.block.block_type, active.block.block_type);
+        assert_eq!(raw.projected_date, active.projected_date);
+        assert_eq!(raw.source, active.source);
+    }
+
+    /// `from_block_row_unchecked` must apply the same uppercase
+    /// normalisation contract as `BlockId::from_trusted` (AGENTS.md
+    /// invariant #8). A lowercase ULID handed in must round-trip to
+    /// canonical uppercase Crockford base32 so blake3 hashing stays
+    /// deterministic if the value is later persisted.
+    #[test]
+    fn from_block_row_unchecked_uppercases_id() {
+        let row = BlockRow {
+            id: "01arz3ndektsv4rrffq69g5fav".to_string(), // lowercase ULID
+            block_type: "content".to_string(),
+            content: None,
+            parent_id: None,
+            position: None,
+            deleted_at: None,
+            is_conflict: false,
+            conflict_type: None,
+            todo_state: None,
+            priority: None,
+            due_date: None,
+            scheduled_date: None,
+            page_id: None,
+        };
+        let active = ActiveBlockRow::from_block_row_unchecked(row);
+        assert_eq!(
+            active.id.as_str(),
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "from_block_row_unchecked must normalise the id to uppercase \
+             via from_trusted_active",
+        );
+    }
+
+    /// `from_block_row_unchecked` is field-preserving (other than the
+    /// id-uppercase) — every other field must be moved through unchanged.
+    #[test]
+    fn from_block_row_unchecked_preserves_other_fields() {
+        let row = BlockRow {
+            id: "ROW_ABC".to_string(),
+            block_type: "page".to_string(),
+            content: Some("body".to_string()),
+            parent_id: Some("PAR".to_string()),
+            position: Some(7),
+            deleted_at: None,
+            is_conflict: false,
+            conflict_type: None,
+            todo_state: Some("DOING".to_string()),
+            priority: Some("B".to_string()),
+            due_date: Some("2025-01-01".to_string()),
+            scheduled_date: Some("2024-12-31".to_string()),
+            page_id: Some("PAGE".to_string()),
+        };
+        let active = ActiveBlockRow::from_block_row_unchecked(row.clone());
+        assert_eq!(active.block_type, row.block_type);
+        assert_eq!(active.content, row.content);
+        assert_eq!(active.parent_id, row.parent_id);
+        assert_eq!(active.position, row.position);
+        assert_eq!(active.deleted_at, row.deleted_at);
+        assert_eq!(active.is_conflict, row.is_conflict);
+        assert_eq!(active.conflict_type, row.conflict_type);
+        assert_eq!(active.todo_state, row.todo_state);
+        assert_eq!(active.priority, row.priority);
+        assert_eq!(active.due_date, row.due_date);
+        assert_eq!(active.scheduled_date, row.scheduled_date);
+        assert_eq!(active.page_id, row.page_id);
+    }
+}
