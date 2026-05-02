@@ -5730,7 +5730,11 @@ async fn eval_grouped_blockrow_fetch_small_in_bind() {
     assert_eq!(resp.total_count, 5);
     assert_eq!(resp.filtered_count, 5);
 
-    let ids: FxHashSet<String> = resp.groups[0].blocks.iter().map(|b| b.id.clone()).collect();
+    let ids: FxHashSet<String> = resp.groups[0]
+        .blocks
+        .iter()
+        .map(|b| b.id.clone().into())
+        .collect();
     let expected: FxHashSet<String> = (1..=5).map(|k| format!("BL_{k:06}")).collect();
     assert_eq!(ids, expected, "IN-bind path must return the 5 source ids");
 }
@@ -5760,7 +5764,11 @@ async fn eval_grouped_blockrow_fetch_large_json_each() {
     assert_eq!(resp.total_count, 600);
     assert_eq!(resp.filtered_count, 600);
 
-    let ids: FxHashSet<String> = resp.groups[0].blocks.iter().map(|b| b.id.clone()).collect();
+    let ids: FxHashSet<String> = resp.groups[0]
+        .blocks
+        .iter()
+        .map(|b| b.id.clone().into())
+        .collect();
     let expected: FxHashSet<String> = (1..=600).map(|k| format!("BL_{k:06}")).collect();
     assert_eq!(
         ids, expected,

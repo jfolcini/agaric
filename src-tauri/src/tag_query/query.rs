@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 use super::resolve::resolve_expr;
 use super::{TagCacheRow, TagExpr};
 use crate::error::AppError;
-use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse};
+use crate::pagination::{ActiveBlockRow, Cursor, PageRequest, PageResponse};
 use crate::sql_utils::escape_like;
 
 /// Evaluate a boolean tag expression and return a paginated set of blocks.
@@ -23,7 +23,7 @@ pub async fn eval_tag_query(
     page: &PageRequest,
     include_inherited: bool,
     space_id: Option<&str>,
-) -> Result<PageResponse<BlockRow>, AppError> {
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let block_ids: FxHashSet<String> = resolve_expr(pool, expr, include_inherited).await?;
     if block_ids.is_empty() {
         return Ok(PageResponse {
@@ -86,7 +86,13 @@ pub async fn eval_tag_query(
                 WHERE bp.key = 'space' AND bp.value_ref = ?)) \
          ORDER BY id"
     );
-    let mut query = sqlx::query_as::<_, BlockRow>(&query_str);
+    // MAINT-113 M2 — query the rows as ActiveBlockRow directly. The SQL
+    // above filters `deleted_at IS NULL AND is_conflict = 0` (lines
+    // ~82-83), so every row sqlx hydrates is active. The
+    // `id as "id: ActiveBlockId"` cast is implicit — sqlx::query_as
+    // calls FromRow which decodes via `sqlx::Type` for ActiveBlockId
+    // (transparent over String).
+    let mut query = sqlx::query_as::<_, ActiveBlockRow>(&query_str);
     for id in &actual_ids {
         query = query.bind(*id);
     }
@@ -94,10 +100,10 @@ pub async fn eval_tag_query(
     // (once for the NULL guard, once for the value comparison) so the
     // dynamic-SQL form keeps the `(? IS NULL OR …)` short-circuit.
     query = query.bind(space_id).bind(space_id);
-    let items: Vec<BlockRow> = query.fetch_all(pool).await?;
+    let items: Vec<ActiveBlockRow> = query.fetch_all(pool).await?;
     let next_cursor = if has_more {
         let last = items.last().expect("has_more implies non-empty");
-        Some(Cursor::for_id(last.id.clone()).encode()?)
+        Some(Cursor::for_id(last.id.as_str().to_string()).encode()?)
     } else {
         None
     };

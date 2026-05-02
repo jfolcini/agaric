@@ -12,7 +12,7 @@ use crate::materializer::Materializer;
 use crate::now_rfc3339;
 use crate::op::{AddTagPayload, OpPayload, RemoveTagPayload};
 use crate::op_log;
-use crate::pagination::BlockRow;
+use crate::pagination::ActiveBlockRow;
 use crate::pagination::PageResponse;
 use crate::tag_query::{self, TagCacheRow, TagExpr};
 use crate::ulid::BlockId;
@@ -248,7 +248,7 @@ pub async fn query_by_tags_inner(
     cursor: Option<String>,
     limit: Option<i64>,
     space_id: Option<String>,
-) -> Result<PageResponse<BlockRow>, AppError> {
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let mut exprs = Vec::new();
     for tag_id in tag_ids {
         exprs.push(TagExpr::Tag(tag_id));
@@ -400,7 +400,7 @@ pub async fn query_by_tags(
     cursor: Option<String>,
     limit: Option<i64>,
     space_id: Option<String>,
-) -> Result<PageResponse<BlockRow>, AppError> {
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     query_by_tags_inner(
         &pool.0,
         tag_ids,

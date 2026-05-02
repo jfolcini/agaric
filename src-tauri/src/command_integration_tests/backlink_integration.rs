@@ -78,7 +78,7 @@ async fn backlinks_filtered_returns_linking_blocks() {
         .await
         .unwrap();
 
-    let ids: HashSet<String> = resp.items.iter().map(|b| b.id.clone()).collect();
+    let ids: HashSet<String> = resp.items.iter().map(|b| b.id.clone().into()).collect();
     assert!(ids.contains(&b1.id), "b1 must be in backlinks");
     assert!(ids.contains(&b2.id), "b2 must be in backlinks");
     assert_eq!(resp.items.len(), 2, "exactly two backlinks expected");

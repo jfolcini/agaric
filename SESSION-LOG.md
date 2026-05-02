@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 619 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 947+ items.
+**Sessions:** 1 – 620 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 947+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 620 (2026-05-02)** — MAINT-113 M2 closed: backlink + tag-query helpers retyped to `ActiveBlockRow`. `BacklinkQueryResponse.items` + `BacklinkGroup.blocks` retyped at the type level. `backlink::query::eval_backlink_query` + `backlink::grouped::eval_backlink_query_grouped` + `eval_unlinked_references` use `ActiveBlockRow::from_block_row_unchecked` boundary casts over their already-active-filtered ID sets. `tag_query::query::eval_tag_query` switched from `query_as::<_, BlockRow>` to `query_as::<_, ActiveBlockRow>` (sqlx's `FromRow` derive handles the typed-id slot via `sqlx::Type` transparent over `String`). `pagination::list_backlinks` uses the sqlx column-cast `id as "id: crate::ulid::ActiveBlockId"` in its `query_as!` macro (one new `.sqlx/` cache entry committed). `commands::queries::get_backlinks_inner` + `commands::tags::query_by_tags_inner` and their respective Tauri command wrappers propagate the typed return. 3 test sites updated with `.into()` widenings on `String` collection targets. **`list_children` retype + the rest of `list_blocks_inner`'s active fan-out deferred to M3** because the dispatcher routes `list_children` / `list_by_type` / `list_by_tag` / `list_agenda*` (active) AND `list_trash` (deleted blocks) into one return type — retyping any one branch forces an architectural decision (split-off-trash vs. narrow-at-callsite) that AGENTS.md "Architectural Stability" requires explicit user approval for. `commands/properties.rs::set_*_inner` family also deferred to M3. 3433 backend + 9078 frontend tests pass; bindings regenerated; specta confirms structural compatibility (`ActiveBlockRow` ≡ `BlockRow` at the wire level via the `ActiveBlockId = string` alias).
 - **Session 619 (2026-05-02)** — MAINT-113 M1.5 closed: parallel-types path chosen for `BlockRow` retype (over the `BlockRow<Id = String>` generic that was blocked by `specta-typescript` 0.0.11 limitations). `ActiveBlockRow` + `ActiveProjectedAgendaEntry` mirror structs added to `pagination/mod.rs` with always-safe `From<Active*> for *Raw*` downcasts and an `ActiveBlockRow::from_block_row_unchecked` boundary-cast helper. Two of the three remaining M1 helpers retyped: `fts::search_fts` + `commands::queries::search_blocks_inner` + the `search_blocks` Tauri command now return `PageResponse<ActiveBlockRow>`; `commands::agenda::list_projected_agenda_inner` + `list_projected_agenda_on_the_fly` + the `list_projected_agenda` Tauri command return `PageResponse<ActiveProjectedAgendaEntry>`. `RepeatingBlockRow::to_active_block_row()` replaces `to_block_row()`. `gcal_push::connector` downcasts at the boundary because the digest pipeline only consumes row content. 5 test sites updated (`fts/tests`, `mcp/tools_ro/tests`, `cache/tests`, `agenda_cmd_tests`) with `.into()` widenings on `String` collection targets. **`list_children` retype deferred to M2** — blocked by the `commands::blocks::queries::list_blocks_inner` polymorphic dispatcher that fans `list_children` / `list_by_type` / `list_by_tag` / `list_agenda*` (active) AND `list_trash` (deleted blocks) into one return type; the dispatcher decision (split-off-trash vs. narrow-at-callsite) is M2-scope. 3429 backend + 9078 frontend tests pass; bindings regenerated; specta emits `ActiveBlockRow` and `ActiveProjectedAgendaEntry` as separate TS types but they're structurally compatible with `BlockRow` / `ProjectedAgendaEntry` (because `ActiveBlockId = string` alias) so no frontend code needed updating.
 - **Session 618 (2026-05-02)** — MAINT-113 M1 partial: `ActiveBlockId(String)` newtype + `verify_active(&BlockId) -> Result<ActiveBlockId>` SQL gate landed in `src-tauri/src/ulid.rs` with 13 unit tests (7 type-level + 6 DB-backed). `PageLink.source_id`/`target_id` retyped to `ActiveBlockId` (1 of the 4 helpers spec'd for M1). `soft_delete::get_descendants` removed — dead code with zero production callers. Specta emits `ActiveBlockId` as a transparent `string` alias, keeping every existing TypeScript consumer compatible (3429 backend + 9078 frontend tests pass, no semantic frontend ripple). The remaining 3 helpers (`list_children`, `list_projected_agenda_inner`, `search_blocks_inner`) are deferred to M1.5/M2 because the natural migration target — `BlockRow<Id = String>` — runs into two friction points with `specta-typescript` 0.0.11 (no Rust generic defaults emit; `specta::Type` derive's `PLACEHOLDER_Id` codegen drops `Id: Clone` bounds through embedded generic structs). Both findings documented in `pagination/mod.rs` header + REVIEW-LATER, with the M1.5 plan (decide between `ActiveBlockRow` parallel struct or a `specta-typescript` ≥ 0.0.12 update). Orchestrator-direct (per PROMPT.md "kitchen-sink refactors"). User picked spec-literal M1; partial close is the right shipping unit given the spec's 3-4h estimate undercounted the row-type retype cascade.
 - **Session 617 (2026-05-02)** — Batch FE-MAINT-CLUSTER-2 closed: MAINT-184, MAINT-185, TEST-FE-8 — three S-cost frontend cleanups; MAINT-183 (`markdown-serialize.ts` zero-dep cleanup) was canceled mid-flight by the user (4th batch in a row to see one cancellation: 613 MAINT-178, 614 TEST-6, 616 implicit cap, 617 MAINT-183). **MAINT-184** extracted twin module-private `resolveAndInsertBlockLink`/`resolveAndInsertBlockRef` helpers in `block-link-picker.ts` and `block-ref-picker.ts`; both InputRule and command call sites collapse to ~5-line wrappers (net −25 LOC across 2 files). All 4 branches (exact-match, onCreate fallback, plain-text fallback, error fallback) tested at both entry points via existing tests (52/52 pass). **MAINT-185** consolidated 16 `useCallback` deps in `use-block-keyboard.ts::handleKeyDown` to a single `useRef<BlockKeyboardCallbacks>` bag (assigned during render), reducing deps from 16 → 1 (just `editor`). 2 new tests pin (a) listener doesn't churn across re-renders via `addEventListener`/`removeEventListener` spy counts, and (b) latest closure is invoked via the bag (re-rendering with new `escV2` → `escV1` not called, `escV2` called). **TEST-FE-8** added `role="alert"` to the `.pairing-error` div in `PairingDialog.tsx` (preserving the existing `aria-live="polite"` so SR announcement remains polite) and converted 7 test sites from `document.querySelector('.pairing-error')` to `await screen.findByRole('alert')` + `toHaveTextContent(/regex/i)`. 4 build subagents launched (3 completed, 1 canceled) + 1 combined review subagent. All 3 closed items PASS first review with zero follow-ups.
@@ -50,6 +51,65 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 620 — MAINT-113 M2 closed: backlink + tag-query helpers retyped (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | orchestrator-only build + 1 explore-profile reviewer (PASS, all categories) |
+| **Items closed** | — (MAINT-113 M2 closed; MAINT-113 remains open for M3) |
+| **Items modified** | MAINT-113 (M2 progress recorded in summary + detail; M3 plan refined with the explicit dispatcher decision + `commands/properties.rs` `set_*_inner` retype path) |
+| **Tests added** | — (the 3 `.into()` widenings on `String` collection targets don't change coverage) |
+| **Files touched** | 9 source + 1 new `.sqlx/` cache entry + REVIEW-LATER + SESSION-LOG |
+
+**Summary:** Closed MAINT-113 M2. Retyped the backlink and tag-query helper cluster — a non-dispatcher, non-trash-adjacent set of helpers that could migrate cleanly without forcing the polymorphic `list_blocks_inner` decision. `BacklinkQueryResponse.items` and `BacklinkGroup.blocks` now type their rows as `ActiveBlockRow`. The three backlink resolvers (`eval_backlink_query`, `eval_backlink_query_grouped`, `eval_unlinked_references`) use the M1.5-introduced `ActiveBlockRow::from_block_row_unchecked` boundary cast over their already-active-filtered ID sets. `eval_tag_query` switches its `query_as` type parameter from `BlockRow` to `ActiveBlockRow` directly (sqlx's `FromRow` derive handles the typed-id slot via `sqlx::Type` transparent over `String`). `pagination::list_backlinks` adopts the sqlx column-cast hint `id as "id: crate::ulid::ActiveBlockId"` in its `query_as!` macro — exercising the third recipe for typed-id retypes (alongside the M1.5 boundary-cast and M2 query_as-typed patterns). The two affected Tauri commands (`get_backlinks`, `query_by_tags`) propagate the typed return.
+
+**Design rationale:** The `list_blocks_inner` polymorphic dispatcher was deliberately deferred to M3. It fans into `list_children` / `list_by_type` / `list_by_tag` / `list_agenda*` (active) **and** `list_trash` (deleted blocks) into a single `Result<PageResponse<BlockRow>, AppError>` return type. Retyping any one branch forces the others to align. Two paths exist (split `list_trash` into a dedicated Tauri command vs. narrow at the call site via downcast) and AGENTS.md "Architectural Stability" requires explicit user approval for the split-IPC path. The backlink + tag-query cluster sits outside this dispatcher and therefore migrated without architectural friction. `commands/properties.rs::set_*_inner` family (9 functions taking `block_id: String` and returning `BlockRow`) was also deferred to M3 because tightening the type-safety win at those sites requires `verify_active` IPC gates — a different shape of change than the row-type retype.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 114 → 114 (no closure; MAINT-113 remains open with M2 closed and M3 next).
+- **Detail entries:** 149 → 149 (MAINT-113's milestone block + summary row rewritten in place).
+- **Previously resolved:** 947+ (unchanged).
+
+**Files touched (this session):**
+- `src-tauri/src/backlink/types.rs` (+8 LOC; `BacklinkQueryResponse.items` + `BacklinkGroup.blocks` retyped to `Vec<ActiveBlockRow>` + M2 doc comments)
+- `src-tauri/src/backlink/query.rs` (+10/-5 LOC; boundary cast at `eval_backlink_query`'s row-fetch step; cursor encoding uses `last.id.as_str().to_string()`)
+- `src-tauri/src/backlink/grouped.rs` (+12/-4 LOC; boundary casts at the per-group block-row construction in both `eval_backlink_query_grouped` and `eval_unlinked_references`)
+- `src-tauri/src/backlink/tests.rs` (2 sites: `b.id.clone().into()` for `FxHashSet<String>` collection)
+- `src-tauri/src/tag_query/query.rs` (return type + `query_as::<_, ActiveBlockRow>` swap + cursor encoding adjusted; M2 doc comment on the sqlx::Type transparent mechanism; import update)
+- `src-tauri/src/pagination/links.rs` (return type; sqlx column-cast hint `id as "id: crate::ulid::ActiveBlockId"` in the `query_as!` macro; cursor encoding adjusted; M2 doc comment; import update)
+- `src-tauri/src/commands/queries.rs` (`get_backlinks_inner` + `get_backlinks` Tauri command return-type propagation)
+- `src-tauri/src/commands/tags.rs` (`query_by_tags_inner` + `query_by_tags` Tauri command return-type propagation; import update)
+- `src-tauri/src/commands/tests/query_cmd_tests.rs` (2 sites: `b.id.clone().into()` widenings for `HashSet<String>` collection in the grouped-backlinks tests)
+- `src-tauri/src/command_integration_tests/backlink_integration.rs` (1 site: `b.id.clone().into()` for `HashSet<String>` collection)
+- `src-tauri/.sqlx/query-*.json` (1 new cache entry for `list_backlinks`'s typed-id query)
+- `src/lib/bindings.ts` (regenerated: `BacklinkQueryResponse.items` + `BacklinkGroup.blocks` typed `ActiveBlockRow[]`; `getBacklinks` and `queryByTags` return types updated)
+- `REVIEW-LATER.md` (MAINT-113 entry — summary row + detail block rewritten with M2 closed, M3 plan refined)
+- `SESSION-LOG.md` (this entry + Recent milestones bump)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3433 tests run, 3433 passed (3 skipped).
+- `npx vitest run` — 9078 frontend tests pass.
+- `cargo sqlx prepare -- --tests` — 1 new `.sqlx/` cache entry committed for the typed-id `list_backlinks` query.
+- `cargo test -- specta_tests --ignored` — bindings regenerated; `ts_bindings_up_to_date` passes.
+- `npx tsc --noEmit` — 0 errors (frontend types continue to accept the new bindings without changes via TS structural typing).
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **Three boundary-cast recipes are now in active use:** (1) M1's `ActiveBlockId::from_trusted_active(&str)` for direct ID construction, (2) M1.5's `ActiveBlockRow::from_block_row_unchecked(BlockRow)` for retrofitting an existing raw row at a known-active boundary (`fts::search_fts`, `gcal_push::connector`'s reverse direction, M2's three backlink resolvers), and (3) M2's `query_as!(ActiveBlockRow, "SELECT id as \"id: crate::ulid::ActiveBlockId\", ...")` direct-typed query for new sqlx call sites that can decode the typed-id column without an intermediate `BlockRow`. Future sessions can pick whichever recipe fits the shape of the helper without inventing a new pattern.
+- **Three backlink resolvers shared the same retype shape.** Their ID sets all derive from a common base-set query that filters active rows; the boundary cast site is at the `block_rows` Vec construction in each case. Once the first migration was understood, the other two were mechanical.
+- **Specta correctly emits all-typed-row Tauri commands** without forcing frontend updates because `ActiveBlockId = string` is a transparent TypeScript alias. This continues to be the green-light pattern that made M1, M1.5, and M2 all zero-frontend-touch for active-helper migrations.
+
+**Lessons learned (for future sessions):**
+- **The `query_as::<_, ActiveBlockRow>` non-macro pattern is the lightest retype** when the SQL is dynamic (built via `format!()`). `tag_query::query::eval_tag_query` showed this — no doc-string column-cast hints needed; sqlx's `FromRow` + `sqlx::Type` transparent handles everything. Use this whenever the call site already uses non-macro `query_as`.
+- **The `query_as!` column-cast hint pattern is the right retype** when the SQL is a literal in the macro (sqlx's compile-time validation needs the literal). `pagination::list_backlinks` showed this. The hint is `id as "id: crate::ulid::ActiveBlockId"` with the fully-qualified path.
+- **The boundary-cast pattern is the right retype** when the helper's caller pre-filters active IDs via a separate query (the helper itself doesn't run the active filter). The three backlink resolvers all do this — they pre-filter `base_ids` via one query, then `fetch_block_rows_by_ids` for full row data via a different query that doesn't re-filter. The cast records the trust transition in the type system.
+- **Architectural decisions belong before the code, not after.** The dispatcher refactor decision was correctly deferred to M3 because (per AGENTS.md "Architectural Stability") it changes the IPC surface; deferring forces an explicit "split-IPC vs. narrow-at-callsite" decision rather than a quiet code-driven outcome.
+
+**Commit plan:** single commit, not pushed.
 
 ---
 

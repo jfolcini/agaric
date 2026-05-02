@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::pagination::BlockRow;
+use crate::pagination::ActiveBlockRow;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -113,9 +113,14 @@ pub enum BacklinkSort {
 }
 
 /// Response for a filtered backlink query, including total count.
+///
+/// MAINT-113 M2 — `items` is `ActiveBlockRow`-typed because the backlink
+/// resolver filters `is_conflict = 0 AND deleted_at IS NULL` on every
+/// candidate source block (`backlink/query.rs::eval_backlink_query`,
+/// `eval_backlink_query_grouped`, `eval_unlinked_references`).
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct BacklinkQueryResponse {
-    pub items: Vec<BlockRow>,
+    pub items: Vec<ActiveBlockRow>,
     pub next_cursor: Option<String>,
     pub has_more: bool,
     pub total_count: usize,
@@ -123,11 +128,14 @@ pub struct BacklinkQueryResponse {
 }
 
 /// A group of backlinks from the same source page.
+///
+/// MAINT-113 M2 — `blocks` is `ActiveBlockRow`-typed; same rationale as
+/// [`BacklinkQueryResponse::items`].
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct BacklinkGroup {
     pub page_id: String,
     pub page_title: Option<String>,
-    pub blocks: Vec<BlockRow>,
+    pub blocks: Vec<ActiveBlockRow>,
 }
 
 /// Response for grouped backlink queries — backlinks organized by source page.
