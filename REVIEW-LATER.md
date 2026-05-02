@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Frontend test code review — TEST-FE-1 through TEST-FE-8)
+> **Last updated:** 2026-05-02 (UX audit — feature-map sweep, UX-300 through UX-397)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-84 open items.
+182 open items.
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -107,6 +107,104 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-FE-6 | TEST | Local positional `makeBlock(id, content, ...)` helpers in `PageOutline`, `PageMetadataBar`, `PageEditor`, `TrashView` test files duplicate the shared `Partial<T>`-override factory — converge | S | — |
 | TEST-FE-7 | TEST | `AgendaResults.test.tsx` hardcodes `'2020-01-01'` as overdue marker (lines 320, 332) when file already imports `subDays` and uses dynamic `new Date()` for "today" | S | — |
 | TEST-FE-8 | TEST | `PairingDialog.test.tsx` uses `document.querySelector('.pairing-error')` for portal content (lines 314-318, 542-546, 850-854) — couples test to CSS class name; accessible queries preferred | S | — |
+| UX-300 | UX | Code-block language selector lacks search/filter | S | — |
+| UX-301 | UX | Toolbar tooltips don't show keyboard shortcuts | S | — |
+| UX-302 | UX | Multi-selection has no visible feedback on selected blocks | S | — |
+| UX-303 | UX | Draft autosave recovery on boot is silent | S | — |
+| UX-304 | UX | Swipe-to-delete (mobile) has no visual affordance or threshold cue | S | — |
+| UX-305 | UX | Drag handle on touch has 250 ms long-press requirement, no hint | S | — |
+| UX-306 | UX | Touch gutter "More actions" menu doesn't preview hidden actions | S | — |
+| UX-307 | UX | `LinkEditPopover` doesn't auto-focus label field on Ctrl+K with selection | S | — |
+| UX-308 | UX | New attachment count badge isn't animated on drop/paste | S | — |
+| UX-309 | UX | Slash command palette is not discoverable to new users | S | — |
+| UX-310 | UX | `@` / `[[` / `((` / `#[…]` triggers not surfaced anywhere visible | S | — |
+| UX-311 | UX | Picker "Create new" item is faintly tinted, lost on long mobile lists | S | — |
+| UX-312 | UX | Picker "No results" state has no next-step guidance | S | — |
+| UX-313 | UX | Broken-link "click to remove" is hover-only (no touch affordance) | S | — |
+| UX-314 | UX | Slash auto-execute (200 ms after 3 chars + unique match) can fire unintentionally | S | — |
+| UX-315 | UX | Picker keyboard navigation not documented inline | S | — |
+| UX-316 | UX | Inline `{{query …}}` expression syntax is cryptic to read | S | — |
+| UX-317 | UX | Query operator symbols (≤, ≥, ≠) presented without text labels | S | — |
+| UX-318 | UX | Query result table column auto-detection silently hides empty columns | S | — |
+| UX-319 | UX | Task cycle is locked to TODO→DOING→DONE→CANCELLED→none with rationale not surfaced | S | — |
+| UX-320 | UX | Repeating-task `++` / `.+` syntax is cryptic in the property drawer | S | — |
+| UX-321 | UX | Property "+N" overflow chip looks like a badge, not a button | S | — |
+| UX-322 | UX | `useDateInput.isParsing` is exposed but never rendered in property drawer | S | — |
+| UX-323 | UX | Agenda filter popover dense (8 dimensions × nested presets) | S | — |
+| UX-324 | UX | Due Panel filter pills (All / Due / Scheduled / Properties) are unlabelled | S | — |
+| UX-325 | UX | `F-37` "DONE warning when block has `blocked_by`" is documented but not implemented | S | — |
+| UX-326 | UX | Calendar dropdown a11y gaps (cluster) | S | — |
+| UX-327 | UX | Calendar dot fetch is silent (no skeleton / no busy state) | S | — |
+| UX-328 | UX | Calendar / nav buttons missing `aria-expanded` / `aria-haspopup` | S | — |
+| UX-329 | UX | Week-start toggle (Monday/Sunday) silently re-renders affected views | S | — |
+| UX-330 | UX | Daily-view empty state doesn't mention `/` or templates | S | — |
+| UX-331 | UX | PageBrowser keyboard navigation lacks `aria-activedescendant` | S | — |
+| UX-332 | UX | PageBrowser sort preference persists silently — no UI cue | S | — |
+| UX-333 | UX | "+" button on namespace folders hidden until hover on desktop | S | — |
+| UX-334 | UX | TemplatesView "remove template" × hidden until hover (destructive) | S | — |
+| UX-335 | UX | Search results count `aria-live` goes silent on zero results / clear | S | — |
+| UX-336 | UX | CJK search notice doesn't explain the 3-char workaround | S | — |
+| UX-337 | UX | Disabled `SearchablePopover` trigger has no tooltip explaining why | S | — |
+| UX-338 | UX | Search placeholder doesn't mention minimum character count | S | — |
+| UX-339 | UX | Property definition options editor has no JSON validation feedback | S | — |
+| UX-340 | UX | Tag filter loading state hidden when stale results present | S | — |
+| UX-341 | UX | "Empty trash" confirm dialog doesn't show item count | S | — |
+| UX-342 | UX | Trash row "Purge" button has no Tooltip; "Restore" does | S | — |
+| UX-343 | UX | Trash batch-restore confirmation threshold (5) is undiscoverable | S | — |
+| UX-344 | UX | Property definition delete button hidden until hover (desktop) | S | — |
+| UX-345 | UX | History "Restore to here" vs "Revert selected" terminology overlaps | S | — |
+| UX-346 | UX | Vim-style `j`/`k` nav has no touch alternative | S | — |
+| UX-347 | UX | Conflict "Keep Incoming" / "Discard Incoming" is ambiguous | S | — |
+| UX-348 | UX | Compaction confirmation copy too soft for an irreversible action | S | — |
+| UX-349 | UX | Conflict type badges differ only by colour | S | — |
+| UX-350 | UX | History op-type filter has no in-UI explanation | S | — |
+| UX-351 | UX | Non-reversible history entries marked only by `opacity-50` + lock icon | S | — |
+| UX-352 | UX | `CompactionCard` collapsed by default at top of HistoryView | S | — |
+| UX-353 | UX | Conflict list help text disappears under filters | S | — |
+| UX-354 | UX | Graph filter bar has no on-touch affordance | S | — |
+| UX-355 | UX | Graph node Enter/Space activation is undocumented | S | — |
+| UX-356 | UX | Graph zoom buttons don't show keyboard shortcut bindings | S | — |
+| UX-357 | UX | Graph node labels truncated at 20 chars without `<title>` tooltip | S | — |
+| UX-358 | UX | `PageHeaderMenu` mixes benign and destructive actions in one popover | S | — |
+| UX-359 | UX | Page title in rich-display mode (with chips) lacks edit affordance | S | — |
+| UX-360 | UX | Page rename on blur has no toast / visible confirmation | S | — |
+| UX-361 | UX | `PageOutline` (TOC) trigger is icon-only, no visible label | S | — |
+| UX-362 | UX | Block zoom has no visible "Exit zoom" affordance (Escape only) | S | — |
+| UX-363 | UX | `LinkedReferences` / `UnlinkedReferences` filter trigger has no visible label | S | — |
+| UX-364 | UX | `SpaceSwitcher` trigger reads as a label, not a switcher | S | — |
+| UX-365 | UX | Spaces onboarding banner only inside `SpaceManageDialog` | S | — |
+| UX-366 | UX | Cross-space `[[link]]` chips render with literal "Broken link" tooltip | S | — |
+| UX-367 | UX | "Move to space" is silent — no confirm, no toast | S | — |
+| UX-368 | UX | Digit hotkeys (Ctrl+1..9) hint only inside dropdown rows | S | — |
+| UX-369 | UX | History "All spaces" toggle resets every session | S | — |
+| UX-370 | UX | Space delete-when-empty signalled only via tooltip | S | — |
+| UX-371 | UX | Per-space journal template buried in Manage Spaces | S | — |
+| UX-372 | UX | `SpaceAccentBadge` click cycles silently with no hover affordance | S | — |
+| UX-373 | UX | Single-space state confusing | S | — |
+| UX-374 | UX | Onboarding banner not re-showable after dismiss | S | — |
+| UX-375 | UX | Per-space journal template variables undocumented in-app | S | — |
+| UX-376 | UX | Pairing dialog defaults to manual passphrase, no QR recommendation | S | — |
+| UX-377 | UX | Pairing pause indicator hidden from screen readers | S | — |
+| UX-378 | UX | Manual peer-address input has no real-time validation | S | — |
+| UX-379 | UX | Sidebar "last synced" timestamp hidden when sidebar collapses | S | — |
+| UX-380 | UX | Sync "no peers" gray indistinguishable from offline gray | S | — |
+| UX-381 | UX | Settings has 9 tabs with no breadcrumb anywhere | S | — |
+| UX-382 | UX | Welcome modal omits Sync / multi-device story | S | — |
+| UX-383 | UX | Bug Report redact toggle nested under "Include logs" with `pl-6` | S | — |
+| UX-384 | UX | Import progress shows file count, not bytes / blocks | S | — |
+| UX-385 | UX | Export ZIP filename doesn't include space name | S | — |
+| UX-386 | UX | Keyboard conflict warnings inline below row (mobile-unfriendly) | S | — |
+| UX-387 | UX | Sidebar theme button cycles 7 themes silently | S | — |
+| UX-388 | UX | Keyboard help panel has no search / filter for ~77 shortcuts | S | — |
+| UX-389 | UX | Help-panel category headers don't stick on scroll | S | — |
+| UX-390 | UX | Custom shortcut input has no documented format | S | — |
+| UX-391 | UX | Custom shortcut input accepts any non-empty string with no validation | S | — |
+| UX-392 | UX | Conflict warning rendered below row, not inline with keys | S | — |
+| UX-393 | UX | "Customized" badge in keyboard settings is plain text-primary | S | — |
+| UX-394 | UX | `findConflicts` ignores the `condition` field — false positives | S | — |
+| UX-395 | UX | Help panel footer button "Customize shortcuts" doesn't indicate it leaves the panel | S | — |
+| UX-396 | UX | Sidebar shortcut button doesn't mention the `?` keystroke | S | — |
+| UX-397 | UX | Help panel doesn't badge customized shortcuts | S | — |
 
 ### Quick wins (S-cost, ready to grab)
 
@@ -1879,3 +1977,891 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low.
 - **Source:** FE review 2026-05-02 / F068
 - **Status:** Open
+
+## UX — User-experience / usability / discoverability
+
+Items in this section come from a feature-map sweep (one analysis subagent per feature area, then 3 validation subagents that re-read each cited file:line and dropped exaggerations and stale claims). Format follows the compact TEST / FE-L convention. None of these are blocking; they are surface-level fixes (no schema, no op-types, no store changes) that improve discoverability, accessibility, or in-UI feedback.
+
+### UX-300 — Code-block language selector lacks search/filter
+- **Domain:** Frontend / Editor
+- **Location:** `src/components/CodeLanguageSelector.tsx:21-69`
+- **What:** Popover lists 17 languages as a static scrollable list with no filter input. Users have to eyeball-scan; painful on mobile.
+- **Cost:** Trivial — add a filter input wired to `match-sorter` (mirrors the page/tag picker pattern).
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-301 — Toolbar tooltips don't show keyboard shortcuts
+- **Domain:** Frontend / Editor
+- **Location:** `src/components/FormattingToolbar.tsx:70-87`
+- **What:** Block context menu shows shortcut hints (`BlockContextMenu.tsx:461-463`) but the formatting-toolbar `Tip` component shows only the action label. Discoverability gap: users never see `Ctrl+B` etc. unless they open `?`.
+- **Cost:** Trivial — append `getCurrentShortcuts()`-derived binding to each tooltip; falls through to customization automatically.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-302 — Multi-selection has no visible feedback on selected blocks
+- **Domain:** Frontend / Editor
+- **Location:** `src/components/SortableBlock.tsx:327-335` — `isSelected` is plumbed into `EditableBlock` but does not drive any border/background change.
+- **What:** Ctrl+Click / Shift+Click / Ctrl+A multi-selection is functional but invisible — user has no idea what is selected.
+- **Cost:** Trivial — apply `bg-primary/10` or a left accent bar to selected blocks; honour `[data-selected]` attribute.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-303 — Draft autosave recovery on boot is silent
+- **Domain:** Frontend / Editor
+- **Location:** `src/hooks/useAppBootRecovery.ts:24-48`
+- **What:** Orphaned drafts are flushed at boot with only `logger.info()`. If the app crashed mid-edit, the user has no idea their work was recovered.
+- **Cost:** Trivial — `toast.info('Recovered N unsaved drafts')` after the flush completes (count > 0).
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-304 — Swipe-to-delete (mobile) has no visual affordance or threshold cue
+- **Domain:** Frontend / Editor
+- **Location:** `src/hooks/useBlockSwipeActions.ts:1-111` (thresholds at lines 4, 7) ; `src/components/SortableBlock.tsx:350-370`
+- **What:** Reveals at 80 px and auto-deletes at 200 px with no visible hint. Users only discover the gesture by accident, and the auto-delete threshold has no progressive cue (color change / "Release to delete" label) before firing.
+- **Cost:** S — add a swipe-hint indicator on coarse-pointer devices and a colour/label change at the 200 px threshold.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-305 — Drag handle on touch has 250 ms long-press requirement, no hint
+- **Domain:** Frontend / Editor
+- **Location:** `src/components/BlockGutterControls.tsx:111-121` ; `src/hooks/useBlockDnD.ts:106` (`PointerSensor delay: 250`)
+- **What:** Touch drag requires long-press; the handle has `aria-label` but no on-touch tooltip / hint indicating the press-and-hold requirement.
+- **Cost:** Trivial — add a one-time hint or a `:active`-pulsing animation on first touch interaction.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-306 — Touch gutter "More actions" menu doesn't preview hidden actions
+- **Domain:** Frontend / Editor
+- **Location:** `src/components/BlockGutterControls.tsx:124-182`
+- **What:** On coarse pointer, history + delete collapse into a `MoreVertical` button with `aria-label` but no tooltip listing what's inside.
+- **Cost:** Trivial — extend the button's `aria-label` to enumerate ("History, Delete") or add a touch-friendly `Popover` preview.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-307 — `LinkEditPopover` doesn't auto-focus label field on Ctrl+K with selection
+- **Domain:** Frontend / Editor
+- **Location:** `src/components/LinkEditPopover.tsx:172-181` (label input — no `autoFocus`) vs `:197` (URL input has `autoFocus`)
+- **What:** When the user invokes Ctrl+K with a selection, the label is pre-filled but the URL input grabs focus, so Tab is required to edit the label first.
+- **Cost:** Trivial — toggle `autoFocus` based on whether selection text was carried in.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-308 — New attachment count badge isn't animated on drop/paste
+- **Domain:** Frontend / Editor
+- **Location:** `src/components/AttachmentList.tsx:107-109` ; `src/components/EditableBlock.tsx:224-244`
+- **What:** Toast confirms but the inline badge update is invisible — no flash/pulse to draw the eye to the just-attached file.
+- **Cost:** Trivial — brief CSS animation on count change.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-309 — Slash command palette is not discoverable to new users
+- **Domain:** Frontend / Editor
+- **Location:** `src/lib/slash-commands.ts` (61 commands across 8 categories) ; `src/editor/extensions/slash-command.ts:1-131`
+- **What:** No in-editor hint that `/` opens a palette. New users find this only via `?` keyboard help or by accident.
+- **Cost:** Trivial — empty-block placeholder "Type / for commands…"; add a 4th highlight in `WelcomeModal` for reference / slash syntax.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-310 — `@` / `[[` / `((` / `#[…]` triggers not surfaced anywhere visible
+- **Domain:** Frontend / Editor
+- **Location:** `src/editor/extensions/at-tag-picker.ts` ; `block-link-picker.ts` ; `block-ref-picker.ts` ; `tag-ref.ts`
+- **What:** All four syntactic triggers are documented only in the `?` help panel. Without reading docs, the user has no way to discover them.
+- **Cost:** S — add a "Reference syntax" highlight in `WelcomeModal` or a dismissible cheat-sheet pinned to first journal page.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-311 — Picker "Create new" item is faintly tinted, lost on long mobile lists
+- **Domain:** Frontend / Editor
+- **Location:** `src/editor/SuggestionList.tsx:115-122, 159` ; `src/editor/suggestion-renderer.ts:19-27, 64-87`
+- **What:** Plus icon + `bg-accent/5` tint is subtle; on mobile with a tall list the create-new option blends in.
+- **Cost:** Trivial — stronger background, a "NEW" badge, or always pin to top.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-312 — Picker "No results" state has no next-step guidance
+- **Domain:** Frontend / Editor
+- **Location:** `src/editor/SuggestionList.tsx:107-113`
+- **What:** Renders a plain "No results" string. For `[[` / `@` the user can press Enter to create-new (not signposted); for `((` (block ref) there is no create-new option at all and the user is stuck.
+- **Cost:** Trivial — context-aware empty state ("Press Enter to create" / "Block references can only point at existing blocks").
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-313 — Broken-link "click to remove" is hover-only (no touch affordance)
+- **Domain:** Frontend / Editor
+- **Location:** `src/editor/extensions/block-link.ts:99-110`
+- **What:** Tooltip "Broken link — click to remove" only appears on hover. Touch users see a non-functional-looking chip with no removal cue.
+- **Cost:** S — touch overlay × button, or a confirm step on the click handler with explanatory toast.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-314 — Slash auto-execute (200 ms after 3 chars + unique match) can fire unintentionally
+- **Domain:** Frontend / Editor
+- **Location:** `src/editor/extensions/slash-command.ts:86-102`
+- **What:** When exactly one match remains, the command fires automatically after 200 ms with no visible cue. Surprise factor on fast typists.
+- **Cost:** S — visible "auto-runs in 0.2 s — Esc to cancel" indicator, or bump the threshold to 4+ chars.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-315 — Picker keyboard navigation not documented inline
+- **Domain:** Frontend / Editor
+- **Location:** `src/editor/SuggestionList.tsx:56-66` ; `src/editor/suggestion-renderer.ts:233-264`
+- **What:** Pickers support full keyboard nav (Arrow / Home / End / PageUp / PageDown / Enter / Tab / Esc) but it's documented only in the `?` panel.
+- **Cost:** Trivial — small "↑↓ navigate · Enter select · Esc close" footer hint, optionally first-use only.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-316 — Inline `{{query …}}` expression syntax is cryptic to read
+- **Domain:** Frontend / Queries
+- **Location:** `src/components/QueryBuilderModal.tsx:120-148` ; `src/lib/query-utils.ts:30-88`
+- **What:** Generated expression is `type:tag expr:project` etc. The pencil-button visual builder hides this behind a modal, but the raw inline form has no plain-English layer.
+- **Cost:** S — render a "this query reads as: …" preview in the modal; tooltip on the inline expression pills with human-readable phrasing.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-317 — Query operator symbols (≤, ≥, ≠) presented without text labels
+- **Domain:** Frontend / Queries
+- **Location:** `src/components/QueryBuilderModal.tsx:50-57` ; `src/lib/query-utils.ts:20-28`
+- **What:** Select shows only the symbol; users unfamiliar with the glyphs misread or skip them.
+- **Cost:** Trivial — render `"≤  less than or equal to"` etc. as the option text; symbol stays in the trigger.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-318 — Query result table column auto-detection silently hides empty columns
+- **Domain:** Frontend / Queries
+- **Location:** `src/components/QueryResult.tsx:36-44` ; `src/components/QueryResultTable.tsx:36-45`
+- **What:** A column is rendered only if at least one row has the value. Sparse result sets hide columns the user might expect.
+- **Cost:** S — show known columns with `—` placeholder for missing values; or add a "show empty columns" toggle.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-319 — Task cycle is locked to TODO→DOING→DONE→CANCELLED→none with rationale not surfaced
+- **Domain:** Frontend / Tasks
+- **Location:** `src/hooks/useBlockProperties.ts:24-32` (rationale in code comment)
+- **What:** Users who don't want CANCELLED in their cycle have no way to opt out, and the locked-cycle decision (UX-201a) is invisible. A short note in Settings → Properties or Keyboard shortcuts panel would set expectations.
+- **Cost:** Trivial — one-line tooltip / help text in Settings Properties tab next to the `todo_state` definition.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-320 — Repeating-task `++` / `.+` syntax is cryptic in the property drawer
+- **Domain:** Frontend / Tasks
+- **Location:** `src/lib/slash-commands.ts:259-280` (slash labels are descriptive); raw form on `repeat` property has no in-UI documentation
+- **What:** Slash commands surface "REPEAT DAILY (catch-up)" / "(from completion)" but a user inspecting / editing the `repeat` property directly sees only the cryptic prefix.
+- **Cost:** Trivial — `?` popover next to the `repeat` field in `BlockPropertyDrawer` explaining catch-up vs from-completion.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-321 — Property "+N" overflow chip looks like a badge, not a button
+- **Domain:** Frontend / Properties
+- **Location:** `src/components/BlockInlineControls.tsx:300-322`
+- **What:** Tooltip says "Show all properties", `cursor-pointer` is set, but no hover background and the visual styling matches the read-only badges.
+- **Cost:** Trivial — hover `bg-accent/50`, `aria-label` mentioning the keyboard shortcut, optional ChevronRight icon.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-322 — `useDateInput.isParsing` is exposed but never rendered in property drawer
+- **Domain:** Frontend / Properties
+- **Location:** `src/hooks/useDateInput.ts:101` ; `src/components/BlockPropertyDrawer.tsx:357-399`
+- **What:** Hook exposes a `isParsing` flag for a "parsing…" indicator; drawer never reads it. NL date typing feels silent on slow machines.
+- **Cost:** Trivial — render a small spinner / "Parsing…" label in `PropertyRow` when `isParsing`.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-323 — Agenda filter popover dense (8 dimensions × nested presets)
+- **Domain:** Frontend / Agenda
+- **Location:** `src/components/AgendaFilterBuilder.tsx:155-191`
+- **What:** Single popover lists all 8 dimensions; users must drill into each to see preset values. No grouped categories ("Dates" / "Task metadata" / "Organisation") and no quick-pick combos.
+- **Cost:** S — group dimensions visually; optionally a small "Quick filters" cluster ("Overdue + TODO", "This week").
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-324 — Due Panel filter pills (All / Due / Scheduled / Properties) are unlabelled
+- **Domain:** Frontend / Agenda
+- **Location:** `src/components/DuePanelFilters.tsx:32-73`
+- **What:** Bare buttons with `aria-pressed`. Users unfamiliar with Agaric's date model don't know the difference between "Due" and "Scheduled".
+- **Cost:** Trivial — `Tooltip` per pill explaining each axis.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-325 — `F-37` "DONE warning when block has `blocked_by`" is documented but not implemented
+- **Domain:** Frontend / Tasks (documentation drift)
+- **Location:** `FEATURE-MAP.md:670` claims "DONE warning when block has `blocked_by` dependencies (F-37)"; `src/components/DependencyIndicator.tsx:32-121` only renders the link icon. Grep across the codebase finds no warning fires when cycling a blocked task to DONE.
+- **What:** Either ship the warning (toast.warning on cycle to DONE if `blocked_by` is set), or remove the F-37 claim from `FEATURE-MAP.md`.
+- **Cost:** S — implementation lives next to `useBlockProperties.cycleTodoState`; one property fetch + `toast.warning`.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-326 — Calendar dropdown a11y gaps (cluster)
+- **Domain:** Frontend / Journal
+- **Location:** `src/components/journal/JournalCalendarDropdown.tsx`
+- **What:** (a) Dialog at `:189` has `role="dialog"` but no `aria-modal="true"`. (b) Backdrop at `:184-186` is non-interactive `<div>` with no `role="presentation"` / no announcement when Escape closes the calendar. (c) Legend at `:215-236` is a plain `<div>` with no `role`/`aria-label`/list semantics, dots have no association with their labels.
+- **Cost:** Trivial — add `aria-modal`, `role="presentation"` on backdrop, wrap legend in `<ul>` with proper `aria-label`.
+- **Risk:** Low.
+- **Impact:** Medium (composite).
+- **Status:** Open.
+
+### UX-327 — Calendar dot fetch is silent (no skeleton / no busy state)
+- **Domain:** Frontend / Journal
+- **Location:** `src/components/journal/JournalCalendarDropdown.tsx:127-145`
+- **What:** `countAgendaBatchBySource` fires async on open and on month-nav with no `aria-busy` or skeleton; the calendar renders empty until dots arrive — looks like a glitch on cold disks.
+- **Cost:** Trivial — `aria-busy="true"` on the grid + 4 placeholder dots while loading.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-328 — Calendar / nav buttons missing `aria-expanded` / `aria-haspopup`
+- **Domain:** Frontend / Journal (a11y)
+- **Location:** `src/components/JournalControls.tsx:226-233` ; `src/components/GlobalDateControls.tsx:99-106`
+- **What:** Buttons toggle a dropdown but only carry `aria-label`. SR users get no signal that activation opens a popover.
+- **Cost:** Trivial — add the two attributes; bind to dropdown state.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-329 — Week-start toggle (Monday/Sunday) silently re-renders affected views
+- **Domain:** Frontend / Settings
+- **Location:** `src/components/settings/AppearanceTab.tsx:106-112` (`handleWeekStartChange`)
+- **What:** No toast / `aria-live` announcement; user changes preference and the only visible cue is the calendar grid silently re-laying out.
+- **Cost:** Trivial — `toast.success(t('settings.weekStartUpdated'))` or polite live-region announcement.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-330 — Daily-view empty state doesn't mention `/` or templates
+- **Domain:** Frontend / Journal
+- **Location:** `src/components/journal/DaySection.tsx:208-223`
+- **What:** Generic "Add first block" button. Users don't learn about slash commands or per-space journal templates from this surface.
+- **Cost:** Trivial — secondary muted line "Type / for commands · journal templates configurable per space".
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-331 — PageBrowser keyboard navigation lacks `aria-activedescendant`
+- **Domain:** Frontend / Pages
+- **Location:** `src/components/PageBrowser.tsx:279-295`
+- **What:** Focus moves on arrow nav but the grid container has no `aria-activedescendant`; SR users can't track focus moves.
+- **Cost:** Trivial — assign stable `id` per row and bind `aria-activedescendant` to focused index.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-332 — PageBrowser sort preference persists silently — no UI cue
+- **Domain:** Frontend / Pages
+- **Location:** `src/hooks/usePageBrowserSort.ts:18-19, 43-52`
+- **What:** Saved to localStorage on change but nothing in the dropdown signals "this will persist next session".
+- **Cost:** Trivial — small "saved" tick on the active option; or one-time toast on first change.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-333 — "+" button on namespace folders hidden until hover on desktop
+- **Domain:** Frontend / Pages
+- **Location:** `src/components/PageTreeItem.tsx:92-102, 142-152`
+- **What:** Desktop: `opacity-0 group-hover:opacity-100`, icon `h-3 w-3`. Touch correctly forced visible. Desktop users can browse for ages without learning the "create sub-page" affordance exists.
+- **Cost:** Trivial — show always (slightly larger icon) or add a tooltip on focus / first hover.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-334 — TemplatesView "remove template" × hidden until hover (destructive)
+- **Domain:** Frontend / Pages / Templates
+- **Location:** `src/components/TemplatesView.tsx:221-234`
+- **What:** Same hover pattern; destructive action with very low desktop discoverability and a tiny `h-3.5 w-3.5` icon.
+- **Cost:** Trivial — show on focus too; consider a per-row kebab menu for less-common actions.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-335 — Search results count `aria-live` goes silent on zero results / clear
+- **Domain:** Frontend / Search
+- **Location:** `src/components/SearchPanel.tsx:540-546`
+- **What:** Region only renders when `results.length > 0`. Cleared / empty searches produce no SR announcement.
+- **Cost:** Trivial — render the region always; toggle text between "N results" / "No results" / "Search cleared".
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-336 — CJK search notice doesn't explain the 3-char workaround
+- **Domain:** Frontend / Search
+- **Location:** `src/components/SearchPanel.tsx:415-425`
+- **What:** Banner says "CJK search is limited"; user can't tell what to do.
+- **Cost:** Trivial — extend copy to mention 3+ character minimum.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-337 — Disabled `SearchablePopover` trigger has no tooltip explaining why
+- **Domain:** Frontend / Search
+- **Location:** `src/components/SearchablePopover.tsx:109`
+- **What:** When disabled (e.g. another filter of the same kind already active), the button greys out silently.
+- **Cost:** Trivial — wrap disabled state in a Tooltip with the reason ("Only one page filter at a time").
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-338 — Search placeholder doesn't mention minimum character count
+- **Domain:** Frontend / Search
+- **Location:** `src/components/SearchPanel.tsx:388-396`
+- **What:** Placeholder is just "Search blocks…". The 3-char min is shown only as a separate notice (lines 509-511) once the user has already typed.
+- **Cost:** Trivial — placeholder = "Search blocks (3+ chars)".
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-339 — Property definition options editor has no JSON validation feedback
+- **Domain:** Frontend / Properties view
+- **Location:** `src/components/PropertyDefinitionsList.tsx:277-289`
+- **What:** Raw JSON input. Errors surface only on Save as a generic toast — no inline syntax warning while typing.
+- **Cost:** S — try/catch parse on every change; render a small red "Invalid JSON" line + disable Save until valid.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-340 — Tag filter loading state hidden when stale results present
+- **Domain:** Frontend / Tags
+- **Location:** `src/components/TagFilterPanel.tsx:427-429`
+- **What:** `LoadingSkeleton` rendered only when `results.length === 0`. Switching mode (AND/OR/NOT) keeps stale results visible while the new query runs.
+- **Cost:** Trivial — render skeleton (or dim list with spinner) whenever `loading`, not only when empty.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-341 — "Empty trash" confirm dialog doesn't show item count
+- **Domain:** Frontend / Trash
+- **Location:** `src/components/TrashView.tsx:334-342, 249-264` ; `TrashEmptyDialog.tsx:24-34`
+- **What:** Destructive dialog with no scope ("are you sure you want to permanently delete X items?"). Count is only known after the success toast.
+- **Cost:** Trivial — pass count prop into the dialog; render in description.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-342 — Trash row "Purge" button has no Tooltip; "Restore" does
+- **Domain:** Frontend / Trash
+- **Location:** `src/components/TrashView/TrashRowItem.tsx:153-162` (Purge) vs `:133-151` (Restore wrapped in Tooltip)
+- **What:** "Purge" terminology is opaque to non-technical users and the destructive action has weaker affordance than the benign one.
+- **Cost:** Trivial — wrap Purge in `Tooltip` with "Permanently delete (cannot be undone)".
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-343 — Trash batch-restore confirmation threshold (5) is undiscoverable
+- **Domain:** Frontend / Trash
+- **Location:** `src/components/TrashView.tsx:96-99, 191-197` (`BATCH_RESTORE_CONFIRM_THRESHOLD = 5`)
+- **What:** Restoring 5 items is silent, restoring 6 prompts. Surprising boundary; not documented anywhere visible.
+- **Cost:** Trivial — either confirm always (matches batch-purge), or surface the threshold in a tooltip ("Confirms above 5 items").
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-344 — Property definition delete button hidden until hover (desktop)
+- **Domain:** Frontend / Properties view
+- **Location:** `src/components/PropertyDefinitionsList.tsx:301-309`
+- **What:** Same `opacity-0 group-hover` pattern as PageTreeItem / TemplatesView. Touch is fine; desktop is poor.
+- **Cost:** Trivial — show on focus + always-visible-on-mobile is already done; just drop `opacity-0` from desktop class set, or show on `:focus-within` of the row.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-345 — History "Restore to here" vs "Revert selected" terminology overlaps
+- **Domain:** Frontend / History
+- **Location:** `src/components/HistoryListItem.tsx:293` ; `HistoryRestoreDialog.tsx:70` ; `HistoryRevertDialog.tsx:61` ; `src/lib/i18n/conflicts.ts:74-75, 215-230`
+- **What:** "Restore to here" reverts every op AFTER the selected one (point-in-time); "Revert selected" creates inverse ops only for the selected entries. Labels read as synonyms.
+- **Cost:** Trivial — rename "Restore to here" → "Reset to this point" + dialog subtitle "This undoes every operation after this point — use 'Revert selected' for individual entries."
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-346 — Vim-style `j`/`k` nav has no touch alternative
+- **Domain:** Frontend / History
+- **Location:** `src/hooks/useHistoryKeyboardNav.ts:57, 74` (vim mode)
+- **What:** Navigation is keyboard-only on touch devices.
+- **Cost:** S — render persistent ↑/↓ arrow buttons in the toolbar on coarse-pointer devices; or rely on existing list selection by tap.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-347 — Conflict "Keep Incoming" / "Discard Incoming" is ambiguous
+- **Domain:** Frontend / Conflicts
+- **Location:** `src/components/ConflictListItem.tsx:25-26, 99-100, 218-222` ; `src/lib/i18n/conflicts.ts:25-26, 48-51`
+- **What:** "Incoming" doesn't make clear which version overwrites the other. Help text exists but only on hover.
+- **Cost:** Trivial — relabel to "Use incoming" / "Reject incoming"; one-line subtitle under each button.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-348 — Compaction confirmation copy too soft for an irreversible action
+- **Domain:** Frontend / Compaction
+- **Location:** `src/components/CompactionCard.tsx:101-118`
+- **What:** Description says "permanently remove eligible operations"; "eligible" is vague and "irreversible" is not emphasised.
+- **Cost:** Trivial — strengthen body copy: "**This cannot be undone.** Deleted operations cannot be recovered or viewed in history."
+- **Risk:** Low.
+- **Impact:** High.
+- **Status:** Open.
+
+### UX-349 — Conflict type badges differ only by colour
+- **Domain:** Frontend / Conflicts
+- **Location:** `src/components/ConflictListItem.tsx:40-49, 145-152`
+- **What:** Three colour-coded badges (text / property / move). Color-blind users distinguish by text label only; tooltip is hover-only.
+- **Cost:** Trivial — add per-type icon (Pencil / Settings / ArrowRight).
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-350 — History op-type filter has no in-UI explanation
+- **Domain:** Frontend / History
+- **Location:** `src/components/HistoryFilterBar.tsx:77-100`
+- **What:** 12 op types in a Select; new users have no idea what `restore_block` vs `delete_block` vs `purge_block` means.
+- **Cost:** Trivial — `?` icon next to the Select with a popover legend.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-351 — Non-reversible history entries marked only by `opacity-50` + lock icon
+- **Domain:** Frontend / History (a11y)
+- **Location:** `src/components/HistoryListItem.tsx:230, 314-329`
+- **What:** Single-cue (opacity) presentation risks WCAG contrast failure; the lock icon helps but is small.
+- **Cost:** Trivial — secondary text label "Non-reversible" + retain icon; ensure body remains contrast-compliant.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-352 — `CompactionCard` collapsed by default at top of HistoryView
+- **Domain:** Frontend / Compaction
+- **Location:** `src/components/CompactionCard.tsx:23, 65-71` ; `HistoryView.tsx:166`
+- **What:** Action surface is invisible on cold load; users may never see it. Once eligible-ops > 0, the user should be nudged.
+- **Cost:** Trivial — auto-expand when `eligible > 0`, or render a small badge on the collapsed header.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-353 — Conflict list help text disappears under filters
+- **Domain:** Frontend / Conflicts
+- **Location:** `src/components/ConflictList.tsx:443-456`
+- **What:** Help banner only when `blocks.length > 0`. Filtered-empty state shows the same UI as truly-empty — user can't tell whether it's filtered.
+- **Cost:** Trivial — render a "No conflicts match the current filters" message (string already exists in i18n at `conflict.noMatchingFilters`).
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-354 — Graph filter bar has no on-touch affordance
+- **Domain:** Frontend / Graph
+- **Location:** `src/components/GraphFilterBar.tsx:358-505` ; `GraphView.tsx:179-191`
+- **What:** Bar is `absolute top-2 left-2`, single-line, easy to miss on phones / tablets.
+- **Cost:** Trivial — small "Filters" label or info banner on first touch render.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-355 — Graph node Enter/Space activation is undocumented
+- **Domain:** Frontend / Graph
+- **Location:** `src/lib/graph-sim-helpers.ts:140-162` ; `src/components/GraphView.tsx:223-228`
+- **What:** Nodes are activatable but the SVG carries only `aria-label="Graph"`. Keyboard users may not realise nodes are interactive.
+- **Cost:** Trivial — `aria-describedby` on the SVG with a one-line keyboard hint.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-356 — Graph zoom buttons don't show keyboard shortcut bindings
+- **Domain:** Frontend / Graph
+- **Location:** `src/components/GraphView.tsx:229-239`
+- **What:** Buttons carry `aria-label` only; the underlying `graphZoomIn`/`graphZoomOut`/`graphZoomReset` shortcuts exist but aren't in tooltips.
+- **Cost:** Trivial — append `getCurrentShortcuts()` binding.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-357 — Graph node labels truncated at 20 chars without `<title>` tooltip
+- **Domain:** Frontend / Graph
+- **Location:** `src/lib/graph-sim-helpers.ts:120-140`
+- **What:** Long page names render as `prefix…` with no native tooltip; nodes become unidentifiable.
+- **Cost:** Trivial — `<title>{fullLabel}</title>` inside each node `<g>`.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-358 — `PageHeaderMenu` mixes benign and destructive actions in one popover
+- **Domain:** Frontend / Page editor
+- **Location:** `src/components/PageHeaderMenu.tsx:151-281`
+- **What:** 8 actions; "Delete page" sits one `<hr>` away from "Open in New Tab". A misclick on a tightly-packed mobile menu can be costly.
+- **Cost:** S — visually separate the destructive group (background tint or separate sub-section); enforce a confirmation dialog with type-to-confirm for Delete.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-359 — Page title in rich-display mode (with chips) lacks edit affordance
+- **Domain:** Frontend / Page editor
+- **Location:** `src/components/PageTitleEditor.tsx:66-100`
+- **What:** Read-only-looking chip rendering with no hover hint, no pencil icon, no `cursor-text`. Only signal is that clicking happens to switch modes.
+- **Cost:** Trivial — `cursor-text` on hover + faint border / pencil icon on hover/focus.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-360 — Page rename on blur has no toast / visible confirmation
+- **Domain:** Frontend / Page editor
+- **Location:** `src/components/PageHeader.tsx:374-396`
+- **What:** Aria-live announcement happens but no `toast.success` and no flash on the title — users second-guess whether the rename took.
+- **Cost:** Trivial — `toast.success(t('pageHeader.renamed'))`.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-361 — `PageOutline` (TOC) trigger is icon-only, no visible label
+- **Domain:** Frontend / Page editor
+- **Location:** `src/components/PageOutline.tsx:73` ; `PageHeader.tsx:494`
+- **What:** List icon with `aria-label` only; users don't realise it's a Table of Contents.
+- **Quoted from validator: "the List icon alone is not self-explanatory."**
+- **Cost:** Trivial — `Tooltip` saying "Page outline".
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-362 — Block zoom has no visible "Exit zoom" affordance (Escape only)
+- **Domain:** Frontend / Page editor
+- **Location:** `src/components/BlockZoomBar.tsx` ; `src/hooks/useBlockTreeKeyboardShortcuts.ts:127-151`
+- **What:** Escape key exits zoom (good) but the breadcrumb has no "Exit zoom" button or label that signals how to leave on touch.
+- **Cost:** Trivial — small "Exit zoom" button next to the home crumb on coarse pointer.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-363 — `LinkedReferences` / `UnlinkedReferences` filter trigger has no visible label
+- **Domain:** Frontend / Page editor
+- **Location:** `src/components/LinkedReferences.tsx:316-320, 329-335` ; `src/components/UnlinkedReferences.tsx:298-302`
+- **What:** SlidersHorizontal icon button with `aria-label` and an active-count badge — but no text label. (Validator confirmed the count badge IS present; the only gap is a visible "Filters" label.)
+- **Cost:** Trivial — short "Filters" text on desktop, icon-only on mobile.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-364 — `SpaceSwitcher` trigger reads as a label, not a switcher
+- **Domain:** Frontend / Spaces
+- **Location:** `src/components/SpaceSwitcher.tsx:105-126` (Radix `<SelectTrigger>` does render a chevron by default; the gap is the leading text)
+- **What:** Replaces the static "Agaric" branding with the bare space name. No "Space:" prefix or accent micro-icon.
+- **Cost:** Trivial — render a small `<SpaceAccentBadge>` + "Personal" pattern in the trigger; or prefix "Space:".
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-365 — Spaces onboarding banner only inside `SpaceManageDialog`
+- **Domain:** Frontend / Spaces / Onboarding
+- **Location:** `src/components/SpaceManageDialog.tsx:614-630, 645-648` ; `src/lib/i18n/common.ts:67-71`
+- **What:** Visible only after the user opens Manage Spaces. New users may never reach it.
+- **Cost:** S — surface the same banner in `WelcomeModal` (4th highlight) or as a one-time tooltip on the SpaceSwitcher trigger.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-366 — Cross-space `[[link]]` chips render with literal "Broken link" tooltip
+- **Domain:** Frontend / Spaces
+- **Location:** `src/editor/extensions/block-link.ts:99-110` (deliberate per FEAT-3p7, but UX-confusing)
+- **What:** A user who knows the page exists in another space sees their link presented as deleted. Same visual + wording as a true broken link.
+- **Cost:** S — distinct visual (dashed border + lock icon) and tooltip "Link is in another space — click to remove".
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-367 — "Move to space" is silent — no confirm, no toast
+- **Domain:** Frontend / Spaces
+- **Location:** `src/components/PageHeaderMenu.tsx:230-269`
+- **What:** Single `SetProperty` op fires; the page disappears from the current view with no feedback. Easy to misfire.
+- **Cost:** Trivial — `toast.success("Page moved to <SpaceName>")`; optional confirmation popover is heavier and probably not needed.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-368 — Digit hotkeys (Ctrl+1..9) hint only inside dropdown rows
+- **Domain:** Frontend / Spaces
+- **Location:** `src/components/SpaceSwitcher.tsx:136-152` ; `src/hooks/useAppKeyboardShortcuts.ts:279-295`
+- **What:** Trigger tooltip mentions "Ctrl+1..9" but doesn't list mappings. Once dropdown closes the user has to re-open to find a mapping.
+- **Cost:** Trivial — extend the trigger tooltip to enumerate the first 5 mappings ("Ctrl+1 Personal · Ctrl+2 Work · …").
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-369 — History "All spaces" toggle resets every session
+- **Domain:** Frontend / Spaces / History
+- **Location:** `src/components/HistoryView.tsx:45-48` (deliberate per spec — non-persistent by design)
+- **What:** Power users who routinely audit cross-space history must re-flip every visit. Either persist with a clear visual indicator, or accept the friction.
+- **Cost:** Trivial — opt-in localStorage persistence guarded by an explicit settings toggle.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open. (Deliberate design — listed for visibility.)
+
+### UX-370 — Space delete-when-empty signalled only via tooltip
+- **Domain:** Frontend / Spaces
+- **Location:** `src/components/SpaceManageDialog.tsx:176-204, 331-337`
+- **What:** Disabled button reason is in a Tooltip only. No inline page-count or hint about what to do first.
+- **Cost:** Trivial — small "(<N> pages)" badge next to disabled Delete; or inline help line under the row.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-371 — Per-space journal template buried in Manage Spaces
+- **Domain:** Frontend / Spaces / Journal
+- **Location:** `src/components/SpaceManageDialog.tsx:425-444`
+- **What:** Powerful feature with no entry from the Journal view itself. Users probably never find it.
+- **Cost:** S — small "Configure template" entry in `JournalPage` kebab menu that deep-links to `SpaceManageDialog` for the current space.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-372 — `SpaceAccentBadge` click cycles silently with no hover affordance
+- **Domain:** Frontend / Spaces
+- **Location:** `src/components/SpaceAccentBadge.tsx:66-78, 93-99` ; `src/components/AppSidebar.tsx:138-142`
+- **What:** Collapsed-rail badge cycles to the next alphabetical space on click — invisible affordance.
+- **Cost:** Trivial — hover ring + Tooltip "Click to switch space".
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-373 — Single-space state confusing
+- **Domain:** Frontend / Spaces
+- **Location:** `src/components/SpaceSwitcher.tsx:62-173` ; `src/components/SpaceAccentBadge.tsx:66-78`
+- **What:** With one space, the switcher dropdown is essentially a no-op and the cycle-badge does nothing on click. No nudge to create a second space.
+- **Cost:** Trivial — render a "Create another space" inline hint when `availableSpaces.length === 1`.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-374 — Onboarding banner not re-showable after dismiss
+- **Domain:** Frontend / Spaces / Onboarding
+- **Location:** `src/components/SpaceManageDialog.tsx:113-127, 650-653` (`agaric:space-onboarding-seen-v1` localStorage flag)
+- **What:** Once dismissed, no in-app way to re-show. Users who clicked through too fast lose the explanation forever.
+- **Cost:** Trivial — "Reset onboarding" button somewhere in Settings → General.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-375 — Per-space journal template variables undocumented in-app
+- **Domain:** Frontend / Spaces / Journal
+- **Location:** `src/components/SpaceManageDialog.tsx:425-444`
+- **What:** Placeholder mentions `<% today %>`, `<% time %>`, etc. but no examples or live preview.
+- **Cost:** Trivial — collapsible "Examples" panel with 1–2 sample templates, optional "preview for today" rendered inline.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-376 — Pairing dialog defaults to manual passphrase, no QR recommendation
+- **Domain:** Frontend / Sync
+- **Location:** `src/components/PairingDialog.tsx:62` ; `src/components/PairingEntryForm.tsx:147-166`
+- **What:** Two equally-prominent buttons; QR is faster but not signposted as recommended.
+- **Cost:** Trivial — "Recommended" badge on QR button; reorder so QR is first.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-377 — Pairing pause indicator hidden from screen readers
+- **Domain:** Frontend / Sync (a11y)
+- **Location:** `src/components/PairingQrDisplay.tsx:94-104`
+- **What:** "Paused while typing…" is inside an `aria-hidden="true"` countdown paragraph; SR users hear the resume but never the pause.
+- **Cost:** Trivial — separate `aria-live="polite"` region announcing pause/resume transitions.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-378 — Manual peer-address input has no real-time validation
+- **Domain:** Frontend / Sync
+- **Location:** `src/components/PeerListItem.tsx:49-64, 122-159`
+- **What:** Format hint is `text-xs` and easily missed; invalid `host:port` only surfaces on Save.
+- **Cost:** Trivial — debounced validation with inline error text below the input.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-379 — Sidebar "last synced" timestamp hidden when sidebar collapses
+- **Domain:** Frontend / Sync
+- **Location:** `src/components/AppSidebar.tsx:233-240` (`group-data-[collapsible=icon]:hidden`)
+- **What:** Dot stays visible but the timestamp disappears in icon mode — user can't tell "idle for 3 minutes" from "idle for 3 hours".
+- **Cost:** Trivial — fold the timestamp into the sync button's `Tooltip` so it's accessible in both modes.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-380 — Sync "no peers" gray indistinguishable from offline gray
+- **Domain:** Frontend / Sync
+- **Location:** `src/components/AppSidebar.tsx:44-59`
+- **What:** Both states return `bg-muted-foreground`. A pairing problem looks identical to a network problem.
+- **Cost:** Trivial — distinct token (e.g. `bg-status-pending` for "no peers").
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-381 — Settings has 9 tabs with no breadcrumb anywhere
+- **Domain:** Frontend / Settings
+- **Location:** `src/components/SettingsView.tsx:140-163`
+- **What:** Sidebar entry "Settings" doesn't show the active tab. After navigating away and back, users have to scan the tab strip to remember where they were (even though the tab IS restored from localStorage).
+- **Cost:** Trivial — append the active tab name to the sidebar entry, or render a small breadcrumb in Settings header.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-382 — Welcome modal omits Sync / multi-device story
+- **Domain:** Frontend / Onboarding
+- **Location:** `src/components/WelcomeModal.tsx:39-55`
+- **What:** Three highlights (Blocks, Shortcuts, Tags) skip what is arguably Agaric's biggest differentiator.
+- **Cost:** Trivial — add a 4th "Sync across devices" highlight or replace one of the existing.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-383 — Bug Report redact toggle nested under "Include logs" with `pl-6`
+- **Domain:** Frontend / Bug report
+- **Location:** `src/components/BugReportDialog.tsx:356-371`
+- **What:** Redaction option is hidden inside another toggle's expanded group; users may miss it before submitting.
+- **Cost:** Trivial — small lock icon + "Redact" label or move to a sibling row that disables when "Include logs" is off.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-384 — Import progress shows file count, not bytes / blocks
+- **Domain:** Frontend / Import-Export
+- **Location:** `src/components/DataSettingsTab.tsx:136-159`
+- **What:** "Importing file 2 of 5" is the only feedback; large markdown imports look stalled.
+- **Cost:** S — secondary line "(N blocks created · M bytes)" updated as the import worker reports.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-385 — Export ZIP filename doesn't include space name
+- **Domain:** Frontend / Import-Export
+- **Location:** `src/components/DataSettingsTab.tsx:87-99`
+- **What:** Generic `agaric-export-YYYY-MM-DD.zip`. With multiple spaces, users can't tell which one is in a ZIP they downloaded weeks ago.
+- **Cost:** Trivial — include the active space name in the filename.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-386 — Keyboard conflict warnings inline below row (mobile-unfriendly)
+- **Domain:** Frontend / Settings / Keyboard
+- **Location:** `src/components/KeyboardSettingsTab.tsx:214-221`
+- **What:** Warnings render as plain text on a separate line below each shortcut; they wrap ungracefully on narrow widths and are only shown after save.
+- **Cost:** Trivial — add a warning icon + colour to the row's left margin; show conflict in real time as the user types in the input.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-387 — Sidebar theme button cycles 7 themes silently
+- **Domain:** Frontend / Settings / Theme
+- **Location:** `src/components/AppSidebar.tsx:254-262` ; `src/components/settings/AppearanceTab.tsx:114-135`
+- **What:** Click cycles through auto / light / dark / solarized-light / solarized-dark / dracula / one-dark-pro with no current-theme tooltip.
+- **Cost:** Trivial — `Tooltip` showing the current theme + "click to cycle"; consider replacing the cycle with "open Appearance settings" given there are 7 themes.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-388 — Keyboard help panel has no search / filter for ~77 shortcuts
+- **Domain:** Frontend / Keyboard
+- **Location:** `src/components/KeyboardShortcuts.tsx:143-187`
+- **What:** Long flat scrollable table with 8 category headers; users have to eyeball-scan every time.
+- **Cost:** S — filter input wired to description + key text; collapse to matching rows.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-389 — Help-panel category headers don't stick on scroll
+- **Domain:** Frontend / Keyboard
+- **Location:** `src/components/KeyboardShortcuts.tsx:156-165`
+- **What:** Category context is lost when scrolling mid-list.
+- **Cost:** Trivial — `position: sticky` on the header `<tr>` (or wrap each category in its own scroll-container).
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-390 — Custom shortcut input has no documented format
+- **Domain:** Frontend / Keyboard
+- **Location:** `src/components/KeyboardSettingsTab.tsx:126-129` ; `src/lib/i18n/shortcuts.ts:119`
+- **What:** Placeholder is "Type new key binding…" with no example. Users don't know whether to write `Ctrl + Shift + E`, `Ctrl-Shift-E`, or what.
+- **Cost:** Trivial — add a one-line "Format: `Ctrl + Shift + E`, alternatives with `/`" hint.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-391 — Custom shortcut input accepts any non-empty string with no validation
+- **Domain:** Frontend / Keyboard
+- **Location:** `src/components/KeyboardSettingsTab.tsx:57-65` ; `src/lib/keyboard-config/storage.ts:39-52`
+- **What:** `saveEdit` writes whatever the user typed; malformed bindings silently never fire at runtime. Nothing rejects modifier-only / unparseable inputs.
+- **Cost:** S — validation step before `setCustomShortcut`; render an inline error if invalid.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-392 — Conflict warning rendered below row, not inline with keys
+- **Domain:** Frontend / Keyboard
+- **Location:** `src/components/KeyboardSettingsTab.tsx:214-221`
+- **What:** Warning is a separate `<div>` outside the row's flex layout. On narrow screens it wraps awkwardly. Also fires only after save, not while typing.
+- **Cost:** Trivial — colocate next to the keys column; recompute on every keystroke during edit.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-393 — "Customized" badge in keyboard settings is plain text-primary
+- **Domain:** Frontend / Keyboard
+- **Location:** `src/components/KeyboardSettingsTab.tsx:167-171`
+- **What:** Easy to miss; doesn't read as a status badge.
+- **Cost:** Trivial — switch to the `Badge` primitive (`variant="secondary"`).
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-394 — `findConflicts` ignores the `condition` field — false positives
+- **Domain:** Frontend / Keyboard (correctness)
+- **Location:** `src/lib/keyboard-config/storage.ts:72-91` (test at `src/lib/__tests__/keyboard-config.test.ts:229-238` documents the false-positive)
+- **What:** Conflicts grouped by `(keys, category)` only; conditional shortcuts (e.g. Backspace on empty block vs. at start) get flagged as conflicting even though they never fire simultaneously. Users see a warning that's wrong.
+- **Cost:** S — group by `(keys, category, condition)`; treat `condition === undefined` as wildcard.
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
+### UX-395 — Help panel footer button "Customize shortcuts" doesn't indicate it leaves the panel
+- **Domain:** Frontend / Keyboard
+- **Location:** `src/components/KeyboardShortcuts.tsx:216-232` ; `src/lib/i18n/shortcuts.ts:10`
+- **What:** Generic label; users don't know it navigates to Settings.
+- **Cost:** Trivial — relabel to "Customize in Settings" with a ChevronRight / external icon.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-396 — Sidebar shortcut button doesn't mention the `?` keystroke
+- **Domain:** Frontend / Keyboard
+- **Location:** `src/components/AppSidebar.tsx:265-268`
+- **What:** Tooltip says "Show keyboard shortcuts" but no hint that pressing `?` opens the same panel — users learn the binding only by reading docs.
+- **Cost:** Trivial — append "(?)" to the tooltip / aria-label.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### UX-397 — Help panel doesn't badge customized shortcuts
+- **Domain:** Frontend / Keyboard
+- **Location:** `src/components/KeyboardShortcuts.tsx:32-45` ; `src/lib/keyboard-config/storage.ts:30-37`
+- **What:** `getCurrentShortcuts()` already exposes `isCustom`; the panel shows current bindings but doesn't differentiate customized ones.
+- **Cost:** Trivial — render the same "Customized" badge that the settings tab uses (after UX-393).
+- **Risk:** Low.
+- **Impact:** Medium.
+- **Status:** Open.
+
