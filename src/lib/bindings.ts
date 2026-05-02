@@ -428,6 +428,23 @@ export const commands = {
 
 /* Types */
 /**
+ *  A block ID that has been verified to refer to an active block.
+ *
+ *  "Active" means the block exists in the materialised `blocks` table
+ *  AND `is_conflict = 0` AND `deleted_at IS NULL`. Use [`verify_active`]
+ *  to convert a raw [`BlockId`] into this type.
+ *
+ *  **Wire-format parity with [`BlockId`] / `String`:** `serde` uses
+ *  `transparent`, and `sqlx::Type` is `transparent` over the inner
+ *  `String` — the encoded representation is byte-identical to the
+ *  underlying ULID. Round-tripping through JSON / SQLite preserves the
+ *  active claim only because callers use [`verify_active`] at the
+ *  boundary; deserialising raw user input never produces an
+ *  `ActiveBlockId` whose claim has been checked.
+ */
+export type ActiveBlockId = string;
+
+/**
  *  Bundled agenda filter for the [`list_blocks`] Tauri command.
  *
  *  Exists purely to keep `list_blocks`'s argument count under the
@@ -707,10 +724,16 @@ export type OpRef = {
 	seq: number,
 };
 
-// A link between two pages (for graph visualization).
+/**
+ *  A link between two pages (for graph visualization).
+ *
+ *  Both endpoints are [`ActiveBlockId`] — `list_page_links_inner` filters
+ *  `is_conflict = 0 AND deleted_at IS NULL` on both source and target
+ *  pages (MAINT-113 M1 lift of invariant #9 into the type system).
+ */
 export type PageLink = {
-	source_id: string,
-	target_id: string,
+	source_id: ActiveBlockId,
+	target_id: ActiveBlockId,
 	ref_count: number,
 };
 

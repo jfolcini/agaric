@@ -32,13 +32,12 @@
 //!
 //! # Sites that still inline the CTE
 //!
-//! Four production paths use `sqlx::query!()` (compile-time checked) and
+//! Three production paths use `sqlx::query!()` (compile-time checked) and
 //! therefore cannot use these macros (sqlx's macro rejects anything other
 //! than a raw string literal). They intentionally duplicate the CTE body:
 //!
 //! * `soft_delete::trash::cascade_soft_delete` — mirrors `descendants_cte_active!()`
 //! * `soft_delete::restore::restore_block`    — mirrors `descendants_cte_standard!()`
-//! * `soft_delete::get_descendants`           — mirrors `descendants_cte_standard!()`
 //! * `commands::blocks::move_ops::move_block_inner` (combined depth-check
 //!   query at `move_ops.rs:130-153`) — defines `path` AND `descendants`
 //!   in one `WITH RECURSIVE` to compute parent-chain depth and subtree
@@ -46,8 +45,13 @@
 //!   its own `WITH RECURSIVE` prefix and cannot be composed into one
 //!   multi-CTE `WITH` block.
 //!
+//! (Pre-MAINT-113-M1 a fourth site existed: `soft_delete::get_descendants`
+//! mirrored `descendants_cte_standard!()`. It was dead code with zero
+//! production callers and was removed when the `ActiveBlockId` newtype
+//! landed; the cascade / restore / purge paths use the macros above.)
+//!
 //! Keeping compile-time type safety was judged more valuable than removing
-//! the last four copies. If sqlx ever learns to accept `concat!()`, migrate
+//! the last three copies. If sqlx ever learns to accept `concat!()`, migrate
 //! those sites too.
 
 /// Recursive descendant CTE, standard variant.
