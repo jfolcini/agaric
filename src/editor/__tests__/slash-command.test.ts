@@ -34,10 +34,14 @@ vi.mock('../suggestion-renderer', () => ({
 // --- Import after mocks ---
 import { SlashCommand } from '../extensions/slash-command'
 
-/** Trigger addProseMirrorPlugins and return the render lifecycle object. */
-function getLifecycle() {
+/**
+ * Trigger addProseMirrorPlugins and return the render lifecycle object.
+ * Accepts an optional editor mock — defaults to a live view so the
+ * auto-execute guard (`editor.view.isDestroyed`) evaluates falsy.
+ */
+function getLifecycle(editor: Record<string, unknown> = { view: { isDestroyed: false } }) {
   const ctx = {
-    editor: {},
+    editor,
     options: { items: () => [], onCommand: vi.fn() },
   }
   // biome-ignore lint/suspicious/noExplicitAny: test helper — call with mock context
@@ -225,5 +229,36 @@ describe('slash-command auto-execute', () => {
     )
 
     debugSpy.mockRestore()
+  })
+
+  // ── Destroyed-view guard (FE-H-18) ───────────────────────────────
+  //
+  // If the editor view is destroyed between scheduling and firing of
+  // the 200ms timer, the deferred command() must be skipped to avoid
+  // dispatching against a torn-down view.
+
+  it('skips auto-execute when the editor view was destroyed before the timer fires', async () => {
+    const { logger } = await import('../../lib/logger')
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const editor = { view: { isDestroyed: false } }
+    const lifecycle = getLifecycle(editor)
+    const command = vi.fn()
+    const item: PickerItem = { id: 'todo', label: 'TODO' }
+
+    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+
+    // Simulate the editor view being destroyed between schedule and fire.
+    editor.view.isDestroyed = true
+
+    vi.advanceTimersByTime(200)
+
+    expect(command).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(
+      'slash-command',
+      'skipping auto-execute — editor view destroyed',
+    )
+
+    warnSpy.mockRestore()
   })
 })

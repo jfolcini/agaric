@@ -752,12 +752,26 @@ impl Materializer {
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
                 .fetch_one(&self.reader_pool)
                 .await
+                .inspect_err(|e| {
+                    tracing::warn!(
+                        error = %e,
+                        query = "total_ops_in_log",
+                        "materializer status query failed"
+                    )
+                })
                 .ok();
 
         let retry_queue_pending: Option<i64> =
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM materializer_retry_queue")
                 .fetch_one(&self.reader_pool)
                 .await
+                .inspect_err(|e| {
+                    tracing::warn!(
+                        error = %e,
+                        query = "retry_queue_pending",
+                        "materializer status query failed"
+                    )
+                })
                 .ok();
 
         let sync_peer_failure_counts = scheduler

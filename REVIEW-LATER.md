@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 607 — Batch QUICK-WINS-1 closed: L-62, FE-L-10, FE-L-11, TEST-5, TEST-17)
+> **Last updated:** 2026-05-02 (Session 608 — Batch QUICK-WINS-2 closed: PERF-29, M-96, FE-H-18, TEST-9, TEST-20)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-149 open items in the summary table; 183 detail entries (FE-* sub-tables don't appear in the summary).
+146 open items in the summary table; 178 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -57,7 +57,6 @@ Items flagged during development that need revisiting. Organized by section with
 | PERF-26 | PERF | `link_metadata/mod.rs::fetch_metadata` rebuilds `reqwest::Client` per call; should reuse a `OnceLock` like `gcal_push/api.rs` does | S | — |
 | PERF-27 | PERF | `backlink/filters.rs::PropertyText` filter fetches all rows for the property key then compares in Rust; push the operator into SQL `WHERE` | S | — |
 | PERF-28 | PERF | Frontend — `TagValuePicker.tsx:39-55` calls `listTagsByPrefix()` synchronously on every keystroke; sibling `TagFilterPanel.tsx:68-82` debounces 300 ms via `useDebouncedCallback`. Apply the same pattern | S | — |
-| PERF-29 | PERF | Frontend — `src/stores/resolve.ts:204-211` (and 249-253) cache eviction loops `cache.keys().next()` per excess key; replace with `Array.from(cache.keys()).slice(0, excess).forEach(k => cache.delete(k))` | S | — |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
@@ -67,7 +66,6 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-6 | TEST | Sync merge tests assert on counter only, not materialized state (`merge_resolves_property_conflict_lww` doesn't query `block_properties`; `merge_block_conflict_creates_copy` doesn't query `blocks` for the conflict copy) | S | — |
 | TEST-7 | TEST | Reverse tests don't verify batch ordering (newest-first by `created_at DESC, seq DESC`) or op-log append-only invariant (count increases by 1) | S | — |
 | TEST-8 | TEST | TOFU test only covers acceptance, not rejection on cert-hash mismatch on reconnect (`inmem_handle_incoming_sync_tofu_stores_cert_hash`) | S | — |
-| TEST-9 | TEST | `two_device_create_sync_both_see_block` only checks op_log via `get_op_by_seq`, never queries `blocks` to verify materialization | S | — |
 | TEST-10 | TEST | Snapshot tests missing redactions of non-deterministic fields: `snapshot_history_entry_response` (cursor), `snapshot_list_blocks_response` (comment promises but no redaction call) | S | — |
 | TEST-11 | TEST | Missing error-path test coverage: `export_page_markdown_inner` has 6 happy-path tests + 0 error tests; `set_property_inner` integration tests miss invalid-key / type-mismatch Validation cases | S | — |
 | TEST-12 | TEST | `apply_remote_ops_detects_fork_with_same_seq_different_hash` queries hash but not full `OpRecord` (payload, op_type) — won't catch row mutation outside the hash field | S | — |
@@ -75,7 +73,6 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-16 | TEST | Recurrence integration tests don't exercise year-boundary transitions (Dec 31 + 1 day → Jan 1 next year) — only unit tests cover DST/leap year | S | — |
 | TEST-18 | TEST | Backlink non-grouped tests use `setup_backlinks()` orphan sources (no parent_id), so they never exercise self-reference filtering; sort tests don't assert `total_count`/`filtered_count` | S | — |
 | TEST-19 | TEST | MCP weak-shape assertions: `list_backlinks_happy_path` checks only `is_object()`; stress test bare `is_ok()` (line 1272); error-response tests check `result.is_none()` but not error code/message shape | S | — |
-| TEST-20 | TEST | `protocol_initiator_requests_and_receives_files` asserts `files_sent/received` and `bytes_sent/received` but not `skipped_hash_mismatch` / `skipped_not_found` (== 0 in happy path) | S | — |
 | TEST-23 | TEST | 6 copy-pasted `*_paginates_with_cursor` tests in `pagination/tests.rs` (lines 720, 877, 1550, 1702, 1911, 2032) — identical 3-page-loop pattern | S | — |
 | TEST-24 | TEST | 13 `tokio::time::sleep(Duration::from_millis(2))` for op-log timestamp separation in `undo_redo_tests.rs` — replace with deterministic `op_log::append_local_op_at` calls | S | — |
 | TEST-25 | TEST | ~12 near-identical FEAT-3p4 space-scoping tests in `agenda_cmd_tests.rs` (lines 2268–2812) — extract `seed_two_spaces` helper | S | — |
@@ -189,7 +186,6 @@ These can be tackled in a single session with low risk — listed for prioritiza
 - **PERF-26** — `OnceLock<reqwest::Client>` in `link_metadata`
 - **PERF-27** — push `PropertyText` operator into SQL `WHERE`
 - **PERF-28** — debounce `TagValuePicker` searches (mirror `TagFilterPanel` pattern)
-- **PERF-29** — replace iterator-loop cache eviction in `stores/resolve.ts` with `Array.from(...).slice(...)`
 - **MAINT-114** — workflow consolidation audit (spike-then-commit)
 - **MAINT-173** — batch-delete transitive-descendant filter in `useBlockMultiSelect` (HIGH-severity correctness)
 - **MAINT-179** — GCal Settings success-toast consistency (mirror `set_gcal_privacy_mode`)
@@ -603,7 +599,7 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 ### MAINT-192 — UX.md / AGENTS.md additions to reduce false-positive churn on future frontend reviews
 - **Domain:** Documentation
 - **Location:** `UX.md`, `AGENTS.md`
-- **What:** Frontend-wide UX review (the one that filed MAINT-173..MAINT-191 and PERF-28..PERF-29) had a 74% false-positive rate. The bulk of rejected findings pattern-matched against React-class anti-patterns that don't apply to this codebase. Four small doc additions would pre-empt most of that churn:
+- **What:** Frontend-wide UX review (the one that filed MAINT-173..MAINT-191 and PERF-28) had a 74% false-positive rate. The bulk of rejected findings pattern-matched against React-class anti-patterns that don't apply to this codebase. Four small doc additions would pre-empt most of that churn:
   - **(a) UX.md "Common Pitfalls"** — add an entry **"`setState` after unmount in React 18+ is no longer a defect"**: React 18 removed the warning and the call is silently dropped; only flag when the late update would leave incorrect *visible* state.
   - **(b) UX.md "Lessons Learned → Data & State"** — add **"Reading store state inside callbacks via `useStore.getState()` is intentional"**: it reads the latest state from the Zustand store, not from the closure, so it is *not* a stale-closure bug.
   - **(c) AGENTS.md "Frontend Development Guidelines → Mandatory patterns"** — add **"Picker debouncing"** entry referencing `useDebouncedCallback` + the 300 ms convention used by `TagFilterPanel`. PERF-28 traces directly to this gap.
@@ -697,15 +693,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Impact:** Medium — TOFU behavior is asymmetric (acceptance is trivial; rejection is the property worth verifying).
 - **Status:** Open.
 
-### TEST-9 — `two_device_create_sync_both_see_block` doesn't verify materialization
-- **Domain:** Sync integration tests
-- **Location:** `src-tauri/src/sync_integration_tests.rs:145-202`
-- **What:** Test verifies the synced op is readable in B via `get_op_by_seq()` but never queries the `blocks` table to verify materialization. If the materializer fails to apply the op on B, the test still passes.
-- **Cost:** Trivial — `materializer.flush_background().await` then `SELECT FROM blocks WHERE id = ?` assertion.
-- **Risk:** Low.
-- **Impact:** Low-medium — closes a gap in the most fundamental sync test.
-- **Status:** Open.
-
 ### TEST-10 — Snapshot tests missing redactions of non-deterministic fields
 - **Domain:** Test infrastructure (insta snapshots)
 - **Location:**
@@ -774,15 +761,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Cost:** S — add field-presence and type assertions per response contract; pin a stable substring for `error.message`.
 - **Risk:** Low.
 - **Impact:** Low-medium — tighter contract enforcement on the MCP boundary.
-- **Status:** Open.
-
-### TEST-20 — `protocol_initiator_requests_and_receives_files` missing skipped-counter assertions
-- **Domain:** Sync files tests
-- **Location:** `src-tauri/src/sync_files/tests.rs:495-570`
-- **What:** Test asserts `files_sent/received` and `bytes_sent/received` but never asserts on `skipped_hash_mismatch` and `skipped_not_found`. Asserting `== 0` in the happy path catches future regressions in the skip accounting.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
 - **Status:** Open.
 
 ### TEST-23 — 6 copy-pasted `*_paginates_with_cursor` tests
@@ -1034,23 +1012,6 @@ Or a simpler cap: reject filter lists longer than some reasonable limit (e.g., 1
 - **Impact:** Medium — visible UI thrashing on slow devices / large tag vocabularies.
 - **Status:** Open.
 
-### PERF-29 — `stores/resolve.ts` cache eviction loops `cache.keys().next()` per excess key
-- **Domain:** Frontend (resolve cache)
-- **Location:** `src/stores/resolve.ts:204-211` and `249-253`
-- **What:**
-  ```ts
-  const keys = cache.keys()
-  for (let i = 0; i < excess; i++) {
-    const { value } = keys.next()
-    if (value) cache.delete(value)
-  }
-  ```
-  Iterating the Map iterator one step at a time has higher overhead than `Array.from(cache.keys()).slice(0, excess).forEach(k => cache.delete(k))`. `excess` is bounded by `MAX_CACHE_SIZE`; not catastrophic but trivially fixable.
-- **Cost:** Trivial — two-line replacement at both sites.
-- **Risk:** Low.
-- **Impact:** Low — micro-perf when the cache fills up (e.g. after preloading many pages).
-- **Status:** Open.
-
 ---
 
 
@@ -1124,17 +1085,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low
 - **Recommendation:** Either leave as-is (the email is still the right one — only the calendar reset) or, if FEAT-5f explicitly differentiates "connected, no calendar yet" from "calendar recreated since last open", refresh `oauth_account_email` from the most recent token's id_token claim during the recreate path. Lean toward leaving as-is unless FEAT-5f spec calls for the distinction.
 - **Pass-1 source:** 10/F23
-- **Status:** Open
-
-### M-96 — `materializer/coordinator.rs::status` swallows DB errors with `.ok()`
-- **Domain:** Materializer / Observability
-- **Location:** `src-tauri/src/materializer/coordinator.rs:751-761`
-- **What:** `total_ops_in_log` and `retry_queue_pending` use `.ok()` on the COUNT query, returning `None` on any DB error with no logging. A persistent reader-pool issue or migration drift would surface as silent `None` values in the status output rather than a tracked operational signal.
-- **Why it matters:** Operators lose visibility during exactly the conditions where they need it (DB pressure, pool exhaustion). Status itself never fails, which is correct behaviour for an observability path, but the silent error swallow loses signal.
-- **Cost:** Trivial — `.inspect_err(|e| tracing::warn!(error = %e, "status query failed"))` chained before `.ok()`.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Recommendation:** Add the `inspect_err` log; keep `.ok()` so status semantics don't change.
 - **Status:** Open
 
 ### M-97 — `commands/properties.rs` reserved-property validation queries `property_definitions` outside the transaction
@@ -1226,17 +1176,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Medium.
 - **Recommendation:** Use `Promise.allSettled` and report each failure individually via `reportIpcError`, or land the response-shape guarantee in the IPC layer so the defensive guards can come out.
 - **Source:** FE review 2026-05-02 / F049
-- **Status:** Open
-
-### FE-H-18 — Slash-command auto-execute timer doesn't guard against destroyed editor view
-- **Domain:** Frontend / Editor
-- **Location:** `src/editor/extensions/slash-command.ts:93-101`
-- **What:** A 200ms `setTimeout` calls `command(item)` later. If the editor view is destroyed between schedule and fire, the call runs on a destroyed view. AGENTS' Floating UI lifecycle logging rules require guarding callback invocations on stale state and logging the desync.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low — race window is narrow but visible in tests / fast keyboard navigation.
-- **Recommendation:** `if (editor.view.isDestroyed) { logger.warn('slash-command', 'skipping auto-execute — editor view destroyed'); return }` plus a try/catch around `command(item)`.
-- **Source:** FE review 2026-05-02 / F010
 - **Status:** Open
 
 ### FE-H-21 — `Resolve` store: asymmetric version-bump policy between `set` and `batchSet`

@@ -204,11 +204,8 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         if (cache.size > MAX_CACHE_SIZE) {
           // Delete oldest entries (first N entries in Map iteration order)
           const excess = cache.size - MAX_CACHE_SIZE
-          const keys = cache.keys()
-          for (let i = 0; i < excess; i++) {
-            const { value } = keys.next()
-            if (value) cache.delete(value)
-          }
+          const toEvict = Array.from(cache.keys()).slice(0, excess)
+          for (const key of toEvict) cache.delete(key)
         }
         // Also update pagesList if it's a new non-deleted entry
         // (pages created via onCreatePage should appear in picker).
@@ -246,11 +243,8 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         if (cache.size > MAX_CACHE_SIZE) {
           // Delete oldest entries (first N entries in Map iteration order)
           const excess = cache.size - MAX_CACHE_SIZE
-          const keys = cache.keys()
-          for (let i = 0; i < excess; i++) {
-            const { value } = keys.next()
-            if (value) cache.delete(value)
-          }
+          const toEvict = Array.from(cache.keys()).slice(0, excess)
+          for (const key of toEvict) cache.delete(key)
         }
         return { cache, version: state.version + 1 }
       })
