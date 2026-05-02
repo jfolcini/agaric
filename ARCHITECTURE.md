@@ -2389,3 +2389,65 @@ empirically validated through bugs found, fixes applied, and alternatives reject
 - **Inline event handlers in render:** Breaks memo; use stable function references.
 - **Manual dialog/dropdown implementations:** Use Radix UI for focus management, keyboard
   trapping, and accessibility. Never build custom overlays.
+- **TanStack Query for Tauri IPC fetching.** `usePaginatedQuery`, `usePollingQuery`, the resolve
+  store, and per-shape batch hooks (`useBatchAttachments`, `useBatchCounts`,
+  `useBlockPropertiesBatch`, `useBacklinkResolution`) superficially look like network-fetch
+  problems. They aren't: there are no requests to deduplicate (Tauri serialises across the
+  bridge), the resolve store's composite `${spaceId}::${ulid}` key + space-scoped invalidation
+  doesn't fit a query-key cache, and `usePollingQuery` already pauses on `document.hidden` —
+  a win TanStack's `refetchInterval` doesn't expose. Adds ~50 KB gzipped + architectural
+  coupling for net-zero LOC.
+- **Radix `Popover` / `@floating-ui/react` for the suggestion popup
+  (`src/editor/suggestion-renderer.ts`).** Both are *controlled* (`open` / `onOpenChange` props,
+  React-state-driven). TipTap's `Suggestion` plugin lifecycle (`onStart` / `onUpdate` /
+  `onExit`) is *uncontrolled* — callbacks fire inside ProseMirror transaction handlers, not
+  React renders. Bridging the impedance mismatch needs a Zustand/ref store that adds more code
+  than the current 276 LOC. The pain documented under "Floating UI lifecycle logging" is
+  inherent to "popup must not break editor focus", not removable.
+- **`iroh` / `iroh-blobs` for sync transport or attachment transfer.** `iroh-sync` assumes a
+  CRDT/Merkle-doc model; Agaric's per-device `(device_id, seq)` op log with positional blake3
+  hashes is orthogonal. `iroh-blobs` looks plug-in-compatible for `sync_files.rs`, but the
+  `FileRequest` / `FileOffer` / `FileReceived` messages live in the `SyncMessage` enum, tunnel
+  over the same TLS WebSocket as op streaming, and gate on `SyncState::Complete` — replacement
+  requires reworking the protocol message set and orchestrator, not a transport swap.
+- **`magic-wormhole` (PAKE) for pairing.** PAKE shines on low-entropy secrets (4-digit PINs);
+  the EFF 4-word passphrase carries ~51.7 bits — well above PAKE's design point. The current
+  HKDF-SHA256 + ChaCha20-Poly1305 stack is correct and right-sized for the threat model.
+- **`webpki` / `rustls-platform-verifier` for sync TLS.** Both validate CA-signed chains;
+  Agaric uses self-signed ECDSA P-256 certificates with TOFU pinning. The custom
+  `PinningCertVerifier` (~100 LOC) is the right tool.
+- **`apalis` / `faktory` / `tower::retry` + `tower::buffer` / `tokio_util::DelayQueue` for the
+  materializer.** The materializer is a CQRS replay engine, not a job queue. The `ApplyOp`
+  cursor advance must live in the same `BEGIN IMMEDIATE` transaction as the op apply (C-2b) —
+  no library exposes that. Two-tier retry, per-task-type dedup, and the persistent retry queue
+  for idempotent per-block tasks are domain-specific. A swap shuffles complexity, not reduces
+  it.
+- **`statig` / `rust-fsm` / typestate macros for the sync state machine.** 8 states, ~15
+  transitions, all explicit and debuggable in `sync_protocol/orchestrator.rs`. Macro-based
+  FSMs would obscure control flow at this size and fight the mutable session state held on
+  `SyncOrchestrator`.
+- **`rrule` crate for recurrence compute.** Replaces only `shift_date_once` (~50 LOC); the
+  surrounding ~1,080 LOC in `recurrence/compute.rs` is end-condition logic + sibling block
+  creation + property copy + materializer dispatch + `BEGIN IMMEDIATE` idempotency under
+  `repeat-count` / `repeat-seq` — none of which `rrule` knows about. Org-mode `.+` and `++`
+  aren't in RFC 5545 anyway. The swap touches ~5 % of the surface.
+- **`react-flow` / `reagraph` / `Cytoscape.js` / `Sigma.js` for the graph view.** None ship a
+  force-directed engine compatible with the existing UX; `react-flow` would still need
+  `d3-force` brought back. The current ~1,245 LOC is already decomposed across 5 hooks
+  (MAINT-127) with a Web Worker + main-thread fallback (PERF-9b). Net code increase, not
+  decrease.
+- **`prosemirror-markdown` / `markdown-it` / `remark` / `unified` for the Markdown
+  serializer + parser.** All would still need custom plugins for `#[ULID]`, `[[ULID]]`,
+  `((ULID))`, plus replicate mark coalescing (`*a****b****c*` ambiguity), variable-length
+  code-block fence selection (BUG-1), and unclosed-mark revert. Saves ~30 % LOC at the cost
+  of a new dependency + new bug surface. `tiptap-markdown` is rejected separately under
+  [§6 Content Format & Serializer](#6-content-format--serializer); generalised here for the
+  broader family.
+- **TanStack Router / React Router 7 for navigation.** Tauri desktop app has no URLs and no
+  browser history. The 13-view union + per-space view persistence in `useNavigationStore`
+  (~209 LOC) is type-safe via the `View` union without a router. Routers add bundle weight
+  and route-definition boilerplate for nothing.
+- **`bincode` / `rkyv` for snapshot encoding.** Both lose schema versioning; CBOR's
+  `#[serde(default)]` field-add path (used at SCHEMA_VERSION 2 for `property_definitions` +
+  `page_aliases`) is the durability story we already rely on. zstd + CBOR + the streaming
+  decoder (L-67) is optimal.
