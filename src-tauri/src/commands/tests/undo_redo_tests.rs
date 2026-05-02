@@ -1841,31 +1841,10 @@ async fn revert_delete_block_restores_with_descendants() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Use a controlled timestamp so blocks.deleted_at matches the op's created_at.
-    // delete_block_inner uses two separate now_rfc3339() calls (one for op_log,
-    // one for blocks), causing a mismatch. We do it manually with one timestamp.
-    let delete_ts = "2025-06-15T12:00:00Z";
-
-    // Manually soft-delete both blocks with the controlled timestamp
-    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ? OR id = ?")
-        .bind(delete_ts)
-        .bind(&parent.id)
-        .bind(&child.id)
-        .execute(&pool)
+    delete_block_inner(&pool, DEV, &mat, parent.id.clone())
         .await
         .unwrap();
-
-    // Append delete_block op with the same timestamp
-    op_log::append_local_op_at(
-        &pool,
-        DEV,
-        OpPayload::DeleteBlock(DeleteBlockPayload {
-            block_id: BlockId::from_trusted(&parent.id),
-        }),
-        delete_ts.to_string(),
-    )
-    .await
-    .unwrap();
+    mat.flush_background().await.unwrap();
 
     // Verify both are deleted
     let p_row = get_block_inner(&pool, parent.id.clone()).await.unwrap();

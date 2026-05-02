@@ -760,6 +760,12 @@ async fn protocol_hash_mismatch_no_ack_returns_err() {
         initiator_result.is_err(),
         "M-50: hash mismatch must surface as Err, got Ok"
     );
+    let err = initiator_result.unwrap_err();
+    let err_str = err.to_string();
+    assert!(
+        err_str.to_lowercase().contains("hash"),
+        "expected hash-mismatch error, got: {err_str}"
+    );
 
     // File must NOT have been written.
     assert!(

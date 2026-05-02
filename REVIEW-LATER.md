@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 603 — Batch MAINT-FIXUPS-1 closed: MAINT-182, MAINT-186, MAINT-187, MAINT-188, MAINT-191)
+> **Last updated:** 2026-05-02 (Session 604 — Batch TEST-FIXUPS-1 closed: TEST-1, TEST-13, TEST-21, TEST-22, TEST-26)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-156 open items in the summary table; 203 detail entries (FE-* sub-tables don't appear in the summary).
+151 open items in the summary table; 198 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -61,7 +61,6 @@ Items flagged during development that need revisiting. Organized by section with
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
-| TEST-1 | TEST | `delete_block_inner` calls `now_rfc3339()` twice — production timestamp-mismatch bug surfaced by hardcoded-timestamp workaround in `revert_delete_block_restores_with_descendants` | S | — |
 | TEST-2 | TEST | Inequality count assertions where exact count is known (3 sites: integration_tests `bg >= 1`, agenda projection `entries.len() >= 3`, recovery `draft_errors.len() >= 2`) | S | — |
 | TEST-3 | TEST | Brittle `err.to_string().contains(...)` / event-message `.contains(...)` assertions instead of `matches!(AppError::Variant(_))` (11 in `block_cmd_tests.rs`, 9 in `sync_daemon/tests.rs`) | S | — |
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
@@ -73,19 +72,15 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-10 | TEST | Snapshot tests missing redactions of non-deterministic fields: `snapshot_history_entry_response` (cursor), `snapshot_list_blocks_response` (comment promises but no redaction call) | S | — |
 | TEST-11 | TEST | Missing error-path test coverage: `export_page_markdown_inner` has 6 happy-path tests + 0 error tests; `set_property_inner` integration tests miss invalid-key / type-mismatch Validation cases | S | — |
 | TEST-12 | TEST | `apply_remote_ops_detects_fork_with_same_seq_different_hash` queries hash but not full `OpRecord` (payload, op_type) — won't catch row mutation outside the hash field | S | — |
-| TEST-13 | TEST | Draft tests use `record.payload.contains(BLOCK_A)` on raw JSON — a substring match that could pass with the ID in the wrong field | S | — |
 | TEST-14 | TEST | Spaces tests don't verify isolation between Personal/Work spaces — no test creates pages in both and asserts queries return correct subset for each | S | — |
 | TEST-16 | TEST | Recurrence integration tests don't exercise year-boundary transitions (Dec 31 + 1 day → Jan 1 next year) — only unit tests cover DST/leap year | S | — |
 | TEST-17 | TEST | `opbatch_streaming_sends_in_chunks` verifies chunk sizes (1000/1000/500) but not seq-ordering within each batch | S | — |
 | TEST-18 | TEST | Backlink non-grouped tests use `setup_backlinks()` orphan sources (no parent_id), so they never exercise self-reference filtering; sort tests don't assert `total_count`/`filtered_count` | S | — |
 | TEST-19 | TEST | MCP weak-shape assertions: `list_backlinks_happy_path` checks only `is_object()`; stress test bare `is_ok()` (line 1272); error-response tests check `result.is_none()` but not error code/message shape | S | — |
 | TEST-20 | TEST | `protocol_initiator_requests_and_receives_files` asserts `files_sent/received` and `bytes_sent/received` but not `skipped_hash_mismatch` / `skipped_not_found` (== 0 in happy path) | S | — |
-| TEST-21 | TEST | `protocol_hash_mismatch_no_ack_returns_err` only asserts `is_err()` — a connection-drop error would also pass; assert error message mentions hash mismatch | S | — |
-| TEST-22 | TEST | `dispatch_op_unknown_op_type` asserts `is_ok()` but doesn't verify no DB side effects (row counts unchanged on `blocks` and `op_log`) | S | — |
 | TEST-23 | TEST | 6 copy-pasted `*_paginates_with_cursor` tests in `pagination/tests.rs` (lines 720, 877, 1550, 1702, 1911, 2032) — identical 3-page-loop pattern | S | — |
 | TEST-24 | TEST | 13 `tokio::time::sleep(Duration::from_millis(2))` for op-log timestamp separation in `undo_redo_tests.rs` — replace with deterministic `op_log::append_local_op_at` calls | S | — |
 | TEST-25 | TEST | ~12 near-identical FEAT-3p4 space-scoping tests in `agenda_cmd_tests.rs` (lines 2268–2812) — extract `seed_two_spaces` helper | S | — |
-| TEST-26 | TEST | `find_lca_after_compaction_returns_clear_error` hardcodes `'SNAP01'` / `'fakehash'` snapshot values inline — extract to module constants | S | — |
 | TEST-27 | TEST | `count_set_property_ops_for_key` helper uses `LIKE '%"key":"X"%'` on JSON payloads — fragile to JSON whitespace changes | S | — |
 | TEST-28 | TEST | `test_connection_pair()` bypasses real TLS (in-memory duplex with `peer_cert_hash_val: None`) — needs documenting so callers don't think they're testing mTLS | S | — |
 | TEST-29 | TEST | `create_50_blocks_paginate_through_all_verify_count` creates 50 blocks sequentially in a loop — could parallelize with `futures::join_all` | S | — |
@@ -641,15 +636,6 @@ Items in this section are test-quality improvements identified during a thorough
 
 > **Format:** test items use the compact L-style block. None of these are blocking; they are code-quality investments.
 
-### TEST-1 — Stale test workaround in `revert_delete_block_restores_with_descendants` (production fix already shipped)
-- **Domain:** Test infrastructure (Block lifecycle)
-- **Location:** `src-tauri/src/commands/tests/undo_redo_tests.rs:1843-1868`
-- **What:** The production bug (two separate `now_rfc3339()` calls in `delete_block_inner`) has been fixed: `src-tauri/src/commands/blocks/crud.rs:608` is now a single `let now = now_rfc3339();` reused at L611 (op_log) and L638 (blocks.deleted_at), with an explicit comment at L606-607 documenting the invariant. The stale test workaround that constructs the op manually with hardcoded timestamp `"2025-06-15T12:00:00Z"` (and a misleading comment claiming "delete_block_inner uses two separate now_rfc3339() calls") is still present.
-- **Cost:** Trivial — remove the workaround at lines 1843-1868 and the stale comment at 1844-1846; call `delete_block_inner` directly.
-- **Risk:** Low.
-- **Impact:** Low — test cleanup only; production already correct.
-- **Status:** Open.
-
 ### TEST-2 — Inequality count assertions where exact count is known (3 sites)
 - **Domain:** Test infrastructure
 - **Location:**
@@ -762,15 +748,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Impact:** Low-medium — defends the append-only invariant on the most adversarial sync path.
 - **Status:** Open.
 
-### TEST-13 — Brittle `payload.contains()` in draft tests
-- **Domain:** Draft tests
-- **Location:** `src-tauri/src/draft/tests.rs:307-308, 330-331`
-- **What:** Tests use `record.payload.contains(BLOCK_A)` and `record.payload.contains(DEVICE)` on the raw JSON-serialized payload string. The block_id or device string can appear anywhere in the JSON; the assertion doesn't prove it's in the correct field.
-- **Cost:** Trivial — `serde_json::from_str::<EditBlockPayload>(&record.payload)` and assert `.block_id == BLOCK_A`.
-- **Risk:** Low.
-- **Impact:** Low — small but real precision improvement.
-- **Status:** Open.
-
 ### TEST-14 — Space isolation test exists at the property level but not at the `list_blocks_inner` IPC boundary
 - **Domain:** Spaces tests
 - **Location:** `src-tauri/src/spaces/tests.rs:773-865` already covers the property-table side via `property_every_page_has_space_after_bootstrap_under_mixed_create_paths` (creates pages in both Personal and Work, then queries `block_properties` directly to assert per-space membership at lines 837-852, plus `personal_pages.contains(&p1)` / `work_pages.contains(&p2)` / leaked-page backfill assertions at L853-864).
@@ -828,24 +805,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Impact:** Low.
 - **Status:** Open.
 
-### TEST-21 — `protocol_hash_mismatch_no_ack_returns_err` only asserts `is_err()`
-- **Domain:** Sync files tests
-- **Location:** `src-tauri/src/sync_files/tests.rs:640-726`
-- **What:** Test asserts the operation errored but doesn't verify the error message mentions hash mismatch. A connection-drop error would also pass — the test would not actually verify hash-mismatch detection.
-- **Cost:** Trivial — `assert!(err.to_string().contains("hash"), …)`.
-- **Risk:** Low.
-- **Impact:** Low-medium.
-- **Status:** Open.
-
-### TEST-22 — `dispatch_op_unknown_op_type` doesn't verify no DB side effects
-- **Domain:** Materializer tests
-- **Location:** `src-tauri/src/materializer/tests.rs:841-850`
-- **What:** Test asserts `dispatch_op` returns `Ok(())` for an unknown op type but doesn't verify that no DB rows were written (blocks unchanged, op_log unchanged, no cache rebuild dispatched). A silent no-op is indistinguishable from a corrupt write.
-- **Cost:** Trivial — capture `SELECT COUNT(*)` before/after on `blocks` and `op_log` and assert equality.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ### TEST-23 — 6 copy-pasted `*_paginates_with_cursor` tests
 - **Domain:** Pagination tests
 - **Location:** `src-tauri/src/pagination/tests.rs` lines 720, 877, 1550, 1702, 1911, 2032
@@ -871,15 +830,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Cost:** S — extract `async fn seed_two_space_blocks(...)` helper.
 - **Risk:** Low.
 - **Impact:** Low — reduces a copy-paste surface that grows with each new space-aware list query.
-- **Status:** Open.
-
-### TEST-26 — `find_lca_after_compaction_returns_clear_error` hardcodes magic strings
-- **Domain:** DAG tests
-- **Location:** `src-tauri/src/dag/tests.rs:971-977` (the `INSERT INTO log_snapshots ... VALUES ('SNAP01', 'complete', 'fakehash', ...)` statement inside `find_lca_after_compaction_returns_clear_error` at L952)
-- **What:** Test inserts a snapshot row with hardcoded `'SNAP01'` and `'fakehash'` directly in the SQL string. If the snapshot row schema or hash format ever changes, the test silently breaks.
-- **Cost:** Trivial — extract to module constants.
-- **Risk:** Low.
-- **Impact:** Low.
 - **Status:** Open.
 
 ### TEST-27 — `count_set_property_ops_for_key` uses LIKE on JSON

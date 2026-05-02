@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 603 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 889+ items.
+**Sessions:** 1 – 604 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 894+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 604 (2026-05-02)** — Batch TEST-FIXUPS-1 closed: TEST-1, TEST-13, TEST-21, TEST-22, TEST-26 — five trivial backend test improvements (remove stale workaround, typed `serde_json::from_str` instead of substring `contains`, hash-mismatch error message assertion, no-DB-side-effects assertion, magic-string → constants). 5 build + 5 review subagents. All-PASS, no follow-ups.
 - **Session 603 (2026-05-02)** — Batch MAINT-FIXUPS-1 closed: MAINT-182, MAINT-186, MAINT-187, MAINT-188, MAINT-191 — five trivial frontend cleanups (i18n leak, explicit touch-target classname, `INTERNAL_PROPERTY_KEYS` shared const, breadcrumb `useMemo`, IPC-bridge clarification comment). 5 build + 5 review subagents.
 - **Session 602 (2026-05-02)** — Batch BACKEND-CLEANUP-1 closed: L-56, L-57, L-58, L-59, L-60 — five trivial Rust commands cleanups (release-build size guard, `unreachable!()` → structured error, mutex-poison helper extraction, shared `text_utils::truncate_at_char_boundary`, `find_missing_attachments` NotFound-vs-other-IO split). 5 build + 5 review subagents. New follow-up L-62 filed for the mirror `unreachable!()` in `delete_property_in_tx` flagged by the L-57 reviewer.
 - **Session 601 (2026-05-02)** — Batch FE-LOGGER-1 closed: FE-H-8, FE-H-9, FE-H-10, FE-H-11, FE-H-12, FE-H-13 — six silent-catch logger backfills (AGENTS' "no silent catch" rule). 6 build + 6 review subagents (max parallelism per PROMPT.md); FE-H-13 source change broke a pre-existing `console.warn` regression test → fixed orchestrator-direct by mocking `'../logger'` at the integration test layer. New follow-up FE-H-14 filed for the second bare `catch {}` in PdfViewerDialog cleanup function (out-of-scope for FE-H-11).
@@ -34,6 +35,53 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 604 — Batch TEST-FIXUPS-1: backend test quality improvements (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 5 build + 5 technical review |
+| **Items closed** | TEST-1, TEST-13, TEST-21, TEST-22, TEST-26 |
+| **Items added** | — |
+| **Tests added** | +0 (all 5 are improvements to EXISTING test assertions, not new tests) |
+| **Files touched** | 5 Rust test files + REVIEW-LATER cleanup |
+
+**Summary:** Closed all 5 items in a fresh "test quality" backend batch. Each is a small but meaningful precision improvement to an existing test — TEST-1 removes a stale workaround pinned to a now-fixed production bug; TEST-13 replaces brittle `payload.contains()` substring checks with typed `serde_json::from_str::<EditBlockPayload>()` + field equality (the second site is now strictly stricter than the original); TEST-21 adds a hash-mismatch error message assertion (preventing the test from passing on unrelated errors like connection drops); TEST-22 adds before/after `SELECT COUNT(*)` assertions verifying unknown op_types produce no DB side effects; TEST-26 extracts inline `'SNAP01'` / `'fakehash'` magic strings to module-level constants. All non-overlapping files; all reviews PASS without follow-ups.
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 156 → 151 (−5).
+- **Detail entries:** 203 → 198 (−5).
+- **Previously-resolved counter:** 889+ → 894+ across 603 → 604 sessions.
+
+**Per-item verification (from review subagents):**
+- **TEST-1** (`commands/tests/undo_redo_tests.rs`): the workaround in `revert_delete_block_restores_with_descendants` (formerly L1843-1868) — hardcoded timestamp `"2025-06-15T12:00:00Z"`, manual `UPDATE blocks SET deleted_at` + `op_log::append_local_op_at` setup, misleading comment claiming "two separate `now_rfc3339()` calls" — fully removed. Replaced with the canonical pattern used by 5 other tests in the same file: `delete_block_inner(&pool, DEV, &mat, parent.id.clone()).await.unwrap(); mat.flush_background().await.unwrap();`. Production fix at `crud.rs:608` (single `let now = now_rfc3339()` reused at L611+L638) ensures `blocks.deleted_at` matches op `created_at`, which is what `reverse_delete_block` needs. 1/1 test passes (0.181s).
+- **TEST-13** (`draft/tests.rs:306-337`): two `record.payload.contains(...)` substring checks replaced with typed parsing. Site 1 (`flush_draft_writes_op_and_removes_draft`): `serde_json::from_str::<EditBlockPayload>(&record.payload)` + `assert_eq!(payload.block_id, BLOCK_A)` (relies on `BlockId: PartialEq<&str>` impl at `ulid.rs:107-111`). Site 2 (`flush_draft_includes_prev_edit_in_payload`): typed parse + `assert_eq!(payload.prev_edit, Some((DEVICE.to_owned(), 3)))` — strictly stricter than the original substring check. 31/31 file tests pass.
+- **TEST-21** (`sync_files/tests.rs:757-768` in `protocol_hash_mismatch_no_ack_returns_err`): added `let err = initiator_result.unwrap_err(); let err_str = err.to_string(); assert!(err_str.to_lowercase().contains("hash"), ...)` after the existing `is_err()` check. `to_lowercase()` keeps it robust to capitalization changes. 1/1 test passes.
+- **TEST-22** (`materializer/tests.rs:841-874` in `dispatch_op_unknown_op_type`): added 2 before-counts (`blocks_before`, `op_log_before`) and 2 after-counts (`blocks_after`, `op_log_after`) bracketing the `dispatch_op(...)` call. Two new `assert_eq!` checks verify "unknown op_type must not mutate blocks" and "unknown op_type must not append to op_log". `Materializer::new(pool)` upgraded to `pool.clone()` so the post-dispatch SELECTs have the pool — matches the pattern used by 6 sibling tests. 1/1 test passes.
+- **TEST-26** (`dag/tests.rs`): extracted `TEST_SNAPSHOT_ID = "SNAP01"` and `TEST_SNAPSHOT_HASH = "fakehash"` to module-level constants (lines 18-19, after existing fixture-constants block, with explanatory doc-comment). Inline SQL refactored to `"INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) VALUES (?, 'complete', ?, '{\"device-A\":1}', X'00')"` + `.bind(TEST_SNAPSHOT_ID).bind(TEST_SNAPSHOT_HASH)`. Other literals (`'complete'`, `'{"device-A":1}'`, `X'00'`) preserved byte-for-byte. Schema column-list (`id, status, up_to_hash, up_to_seqs, data`) matches `migrations/0001_initial.sql:74-80` exactly. 2/2 related tests pass (`find_lca_after_compaction_returns_clear_error` + `find_lca_after_compaction_produces_not_found`).
+
+**Files touched (this session):**
+- `src-tauri/src/commands/tests/undo_redo_tests.rs` (-25 / +4 — workaround removed, simpler call substituted)
+- `src-tauri/src/draft/tests.rs` (+12 / -2 — typed parsing on 2 sites)
+- `src-tauri/src/sync_files/tests.rs` (+6 — hash-message assertion)
+- `src-tauri/src/materializer/tests.rs` (+24 / -1 — `pool.clone()` + 4 count captures + 2 asserts)
+- `src-tauri/src/dag/tests.rs` (+8 / -2 — 2 constants + bind refactor)
+- `REVIEW-LATER.md` (-43 net — 5 detail blocks + 5 summary rows; count + Last-updated header refreshed)
+- `SESSION-LOG.md` (this entry + Recent milestones bump)
+
+**Verification:**
+- `cargo nextest run -p agaric --filter-expr 'test(/revert_delete_block_restores_with_descendants|draft::tests::|protocol_hash_mismatch|dispatch_op_unknown|find_lca_after_compaction/)'` — **36/36 pass** (3360 skipped) across the 5 touched modules.
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **Cleanest test-improvement batch.** All 5 reviewers returned PASS without flagging any follow-ups. No mid-session orchestrator-direct fixes were needed.
+- **TEST-1 stale-warning false positive.** The TEST-1 build subagent reported "two pre-existing warnings (`TEST_SNAPSHOT_ID` / `TEST_SNAPSHOT_HASH`)" — this was a stale snapshot of TEST-26's mid-build state (before the bind() calls landed). The TEST-26 reviewer explicitly verified via `grep` that the constants are now actively used (lines 18-19 definitions + lines 981-982 binds) and there are no real warnings. This kind of cross-subagent observation is honest signal — worth flagging — but should be re-verified by the orchestrator before treating it as a blocker.
+- **Test-improvement batches are fast.** Wall-clock to ship was meaningfully shorter than feature/code batches because each subagent only modified 1 file, the changes are mostly mechanical, and the verification command (`cargo nextest run --filter-expr`) is narrow. Worth repeating for future test-quality sweeps.
+
+**Commit plan:** single commit. Not pushed.
 
 ---
 
