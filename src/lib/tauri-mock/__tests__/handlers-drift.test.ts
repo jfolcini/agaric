@@ -22,9 +22,19 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { HANDLERS } from '../handlers'
+import { logger } from '../../logger'
+import { dispatch, HANDLERS } from '../handlers'
+
+vi.mock('../../logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
 
 // ---------------------------------------------------------------------------
 // Allowlist
@@ -110,5 +120,20 @@ describe('tauri-mock HANDLERS drift detection (MAINT-123)', () => {
   it('allowlisted commands are not also handled (avoid contradictory state)', () => {
     const contradictory = [...INTENTIONALLY_NOT_MOCKED].filter((cmd) => handlerKeys.has(cmd))
     expect(contradictory, 'Allowlisted commands must not also appear in HANDLERS.').toEqual([])
+  })
+
+  it('FE-H-13: unhandled command logs via logger.warn (not console.warn)', () => {
+    const warnedLogger = vi.mocked(logger.warn)
+    warnedLogger.mockClear()
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const bogus = 'definitely_not_a_real_command_FE_H_13'
+    const result = dispatch(bogus, {})
+
+    expect(result).toBeNull()
+    expect(warnedLogger).toHaveBeenCalledWith('TauriMock', 'unhandled command', { command: bogus })
+    expect(consoleWarnSpy).not.toHaveBeenCalled()
+
+    consoleWarnSpy.mockRestore()
   })
 })

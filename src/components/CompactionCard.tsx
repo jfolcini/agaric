@@ -15,6 +15,7 @@ import { CollapsiblePanelHeader } from '@/components/CollapsiblePanelHeader'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
+import { logger } from '@/lib/logger'
 import type { CompactionStatus } from '@/lib/tauri'
 import { compactOpLog, getCompactionStatus } from '@/lib/tauri'
 
@@ -31,7 +32,8 @@ export function CompactionCard(): React.ReactElement {
     try {
       const s = await getCompactionStatus()
       setStatus(s)
-    } catch {
+    } catch (err) {
+      logger.warn('CompactionCard', 'getCompactionStatus failed', undefined, err)
       toast.error(t('compaction.loadFailed'))
     } finally {
       setLoading(false)
@@ -50,7 +52,8 @@ export function CompactionCard(): React.ReactElement {
       toast.success(t('compaction.success', { count: result.ops_deleted }))
       setConfirmOpen(false)
       void fetchStatus()
-    } catch {
+    } catch (err) {
+      logger.error('CompactionCard', 'compaction failed', undefined, err)
       toast.error(t('compaction.failed'))
     } finally {
       setCompacting(false)

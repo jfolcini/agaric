@@ -12,6 +12,7 @@
  */
 
 import { matchesSearchFolded } from '../fold-for-search'
+import { logger } from '../logger'
 import { applyRevertForOp } from './revert'
 import {
   attachments,
@@ -1627,14 +1628,13 @@ export const HANDLERS: Record<string, Handler> = {
 }
 
 /**
- * Dispatch an IPC command to its handler. Unknown commands log a warning and
- * return `null` (matches pre-decomposition behaviour, including the exact
- * warning text asserted by `tauri-mock.test.ts`).
+ * Dispatch an IPC command to its handler. Unknown commands log a warning via
+ * the structured logger and return `null`.
  */
 export function dispatch(cmd: string, args: unknown): unknown {
   const handler = HANDLERS[cmd]
   if (!handler) {
-    console.warn(`[tauri-mock] Unhandled command: ${cmd}`)
+    logger.warn('TauriMock', 'unhandled command', { command: cmd })
     return null
   }
   return handler(args)

@@ -20,7 +20,17 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { logger } from '@/lib/logger'
 import { CompactionCard } from '../CompactionCard'
+
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -226,6 +236,63 @@ describe('CompactionCard', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to load compaction status')
     })
+  })
+
+  it('FE-H-10: logs warning when fetchStatus rejects', async () => {
+    const err = new Error('load failed')
+    mockedInvoke.mockRejectedValueOnce(err)
+
+    const user = userEvent.setup()
+    render(<CompactionCard />)
+
+    // Expand to trigger visible loading
+    await user.click(screen.getByText('Op Log Compaction'))
+
+    await waitFor(() => {
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'CompactionCard',
+        'getCompactionStatus failed',
+        undefined,
+        err,
+      )
+    })
+
+    // Regression guard — toast still fires.
+    expect(toast.error).toHaveBeenCalledWith('Failed to load compaction status')
+  })
+
+  it('FE-H-10: logs error when handleCompact rejects', async () => {
+    const err = new Error('compact failed')
+    const user = userEvent.setup()
+    mockedInvoke
+      .mockResolvedValueOnce(defaultStatus) // getCompactionStatus
+      .mockRejectedValueOnce(err) // compactOpLog
+
+    render(<CompactionCard />)
+
+    await user.click(screen.getByText('Op Log Compaction'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
+    })
+
+    // Open confirm dialog
+    await user.click(screen.getByRole('button', { name: /Compact Now/i }))
+
+    // Click Compact button
+    await user.click(screen.getByRole('button', { name: /^Compact$/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'CompactionCard',
+        'compaction failed',
+        undefined,
+        err,
+      )
+    })
+
+    // Regression guard — toast still fires.
+    expect(toast.error).toHaveBeenCalledWith('Failed to compact op log')
   })
 
   // UX-259: destructive dialogs must not compact on a reflex Enter on open.
