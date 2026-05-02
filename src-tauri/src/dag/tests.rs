@@ -12,6 +12,12 @@ const FIXED_TS: &str = "2025-01-15T12:00:00Z";
 const DEV_A: &str = "device-A";
 const DEV_B: &str = "device-B";
 
+/// Test-fixture constants for `find_lca_after_compaction_returns_clear_error`.
+/// Extracted from inline SQL (TEST-26) to make schema/format changes easier
+/// to track. Adjust here when the snapshot row schema or hash format changes.
+const TEST_SNAPSHOT_ID: &str = "SNAP01";
+const TEST_SNAPSHOT_HASH: &str = "fakehash";
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 /// Create a temp-file-backed SQLite pool with migrations applied.
@@ -970,8 +976,10 @@ async fn find_lca_after_compaction_returns_clear_error() {
     // Simulate compaction: insert a snapshot row then delete seq 1
     sqlx::query(
         "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
-         VALUES ('SNAP01', 'complete', 'fakehash', '{\"device-A\":1}', X'00')",
+         VALUES (?, 'complete', ?, '{\"device-A\":1}', X'00')",
     )
+    .bind(TEST_SNAPSHOT_ID)
+    .bind(TEST_SNAPSHOT_HASH)
     .execute(&pool)
     .await
     .unwrap();

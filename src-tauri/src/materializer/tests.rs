@@ -840,12 +840,36 @@ async fn dispatch_op_delete_attachment() {
 #[tokio::test]
 async fn dispatch_op_unknown_op_type() {
     let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool);
+    let mat = Materializer::new(pool.clone());
+    let blocks_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let op_log_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert!(
         mat.dispatch_op(&fake_op_record("unknown_future_op", "{}"))
             .await
             .is_ok(),
         "unknown op type should not cause an error"
+    );
+    let blocks_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let op_log_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        blocks_before, blocks_after,
+        "unknown op_type must not mutate blocks"
+    );
+    assert_eq!(
+        op_log_before, op_log_after,
+        "unknown op_type must not append to op_log"
     );
 }
 #[tokio::test]

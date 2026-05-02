@@ -303,8 +303,10 @@ async fn flush_draft_writes_op_and_removes_draft() {
 
     assert_eq!(record.op_type, "edit_block", "op_type must be edit_block");
     assert_eq!(record.device_id, DEVICE, "device_id must match");
-    assert!(
-        record.payload.contains(BLOCK_A),
+    let payload: EditBlockPayload =
+        serde_json::from_str(&record.payload).expect("payload should parse as EditBlockPayload");
+    assert_eq!(
+        payload.block_id, BLOCK_A,
         "payload must reference the block"
     );
     assert_eq!(
@@ -326,8 +328,11 @@ async fn flush_draft_includes_prev_edit_in_payload() {
         .unwrap();
 
     assert_eq!(record.op_type, "edit_block");
-    assert!(
-        record.payload.contains(DEVICE),
+    let payload: EditBlockPayload =
+        serde_json::from_str(&record.payload).expect("payload should parse as EditBlockPayload");
+    assert_eq!(
+        payload.prev_edit,
+        Some((DEVICE.to_owned(), 3)),
         "payload must contain prev_edit device reference"
     );
 }
