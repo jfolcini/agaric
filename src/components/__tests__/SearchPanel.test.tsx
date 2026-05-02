@@ -1146,6 +1146,45 @@ describe('SearchPanel', () => {
     expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('Breadcrumb Page')
   })
 
+  // FE-H-20: SearchPanel must dedupe parentIds before invoking
+  // batchResolve, mirroring the pattern in TagFilterPanel.tsx:137. Without
+  // the `[...new Set(...)]` wrap, a results page with N children of the
+  // same parent page would resolve the parent N times.
+  it('dedupes parent page_ids before calling batchResolve', async () => {
+    // 5 blocks share 3 distinct page_ids: PAGE_A x3, PAGE_B x1, PAGE_C x1.
+    const searchResults = {
+      items: [
+        makeSearchResult({ id: 'B1', page_id: 'PAGE_A', content: 'one' }),
+        makeSearchResult({ id: 'B2', page_id: 'PAGE_A', content: 'two' }),
+        makeSearchResult({ id: 'B3', page_id: 'PAGE_A', content: 'three' }),
+        makeSearchResult({ id: 'B4', page_id: 'PAGE_B', content: 'four' }),
+        makeSearchResult({ id: 'B5', page_id: 'PAGE_C', content: 'five' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'search_blocks') return searchResults
+      if (cmd === 'batch_resolve') return []
+      return emptyPage
+    })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(input, 'test')
+
+    await waitFor(() => {
+      expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === 'batch_resolve')).toBe(true)
+    })
+
+    const batchResolveCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'batch_resolve')
+    expect(batchResolveCalls).toHaveLength(1)
+    const args = batchResolveCalls[0]?.[1] as { ids: string[] }
+    expect(args.ids).toHaveLength(3)
+    expect([...args.ids].sort()).toEqual(['PAGE_A', 'PAGE_B', 'PAGE_C'])
+  })
+
   // =========================================================================
   // Keyboard navigation tests
   // =========================================================================

@@ -35,14 +35,16 @@ export function useScrollRestore(
   // On view change: restore scroll position for the incoming view
   useEffect(() => {
     const container = containerRef.current
-    if (!container) return
+    if (!container) return undefined
 
     if (prevViewRef.current !== viewKey) {
       prevViewRef.current = viewKey
       const savedPosition = scrollPositions.current.get(viewKey) ?? 0
-      requestAnimationFrame(() => {
+      const rafId = requestAnimationFrame(() => {
         container.scrollTop = savedPosition
       })
+      return () => cancelAnimationFrame(rafId)
     }
+    return undefined
   }, [viewKey, containerRef])
 }

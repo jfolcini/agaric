@@ -185,4 +185,31 @@ describe('useScrollRestore', () => {
 
     spy.mockRestore()
   })
+
+  it('cancels the pending restore rAF on unmount', () => {
+    const ref = { current: container }
+
+    // Stub RAF/cAF so we can capture the id and assert cancellation.
+    const rafMock = vi.fn((_cb: FrameRequestCallback) => 42)
+    const cancelMock = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', rafMock)
+    vi.stubGlobal('cancelAnimationFrame', cancelMock)
+
+    try {
+      const { rerender, unmount } = renderHook(({ viewKey }) => useScrollRestore(ref, viewKey), {
+        initialProps: { viewKey: 'journal' },
+      })
+
+      // Trigger the view-change branch that schedules the rAF.
+      rerender({ viewKey: 'pages' })
+
+      expect(rafMock).toHaveBeenCalledTimes(1)
+
+      unmount()
+
+      expect(cancelMock).toHaveBeenCalledWith(42)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })
