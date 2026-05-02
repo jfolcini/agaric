@@ -136,10 +136,13 @@ export function BlockContextMenu({
     // If the trigger element has been removed from the DOM during the menu's
     // lifetime (e.g. block deleted via the menu itself, or via remote sync),
     // `triggerRef.current.focus()` no-ops silently and focus drops to <body>.
-    // Fall back to the block's gutter button so keyboard users keep a sane
-    // focus target near where the action took place.
+    // Fall back to the block's gutter button (marked with
+    // `data-context-trigger="true"`) so keyboard users keep a sane focus
+    // target near where the action took place. The marker is intentionally
+    // narrower than `[role="button"]`, which would also match inline date
+    // chips, property chips, etc.
     const fallback = document.querySelector<HTMLElement>(
-      `[data-block-id="${blockId}"] [role="button"]`,
+      `[data-block-id="${blockId}"] [data-context-trigger="true"]`,
     )
     ;(triggerRef?.current ?? fallback)?.focus()
     onClose()
@@ -177,11 +180,6 @@ export function BlockContextMenu({
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [handleCloseWithFocus])
-
-  // ── Focus first item on mount ────────────────────────────────────
-  useEffect(() => {
-    itemRefs.current[0]?.focus()
-  }, [])
 
   // ── Compute position with floating-ui ─────────────────────────────
   // Uses `autoUpdate` so the menu reflows on scroll/resize while open,
@@ -247,11 +245,23 @@ export function BlockContextMenu({
   }, [position, triggerRef, blockId])
 
   const handleAction = useCallback(
-    (action: ((blockId: string) => void) | undefined) => {
-      action?.(blockId)
-      onClose()
+    (action: ((blockId: string) => void | Promise<void>) | undefined) => {
+      if (!action) return
+      // Wrap in try/catch so sync throws and async rejections both surface
+      // as a toast + log instead of silently closing the menu (the user's
+      // intent — "do this thing" — was not honoured, so leave the menu
+      // open and let them retry or dismiss manually).
+      void (async () => {
+        try {
+          await Promise.resolve(action(blockId))
+          onClose()
+        } catch (err) {
+          logger.error('BlockContextMenu', 'action failed', { blockId }, err)
+          toast.error(t('contextMenu.actionFailed'))
+        }
+      })()
     },
-    [blockId, onClose],
+    [blockId, onClose, t],
   )
 
   // ── Menu item groups ─────────────────────────────────────────────
@@ -405,6 +415,15 @@ export function BlockContextMenu({
     wrap: true,
     homeEnd: true,
   })
+
+  // ── Focus first item on mount and whenever the visible item set changes ──
+  // Items are conditional (zoom-in only when `hasChildren`, history only when
+  // `onShowHistory` is passed, etc.) — refire whenever the count changes so
+  // focus lands on the current first item rather than a stale reference.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: visibleItems.length IS the trigger — we refocus when the conditional item set toggles, even though the effect body doesn't read it
+  useEffect(() => {
+    itemRefs.current[0]?.focus()
+  }, [visibleItems.length])
 
   // ── Focus item on focusedIndex change ────────────────────────────
   useEffect(() => {

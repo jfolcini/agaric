@@ -15,6 +15,7 @@ import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { applySafePosition } from '@/lib/floating-position'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '../lib/logger'
 import { reportIpcError } from '../lib/report-ipc-error'
@@ -88,11 +89,7 @@ export function BlockPropertyEditor({
         middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 })],
       })
         .then(({ x, y }) => {
-          Object.assign(popup.style, {
-            position: 'fixed',
-            left: `${x}px`,
-            top: `${y}px`,
-          })
+          applySafePosition(popup, { x, y })
         })
         .catch((err: unknown) => {
           logger.warn(
@@ -101,6 +98,9 @@ export function BlockPropertyEditor({
             { key: editingProp.key },
             err,
           )
+          // MAINT-175: push popup off-screen on failure so it doesn't
+          // float orphaned mid-page after the anchor scrolls or moves.
+          applySafePosition(popup, null)
         })
     }
 
@@ -164,11 +164,7 @@ export function BlockPropertyEditor({
         middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 })],
       })
         .then(({ x, y }) => {
-          Object.assign(popup.style, {
-            position: 'fixed',
-            left: `${x}px`,
-            top: `${y}px`,
-          })
+          applySafePosition(popup, { x, y })
         })
         .catch((err: unknown) => {
           logger.warn(
@@ -177,6 +173,9 @@ export function BlockPropertyEditor({
             { oldKey: editingKey.oldKey },
             err,
           )
+          // MAINT-175: push popup off-screen on failure so it doesn't
+          // float orphaned mid-page after the anchor scrolls or moves.
+          applySafePosition(popup, null)
         })
     }
 

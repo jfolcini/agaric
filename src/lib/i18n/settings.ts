@@ -76,6 +76,13 @@ export const settings: Record<string, string> = {
   'bugReport.loadMetadataFailed': 'Failed to collect bug-report metadata',
   'bugReport.readLogsFailed': 'Failed to read logs',
   'bugReport.buildZipFailed': 'Failed to build ZIP',
+  // MAINT-177: surfaced when openUrl resolves false (Tauri shell errored AND
+  // window.open was popup-blocked / returned null). The dialog stays open so
+  // the user can retry or copy the issue URL from the clipboard fallback.
+  'bugReport.browserOpenFailed':
+    "Couldn't open your browser. The issue URL has been copied to the clipboard — paste it into your browser to open the GitHub issue.",
+  'bugReport.browserOpenFailedNoClipboard':
+    "Couldn't open your browser, and the URL couldn't be copied to the clipboard. Use the Copy report button and open GitHub manually.",
   'bugReport.reportCrashTitle': 'Report this crash',
   'settings.tabAgentAccess': 'Agent access',
   'agentAccess.title': 'Agent access',

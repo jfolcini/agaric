@@ -178,6 +178,7 @@ export const common: Record<string, string> = {
   'contextMenu.copyUrl': 'Copy URL',
   'contextMenu.urlCopied': 'URL copied to clipboard',
   'contextMenu.copyUrlFailed': 'Failed to copy URL',
+  'contextMenu.actionFailed': 'Action failed',
   'sidebar.properties': 'Properties',
   'shortcuts.title': 'Quick Reference',
   'shortcuts.syntaxSection': 'Syntax',

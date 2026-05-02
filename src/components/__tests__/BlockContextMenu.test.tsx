@@ -25,10 +25,12 @@
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { writeText } from '../../lib/clipboard'
 import { t } from '../../lib/i18n'
+import { logger } from '../../lib/logger'
 import { BlockContextMenu, type BlockContextMenuProps } from '../BlockContextMenu'
 
 vi.mock('@floating-ui/dom', () => ({
@@ -386,11 +388,13 @@ describe('BlockContextMenu', () => {
     // Simulate a block whose trigger element was removed during the menu's
     // lifetime (e.g. block deleted by a remote sync). The menu should focus
     // the matching `[data-block-id]` gutter button rather than letting focus
-    // drop to <body>.
+    // drop to <body>. MAINT-174: the marker is `data-context-trigger="true"`
+    // on the gutter drag handle (intentionally narrower than `[role="button"]`,
+    // which would also match inline date chips, property chips, etc.).
     const blockEl = document.createElement('div')
     blockEl.setAttribute('data-block-id', 'BLOCK_01')
     const fallbackBtn = document.createElement('button')
-    fallbackBtn.setAttribute('role', 'button')
+    fallbackBtn.setAttribute('data-context-trigger', 'true')
     blockEl.appendChild(fallbackBtn)
     document.body.appendChild(blockEl)
 
@@ -793,6 +797,166 @@ describe('BlockContextMenu', () => {
       })
 
       warnSpy.mockRestore()
+    })
+  })
+
+  // ── MAINT-174 hardening cluster ──────────────────────────────────
+  //
+  // 1. Action errors keep the menu open + surface as toast + log.
+  // 2. First-item focus refires when the visible item set changes.
+  // 3. Close-fallback uses `data-context-trigger="true"` (not `[role="button"]`).
+
+  describe('MAINT-174 — action error handling', () => {
+    it('synchronous action throw keeps menu open and shows toast', async () => {
+      const user = userEvent.setup()
+      const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
+      const onClose = vi.fn()
+      const onDelete = vi.fn(() => {
+        throw new Error('sync boom')
+      })
+
+      renderMenu({ onClose, onDelete })
+
+      await user.click(screen.getByText(t('contextMenu.delete')))
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(t('contextMenu.actionFailed'))
+      })
+      expect(toast.error).toHaveBeenCalledTimes(1)
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(errorSpy).toHaveBeenCalledWith(
+        'BlockContextMenu',
+        'action failed',
+        expect.objectContaining({ blockId: 'BLOCK_01' }),
+        expect.any(Error),
+      )
+      expect(onClose).not.toHaveBeenCalled()
+
+      errorSpy.mockRestore()
+    })
+
+    it('asynchronous action rejection keeps menu open and shows toast', async () => {
+      const user = userEvent.setup()
+      const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
+      const onClose = vi.fn()
+      const onIndent = vi.fn(() => Promise.reject(new Error('async boom')))
+
+      renderMenu({ onClose, onIndent })
+
+      await user.click(screen.getByText(t('contextMenu.indent')))
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(t('contextMenu.actionFailed'))
+      })
+      expect(toast.error).toHaveBeenCalledTimes(1)
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(errorSpy).toHaveBeenCalledWith(
+        'BlockContextMenu',
+        'action failed',
+        expect.objectContaining({ blockId: 'BLOCK_01' }),
+        expect.any(Error),
+      )
+      expect(onClose).not.toHaveBeenCalled()
+
+      errorSpy.mockRestore()
+    })
+
+    it('successful action calls onClose and does not show error toast', async () => {
+      const user = userEvent.setup()
+      const onClose = vi.fn()
+      const onDelete = vi.fn(() => Promise.resolve())
+
+      renderMenu({ onClose, onDelete })
+
+      await user.click(screen.getByText(t('contextMenu.delete')))
+
+      await waitFor(() => {
+        expect(onClose).toHaveBeenCalledTimes(1)
+      })
+      expect(onDelete).toHaveBeenCalledWith('BLOCK_01')
+      expect(toast.error).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('MAINT-174 — first-item focus refires on item-set change', () => {
+    it('refocuses the first item when the visible set grows (hasChildren toggle)', async () => {
+      // Render initially without children — no Collapse/Expand item is shown.
+      const { rerender, props } = renderMenu({ hasChildren: false })
+
+      const initialItems = screen.getAllByRole('menuitem')
+      expect(initialItems[0]).toHaveFocus()
+      const initialCount = initialItems.length
+
+      // Re-render with hasChildren=true — Collapse joins the visible set.
+      rerender(<BlockContextMenu {...(props as BlockContextMenuProps)} hasChildren={true} />)
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('menuitem').length).toBe(initialCount + 1)
+      })
+
+      // Focus must land on the (current) first item — not on a stale ref.
+      const updatedItems = screen.getAllByRole('menuitem')
+      expect(updatedItems[0]).toHaveFocus()
+    })
+
+    it('refocuses the new first item when linkUrl appears (Copy URL becomes first)', async () => {
+      // No linkUrl initially → Delete is the first item.
+      const { rerender, props } = renderMenu()
+
+      const initialItems = screen.getAllByRole('menuitem')
+      expect(initialItems[0]).toHaveTextContent(t('contextMenu.delete'))
+      expect(initialItems[0]).toHaveFocus()
+      const initialCount = initialItems.length
+
+      // Add linkUrl → Copy URL is prepended and should now own focus.
+      rerender(
+        <BlockContextMenu
+          {...(props as BlockContextMenuProps)}
+          linkUrl="https://example.com/page"
+        />,
+      )
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('menuitem').length).toBe(initialCount + 1)
+      })
+
+      const updatedItems = screen.getAllByRole('menuitem')
+      expect(updatedItems[0]).toHaveTextContent(t('contextMenu.copyUrl'))
+      expect(updatedItems[0]).toHaveFocus()
+    })
+  })
+
+  describe('MAINT-174 — close-fallback selector', () => {
+    it('focuses the [data-context-trigger="true"] gutter button, not a [role="button"] sibling', () => {
+      // Same block has both a `[role="button"]` chip (e.g. an inline date
+      // chip) and a `[data-context-trigger="true"]` gutter button. The
+      // close-fallback must prefer the gutter marker.
+      const blockEl = document.createElement('div')
+      blockEl.setAttribute('data-block-id', 'BLOCK_01')
+
+      const chip = document.createElement('span')
+      chip.setAttribute('role', 'button')
+      chip.tabIndex = 0
+      blockEl.appendChild(chip)
+
+      const gutterBtn = document.createElement('button')
+      gutterBtn.setAttribute('data-context-trigger', 'true')
+      blockEl.appendChild(gutterBtn)
+
+      document.body.appendChild(blockEl)
+
+      const chipFocusSpy = vi.spyOn(chip, 'focus')
+      const gutterFocusSpy = vi.spyOn(gutterBtn, 'focus')
+
+      const triggerRef = { current: null as HTMLElement | null }
+      renderMenu({ triggerRef })
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      expect(gutterFocusSpy).toHaveBeenCalledTimes(1)
+      expect(chipFocusSpy).not.toHaveBeenCalled()
+
+      document.body.removeChild(blockEl)
     })
   })
 })
