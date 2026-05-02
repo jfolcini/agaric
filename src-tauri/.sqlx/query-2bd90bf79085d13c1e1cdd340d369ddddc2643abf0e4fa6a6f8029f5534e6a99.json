@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE gcal_space_config SET last_error = ?, updated_at = ? WHERE space_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "2bd90bf79085d13c1e1cdd340d369ddddc2643abf0e4fa6a6f8029f5534e6a99"
+}

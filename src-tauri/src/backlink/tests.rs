@@ -4914,12 +4914,19 @@ async fn eval_unlinked_refs_tag_filter_excludes_non_matching() {
         .collect();
     assert!(ids.contains("BLK_B1"), "BLK_B1 has T_A");
     assert!(ids.contains("BLK_B4"), "BLK_B4 has T_A");
-    // Post-filter counts — AGENTS.md "Backend Patterns" #4.
+    // MAINT-170: `total_count` is captured pre-filter, post-self-reference
+    // (parity with `eval_backlink_query_grouped:128`); `filtered_count` is
+    // the post-filter, post-grouping sum. Pre-fix this assertion encoded
+    // the bug — `total_count == 2` collapsed both counts to the post-filter
+    // sum and under-reported the unlinked-reference badge.
     assert_eq!(
-        resp.total_count, 2,
-        "total_count reflects post-filter count, not pre-filter 4"
+        resp.total_count, 4,
+        "total_count is the pre-filter, post-self-ref count (4)"
     );
-    assert_eq!(resp.filtered_count, 2, "filtered_count matches");
+    assert_eq!(
+        resp.filtered_count, 2,
+        "filtered_count is the post-filter group sum (2)"
+    );
 }
 
 #[tokio::test]
@@ -4952,8 +4959,10 @@ async fn eval_unlinked_refs_property_filter_matches_exact_value() {
         .collect();
     assert!(ids.contains("BLK_B1"));
     assert!(ids.contains("BLK_B3"));
-    assert_eq!(resp.total_count, 2, "post-filter total_count == 2");
-    assert_eq!(resp.filtered_count, 2);
+    // MAINT-170: `total_count` is the pre-filter, post-self-ref count
+    // (parity with `eval_backlink_query_grouped:128`).
+    assert_eq!(resp.total_count, 4, "pre-filter total_count == 4");
+    assert_eq!(resp.filtered_count, 2, "post-filter filtered_count == 2");
 }
 
 #[tokio::test]
@@ -5050,9 +5059,17 @@ async fn eval_unlinked_refs_sort_property_text_orders_by_value() {
 }
 
 #[tokio::test]
-async fn eval_unlinked_refs_total_count_reflects_post_filter() {
-    // Explicit regression for AGENTS.md "Backend Patterns" #4:
-    // total_count must be the post-filter count, not the pre-filter count.
+async fn eval_unlinked_refs_total_count_reflects_pre_filter() {
+    // MAINT-170 regression: `total_count` is the pre-filter,
+    // post-self-reference-exclusion count (parity with
+    // `eval_backlink_query_grouped:128`). `filtered_count` is the
+    // post-filter, post-grouping sum. Pre-fix the function collapsed
+    // both counts to the same post-filter value, under-reporting the
+    // UI badge whenever a user filter was active.
+    //
+    // Note: this test previously encoded the *buggy* behaviour
+    // (asserted `total_count == filtered_count` after filtering); it
+    // has been inverted to lock down the corrected semantics.
     let (pool, _dir) = test_pool().await;
     setup_unlinked_refs_for_filters(&pool).await;
 
@@ -5063,6 +5080,10 @@ async fn eval_unlinked_refs_total_count_reflects_post_filter() {
         .unwrap();
     assert_eq!(unfiltered.total_count, 4);
     assert_eq!(unfiltered.filtered_count, 4);
+    assert!(
+        unfiltered.total_count >= unfiltered.filtered_count,
+        "total_count is always >= filtered_count"
+    );
 
     // Narrow to priority=high (2 blocks).
     let filters = vec![BacklinkFilter::PropertyText {
@@ -5074,10 +5095,189 @@ async fn eval_unlinked_refs_total_count_reflects_post_filter() {
         .await
         .unwrap();
     assert_eq!(
-        filtered.total_count, 2,
-        "total_count must be the post-filter count (2), not pre-filter (4)"
+        filtered.total_count, 4,
+        "total_count must be the pre-filter count (4), not the post-filter count (2)"
     );
-    assert_eq!(filtered.filtered_count, 2);
+    assert_eq!(
+        filtered.filtered_count, 2,
+        "filtered_count is the post-filter group sum (2)"
+    );
+    assert!(
+        filtered.total_count >= filtered.filtered_count,
+        "total_count is always >= filtered_count"
+    );
+}
+
+// ======================================================================
+// MAINT-170 — `eval_unlinked_references::total_count` must reflect the
+// pre-filter, post-self-reference-exclusion count (parity with
+// `eval_backlink_query_grouped:128`).
+// ======================================================================
+
+/// Seed 6 unlinked-reference blocks distributed across 3 source pages,
+/// none of which are self-references to the TARGET page. Used by the
+/// MAINT-170 regression tests below. Each block carries a `priority`
+/// property so a filter can split the set in half (3 high / 3 low).
+///
+/// Layout:
+/// * TARGET (page): "Project Beta"
+/// * PAGE_X (page): "Page X"
+///   ├── BLK_X1 — content "Project Beta milestones",  priority=high
+///   └── BLK_X2 — content "more on Project Beta",     priority=low
+/// * PAGE_Y (page): "Page Y"
+///   ├── BLK_Y1 — content "Project Beta updates",     priority=high
+///   └── BLK_Y2 — content "Project Beta retros",      priority=low
+/// * PAGE_Z (page): "Page Z"
+///   ├── BLK_Z1 — content "Project Beta launch",      priority=high
+///   └── BLK_Z2 — content "Project Beta postmortem",  priority=low
+async fn seed_unlinked_blocks_for_total_count(pool: &SqlitePool) {
+    insert_block_with_parent(pool, "TARGET", "page", "Project Beta", None, None).await;
+
+    let pages = [
+        ("PAGE_X", "Page X", "X"),
+        ("PAGE_Y", "Page Y", "Y"),
+        ("PAGE_Z", "Page Z", "Z"),
+    ];
+    let blocks: [(&str, &str, &str); 6] = [
+        ("BLK_X1", "Project Beta milestones", "high"),
+        ("BLK_X2", "more on Project Beta", "low"),
+        ("BLK_Y1", "Project Beta updates", "high"),
+        ("BLK_Y2", "Project Beta retros", "low"),
+        ("BLK_Z1", "Project Beta launch", "high"),
+        ("BLK_Z2", "Project Beta postmortem", "low"),
+    ];
+
+    for (page_id, page_title, _) in &pages {
+        insert_block_with_parent(pool, page_id, "page", page_title, None, None).await;
+    }
+
+    for (idx, (blk_id, content, priority)) in blocks.iter().enumerate() {
+        // First two blocks live on PAGE_X, next two on PAGE_Y, last two on PAGE_Z.
+        let parent_page = pages[idx / 2].0;
+        let position = ((idx % 2) + 1) as i64;
+        insert_block_with_parent(
+            pool,
+            blk_id,
+            "content",
+            content,
+            Some(parent_page),
+            Some(position),
+        )
+        .await;
+        insert_fts(pool, blk_id, content).await;
+        insert_property(pool, blk_id, "priority", Some(priority), None, None).await;
+    }
+}
+
+#[tokio::test]
+async fn eval_unlinked_refs_total_count_equals_filtered_count_with_no_filter() {
+    // Happy path: 6 unlinked blocks across 3 source pages, no
+    // self-references. With no user filter, `total_count` and
+    // `filtered_count` must both equal the unfiltered group sum (6).
+    let (pool, _dir) = test_pool().await;
+    seed_unlinked_blocks_for_total_count(&pool).await;
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.groups.len(), 3, "three source page groups");
+    let group_sum: usize = resp.groups.iter().map(|g| g.blocks.len()).sum();
+    assert_eq!(group_sum, 6, "all six blocks distributed across the groups");
+    assert_eq!(resp.total_count, 6, "pre-filter total_count == 6");
+    assert_eq!(resp.filtered_count, 6, "post-filter filtered_count == 6");
+    assert_eq!(
+        resp.total_count, resp.filtered_count,
+        "with no filter total_count must equal filtered_count"
+    );
+}
+
+#[tokio::test]
+async fn eval_unlinked_refs_total_count_holds_when_filter_drops_half() {
+    // Regression anchor for MAINT-170: 6 unlinked blocks pre-filter, a
+    // user filter eliminates 3 of them. `total_count` must remain the
+    // pre-filter count (6) while `filtered_count` reflects the
+    // post-filter group sum (3). Pre-fix the function collapsed both
+    // counts to 3, under-reporting the unlinked-references badge.
+    let (pool, _dir) = test_pool().await;
+    seed_unlinked_blocks_for_total_count(&pool).await;
+
+    let filters = vec![BacklinkFilter::PropertyText {
+        key: "priority".into(),
+        op: CompareOp::Eq,
+        value: "high".into(),
+    }];
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", Some(filters), None, &page, None)
+        .await
+        .unwrap();
+
+    let group_sum: usize = resp.groups.iter().map(|g| g.blocks.len()).sum();
+    assert_eq!(group_sum, 3, "filter keeps the three high-priority blocks");
+    assert_eq!(
+        resp.total_count, 6,
+        "total_count holds the pre-filter, post-self-ref count (6)"
+    );
+    assert_eq!(
+        resp.filtered_count, 3,
+        "filtered_count is the post-filter group sum (3)"
+    );
+    assert!(
+        resp.total_count >= resp.filtered_count,
+        "total_count must always be >= filtered_count"
+    );
+}
+
+#[tokio::test]
+async fn eval_unlinked_refs_total_count_excludes_self_references_with_other_matches() {
+    // Reinforces `eval_unlinked_refs_excludes_own_page_blocks`: when the
+    // FTS match set contains BOTH a self-reference and a non-self-ref,
+    // `total_count` must reflect only the non-self-ref count. The FTS
+    // hit count would be 2; the post-self-ref count is 1.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block_with_parent(&pool, "TARGET", "page", "Project Gamma", None, None).await;
+    // Self-reference: a child block of TARGET that mentions the title.
+    insert_block_with_parent(
+        &pool,
+        "BLK_SELF",
+        "content",
+        "Project Gamma is the focus here",
+        Some("TARGET"),
+        Some(1),
+    )
+    .await;
+    insert_fts(&pool, "BLK_SELF", "Project Gamma is the focus here").await;
+    // Cross-page reference.
+    insert_block_with_parent(&pool, "PAGE_OTHER", "page", "Other Page", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_OTHER",
+        "content",
+        "We track Project Gamma carefully",
+        Some("PAGE_OTHER"),
+        Some(1),
+    )
+    .await;
+    insert_fts(&pool, "BLK_OTHER", "We track Project Gamma carefully").await;
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.groups.len(), 1, "only the non-self-ref group survives");
+    assert_eq!(resp.groups[0].page_id, "PAGE_OTHER");
+    assert_eq!(resp.groups[0].blocks.len(), 1, "BLK_OTHER only");
+    // FTS matched 2 rows but BLK_SELF is excluded by the self-reference
+    // walk before total_count is captured.
+    assert_eq!(
+        resp.total_count, 1,
+        "total_count reflects post-self-ref base (1), not FTS hit count (2)"
+    );
+    assert_eq!(resp.filtered_count, 1);
 }
 
 // ======================================================================

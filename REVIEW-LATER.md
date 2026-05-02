@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 611 — Batch QUICK-WINS-3 closed: MAINT-171, TEST-7)
+> **Last updated:** 2026-05-02 (Session 612 — Batch QUICK-WINS-4 closed: MAINT-169, MAINT-170, MAINT-173)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-135 open items in the summary table; 167 detail entries (FE-* sub-tables don't appear in the summary).
+132 open items in the summary table; 164 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -31,10 +31,7 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-114 | MAINT | Consolidation audit of `.github/workflows/` — fold `release-tag.yml` into `release.yml` as a `workflow_dispatch` job (4 → 3 files). Spike-then-commit; abandon if merged file isn't shorter than the sum. | S–M | — |
 | MAINT-128 | MAINT | God-component decomposition: `PropertyRowEditor.tsx` (550L) — split each typed editor (text/number/date/ref/select) into its own component AND lift the shared state (`localValue`, date hook, select-options, ref-picker, 10+ callbacks) UP into a containing hook. **SCHEDULED** — owner-prioritized; refactor path locked in. Removes the only `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` in the codebase (at L85). | L | — |
 | MAINT-168 | MAINT | Sync trigger / scheduler dual-backoff unification — `useSyncTrigger.ts` (60s → 600s) and `sync_scheduler.rs` (1s → 60s) run independent exponential backoffs that never coordinate. Not a correctness bug; the backend is the authoritative scheduler and silently rejects redundant `startSync` calls. Filed as a documented design note after this session's bird's-eye review. | M | — |
-| MAINT-169 | MAINT | GCal connector: `DateFailure::Skipped` per-date errors are logged but never persisted to `gcal_space_config.last_error` — Settings UI shows no feedback for transient per-date failures until the next reconcile clears the dirty set | S | — |
-| MAINT-170 | MAINT | Backlink: `eval_unlinked_references` collapses `total_count = filtered_count` (out of parity with `eval_backlink_query_grouped`); UI badge under-reports the unlinked-ref count when filters are active | S | — |
 | MAINT-172 | MAINT | Pagination/queries: space-filter SQL fragment inlined across 13+ files because `sqlx::query_as!` rejects `concat!()`; `space_filter_clause!` macro referenced in comments but unusable. Real maintenance hotspot, sqlx-constrained | M | sqlx upstream |
-| MAINT-173 | MAINT | Frontend — batch-delete in `useBlockMultiSelect` only filters direct children; transitive descendants are dispatched as redundant `deleteBlock` calls that race the cascade and surface as spurious "delete failed" toast counts | S | — |
 | MAINT-174 | MAINT | Frontend — `BlockContextMenu` hardening cluster: action errors silently close the menu, first-item focus has empty deps and doesn't refocus when items change, close-fallback selector matches any button in the block | S | — |
 | MAINT-175 | MAINT | Frontend — `BlockPropertyEditor` leaves popup at last position on `computePosition` failure; `suggestion-renderer.ts` (off-screen fallback) is the better pattern. Extract a shared `applySafePosition` helper | S | — |
 | MAINT-176 | MAINT | Frontend — `use-roving-editor.ts:391` dispatches the suggestion-exit transaction without try/catch; `replaceDocSilently()` then runs against a possibly-corrupt plugin state if dispatch throws | S | — |
@@ -163,12 +160,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 These can be tackled in a single session with low risk — listed for prioritization convenience (canonical entries remain in the per-section detail blocks below):
 
-- **MAINT-169** — gcal connector: persist `DateFailure::Skipped` reason to `gcal_space_config.last_error`
-- **MAINT-170** — backlink `eval_unlinked_references`: capture `total_count` before user filters
 - **PERF-19** — backlink pagination keyset for non-Created sorts (2 sites)
 - **PERF-20** — concurrency cap on `try_join_all` in backlink filter resolver
 - **MAINT-114** — workflow consolidation audit (spike-then-commit)
-- **MAINT-173** — batch-delete transitive-descendant filter in `useBlockMultiSelect` (HIGH-severity correctness)
 - **MAINT-192** — UX.md / AGENTS.md additions (4 small doc inserts to reduce review false-positive churn)
 - **PUB-5** — Tauri updater wiring (user-only: keypair + 2 secrets + uncomment)
 - **PUB-8** — Android release keystore + 4 GH Actions secrets (CI wiring already shipped)
@@ -386,35 +380,6 @@ The initial one-line recommendation was "4 → 2 (validate + release)". On inspe
 
 **Decision:** Defer — keep tracked as a documented design note. Revisit only if (i) the dual-scheduler behaviour ever surfaces as a user-facing bug, or (ii) the sync layer is being touched for another reason and unification becomes opportunistic.
 
-### MAINT-169 — GCal connector: per-date `DateFailure::Skipped` errors are not persisted to `gcal_space_config.last_error`
-
-**Problem:** `src-tauri/src/gcal_push/connector.rs:484-491` handles `DateFailure::Skipped(reason)` by emitting a `tracing::warn!` and `continue`-ing to the next date. Cycle-level failures (`CalendarGone`, `Unauthorized`, `Forbidden`) update state and emit events; transient per-date failures do not touch the database at all.
-
-**Why it matters:** The Settings UI reads `gcal_space_config.last_error` to surface push status. A user whose push silently skips dates sees `last_error = NULL` even while the tracing log is full of warnings. Diagnostic feedback is the only signal that something is wrong before the daily reconcile clears the dirty set.
-
-**Fix:** On `DateFailure::Skipped(reason)`, write the reason to `gcal_space_config.last_error` (via `models::upsert_space_config_last_error` or by extending the existing setter) before `continue`-ing. The reason string is already constructed.
-
-**Cost:** S — one new helper or extend the existing one, plus one call site.
-**Risk:** Low.
-**Impact:** Medium — closes the diagnostic gap for transient failures.
-
-### MAINT-170 — Backlink: `eval_unlinked_references` collapses `total_count = filtered_count`
-
-**Problem:** `src-tauri/src/backlink/grouped.rs:525-526` sets both counts to the same post-filter value:
-```rust
-let filtered_count = page_groups.values().map(|(_, blocks)| blocks.len()).sum();
-let total_count = filtered_count;
-```
-`eval_backlink_query_grouped` (line 128 in the same file) sets `total_count = base_ids.len()` *before* user filters. The two functions therefore report counts on different bases. The comment at L523-524 cites AGENTS.md "Backend Patterns #4" but that rule applies to fixed semantic filters (self-reference exclusion), not user-supplied filter expressions.
-
-**Why it matters:** UI badge under-reports the unlinked-reference count when the user has any backlink filter active.
-
-**Fix:** Capture `total_count` after self-reference exclusion (the grouping step) but *before* applying user `filters`. Mirror the structure of `eval_backlink_query_grouped`. Add a regression test that asserts `total_count >= filtered_count` and that both equal the unfiltered group sum when no filters are supplied.
-
-**Cost:** S.
-**Risk:** Low — pure read-side count semantics.
-**Impact:** Low-medium — UX correctness for unlinked-references badge.
-
 ### MAINT-172 — Pagination/queries: space-filter SQL fragment inlined across 13+ files
 
 **Problem:** The fragment
@@ -442,15 +407,6 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 > Methodology: 7 parallel discovery subagents covering all 438 frontend source files,
 > 3 parallel verification subagents reading the cited code to filter hallucinations.
 > Items below are the verified survivors. Known false positives are not listed.
-
-### MAINT-173 — Batch-delete in `useBlockMultiSelect` doesn't filter transitive descendants
-- **Domain:** Frontend (block tree multi-select)
-- **Location:** `src/hooks/useBlockMultiSelect.ts:95-99`
-- **What:** The descendant filter `if (block?.parent_id && idsSet.has(block.parent_id)) return false` only excludes direct children of selected blocks. If a user multi-selects an ancestor A and a non-direct descendant C (skipping intermediate B), C is dispatched as a separate `deleteBlock(C)` call after `deleteBlock(A)` has already cascaded it server-side. Symptom: spurious "delete failed" entries in the failCount toast.
-- **Cost:** S — replace the parent-only check with an ancestor walk (mirror the existing `getDragDescendants(blocks, id)` helper, or invert it).
-- **Risk:** Low — narrower deletion (correct) is the only behaviour change.
-- **Impact:** Medium — eliminates a class of "looks-like-it-failed-but-didn't" toast noise on multi-level selections.
-- **Status:** Open.
 
 ### MAINT-174 — `BlockContextMenu` hardening cluster (3 small bugs in one file)
 - **Domain:** Frontend (block context menu)

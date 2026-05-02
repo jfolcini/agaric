@@ -30,6 +30,7 @@ use crate::gcal_push::connector::GcalConnectorHandle;
 use crate::gcal_push::keyring_store::{GcalEvent, GcalEventEmitter, TokenStore};
 use crate::gcal_push::lease::{self, LeaseState};
 use crate::gcal_push::models::{self, GcalSettingKey};
+use crate::spaces::bootstrap::SPACE_PERSONAL_ULID;
 
 // ---------------------------------------------------------------------------
 // Response types
@@ -151,6 +152,18 @@ pub async fn get_gcal_status_inner(
     let push_lease = lease::read_current_lease(pool).await?;
     let last_push = last_push_at(pool).await?;
 
+    // MAINT-169: surface the most-recent transient per-date `Skipped`
+    // reason from the connector to the Settings UI. Reads from the
+    // Personal-space row because FEAT-3p9 has not yet branched the
+    // connector by space (the connector still writes to
+    // `SPACE_PERSONAL_ULID` only). When FEAT-3p9 M2 lands, replace this
+    // with a per-space accordion. `optionalize` collapses the canonical
+    // "" → `None` (empty == healthy).
+    let last_error = models::get_space_config(pool, SPACE_PERSONAL_ULID)
+        .await?
+        .map(|c| c.last_error)
+        .unwrap_or_default();
+
     Ok(GcalStatus {
         connected,
         account_email: optionalize(account_email),
@@ -158,7 +171,7 @@ pub async fn get_gcal_status_inner(
         window_days,
         privacy_mode,
         last_push_at: last_push,
-        last_error: None, // FEAT-5f wires in-memory last-error surface
+        last_error: optionalize(last_error),
         push_lease: lease_state_to_holder(&push_lease, this_device),
     })
 }
@@ -628,6 +641,83 @@ mod tests {
         assert!(
             !status.connected,
             "keyring unavailable must degrade to connected=false"
+        );
+    }
+
+    /// MAINT-169 reader: when the connector has persisted a transient
+    /// `Skipped` reason to `gcal_space_config[Personal].last_error`,
+    /// `get_gcal_status_inner` must surface it to the Settings UI as
+    /// `Some(reason)` (was hard-coded `None` before this fix).
+    #[tokio::test]
+    async fn get_status_surfaces_persisted_last_error_from_personal_space_row() {
+        let (pool, _dir) = test_pool().await;
+        let store = store_with(None).await;
+
+        // Seed the Personal-space row directly (no need to bootstrap
+        // spaces — `get_gcal_status_inner` only reads the row by id).
+        let now = chrono::Utc::now();
+        let mut cfg = crate::gcal_push::models::default_space_config(SPACE_PERSONAL_ULID, now);
+        cfg.last_error = "rate-limited: HTTP 429".to_owned();
+        crate::gcal_push::models::upsert_space_config(&pool, &cfg)
+            .await
+            .unwrap();
+
+        let status = get_gcal_status_inner(&pool, &store, THIS_DEVICE)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            status.last_error.as_deref(),
+            Some("rate-limited: HTTP 429"),
+            "MAINT-169: persisted last_error must surface to Settings UI",
+        );
+    }
+
+    /// MAINT-169 reader: empty `last_error` (the canonical "healthy"
+    /// state per migration 0041) collapses to `None` via
+    /// `optionalize`, matching the pre-fix Settings-UI shape.
+    #[tokio::test]
+    async fn get_status_collapses_empty_last_error_to_none() {
+        let (pool, _dir) = test_pool().await;
+        let store = store_with(None).await;
+
+        // Seed the Personal-space row with an empty `last_error`
+        // (the migration default).
+        let now = chrono::Utc::now();
+        let cfg = crate::gcal_push::models::default_space_config(SPACE_PERSONAL_ULID, now);
+        assert_eq!(
+            cfg.last_error, "",
+            "default_space_config seeds empty last_error"
+        );
+        crate::gcal_push::models::upsert_space_config(&pool, &cfg)
+            .await
+            .unwrap();
+
+        let status = get_gcal_status_inner(&pool, &store, THIS_DEVICE)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            status.last_error, None,
+            "MAINT-169: empty last_error must collapse to None (\"\" == healthy)",
+        );
+    }
+
+    /// MAINT-169 reader: when no per-space row exists yet (fresh
+    /// install pre-FEAT-3p9 migration), `last_error` must remain
+    /// `None` rather than propagating an error.
+    #[tokio::test]
+    async fn get_status_returns_none_last_error_when_personal_row_absent() {
+        let (pool, _dir) = test_pool().await;
+        let store = store_with(None).await;
+
+        let status = get_gcal_status_inner(&pool, &store, THIS_DEVICE)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            status.last_error, None,
+            "MAINT-169: missing Personal-space row must yield last_error=None, not an error",
         );
     }
 

@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 611 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 926+ items.
+**Sessions:** 1 – 612 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 929+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 612 (2026-05-02)** — Batch QUICK-WINS-4 closed: MAINT-169, MAINT-170, MAINT-173 — three S-cost mixed back/front cleanups from the Quick-wins list. **MAINT-169** persists `DateFailure::Skipped(reason)` to `gcal_space_config[Personal].last_error` from the GCal connector and surfaces it through `get_gcal_status_inner` to the Settings UI. The reviewer caught that the original build only fixed the writer half; the orchestrator applied the reader-side fix directly (`get_gcal_status_inner` now reads `gcal_space_config[SPACE_PERSONAL_ULID].last_error`, collapses `""` → `None` via `optionalize`, and tolerates a missing row) plus three round-trip tests. **MAINT-170** restructures `eval_unlinked_references` to capture `total_count` BEFORE user filters apply but AFTER orphan + self-reference exclusion (parity with sister fn `eval_backlink_query_grouped:128`); 3 pre-existing buggy assertions corrected + 3 new regression tests. **MAINT-173** replaces a direct-parent-only filter in `useBlockMultiSelect.handleBatchDelete` with a `Map<id, parent_id>`-backed ancestor-walk filter (cycle-safe at depth 1000, orphan-tolerant), eliminating spurious "delete failed" toast counts on multi-level selections. 3 build + 3 review subagents (1 CONDITIONAL PASS on MAINT-169 → reader fix applied orchestrator-direct; the other two PASS).
 - **Session 611 (2026-05-02)** — Batch QUICK-WINS-3 closed: MAINT-171, TEST-7 — two S-cost backend cleanups left mid-flight by the previous agent (resumed and finished). MAINT-171 extracted a private `set_recurrence_property` helper in `recurrence/compute.rs` to dedupe the `let (_, op) = set_property_in_tx(...).await?; op_records.push(op);` pattern repeated at 8 property-write call sites in `handle_recurrence_in_tx` (8 sites → 8 one-liners; production behaviour unchanged, all 43 recurrence-related tests pass). TEST-7 added two contract-level tests in `reverse/tests.rs` pinning AGENTS.md "Undo/reverse testing" invariants at the `revert_ops_inner` boundary: (a) batch-ordering is newest-first by `(created_at DESC, seq DESC)` — three `SetProperty` ops with identical `created_at` reverse strictly seq-descending; (b) op_log is append-only — count increases by exactly 1 per input and the original `(device_id, seq)` row remains. Orchestrator-only finish: no new subagents launched (work was already in working tree).
 - **Session 610 (2026-05-02)** — Batch TEST-IMPROVEMENTS-1 closed: TEST-2, TEST-12, TEST-14, TEST-19, TEST-29 — five S-cost backend test-quality items. TEST-2 replaced 3 inequality assertions with exact counts (`bg == 7` via 6 dispatched tasks + 1 Barrier; `entries.len() == 5` weekly projection across `[today, today+28]`; `draft_errors.len() == 2` from dropped `op_log` + BEFORE-DELETE trigger). TEST-12 snapshots the full `OpRecord` pre-fork-detection via a test-local `OpRecordSnapshot` projection (no production `PartialEq` added). TEST-14 added `list_blocks_inner_isolates_blocks_by_space_id` exercising the IPC boundary with 2 Personal + 2 Work pages. TEST-19 strengthened 4 MCP weak-shape assertions (GroupedBacklinkResponse 4-field contract, PageResponse 3-field contract, `error.message.contains("Not found"/"Validation error")` substring checks). TEST-29 parallelized 50 sequential block creates via `futures_util::future::try_join_all`. All 5 reviews PASS; 10/10 targeted tests pass.
 - **Session 609 (2026-05-02)** — Batch PERF-CLUSTER-1 closed: PERF-24, PERF-25, PERF-26, PERF-27, PERF-28 — five S-cost performance items, each with an existing reference implementation to mirror (block_links json_each, lease.rs key-IN batch, gcal_push/api shared_client, pagination/properties dynamic-operator SQL, TagFilterPanel debounce). All 5 reviews PASS (PERF-28 CONDITIONAL PASS, follow-up FE-L-15 filed for the unstable-object return in `useDebouncedCallback`). Also cleaned 4 stale Quick-wins bullets (MAINT-179/182/187/188, PERF-23 — already resolved in earlier sessions).
@@ -42,6 +43,64 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 612 — Batch QUICK-WINS-4: three Quick-wins from REVIEW-LATER (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 3 build + 3 technical review (2 PASS, 1 CONDITIONAL PASS on MAINT-169 → reader fix applied orchestrator-direct) |
+| **Items closed** | MAINT-169, MAINT-170, MAINT-173 |
+| **Items modified** | — |
+| **Tests added** | +9 backend (MAINT-169 ×4: 2 in `models.rs` + 2 in `connector.rs` + reader-side 3 in `commands/gcal.rs`; MAINT-170 ×3 regression + 1 new helper) + 4 frontend (MAINT-173 ancestor-walk cases) |
+| **Files touched** | 8 (3 Rust source + 2 Rust test + 1 frontend source + 1 frontend test + 1 new `.sqlx/` cache entry) + REVIEW-LATER + SESSION-LOG |
+
+**Summary:** Closed 3 S-cost items from the Quick-wins list across non-overlapping files (Rust gcal connector, Rust backlink, frontend hook). MAINT-169 wires `DateFailure::Skipped(reason)` from the GCal push connector to `gcal_space_config[Personal].last_error` via a new focused `set_space_config_last_error` setter (UPDATE-only; no-op when row absent), and the orchestrator extended the fix end-to-end by wiring the reader path in `get_gcal_status_inner` (was hard-coded `last_error: None` with a "FEAT-5f wires this" placeholder comment) — the reviewer correctly flagged that without this the persistence was silent. MAINT-170 restructures `eval_unlinked_references` so `total_count` is captured AFTER orphan + self-reference exclusion but BEFORE user filters apply, achieving parity with the sister `eval_backlink_query_grouped:128`; the early-return for "filters eliminated everything" now propagates the captured count instead of hard-coding 0. MAINT-173 replaces the direct-parent-only filter in `useBlockMultiSelect.handleBatchDelete` with a `Map<id, parent_id>`-backed ancestor-walk filter (depth-capped at 1000 for cycle defence, orphan-tolerant), eliminating spurious "delete failed" toast counts on multi-level selections.
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 135 → 132 (−3 — all three items were in summary).
+- **Detail entries:** 167 → 164 (−3).
+- **Previously-resolved counter:** 926+ → 929+ across 611 → 612 sessions.
+
+**Per-item verification (from review subagents):**
+
+- **MAINT-169** (CONDITIONAL PASS → reader fix applied orchestrator-direct):
+  - **Writer (build subagent)**: `models::set_space_config_last_error` is a single `UPDATE gcal_space_config SET last_error = ?, updated_at = ? WHERE space_id = ?` (compile-time-validated `query!`); doc-comment captures the no-op-when-row-absent contract. New `.sqlx/` cache entry `query-2bd90bf79085…json`. Connector wiring at `Skipped` arm calls the setter with `SPACE_PERSONAL_ULID` BEFORE the existing `tracing::warn!` (so log is preserved verbatim). 2 unit tests (overwrite + bump `updated_at`; no-op when row absent) + 2 wiremock-driven connector integration tests (503 → reason persists; 503 + no per-space row → cycle still succeeds, no row conjured).
+  - **Reviewer flag**: `commands/gcal.rs::get_gcal_status_inner` line 161 hard-coded `last_error: None`. Without the reader, the persistence is silent — Settings UI never sees the new error.
+  - **Orchestrator-direct reader fix** (`commands/gcal.rs`): now reads `gcal_space_config[SPACE_PERSONAL_ULID].last_error` via `models::get_space_config`, applies `optionalize` (canonical `""` → `None`), and tolerates the row being absent (`unwrap_or_default()` on the option, then `optionalize`). Three new tests pin the round-trip: persisted reason surfaces as `Some(...)`; empty `last_error` collapses to `None`; missing Personal-space row yields `last_error: None` rather than propagating an error.
+  - **Targeted tests**: `cargo nextest run -E 'test(/gcal/) | test(/space_config/) | test(/last_error/)'` — 294 → **15/15 pass** for the targeted slice (writer + connector + reader); full suite 3410/3410 with one unrelated flaky `sync_files` test passing on retry.
+
+- **MAINT-170** (PASS): `resolve_root_pages` is now invoked once on `matching_ids` (FTS hit set) up front. `total_count` captured immediately after as the count of `matching_ids` whose root resolves and is not the target page (drops orphans + self-refs). User filters narrow `matching_ids → filtered_matching`; grouping reuses the same `root_map`. Both early-return paths now propagate the captured `total_count`. 3 pre-existing tests with the buggy `total_count == filtered_count` assertion corrected + 3 new regression tests (`..._equals_filtered_count_with_no_filter`, `..._holds_when_filter_drops_half`, `..._excludes_self_references_with_other_matches`) + 1 helper (`seed_unlinked_blocks_for_total_count` — distinct from the existing `setup_unlinked_refs_for_filters`, different page topology). Reviewer noted optional follow-up: dedicated test for "filters eliminate everything" branch (currently exercised implicitly) — not material; not filed.
+
+- **MAINT-173** (PASS): `parentOf: Map<string, string|null>` built once from `pageStore.getState().blocks` (O(n)); per-id `hasAncestorInSet` walks the chain (capped at 1000 hops, breaks on orphans). 4 new tests in the existing `handleBatchDelete` describe block: direct child filtered (regression anchor), transitive descendant filtered (the bug fix), independent siblings both deleted (over-filter guard), orphan deleted (incomplete-chain edge case). All 4 use `vi.mocked(invoke)` + `toHaveBeenCalledTimes` + `toHaveBeenCalledWith` for exact verification. Reviewer flagged a 102-char test description (5 chars over the 100-char Biome limit on a string literal) — left as-is until prek surfaces it; biome typically allows long strings to overflow.
+
+**Files touched (this session):**
+- `src-tauri/src/gcal_push/models.rs` (+101 — `set_space_config_last_error` helper + 2 unit tests)
+- `src-tauri/src/gcal_push/connector.rs` (+117 — import `SPACE_PERSONAL_ULID`; setter call in `Skipped` arm; 2 wiremock integration tests)
+- `src-tauri/src/commands/gcal.rs` (+~85 — import `SPACE_PERSONAL_ULID`; reader-side `last_error` query + `optionalize`; 3 round-trip tests)
+- `src-tauri/.sqlx/query-2bd90bf79085d13c1e1cdd340d369ddddc2643abf0e4fa6a6f8029f5534e6a99.json` (new — `UPDATE gcal_space_config SET last_error = ?, updated_at = ? WHERE space_id = ?`)
+- `src-tauri/src/backlink/grouped.rs` (+35 / -15 — `eval_unlinked_references` restructure)
+- `src-tauri/src/backlink/tests.rs` (+185 / -7 — 3 corrected assertions + 3 new tests + 1 helper)
+- `src/hooks/useBlockMultiSelect.ts` (+17 / -4 — `parentOf` map + ancestor-walk filter)
+- `src/hooks/__tests__/useBlockMultiSelect.test.ts` (+~60 — 4 new tests)
+- `REVIEW-LATER.md` (3 detail blocks + 3 summary rows + 3 Quick-wins bullets removed; counts updated)
+- `SESSION-LOG.md` (this entry + Recent milestones bump)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run -E 'test(/gcal/) | test(/space_config/) | test(/last_error/) | test(/unlinked/) | test(/backlink/)'` — passes (combined slice).
+- `cd src-tauri && cargo nextest run` — 3410 tests run, 3410 passed (1 unrelated flaky test passed on retry), 3 skipped.
+- `npx vitest run src/hooks/__tests__/useBlockMultiSelect.test.ts` — 25 tests run, 25 passed.
+- `cargo sqlx prepare --check -- --tests` — `.sqlx/` cache in sync.
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **End-to-end-or-it-doesn't-ship.** The MAINT-169 build subagent did exactly what the REVIEW-LATER entry asked for: persist the reason. The reviewer correctly identified that this was insufficient — the reader was hard-coded to `None`, so the fix was silent. The orchestrator extended the scope by ~85 lines (3 added tests, 1 query call, 1 ternary collapse) to make the fix actually surface to the user. Pattern for future sessions: when a writer-only fix references a hard-coded reader, audit the reader at planning time, not at review time. The cost of bundling the reader was trivial; deferring it as a follow-up would have shipped dead code.
+- **Sister-function parity is a strong invariant.** MAINT-170's fix is "make `eval_unlinked_references` mirror `eval_backlink_query_grouped:128`". The reviewer's parity check (re-deriving each function's `total_count` capture point) was the strongest verification — independent of test assertions, the structural shape proves the fix.
+- **Three pre-existing tests with buggy invariants need corrected, not deleted.** MAINT-170's tests showed the value of "if a test encoded the bug, change the assertion and document why" rather than deleting + re-creating. Each corrected test now has an inline comment citing MAINT-170 + the pre-fix value, so a future reader doesn't get confused if they `git blame` the change.
+
+**Commit plan:** single commit, not pushed.
 
 ---
 

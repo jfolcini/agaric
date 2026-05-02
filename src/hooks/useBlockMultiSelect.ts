@@ -92,11 +92,23 @@ export function useBlockMultiSelect({
     try {
       const ids = [...selectedBlockIds]
       const idsSet = new Set(ids)
-      const toDelete = ids.filter((id) => {
-        const block = pageStore.getState().blocks.find((b) => b.id === id)
-        if (block?.parent_id && idsSet.has(block.parent_id)) return false
-        return true
-      })
+      // Walk the parent chain (not just the direct parent) so transitive
+      // descendants of a selected ancestor are filtered out — otherwise the
+      // ancestor's server-side cascade races extra deleteBlock() calls and
+      // surfaces as spurious "delete failed" toast counts (#MAINT-173).
+      const blocks = pageStore.getState().blocks
+      const parentOf = new Map<string, string | null>()
+      for (const b of blocks) parentOf.set(b.id, b.parent_id ?? null)
+      const hasAncestorInSet = (id: string): boolean => {
+        let cursor = parentOf.get(id) ?? null
+        for (let i = 0; cursor !== null && i < 1000; i++) {
+          if (idsSet.has(cursor)) return true
+          if (!parentOf.has(cursor)) return false
+          cursor = parentOf.get(cursor) ?? null
+        }
+        return false
+      }
+      const toDelete = ids.filter((id) => !hasAncestorInSet(id))
       let successCount = 0
       let failCount = 0
       for (const id of toDelete) {

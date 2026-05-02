@@ -189,6 +189,68 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'PARENT' })
   })
 
+  // #MAINT-173 — ancestor-walk filter (not just direct-parent filter).
+  it('filters out transitive descendants whose ancestor is also selected', async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A' }),
+        makeBlock({ id: 'B', parent_id: 'A' }),
+        makeBlock({ id: 'C', parent_id: 'B' }),
+      ],
+    })
+    const params = makeDefaultParams({
+      selectedBlockIds: ['A', 'C'],
+    })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'A' })
+  })
+
+  it('deletes independent siblings when neither is an ancestor of the other', async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A' }),
+        makeBlock({ id: 'B', parent_id: 'A' }),
+        makeBlock({ id: 'C' }),
+        makeBlock({ id: 'D', parent_id: 'C' }),
+      ],
+    })
+    const params = makeDefaultParams({
+      selectedBlockIds: ['A', 'C'],
+    })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledTimes(2)
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'A' })
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'C' })
+  })
+
+  it('deletes a block whose parent_id points to an id not in the store (orphan chain)', async () => {
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'X', parent_id: 'MISSING' })],
+    })
+    const params = makeDefaultParams({
+      selectedBlockIds: ['X'],
+    })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'X' })
+  })
+
   it('shows error toast on failure', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('fail'))
     const params = makeDefaultParams({ selectedBlockIds: ['BLOCK_1'] })
