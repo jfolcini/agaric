@@ -102,6 +102,7 @@ vi.mock('lucide-react', () => ({
 
 import { toast } from 'sonner'
 
+import { makeBlock } from '../../__tests__/fixtures'
 import { useBlockStore } from '../../stores/blocks'
 import { useNavigationStore } from '../../stores/navigation'
 import { pageBlockRegistry } from '../../stores/page-blocks'
@@ -111,25 +112,6 @@ import { PageEditor } from '../PageEditor'
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
-
-function makeBlock(id: string, content: string, parentId: string | null = null, position = 0) {
-  return {
-    id,
-    block_type: 'content',
-    content,
-    parent_id: parentId,
-    position,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-    depth: 0,
-  }
-}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -244,7 +226,7 @@ describe('PageEditor', () => {
     // Pre-populate per-page store with a block (via registry after mount)
     act(() => {
       pageBlockRegistry.get('PAGE_1')?.setState({
-        blocks: [makeBlock('B1', 'First block', 'PAGE_1', 0)],
+        blocks: [makeBlock({ id: 'B1', content: 'First block', parent_id: 'PAGE_1', position: 0 })],
       })
     })
 
@@ -283,7 +265,7 @@ describe('PageEditor', () => {
     })
     // Mock the subsequent load(pageId) call
     mockedInvoke.mockResolvedValueOnce({
-      items: [makeBlock('B1', '', 'PAGE_1', 0)],
+      items: [makeBlock({ id: 'B1', content: '', parent_id: 'PAGE_1', position: 0 })],
       next_cursor: null,
       has_more: false,
     })
@@ -327,9 +309,15 @@ describe('PageEditor', () => {
     act(() => {
       pageBlockRegistry.get('PAGE_1')?.setState({
         blocks: [
-          { ...makeBlock('B1', 'Top-level block', 'PAGE_1', 0), depth: 0 },
-          { ...makeBlock('B2', 'Nested child', 'B1', 0), depth: 1 },
-          { ...makeBlock('B3', 'Deeply nested', 'B2', 0), depth: 2 },
+          makeBlock({
+            id: 'B1',
+            content: 'Top-level block',
+            parent_id: 'PAGE_1',
+            position: 0,
+            depth: 0,
+          }),
+          makeBlock({ id: 'B2', content: 'Nested child', parent_id: 'B1', position: 0, depth: 1 }),
+          makeBlock({ id: 'B3', content: 'Deeply nested', parent_id: 'B2', position: 0, depth: 2 }),
         ],
       })
     })
@@ -486,7 +474,7 @@ describe('PageEditor BlockTree auto-creation prop', () => {
       position: 0,
     })
     mockedInvoke.mockResolvedValueOnce({
-      items: [makeBlock('FIRST_BLOCK', '', 'PAGE_1', 0)],
+      items: [makeBlock({ id: 'FIRST_BLOCK', content: '', parent_id: 'PAGE_1', position: 0 })],
       next_cursor: null,
       has_more: false,
     })

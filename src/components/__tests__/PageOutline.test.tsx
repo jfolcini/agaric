@@ -17,6 +17,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 import { createStore } from 'zustand'
+import { makeBlock } from '../../__tests__/fixtures'
 import type { FlatBlock } from '../../stores/page-blocks'
 import { PageBlockContext, type PageBlockState } from '../../stores/page-blocks'
 import { extractHeadings, PageOutline } from '../PageOutline'
@@ -31,25 +32,6 @@ vi.mock('lucide-react', () => ({
 }))
 
 // ── Helpers ──────────────────────────────────────────────────────────────
-
-function makeBlock(id: string, content: string | null): FlatBlock {
-  return {
-    id,
-    block_type: 'block',
-    content,
-    parent_id: 'PAGE_1',
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-    depth: 0,
-  }
-}
 
 function createTestStore(blocks: FlatBlock[]): StoreApi<PageBlockState> {
   return createStore<PageBlockState>()(() => ({
@@ -89,10 +71,10 @@ function renderOutline(blocks: FlatBlock[]) {
 describe('extractHeadings', () => {
   it('extracts headings from blocks with heading prefixes', () => {
     const blocks: FlatBlock[] = [
-      makeBlock('b1', '# Introduction'),
-      makeBlock('b2', 'Some paragraph text'),
-      makeBlock('b3', '## Section A'),
-      makeBlock('b4', '### Sub-section'),
+      makeBlock({ id: 'b1', content: '# Introduction' }),
+      makeBlock({ id: 'b2', content: 'Some paragraph text' }),
+      makeBlock({ id: 'b3', content: '## Section A' }),
+      makeBlock({ id: 'b4', content: '### Sub-section' }),
     ]
     const headings = extractHeadings(blocks)
     expect(headings).toEqual([
@@ -103,22 +85,25 @@ describe('extractHeadings', () => {
   })
 
   it('skips blocks with null content', () => {
-    const blocks: FlatBlock[] = [makeBlock('b1', null), makeBlock('b2', '# Title')]
+    const blocks: FlatBlock[] = [
+      makeBlock({ id: 'b1', content: null }),
+      makeBlock({ id: 'b2', content: '# Title' }),
+    ]
     const headings = extractHeadings(blocks)
     expect(headings).toEqual([{ blockId: 'b2', level: 1, text: 'Title' }])
   })
 
   it('skips blocks without heading prefix', () => {
     const blocks: FlatBlock[] = [
-      makeBlock('b1', 'no heading here'),
-      makeBlock('b2', '#no space after hash'),
+      makeBlock({ id: 'b1', content: 'no heading here' }),
+      makeBlock({ id: 'b2', content: '#no space after hash' }),
     ]
     const headings = extractHeadings(blocks)
     expect(headings).toEqual([])
   })
 
   it('handles up to h6 headings', () => {
-    const blocks: FlatBlock[] = [makeBlock('b1', '###### Deep heading')]
+    const blocks: FlatBlock[] = [makeBlock({ id: 'b1', content: '###### Deep heading' })]
     const headings = extractHeadings(blocks)
     expect(headings).toEqual([{ blockId: 'b1', level: 6, text: 'Deep heading' }])
   })
@@ -133,7 +118,7 @@ describe('extractHeadings', () => {
 describe('PageOutline', () => {
   it('shows empty state when no headings found', async () => {
     const user = userEvent.setup()
-    renderOutline([makeBlock('b1', 'just text')])
+    renderOutline([makeBlock({ id: 'b1', content: 'just text' })])
 
     // Open the sheet
     await user.click(screen.getByRole('button', { name: 'Open outline' }))
@@ -144,10 +129,10 @@ describe('PageOutline', () => {
   it('renders heading list from blocks with heading prefixes', async () => {
     const user = userEvent.setup()
     renderOutline([
-      makeBlock('b1', '# Title'),
-      makeBlock('b2', '## Subtitle'),
-      makeBlock('b3', 'plain text'),
-      makeBlock('b4', '### Deep'),
+      makeBlock({ id: 'b1', content: '# Title' }),
+      makeBlock({ id: 'b2', content: '## Subtitle' }),
+      makeBlock({ id: 'b3', content: 'plain text' }),
+      makeBlock({ id: 'b4', content: '### Deep' }),
     ])
 
     await user.click(screen.getByRole('button', { name: 'Open outline' }))
@@ -160,7 +145,11 @@ describe('PageOutline', () => {
 
   it('indents headings by level via paddingLeft', async () => {
     const user = userEvent.setup()
-    renderOutline([makeBlock('b1', '# H1'), makeBlock('b2', '## H2'), makeBlock('b3', '### H3')])
+    renderOutline([
+      makeBlock({ id: 'b1', content: '# H1' }),
+      makeBlock({ id: 'b2', content: '## H2' }),
+      makeBlock({ id: 'b3', content: '### H3' }),
+    ])
 
     await user.click(screen.getByRole('button', { name: 'Open outline' }))
 
@@ -185,7 +174,7 @@ describe('PageOutline', () => {
     fakeEl.scrollIntoView = mockScrollIntoView
     document.body.appendChild(fakeEl)
 
-    renderOutline([makeBlock('b1', '# Click me')])
+    renderOutline([makeBlock({ id: 'b1', content: '# Click me' })])
 
     await user.click(screen.getByRole('button', { name: 'Open outline' }))
     await user.click(screen.getByText('Click me'))
@@ -197,7 +186,7 @@ describe('PageOutline', () => {
 
   it('UX-237: heading buttons have ring-inset focus rings so they are not clipped by the inner ScrollArea', async () => {
     const user = userEvent.setup()
-    renderOutline([makeBlock('b1', '# Heading 1')])
+    renderOutline([makeBlock({ id: 'b1', content: '# Heading 1' })])
 
     await user.click(screen.getByRole('button', { name: 'Open outline' }))
 
@@ -210,8 +199,8 @@ describe('PageOutline', () => {
   it('passes axe a11y audit', async () => {
     const user = userEvent.setup()
     const { container } = renderOutline([
-      makeBlock('b1', '# Accessible heading'),
-      makeBlock('b2', '## Another heading'),
+      makeBlock({ id: 'b1', content: '# Accessible heading' }),
+      makeBlock({ id: 'b2', content: '## Another heading' }),
     ])
 
     await user.click(screen.getByRole('button', { name: 'Open outline' }))
@@ -222,7 +211,7 @@ describe('PageOutline', () => {
 
   it('passes axe a11y audit with empty state', async () => {
     const user = userEvent.setup()
-    const { container } = renderOutline([makeBlock('b1', 'no headings')])
+    const { container } = renderOutline([makeBlock({ id: 'b1', content: 'no headings' })])
 
     await user.click(screen.getByRole('button', { name: 'Open outline' }))
 
@@ -235,7 +224,7 @@ describe('PageOutline', () => {
   describe('UX-361: trigger tooltip', () => {
     it('shows a tooltip with the localised label when hovering the trigger', async () => {
       const user = userEvent.setup()
-      renderOutline([makeBlock('b1', 'just text')])
+      renderOutline([makeBlock({ id: 'b1', content: 'just text' })])
 
       const trigger = screen.getByRole('button', { name: 'Open outline' })
       await user.hover(trigger)
@@ -249,7 +238,7 @@ describe('PageOutline', () => {
       // itself is composed via Radix `Slot` with the design-system Tooltip
       // primitive (data-slot="tooltip-trigger"), so we don't reinvent
       // hover/un-hover behaviour — that's covered by the Tooltip's own tests.
-      renderOutline([makeBlock('b1', 'just text')])
+      renderOutline([makeBlock({ id: 'b1', content: 'just text' })])
 
       const trigger = screen.getByRole('button', { name: 'Open outline' })
       expect(trigger).toHaveAttribute('data-slot', 'tooltip-trigger')

@@ -1522,7 +1522,15 @@ async fn undo_page_op_finds_delete_attachment_op() {
 
     // 2. Add an attachment to the child block
     let att_id = "ATT_UNDO_001";
-    let att_ts = now_rfc3339();
+    // TEST-30: explicit timestamps (instead of consecutive `now_rfc3339()`
+    // calls) so the ATT and subsequent DEL op cannot share a millisecond and
+    // make the (created_at, seq) ordering test-fragile. Sibling sites in this
+    // file already use `append_local_op_at` with explicit strings; this
+    // closes the last residual `now_rfc3339()` collision in the file.
+    // Use timestamps in the far future so they're strictly after the
+    // page/child `create_block` ops (which use real `now_rfc3339()`),
+    // ensuring undo's "most recent op" lookup finds the attachment ops.
+    let att_ts = "2099-01-15T12:00:00.000Z".to_string();
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -1555,7 +1563,9 @@ async fn undo_page_op_finds_delete_attachment_op() {
     .unwrap();
 
     // 3. Delete the attachment (append delete_attachment op + soft-delete)
-    let del_ts = now_rfc3339();
+    // TEST-30: explicit timestamp strictly after `att_ts` for deterministic
+    // ordering (see comment at the att_ts declaration above).
+    let del_ts = "2099-01-15T12:00:01.000Z".to_string();
     op_log::append_local_op_at(
         &pool,
         DEV,
