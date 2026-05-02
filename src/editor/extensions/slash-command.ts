@@ -41,6 +41,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
 
   addProseMirrorPlugins() {
     const extensionOptions = this.options
+    const editor = this.editor
     return [
       createPickerPlugin({
         loggerComponent: 'SlashCommand',
@@ -48,7 +49,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
         pluginKey: slashCommandPluginKey,
         char: '/',
         allowedPrefixes: null,
-        editor: this.editor,
+        editor,
         items: (query) => extensionOptions.items(query),
         command: ({ editor, range, props }) => {
           editor.chain().focus().deleteRange(range).run()
@@ -92,12 +93,20 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
                 })
                 autoExecTimer = setTimeout(() => {
                   autoExecTimer = null
+                  if (editor.view?.isDestroyed) {
+                    logger.warn('slash-command', 'skipping auto-execute — editor view destroyed')
+                    return
+                  }
                   const item = items[0] as PickerItem
                   logger.debug('slash-command', 'auto-execute timer fired', {
                     query,
                     itemId: item.id,
                   })
-                  command(item)
+                  try {
+                    command(item)
+                  } catch (err) {
+                    logger.warn('slash-command', 'auto-execute threw', undefined, err)
+                  }
                 }, AUTO_EXEC_DELAY_MS)
               }
             },

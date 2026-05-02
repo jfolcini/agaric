@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 607 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 909+ items.
+**Sessions:** 1 – 608 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 914+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 608 (2026-05-02)** — Batch QUICK-WINS-2 closed: PERF-29, M-96, FE-H-18, TEST-9, TEST-20 — five trivial mixed front/back cleanups (cache eviction batched slice, COUNT-query error logging via `inspect_err`, slash-command auto-execute destroyed-view guard + try/catch, sync materialization verification, sync file-transfer skipped-counter assertions). All 5 reviews PASS; TEST-9 flake-check 5/5; TEST-9 flush needed both `flush_foreground` + `flush_background` (originally spec'd only the background).
 - **Session 607 (2026-05-02)** — Batch QUICK-WINS-1 closed: L-62, FE-L-10, FE-L-11, TEST-5, TEST-17 — five trivial mixed front/back cleanups (Rust `unreachable!()` mirror follow-up, redundant optional chain removal, defensive StorageEvent field completeness, op_log count assertion, within-batch seq-ordering assertion). All 5 reviews PASS with no mid-session orchestrator fixes needed.
 - **Session 606 (2026-05-02)** — Batch FE-H-FIXUPS-1 closed: FE-H-3, FE-H-14, FE-H-19, FE-H-20 fixed + FE-H-16 rejected as false-positive. FE-H-16's proposed fix (add stable `useState` setters to `useMemo` deps) was reverted after biome's `useExhaustiveDependencies` rule correctly flagged it as over-specification — the fix was filed with a "defensive correctness" framing but is actively against project convention. FE-H-19 build subagent stalled → orchestrator-direct; FE-H-19 reviewer caught that memoizing `flatItems` alone was insufficient because `grouped` (its upstream) was also unmemoized → applied both fixes orchestrator-direct.
 - **Session 605 (2026-05-02)** — Batch FRONTEND-FIXUPS-1 closed: TEST-FE-3, TEST-FE-4, TEST-FE-5, TEST-FE-7, FE-H-2 — five trivial frontend cleanups (`makeHistoryEntry` shared fixture, try/finally guard around `vi.doMock`, lock `dateStr` cache-key contract via Option A + Option B, hardcoded date → relative-to-today, extract `AGENDA_QUERY_LIMIT` from 11 sites). TEST-FE-5 reviewer correctly flagged that Option A alone was insufficient → Option B applied orchestrator-direct. FE-H-2 reviewer flagged a stale line-number comment → fixed orchestrator-direct.
@@ -38,6 +39,57 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 608 — Batch QUICK-WINS-2: mixed-domain trivial cleanups (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 5 build + 5 technical review (all-PASS; no mid-session orchestrator fixes) |
+| **Items closed** | PERF-29, M-96, FE-H-18, TEST-9, TEST-20 |
+| **Items added** | — |
+| **Tests added** | +1 frontend (FE-H-18 destroyed-view guard test) + 2 Rust test-improvements (TEST-9 materialization SELECT; TEST-20 skip-counter assertions) |
+| **Files touched** | 6 (3 Rust source + 2 frontend source + 1 frontend test + REVIEW-LATER + SESSION-LOG) |
+
+**Summary:** Closed 5 trivial items across frontend and backend with zero follow-ups and zero orchestrator-direct mid-session fixes. PERF-29 replaced per-excess-key `cache.keys().next()` iterator loops with `Array.from(cache.keys()).slice(0, excess)` at both eviction sites in `stores/resolve.ts`. M-96 added `inspect_err` structured-warn logging (including a `query` field identifying `"total_ops_in_log"` vs `"retry_queue_pending"`) before both `.ok()` calls in `materializer/coordinator.rs::status`, preserving return-type semantics. FE-H-18 added `editor.view?.isDestroyed` guard + try/catch around `command(item)` in the 200ms `setTimeout` in `slash-command.ts`, plus a new test that destroys the view mid-timer. TEST-9 added a `SELECT id FROM blocks` materialization assertion after `flush_foreground + flush_background` on device B. TEST-20 added `skipped_hash_mismatch == 0` and `skipped_not_found == 0` assertions to the happy-path `protocol_initiator_requests_and_receives_files` test.
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 149 → 146 (−3 — PERF-29, TEST-9, TEST-20 were in summary; M-96 and FE-H-18 are sub-table items).
+- **Detail entries:** 183 → 178 (−5).
+- **Previously-resolved counter:** 909+ → 914+ across 607 → 608 sessions.
+
+**Per-item verification (from review subagents):**
+- **PERF-29** (`src/stores/resolve.ts:204-253`): both eviction sites (in `set` and `batchSet`) now use `Array.from(cache.keys()).slice(0, excess).forEach(k => cache.delete(k))`. Reviewer confirmed LRU FIFO order preserved because `Array.from(Map.keys())` preserves insertion order. 34/34 `resolve.test.ts` tests pass.
+- **M-96** (`src-tauri/src/materializer/coordinator.rs:751-775`): both COUNT queries (`total_ops_in_log` and `retry_queue_pending`) use `.inspect_err(|e| tracing::warn!(error = %e, query = "…", "materializer status query failed")).ok()`. Function signature + return type `StatusInfo` unchanged; snapshot test confirms both fields still serialize correctly. `materializer::tests::status_info`, `status_error_counters`, and `snapshot_status_info_response` all pass.
+- **FE-H-18** (`src/editor/extensions/slash-command.ts`): captured `const editor = this.editor` at line 44 so the setTimeout closure (line 94) has a stable outer reference; guard at line 96 `if (editor.view?.isDestroyed) { logger.warn(...); return }`; try/catch around `command(item)` logs `'auto-execute threw'` via `logger.warn` with `err` as the 4th arg (stack-capture). `getLifecycle` test helper defaults to `{ view: { isDestroyed: false } }` so existing tests continue to pass through the guard. New test mutates `editor.view.isDestroyed = true` between schedule and fire and asserts `command` was not called and the correct warn was logged. 10/10 tests pass.
+- **TEST-9** (`src-tauri/src/sync_integration_tests.rs:201-218`): **spec refinement during build.** The REVIEW-LATER spec suggested `flush_background()` alone; the build subagent correctly identified that `apply_remote_ops` enqueues `BatchApplyOps` via `enqueue_foreground` (sync_protocol/operations.rs:378) and that the `BatchApplyOps` handler writes the `blocks` row from the foreground queue (materializer/handlers.rs:46). Result: added `flush_foreground().await.unwrap()` **then** `flush_background().await.unwrap()` before `sqlx::query_scalar!("SELECT id FROM blocks WHERE id = ?")` — pattern mirrors `two_device_concurrent_edit_produces_merge` at line 244. **Flake check:** 5/5 consecutive runs PASS.
+- **TEST-20** (`src-tauri/src/sync_files/tests.rs:613-620`): added two assert_eq!'s on the existing `receiver_stats` binding — `receiver_stats.skipped_hash_mismatch == 0` and `receiver_stats.skipped_not_found == 0` — with "happy path should have no hash-mismatch skips" / "no not-found skips" messages. Field names match `FileTransferStats` in `sync_files.rs:55-56`. Existing `files_received/bytes_received/files_sent/bytes_sent` assertions preserved. Test passes.
+
+**Files touched (this session):**
+- `src-tauri/src/materializer/coordinator.rs` (+14 / 0 — two `.inspect_err` chains)
+- `src-tauri/src/sync_integration_tests.rs` (+19 / 0 — flush_foreground + flush_background + SELECT block materialization assertion)
+- `src-tauri/src/sync_files/tests.rs` (+8 / 0 — 2 skipped-counter asserts)
+- `src/editor/extensions/slash-command.ts` (+11 / -2 — capture outer `editor` + guard + try/catch)
+- `src/editor/__tests__/slash-command.test.ts` (+38 / -3 — helper default + new destroyed-view test)
+- `src/stores/resolve.ts` (+4 / -10 — batched slice eviction at both sites)
+- `REVIEW-LATER.md` (net shrink — 5 detail blocks + 3 summary rows + 1 Quick-wins bullet)
+- `SESSION-LOG.md` (this entry + Recent milestones bump)
+
+**Verification:**
+- `cargo nextest run -p agaric --filter-expr 'test(/two_device_create_sync|protocol_initiator_requests_and_receives_files|materializer::tests::status|snapshot_status_info/)'` — **5/5 pass**.
+- TEST-9 flake check: `two_device_create_sync_both_see_block` 5/5 consecutive runs pass.
+- `npx vitest run src/stores/__tests__/resolve.test.ts src/editor/__tests__/slash-command.test.ts` — **44/44 pass**.
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **Clean batch — no false-positives, no orchestrator-direct fixes.** Four trivial defensive-pattern items in a row (sessions 606 + 607 had at least one lint-policy or TS-narrowing reject each; this one had none). The lesson from the previous 2 sessions is still live: any item framed as "dead defensiveness" or "unnecessary guard" needs a full `prek run --all-files` before concluding complete. Good outcome this time doesn't invalidate the pattern.
+- **Build-subagent spec refinement caught a real gap.** TEST-9 spec said only `flush_background()`, but `BatchApplyOps` is a foreground task, so `flush_background()` alone wouldn't fully drain the work. The build subagent read the actual queue-dispatch code in `sync_protocol/operations.rs` + `materializer/handlers.rs` to verify which flush was needed. Worth remembering for future sync/materializer tests: when writing a post-sync assertion, check which queue the specific op type is routed to.
+- **Closure-capture discipline.** FE-H-18 needed `const editor = this.editor` at line 44 (outside the render callback) so the setTimeout closure could reference the long-lived editor instance, not the inner `command: ({ editor, range, props })` destructure shadow. Reviewer flagged scope-shadow explicitly and confirmed it was intentional. Pattern worth copying wherever a setTimeout fires past the boundary of a TipTap suggestion render callback.
+- **Parallelism was clean.** All 5 subagents touched disjoint files (1 rust source + 2 rust test source split 3 ways; 2 frontend source + 1 frontend test); no contention.
+
+**Commit plan:** single commit, not pushed.
 
 ---
 

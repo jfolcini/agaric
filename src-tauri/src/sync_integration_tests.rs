@@ -198,6 +198,25 @@ async fn two_device_create_sync_both_see_block() {
         "payload in B must contain the block ID"
     );
 
+    // TEST-9: verify materialization on B — op was synced AND applied to blocks.
+    // `apply_remote_ops` enqueues `BatchApplyOps` on the foreground queue
+    // (which is what actually writes the `blocks` row), so we must drain
+    // the foreground queue first; the background flush follows the same
+    // pattern used elsewhere in this file for quiescence before reads.
+    mat_b.flush_foreground().await.unwrap();
+    mat_b.flush_background().await.unwrap();
+    let block_id = "BLK1".to_string();
+    let block_row: Option<String> =
+        sqlx::query_scalar!("SELECT id FROM blocks WHERE id = ?", block_id)
+            .fetch_optional(&pool_b)
+            .await
+            .unwrap();
+    assert_eq!(
+        block_row.as_deref(),
+        Some(block_id.as_str()),
+        "block should be materialized on device B after sync"
+    );
+
     mat_b.shutdown();
 }
 

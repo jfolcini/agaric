@@ -610,6 +610,14 @@ async fn protocol_initiator_requests_and_receives_files() {
         sender_stats.bytes_sent,
         u64::try_from(file_data.len()).expect("invariant: test fixture file size fits in u64")
     );
+    assert_eq!(
+        receiver_stats.skipped_hash_mismatch, 0,
+        "happy path should have no hash-mismatch skips"
+    );
+    assert_eq!(
+        receiver_stats.skipped_not_found, 0,
+        "happy path should have no not-found skips"
+    );
 
     server.shutdown().await;
 }
