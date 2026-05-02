@@ -24,31 +24,17 @@ pub async fn is_deleted(pool: &SqlitePool, block_id: &str) -> Result<Option<bool
     Ok(row.map(|r| r.deleted_at.is_some()))
 }
 
-/// Return the IDs of a block and all its descendants via recursive CTE.
-///
-/// Recursive member filters `is_conflict = 0` — conflict copies share
-/// their original's parent_id but are logically separate (invariant #9).
-/// `depth < 100` bounds the walk.
-///
-/// Canonical CTE in `crate::block_descendants::DESCENDANTS_CTE_STANDARD`.
-/// This site inlines the SQL because `sqlx::query!` requires a string
-/// literal and cannot accept `concat!()` of a `macro_rules!` expansion.
-pub async fn get_descendants(pool: &SqlitePool, block_id: &str) -> Result<Vec<String>, AppError> {
-    let rows = sqlx::query!(
-        "WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT id, 0 FROM blocks WHERE id = ? \
-             UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-             INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.is_conflict = 0 AND d.depth < 100 \
-         ) \
-         SELECT id FROM descendants",
-        block_id,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows.into_iter().map(|r| r.id).collect())
-}
+// MAINT-113 M1 — `get_descendants` removed (2026-05-02). It returned a
+// non-conflict-but-possibly-deleted descendant set (`is_conflict = 0`
+// only, no `deleted_at IS NULL` filter), so it never fit the
+// `ActiveBlockId` model the rest of the codebase reaches for. It also
+// had zero production callers — only its own `#[cfg(test)]` module
+// referenced it. The remaining cascade / restore / purge call sites
+// use the `descendants_cte_*` macros from `crate::block_descendants`
+// directly, with the variant chosen at the call site:
+// - cascade_soft_delete   → descendants_cte_active!()
+// - restore_block         → descendants_cte_standard!()
+// - purge / compaction    → descendants_cte_purge!()
 
 #[cfg(test)]
 mod tests {
@@ -715,8 +701,11 @@ mod tests {
     }
 
     // ======================================================================
-    // Helper functions: is_deleted, get_descendants
+    // Helper functions: is_deleted
     // ======================================================================
+    //
+    // `get_descendants` was removed in MAINT-113 M1 (2026-05-02). See the
+    // module-level comment for rationale.
 
     #[tokio::test]
     async fn is_deleted_returns_correct_state_for_each_lifecycle_stage() {
@@ -726,33 +715,6 @@ mod tests {
         assert_eq!(is_deleted(&pool, BLOCK_A).await.unwrap(), Some(false));
         soft_delete_block(&pool, BLOCK_A).await.unwrap();
         assert_eq!(is_deleted(&pool, BLOCK_A).await.unwrap(), Some(true));
-    }
-
-    #[tokio::test]
-    async fn get_descendants_returns_full_subtree() {
-        let (pool, _dir) = test_pool().await;
-        insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
-        insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
-        insert_block(&pool, CHILD2, "content", "child2", Some(PARENT), Some(2)).await;
-        insert_block(
-            &pool,
-            GRANDCHILD,
-            "content",
-            "grandchild",
-            Some(CHILD),
-            Some(1),
-        )
-        .await;
-        let mut ids = get_descendants(&pool, PARENT).await.unwrap();
-        ids.sort();
-        assert_eq!(ids, vec![CHILD, CHILD2, GRANDCHILD, PARENT]);
-    }
-
-    #[tokio::test]
-    async fn get_descendants_nonexistent_returns_empty() {
-        let (pool, _dir) = test_pool().await;
-        let ids = get_descendants(&pool, "NOPE").await.unwrap();
-        assert!(ids.is_empty());
     }
 
     #[tokio::test]

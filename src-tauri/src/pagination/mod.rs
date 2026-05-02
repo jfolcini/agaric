@@ -106,6 +106,37 @@ pub(crate) const NULL_POSITION_SENTINEL: i64 = i64::MAX;
 // ---------------------------------------------------------------------------
 
 /// Row returned by paginated block queries.
+//
+// MAINT-113 M1 deliberately leaves `BlockRow` non-generic. The natural
+// migration target — `BlockRow<Id = String>` — runs into two friction
+// points that, together, make the change un-ergonomic for a single
+// session:
+//
+// 1. **`specta-typescript` 0.0.11 does NOT emit Rust generic defaults.**
+//    A `pub struct BlockRow<Id = String>` round-trips to TypeScript as
+//    `export type BlockRow<Id> = { id: Id, ... }` (no `Id = string`
+//    default). Every one of the ~69 frontend files that imports
+//    `BlockRow` as a bare name (without a type argument) would fail
+//    type-checking until each one is updated to `BlockRow<string>`.
+//
+// 2. **The `specta::Type` derive macro on a struct that embeds a generic
+//    `BlockRow<Id>` requires `Id: Clone` to be expressible in the macro's
+//    own placeholder bound — but the derive emits a `PLACEHOLDER_Id`
+//    type that doesn't carry the where-clause forward, so
+//    `ProjectedAgendaEntry<Id> { block: BlockRow<Id> }` fails to derive
+//    `specta::Type` when `Id: Clone` is bounded on the inner struct.
+//
+// The clean resolution belongs in MAINT-113 M2: either upstream a
+// specta-typescript change that emits generic defaults, or introduce a
+// parallel `ActiveBlockRow` struct (clear types, code duplication
+// limited to one struct shape). For now, helpers that filter active
+// rows keep returning `BlockRow` and the callers that need a typed id
+// can call `ActiveBlockId::from_trusted_active(&row.id)` at the
+// boundary — the activeness invariant is documented at the helper, not
+// enforced at the type level. The newly-introduced `ActiveBlockId` +
+// `verify_active` gate already covers the path where untrusted ids
+// enter the codebase (e.g., from command parameters), so the type-level
+// safety win lands today even without retyping every row.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 pub struct BlockRow {
     pub id: String,

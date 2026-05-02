@@ -2379,7 +2379,7 @@ async fn list_page_links_returns_only_current_space_edges_feat3p4() {
         .unwrap();
     let edges_a: std::collections::HashSet<(String, String)> = scoped_a
         .iter()
-        .map(|l| (l.source_id.clone(), l.target_id.clone()))
+        .map(|l| (l.source_id.clone().into(), l.target_id.clone().into()))
         .collect();
     assert_eq!(
         edges_a,
@@ -2494,7 +2494,7 @@ async fn list_page_links_disjointness_feat3p4() {
 
     let to_set = |v: Vec<crate::commands::PageLink>| {
         v.into_iter()
-            .map(|l| (l.source_id, l.target_id))
+            .map(|l| (l.source_id.into(), l.target_id.into()))
             .collect::<std::collections::HashSet<(String, String)>>()
     };
     let a = to_set(

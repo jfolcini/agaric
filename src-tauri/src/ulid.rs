@@ -1,6 +1,9 @@
 use serde::Serialize;
+use sqlx::SqlitePool;
 use std::fmt;
 use std::str::FromStr;
+
+use crate::error::AppError;
 
 /// Newtype wrapper around ULID for type safety and consistent serialisation.
 /// Stores the canonical uppercase Crockford base32 representation.
@@ -120,6 +123,210 @@ impl From<BlockId> for String {
     fn from(id: BlockId) -> Self {
         id.0
     }
+}
+
+// ---------------------------------------------------------------------------
+// ActiveBlockId — MAINT-113 M1
+// ---------------------------------------------------------------------------
+//
+// Lifts AGENTS.md invariant #9 (recursive CTEs over `blocks` must filter
+// `is_conflict = 0`) into the type system for IDs that have been
+// materialised as live, non-conflict blocks. A function signature that
+// takes `&ActiveBlockId` documents — and enforces — that the caller has
+// already verified the block exists, is not a conflict copy, and has
+// not been soft-deleted.
+//
+// `ActiveBlockId` is a *strict* subset of `BlockId`. Every `ActiveBlockId`
+// value is also a valid `BlockId` (witnessed by the `From<ActiveBlockId>
+// for BlockId` impl below), but only IDs that have round-tripped through
+// [`verify_active`] (or were produced by an active-filtering query) carry
+// the `ActiveBlockId` tag.
+//
+// Wire format is identical to `BlockId` and `String` — both `serde` and
+// `sqlx` use the transparent encoding so the JSON / SQLite layer cannot
+// distinguish the type. The newtype is purely a Rust-side type-safety
+// gate; sync, IPC, and op log payloads all continue to see the underlying
+// 26-character ULID string.
+
+/// A block ID that has been verified to refer to an active block.
+///
+/// "Active" means the block exists in the materialised `blocks` table
+/// AND `is_conflict = 0` AND `deleted_at IS NULL`. Use [`verify_active`]
+/// to convert a raw [`BlockId`] into this type.
+///
+/// **Wire-format parity with [`BlockId`] / `String`:** `serde` uses
+/// `transparent`, and `sqlx::Type` is `transparent` over the inner
+/// `String` — the encoded representation is byte-identical to the
+/// underlying ULID. Round-tripping through JSON / SQLite preserves the
+/// active claim only because callers use [`verify_active`] at the
+/// boundary; deserialising raw user input never produces an
+/// `ActiveBlockId` whose claim has been checked.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, sqlx::Type, specta::Type,
+)]
+#[serde(transparent)]
+#[sqlx(transparent)]
+pub struct ActiveBlockId(String);
+
+impl<'de> serde::Deserialize<'de> for ActiveBlockId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Mirror `BlockId::Deserialize`: lenient uppercase normalisation
+        // without ULID validation. The activeness invariant is NOT
+        // re-checked on deserialize — it's the caller's responsibility
+        // to feed `verify_active` if the source is untrusted.
+        let s = String::deserialize(deserializer)?;
+        Ok(Self(s.to_ascii_uppercase()))
+    }
+}
+
+impl ActiveBlockId {
+    /// Get the inner string reference.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Consume and return the inner string.
+    pub fn into_string(self) -> String {
+        self.0
+    }
+
+    /// Construct from a string already known to refer to an active block.
+    ///
+    /// Skips the [`verify_active`] DB lookup. Use ONLY when the call site
+    /// has just produced the value from an active-filtering SQL query
+    /// (e.g., a `SELECT … WHERE is_conflict = 0 AND deleted_at IS NULL`
+    /// helper) and the activeness claim is fresh. For untrusted input
+    /// (command parameters, op log payloads, sync messages) call
+    /// [`verify_active`] instead.
+    ///
+    /// Mirrors [`BlockId::from_trusted`] — `to_ascii_uppercase` keeps
+    /// the byte-stable normalisation contract that blake3 hashing
+    /// depends on (AGENTS.md invariant #8).
+    pub fn from_trusted_active(s: &str) -> Self {
+        Self(s.to_ascii_uppercase())
+    }
+
+    /// Test-only constructor that bypasses both ULID validation and
+    /// the DB activeness check. Mirrors [`BlockId::test_id`].
+    #[cfg(test)]
+    pub fn test_id(s: &str) -> Self {
+        Self(s.to_ascii_uppercase())
+    }
+}
+
+impl fmt::Display for ActiveBlockId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl AsRef<str> for ActiveBlockId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq<&str> for ActiveBlockId {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<str> for ActiveBlockId {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<String> for ActiveBlockId {
+    fn eq(&self, other: &String) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<ActiveBlockId> for String {
+    fn eq(&self, other: &ActiveBlockId) -> bool {
+        *self == other.0
+    }
+}
+
+impl PartialEq<ActiveBlockId> for str {
+    fn eq(&self, other: &ActiveBlockId) -> bool {
+        *self == other.0
+    }
+}
+
+impl PartialEq<ActiveBlockId> for &str {
+    fn eq(&self, other: &ActiveBlockId) -> bool {
+        *self == other.0
+    }
+}
+
+impl From<ActiveBlockId> for String {
+    fn from(id: ActiveBlockId) -> Self {
+        id.0
+    }
+}
+
+impl From<ActiveBlockId> for BlockId {
+    /// `ActiveBlockId` is a strict subset of `BlockId` — every active
+    /// id is also a valid raw id. Conversion is infallible and free.
+    fn from(id: ActiveBlockId) -> Self {
+        BlockId::from_trusted(&id.0)
+    }
+}
+
+/// Verify that a [`BlockId`] refers to an active block — i.e., a row
+/// exists in `blocks` with `is_conflict = 0 AND deleted_at IS NULL`.
+///
+/// This is the single checked gate from raw [`BlockId`] to
+/// [`ActiveBlockId`] (MAINT-113 M1). Every `ActiveBlockId` value in the
+/// codebase is either:
+///
+/// 1. produced directly by a SQL query that filters on
+///    `is_conflict = 0 AND deleted_at IS NULL` (constructed via
+///    [`ActiveBlockId::from_trusted_active`] at the helper boundary), or
+/// 2. round-tripped through this function from a raw [`BlockId`].
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — no row exists with this id.
+/// - [`AppError::Validation`] — the row exists but is a conflict copy
+///   (`is_conflict = 1`) or has been soft-deleted
+///   (`deleted_at IS NOT NULL`). The error message distinguishes the
+///   two cases for the (rare) caller that wants to recover.
+pub async fn verify_active(pool: &SqlitePool, id: &BlockId) -> Result<ActiveBlockId, AppError> {
+    let id_str = id.as_str();
+    let row = sqlx::query!(
+        r#"SELECT is_conflict as "is_conflict: bool",
+                  deleted_at
+           FROM blocks
+           WHERE id = ?"#,
+        id_str,
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let row =
+        row.ok_or_else(|| AppError::NotFound(format!("block '{}' does not exist", id_str)))?;
+
+    if row.is_conflict {
+        return Err(AppError::Validation(format!(
+            "block '{}' is a conflict copy",
+            id_str
+        )));
+    }
+    if row.deleted_at.is_some() {
+        return Err(AppError::Validation(format!(
+            "block '{}' has been soft-deleted",
+            id_str
+        )));
+    }
+
+    Ok(ActiveBlockId(id_str.to_string()))
 }
 
 // ---------------------------------------------------------------------------

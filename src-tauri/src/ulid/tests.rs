@@ -545,3 +545,200 @@ fn from_trusted_and_deserialize_agree_on_inputs_i_gcalspaces_1() {
         );
     }
 }
+
+// ============================================================================
+// ActiveBlockId — MAINT-113 M1
+// ============================================================================
+//
+// Tests for the type-level newtype (no DB) and for the `verify_active`
+// gate (DB-backed). The DB-backed tests share the same `test_pool()`
+// pattern used elsewhere in the crate — `init_pool` runs every migration
+// against a fresh SQLite file under a `TempDir`.
+
+#[test]
+fn active_block_id_from_trusted_active_uppercases() {
+    let id = ActiveBlockId::from_trusted_active("abc123");
+    assert_eq!(id.as_str(), "ABC123");
+}
+
+#[test]
+fn active_block_id_serialize_is_transparent() {
+    let id = ActiveBlockId::from_trusted_active(FIXTURE_ULID);
+    let json = serde_json::to_string(&id).unwrap();
+    assert_eq!(
+        json,
+        format!("\"{FIXTURE_ULID}\""),
+        "serde(transparent) must emit the bare ULID string, identical to BlockId / String",
+    );
+}
+
+#[test]
+fn active_block_id_deserialize_uppercases() {
+    let json = format!("\"{FIXTURE_ULID_LOWER}\"");
+    let id: ActiveBlockId = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        id.as_str(),
+        FIXTURE_ULID,
+        "Deserialize must uppercase to canonical Crockford base32",
+    );
+}
+
+#[test]
+fn active_block_id_into_block_id_preserves_string() {
+    let active = ActiveBlockId::from_trusted_active(FIXTURE_ULID);
+    let raw: BlockId = active.clone().into();
+    assert_eq!(
+        raw.as_str(),
+        active.as_str(),
+        "From<ActiveBlockId> for BlockId must be a byte-identical conversion",
+    );
+}
+
+#[test]
+fn active_block_id_display_emits_inner_string() {
+    let id = ActiveBlockId::from_trusted_active(FIXTURE_ULID);
+    assert_eq!(format!("{id}"), FIXTURE_ULID);
+}
+
+#[test]
+fn active_block_id_partial_eq_against_str() {
+    let id = ActiveBlockId::from_trusted_active(FIXTURE_ULID);
+    assert_eq!(id, FIXTURE_ULID);
+    assert_ne!(id, FIXTURE_ULID_OTHER);
+}
+
+// --- verify_active: DB-backed ---
+
+mod verify_active_db {
+    use super::*;
+    use crate::db::init_pool;
+    use sqlx::SqlitePool;
+    use tempfile::TempDir;
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    /// Insert a block row directly. Bypasses the command layer because
+    /// these tests need to set `is_conflict` / `deleted_at` to specific
+    /// states that the regular create path doesn't expose.
+    async fn insert_block(pool: &SqlitePool, id: &str, is_conflict: i64, deleted_at: Option<&str>) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict, deleted_at) \
+             VALUES (?, 'content', '', NULL, 1, ?, ?)",
+        )
+        .bind(id)
+        .bind(is_conflict)
+        .bind(deleted_at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn verify_active_accepts_live_non_conflict_block() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "ACTBLK01", 0, None).await;
+
+        let raw = BlockId::from_trusted("ACTBLK01");
+        let active = verify_active(&pool, &raw)
+            .await
+            .expect("live non-conflict block must verify");
+        assert_eq!(active.as_str(), "ACTBLK01");
+    }
+
+    #[tokio::test]
+    async fn verify_active_rejects_conflict_copy() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "CFLBLK01", 1, None).await;
+
+        let raw = BlockId::from_trusted("CFLBLK01");
+        let err = verify_active(&pool, &raw)
+            .await
+            .expect_err("conflict copy must be rejected");
+        match err {
+            AppError::Validation(msg) => {
+                assert!(
+                    msg.contains("conflict"),
+                    "error must mention conflict, got: {msg}",
+                );
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn verify_active_rejects_soft_deleted_block() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "DELBLK01", 0, Some("2025-01-01T00:00:00+00:00")).await;
+
+        let raw = BlockId::from_trusted("DELBLK01");
+        let err = verify_active(&pool, &raw)
+            .await
+            .expect_err("soft-deleted block must be rejected");
+        match err {
+            AppError::Validation(msg) => {
+                assert!(
+                    msg.contains("soft-deleted"),
+                    "error must mention soft-deleted, got: {msg}",
+                );
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn verify_active_rejects_nonexistent_block() {
+        let (pool, _dir) = test_pool().await;
+
+        let raw = BlockId::from_trusted("NOPEBLK1");
+        let err = verify_active(&pool, &raw)
+            .await
+            .expect_err("missing block must be rejected");
+        assert!(
+            matches!(err, AppError::NotFound(_)),
+            "expected NotFound, got {err:?}",
+        );
+    }
+
+    /// A block that is BOTH a conflict copy AND soft-deleted reports the
+    /// conflict-copy error first. Documents the ordering — callers that
+    /// branch on the error message can rely on the conflict check
+    /// taking precedence over the deletion check.
+    #[tokio::test]
+    async fn verify_active_rejects_conflict_before_deletion() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BOTHBLK1", 1, Some("2025-01-01T00:00:00+00:00")).await;
+
+        let raw = BlockId::from_trusted("BOTHBLK1");
+        let err = verify_active(&pool, &raw).await.unwrap_err();
+        if let AppError::Validation(msg) = err {
+            assert!(
+                msg.contains("conflict"),
+                "conflict check must take precedence over deletion check, got: {msg}",
+            );
+        } else {
+            panic!("expected Validation");
+        }
+    }
+
+    /// `verify_active` accepts a `BlockId` regardless of how the caller
+    /// produced it (literal `from_trusted`, deserialized JSON, etc.) —
+    /// the activeness check is purely SQL-driven.
+    #[tokio::test]
+    async fn verify_active_normalises_lowercase_id_lookup() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "01ARZ3NDEKTSV4RRFFQ69G5FAV", 0, None).await;
+
+        // Caller hands us a lowercased ULID — `from_trusted` uppercases
+        // it before the SQL lookup, so the row is found.
+        let raw = BlockId::from_trusted("01arz3ndektsv4rrffq69g5fav");
+        let active = verify_active(&pool, &raw)
+            .await
+            .expect("lookup must hit the row regardless of input casing");
+        assert_eq!(active.as_str(), "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    }
+}
