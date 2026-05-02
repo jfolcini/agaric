@@ -157,7 +157,10 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
     const TOTAL: usize = 50;
     const PAGE_SIZE: i64 = 7;
 
-    for i in 0..TOTAL {
+    // TEST-29: parallelize the 50 block creates. The downstream assertions
+    // check count, uniqueness, and page count only — never ordering — so
+    // nondeterministic completion order across the 2-writer pool is safe.
+    let creates = (0..TOTAL).map(|i| {
         create_block_inner(
             &pool,
             DEV,
@@ -167,9 +170,8 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
             None,
             Some(i64::try_from(i + 1).unwrap()),
         )
-        .await
-        .unwrap();
-    }
+    });
+    futures_util::future::try_join_all(creates).await.unwrap();
 
     let mut all_ids = Vec::new();
     let mut cursor: Option<String> = None;

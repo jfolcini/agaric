@@ -686,10 +686,15 @@ async fn recover_at_boot_records_errors_when_draft_processing_fails() {
 
     let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
-    // Both the recover and delete steps should have logged errors.
-    assert!(
-        report.draft_errors.len() >= 2,
-        "expected at least 2 draft errors (recover + delete), got: {:?}",
+    // Single draft row → the loop iterates once. Both steps fail:
+    //   - `recover_single_draft` → op_log SELECT errors (table dropped)
+    //   - `delete_draft`         → BEFORE DELETE trigger aborts
+    // Each failure pushes one entry into `draft_errors`, so the count
+    // is deterministically 2.
+    assert_eq!(
+        report.draft_errors.len(),
+        2,
+        "expected exactly 2 draft errors (recover + delete), got: {:?}",
         report.draft_errors
     );
     assert!(

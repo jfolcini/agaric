@@ -696,8 +696,29 @@ async fn list_backlinks_happy_path() {
         .expect("happy path");
     // `list_backlinks_grouped_inner` returns a GroupedBacklinkResponse
     // shaped `{ groups: [], next_cursor, has_more, total_count, ... }`.
-    // Just assert the envelope exists.
+    // Assert the full envelope contract, not just "it's an object" — a
+    // handler that returned `{}` or a raw array would pass a bare
+    // `is_object()` check but break every downstream consumer.
     assert!(result.is_object(), "response is a JSON object");
+    let groups = result
+        .get("groups")
+        .and_then(|v| v.as_array())
+        .expect("response.groups[] array");
+    assert!(groups.is_empty(), "no sources seeded → groups empty");
+    assert!(
+        result.get("next_cursor").is_some(),
+        "response.next_cursor field present (nullable)",
+    );
+    assert_eq!(
+        result.get("has_more").and_then(|v| v.as_bool()),
+        Some(false),
+        "no results → has_more must be false",
+    );
+    assert_eq!(
+        result.get("total_count").and_then(|v| v.as_u64()),
+        Some(0),
+        "no results → total_count must be 0",
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1269,7 +1290,27 @@ async fn concurrent_clients_exact_success_count() {
                     last_list_pages = v.clone();
                 }
                 for r in [a, b, d] {
-                    assert!(r.is_ok(), "stress call failed: {r:?}");
+                    // All three tools (`search`, `list_pages`,
+                    // `get_agenda`) return a `PageResponse`-shaped
+                    // envelope `{ items, next_cursor, has_more }`. A
+                    // bare `is_ok()` would miss a handler that
+                    // returned the wrong JSON shape under contention
+                    // (e.g., a `Null`, raw array, or an object
+                    // missing pagination fields) — assert the
+                    // contract on every call, not just the sample.
+                    let v = r.as_ref().expect("stress call failed");
+                    assert!(
+                        v.get("items").and_then(|x| x.as_array()).is_some(),
+                        "response.items[] array present, got {v:?}",
+                    );
+                    assert!(
+                        v.get("has_more").and_then(|x| x.as_bool()).is_some(),
+                        "response.has_more bool present, got {v:?}",
+                    );
+                    assert!(
+                        v.get("next_cursor").is_some(),
+                        "response.next_cursor field present (nullable), got {v:?}",
+                    );
                     ok += 1;
                 }
             }

@@ -862,9 +862,13 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
         .unwrap()
         .items;
 
-    assert!(
-        entries.len() >= 3,
-        "should project at least 3 weekly occurrences, got {}",
+    // Weekly cadence with due_date = today - 21d projects onto today,
+    // today + 7, +14, +21, +28 — all five hits fall in the inclusive
+    // [today, today + 28] window the query filters on.
+    assert_eq!(
+        entries.len(),
+        5,
+        "weekly projection over 28 days yields exactly 5 entries, got {}",
         entries.len()
     );
     let expected_first = today.format("%Y-%m-%d").to_string();

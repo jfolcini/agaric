@@ -864,6 +864,144 @@ async fn property_every_page_has_space_after_bootstrap_under_mixed_create_paths(
     );
 }
 
+/// TEST-14 — `list_blocks_inner` (the IPC consumer path the frontend
+/// hits via the `list_blocks` Tauri command) must enforce space
+/// isolation end-to-end: given pages seeded across both spaces via
+/// the real `create_page_in_space_inner` command path, a query with
+/// `space_id = Personal` returns ONLY Personal pages, and a query
+/// with `space_id = Work` returns ONLY Work pages. Complements the
+/// property-table-level isolation tests above (which assert the raw
+/// `block_properties` rows carry the right `space` refs) by pinning
+/// the behaviour at the boundary the frontend actually consumes.
+#[tokio::test]
+async fn list_blocks_inner_isolates_blocks_by_space_id() {
+    use crate::commands::{create_page_in_space_inner, list_blocks_inner};
+    use crate::materializer::Materializer;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // 1. Bootstrap Personal + Work.
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    // 2. Create 2 pages in Personal and 2 pages in Work via the real
+    //    command the frontend invokes (`create_page_in_space`).
+    let personal_1 = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &materializer,
+        None,
+        "Personal note A".into(),
+        SPACE_PERSONAL_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+    let personal_2 = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &materializer,
+        None,
+        "Personal note B".into(),
+        SPACE_PERSONAL_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+    let work_1 = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &materializer,
+        None,
+        "Work brief A".into(),
+        SPACE_WORK_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+    let work_2 = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &materializer,
+        None,
+        "Work brief B".into(),
+        SPACE_WORK_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+
+    // 3. Query via the IPC consumer path with space_id = Personal.
+    //    `block_type = "page"` matches the PageBrowser dispatch
+    //    (`list_by_type`) in `commands/blocks/queries.rs`.
+    let personal_resp = list_blocks_inner(
+        &pool,
+        None,                           // parent_id
+        Some("page".into()),            // block_type
+        None,                           // tag_id
+        None,                           // show_deleted
+        None,                           // agenda_date
+        None,                           // agenda_date_start
+        None,                           // agenda_date_end
+        None,                           // agenda_source
+        None,                           // cursor
+        Some(50),                       // limit
+        SPACE_PERSONAL_ULID.to_owned(), // space_id
+    )
+    .await
+    .unwrap();
+
+    let personal_ids: Vec<String> = personal_resp.items.iter().map(|r| r.id.clone()).collect();
+    assert!(
+        personal_ids.contains(&personal_1.as_str().to_owned()),
+        "Personal query must surface page 1 created in Personal; got {personal_ids:?}"
+    );
+    assert!(
+        personal_ids.contains(&personal_2.as_str().to_owned()),
+        "Personal query must surface page 2 created in Personal; got {personal_ids:?}"
+    );
+    assert!(
+        !personal_ids.contains(&work_1.as_str().to_owned()),
+        "Personal query must NOT leak page 1 from Work; got {personal_ids:?}"
+    );
+    assert!(
+        !personal_ids.contains(&work_2.as_str().to_owned()),
+        "Personal query must NOT leak page 2 from Work; got {personal_ids:?}"
+    );
+
+    // 4. Query via the same IPC consumer path with space_id = Work.
+    let work_resp = list_blocks_inner(
+        &pool,
+        None,
+        Some("page".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(50),
+        SPACE_WORK_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+
+    let work_ids: Vec<String> = work_resp.items.iter().map(|r| r.id.clone()).collect();
+    assert!(
+        work_ids.contains(&work_1.as_str().to_owned()),
+        "Work query must surface page 1 created in Work; got {work_ids:?}"
+    );
+    assert!(
+        work_ids.contains(&work_2.as_str().to_owned()),
+        "Work query must surface page 2 created in Work; got {work_ids:?}"
+    );
+    assert!(
+        !work_ids.contains(&personal_1.as_str().to_owned()),
+        "Work query must NOT leak page 1 from Personal; got {work_ids:?}"
+    );
+    assert!(
+        !work_ids.contains(&personal_2.as_str().to_owned()),
+        "Work query must NOT leak page 2 from Personal; got {work_ids:?}"
+    );
+}
+
 // ---------------------------------------------------------------------
 // MAINT-1 — One-shot migration: move existing Personal pages → Work.
 // ---------------------------------------------------------------------

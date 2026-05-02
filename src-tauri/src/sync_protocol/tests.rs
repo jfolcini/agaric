@@ -4162,6 +4162,50 @@ async fn apply_remote_ops_detects_fork_with_same_seq_different_hash() {
 
     let fork_transfer: OpTransfer = remote_record.into();
 
+    // Snapshot the full local op_log row BEFORE fork detection so we can
+    // defend the append-only invariant byte-for-byte afterward — not just
+    // the hash.  `OpRecord` does not derive `PartialEq` in the production
+    // type (and this PR must not add it), so we project into a test-local
+    // snapshot struct that does.
+    #[derive(Debug, PartialEq, Eq)]
+    struct OpRecordSnapshot {
+        device_id: String,
+        seq: i64,
+        parent_seqs: Option<String>,
+        hash: String,
+        op_type: String,
+        payload: String,
+        created_at: String,
+        block_id: Option<String>,
+    }
+    impl From<OpRecord> for OpRecordSnapshot {
+        fn from(r: OpRecord) -> Self {
+            Self {
+                device_id: r.device_id,
+                seq: r.seq,
+                parent_seqs: r.parent_seqs,
+                hash: r.hash,
+                op_type: r.op_type,
+                payload: r.payload,
+                created_at: r.created_at,
+                block_id: r.block_id,
+            }
+        }
+    }
+    let read_row = || async {
+        let row: OpRecord = sqlx::query_as(
+            "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id \
+             FROM op_log WHERE device_id = ? AND seq = ?",
+        )
+        .bind(DEV_A)
+        .bind(1_i64)
+        .fetch_one(&local_pool)
+        .await
+        .unwrap();
+        OpRecordSnapshot::from(row)
+    };
+    let pre_record = read_row().await;
+
     // Apply the forking transfer to the local pool.
     let result = apply_remote_ops(&local_pool, &materializer, vec![fork_transfer])
         .await
@@ -4187,6 +4231,16 @@ async fn apply_remote_ops_detects_fork_with_same_seq_different_hash() {
         stored_hash.as_deref(),
         Some(hash_a.as_str()),
         "local row must still carry hash_a after a fork attempt"
+    );
+
+    // Full-row append-only guard: every OpRecord field must be byte-
+    // identical before and after fork detection.  This catches any future
+    // regression where the fork path silently overwrites (e.g.)
+    // `parent_seqs`, `created_at`, or `payload` while keeping the hash.
+    let post_record = read_row().await;
+    assert_eq!(
+        pre_record, post_record,
+        "op_log row must not be mutated during fork detection (append-only)"
     );
 
     materializer.shutdown();
