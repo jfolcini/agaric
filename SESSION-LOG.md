@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 598 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 863+ items.
+**Sessions:** 1 – 599 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 868+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 599 (2026-05-02)** — Batch UX-DISC-1 closed: UX-301, UX-342, UX-356, UX-361, UX-396 — five tooltip / label / shortcut-hint additions (5 build + 5 review subagents; 1 build redone orchestrator-direct due to parallel-agent write contention).
 - **Session 598 (2026-05-02)** — Batch UX-A11Y-1 closed: UX-326, UX-328, UX-331, UX-335, UX-377 — five a11y missing-attribute fixes (5 build + 5 review subagents).
 - **Session 596 (2026-05-01)** — FEAT-3p9 M1: per-space GCal config foundation (additive schema + per-space CRUD + per-space keychain).
 - **Session 595 (2026-05-01)** — FEAT-4 closed (entire family shipped); FEAT-4i dropped (mobile-only).
@@ -29,6 +30,60 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 599 — Batch UX-DISC-1: tooltip / label / shortcut-hint additions (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 5 build + 5 technical review (one UX-342 build redone orchestrator-direct) |
+| **Items closed** | UX-301, UX-342, UX-356, UX-361, UX-396 |
+| **Items modified** | — |
+| **Tests added** | +14 frontend (4 FormattingToolbar + 3 TrashView + 4 GraphView + 2 PageOutline + 1 AppSidebar) / +0 backend |
+| **Files touched** | 12 (5 source + 5 test + 2 i18n) |
+
+**Summary:** Closed all 5 items in the pre-staged "Batch UX-DISC-1" cluster from session 597's batch addition — pure additive tooltip / label / shortcut-hint additions across the formatting toolbar, trash row, graph zoom controls, page outline trigger, and sidebar shortcuts button. Each shortcut-bearing button now reflects user-customised bindings via `getShortcutKeys()`. Zero behaviour change.
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 171 → **166** (-5).
+- **Detail entries:** 227 → 222 (-5).
+- **Ready-made batches:** 2 → 1 (UX-DISC-1 entry removed; UX-FB-1 remains pre-staged).
+- **Previously-resolved counter:** 863+ → 868+ across 598 → 599 sessions.
+
+**Per-item verification (from review subagents):**
+- **UX-301** (`FormattingToolbar`): introduced a `TOOLBAR_SHORTCUT_IDS` map + `tooltipWithShortcut(label, id)` helper using existing `getShortcutKeys` from `keyboard-config`. Buttons with catalog ids (`inlineCode`, `strikethrough`, `highlight`, `linkPopover`, `codeBlock`) get a dynamic `(<binding>)` suffix; buttons without (Bold, Italic, Heading dropdown, Cycle priority) keep their existing tooltip i18n. Reviewer flagged a copy regression — `'Code (Ctrl+E)'` vs the original `'Inline code (Ctrl+E)'` lost the "Inline" qualifier — fixed orchestrator-direct by changing `toolbar.code` i18n value from `'Code'` to `'Inline code'` (1-line change in `src/lib/i18n/toolbar.ts`); test re-anchored. 4 new assertions; 83/83 file tests pass.
+- **UX-342** (`TrashView/TrashRowItem`): wrapped the destructive Purge button in the same Tooltip pattern as Restore, with new i18n key `trash.purgeTooltip = 'Permanently delete (cannot be undone)'`. Build subagent's writes failed to land (parallel-agent write contention — same anomaly the UX-356 subagent flagged in session 598); orchestrator re-implemented directly. 3 new assertions; 79/79 file tests pass.
+- **UX-356** (`GraphView`): `withShortcut(label, id)` helper drives `aria-label` on all 3 zoom buttons (zoomIn/zoomOut/zoomReset) — picks up user customisation. 4 new assertions including a localStorage-customised-binding round-trip; 39/39 file tests pass.
+- **UX-361** (`PageOutline`): wrapped the SheetTrigger Button in a `Tooltip` (Radix `asChild` Slot composition merges hover + click handlers onto the same Button); reused existing `pageHeader.openOutline` i18n key. 2 new assertions; 14/14 file tests + 84/84 PageHeader tests pass.
+- **UX-396** (`AppSidebar`): keyboard-shortcuts button tooltip appends `(${getShortcutKeys('showShortcuts')})` via an IIFE that skips the suffix when the binding is empty. 1 new assertion; 8/8 file tests pass.
+
+**Files touched (this session):**
+- `src/components/FormattingToolbar.tsx` (+18 / -3)
+- `src/components/TrashView/TrashRowItem.tsx` (+19 / -8)
+- `src/components/GraphView.tsx` (+15 / -3)
+- `src/components/PageOutline.tsx` (+13 / -3)
+- `src/components/AppSidebar.tsx` (+15 / -3)
+- `src/lib/i18n/toolbar.ts` (+1 / -1 — `toolbar.code: 'Code'` → `'Inline code'`)
+- `src/lib/i18n/conflicts.ts` (+1 — `trash.purgeTooltip`)
+- `src/components/__tests__/FormattingToolbar.test.tsx` (+71)
+- `src/components/__tests__/TrashView.test.tsx` (+41)
+- `src/components/__tests__/GraphView.test.tsx` (+82)
+- `src/components/__tests__/PageOutline.test.tsx` (+34)
+- `src/components/__tests__/AppSidebar.test.tsx` (+24)
+- `REVIEW-LATER.md` (-44 net — 5 detail blocks, 5 summary rows, 1 batch entry; count + Last-updated header refreshed)
+
+**Verification:**
+- `npx vitest run` on the 5 touched component test files — 223/223 pass.
+- `prek run --all-files` — pending until commit (all 35 hooks green expected based on earlier sessions and clean test pass).
+
+**Process notes:**
+- **Parallel-agent contention is real.** Two `devin` processes are running in parallel terminals (pts/2 + pts/3); the other agent is committing GCal/space/prek-hardening work onto the same `main` branch. UX-342's build subagent reported success but its writes never landed in the working tree — same anomaly UX-356 flagged ("first sequence of edits reported success but the file showed no diff afterwards"). For UX-342 we redid orchestrator-direct (the scope was small enough); UX-356 retried-and-persisted. Worth flagging in PROMPT.md or AGENTS.md if the multi-agent setup is intentional.
+- **Reviewer caught a copy regression that required acceptance.** UX-301's tooltip change collapsed `'Inline code (Ctrl+E)'` to `'Code (Ctrl + E)'`, losing the "Inline" qualifier next to the existing "Code block" button. Fixed orchestrator-direct via a 1-line i18n value change rather than asking the user — the resolution is unambiguous given the surrounding "Code block" sibling.
+- **Shared `getShortcutKeys` helper pattern established.** UX-301 (`tooltipWithShortcut`), UX-356 (`withShortcut`), and UX-396 (inline IIFE) all use the same primitive in compatible ways. Future shortcut-aware tooltip work can converge on a shared util — small win for the next batch.
+
+**Commit plan:** single commit. Not pushed.
 
 ---
 

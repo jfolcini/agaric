@@ -20,6 +20,7 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { dispatchBlockEvent } from '@/lib/block-events'
+import { getShortcutKeys } from '@/lib/keyboard-config'
 import type { ToolbarButtonConfig } from '@/lib/toolbar-config'
 import {
   createHistoryButtons,
@@ -67,6 +68,32 @@ function getHeadingLevel(editor: Editor): number {
   return 0
 }
 
+/**
+ * Map of toolbar button label keys to keyboard-config shortcut ids (UX-301).
+ * Buttons listed here get their tooltip rebuilt as `${label} (${binding})`
+ * via `tooltipWithShortcut`, picking up any user customisation. Buttons
+ * absent from this map keep their existing `tip` i18n string. Bold and
+ * italic intentionally have no entry — they use TipTap's StarterKit
+ * defaults and are not part of the keyboard-config catalog, so their
+ * pre-existing tip strings already encode the shortcut.
+ */
+const TOOLBAR_SHORTCUT_IDS: Record<string, string> = {
+  'toolbar.code': 'inlineCode',
+  'toolbar.strikethrough': 'strikethrough',
+  'toolbar.highlight': 'highlight',
+}
+
+/**
+ * Append the current keyboard binding for `shortcutId` to `label` so the
+ * tooltip stays in sync with user customisations (UX-301). Returns the
+ * plain label when the id is unknown so we never render an empty `()`
+ * for buttons that lack a configurable shortcut.
+ */
+function tooltipWithShortcut(label: string, shortcutId: string): string {
+  const keys = getShortcutKeys(shortcutId)
+  return keys ? `${label} (${keys})` : label
+}
+
 const Tip = ({
   ref,
   label,
@@ -98,24 +125,30 @@ function ToolbarButtonGroup({
 }): React.ReactElement {
   return (
     <>
-      {buttons.map((btn) => (
-        <Tip key={btn.label} label={t(btn.tip)}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t(btn.label)}
-            aria-pressed={btn.activeKey ? (state[btn.activeKey] as boolean) : undefined}
-            disabled={btn.disabledWhenFalse ? !state[btn.disabledWhenFalse] : undefined}
-            className={cn(btn.activeKey && (state[btn.activeKey] as boolean) && toolbarActiveClass)}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              btn.action()
-            }}
-          >
-            <btn.icon className="h-3.5 w-3.5" />
-          </Button>
-        </Tip>
-      ))}
+      {buttons.map((btn) => {
+        const shortcutId = TOOLBAR_SHORTCUT_IDS[btn.label]
+        const tooltip = shortcutId ? tooltipWithShortcut(t(btn.label), shortcutId) : t(btn.tip)
+        return (
+          <Tip key={btn.label} label={tooltip}>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={t(btn.label)}
+              aria-pressed={btn.activeKey ? (state[btn.activeKey] as boolean) : undefined}
+              disabled={btn.disabledWhenFalse ? !state[btn.disabledWhenFalse] : undefined}
+              className={cn(
+                btn.activeKey && (state[btn.activeKey] as boolean) && toolbarActiveClass,
+              )}
+              onPointerDown={(e) => {
+                e.preventDefault()
+                btn.action()
+              }}
+            >
+              <btn.icon className="h-3.5 w-3.5" />
+            </Button>
+          </Tip>
+        )
+      })}
     </>
   )
 }
@@ -232,7 +265,7 @@ export function FormattingToolbar({
 
           <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
             <PopoverAnchor asChild>
-              <Tip label={t('toolbar.linkTip')}>
+              <Tip label={tooltipWithShortcut(t('toolbar.link'), 'linkPopover')}>
                 <Button
                   variant="ghost"
                   size="icon-xs"
@@ -272,7 +305,7 @@ export function FormattingToolbar({
 
           <Popover open={codeBlockPopoverOpen} onOpenChange={setCodeBlockPopoverOpen}>
             <PopoverAnchor asChild>
-              <Tip label={t('toolbar.codeBlockLanguageTip')}>
+              <Tip label={tooltipWithShortcut(t('toolbar.codeBlockLanguage'), 'codeBlock')}>
                 <Button
                   variant="ghost"
                   size="icon-xs"

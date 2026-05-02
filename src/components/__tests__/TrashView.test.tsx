@@ -1807,3 +1807,44 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('restore_block', expect.anything())
   })
 })
+
+describe('TrashView UX-342 purge button tooltip', () => {
+  it('purge button is wrapped in a Tooltip and shows the localised content on hover', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([makeBlock('B1', 'deleted item', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    const purgeBtn = await screen.findByTestId('trash-purge-btn')
+    await user.hover(purgeBtn)
+
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip).toHaveTextContent('Permanently delete (cannot be undone)')
+  })
+
+  it('purge tooltip mentions "cannot be undone"', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([makeBlock('B1', 'deleted item', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    const purgeBtn = await screen.findByTestId('trash-purge-btn')
+    await user.hover(purgeBtn)
+
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip.textContent ?? '').toMatch(/cannot be undone/i)
+  })
+
+  it("restore button's existing tooltip is unchanged", async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([makeBlock('B1', 'deleted item', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    const restoreBtn = await screen.findByTestId('trash-restore-btn')
+    await user.hover(restoreBtn)
+
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip).toHaveTextContent('Restore this block from trash')
+  })
+})
