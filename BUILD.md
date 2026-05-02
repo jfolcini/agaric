@@ -46,6 +46,10 @@ Android builds exclude the sidecar via `tauri.android.conf.json`'s `externalBin:
 - **Rust** (stable toolchain) via [rustup](https://rustup.rs)
 - **Tauri CLI**: `cargo install tauri-cli --locked`
 - **sqruff** (SQL linter used by the `sqruff` pre-commit hook against `src-tauri/migrations/*.sql`): `cargo install sqruff`. Without it, `prek run --all-files` fails with `sqruff: command not found` on any commit that stages SQL or runs the full hook set.
+- **typos** (typo checker, `typos` pre-commit hook): `cargo install typos-cli --locked`. Allow-list lives in `_typos.toml`.
+- **taplo** (TOML lint + format, `taplo-fmt` and `taplo-lint` pre-commit hooks): `cargo install taplo-cli --locked`. Repo-specific style overrides live in `.taplo.toml` (4-space indent, 200-col width, no array auto-collapse).
+- **zizmor** (GitHub Actions security audit, `zizmor` pre-commit hook): `cargo install zizmor --locked`. Existing findings are baselined in `.github/zizmor.yml`; the hook fires on new findings only.
+- **shellcheck** (shell-script linter, `shellcheck` pre-commit hook against `scripts/*.sh`): system package (`apt-get install shellcheck` on Debian/Ubuntu, `brew install shellcheck` on macOS). The hook runs with `--severity=warning`, skipping `info`/`style` notices.
 
 ```bash
 # Install npm dependencies
@@ -248,12 +252,12 @@ The `prek.toml` configuration runs the full set of file-type-aware hooks. Every 
 
 | Category | Hooks | Triggers on |
 | --- | --- | --- |
-| **File checks** | trailing whitespace, end-of-file, check-yaml/toml/json, check-merge-conflict, large-file guard, private-key detection | All staged files |
-| **Security** | gitleaks (secret scanning), actionlint (GitHub Actions linter) | All / `.github/workflows/*` |
+| **File checks** | trailing whitespace, end-of-file, check-yaml/toml/json, check-merge-conflict, large-file guard, private-key detection, shebang-scripts-are-executable, executables-have-shebangs, mixed-line-ending | All staged files |
+| **Security** | gitleaks (secret scanning), actionlint (GitHub Actions linter), zizmor (GitHub Actions security audit) | All / `.github/workflows/*` |
 | **Frontend lint + tests** | biome check, typescript check, no-hsl/rgb wrapping CSS vars, no legacy React APIs, vitest, axe-presence, test-file naming, IPC error-path coverage, AGENTS.md test-count drift, snapshot redaction | `*.ts`, `*.tsx`, `*.css`, `*.json` (config) |
 | **Backend** | cargo fmt, cargo clippy, cargo nextest run, cargo deny, cargo machete | `*.rs` |
-| **Database** | sqlx prepare check, sqruff (SQL lint), tauri command sanitize | `src-tauri/migrations/*.sql`, command files |
-| **Docs** | markdownlint-cli2, lychee (link checker), markdown link targets, tauri-mock parity | `*.md`, mock parity scripts |
+| **Database** | sqlx prepare check, sqruff (SQL lint), migrations append-only, tauri command sanitize | `src-tauri/migrations/*.sql`, command files |
+| **Cross-cutting** | typos (spell check), shellcheck (`scripts/*.sh`), taplo fmt/lint (TOML), markdownlint-cli2, lychee (link checker), markdown link targets, tauri-mock parity | `*.md`, `*.toml`, `*.sh`, mock parity scripts |
 | **Bindings** | ts_bindings_up_to_date, npm audit, license check, depcheck, knip | `src-tauri/**/*.rs`, `package.json` |
 
 ---

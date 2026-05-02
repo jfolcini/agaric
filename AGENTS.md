@@ -244,7 +244,7 @@ cd src-tauri && cargo test -- specta_tests --ignored
 
 ## Pre-commit & CI
 
-- **Pre-commit:** `prek.toml` — 25 file-type-aware hooks (Rust hooks skip when no `.rs` staged, etc.) covering 9 builtin file checks, gitleaks (secret scanning), biome, tsc, `no-hsl-rgb-var-wrap`, vitest, npm-audit, license-checker, depcheck, knip, markdownlint, lychee, cargo fmt/clippy/nextest/deny/machete
+- **Pre-commit:** `prek.toml` — 44 file-type-aware hooks at pre-commit + 3 at pre-push (Rust hooks skip when no `.rs` staged, etc.). 12 builtin file checks; secret + workflow security (gitleaks, zizmor); actionlint; biome + tsc + vitest (frontend lint/test); cargo fmt/clippy/nextest/deny/machete (Rust); sqruff + sqlx prepare + migrations-immutable (DB); typos + shellcheck + taplo + markdownlint + lychee (cross-cutting); repo-specific guards (no-hsl-rgb-var-wrap, no-legacy-react-apis, tauri-mock-parity, tauri-command-sanitize, ipc-error-path-coverage, snapshot-redaction, axe-presence, test-file-naming, agents-md-count-tables, md-link-targets); npm audit + license-checker + depcheck + knip. Hook-tool config for typos / taplo / zizmor lives in `_typos.toml`, `.taplo.toml`, and `.github/zizmor.yml` respectively. The `migrations-immutable` hook enforces invariant #1 from the [invariants list](#key-architectural-invariants) at commit time.
 - **CI:** `.github/workflows/ci.yml` — 3 jobs: `check` (lint/test on Linux), `build` (matrix: Linux + Windows + macOS), `android-build`
 
 ## Releases

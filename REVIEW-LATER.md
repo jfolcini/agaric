@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 598 — Batch UX-A11Y-1 closed: UX-326, UX-328, UX-331, UX-335, UX-377)
+> **Last updated:** 2026-05-02 (Session 599 — Batch UX-DISC-1 closed: UX-301, UX-342, UX-356, UX-361, UX-396)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-171 open items in the summary table; 227 detail entries (FE-* sub-tables don't appear in the summary).
+166 open items in the summary table; 222 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -55,6 +55,7 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-190 | MAINT | Frontend — `FilterPillRow.tsx:104-105` uses `key={index}` with a `biome-ignore` because `getFilterKey()` can collide; make the key collision-free instead of relying on the workaround | S | — |
 | MAINT-191 | MAINT | Frontend — `PairingDialog.tsx:147-167` cleanup correctly cancels the pairing session, but the comment doesn't make clear that the IPC payload itself has already crossed the bridge. One-line clarification | S | — |
 | MAINT-192 | MAINT | Documentation — UX.md / AGENTS.md additions to reduce false-positive churn on future reviews: (a) UX.md Common-Pitfall "`setState` after unmount in React 18+ is no longer a defect"; (b) UX.md Lesson-Learned "Reading store state inside callbacks via `useStore.getState()` is intentional"; (c) AGENTS.md mandatory-pattern: picker debouncing convention; (d) AGENTS.md reference `INTERNAL_PROPERTY_KEYS` (see MAINT-187) | S | — |
+| MAINT-193 | MAINT | zizmor baseline triage — 53 GitHub Actions findings suppressed by file:line in `.github/zizmor.yml` when the `zizmor` pre-commit hook was first wired in. Mix of policy-level (`unpinned-uses` × 35: tags vs SHAs) and real fixes (`template-injection` × 6 in `release-tag.yml` — pass `inputs.version` via `env:` instead of `${{ }}` interpolation; `excessive-permissions` × 1 in `release.yml`; `cache-poisoning` × 11; `artipacked` × 7). Triage off the baseline as fixes land. | M | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
 | PERF-24 | PERF | `cache/block_tag_refs.rs::reindex_block_tag_refs` issues per-target DELETE/INSERT in a loop; sibling `block_links.rs` already batches via `json_each` | S | — |
@@ -105,7 +106,6 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-FE-7 | TEST | `AgendaResults.test.tsx` hardcodes `'2020-01-01'` as overdue marker (lines 320, 332) when file already imports `subDays` and uses dynamic `new Date()` for "today" | S | — |
 | TEST-FE-8 | TEST | `PairingDialog.test.tsx` uses `document.querySelector('.pairing-error')` for portal content (lines 314-318, 542-546, 850-854) — couples test to CSS class name; accessible queries preferred | S | — |
 | UX-300 | UX | Code-block language selector lacks search/filter | S | — |
-| UX-301 | UX | Toolbar tooltips don't show keyboard shortcuts | S | — |
 | UX-302 | UX | Multi-selection has no visible feedback on selected blocks | S | — |
 | UX-303 | UX | Draft autosave recovery on boot is silent | S | — |
 | UX-304 | UX | Swipe-to-delete (mobile) has no visual affordance or threshold cue | S | — |
@@ -142,7 +142,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-339 | UX | Property definition options editor has no JSON validation feedback | S | — |
 | UX-340 | UX | Tag filter loading state hidden when stale results present | S | — |
 | UX-341 | UX | "Empty trash" confirm dialog doesn't show item count | S | — |
-| UX-342 | UX | Trash row "Purge" button has no Tooltip; "Restore" does | S | — |
 | UX-343 | UX | Trash batch-restore confirmation threshold (5) is undiscoverable | S | — |
 | UX-344 | UX | Property definition delete button hidden until hover (desktop) | S | — |
 | UX-345 | UX | History "Restore to here" vs "Revert selected" terminology overlaps | S | — |
@@ -154,12 +153,10 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-352 | UX | `CompactionCard` collapsed by default at top of HistoryView | S | — |
 | UX-354 | UX | Graph filter bar has no on-touch affordance | S | — |
 | UX-355 | UX | Graph node Enter/Space activation is undocumented | S | — |
-| UX-356 | UX | Graph zoom buttons don't show keyboard shortcut bindings | S | — |
 | UX-357 | UX | Graph node labels truncated at 20 chars without `<title>` tooltip | S | — |
 | UX-358 | UX | `PageHeaderMenu` mixes benign and destructive actions in one popover | S | — |
 | UX-359 | UX | Page title in rich-display mode (with chips) lacks edit affordance | S | — |
 | UX-360 | UX | Page rename on blur has no toast / visible confirmation | S | — |
-| UX-361 | UX | `PageOutline` (TOC) trigger is icon-only, no visible label | S | — |
 | UX-362 | UX | Block zoom has no visible "Exit zoom" affordance (Escape only) | S | — |
 | UX-363 | UX | `LinkedReferences` / `UnlinkedReferences` filter trigger has no visible label | S | — |
 | UX-364 | UX | `SpaceSwitcher` trigger reads as a label, not a switcher | S | — |
@@ -192,7 +189,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-393 | UX | "Customized" badge in keyboard settings is plain text-primary | S | — |
 | UX-394 | UX | `findConflicts` ignores the `condition` field — false positives | S | — |
 | UX-395 | UX | Help panel footer button "Customize shortcuts" doesn't indicate it leaves the panel | S | — |
-| UX-396 | UX | Sidebar shortcut button doesn't mention the `?` keystroke | S | — |
 | UX-397 | UX | Help panel doesn't badge customized shortcuts | S | — |
 
 ### Quick wins (S-cost, ready to grab)
@@ -687,6 +683,21 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Risk:** Low.
 - **Impact:** Medium — every future frontend review (human or automated) avoids re-discovering the same false positives.
 - **Status:** Open.
+
+### MAINT-193 — `zizmor` baseline triage (53 GitHub Actions findings suppressed at hook-introduction time)
+
+- **Domain:** GitHub Actions security
+- **Location:** `.github/zizmor.yml`, `.github/workflows/{ci,release,release-tag,_validate}.yml`
+- **What:** When the `zizmor` pre-commit hook was first wired into `prek.toml`, the audit reported 53 deduped findings across 5 rules. To avoid blocking every commit until they were all fixed, the findings were captured as a file:line baseline in `.github/zizmor.yml` so the hook only fires on **new** findings going forward. The baseline is a known-debt list, not a clean bill of health. Breakdown:
+  - **`unpinned-uses` × 35** (High) — every `actions/checkout@v5`, `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`, `actions/setup-node@v5`, etc. is pinned to a tag/branch instead of a SHA. This is a policy decision; many projects intentionally pin to tags. If we want SHA pinning, automate it via Renovate or Dependabot (it's mechanical).
+  - **`template-injection` × 6** (High, all in `release-tag.yml`) — `scripts/bump-version.sh "${{ github.event.inputs.version }}"` and `echo "::notice title=Tagged ${{ github.event.inputs.version }}::..."` interpolate `inputs.version` directly into shell. Mitigation is small and idiomatic: `env: VERSION: ${{ inputs.version }}` then `"$VERSION"`. Threat-model context (per `AGENTS.md`): `workflow_dispatch` is collaborator-only, but the fix is cheap and worth doing.
+  - **`cache-poisoning` × 11** (High, mostly tag-pushes building artifacts with `actions/cache` enabled). Either disable caching for tag builds or accept the risk and document.
+  - **`artipacked` × 7** (Medium, Low confidence) — `actions/checkout` without `persist-credentials: false`. Auto-fixable via zizmor; one-liner per checkout.
+  - **`excessive-permissions` × 1** (High, in `release.yml`) — workflow-level token grants more than the steps actually need. Audit and tighten.
+- **Cost:** S–M. The `template-injection` cluster is ~6 lines of YAML across `release-tag.yml`. The `artipacked` cluster is mechanical (auto-fix). `unpinned-uses` is a policy decision plus a Renovate config. `excessive-permissions` is one workflow header to tighten.
+- **Risk:** Low — these are workflow-only changes; existing tests cover them via `_validate.yml`.
+- **Impact:** Medium — closes real (if low-likelihood) supply-chain / template-injection vectors, and shrinks the baseline file so the hook gives more genuine signal.
+- **Status:** Open. Triage off the baseline as fixes land — when a finding is fixed, drop the matching `file:line` entry from `.github/zizmor.yml`.
 
 ## TEST — Backend test improvements
 
@@ -1889,14 +1900,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-301 — Toolbar tooltips don't show keyboard shortcuts
-- **Domain:** Frontend / Editor
-- **Location:** `src/components/FormattingToolbar.tsx:70-87`
-- **What:** Block context menu shows shortcut hints (`BlockContextMenu.tsx:461-463`) but the formatting-toolbar `Tip` component shows only the action label. Discoverability gap: users never see `Ctrl+B` etc. unless they open `?`.
-- **Cost:** Trivial — append `getCurrentShortcuts()`-derived binding to each tooltip; falls through to customization automatically.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
 
 ### UX-302 — Multi-selection styling exists for the static path but not the focused (mounted-editor) path
 - **Domain:** Frontend / Editor
@@ -2226,14 +2229,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-342 — Trash row "Purge" button has no Tooltip; "Restore" does
-- **Domain:** Frontend / Trash
-- **Location:** `src/components/TrashView/TrashRowItem.tsx:153-162` (Purge) vs `:133-151` (Restore wrapped in Tooltip)
-- **What:** "Purge" terminology is opaque to non-technical users and the destructive action has weaker affordance than the benign one.
-- **Cost:** Trivial — wrap Purge in `Tooltip` with "Permanently delete (cannot be undone)".
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
 
 ### UX-343 — Trash batch-restore confirmation threshold (5) is undiscoverable
 - **Domain:** Frontend / Trash
@@ -2336,14 +2331,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-356 — Graph zoom buttons don't show keyboard shortcut bindings
-- **Domain:** Frontend / Graph
-- **Location:** `src/components/GraphView.tsx:229-239`
-- **What:** Buttons carry `aria-label` only; the underlying `graphZoomIn`/`graphZoomOut`/`graphZoomReset` shortcuts exist but aren't in tooltips.
-- **Cost:** Trivial — append `getCurrentShortcuts()` binding.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
 
 ### UX-357 — Graph node labels truncated at 20 chars without `<title>` tooltip
 - **Domain:** Frontend / Graph
@@ -2381,15 +2368,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-361 — `PageOutline` (TOC) trigger is icon-only, no visible label
-- **Domain:** Frontend / Page editor
-- **Location:** `src/components/PageOutline.tsx:73` ; `PageHeader.tsx:494`
-- **What:** List icon with `aria-label` only; users don't realise it's a Table of Contents.
-- **Quoted from validator: "the List icon alone is not self-explanatory."**
-- **Cost:** Trivial — `Tooltip` saying "Page outline".
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
 
 ### UX-362 — Block zoom has no visible "Exit zoom" affordance (Escape only)
 - **Domain:** Frontend / Page editor
@@ -2681,14 +2659,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-396 — Sidebar shortcut button doesn't mention the `?` keystroke
-- **Domain:** Frontend / Keyboard
-- **Location:** `src/components/AppSidebar.tsx:265-268`
-- **What:** Tooltip says "Show keyboard shortcuts" but no hint that pressing `?` opens the same panel — users learn the binding only by reading docs.
-- **Cost:** Trivial — append "(?)" to the tooltip / aria-label.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
 
 ### UX-397 — Help panel doesn't badge customized shortcuts
 - **Domain:** Frontend / Keyboard
@@ -2707,10 +2677,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 Pre-grouped item clusters identified during the 2-pass audit. Each batch is sized for one PROMPT.md session — 5 trivial-cost items in non-overlapping files, splittable across 5 parallel subagents. **Remove the batch entry from this list when its items are resolved.**
 
 
-### Batch UX-DISC-1 — Discoverability via tooltip / label additions
-- **Items:** UX-301, UX-342, UX-356, UX-361, UX-396
-- **Cost:** 5× Trivial. **Files:** 5 (`FormattingToolbar.tsx`, `TrashView/TrashRowItem.tsx`, `GraphView.tsx`, `PageOutline.tsx` + `PageHeader.tsx`, `AppSidebar.tsx`).
-- **Why pick:** Each is a single tooltip / label / shortcut-hint addition. Highest visibility-per-LOC for sighted desktop users. Several items would benefit from a shared `getCurrentShortcuts()` lookup pattern that this batch could establish.
 
 ### Batch UX-FB-1 — Toast feedback for silent operations
 - **Items:** UX-303, UX-329, UX-341, UX-360, MAINT-179

@@ -1,0 +1,99 @@
+# zizmor configuration — security audit for GitHub Actions workflows.
+# https://docs.zizmor.sh/configuration/
+#
+# This file is a BASELINE: it suppresses every finding zizmor reported
+# the day the hook was first wired into prek.toml. The hook will catch
+# *new* findings introduced after that point. Existing findings are
+# tracked as MAINT items in REVIEW-LATER.md and should be triaged off
+# the baseline over time — fix the underlying issue (or document why
+# it's safe in the threat-model sense), then drop the matching entry
+# from this file.
+#
+# Counts at baseline creation:
+#   - 63 total locations across 5 rule(s)
+#   - artipacked: 7
+#   - cache-poisoning: 14
+#   - excessive-permissions: 1
+#   - template-injection: 6
+#   - unpinned-uses: 35
+#
+# Threat-model context (AGENTS.md): Agaric is single-user, no cloud,
+# no adversarial peers. The release-tag.yml `template-injection`
+# findings, for example, fire on `${{ inputs.version }}` interpolation
+# and only `workflow_dispatch` collaborators can trigger them — but
+# the mitigation (pass via `env:`) is cheap, so they're worth fixing.
+
+rules:
+  artipacked:
+    ignore:
+      - _validate.yml:25
+      - ci.yml:181
+      - ci.yml:51
+      - release-tag.yml:40
+      - release.yml:28
+      - release.yml:314
+      - release.yml:72
+  cache-poisoning:
+    ignore:
+      - ci.yml:189
+      - ci.yml:208
+      - ci.yml:209
+      - ci.yml:3
+      - ci.yml:77
+      - ci.yml:82
+      - ci.yml:83
+      - release.yml:111
+      - release.yml:112
+      - release.yml:3
+      - release.yml:322
+      - release.yml:346
+      - release.yml:347
+      - release.yml:80
+  excessive-permissions:
+    ignore:
+      - release.yml:10
+  template-injection:
+    ignore:
+      - release-tag.yml:67
+      - release-tag.yml:72
+      - release-tag.yml:74
+      - release-tag.yml:76
+      - release-tag.yml:77
+      - release-tag.yml:78
+  unpinned-uses:
+    ignore:
+      - _validate.yml:121
+      - _validate.yml:25
+      - _validate.yml:43
+      - _validate.yml:46
+      - _validate.yml:54
+      - _validate.yml:68
+      - ci.yml:152
+      - ci.yml:161
+      - ci.yml:170
+      - ci.yml:181
+      - ci.yml:184
+      - ci.yml:189
+      - ci.yml:194
+      - ci.yml:200
+      - ci.yml:208
+      - ci.yml:283
+      - ci.yml:51
+      - ci.yml:74
+      - ci.yml:77
+      - ci.yml:82
+      - release-tag.yml:41
+      - release-tag.yml:49
+      - release-tag.yml:52
+      - release.yml:111
+      - release.yml:120
+      - release.yml:28
+      - release.yml:314
+      - release.yml:317
+      - release.yml:322
+      - release.yml:332
+      - release.yml:338
+      - release.yml:346
+      - release.yml:72
+      - release.yml:75
+      - release.yml:80
