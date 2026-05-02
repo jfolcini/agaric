@@ -153,11 +153,15 @@ export function PairingDialog({
       await init()
     }
 
-    doInit().then(() => {
-      if (cancelled) {
-        // Component closed before init finished — clean up
-      }
-    })
+    doInit()
+      .then(() => {
+        if (cancelled) {
+          // Component closed before init finished — clean up
+        }
+      })
+      .catch((err) => {
+        logger.warn('PairingDialog', 'init failed', undefined, err)
+      })
 
     return () => {
       cancelled = true

@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 600 — Batch UX-FB-1 closed: UX-303, UX-329, UX-341, UX-360, MAINT-179)
+> **Last updated:** 2026-05-02 (Session 601 — Batch FE-LOGGER-1 closed: FE-H-8, FE-H-9, FE-H-10, FE-H-11, FE-H-12, FE-H-13)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-161 open items in the summary table; 217 detail entries (FE-* sub-tables don't appear in the summary).
+161 open items in the summary table; 212 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -1442,72 +1442,15 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F037
 - **Status:** Open
 
-### FE-H-8 — `useCheckboxSyntax` silent catch: only `toast.error`, no `logger`
-- **Domain:** Frontend / Editor
-- **Location:** `src/hooks/useCheckboxSyntax.ts:55-60`
-- **What:** `.catch(() => toast.error(...))` violates AGENTS' "no silent catch" rule — production debugging blind spot.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Recommendation:** Add `logger.error('useCheckboxSyntax', 'setTodoState failed', { focusedBlockId, state }, err)` before the toast. Combine with FE-H-7.
-- **Source:** FE review 2026-05-02 / F034
-- **Status:** Open
-
-### FE-H-9 — `useHistoryDiffToggle` silent catch: only `toast.error`, no `logger`
-- **Domain:** Frontend / History
-- **Location:** `src/hooks/useHistoryDiffToggle.ts:33-38`
-- **What:** Same pattern as FE-H-8 — bare `catch { toast.error(...) }` swallows the error.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Recommendation:** Add `logger.warn('useHistoryDiffToggle', 'computeEditDiff failed', undefined, err)`.
-- **Source:** FE review 2026-05-02 / F035
-- **Status:** Open
-
-### FE-H-10 — `CompactionCard` silent catches in `fetchStatus` and `handleCompact`
-- **Domain:** Frontend / Compaction
-- **Location:** `src/components/CompactionCard.tsx:30-36, 50-55`
-- **What:** Both catch handlers show toast but no `logger` call.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low — production debugging blind spot for compaction failures.
-- **Recommendation:** Add `logger.warn('CompactionCard', 'getCompactionStatus failed', undefined, err)` and `logger.error('CompactionCard', 'compaction failed', undefined, err)`.
-- **Source:** FE review 2026-05-02 / F069 + F070
-- **Status:** Open
-
-### FE-H-11 — `PdfViewerDialog` render-task cancel uses bare `catch { }`
+### FE-H-14 — `PdfViewerDialog` cleanup function still has bare `catch {}` (FE-H-11 follow-up)
 - **Domain:** Frontend / PDF viewer
-- **Location:** `src/components/PdfViewerDialog.tsx:58-62`
-- **What:** Literal `catch {}` (no parameter, no log) violates AGENTS' "no silent catch" rule.
-- **Cost:** Trivial.
+- **Location:** `src/components/PdfViewerDialog.tsx:146` (inside the useEffect cleanup function, separate from the render-task cancel path closed by FE-H-11).
+- **What:** A second bare `catch {}` (no parameter, no log) on the cleanup-time `renderTaskRef.current.cancel()` call. Same anti-pattern FE-H-11 closed for the render-time cancel; left intentionally untouched there to keep the FE-H-11 diff minimal.
+- **Cost:** Trivial — `catch (err) { logger.warn('PdfViewerDialog', 'cleanup cancel threw', undefined, err) }`.
 - **Risk:** Low.
-- **Impact:** Low.
-- **Recommendation:** `catch (err) { logger.warn('PdfViewerDialog', 'render task cancel threw', undefined, err) }`.
-- **Source:** FE review 2026-05-02 / F075
+- **Impact:** Low — cleanup-time cancel rarely throws, but the log is needed to comply with AGENTS' "no silent catch" rule.
+- **Source:** Reviewer note from FE-H-11 close (2026-05-02 / Session 601).
 - **Status:** Open
-
-### FE-H-12 — `PairingDialog.doInit()` promise has no `.catch`
-- **Domain:** Frontend / Pairing
-- **Location:** `src/components/PairingDialog.tsx:153-160`
-- **What:** `doInit().then(...)` has no `.catch`. Rejections become unhandled promise rejections.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Recommendation:** Chain `.catch((err) => logger.warn('PairingDialog', 'init failed', undefined, err))`.
-- **Source:** FE review 2026-05-02 / F074
-- **Status:** Open
-
-### FE-H-13 — Tauri-mock dispatcher uses `console.warn`, bypassing the logger
-- **Domain:** Frontend / Tauri mock
-- **Location:** `src/lib/tauri-mock/handlers.ts:1635-1640`
-- **What:** Bypasses the logger's rate-limiting, stack capture, and IPC bridge to the Rust side. Per AGENTS, `console.warn` is forbidden.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low — only affects dev/Storybook/E2E paths but undermines the "structured logging" guarantee.
-- **Recommendation:** `logger.warn('TauriMock', 'unhandled command', { command: cmd })`.
-- **Source:** FE review 2026-05-02 / F022
-- **Status:** Open
-
 
 ### FE-H-15 — Sidebar rail drag handler leaks `pointermove`/`pointerup` listeners on unmount-during-drag
 - **Domain:** Frontend / UI primitives

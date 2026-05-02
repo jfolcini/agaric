@@ -22,6 +22,11 @@ vi.mock('@tauri-apps/api/mocks', () => ({
   mockWindows: vi.fn(),
 }))
 
+vi.mock('../logger', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
+
+import { logger } from '../logger'
 import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '../tauri-mock'
 
 /** Helper — call the captured IPC handler as if invoke() were called. */
@@ -2485,11 +2490,15 @@ describe('LinkMetadata commands', () => {
 
 describe('default case warning', () => {
   it('logs a warning for unhandled commands', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // FE-H-13: unhandled-command path now goes through the structured logger
+    // (logger.warn) instead of console.warn directly. This integration test
+    // exercises the path via setupMock()'s captured IPC handler; the unit-
+    // level dispatch test lives in tauri-mock/__tests__/handlers-drift.test.ts.
     const result = invoke('totally_unknown_command', {})
     expect(result).toBeNull()
-    expect(warnSpy).toHaveBeenCalledWith('[tauri-mock] Unhandled command: totally_unknown_command')
-    warnSpy.mockRestore()
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('TauriMock', 'unhandled command', {
+      command: 'totally_unknown_command',
+    })
   })
 })
 

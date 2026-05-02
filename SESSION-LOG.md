@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 600 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 873+ items.
+**Sessions:** 1 – 601 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 879+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 601 (2026-05-02)** — Batch FE-LOGGER-1 closed: FE-H-8, FE-H-9, FE-H-10, FE-H-11, FE-H-12, FE-H-13 — six silent-catch logger backfills (AGENTS' "no silent catch" rule). 6 build + 6 review subagents (max parallelism per PROMPT.md); FE-H-13 source change broke a pre-existing `console.warn` regression test → fixed orchestrator-direct by mocking `'../logger'` at the integration test layer. New follow-up FE-H-14 filed for the second bare `catch {}` in PdfViewerDialog cleanup function (out-of-scope for FE-H-11).
 - **Session 600 (2026-05-02)** — Batch UX-FB-1 closed: UX-303, UX-329, UX-341, UX-360, MAINT-179 — five toast-feedback additions for previously-silent operations (recovery, settings change, destructive confirm, rename, GCal config). 5 build + 5 review subagents; reviewer-caught pagination caveat on UX-341 fixed orchestrator-direct (paginated-copy variant + new test). After this commit, no ready-made batches remain pre-staged.
 - **Session 599 (2026-05-02)** — Batch UX-DISC-1 closed: UX-301, UX-342, UX-356, UX-361, UX-396 — five tooltip / label / shortcut-hint additions (5 build + 5 review subagents; 1 build redone orchestrator-direct due to parallel-agent write contention).
 - **Session 598 (2026-05-02)** — Batch UX-A11Y-1 closed: UX-326, UX-328, UX-331, UX-335, UX-377 — five a11y missing-attribute fixes (5 build + 5 review subagents).
@@ -31,6 +32,62 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 601 — Batch FE-LOGGER-1: silent-catch logger backfill (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 6 build + 6 technical review (max parallelism — PROMPT.md endorses up to 6) |
+| **Items closed** | FE-H-8, FE-H-9, FE-H-10, FE-H-11, FE-H-12, FE-H-13 |
+| **Items added** | FE-H-14 (PdfViewerDialog cleanup-function follow-up flagged by FE-H-11 reviewer) |
+| **Tests added** | +8 frontend (1 useCheckboxSyntax + 1 useHistoryDiffToggle + 2 CompactionCard + 1 PdfViewerDialog + 1 PairingDialog + 1 handlers-drift + 1 tauri-mock integration update) / +0 backend |
+| **Files touched** | 14 (6 source + 7 test + 1 REVIEW-LATER cleanup) |
+
+**Summary:** Closed all 6 items in a fresh "quick-wins" batch — silent-catch logger backfills for AGENTS' "no silent catch" rule. Each adds a single `logger.warn` or `logger.error` call before the existing `toast.error` (or, in two cases, replaces a bare `catch {}` / `console.warn`). FE-H-13's source change broke a pre-existing console.warn assertion in `tauri-mock.test.ts`; fixed orchestrator-direct by mocking `'../logger'` at module scope so the integration test still exercises the unhandled-command path through `setupMock()`'s captured IPC handler. Filed FE-H-14 (PdfViewerDialog cleanup-function bare catch — separate site from FE-H-11) as a documented follow-up.
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 161 → 161 (unchanged — FE-* sub-table items don't appear in summary).
+- **Detail entries:** 217 → 212 (−6 closed +1 new follow-up = net −5).
+- **Previously-resolved counter:** 873+ → 879+ across 600 → 601 sessions.
+
+**Per-item verification (from review subagents):**
+- **FE-H-8** (`useCheckboxSyntax.ts`): added `logger.error('useCheckboxSyntax', 'setTodoState failed', { focusedBlockId, state }, err)` before the existing `toast.error` in the `.catch` arm of `setTodoStateCmd`. Logger was already imported. Created new test file `src/hooks/__tests__/useCheckboxSyntax.test.ts` (1 new test) since the hook had none. Build subagent inappropriately struck through the REVIEW-LATER entry mid-build → reverted orchestrator-direct.
+- **FE-H-9** (`useHistoryDiffToggle.ts`): added `import { logger } from '../lib/logger'` + `logger.warn('useHistoryDiffToggle', 'computeEditDiff failed', undefined, err)` before the existing `toast.error`. 1 new test asserting both logger.warn and existing toast still fire (regression guard). 10/10 file tests pass.
+- **FE-H-10** (`CompactionCard.tsx`): two catch sites — `fetchStatus` gets `logger.warn` (read path), `handleCompact` gets `logger.error` (destructive path). Severity choice consistent with operational impact. 2 new tests + regression guards on existing toasts. 17/17 file tests pass.
+- **FE-H-11** (`PdfViewerDialog.tsx`): replaced bare `catch {}` (no parameter) at the render-task cancel site with `catch (err) { logger.warn('PdfViewerDialog', 'render task cancel threw', undefined, err) }`. Test required overriding the global `HTMLCanvasElement.getContext` stub locally + a hanging promise + double-click navigation to reach the actual cancel path. 19/19 file tests pass. **Reviewer flagged:** a SECOND bare `catch {}` exists at line 146 (cleanup function) — out of scope for FE-H-11 but a real follow-up; filed as FE-H-14.
+- **FE-H-12** (`PairingDialog.tsx`): appended `.catch((err) => logger.warn('PairingDialog', 'init failed', undefined, err))` to the `doInit().then(...)` chain. Test required mocking `useIpcCommand` with a delegating wrapper + per-test override scoped to the init command (matched by `errorLogMessage === 'Failed to initialize pairing'`); finally-block restoration prevents cross-test leakage. 43/43 file tests pass.
+- **FE-H-13** (`tauri-mock/handlers.ts`): replaced `console.warn(\`[tauri-mock] Unhandled command: ${cmd}\`)` with `logger.warn('TauriMock', 'unhandled command', { command: cmd })`. New unit test in `handlers-drift.test.ts` asserting both `logger.warn` is called AND `console.warn` is NOT (5/5 pass). **Side-effect:** existing integration test in `src/lib/__tests__/tauri-mock.test.ts:2486-2493` previously asserted the literal `console.warn` string and now failed — fixed orchestrator-direct by adding `vi.mock('../logger', ...)` at module scope and rewriting the assertion to use `vi.mocked(logger.warn)`; comment cross-references the new unit test.
+
+**Files touched (this session):**
+- `src/hooks/useCheckboxSyntax.ts` (+3 / -1)
+- `src/hooks/useHistoryDiffToggle.ts` (+2 / -1)
+- `src/components/CompactionCard.tsx` (+5 / -2)
+- `src/components/PdfViewerDialog.tsx` (+4 / -1)
+- `src/components/PairingDialog.tsx` (+3)
+- `src/lib/tauri-mock/handlers.ts` (+3 / -2 — import + 1 line replaced + 1 docstring tweak)
+- `src/hooks/__tests__/useCheckboxSyntax.test.ts` (NEW, +95)
+- `src/hooks/__tests__/useHistoryDiffToggle.test.ts` (+38)
+- `src/components/__tests__/CompactionCard.test.tsx` (+78)
+- `src/components/__tests__/PdfViewerDialog.test.tsx` (+76)
+- `src/components/__tests__/PairingDialog.test.tsx` (+45)
+- `src/lib/tauri-mock/__tests__/handlers-drift.test.ts` (+18)
+- `src/lib/__tests__/tauri-mock.test.ts` (+9 / -3 — module-scope mock + assertion rewrite + comment)
+- `REVIEW-LATER.md` (-66 net — 6 detail blocks removed + 1 new FE-H-14 entry; count + Last-updated header refreshed)
+
+**Verification:**
+- `npx vitest run` on all 7 touched test files together — 310/310 pass.
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **Maxed out PROMPT.md's parallelism budget (6 simultaneous subagents).** The "silent-catch" theme yielded exactly 6 trivial-cost items in 6 non-overlapping files — perfect for the maximum-parallel cadence. Wall-clock benefit was meaningful: all 6 builds completed within roughly the time it would have taken to do 2-3 sequentially.
+- **One subagent edited REVIEW-LATER.md against orchestrator role.** FE-H-8's build subagent struck through the entry as "Resolved" mid-build despite the prompt explicitly listing "AGENTS.md" as off-limits and "Do NOT modify any other file" — reverted orchestrator-direct. Worth tightening the future prompt: "Do NOT touch REVIEW-LATER.md" should be a separate explicit bullet.
+- **Reviewer-caught real follow-up (FE-H-14).** The FE-H-11 reviewer noticed a second bare `catch {}` in PdfViewerDialog's cleanup function and explicitly called it out as out-of-scope for FE-H-11 but a real follow-up. Filed FE-H-14 with a pointer back to FE-H-11. This pattern (reviewer files follow-up rather than expanding scope) is the right behaviour for the build-review pipeline.
+- **Side-effect detection across test files works.** The FE-H-13 build subagent honestly reported that its source change broke a test in another file (which it was forbidden from touching) — letting the orchestrator decide how to fix. The orchestrator-direct fix updated the integration test to use the new logger contract while keeping the test at its original layer (regression-guarding the path through `setupMock()`'s captured IPC handler).
+
+**Commit plan:** single commit. Not pushed.
 
 ---
 

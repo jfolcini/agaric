@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { toast } from 'sonner'
 import { i18n } from '../lib/i18n'
+import { logger } from '../lib/logger'
 import type { DiffSpan, HistoryEntry } from '../lib/tauri'
 import { computeEditDiff } from '../lib/tauri'
 
@@ -33,7 +34,8 @@ export function useHistoryDiffToggle<K>(keyFn: (entry: HistoryEntry) => K): {
         if (diff) {
           setDiffCache((prev) => new Map(prev).set(key, diff))
         }
-      } catch {
+      } catch (err) {
+        logger.warn('useHistoryDiffToggle', 'computeEditDiff failed', undefined, err)
         toast.error(i18n.t('history.loadDiffFailed'))
         setExpandedKeys((prev) => {
           const next = new Set(prev)

@@ -8,10 +8,21 @@ vi.mock('../../lib/tauri', () => ({
   computeEditDiff: vi.fn(),
 }))
 
+vi.mock('../../lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
+
+import { logger } from '../../lib/logger'
 import { computeEditDiff } from '../../lib/tauri'
 
 const mockedComputeEditDiff = vi.mocked(computeEditDiff)
 const mockedToastError = vi.mocked(toast.error)
+const mockedLoggerWarn = vi.mocked(logger.warn)
 
 function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
   return {
@@ -205,5 +216,27 @@ describe('useHistoryDiffToggle', () => {
     expect(result.current.expandedKeys.has(20)).toBe(true)
     expect(result.current.diffCache.has(20)).toBe(false)
     expect(result.current.loadingDiffs.has(20)).toBe(false)
+  })
+
+  it('FE-H-9: logs warning when computeEditDiff rejects', async () => {
+    const rejection = new Error('compute failed')
+    mockedComputeEditDiff.mockRejectedValue(rejection)
+
+    const { result } = renderHook(() => useHistoryDiffToggle<number>((entry) => entry.seq))
+
+    const entry = makeEntry({ seq: 77 })
+
+    await act(async () => {
+      await result.current.handleToggleDiff(entry)
+    })
+
+    expect(mockedLoggerWarn).toHaveBeenCalledWith(
+      'useHistoryDiffToggle',
+      'computeEditDiff failed',
+      undefined,
+      rejection,
+    )
+    // Regression guard: existing toast.error behaviour preserved.
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to load diff')
   })
 })

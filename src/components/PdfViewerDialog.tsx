@@ -14,6 +14,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import * as pdfjsLib from 'pdfjs-dist'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { logger } from '../lib/logger'
 import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog'
 import { ScrollArea } from './ui/scroll-area'
@@ -57,8 +58,8 @@ export function PdfViewerDialog({
     if (renderTaskRef.current) {
       try {
         renderTaskRef.current.cancel()
-      } catch {
-        // Ignore cancel errors
+      } catch (err) {
+        logger.warn('PdfViewerDialog', 'render task cancel threw', undefined, err)
       }
       renderTaskRef.current = null
     }

@@ -14,6 +14,16 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { logger } from '@/lib/logger'
+
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
 
 // Mock pdfjs-dist before importing the component
 const mockRenderPromise = Promise.resolve()
@@ -463,5 +473,71 @@ describe('PdfViewerDialog', () => {
     // Listener should be unregistered — keypress must not throw or change state
     await user.keyboard('{ArrowRight}')
     expect(screen.queryByText('Page 2 / 5')).not.toBeInTheDocument()
+  })
+
+  it('FE-H-11: logs warning when render-task cancel throws', async () => {
+    const cancelError = new Error('cancel failed')
+    const cancelMock = vi.fn(() => {
+      throw cancelError
+    })
+
+    // The global test-setup stubs canvas.getContext to return null, which makes
+    // renderPage() bail before calling page.render(). Override locally so the
+    // render task is actually parked in renderTaskRef and the cancel path runs.
+    const originalGetContext = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = (() =>
+      ({}) as unknown) as typeof HTMLCanvasElement.prototype.getContext
+
+    try {
+      // The first navigation render hangs and parks a task in renderTaskRef whose
+      // cancel() throws; the next navigation triggers the catch on the cancel path.
+      let renderCallCount = 0
+      mockRender.mockImplementation(() => {
+        renderCallCount++
+        if (renderCallCount === 1) {
+          return {
+            promise: new Promise<void>(() => {}),
+            cancel: cancelMock,
+          }
+        }
+        return {
+          promise: Promise.resolve(),
+          cancel: vi.fn(),
+        }
+      })
+
+      const user = userEvent.setup()
+
+      render(
+        <PdfViewerDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          fileUrl="http://example.com/test.pdf"
+          filename="test.pdf"
+        />,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+      })
+
+      const nextBtn = screen.getByRole('button', { name: 'Next page' })
+      // First click: starts the (hanging) render that parks a task in renderTaskRef.
+      await user.click(nextBtn)
+      // Second click: next renderPage tries to cancel the parked task, which throws.
+      await user.click(nextBtn)
+
+      await waitFor(() => {
+        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+          'PdfViewerDialog',
+          'render task cancel threw',
+          undefined,
+          cancelError,
+        )
+      })
+      expect(cancelMock).toHaveBeenCalled()
+    } finally {
+      HTMLCanvasElement.prototype.getContext = originalGetContext
+    }
   })
 })

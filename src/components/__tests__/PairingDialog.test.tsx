@@ -24,6 +24,8 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { useIpcCommand } from '@/hooks/useIpcCommand'
+import { logger } from '@/lib/logger'
 import { announce } from '../../lib/announcer'
 import { PairingDialog } from '../PairingDialog'
 
@@ -38,6 +40,28 @@ vi.mock('react-qr-code', () => ({
 vi.mock('../../lib/announcer', () => ({
   announce: vi.fn(),
 }))
+
+// FE-H-12: capture logger.warn so we can assert the doInit() rejection path.
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
+
+// FE-H-12: spy-mock useIpcCommand so individual tests can swap in a rejecting
+// `executeInit` while leaving the hook's real behavior in place for everything
+// else (and for every other test in this file).
+vi.mock('@/hooks/useIpcCommand', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/hooks/useIpcCommand')>('@/hooks/useIpcCommand')
+  return {
+    ...actual,
+    useIpcCommand: vi.fn(actual.useIpcCommand),
+  }
+})
 
 vi.mock('../../stores/sync', () => ({
   useSyncStore: (selector: (s: Record<string, unknown>) => unknown) =>
@@ -1215,5 +1239,42 @@ describe('PairingDialog', () => {
     expect(announceMock).toHaveBeenCalledWith('Pairing countdown resumed')
 
     vi.useRealTimers()
+  })
+
+  // -----------------------------------------------------------------------
+  // FE-H-12: doInit().then(...) chain previously had no .catch, so any
+  // rejection bubbled up as an unhandled promise rejection. Assert the new
+  // `.catch` handler logs the failure via logger.warn instead.
+  // -----------------------------------------------------------------------
+  it('FE-H-12: logs warning when doInit rejects', async () => {
+    const initError = new Error('init boom')
+    const actualIpc =
+      await vi.importActual<typeof import('@/hooks/useIpcCommand')>('@/hooks/useIpcCommand')
+
+    // Swap useIpcCommand so the executeInit hook returns a rejecting execute,
+    // while every other useIpcCommand call (cancel/pair/unpair) returns a
+    // benign no-op execute. Restored in `finally` so subsequent tests in this
+    // file see the default (delegate-to-actual) implementation again.
+    vi.mocked(useIpcCommand).mockImplementation(((opts: { errorLogMessage: string }) => {
+      if (opts.errorLogMessage === 'Failed to initialize pairing') {
+        return { execute: () => Promise.reject(initError), loading: false }
+      }
+      return { execute: () => Promise.resolve(undefined), loading: false }
+    }) as unknown as typeof useIpcCommand)
+
+    try {
+      render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+      await waitFor(() => {
+        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+          'PairingDialog',
+          'init failed',
+          undefined,
+          initError,
+        )
+      })
+    } finally {
+      vi.mocked(useIpcCommand).mockImplementation(actualIpc.useIpcCommand)
+    }
   })
 })

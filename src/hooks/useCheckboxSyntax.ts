@@ -54,7 +54,10 @@ export function useCheckboxSyntax({
               })
           }
         })
-        .catch(() => toast.error(t('blockTree.setTaskStateFailed')))
+        .catch((err) => {
+          logger.error('useCheckboxSyntax', 'setTodoState failed', { focusedBlockId, state }, err)
+          toast.error(t('blockTree.setTaskStateFailed'))
+        })
       pageStore.setState((s) => ({
         blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, todo_state: state } : b)),
       }))
