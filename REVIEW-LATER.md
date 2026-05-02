@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Backend test code review — TEST-1 through TEST-31)
+> **Last updated:** 2026-05-02 (Frontend test code review — TEST-FE-1 through TEST-FE-8)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-54 open items.
+62 open items.
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -77,6 +77,14 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-29 | TEST | `create_50_blocks_paginate_through_all_verify_count` creates 50 blocks sequentially in a loop — could parallelize with `futures::join_all` | S | — |
 | TEST-30 | TEST | `now_rfc3339()` collision risk in `undo_redo_tests.rs` lines 1187, 1311, 1525 — siblings have sleep guards but these don't | S | — |
 | TEST-31 | TEST | MCP pagination roundtrip test asserts `!ids1.contains(id)` for no overlap but never sums lengths across pages to verify nothing is lost | S | — |
+| TEST-FE-1 | TEST | Bare `setTimeout` waits in tests (24 occurrences across 13 files; the dangerous subset is bare 50ms waits before `not.toHaveBeenCalledWith` negatives — `BlockTree.test.tsx`, `TagFilterPanel.test.tsx`, `useBlockTreeEventListeners.test.ts`, `GraphView.test.tsx`) — AGENTS.md explicitly forbids `await sleep(n)`; replace with `waitFor` or fake timers | M | — |
+| TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `BlockContextMenu` (19), `FormattingToolbar` (16), `useBlockKeyboardHandlers` (10), `GraphView` (8), `BlockPropertyEditor` (7), `HeadingLevelSelector` (7), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently | M | — |
+| TEST-FE-3 | TEST | `makeHistoryEntry` helper duplicated across `HistoryPanel.test.tsx` and `HistoryView.test.tsx` — move to `src/__tests__/fixtures/index.ts` | S | — |
+| TEST-FE-4 | TEST | `ViewDispatcher.test.tsx` Suspense-fallback test calls `vi.resetModules()` + `vi.doMock()` then unmocks at end of bare test body — assertion failure mid-test would leak module mocks to subsequent tests in the same worker | S | — |
+| TEST-FE-5 | TEST | `useBatchCounts` test fixture sets `displayDate === dateStr`, so a regression that keys `agendaCounts` by `displayDate` instead of `dateStr` would silently pass | S | — |
+| TEST-FE-6 | TEST | Local positional `makeBlock(id, content, ...)` helpers in `PageOutline`, `PageMetadataBar`, `PageEditor`, `TrashView` test files duplicate the shared `Partial<T>`-override factory — converge | S | — |
+| TEST-FE-7 | TEST | `AgendaResults.test.tsx` hardcodes `'2020-01-01'` as overdue marker (lines 320, 332) when file already imports `subDays` and uses dynamic `new Date()` for "today" | S | — |
+| TEST-FE-8 | TEST | `PairingDialog.test.tsx` uses `document.querySelector('.pairing-error')` for portal content (lines 314-318, 542-546, 850-854) — couples test to CSS class name; accessible queries preferred | S | — |
 
 ### Quick wins (S-cost, ready to grab)
 
@@ -666,6 +674,113 @@ Items in this section are test-quality improvements identified during a thorough
 - **Location:** `src-tauri/src/mcp/tools_ro/tests.rs:1007-1012`
 - **What:** Test asserts `!ids1.contains(id)` for no overlap between pages but doesn't sum `ids1.len() + ids2.len() + ids3.len()` and assert it equals the original total. A pagination bug that drops items would still pass.
 - **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+## TEST-FE — Frontend test improvements
+
+Items in this section are test-quality improvements identified during a thorough frontend test review (8 parallel review subagents covering 366 test files under `src/**/__tests__/`, 3 verification subagents to filter hallucinations, plus direct grep + spot-reads on cross-cutting patterns). All items below are verified — known false positives (e.g., axe audits the reviewer thought were missing because they only read the first 471 lines of a longer file) are not listed.
+
+> **Format:** test items use the compact L-style block. None of these are blocking; they are code-quality investments.
+
+### TEST-FE-1 — Bare `setTimeout` waits in tests as the only "wait" before negative assertions
+- **Domain:** Frontend test infrastructure
+- **Location:**
+  - `src/components/__tests__/BlockTree.test.tsx:1246, 3661, 3756, 3779, 3898, 4039, 4861` (7 bare 50ms waits before `not.toHaveBeenCalledWith` negatives)
+  - `src/components/__tests__/TagFilterPanel.test.tsx:945` (350ms wall-clock for debounce, with explicit comment "without fake timers")
+  - `src/hooks/__tests__/useBlockTreeEventListeners.test.ts:115` (50ms)
+  - `src/components/__tests__/GraphView.test.tsx:960` (0ms tick, bare)
+  - 9 additional sites where the same `await new Promise(r => setTimeout(r, N))` pattern appears (most legitimate, wrapped in `act(async)` per the React 19 timing convention)
+- **What:** `src/__tests__/AGENTS.md` lines 187, 254, 261 explicitly forbid `await sleep(n)` patterns in tests ("the flake only looks fixed"). 24 occurrences across 13 files; the dangerous subset is bare 50ms waits used as the only "wait" before `expect(invoke).not.toHaveBeenCalledWith(...)` negatives — a 50ms wait passes trivially if the side effect ever takes longer than 50ms, so the test cannot tell broken from slow.
+- **Why it matters:** Negative-assertion tests with bare timeouts give false confidence. Wall-clock waits for debounce (TagFilterPanel:945) waste 350ms per run and add cross-worker timing variance — pitfall #5 in AGENTS.md says exactly this.
+- **Cost:** S–M — for negative assertions, await an observable signal first (`await waitFor(() => expect(invoke).toHaveBeenCalledWith('positive_signal', ...))`) then assert absence of the negative one; for debounce, `vi.useFakeTimers()` + `vi.advanceTimersByTime()`. ~13 files to touch.
+- **Risk:** Low — converting wall-clock waits to deterministic `waitFor` strictly improves robustness.
+- **Impact:** Medium — eliminates an entire class of silent-pass holes.
+- **Status:** Open.
+
+### TEST-FE-2 — Weak `toHaveBeenCalled()` assertions in hot files
+- **Domain:** Frontend test infrastructure
+- **Location:**
+  - `src/components/__tests__/BlockContextMenu.test.tsx` (19 occurrences, e.g. lines 115–195: action handlers tested without verifying which block id they receive)
+  - `src/components/__tests__/FormattingToolbar.test.tsx` (16)
+  - `src/hooks/__tests__/useBlockKeyboardHandlers.test.ts` (10)
+  - `src/components/__tests__/GraphView.test.tsx` (8)
+  - `src/components/__tests__/BlockPropertyEditor.test.tsx` (7)
+  - `src/components/__tests__/HeadingLevelSelector.test.tsx` (7)
+  - `src/hooks/__tests__/useUndoShortcuts.test.ts` (6)
+  - `src/components/__tests__/UnlinkedReferences.test.tsx` (5)
+  - 175 total occurrences across 61 files (many legitimate "did fire at all"; high-frequency files most likely contain real cases)
+- **What:** `src/__tests__/AGENTS.md` line 582: "Meaningful assertions — `toHaveBeenCalledWith` with exact args, not just `toHaveBeenCalled`." In `BlockContextMenu.test.tsx:115–195`, 9 parallel "it calls X" tests verify the action handler fired but not which block id it received — a wrong-block regression would silently pass.
+- **Why it matters:** A documented quality standard. Concentration in hot files (action handlers, keyboard shortcuts) means real correctness regressions could slip through.
+- **Cost:** M — audit the 8 listed files (~88 occurrences) and tighten high-value cases to `toHaveBeenCalledWith(expect.objectContaining({...}))`. The remaining ~50 files are a separate pass.
+- **Risk:** Low — additive specificity in assertions.
+- **Impact:** Medium-high in the action-handler / keyboard-shortcut files.
+- **Status:** Open.
+
+### TEST-FE-3 — `makeHistoryEntry` factory duplicated across two test files
+- **Domain:** Frontend test fixtures
+- **Location:**
+  - `src/components/__tests__/HistoryPanel.test.tsx:38-51`
+  - `src/components/__tests__/HistoryView.test.tsx:46-60`
+  - Should live in `src/__tests__/fixtures/index.ts`
+- **What:** Both files define a near-identical `makeHistoryEntry(seq, opType, payload, createdAt?, deviceId?)` constructing mock op-log history entries. The HistoryView variant adds an optional `deviceId` parameter; otherwise identical (same fields, same defaults, same JSON-stringified `payload`).
+- **Why it matters:** `src/__tests__/AGENTS.md` line 225 explicitly says: "When the shared factory doesn't exist yet, add it to `fixtures/index.ts` rather than defining it locally — the next test file will need it too." Forthcoming undo / op-log inspector tests will likely use the same factory.
+- **Cost:** Trivial — one factory + signature in fixtures, two deletions.
+- **Risk:** Low — pure refactor.
+- **Impact:** Low — small maintainability win.
+- **Status:** Open.
+
+### TEST-FE-4 — `vi.resetModules()` + `vi.doMock()` without try/finally guard in ViewDispatcher test
+- **Domain:** Frontend test infrastructure
+- **Location:** `src/components/__tests__/ViewDispatcher.test.tsx:167-213`
+- **What:** The Suspense-fallback test calls `vi.resetModules()` (line 167) and `vi.doMock('../StatusPanel', …)` / `vi.doMock('../JournalPage', …)` (lines 174–180), then unmocks at lines 211–212 in the bare test body. If any assertion between 195 and 209 fails, the unmocks never run, the module registry stays poisoned, and subsequent tests in the same worker that import `StatusPanel` / `JournalPage` see the deferred-import mocks.
+- **Why it matters:** Vitest's per-test isolation does not cover the dynamic module registry — it covers spies / mocked return values via `vi.clearAllMocks`, not `vi.doMock` calls. A flaky failure mid-test would corrupt the worker's module state and propagate failures.
+- **Cost:** Trivial — wrap the body in `try { ... } finally { vi.doUnmock('../StatusPanel'); vi.doUnmock('../JournalPage') }`.
+- **Risk:** Low.
+- **Impact:** Low (rarely triggers, but eliminates a real flake source when it does).
+- **Status:** Open.
+
+### TEST-FE-5 — `useBatchCounts` agendaCounts assertion can't distinguish `dateStr` vs `displayDate` key contract
+- **Domain:** Frontend test infrastructure
+- **Location:** `src/hooks/__tests__/useBatchCounts.test.ts:32-52`
+- **What:** The `makeDayEntry` fixture sets `displayDate === dateStr`. The hook contract is "`agendaCounts` is keyed by `dateStr`" (canonical date), but the test would also pass if a refactor accidentally changed it to use `displayDate` (timezone-formatted) — because they're the same value in the fixture. The two fields exist precisely to differ.
+- **Why it matters:** A real contract regression (hook switching to display-date as the cache key) would silently pass — exactly the silent-pass class AGENTS.md flags.
+- **Cost:** Trivial — make `displayDate` differ from `dateStr` in at least one fixture row, OR add `expect(Object.keys(result.current.agendaCounts)).toEqual(['2025-01-06', '2025-01-07'])`.
+- **Risk:** Low.
+- **Impact:** Low–medium — locks down the cache-key contract.
+- **Status:** Open.
+
+### TEST-FE-6 — Local positional `makeBlock` helpers duplicate the shared `Partial<T>`-override factory
+- **Domain:** Frontend test fixtures
+- **Location:**
+  - `src/components/__tests__/PageOutline.test.tsx:34-51`
+  - `src/components/__tests__/PageMetadataBar.test.tsx:21-35`
+  - `src/components/__tests__/PageEditor.test.tsx:115-130`
+  - `src/components/__tests__/TrashView.test.tsx:51-70`
+- **What:** Four files define their own positional `makeBlock(id, content, ...)` helper that fully reconstructs a `FlatBlock`/`BlockRow` rather than spreading on top of the shared factory. They don't add component-specific fields — they're just positional-arg sugar over the shared `makeBlock`.
+- **Why it matters:** AGENTS.md line 225 endorses the shared `Partial<T>`-override pattern. Picking one approach (positional-arg shared helper OR named-override shared helper) reduces drift in defaults — a future field added to `FlatBlock` must currently be added to four local copies, and divergence is invisible at the call site.
+- **Cost:** Small — either inline `makeBlock({ id, content, parent_id: 'PAGE_1' })` at each call site, or add positional-arg variants to `fixtures/index.ts`.
+- **Risk:** Low.
+- **Impact:** Low — consistency and reduced drift surface.
+- **Status:** Open.
+
+### TEST-FE-7 — `AgendaResults.test.tsx` hardcoded `'2020-01-01'` overdue marker
+- **Domain:** Frontend test infrastructure
+- **Location:** `src/components/__tests__/AgendaResults.test.tsx:320, 332`
+- **What:** Two test cases hardcode `'2020-01-01'` as an overdue date marker. The date will always be in the past, so the test isn't actually flaky — but the file already imports `subDays` from `date-fns` and uses dynamic `new Date()` for the "today" row. A relative date (`format(subDays(new Date(), 30), 'yyyy-MM-dd')`) would express intent more clearly and match the rest of the file's style.
+- **Why it matters:** Mixing hardcoded-and-dynamic dates in the same test file is a small clarity tax. Consistency would make future date-relative refactors safer.
+- **Cost:** Trivial — 2-line change.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Status:** Open.
+
+### TEST-FE-8 — `PairingDialog.test.tsx` uses `document.querySelector('.pairing-error')` for portal content
+- **Domain:** Frontend test infrastructure
+- **Location:** `src/components/__tests__/PairingDialog.test.tsx:314-318, 542-546, 850-854`
+- **What:** Three sites use `document.querySelector('.pairing-error')` to reach error content rendered inside a Radix Portal (outside the React tree). This works (the Portal escapes the React tree, `document.querySelector` reaches it) but couples the test to the CSS class name.
+- **Why it matters:** Per AGENTS.md, accessible queries (`screen.findByText(...)` / `findByRole('alert')`) are preferred. They survive a class-name refactor and express intent better. Worth a quick check that each `.pairing-error` element exposes a stable accessible role/text first — if not, a one-line attribute add to the production component is the right precondition.
+- **Cost:** Small — verify accessible-name surface, then swap selectors.
 - **Risk:** Low.
 - **Impact:** Low.
 - **Status:** Open.
