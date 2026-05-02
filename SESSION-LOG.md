@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 610 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 924+ items.
+**Sessions:** 1 – 611 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 926+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 611 (2026-05-02)** — Batch QUICK-WINS-3 closed: MAINT-171, TEST-7 — two S-cost backend cleanups left mid-flight by the previous agent (resumed and finished). MAINT-171 extracted a private `set_recurrence_property` helper in `recurrence/compute.rs` to dedupe the `let (_, op) = set_property_in_tx(...).await?; op_records.push(op);` pattern repeated at 8 property-write call sites in `handle_recurrence_in_tx` (8 sites → 8 one-liners; production behaviour unchanged, all 43 recurrence-related tests pass). TEST-7 added two contract-level tests in `reverse/tests.rs` pinning AGENTS.md "Undo/reverse testing" invariants at the `revert_ops_inner` boundary: (a) batch-ordering is newest-first by `(created_at DESC, seq DESC)` — three `SetProperty` ops with identical `created_at` reverse strictly seq-descending; (b) op_log is append-only — count increases by exactly 1 per input and the original `(device_id, seq)` row remains. Orchestrator-only finish: no new subagents launched (work was already in working tree).
 - **Session 610 (2026-05-02)** — Batch TEST-IMPROVEMENTS-1 closed: TEST-2, TEST-12, TEST-14, TEST-19, TEST-29 — five S-cost backend test-quality items. TEST-2 replaced 3 inequality assertions with exact counts (`bg == 7` via 6 dispatched tasks + 1 Barrier; `entries.len() == 5` weekly projection across `[today, today+28]`; `draft_errors.len() == 2` from dropped `op_log` + BEFORE-DELETE trigger). TEST-12 snapshots the full `OpRecord` pre-fork-detection via a test-local `OpRecordSnapshot` projection (no production `PartialEq` added). TEST-14 added `list_blocks_inner_isolates_blocks_by_space_id` exercising the IPC boundary with 2 Personal + 2 Work pages. TEST-19 strengthened 4 MCP weak-shape assertions (GroupedBacklinkResponse 4-field contract, PageResponse 3-field contract, `error.message.contains("Not found"/"Validation error")` substring checks). TEST-29 parallelized 50 sequential block creates via `futures_util::future::try_join_all`. All 5 reviews PASS; 10/10 targeted tests pass.
 - **Session 609 (2026-05-02)** — Batch PERF-CLUSTER-1 closed: PERF-24, PERF-25, PERF-26, PERF-27, PERF-28 — five S-cost performance items, each with an existing reference implementation to mirror (block_links json_each, lease.rs key-IN batch, gcal_push/api shared_client, pagination/properties dynamic-operator SQL, TagFilterPanel debounce). All 5 reviews PASS (PERF-28 CONDITIONAL PASS, follow-up FE-L-15 filed for the unstable-object return in `useDebouncedCallback`). Also cleaned 4 stale Quick-wins bullets (MAINT-179/182/187/188, PERF-23 — already resolved in earlier sessions).
 - **Session 608 (2026-05-02)** — Batch QUICK-WINS-2 closed: PERF-29, M-96, FE-H-18, TEST-9, TEST-20 — five trivial mixed front/back cleanups (cache eviction batched slice, COUNT-query error logging via `inspect_err`, slash-command auto-execute destroyed-view guard + try/catch, sync materialization verification, sync file-transfer skipped-counter assertions). All 5 reviews PASS; TEST-9 flake-check 5/5; TEST-9 flush needed both `flush_foreground` + `flush_background` (originally spec'd only the background).
@@ -41,6 +42,48 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 611 — Batch QUICK-WINS-3: resume mid-flight backend cleanups (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | orchestrator-only (resumed work the previous agent left in the working tree) |
+| **Items closed** | MAINT-171, TEST-7 |
+| **Items modified** | — |
+| **Tests added** | +2 backend (`reverse/tests.rs::revert_ops_returns_results_newest_first_by_created_at_desc_seq_desc`, `reverse/tests.rs::revert_ops_appends_reverse_op_without_mutating_original`) |
+| **Files touched** | 5 (1 Rust source + 1 Rust test + 1 new `.sqlx/` cache entry + REVIEW-LATER + SESSION-LOG) |
+
+**Summary:** Resumed and finished work the previous agent had partially staged in the working tree (`recurrence/compute.rs` + `reverse/tests.rs`). MAINT-171 extracted a private `set_recurrence_property(tx, device_id, block_id, key, value_text, value_num, value_date, value_ref, op_records: &mut Vec<OpRecord>)` wrapper over `set_property_in_tx` in `recurrence/compute.rs`, collapsing the `let (_, op) = …; op_records.push(op);` pattern that was repeated at 8 property-write call sites inside `handle_recurrence_in_tx` (TODO state, copy `repeat`, shifted `due_date`, shifted `scheduled_date`, copy `repeat-until`, copy `repeat-count`, incremented `repeat-seq`, set `repeat-origin`). Helper is module-private because the recurrence flow is the only caller that needs the exact "discard the returned `BlockRow`, append the op to a local vec" shape; production behaviour and op-emission ordering are unchanged. TEST-7 added two contract-level tests pinning AGENTS.md "Undo/reverse testing" invariants at the `revert_ops_inner` boundary (the function the Undo stack actually calls).
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 137 → 135 (−2 — both items were in summary; the existing summary text said `136` but the actual table count was `137`, so the displayed count drops 136 → 135).
+- **Detail entries:** 169 → 167 (−2).
+- **Previously-resolved counter:** 924+ → 926+ across 610 → 611 sessions.
+
+**Per-item verification:**
+- **MAINT-171** (`recurrence/compute.rs`): 8 `let (_, op) = set_property_in_tx(...).await?; op_records.push(op);` blocks → 8 `set_recurrence_property(...).await?;` one-liners. The new helper is `async fn` with `#[allow(clippy::too_many_arguments)]` (mirrors `set_property_in_tx`'s own arg count). Doc-comment captures why it's module-private (only caller is `handle_recurrence_in_tx`; discards `BlockRow`, appends to a caller-provided `Vec<OpRecord>`). 43 recurrence tests pass, including the property-emission counts in `handle_recurrence_copies_properties_to_sibling`, `handle_recurrence_repeat_count_stops_when_exhausted`, `handle_recurrence_sets_repeat_origin_on_sibling`, plus the `tests_h17_m77` atomicity tests. No SQL change → `.sqlx/` unaffected (the only new cache entry is from TEST-7).
+- **TEST-7** (`reverse/tests.rs:1543-1728`): two new tests added below the existing `compute_reverse_restore_discards_deleted_at_ref_m71` block, with a 23-line block comment up front explaining the rationale and why `reverse/tests.rs` (not `commands/tests/undo_redo_tests.rs`) is the right home for these (bare-pool idiom; `append_local_op_at` + direct `op_log` SQL; no Materializer command-stack dependency). Test (a) creates 3 `SetProperty` ops with distinct keys and the same `FIXED_TS`, asserts ascending auto-assigned seqs as a precondition, then passes them to `revert_ops_inner` in oldest-first order and asserts the result vector is in strict seq-descending order — proving the `(created_at DESC, seq DESC)` predicate. Test (b) appends a single `SetProperty`, snapshots `COUNT(*)` from `op_log` where `device_id = TEST_DEVICE`, calls `revert_ops_inner` once, then asserts `count_after == count_before + 1` AND the original `(device_id, seq)` row is still present. Both tests use `compute_reverse`'s natural fallback path: `SetProperty` with no prior set_property for `(block_id, key)` returns a bare `DeleteProperty`, which `apply_reverse_in_tx` executes idempotently with no `blocks` FK dependency — no seed row is required. New `.sqlx/` cache entry: `query-b5e42ef…json` (`SELECT COUNT(*) FROM op_log WHERE device_id = ?`) added by the `query_scalar!` macros in test (b).
+
+**Files touched (this session):**
+- `src-tauri/src/recurrence/compute.rs` (+32 / -16 — new `set_recurrence_property` helper + 8 call-site rewrites)
+- `src-tauri/src/reverse/tests.rs` (+187 — TEST-7 block comment + 2 tests)
+- `src-tauri/.sqlx/query-b5e42ef16f22e80a33bebd34257a901e445edb885a2b9eeaf85229ed64e14d48.json` (new — `SELECT COUNT(*) FROM op_log WHERE device_id = ?`)
+- `REVIEW-LATER.md` (net shrink — 2 detail blocks + 2 summary rows + 1 Quick-wins bullet removed; header counts updated)
+- `SESSION-LOG.md` (this entry + Recent milestones bump)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run -E 'test(/revert_ops/) | test(/recurrence/)'` — **52 tests run, 52 passed, 3348 skipped** (9 `revert_ops_*` + 43 `recurrence` / `handle_recurrence_*` / `tests_h17_m77` / `tests_l99_l100`).
+- `cd src-tauri && cargo nextest run` — **3400 tests run, 3400 passed, 3 skipped** (full backend suite).
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **Resume-only mission.** The working tree already contained a complete, locally-passing implementation of both items — the only remaining work was full-suite verification, REVIEW-LATER bookkeeping, and the SESSION-LOG entry. No subagents were launched; the orchestrator finished the session in a single pass after verifying compilation and full-suite tests.
+- **Test homing decision.** TEST-7's two tests live in `reverse/tests.rs` rather than `commands/tests/undo_redo_tests.rs` because the latter exercises the full command stack (`create_block_inner` / `edit_block_inner` / `Materializer`) while these contract tests need to pin invariants at the `revert_ops_inner` boundary using the bare-pool idiom that dominates `reverse/tests.rs` — a regression in the sort predicate or the append contract surfaces here even if the command-layer tests drift.
+
+**Commit plan:** single commit, not pushed.
 
 ---
 

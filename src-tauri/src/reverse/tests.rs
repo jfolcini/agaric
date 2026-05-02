@@ -1539,3 +1539,194 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
          the new behaviour."
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// TEST-7 — AGENTS.md "Undo/reverse testing" invariants
+//
+// Pins two contract-level properties of the batch reverse path
+// (`revert_ops_inner` in `commands/history.rs` — the function the
+// Undo stack actually calls; `compute_reverse` is its single-op
+// building block):
+//
+//   (a) batch-ordering is newest-first by (created_at DESC, seq DESC)
+//       — the tie-break on `seq` when `created_at` is identical must
+//       hold so a local burst of ops reverses in LIFO order;
+//   (b) the op_log is append-only (invariant #1): a revert appends
+//       exactly one new op per input and leaves the original row
+//       untouched.
+//
+// Both behaviours are already exercised end-to-end by tests in
+// `commands/tests/undo_redo_tests.rs`, but those tests cover the
+// full command stack (create_block_inner / edit_block_inner /
+// Materializer). The two tests below pin the same invariants at
+// this module's level using the bare-pool idioms that dominate
+// `reverse/tests.rs` (`append_local_op_at` + direct `op_log` SQL),
+// so a regression in the sort predicate or the append contract
+// surfaces here even if the command-layer tests drift.
+// ──────────────────────────────────────────────────────────────────────
+
+/// TEST-7 (a): batch-ordering is newest-first by (created_at DESC,
+/// seq DESC). Three ops on the same device share an identical
+/// `created_at`, so the tie-break falls entirely on `seq`. Passing
+/// them oldest-first must yield results in strict seq-descending
+/// order.
+#[tokio::test]
+async fn revert_ops_returns_results_newest_first_by_created_at_desc_seq_desc() {
+    use crate::commands::revert_ops_inner;
+    use crate::materializer::Materializer;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Three SetProperty ops on the same block with distinct keys
+    // and the same `created_at`. Each has no prior set_property for
+    // its (block, key) pair, so `compute_reverse` returns a bare
+    // `DeleteProperty` — `apply_reverse_in_tx` executes an idempotent
+    // DELETE with no FK dependency on `blocks`, so no seed row is
+    // required.
+    let block_id = BlockId::test_id("BLK_BATCH");
+    let mk = |key: &str| {
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: block_id.clone(),
+            key: key.into(),
+            value_text: Some("v".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        })
+    };
+    let rec1 = append_op(&pool, mk("k1"), FIXED_TS).await;
+    let rec2 = append_op(&pool, mk("k2"), FIXED_TS).await;
+    let rec3 = append_op(&pool, mk("k3"), FIXED_TS).await;
+
+    // Sanity: all three share the timestamp (so the sort degenerates
+    // to seq DESC) and the auto-assigned seqs are strictly
+    // ascending (so a newest-first result is unambiguously
+    // distinguishable from insertion order).
+    assert_eq!(rec1.created_at, FIXED_TS);
+    assert_eq!(rec2.created_at, FIXED_TS);
+    assert_eq!(rec3.created_at, FIXED_TS);
+    assert!(
+        rec1.seq < rec2.seq && rec2.seq < rec3.seq,
+        "append_local_op_at must assign ascending seqs; got {}, {}, {}",
+        rec1.seq,
+        rec2.seq,
+        rec3.seq
+    );
+
+    // Pass the ops in oldest-first order; the batch must re-sort
+    // internally before applying.
+    let results = revert_ops_inner(
+        &pool,
+        TEST_DEVICE,
+        &mat,
+        vec![
+            OpRef {
+                device_id: TEST_DEVICE.into(),
+                seq: rec1.seq,
+            },
+            OpRef {
+                device_id: TEST_DEVICE.into(),
+                seq: rec2.seq,
+            },
+            OpRef {
+                device_id: TEST_DEVICE.into(),
+                seq: rec3.seq,
+            },
+        ],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(results.len(), 3, "one result per input op");
+    assert_eq!(
+        results[0].reversed_op.seq, rec3.seq,
+        "newest op (highest seq with identical created_at) must be reversed first"
+    );
+    assert_eq!(
+        results[1].reversed_op.seq, rec2.seq,
+        "middle op must be reversed second"
+    );
+    assert_eq!(
+        results[2].reversed_op.seq, rec1.seq,
+        "oldest op (lowest seq) must be reversed last"
+    );
+}
+
+/// TEST-7 (b): op_log is append-only (invariant #1). Reverting one
+/// op must append exactly one new op to the log and leave the
+/// original row untouched.
+#[tokio::test]
+async fn revert_ops_appends_reverse_op_without_mutating_original() {
+    use crate::commands::revert_ops_inner;
+    use crate::materializer::Materializer;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // A single SetProperty. Its reverse is `DeleteProperty` (no
+    // prior for this block/key), which applies cleanly without a
+    // seeded block row — see the TEST-7 (a) note above.
+    let rec = append_op(
+        &pool,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("BLK_APPEND"),
+            key: "tag".into(),
+            value_text: Some("start".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        }),
+        FIXED_TS,
+    )
+    .await;
+
+    let count_before: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log WHERE device_id = ?",
+        TEST_DEVICE
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    revert_ops_inner(
+        &pool,
+        TEST_DEVICE,
+        &mat,
+        vec![OpRef {
+            device_id: TEST_DEVICE.into(),
+            seq: rec.seq,
+        }],
+    )
+    .await
+    .unwrap();
+
+    let count_after: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log WHERE device_id = ?",
+        TEST_DEVICE
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count_after,
+        count_before + 1,
+        "revert_ops_inner must append exactly one reverse op to op_log"
+    );
+
+    // The original row (same (device_id, seq)) must still exist —
+    // the op_log is strictly append-only (AGENTS.md invariant #1).
+    let original_still_present: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND seq = ?",
+        TEST_DEVICE,
+        rec.seq,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        original_still_present, 1,
+        "original op (device_id={TEST_DEVICE}, seq={}) must remain in op_log after revert",
+        rec.seq
+    );
+}
