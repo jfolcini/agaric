@@ -154,6 +154,14 @@ pub fn check_attachment_fs_path_shape(fs_path: &str) -> Result<(), AppError> {
 /// quarantined path), the entry is classified as missing — the most
 /// defensive choice per AGENTS.md's "preventing accidental corruption"
 /// framing, and ensures a re-request rather than a silent skip.
+///
+/// L-60: `NotFound` is the expected case (file genuinely absent) and
+/// is logged at debug level only via the resulting re-request flow.
+/// Any other error kind (`PermissionDenied`, `NotADirectory`,
+/// `Other` for EBUSY, …) on the app's own data dir is an ops signal
+/// — antivirus quarantine, sandbox denial, read-only remount — and
+/// is logged at warn level so it surfaces in diagnostics. The entry
+/// is still classified as missing for sync correctness either way.
 pub async fn find_missing_attachments(
     pool: &SqlitePool,
     app_data_dir: &Path,
@@ -190,7 +198,23 @@ pub async fn find_missing_attachments(
                     missing.push(MissingAttachment { id, fs_path });
                 }
             }
-            Err(_) => {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(MissingAttachment { id, fs_path });
+            }
+            Err(e) => {
+                // L-60: surface non-NotFound errors as a warning instead of
+                // silently treating them as missing. EACCES/EBUSY/ENOTDIR on
+                // the app's own data dir indicate antivirus quarantine,
+                // sandbox denial, or a read-only remount — useful ops signal.
+                // Behaviour is preserved: still classified as missing so the
+                // next sync re-requests the file rather than skipping it.
+                tracing::warn!(
+                    attachment_id = %id,
+                    path = %full_path.display(),
+                    error_kind = ?e.kind(),
+                    error = %e,
+                    "L-60: non-NotFound metadata error; treating as missing for sync correctness"
+                );
                 missing.push(MissingAttachment { id, fs_path });
             }
         }

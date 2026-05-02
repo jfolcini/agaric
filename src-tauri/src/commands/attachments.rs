@@ -37,10 +37,10 @@ use super::*;
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
-/// - [`AppError::Validation`] — size exceeds 50 MB or MIME type not allowed
+/// - [`AppError::Validation`] — size exceeds 50 MB, MIME type not allowed,
+///   or `metadata.len()` disagrees with the IPC-supplied `size_bytes`
 /// - [`AppError::Io`] — `fs_path` does not resolve to a file under
-///   `app_data_dir` (or `metadata.len()` disagrees with `size_bytes` in
-///   debug builds)
+///   `app_data_dir`
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(pool, device_id, materializer, app_data_dir, fs_path), err)]
 pub async fn add_attachment_inner(
@@ -120,14 +120,13 @@ pub async fn add_attachment_inner(
     // to the row insert.
     let full_path = app_data_dir.join(&fs_path);
     let metadata = std::fs::metadata(&full_path)?;
-    debug_assert_eq!(
-        i64::try_from(metadata.len()).unwrap_or(i64::MAX),
-        size_bytes,
-        "attachment fs metadata size ({}) does not match declared size_bytes ({}) for {}",
-        metadata.len(),
-        size_bytes,
-        full_path.display(),
-    );
+    let on_disk_len = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
+    if on_disk_len != size_bytes {
+        return Err(AppError::Validation(format!(
+            "attachment size mismatch: expected {size_bytes} bytes, on disk is {} bytes",
+            metadata.len()
+        )));
+    }
 
     // Append to op_log within transaction
     let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;

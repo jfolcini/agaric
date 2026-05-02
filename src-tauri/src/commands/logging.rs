@@ -16,28 +16,19 @@ pub(crate) const MAX_FRONTEND_LOG_FIELD_BYTES: usize = 64 * 1024;
 
 /// Truncate a single frontend log field to [`MAX_FRONTEND_LOG_FIELD_BYTES`].
 ///
-/// The pattern mirrors `bug_report::redact_line` (`bug_report.rs:213-224`):
+/// Delegates to [`crate::text_utils::truncate_at_char_boundary`] (L-59):
 /// preserve the head of the field, append a `…[truncated N bytes]`
 /// marker, and split on a UTF-8 char boundary so the cut never lands
-/// inside a multibyte codepoint.
+/// inside a multibyte codepoint. The marker wording is owned here so
+/// `bug_report::cap_line_length` can use a different one without
+/// disturbing existing log output.
 ///
 /// Returns the input unchanged when its length is at or below the cap
 /// — no allocation in the common case.
 pub(crate) fn truncate_log_field(s: String) -> String {
-    if s.len() <= MAX_FRONTEND_LOG_FIELD_BYTES {
-        return s;
-    }
-    let extra = s.len() - MAX_FRONTEND_LOG_FIELD_BYTES;
-    let mut cut = MAX_FRONTEND_LOG_FIELD_BYTES;
-    let mut s = s;
-    // Walk backwards to the nearest UTF-8 char boundary so `truncate`
-    // never panics on a multibyte codepoint.
-    while !s.is_char_boundary(cut) && cut > 0 {
-        cut -= 1;
-    }
-    s.truncate(cut);
-    s.push_str(&format!("…[truncated {extra} bytes]"));
-    s
+    crate::text_utils::truncate_at_char_boundary(s, MAX_FRONTEND_LOG_FIELD_BYTES, |extra| {
+        format!("…[truncated {extra} bytes]")
+    })
 }
 
 fn truncate_optional_log_field(s: Option<String>) -> Option<String> {

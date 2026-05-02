@@ -2662,6 +2662,72 @@ async fn add_attachment_validates_mime_type() {
     mat.shutdown();
 }
 
+/// L-56: `add_attachment_inner` must reject a `size_bytes` that disagrees
+/// with the on-disk file's `metadata.len()` in *all* builds (previously
+/// only checked via `debug_assert_eq!`, which compiled out in release).
+/// The mismatch surfaces as `AppError::Validation` and the IMMEDIATE
+/// transaction rolls back so no row is committed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_size_mismatch_returns_validation_error() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "hello".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    // Write a 32-byte file but tell `add_attachment_inner` it is 64 bytes.
+    // Both values are well under MAX_ATTACHMENT_SIZE and use an allowed
+    // MIME, so the only failure path here is the size-mismatch guard.
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    let rel_path = "attachments/mismatch.png";
+    std::fs::write(app_data_dir.join(rel_path), vec![0u8; 32]).unwrap();
+
+    let result = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "mismatch.png".into(),
+        "image/png".into(),
+        64, // declared, not the actual on-disk size
+        rel_path.into(),
+    )
+    .await;
+
+    match result {
+        Err(AppError::Validation(msg)) => {
+            assert!(
+                msg.contains("size mismatch") && msg.contains("64") && msg.contains("32"),
+                "error message must report both declared and on-disk sizes: {msg}"
+            );
+        }
+        other => panic!("expected AppError::Validation for size mismatch, got: {other:?}"),
+    }
+
+    // Rollback: no attachment row may be committed when the guard trips.
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "size-mismatch failure must not leave an attachment row"
+    );
+
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_attachments_returns_for_block() {
     let (pool, _dir) = test_pool().await;
