@@ -147,8 +147,12 @@ export const conflicts: Record<string, string> = {
   'trash.emptyTrashButton': 'Empty trash',
   'trash.restoreAllHeaderButton': 'Restore all',
   'trash.emptyTrashTitle': 'Empty trash?',
-  'trash.emptyTrashDescription':
-    'This will permanently delete all items in the trash. This cannot be undone.',
+  'trash.emptyTrashDescription_one': 'Permanently delete {{count}} item? This cannot be undone.',
+  'trash.emptyTrashDescription_other': 'Permanently delete {{count}} items? This cannot be undone.',
+  'trash.emptyTrashDescriptionPaginated_one':
+    'Permanently delete every trashed item ({{count}} loaded, more available)? This cannot be undone.',
+  'trash.emptyTrashDescriptionPaginated_other':
+    'Permanently delete every trashed item ({{count}} loaded, more available)? This cannot be undone.',
   'trash.restoreAllTitle': 'Restore all items?',
   'trash.restoreAllDescription':
     'This will restore all items from the trash to their original locations.',

@@ -1129,11 +1129,75 @@ describe('TrashView', () => {
     await user.click(emptyTrashBtn)
 
     expect(screen.getByText('Empty trash?')).toBeInTheDocument()
+    // UX-341: dialog description shows the count of trashed items.
+    expect(
+      screen.getByText('Permanently delete 1 item? This cannot be undone.'),
+    ).toBeInTheDocument()
+  })
+
+  // UX-341: confirmation dialog shows the count of items that will be purged.
+  it('UX-341: empty-trash dialog uses singular form when 1 item is loaded', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([makeBlock('B1', 'only item', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    await screen.findByText('only item')
+    await user.click(screen.getByTestId('trash-empty-trash-btn'))
+
+    expect(
+      screen.getByText('Permanently delete 1 item? This cannot be undone.'),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('Permanently delete 1 items? This cannot be undone.'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('UX-341: empty-trash dialog uses plural form when multiple items are loaded', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([
+      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+      makeBlock('B3', 'item 3', '2025-01-13T00:00:00Z'),
+    ])
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-empty-trash-btn'))
+
+    expect(
+      screen.getByText('Permanently delete 3 items? This cannot be undone.'),
+    ).toBeInTheDocument()
+  })
+
+  // UX-341: when more pages remain, the dialog must NOT claim a precise count
+  // (purge_all_deleted ignores pagination and wipes everything in trash).
+  it('UX-341: empty-trash dialog uses paginated copy when more pages remain', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve(
+      [
+        makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
+        makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+      ],
+      true, // hasMore = true
+    )
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-empty-trash-btn'))
+
+    // Paginated copy makes clear we're purging everything, not just the loaded set.
     expect(
       screen.getByText(
-        'This will permanently delete all items in the trash. This cannot be undone.',
+        'Permanently delete every trashed item (2 loaded, more available)? This cannot be undone.',
       ),
     ).toBeInTheDocument()
+    // The non-paginated copy must NOT appear, since it would understate the purge.
+    expect(
+      screen.queryByText('Permanently delete 2 items? This cannot be undone.'),
+    ).not.toBeInTheDocument()
   })
 
   it('calls purgeAllDeleted on Empty Trash confirmation', async () => {

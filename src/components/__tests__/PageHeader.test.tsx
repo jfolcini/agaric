@@ -85,6 +85,7 @@ import { toast } from 'sonner'
 import { announce } from '../../lib/announcer'
 
 const mockedToastError = vi.mocked(toast.error)
+const mockedToastSuccess = vi.mocked(toast.success)
 const mockedAnnounce = vi.mocked(announce)
 
 beforeEach(() => {
@@ -289,6 +290,72 @@ describe('PageHeader title editing', () => {
         toText: 'Entered Title',
       })
     })
+  })
+
+  // UX-360 — successful rename surfaces a user-visible toast for sighted
+  // users without screen readers, in addition to the existing aria-live
+  // announcement (regression-guarded below).
+  it('fires toast.success with localised text on successful rename', async () => {
+    const user = userEvent.setup()
+    setupTagMock([])
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Old Title" />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+
+    await user.clear(titleEl)
+    await user.type(titleEl, 'Renamed Title')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalledWith('Page renamed')
+    })
+    // Existing aria-live announcement still fires alongside the toast.
+    expect(mockedAnnounce).toHaveBeenCalledWith('Page renamed')
+  })
+
+  // UX-360 — a no-change blur (title unchanged) must be silent.
+  it('does not fire toast.success when blur leaves the title unchanged', async () => {
+    const user = userEvent.setup()
+    setupTagMock([])
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Same Title" />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+
+    // Focus and blur without changing anything.
+    titleEl.focus()
+    await user.tab()
+
+    expect(mockedToastSuccess).not.toHaveBeenCalled()
+    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+  })
+
+  // UX-360 — a failed rename must not surface a spurious success toast;
+  // the existing error path (toast.error) is exercised separately.
+  it('does not fire toast.success when the rename IPC rejects', async () => {
+    const user = userEvent.setup()
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'edit_block') throw new Error('backend error')
+      if (cmd === 'get_page_aliases') return []
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Original Title" />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+
+    await user.clear(titleEl)
+    await user.type(titleEl, 'Doomed Title')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to rename page')
+    })
+    expect(mockedToastSuccess).not.toHaveBeenCalled()
   })
 })
 
@@ -1647,8 +1714,6 @@ describe('PageHeader UX-198 header outlet migration', () => {
 // be nested inside other spaces).
 
 describe('PageHeader Move to space (FEAT-3 Phase 2)', () => {
-  const mockedToastSuccess = vi.mocked(toast.success)
-
   /** Install an invoke mock that returns a page owned by `spaceId`. */
   function setupPageWithSpace(
     spaceId: string,

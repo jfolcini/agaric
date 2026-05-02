@@ -11,6 +11,7 @@
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import {
   Select,
   SelectContent,
@@ -103,12 +104,19 @@ export function AppearanceTab(): React.ReactElement {
   // and underlying localStorage key are typed `0 | 1`. We accept only
   // `'0'` and `'1'` and ignore anything else (defensive — the Select
   // can only emit values from the items we render).
+  // UX-329 — surface a toast so the change is not silent; the only
+  // other visible cue today is calendar grids re-laying out.
   const handleWeekStartChange = useCallback(
     (value: string) => {
-      if (value === '0') setWeekStart(0)
-      else if (value === '1') setWeekStart(1)
+      if (value === '0') {
+        setWeekStart(0)
+        toast.success(t('settings.weekStartUpdated', { day: t('settings.weekStartSunday') }))
+      } else if (value === '1') {
+        setWeekStart(1)
+        toast.success(t('settings.weekStartUpdated', { day: t('settings.weekStartMonday') }))
+      }
     },
-    [setWeekStart],
+    [setWeekStart, t],
   )
 
   return (

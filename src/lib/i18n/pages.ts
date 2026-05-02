@@ -54,6 +54,7 @@ export const pages: Record<string, string> = {
   'pageHeader.undoFailed': 'Undo failed',
   'pageHeader.redone': 'Redone',
   'pageHeader.redoFailed': 'Redo failed',
+  'pageHeader.pageRenamed': 'Page renamed',
   'pageHeader.renameFailed': 'Failed to rename page',
   'pageHeader.aliases': 'Also known as:',
   'pageHeader.aliasUpdateFailed': 'Failed to update aliases',

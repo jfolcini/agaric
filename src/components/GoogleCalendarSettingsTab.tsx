@@ -217,6 +217,9 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
       setWindowInput(String(n))
       setStatus((s) => (s === null ? s : { ...s, window_days: n }))
     },
+    onSuccess: () => {
+      toast.success(t('gcal.windowUpdated'))
+    },
     onError: () => {
       toast.error(t('gcal.windowFailed'))
       void loadStatus()
