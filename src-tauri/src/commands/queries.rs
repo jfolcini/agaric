@@ -33,7 +33,7 @@ pub async fn get_backlinks_inner(
     cursor: Option<String>,
     limit: Option<i64>,
     space_id: Option<String>,
-) -> Result<PageResponse<BlockRow>, AppError> {
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let page = pagination::PageRequest::new(cursor, limit)?;
     pagination::list_backlinks(pool, &block_id, &page, space_id.as_deref()).await
 }
@@ -294,7 +294,7 @@ pub async fn get_backlinks(
     cursor: Option<String>,
     limit: Option<i64>,
     space_id: Option<String>,
-) -> Result<PageResponse<BlockRow>, AppError> {
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     get_backlinks_inner(&pool.0, block_id, cursor, limit, space_id)
         .await
         .map_err(sanitize_internal_error)

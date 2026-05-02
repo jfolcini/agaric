@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT is_conflict as \"is_conflict: bool\",\n                  deleted_at\n           FROM blocks\n           WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "is_conflict: bool",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "deleted_at",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "b4e91c5ac97c11ff4b077ecb50f6f26e022c2bded57f335c39dcb87ea31ef159"
+}

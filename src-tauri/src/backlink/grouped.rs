@@ -268,7 +268,11 @@ pub async fn eval_backlink_query_grouped(
         .map(|(i, id)| (id.as_str(), i))
         .collect();
 
-    // 9. Distribute fetched rows back into groups, maintaining sort order
+    // 9. Distribute fetched rows back into groups, maintaining sort order.
+    //    MAINT-113 M2 — `all_block_ids` traces back to active candidates
+    //    (the grouped query's base set filters `is_conflict = 0 AND
+    //    deleted_at IS NULL`), so the per-group rows are also active.
+    //    The boundary cast records that claim in the type system.
     let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(actual_groups.len());
     for (page_id, page_title, block_ids_in_group) in &actual_groups {
         let mut blocks: Vec<(&str, usize)> = block_ids_in_group
@@ -277,9 +281,10 @@ pub async fn eval_backlink_query_grouped(
             .collect();
         blocks.sort_by_key(|&(_, pos)| pos);
 
-        let block_rows: Vec<BlockRow> = blocks
+        let block_rows: Vec<crate::pagination::ActiveBlockRow> = blocks
             .iter()
             .filter_map(|&(bid, _)| row_map.get(bid).map(|r| (*r).clone()))
+            .map(crate::pagination::ActiveBlockRow::from_block_row_unchecked)
             .collect();
 
         groups.push(BacklinkGroup {
@@ -630,7 +635,10 @@ pub async fn eval_unlinked_references(
         .map(|(i, id)| (id.as_str(), i))
         .collect();
 
-    // 11. Distribute fetched rows back into groups, maintaining sort order
+    // 11. Distribute fetched rows back into groups, maintaining sort order.
+    //     MAINT-113 M2 — same active-only invariant as step 9 above; the
+    //     unlinked-references query path also filters
+    //     `is_conflict = 0 AND deleted_at IS NULL` upstream.
     let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(actual_groups.len());
     for (group_page_id, page_title, block_ids_in_group) in &actual_groups {
         let mut blocks: Vec<(&str, usize)> = block_ids_in_group
@@ -639,9 +647,10 @@ pub async fn eval_unlinked_references(
             .collect();
         blocks.sort_by_key(|&(_, pos)| pos);
 
-        let block_rows: Vec<BlockRow> = blocks
+        let block_rows: Vec<crate::pagination::ActiveBlockRow> = blocks
             .iter()
             .filter_map(|&(bid, _)| row_map.get(bid).map(|r| (*r).clone()))
+            .map(crate::pagination::ActiveBlockRow::from_block_row_unchecked)
             .collect();
 
         groups.push(BacklinkGroup {

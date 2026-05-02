@@ -210,7 +210,11 @@ pub async fn eval_backlink_query(
         });
     }
 
-    // 6. Fetch full BlockRows
+    // 6. Fetch full BlockRows.
+    //    MAINT-113 M2 — `actual_ids` is pre-filtered to active blocks via
+    //    the `b.deleted_at IS NULL AND b.is_conflict = 0` predicate at
+    //    the base-set query above (line ~86). The boundary cast records
+    //    that claim in the type system.
     let fetched: Vec<BlockRow> = fetch_block_rows_by_ids(pool, &actual_ids).await?;
 
     // Reorder fetched rows to match the sorted order
@@ -219,13 +223,17 @@ pub async fn eval_backlink_query(
         .enumerate()
         .map(|(i, id)| (*id, i))
         .collect();
-    let mut items = fetched;
-    items.sort_by_key(|row| id_order.get(row.id.as_str()).copied().unwrap_or(usize::MAX));
+    let mut sorted_fetched = fetched;
+    sorted_fetched.sort_by_key(|row| id_order.get(row.id.as_str()).copied().unwrap_or(usize::MAX));
+    let items: Vec<crate::pagination::ActiveBlockRow> = sorted_fetched
+        .into_iter()
+        .map(crate::pagination::ActiveBlockRow::from_block_row_unchecked)
+        .collect();
 
     // 7. Build cursor
     let next_cursor = if has_more {
         let last = items.last().expect("has_more implies non-empty");
-        Some(Cursor::for_id(last.id.clone()).encode()?)
+        Some(Cursor::for_id(last.id.as_str().to_string()).encode()?)
     } else {
         None
     };

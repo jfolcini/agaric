@@ -57,7 +57,7 @@ export const commands = {
 	// Tauri command: remove a tag from a block. Delegates to [`remove_tag_inner`].
 	removeTag: (blockId: string, tagId: string) => typedError<TagResponse, AppErrorSchema>(__TAURI_INVOKE("remove_tag", { blockId, tagId })),
 	// Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`].
-	getBacklinks: (blockId: string, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("get_backlinks", { blockId, cursor, limit, spaceId })),
+	getBacklinks: (blockId: string, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<ActiveBlockRow>, AppErrorSchema>(__TAURI_INVOKE("get_backlinks", { blockId, cursor, limit, spaceId })),
 	// Tauri command: list op-log history for a block. Delegates to [`get_block_history_inner`].
 	getBlockHistory: (blockId: string, cursor: string | null, limit: number | null) => typedError<PageResponse<HistoryEntry>, AppErrorSchema>(__TAURI_INVOKE("get_block_history", { blockId, cursor, limit })),
 	// Tauri command: list conflict-copy blocks. Delegates to [`get_conflicts_inner`].
@@ -67,7 +67,7 @@ export const commands = {
 	// Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
 	searchBlocks: (query: string, cursor: string | null, limit: number | null, parentId: string | null, tagIds: string[] | null, spaceId: string) => typedError<PageResponse<ActiveBlockRow>, AppErrorSchema>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, parentId, tagIds, spaceId })),
 	// Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`].
-	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit, spaceId })),
+	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<ActiveBlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit, spaceId })),
 	// Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
 	queryByProperty: (key: string, valueText: string | null, valueDate: string | null, operator: string | null, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_property", { key, valueText, valueDate, operator, cursor, limit, spaceId })),
 	// Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
@@ -563,16 +563,28 @@ export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp;
 // Filter by source page — include/exclude blocks based on their root page ancestor.
 { type: "SourcePage"; included: string[]; excluded: string[] } | { type: "And"; filters: BacklinkFilter[] } | { type: "Or"; filters: BacklinkFilter[] } | { type: "Not"; filter: BacklinkFilter };
 
-// A group of backlinks from the same source page.
+/**
+ *  A group of backlinks from the same source page.
+ *
+ *  MAINT-113 M2 — `blocks` is `ActiveBlockRow`-typed; same rationale as
+ *  [`BacklinkQueryResponse::items`].
+ */
 export type BacklinkGroup = {
 	page_id: string,
 	page_title: string | null,
-	blocks: BlockRow[],
+	blocks: ActiveBlockRow[],
 };
 
-// Response for a filtered backlink query, including total count.
+/**
+ *  Response for a filtered backlink query, including total count.
+ *
+ *  MAINT-113 M2 — `items` is `ActiveBlockRow`-typed because the backlink
+ *  resolver filters `is_conflict = 0 AND deleted_at IS NULL` on every
+ *  candidate source block (`backlink/query.rs::eval_backlink_query`,
+ *  `eval_backlink_query_grouped`, `eval_unlinked_references`).
+ */
 export type BacklinkQueryResponse = {
-	items: BlockRow[],
+	items: ActiveBlockRow[],
 	next_cursor: string | null,
 	has_more: boolean,
 	total_count: number,

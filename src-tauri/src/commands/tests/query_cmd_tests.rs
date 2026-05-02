@@ -2023,7 +2023,7 @@ async fn list_backlinks_grouped_disjointness_feat3p4() {
     let collect_ids = |resp: &crate::backlink::GroupedBacklinkResponse| {
         resp.groups
             .iter()
-            .flat_map(|g| g.blocks.iter().map(|b| b.id.clone()))
+            .flat_map(|g| g.blocks.iter().map(|b| -> String { b.id.clone().into() }))
             .collect::<std::collections::HashSet<_>>()
     };
     let a_ids = collect_ids(&a);
@@ -2293,7 +2293,7 @@ async fn list_unlinked_references_disjointness_feat3p4() {
     let collect_ids = |resp: &crate::backlink::GroupedBacklinkResponse| {
         resp.groups
             .iter()
-            .flat_map(|g| g.blocks.iter().map(|b| b.id.clone()))
+            .flat_map(|g| g.blocks.iter().map(|b| -> String { b.id.clone().into() }))
             .collect::<std::collections::HashSet<_>>()
     };
     let a = list_unlinked_references_inner(
