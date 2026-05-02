@@ -2744,3 +2744,24 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
+
+---
+
+## Ready-made batches (planning aid for next sessions)
+
+Pre-grouped item clusters identified during the 2-pass audit. Each batch is sized for one PROMPT.md session — 5 trivial-cost items in non-overlapping files, splittable across 5 parallel subagents. **Remove the batch entry from this list when its items are resolved.**
+
+### Batch UX-A11Y-1 — A11y missing-attribute fixes
+- **Items:** UX-326, UX-328, UX-331, UX-335, UX-377
+- **Cost:** 5× Trivial. **Files:** 6 (UX-328 spans `JournalControls.tsx` + `GlobalDateControls.tsx`; the other 4 are one file each).
+- **Why pick:** Pure additive attribute / i18n adds. Zero behaviour change. Broadest screen-reader / keyboard impact per LOC. All five items just landed in the audit at high confidence.
+
+### Batch UX-DISC-1 — Discoverability via tooltip / label additions
+- **Items:** UX-301, UX-342, UX-356, UX-361, UX-396
+- **Cost:** 5× Trivial. **Files:** 5 (`FormattingToolbar.tsx`, `TrashView/TrashRowItem.tsx`, `GraphView.tsx`, `PageOutline.tsx` + `PageHeader.tsx`, `AppSidebar.tsx`).
+- **Why pick:** Each is a single tooltip / label / shortcut-hint addition. Highest visibility-per-LOC for sighted desktop users. Several items would benefit from a shared `getCurrentShortcuts()` lookup pattern that this batch could establish.
+
+### Batch UX-FB-1 — Toast feedback for silent operations
+- **Items:** UX-303, UX-329, UX-341, UX-360, MAINT-179
+- **Cost:** 5× Trivial–S. **Files:** 5 (`useAppBootRecovery.ts`, `AppearanceTab.tsx`, `TrashEmptyDialog.tsx` + `TrashView.tsx`, `PageHeader.tsx`, `GoogleCalendarSettingsTab.tsx`).
+- **Why pick:** Each fixes a silent-operation gap (recovery, settings change, destructive confirm, rename, GCal config) with a single `toast.*` call. Crosses domains, so a single batch ships parity across boot / settings / page / trash / GCal in one go.
