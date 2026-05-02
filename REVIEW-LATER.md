@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-15 open items.
+23 open items.
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -31,9 +31,17 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-114 | MAINT | Consolidation audit of `.github/workflows/` — fold `release-tag.yml` into `release.yml` as a `workflow_dispatch` job (4 → 3 files). Spike-then-commit; abandon if merged file isn't shorter than the sum. | S–M | — |
 | MAINT-128 | MAINT | God-component decomposition: `PropertyRowEditor.tsx` (550L) — split each typed editor (text/number/date/ref/select) into its own component AND lift the shared state (`localValue`, date hook, select-options, ref-picker, 10+ callbacks) UP into a containing hook. **SCHEDULED** — owner-prioritized; refactor path locked in. Removes the only `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` in the codebase (at L85). | L | — |
 | MAINT-168 | MAINT | Sync trigger / scheduler dual-backoff unification — `useSyncTrigger.ts` (60s → 600s) and `sync_scheduler.rs` (1s → 60s) run independent exponential backoffs that never coordinate. Not a correctness bug; the backend is the authoritative scheduler and silently rejects redundant `startSync` calls. Filed as a documented design note after this session's bird's-eye review. | M | — |
+| MAINT-169 | MAINT | GCal connector: `DateFailure::Skipped` per-date errors are logged but never persisted to `gcal_space_config.last_error` — Settings UI shows no feedback for transient per-date failures until the next reconcile clears the dirty set | S | — |
+| MAINT-170 | MAINT | Backlink: `eval_unlinked_references` collapses `total_count = filtered_count` (out of parity with `eval_backlink_query_grouped`); UI badge under-reports the unlinked-ref count when filters are active | S | — |
+| MAINT-171 | MAINT | Recurrence: 8 duplicated `set_property_in_tx` call sites in `apply_recurrence_advance` — extract a small helper to reduce copy-paste surface | S | — |
+| MAINT-172 | MAINT | Pagination/queries: space-filter SQL fragment inlined across 13+ files because `sqlx::query_as!` rejects `concat!()`; `space_filter_clause!` macro referenced in comments but unusable. Real maintenance hotspot, sqlx-constrained | M | sqlx upstream |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S | — |
+| PERF-24 | PERF | `cache/block_tag_refs.rs::reindex_block_tag_refs` issues per-target DELETE/INSERT in a loop; sibling `block_links.rs` already batches via `json_each` | S | — |
+| PERF-25 | PERF | `gcal_push/connector.rs::GcalSettingsSnapshot::read` issues 4 separate `SELECT`s every cycle; trivially batchable via `key IN (?, ?, ?, ?)` | S | — |
+| PERF-26 | PERF | `link_metadata/mod.rs::fetch_metadata` rebuilds `reqwest::Client` per call; should reuse a `OnceLock` like `gcal_push/api.rs` does | S | — |
+| PERF-27 | PERF | `backlink/filters.rs::PropertyText` filter fetches all rows for the property key then compares in Rust; push the operator into SQL `WHERE` | S | — |
 | PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S | Identity decision |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
@@ -43,9 +51,16 @@ Items flagged during development that need revisiting. Organized by section with
 
 These can be tackled in a single session with low risk — listed for prioritization convenience (canonical entries remain in the per-section detail blocks below):
 
+- **MAINT-169** — gcal connector: persist `DateFailure::Skipped` reason to `gcal_space_config.last_error`
+- **MAINT-170** — backlink `eval_unlinked_references`: capture `total_count` before user filters
+- **MAINT-171** — extract `set_recurrence_property` helper to dedupe 8 call sites in `apply_recurrence_advance`
 - **PERF-19** — backlink pagination keyset for non-Created sorts (2 sites)
 - **PERF-20** — concurrency cap on `try_join_all` in backlink filter resolver
 - **PERF-23** — stream-send for `read_attachment_file` (receive side already streams)
+- **PERF-24** — batch `reindex_block_tag_refs` via `json_each` (mirror `block_links.rs`)
+- **PERF-25** — `models::get_settings_batch` + single `SELECT … WHERE key IN (...)`
+- **PERF-26** — `OnceLock<reqwest::Client>` in `link_metadata`
+- **PERF-27** — push `PropertyText` operator into SQL `WHERE`
 - **MAINT-114** — workflow consolidation audit (spike-then-commit)
 - **PUB-5** — Tauri updater wiring (user-only: keypair + 2 secrets + uncomment)
 - **PUB-8** — Android release keystore + 4 GH Actions secrets (CI wiring already shipped)
@@ -262,6 +277,66 @@ The initial one-line recommendation was "4 → 2 (validate + release)". On inspe
 
 **Decision:** Defer — keep tracked as a documented design note. Revisit only if (i) the dual-scheduler behaviour ever surfaces as a user-facing bug, or (ii) the sync layer is being touched for another reason and unification becomes opportunistic.
 
+### MAINT-169 — GCal connector: per-date `DateFailure::Skipped` errors are not persisted to `gcal_space_config.last_error`
+
+**Problem:** `src-tauri/src/gcal_push/connector.rs:484-491` handles `DateFailure::Skipped(reason)` by emitting a `tracing::warn!` and `continue`-ing to the next date. Cycle-level failures (`CalendarGone`, `Unauthorized`, `Forbidden`) update state and emit events; transient per-date failures do not touch the database at all.
+
+**Why it matters:** The Settings UI reads `gcal_space_config.last_error` to surface push status. A user whose push silently skips dates sees `last_error = NULL` even while the tracing log is full of warnings. Diagnostic feedback is the only signal that something is wrong before the daily reconcile clears the dirty set.
+
+**Fix:** On `DateFailure::Skipped(reason)`, write the reason to `gcal_space_config.last_error` (via `models::upsert_space_config_last_error` or by extending the existing setter) before `continue`-ing. The reason string is already constructed.
+
+**Cost:** S — one new helper or extend the existing one, plus one call site.
+**Risk:** Low.
+**Impact:** Medium — closes the diagnostic gap for transient failures.
+
+### MAINT-170 — Backlink: `eval_unlinked_references` collapses `total_count = filtered_count`
+
+**Problem:** `src-tauri/src/backlink/grouped.rs:525-526` sets both counts to the same post-filter value:
+```rust
+let filtered_count = page_groups.values().map(|(_, blocks)| blocks.len()).sum();
+let total_count = filtered_count;
+```
+`eval_backlink_query_grouped` (line 128 in the same file) sets `total_count = base_ids.len()` *before* user filters. The two functions therefore report counts on different bases. The comment at L523-524 cites AGENTS.md "Backend Patterns #4" but that rule applies to fixed semantic filters (self-reference exclusion), not user-supplied filter expressions.
+
+**Why it matters:** UI badge under-reports the unlinked-reference count when the user has any backlink filter active.
+
+**Fix:** Capture `total_count` after self-reference exclusion (the grouping step) but *before* applying user `filters`. Mirror the structure of `eval_backlink_query_grouped`. Add a regression test that asserts `total_count >= filtered_count` and that both equal the unfiltered group sum when no filters are supplied.
+
+**Cost:** S.
+**Risk:** Low — pure read-side count semantics.
+**Impact:** Low-medium — UX correctness for unlinked-references badge.
+
+### MAINT-171 — Recurrence: 8 duplicated `set_property_in_tx` call sites in `apply_recurrence_advance`
+
+**Problem:** `src-tauri/src/recurrence/compute.rs:239, 253, 282, 307, 324, 382, 396, 412` each call `set_property_in_tx(tx, device_id, block_id, key, value).await?` and then push the resulting `OpRecord` onto `ops`. The pattern is identical except for the key and value pair. Forgetting to push the op record (or capturing the wrong one) is a real copy-paste failure mode.
+
+**Fix:** Extract `async fn set_recurrence_property(tx, device_id, block_id, key, value, ops: &mut Vec<OpRecord>) -> Result<()>` and reduce the 8 sites to 8 one-liners.
+
+**Cost:** S — pure refactor; existing tests cover the behavior.
+**Risk:** Low.
+**Impact:** Low.
+
+### MAINT-172 — Pagination/queries: space-filter SQL fragment inlined across 13+ files
+
+**Problem:** The fragment
+```sql
+(?N IS NULL OR COALESCE(b.page_id, b.id) IN
+    (SELECT bp.block_id FROM block_properties bp
+     WHERE bp.key = 'space' AND bp.value_ref = ?N))
+```
+is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,properties}.rs`, `backlink/{query,grouped}.rs`, `fts/search.rs`, `tag_query/query.rs`, and `commands/{pages,agenda}.rs`. The `space_filter_clause!` macro is referenced in inline comments but unusable because `sqlx::query_as!` requires a string literal and rejects `concat!()`. Comments at the call sites instruct future maintainers to "mirror any change" — convention enforcement, not single-source-of-truth.
+
+**Why it matters:** Real maintenance hotspot. Any change to the filter semantics requires N coordinated edits. A subtle bug (one site forgets the `COALESCE`) would only be caught by per-site tests.
+
+**Fix (design space):**
+1. **build.rs text substitution** — generate per-query SQL strings into `OUT_DIR` from a single canonical fragment, keep `query_as!` consuming the generated literal.
+2. **prek hook** — fail commit if the canonical fragment text drifts across the 13 sites. Cheap; does not consolidate the source.
+3. **Migrate the queries off `query_as!` to runtime sqlx** — loses compile-time validation; not preferred.
+
+**Cost:** M — design + implementation + verifying the 13 sites still produce identical query plans.
+**Risk:** Medium — touching every list query is high blast-radius; needs careful test coverage.
+**Decision:** Defer until the cost of drift becomes visible (a real bug shipped because one site got out of sync). Until then, the comment-based "mirror any change" convention is acceptable.
+
 ## PERF — Performance items
 
 ### PERF-19 — Backlink pagination cursor uses linear scan for non-Created sorts (2 sites)
@@ -320,6 +395,48 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 **Decision:** Defer — keep tracked in REVIEW-LATER as a deliberate non-fix. Revisit only if large media (video notes, high-bit-depth images) becomes a supported use case.
 
 **Cost:** S–M
+
+### PERF-24 — `cache/block_tag_refs.rs::reindex_block_tag_refs` per-target DELETE/INSERT loop
+
+**Problem:** `src-tauri/src/cache/block_tag_refs.rs:80-88` (DELETE loop) and `:90-108` (INSERT loop) issue one statement per target. The split-pool variant `reindex_block_tag_refs_split` has the same shape. Sibling `cache/block_links.rs:66-93` already uses `json_each(?)` to batch deletes and inserts in two round-trips total.
+
+**Why it matters:** Realistic block-tag-ref counts are 1-10 per block, so the wall-clock impact is bounded. The value is consistency with `block_links` (same diff-and-apply semantics, two different implementations) and future-proofing if a block ever holds many tag refs (e.g. a block that aggregates tags from multiple sources).
+
+**Fix:** Match the `block_links` pattern. Two statements total per re-index. The `INSERT OR IGNORE ... WHERE EXISTS (... block_type='tag')` form is expressible as a single statement using `json_each` joined against `blocks`. Keep the existence check in the JOIN.
+
+**Cost:** S — straightforward port of the `block_links` pattern.
+**Risk:** Low — covered by existing reindex tests; the oracle is `block_links`'s already-shipped batched implementation.
+**Impact:** Low (bounded) but consistent with project performance conventions.
+
+### PERF-25 — `gcal_push/connector.rs::GcalSettingsSnapshot::read` issues 4 separate SELECTs
+
+**Problem:** `src-tauri/src/gcal_push/connector.rs:313-324` calls `models::get_setting` four times (CalendarId, PrivacyMode, WindowDays, AccountEmail). Each is a separate `SELECT … WHERE key = ?` round trip. Runs once per cycle (every 15-minute reconcile + every dirty-event burst).
+
+**Fix:** Add `models::get_settings_batch(pool, &[Key1, Key2, Key3, Key4])` returning `HashMap<GcalSettingKey, String>`. Single `SELECT … WHERE key IN (?, ?, ?, ?)`. The pattern is already used in `lease.rs` for batched key reads.
+
+**Cost:** S — one helper; one call-site change.
+**Risk:** Low.
+**Impact:** Low (4 round trips → 1, on a 15-minute timer; not a hot path).
+
+### PERF-26 — `link_metadata/mod.rs::fetch_metadata` rebuilds `reqwest::Client` per call
+
+**Problem:** `src-tauri/src/link_metadata/mod.rs:51-57` constructs `reqwest::Client::builder()…build()` on every invocation. Each call rebuilds TLS state and discards the connection pool after a single request. Called from a hot path (link preview on every external link paste/edit).
+
+**Fix:** Move the client to a module-level `static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();` initialised lazily on first call. Pattern already used in `gcal_push/api.rs:49`.
+
+**Cost:** S — 5-line change.
+**Risk:** Low — `reqwest::Client` is `Clone + Send + Sync` and explicitly designed for this use.
+**Impact:** Low-medium — eliminates per-call TLS handshake on the link-preview hot path. Particularly valuable when a user pastes a markdown block with many external links.
+
+### PERF-27 — `backlink/filters.rs::PropertyText` filter materialises before comparing
+
+**Problem:** `src-tauri/src/backlink/filters.rs:137-162` fetches all rows matching a property key (`SELECT … WHERE bp.key = ?1`), then applies the comparison operator (`=`, `LIKE`, `CONTAINS`, etc.) in Rust. For property keys with thousands of distinct values this materialises the full set into memory before filtering.
+
+**Fix:** Build the comparison clause dynamically (the existing operator enum already enumerates the cases) and let SQLite do the filtering. Pattern already exists in `pagination/properties.rs:100-140`.
+
+**Cost:** S — finite operator arms; query builder already in use elsewhere.
+**Risk:** Low — covered by existing filter-resolver tests.
+**Impact:** Low-medium — bounded by realistic property cardinality, but pushes work to the layer that should be doing it.
 
 ---
 
@@ -414,6 +531,28 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F23
 - **Status:** Open
 
+### M-96 — `materializer/coordinator.rs::status` swallows DB errors with `.ok()`
+- **Domain:** Materializer / Observability
+- **Location:** `src-tauri/src/materializer/coordinator.rs:751-761`
+- **What:** `total_ops_in_log` and `retry_queue_pending` use `.ok()` on the COUNT query, returning `None` on any DB error with no logging. A persistent reader-pool issue or migration drift would surface as silent `None` values in the status output rather than a tracked operational signal.
+- **Why it matters:** Operators lose visibility during exactly the conditions where they need it (DB pressure, pool exhaustion). Status itself never fails, which is correct behaviour for an observability path, but the silent error swallow loses signal.
+- **Cost:** Trivial — `.inspect_err(|e| tracing::warn!(error = %e, "status query failed"))` chained before `.ok()`.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Recommendation:** Add the `inspect_err` log; keep `.ok()` so status semantics don't change.
+- **Status:** Open
+
+### M-97 — `commands/properties.rs` reserved-property validation queries `property_definitions` outside the transaction
+- **Domain:** Commands (Properties)
+- **Location:** `src-tauri/src/commands/properties.rs:204-207, 380-384`
+- **What:** Both `set_priority_inner` and `set_todo_state_inner` issue a `fetch_optional` against `property_definitions` *before* opening the `CommandTx`. The single-user threat model means concurrent deletion of a property definition by another process is not a realistic race, and `set_property_in_tx` (called inside the transaction) repeats the validation. The pattern is suboptimal but not a correctness bug in the single-user context.
+- **Why it matters:** Future-bug magnet. If the in-tx validation path is ever inlined or simplified, the out-of-tx fetch becomes the primary check and stops being safe. Folding it into `CommandTx::begin_immediate` is a 3-line move and removes the duplication.
+- **Cost:** S — straightforward refactor.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Recommendation:** Move the `fetch_optional` to inside the existing transaction so the validation and the eventual write share atomicity. No behaviour change in single-user usage; cleaner contract for future readers.
+- **Status:** Open
+
 ### L-17 — `dispatch_op` enqueues fg+bg out of order
 - **Domain:** Materializer
 - **Location:** `src-tauri/src/materializer/dispatch.rs:98-102`
@@ -449,3 +588,63 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Recommendation:** Acceptable as-is until profiling shows it is a bottleneck; lower priority than M-31 / L-41. If/when fixed, a single-pass `replace_n` over both needles avoids allocations.
 - **Pass-1 source:** 05/F35
 - **Status:** Open
+
+### L-56 — `commands/attachments.rs::add_attachment_inner` uses `debug_assert_eq!` for file-size verification
+- **Domain:** Commands (Attachments)
+- **Location:** `src-tauri/src/commands/attachments.rs:122-130`
+- **What:** Verifies `metadata.len() == size_bytes` only in debug builds; release builds skip the check entirely. If the frontend's `@tauri-apps/plugin-fs` write fails silently (truncation, disk full) the attachment record is created with the wrong `size_bytes`. The sync layer's hash check provides secondary defense, but the early guard is intentional.
+- **Cost:** Trivial — convert to a runtime guard returning `AppError::Validation`.
+- **Risk:** Low.
+- **Impact:** Low — closes a release-build integrity gap.
+- **Status:** Open
+
+### L-57 — `commands/mod.rs::delete_property_core` panics on unknown reserved key via `unreachable!()`
+- **Domain:** Commands
+- **Location:** `src-tauri/src/commands/mod.rs:629-655`
+- **What:** Match arms cover `"todo_state"`, `"priority"`, `"due_date"`, `"scheduled_date"`; the catch-all is `unreachable!(...)`. Currently safe because `is_reserved_property_key` (`src-tauri/src/op.rs:343-348`) returns `true` for exactly those four keys — but a future addition without updating this match crashes the command instead of returning a proper error.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low — defensive change; converts a panic path into an error path.
+- **Recommendation:** Replace `unreachable!()` with `Err(AppError::InvalidOperation(format!("unknown reserved property: {key}")))`.
+- **Status:** Open
+
+### L-58 — `commands/sync_cmds.rs` repeats mutex-poison error mapping 4×
+- **Domain:** Commands (Pairing/Sync)
+- **Location:** `src-tauri/src/commands/sync_cmds.rs:152, 197, 230, 247`
+- **What:** Four `map_err(|_| AppError::InvalidOperation("pairing state lock poisoned"))` sites in `start_pairing_inner`, `confirm_pairing_inner`, and `cancel_pairing_inner`. Future changes to the message or logging require N coordinated edits.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low — small DRY improvement.
+- **Recommendation:** Extract a `lock_pairing_state(state) -> Result<MutexGuard<...>, AppError>` helper; collapse the 4 sites to 1.
+- **Status:** Open
+
+### L-59 — UTF-8-safe truncation duplicated between `commands/logging.rs` and `commands/bug_report.rs`
+- **Domain:** Commands (Logging / Bug report)
+- **Location:** `src-tauri/src/commands/logging.rs:26-40` and `src-tauri/src/commands/bug_report.rs:213-224`
+- **What:** Both implement char-boundary-safe string truncation. Different signatures and message formats but identical core logic.
+- **Cost:** Trivial.
+- **Risk:** Low.
+- **Impact:** Low.
+- **Recommendation:** Move to a small `crate::text_utils::truncate_at_char_boundary` helper; reuse from both call sites.
+- **Status:** Open
+
+### L-60 — `sync_files.rs::find_missing_attachments` collapses all `metadata` errors into "missing"
+- **Domain:** Sync (Attachments)
+- **Location:** `src-tauri/src/sync_files.rs:179-195`
+- **What:** `Err(_) => missing.push(...)` treats EACCES, EPERM, EBUSY identically to ENOENT. The comment at L153-156 explicitly says "most defensive choice." A permission-denied attachment would be re-requested from the peer on every sync until fixed.
+- **Why it matters:** Realistic impact is low (app's own data dir should be readable on Linux/Windows). Logging the error kind separately costs nothing and surfaces a real ops failure mode (antivirus quarantine, read-only remount, sandbox denial).
+- **Cost:** Trivial — split the `Err` arm into `NotFound` vs other-with-warn.
+- **Risk:** Low.
+- **Impact:** Low — better diagnostics, no behaviour change.
+- **Status:** Open
+
+### L-61 — `op_log.rs::extract_block_id_from_payload` warns and returns `None` on JSON parse failure (DELIBERATE — no action)
+- **Domain:** Op log
+- **Location:** `src-tauri/src/op_log.rs:344-367`
+- **What:** Function logs at `warn!` level and returns `None` if the payload JSON is malformed, leaving the indexed `op_log.block_id` column NULL for that row.
+- **Why this is filed and not done:** The inline `L-1` comment documents the deliberate decision. The only path that produces a malformed payload here is one that has already passed hash-chain verification — essentially impossible for synced ops. Local ops go through the typed `OpPayload` path and would fail at serialize time, not at index extraction. The team has already considered and resolved this; recording it here so future code reviews don't re-flag the same pattern.
+- **Cost:** N/A.
+- **Risk:** N/A.
+- **Impact:** N/A.
+- **Decision:** No action. Filed for awareness only.
+- **Status:** Documented as deliberate.
