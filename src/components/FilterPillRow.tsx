@@ -14,8 +14,18 @@ import type { BacklinkFilter, CompareOp } from '../lib/tauri'
 // Props
 // ---------------------------------------------------------------------------
 
+/**
+ * Filter object augmented with a frontend-only `_addId` React key (MAINT-190).
+ *
+ * `BacklinkFilterBuilder` stamps every newly-added filter with a monotonic
+ * `_addId`; we use it as the React `key` on each pill `<li>` to give
+ * structurally-identical filters distinct identities. The field is invisible
+ * to the Rust IPC contract (serde silently drops unknown fields).
+ */
+export type FilterWithKey = BacklinkFilter & { _addId: number }
+
 export interface FilterPillRowProps {
-  filters: BacklinkFilter[]
+  filters: FilterWithKey[]
   onRemove: (index: number) => void
   tagResolver?: ((id: string) => string) | undefined
 }
@@ -100,11 +110,7 @@ export function FilterPillRow({
   return (
     <ul aria-label={t('backlink.appliedFiltersLabel')} className="contents list-none m-0 p-0">
       {filters.map((filter, index) => (
-        <li
-          // biome-ignore lint/suspicious/noArrayIndexKey: getFilterKey can produce duplicates for structurally different filters with same key
-          key={index}
-          className="contents"
-        >
+        <li key={filter._addId} className="contents">
           <FilterPill
             label={filterSummary(filter, tagResolver, t)}
             onRemove={() => onRemove(index)}

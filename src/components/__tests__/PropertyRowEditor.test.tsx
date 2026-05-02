@@ -999,7 +999,7 @@ describe('PropertyRowEditor ref picker', () => {
     })
   })
 
-  it('shows error toast when page list fails to load', async () => {
+  it('shows error toast when page list fails to load and keeps picker closed (MAINT-181)', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockRejectedValue(new Error('backend error'))
 
@@ -1017,6 +1017,13 @@ describe('PropertyRowEditor ref picker', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.loadPagesFailed'))
     })
+
+    // MAINT-181: the picker must NOT open on rejection — the user
+    // would otherwise see an empty "Select page" list with no
+    // indication that the load actually failed. The toast is the
+    // only failure surface; the picker's search input must be
+    // absent from the DOM.
+    expect(screen.queryByLabelText(t('block.searchPages'))).not.toBeInTheDocument()
   })
 
   it('ref property has no a11y violations', async () => {
