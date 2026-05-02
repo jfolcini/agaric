@@ -143,8 +143,8 @@ export function PdfViewerDialog({
       if (renderTaskRef.current) {
         try {
           renderTaskRef.current.cancel()
-        } catch {
-          // Ignore
+        } catch (err) {
+          logger.warn('PdfViewerDialog', 'cleanup cancel threw', undefined, err)
         }
         renderTaskRef.current = null
       }

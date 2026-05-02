@@ -2,12 +2,13 @@
 
 ## Quick Reference
 
-**Sessions:** 1 – 605 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 899+ items.
+**Sessions:** 1 – 606 | **Latest entry:** 2026-05-02 | **Previously resolved counter:** 904+ items.
 
 > **Older sessions archived.** Sessions 1 – 400 (earliest entry through ~2026-04-17) live in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md). This file holds sessions 401 – 597 (~2026-04-17 onwards).
 
 ### Recent milestones
 
+- **Session 606 (2026-05-02)** — Batch FE-H-FIXUPS-1 closed: FE-H-3, FE-H-14, FE-H-19, FE-H-20 fixed + FE-H-16 rejected as false-positive. FE-H-16's proposed fix (add stable `useState` setters to `useMemo` deps) was reverted after biome's `useExhaustiveDependencies` rule correctly flagged it as over-specification — the fix was filed with a "defensive correctness" framing but is actively against project convention. FE-H-19 build subagent stalled → orchestrator-direct; FE-H-19 reviewer caught that memoizing `flatItems` alone was insufficient because `grouped` (its upstream) was also unmemoized → applied both fixes orchestrator-direct.
 - **Session 605 (2026-05-02)** — Batch FRONTEND-FIXUPS-1 closed: TEST-FE-3, TEST-FE-4, TEST-FE-5, TEST-FE-7, FE-H-2 — five trivial frontend cleanups (`makeHistoryEntry` shared fixture, try/finally guard around `vi.doMock`, lock `dateStr` cache-key contract via Option A + Option B, hardcoded date → relative-to-today, extract `AGENDA_QUERY_LIMIT` from 11 sites). TEST-FE-5 reviewer correctly flagged that Option A alone was insufficient → Option B applied orchestrator-direct. FE-H-2 reviewer flagged a stale line-number comment → fixed orchestrator-direct.
 - **Session 604 (2026-05-02)** — Batch TEST-FIXUPS-1 closed: TEST-1, TEST-13, TEST-21, TEST-22, TEST-26 — five trivial backend test improvements (remove stale workaround, typed `serde_json::from_str` instead of substring `contains`, hash-mismatch error message assertion, no-DB-side-effects assertion, magic-string → constants). 5 build + 5 review subagents. All-PASS, no follow-ups.
 - **Session 603 (2026-05-02)** — Batch MAINT-FIXUPS-1 closed: MAINT-182, MAINT-186, MAINT-187, MAINT-188, MAINT-191 — five trivial frontend cleanups (i18n leak, explicit touch-target classname, `INTERNAL_PROPERTY_KEYS` shared const, breadcrumb `useMemo`, IPC-bridge clarification comment). 5 build + 5 review subagents.
@@ -36,6 +37,58 @@ For older milestones, see [`MILESTONES.md`](MILESTONES.md) and the archived [`do
 - **By number:** `grep -n '^## Session 596' SESSION-LOG.md` — heading appears once per session.
 - **By date:** `grep -nE '\(2026-04-3[0-9]\)|\(2026-05-' SESSION-LOG.md` — most recent first.
 - **By REVIEW-LATER item:** `grep -n 'FEAT-3p9' SESSION-LOG.md` — every cross-reference.
+
+---
+
+## Session 606 — Batch FE-H-FIXUPS-1: trivial frontend hook/component bugs (2026-05-02)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-02 |
+| **Subagents** | 5 build + 5 technical review (FE-H-19 build subagent stalled → orchestrator-direct + reviewer caught incomplete fix → completed orchestrator-direct; FE-H-16 build passed local tests but failed project-wide biome at prek time → reverted) |
+| **Items closed** | FE-H-3, FE-H-14, FE-H-19, FE-H-20 (fixed); FE-H-16 (rejected as false-positive) |
+| **Items added** | — |
+| **Tests added** | +3 frontend (1 useScrollRestore + 1 PdfViewerDialog + 1 SearchPanel); FE-H-19 is a static fix covered by existing 50 DuePanel tests |
+| **Files touched** | 6 (4 source + 2 test + REVIEW-LATER cleanup) — FE-H-16's `ui/sidebar.tsx` edit was reverted |
+
+**Summary:** Closed 4 trivial FE-H-* items in distinct files + 1 item rejected after investigation. Most delegated cleanly. Three notable mid-session issues: (1) FE-H-19 build subagent stalled — orchestrator-direct; (2) FE-H-19 reviewer caught that memoizing `flatItems` alone was insufficient because its upstream `grouped` was also unmemoized — applied full fix orchestrator-direct; (3) FE-H-16's fix (add stable `useState` setters to `useMemo` deps) passed unit tests but biome's `useExhaustiveDependencies` rule at prek time correctly rejected it as over-specification. The REVIEW-LATER item was filed with a "defensive correctness" framing but runs counter to project lint convention — reverted the sidebar change and removed FE-H-16 from REVIEW-LATER (no future filer should re-propose this fix).
+
+**REVIEW-LATER impact:**
+- **Top-level open count (summary table):** 151 → 151 (unchanged — FE-H-* are sub-table items).
+- **Detail entries:** 193 → 188 (−5).
+- **Previously-resolved counter:** 899+ → 904+ across 605 → 606 sessions.
+
+**Per-item verification (from review subagents):**
+- **FE-H-3** (`useScrollRestore.ts`): captured `const rafId = requestAnimationFrame(...)` + `return () => cancelAnimationFrame(rafId)` from the if-branch that schedules the rAF (the `viewKey` transition branch). Other branches' early returns unchanged. New test uses `vi.stubGlobal(...)` pattern (matches `useAutoScrollOnDrag.test.ts:80-89`) with `vi.unstubAllGlobals()` cleanup in `finally`. 7/7 tests pass.
+- **FE-H-14** (`PdfViewerDialog.tsx:144-148`): replaced the cleanup-time bare `catch {}` with `catch (err) { logger.warn('PdfViewerDialog', 'cleanup cancel threw', undefined, err) }` — follow-up to FE-H-11 (which closed the analogous render-time catch). Logger import already present from FE-H-11. New test mirrors the FE-H-11 test pattern: getContext stub override + hanging promise + throwing cancel, then unmount() fires the cleanup catch. File has no remaining bare `catch {}`. 20/20 tests pass.
+- **FE-H-16** (`ui/sidebar.tsx:206-232` — **REJECTED**): proposed fix was to add `setOpenMobile` / `setIsResizing` to the SidebarContext `useMemo` deps array. Build subagent applied it and all 73 sidebar tests passed. The reviewer also PASSed. But at prek time, biome's `useExhaustiveDependencies` rule correctly rejected the change as over-specification — `useState` setters are known-stable and project convention excludes them from deps. Reverted via `git checkout src/components/ui/sidebar.tsx` and removed FE-H-16 from REVIEW-LATER. The REVIEW-LATER item's own "Impact" field acknowledged the setters-are-stable fact, so in retrospect this item should not have been filed. Unit-test-only verification is insufficient for lint-policy questions; always run `prek run --all-files` before concluding a fix is complete.
+- **FE-H-19** (`DuePanel.tsx` — orchestrator-direct + reviewer-caught upstream fix): (1) wrapped `flatItems` in `useMemo(() => [...], [grouped, uniqueProjected])` at L152-155; (2) after reviewer flagged that `grouped` was unmemoized (making the outer memo pointless), also wrapped `grouped` in `useMemo` with deps `[visibleBlocks, t]` at L131-147, moving the `groupLabels` object INSIDE the memo so it isn't a per-render dep. Both memos together now produce a reference-stable `flatItems` that doesn't invalidate keyboard-nav effects on every parent re-render. 50/50 tests pass.
+- **FE-H-20** (`SearchPanel.tsx:170-174`): wrapped the existing `parentIds = results.map((b) => b.page_id).filter((id): id is string => id != null)` with `[...new Set(...)]` — mirrors the reference pattern at `TagFilterPanel.tsx:136-138`. Predicate preserved verbatim. New test mocks 5 results with page_ids `[PAGE_A x3, PAGE_B, PAGE_C]` and asserts `batch_resolve` is called once with 3 (deduped) ids. 71/71 tests pass.
+
+**Files touched (this session):**
+- `src/hooks/useScrollRestore.ts` (+5 / -1 — capture rafId + cancelAnimationFrame cleanup + explicit `return undefined` for TS noImplicitReturns)
+- `src/hooks/__tests__/useScrollRestore.test.ts` (+28 — new cancel-on-unmount test)
+- `src/components/PdfViewerDialog.tsx` (+3 / -1 — cleanup catch handler)
+- `src/components/__tests__/PdfViewerDialog.test.tsx` (+65 — new FE-H-14 test)
+- `src/components/DuePanel.tsx` (+19 / -11 — two memos + comments)
+- `src/components/SearchPanel.tsx` (+3 / -1 — Set wrap for dedupe)
+- `src/components/__tests__/SearchPanel.test.tsx` (+38 — new dedupe test)
+- `REVIEW-LATER.md` (-43 net — 5 detail blocks removed, incl. the rejected FE-H-16; count + Last-updated header refreshed)
+- `SESSION-LOG.md` (this entry + Recent milestones bump)
+- `src/components/ui/sidebar.tsx` — NOT in final diff (FE-H-16 change reverted)
+
+**Verification:**
+- `npx vitest run` on all 7 touched test files together — **221/221 pass** (7 useScrollRestore + 20 PdfViewerDialog + 20 AppSidebar + 35 ui/sidebar + 18 Sidebar + 50 DuePanel + 71 SearchPanel).
+- `prek run --all-files` — pending until commit.
+
+**Process notes:**
+- **FE-H-19 build subagent stall.** The build subagent sat idle well after the other 4 had finished their file writes. User intervened to kill-and-orchestrator-direct after ~3x the expected wall-clock. Root-cause likely: the prompt asked for a "reference stability assertion" that's awkward to express in a test-library API, and the subagent may have gotten tangled trying to write such a test. Lesson: when delegating, keep test requirements loose — prefer "regression test matching existing patterns" over specific assertion styles. Confirmed via `git status` that the stalled subagent never wrote to the target files.
+- **Reviewer-caught incomplete fix on FE-H-19.** The reviewer identified that `grouped` (the upstream dependency of `flatItems`) was itself unmemoized and depended on a per-render-new `groupLabels` literal — so memoizing `flatItems` alone wouldn't produce reference stability. Applied the full fix: wrap `grouped` too, move `groupLabels` inside. This turned a symptom-level fix into a root-cause fix. The reviewer's root-cause analysis was genuinely useful — worth remembering the pattern that "memoize the leaf value" is often insufficient if upstream values aren't also stable.
+- **FE-H-16 rejected by lint policy after unit tests + reviewer passed.** The build subagent shipped the change, all 73 sidebar tests passed, the reviewer PASSed with a confident verdict — but `prek run --all-files` (biome's `useExhaustiveDependencies` rule) correctly rejected the change. The lesson for the orchestration flow: **unit tests + code review are insufficient for lint-policy questions**. Always run `prek run --all-files` before considering a fix complete. Review subagents verify CORRECTNESS against the REVIEW-LATER item's intent; they don't always catch that the fix conflicts with project-wide convention. The REVIEW-LATER item itself was filed with an acknowledgment that React setters are stable — which is exactly why biome excludes them — so in hindsight this item was built on a faulty premise.
+- **TypeScript strict-return caught in prek, not unit tests.** FE-H-3's initial diff missed an explicit `return undefined` on the non-if path of the useEffect; the 7 tests passed but `tsc --noEmit` at prek time flagged `TS7030 Not all code paths return a value`. Fixed orchestrator-direct by adding explicit `return undefined` on both the early-return and no-op paths. Same lesson: vitest tests alone aren't enough signal.
+- **Cross-subagent trust.** FE-H-19's reviewer caught a real, substantive issue that my orchestrator-direct fix missed on first pass. Strong signal that the read-only review subagents are earning their keep — we should continue pipelining them for every build, not just "important" ones. But reviewers' scope is correctness-of-intent, not lint-policy — prek is still the final arbiter.
+
+**Commit plan:** single commit. Not pushed.
 
 ---
 

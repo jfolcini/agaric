@@ -475,6 +475,72 @@ describe('PdfViewerDialog', () => {
     expect(screen.queryByText('Page 2 / 5')).not.toBeInTheDocument()
   })
 
+  it('FE-H-14: logs warning when cleanup-time cancel throws', async () => {
+    const cancelError = new Error('cleanup cancel failed')
+    const cancelMock = vi.fn(() => {
+      throw cancelError
+    })
+
+    // The global test-setup stubs canvas.getContext to return null, which makes
+    // renderPage() bail before calling page.render(). Override locally so the
+    // render task is actually parked in renderTaskRef and the cleanup-cancel
+    // path runs on unmount.
+    const originalGetContext = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = (() =>
+      ({}) as unknown) as typeof HTMLCanvasElement.prototype.getContext
+
+    try {
+      // The initial loadPdf renderPage(1) bails (canvas not yet committed),
+      // so the first observable mockRender call comes from the Next click,
+      // which we make hang and park a task in renderTaskRef whose cancel()
+      // throws. Unmounting fires the loadPdf useEffect cleanup which calls
+      // cancel() and hits the catch.
+      mockRender.mockImplementation(() => ({
+        promise: new Promise<void>(() => {}),
+        cancel: cancelMock,
+      }))
+
+      const user = userEvent.setup()
+
+      const { unmount } = render(
+        <PdfViewerDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          fileUrl="http://example.com/test.pdf"
+          filename="test.pdf"
+        />,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+      })
+
+      // Click Next to start a render that hangs and parks a task whose cancel() throws.
+      const nextBtn = screen.getByRole('button', { name: 'Next page' })
+      await user.click(nextBtn)
+
+      await waitFor(() => {
+        expect(mockRender).toHaveBeenCalled()
+      })
+
+      // Unmount triggers the loadPdf useEffect cleanup which calls cancel() on
+      // the parked task; cancel() throws and the catch logs a warning.
+      unmount()
+
+      await waitFor(() => {
+        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+          'PdfViewerDialog',
+          'cleanup cancel threw',
+          undefined,
+          cancelError,
+        )
+      })
+      expect(cancelMock).toHaveBeenCalled()
+    } finally {
+      HTMLCanvasElement.prototype.getContext = originalGetContext
+    }
+  })
+
   it('FE-H-11: logs warning when render-task cancel throws', async () => {
     const cancelError = new Error('cancel failed')
     const cancelMock = vi.fn(() => {

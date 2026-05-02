@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 605 — Batch FRONTEND-FIXUPS-1 closed: TEST-FE-3, TEST-FE-4, TEST-FE-5, TEST-FE-7, FE-H-2)
+> **Last updated:** 2026-05-02 (Session 606 — Batch FE-H-FIXUPS-1 closed: FE-H-3, FE-H-14, FE-H-19, FE-H-20 fixed + FE-H-16 rejected as false-positive per biome's useExhaustiveDependencies)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-151 open items in the summary table; 193 detail entries (FE-* sub-tables don't appear in the summary).
+151 open items in the summary table; 188 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -1226,18 +1226,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F014
 - **Status:** Open
 
-### FE-H-3 — `useScrollRestore` schedules a `requestAnimationFrame` with no cleanup
-- **Domain:** Frontend / Hooks
-- **Location:** `src/hooks/useScrollRestore.ts:36-47`
-- **What:** RAF callback captures `container`. If the component unmounts before the frame fires, the callback runs and writes `scrollTop` on a detached node.
-- **Cost:** Trivial — capture the RAF id and `cancelAnimationFrame(id)` in the cleanup.
-- **Risk:** Low.
-- **Impact:** Low — defensive fix.
-- **Source:** FE review 2026-05-02 / F043
-- **Status:** Open
-
-
-
 
 ### FE-H-7 — `useCheckboxSyntax`: optimistic update has no rollback on IPC rejection
 - **Domain:** Frontend / Editor
@@ -1249,16 +1237,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F037
 - **Status:** Open
 
-### FE-H-14 — `PdfViewerDialog` cleanup function still has bare `catch {}` (FE-H-11 follow-up)
-- **Domain:** Frontend / PDF viewer
-- **Location:** `src/components/PdfViewerDialog.tsx:146` (inside the useEffect cleanup function, separate from the render-task cancel path closed by FE-H-11).
-- **What:** A second bare `catch {}` (no parameter, no log) on the cleanup-time `renderTaskRef.current.cancel()` call. Same anti-pattern FE-H-11 closed for the render-time cancel; left intentionally untouched there to keep the FE-H-11 diff minimal.
-- **Cost:** Trivial — `catch (err) { logger.warn('PdfViewerDialog', 'cleanup cancel threw', undefined, err) }`.
-- **Risk:** Low.
-- **Impact:** Low — cleanup-time cancel rarely throws, but the log is needed to comply with AGENTS' "no silent catch" rule.
-- **Source:** Reviewer note from FE-H-11 close (2026-05-02 / Session 601).
-- **Status:** Open
-
 ### FE-H-15 — Sidebar rail drag handler leaks `pointermove`/`pointerup` listeners on unmount-during-drag
 - **Domain:** Frontend / UI primitives
 - **Location:** `src/components/ui/sidebar.tsx:488-548` (registration: 542-543)
@@ -1267,16 +1245,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Risk:** Low.
 - **Impact:** Medium — small but real memory leak + stale-state callback risk.
 - **Source:** FE review 2026-05-02 / F025
-- **Status:** Open
-
-### FE-H-16 — `SidebarProvider` `useMemo` deps array missing `setOpenMobile` / `setIsResizing`
-- **Domain:** Frontend / UI primitives
-- **Location:** `src/components/ui/sidebar.tsx:206-231`
-- **What:** Memoized context value object includes `setOpenMobile` (line 213) and `setIsResizing` (line 218) but the dependency array (lines 220–230) omits both. If either setter ever changes identity, consumers receive a stale closure.
-- **Cost:** Trivial — add both to the dependency array.
-- **Risk:** Low.
-- **Impact:** Low — current React guarantees that `useState` setters are stable, so the stale-closure risk is narrow today; included as a defensive correctness fix.
-- **Source:** FE review 2026-05-02 / F026
 - **Status:** Open
 
 ### FE-H-17 — `BlockPropertyDrawer` / `PagePropertyTable`: `Promise.all` partial-failure handling
@@ -1299,28 +1267,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low — race window is narrow but visible in tests / fast keyboard navigation.
 - **Recommendation:** `if (editor.view.isDestroyed) { logger.warn('slash-command', 'skipping auto-execute — editor view destroyed'); return }` plus a try/catch around `command(item)`.
 - **Source:** FE review 2026-05-02 / F010
-- **Status:** Open
-
-### FE-H-19 — `DuePanel`: `flatItems` array recomputed every render, breaks `useListKeyboardNavigation` stability
-- **Domain:** Frontend / Performance / Due panel
-- **Location:** `src/components/DuePanel.tsx:149`
-- **What:** `const flatItems = [...grouped.flatMap((g) => g.items), ...uniqueProjected.map((e) => e.block)]` runs every render. The reference is read in keyboard-nav and effect deps, which makes the effect re-run on every parent render even when membership hasn't changed.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Medium — re-renders + effect runs on a hot path (the agenda surface).
-- **Recommendation:** `useMemo(() => [...], [grouped, uniqueProjected])`.
-- **Source:** FE review 2026-05-02 / F059
-- **Status:** Open
-
-### FE-H-20 — `SearchPanel` doesn't dedupe `parentIds` before `batchResolve`
-- **Domain:** Frontend / Search
-- **Location:** `src/components/SearchPanel.tsx:136-154`
-- **What:** `parentIds = results.map((b) => b.page_id).filter(...)` is computed inside the effect body (deps are `[results]`, so the effect only fires when `results` reference changes; the `useMemo` recommendation in earlier framings of this item would be a no-op). The genuine bug is missing dedupe — `SearchPanel` can hand `batchResolve` a list with duplicates, while `TagFilterPanel.tsx:137` already wraps with `[...new Set(...)]`.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low–medium — slightly redundant IPC payload on duplicated parent ids; only `SearchPanel` is affected.
-- **Recommendation:** `const parentIds = [...new Set(results.map((b) => b.page_id).filter(notNullish))]` in `SearchPanel.tsx`. Demote severity to FE-M.
-- **Source:** FE review 2026-05-02 / F060 + F061
 - **Status:** Open
 
 ### FE-H-21 — `Resolve` store: asymmetric version-bump policy between `set` and `batchSet`

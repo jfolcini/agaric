@@ -123,18 +123,28 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   // ── Keyboard navigation (UX-138) ────────────────────────────────────
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Group blocks for display (computed early so flatItems can be derived)
-  const groupLabels: Record<string, string> = {
-    DOING: t('duePanel.groupDoing'),
-    TODO: t('duePanel.groupTodo'),
-    DONE: t('duePanel.groupDone'),
-  }
-  const grouped = GROUP_ORDER.map((state) => {
-    const items = visibleBlocks
-      .filter((b) => b.todo_state === state)
-      .sort((a, b) => priorityKey(a.priority) - priorityKey(b.priority))
-    return { state, label: state ? (groupLabels[state] ?? state) : t('duePanel.groupOther'), items }
-  }).filter((g) => g.items.length > 0)
+  // Group blocks for display (computed early so flatItems can be derived).
+  // FE-H-19: memoized to keep reference-stable across renders — otherwise the
+  // `flatItems` memo below would recompute every render because `grouped`
+  // would change identity, which would in turn reset keyboard-nav focus.
+  // `groupLabels` is kept inside the memo so it isn't a per-render dep.
+  const grouped = useMemo(() => {
+    const groupLabels: Record<string, string> = {
+      DOING: t('duePanel.groupDoing'),
+      TODO: t('duePanel.groupTodo'),
+      DONE: t('duePanel.groupDone'),
+    }
+    return GROUP_ORDER.map((state) => {
+      const items = visibleBlocks
+        .filter((b) => b.todo_state === state)
+        .sort((a, b) => priorityKey(a.priority) - priorityKey(b.priority))
+      return {
+        state,
+        label: state ? (groupLabels[state] ?? state) : t('duePanel.groupOther'),
+        items,
+      }
+    }).filter((g) => g.items.length > 0)
+  }, [visibleBlocks, t])
 
   // Deduplicate: exclude projected entries whose block already appears in real
   // agenda. Computed once here so the result is shared by the keyboard nav
@@ -146,7 +156,13 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
 
   // Flat-items array threads grouped blocks AND projected entries so arrow-key
   // navigation can reach the projected `<li>` items at the bottom of the list.
-  const flatItems = [...grouped.flatMap((g) => g.items), ...uniqueProjected.map((e) => e.block)]
+  // FE-H-19: memoized to keep reference-stable across renders — otherwise the
+  // keyboard-nav `itemCount` / `onSelect` reads below recompute on every parent
+  // render, invalidating effects that depend on `flatItems` identity.
+  const flatItems = useMemo(
+    () => [...grouped.flatMap((g) => g.items), ...uniqueProjected.map((e) => e.block)],
+    [grouped, uniqueProjected],
+  )
 
   const {
     focusedIndex,

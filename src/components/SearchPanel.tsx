@@ -168,7 +168,9 @@ export function SearchPanel(): React.ReactElement {
 
   // Resolve page titles for breadcrumbs when results change
   useEffect(() => {
-    const parentIds = results.map((b) => b.page_id).filter((id): id is string => id != null)
+    const parentIds = [
+      ...new Set(results.map((b) => b.page_id).filter((id): id is string => id != null)),
+    ]
     if (parentIds.length === 0) return
     batchResolve(parentIds)
       .then((resolved) => {
