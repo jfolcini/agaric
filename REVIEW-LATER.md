@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-62 open items.
+84 open items.
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -35,6 +35,26 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-170 | MAINT | Backlink: `eval_unlinked_references` collapses `total_count = filtered_count` (out of parity with `eval_backlink_query_grouped`); UI badge under-reports the unlinked-ref count when filters are active | S | — |
 | MAINT-171 | MAINT | Recurrence: 8 duplicated `set_property_in_tx` call sites in `apply_recurrence_advance` — extract a small helper to reduce copy-paste surface | S | — |
 | MAINT-172 | MAINT | Pagination/queries: space-filter SQL fragment inlined across 13+ files because `sqlx::query_as!` rejects `concat!()`; `space_filter_clause!` macro referenced in comments but unusable. Real maintenance hotspot, sqlx-constrained | M | sqlx upstream |
+| MAINT-173 | MAINT | Frontend — batch-delete in `useBlockMultiSelect` only filters direct children; transitive descendants are dispatched as redundant `deleteBlock` calls that race the cascade and surface as spurious "delete failed" toast counts | S | — |
+| MAINT-174 | MAINT | Frontend — `BlockContextMenu` hardening cluster: action errors silently close the menu, first-item focus has empty deps and doesn't refocus when items change, close-fallback selector matches any button in the block | S | — |
+| MAINT-175 | MAINT | Frontend — `BlockPropertyEditor` leaves popup at last position on `computePosition` failure; `suggestion-renderer.ts` (off-screen fallback) is the better pattern. Extract a shared `applySafePosition` helper | S | — |
+| MAINT-176 | MAINT | Frontend — `use-roving-editor.ts:391` dispatches the suggestion-exit transaction without try/catch; `replaceDocSilently()` then runs against a possibly-corrupt plugin state if dispatch throws | S | — |
+| MAINT-177 | MAINT | Frontend — `BugReportDialog.handleSubmit` doesn't catch `openUrl()` failures; the dialog still closes with a success toast even when the GitHub issue page never opened. Add a copy-the-URL fallback on error | S | — |
+| MAINT-178 | MAINT | Frontend — `BootGate` error screen has only Retry; for unrecoverable failures (corrupted DB, permission denied, missing migration) the user is stuck. Add a diagnostics escape hatch (show `error.cause` chain, copy logs, launch bug-report) | S | — |
+| MAINT-179 | MAINT | Frontend — GCal Settings success-toast asymmetry: `set_gcal_window_days` shows error toast but no success toast, while `set_gcal_privacy_mode` does both. Standardise via the existing `useIpcCommand` `onSuccess` callback | S | — |
+| MAINT-180 | MAINT | Frontend — `SpaceManageDialog` — each `SpaceRowEditor` mount fires emptiness-probe + journal-template `listBlocks` IPCs with no dedup; reopening the dialog re-fetches the same data per row | S | — |
+| MAINT-181 | MAINT | Frontend — `PropertyRowEditor.handleOpenRefPicker` opens the picker even when `listBlocks` rejects; user sees an empty picker with no failure indicator. Move `setRefPickerOpen(true)` into `.then()` | S | — |
+| MAINT-182 | MAINT | Frontend i18n leak — `useBlockKeyboardHandlers.ts:425` toasts hardcoded English `'Changes discarded'`; only such occurrence in `src/hooks/` | S | — |
+| MAINT-183 | MAINT | Frontend — `markdown-serialize.ts` header claims "zero external dependencies" but file imports `sonner`, `logger`, `i18n`. Either rewrite the header or move the toast/i18n side effect to a wrapper at the call site | S | — |
+| MAINT-184 | MAINT | Frontend — `block-link-picker.ts` and `block-ref-picker.ts` each duplicate ~70% of resolve-and-insert logic between their InputRule handler and their `resolve*FromSelection` command. Extract a shared helper | S | — |
+| MAINT-185 | MAINT | Frontend — `use-block-keyboard.ts:275-335` `handleKeyDown` callback has 16 deps; depends on parent-callback memoization. Switch to the refs-bag pattern already used in `use-roving-editor.ts:258-289` for stable listener identity | S | — |
+| MAINT-186 | MAINT | Frontend — `SuggestionList.tsx:155-159` meets the 44 px touch target via the `touch-target` utility class but not via the explicit `min-h-[44px]` documented in `UX.md` "Touch Target Sizing" line 260; either make explicit or update the doc to reference the utility | S | — |
+| MAINT-187 | MAINT | Frontend — hardcoded internal-property keys list `['repeat','created_at','completed_at','repeat-seq','repeat-origin']` duplicated across `SortableBlock.tsx:271-278` and elsewhere; promote to `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts` | S | — |
+| MAINT-188 | MAINT | Frontend — `PageHeader.tsx:524-542` rebuilds breadcrumb segments in an inline IIFE on every render; wrap in `useMemo` keyed on `title` | S | — |
+| MAINT-189 | MAINT | Frontend — `PropertyValuePicker.tsx:42-49` calls `listPropertyKeys()` once per component mount with no shared cache; multiple instances on the same view re-fetch. Add a `usePropertyKeysCache` hook | S | — |
+| MAINT-190 | MAINT | Frontend — `FilterPillRow.tsx:104-105` uses `key={index}` with a `biome-ignore` because `getFilterKey()` can collide; make the key collision-free instead of relying on the workaround | S | — |
+| MAINT-191 | MAINT | Frontend — `PairingDialog.tsx:147-167` cleanup correctly cancels the pairing session, but the comment doesn't make clear that the IPC payload itself has already crossed the bridge. One-line clarification | S | — |
+| MAINT-192 | MAINT | Documentation — UX.md / AGENTS.md additions to reduce false-positive churn on future reviews: (a) UX.md Common-Pitfall "`setState` after unmount in React 18+ is no longer a defect"; (b) UX.md Lesson-Learned "Reading store state inside callbacks via `useStore.getState()` is intentional"; (c) AGENTS.md mandatory-pattern: picker debouncing convention; (d) AGENTS.md reference `INTERNAL_PROPERTY_KEYS` (see MAINT-187) | S | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S | — |
@@ -42,6 +62,8 @@ Items flagged during development that need revisiting. Organized by section with
 | PERF-25 | PERF | `gcal_push/connector.rs::GcalSettingsSnapshot::read` issues 4 separate `SELECT`s every cycle; trivially batchable via `key IN (?, ?, ?, ?)` | S | — |
 | PERF-26 | PERF | `link_metadata/mod.rs::fetch_metadata` rebuilds `reqwest::Client` per call; should reuse a `OnceLock` like `gcal_push/api.rs` does | S | — |
 | PERF-27 | PERF | `backlink/filters.rs::PropertyText` filter fetches all rows for the property key then compares in Rust; push the operator into SQL `WHERE` | S | — |
+| PERF-28 | PERF | Frontend — `TagValuePicker.tsx:39-55` calls `listTagsByPrefix()` synchronously on every keystroke; sibling `TagFilterPanel.tsx:68-82` debounces 300 ms via `useDebouncedCallback`. Apply the same pattern | S | — |
+| PERF-29 | PERF | Frontend — `src/stores/resolve.ts:204-211` (and 249-253) cache eviction loops `cache.keys().next()` per excess key; replace with `Array.from(cache.keys()).slice(0, excess).forEach(k => cache.delete(k))` | S | — |
 | PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S | Identity decision |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
@@ -100,7 +122,15 @@ These can be tackled in a single session with low risk — listed for prioritiza
 - **PERF-25** — `models::get_settings_batch` + single `SELECT … WHERE key IN (...)`
 - **PERF-26** — `OnceLock<reqwest::Client>` in `link_metadata`
 - **PERF-27** — push `PropertyText` operator into SQL `WHERE`
+- **PERF-28** — debounce `TagValuePicker` searches (mirror `TagFilterPanel` pattern)
+- **PERF-29** — replace iterator-loop cache eviction in `stores/resolve.ts` with `Array.from(...).slice(...)`
 - **MAINT-114** — workflow consolidation audit (spike-then-commit)
+- **MAINT-173** — batch-delete transitive-descendant filter in `useBlockMultiSelect` (HIGH-severity correctness)
+- **MAINT-179** — GCal Settings success-toast consistency (mirror `set_gcal_privacy_mode`)
+- **MAINT-182** — i18n leak in `useBlockKeyboardHandlers.ts:425` (one hardcoded English string)
+- **MAINT-187** — promote internal-property keys list to `INTERNAL_PROPERTY_KEYS` in `block-utils.ts`
+- **MAINT-188** — memoize breadcrumb segments in `PageHeader.tsx:524-542`
+- **MAINT-192** — UX.md / AGENTS.md additions (4 small doc inserts to reduce review false-positive churn)
 - **PUB-5** — Tauri updater wiring (user-only: keypair + 2 secrets + uncomment)
 - **PUB-8** — Android release keystore + 4 GH Actions secrets (CI wiring already shipped)
 
@@ -375,6 +405,198 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 **Cost:** M — design + implementation + verifying the 13 sites still produce identical query plans.
 **Risk:** Medium — touching every list query is high blast-radius; needs careful test coverage.
 **Decision:** Defer until the cost of drift becomes visible (a real bug shipped because one site got out of sync). Until then, the comment-based "mirror any change" convention is acceptable.
+
+> **MAINT-173 through MAINT-192 below were filed from a frontend-wide UX review.**
+> Methodology: 7 parallel discovery subagents covering all 438 frontend source files,
+> 3 parallel verification subagents reading the cited code to filter hallucinations.
+> Items below are the verified survivors. Known false positives are not listed.
+
+### MAINT-173 — Batch-delete in `useBlockMultiSelect` doesn't filter transitive descendants
+- **Domain:** Frontend (block tree multi-select)
+- **Location:** `src/hooks/useBlockMultiSelect.ts:95-99`
+- **What:** The descendant filter `if (block?.parent_id && idsSet.has(block.parent_id)) return false` only excludes direct children of selected blocks. If a user multi-selects an ancestor A and a non-direct descendant C (skipping intermediate B), C is dispatched as a separate `deleteBlock(C)` call after `deleteBlock(A)` has already cascaded it server-side. Symptom: spurious "delete failed" entries in the failCount toast.
+- **Cost:** S — replace the parent-only check with an ancestor walk (mirror the existing `getDragDescendants(blocks, id)` helper, or invert it).
+- **Risk:** Low — narrower deletion (correct) is the only behaviour change.
+- **Impact:** Medium — eliminates a class of "looks-like-it-failed-but-didn't" toast noise on multi-level selections.
+- **Status:** Open.
+
+### MAINT-174 — `BlockContextMenu` hardening cluster (3 small bugs in one file)
+- **Domain:** Frontend (block context menu)
+- **Location:** `src/components/BlockContextMenu.tsx`
+- **What:** Three independent small bugs that share a single file and are best fixed in one session:
+  - **Action errors silently close the menu** (lines 249-255): `handleAction` calls `action?.(blockId)` then unconditionally `onClose()`. Sync or async action rejections are swallowed; the menu disappears with no feedback. Wrap in try/catch with `toast.error` + `logger.error` before closing.
+  - **First-item focus has empty deps** (lines 181-184): `useEffect(() => itemRefs.current[0]?.focus(), [])` runs once at mount. Items are conditional (zoom-in only when `hasChildren`, history only when `onShowHistory` is passed) — focus can land on an item that's no longer the first visible. Add `groups.length` (or a stable signature) to deps.
+  - **Close-fallback selector is overly broad** (lines 135-145): `[data-block-id="${blockId}"] [role="button"]` matches any button in the block (gutter, inline date chip, property chip). After a delete-from-context-menu, focus is unpredictable. Use a stable marker (`data-context-trigger="true"` on the gutter overflow button) and select that.
+- **Cost:** S — three small edits in one file.
+- **Risk:** Low.
+- **Impact:** Medium — improves keyboard UX and error feedback in a heavily-used menu.
+- **Status:** Open.
+
+### MAINT-175 — Floating UI position-failure recovery is inconsistent
+- **Domain:** Frontend (popups / floating UI)
+- **Location:** `src/components/BlockPropertyEditor.tsx:86-104`; reference impl in `src/editor/suggestion-renderer.ts:160-170`.
+- **What:** `BlockPropertyEditor` catches `computePosition()` rejections and logs them, but does not reposition the popup, so it stays at whatever its last `style.left/top` was — if the anchor scrolled, the popup floats orphaned. `suggestion-renderer.ts` is the better pattern: keep the popup at `(-9999px, -9999px)` on failure (off-screen, not broken).
+- **Cost:** S — extract a shared helper (e.g. `applySafePosition(popup, { x, y } | null)` in `src/lib/`) that applies coordinates if provided and applies the off-screen fallback otherwise. Use from both call sites.
+- **Risk:** Low.
+- **Impact:** Low–medium — eliminates a class of "popup stuck mid-page" visual bugs without changing happy-path behaviour.
+- **Status:** Open.
+
+### MAINT-176 — `use-roving-editor.ts` dispatches the suggestion-exit transaction without try/catch
+- **Domain:** Frontend (editor)
+- **Location:** `src/editor/use-roving-editor.ts:385-392`
+- **What:** The "exit suggestion plugins before `replaceDocSilently()`" sequence dispatches a transaction that can throw if the view is destroyed between the earlier `editor.view.isDestroyed` check and the dispatch. The subsequent `replaceDocSilently()` then runs against a possibly-corrupt plugin state.
+- **Cost:** S — wrap the dispatch in try/catch with `logger.warn` + an `editor.view.isDestroyed` re-check on the catch path.
+- **Risk:** Low.
+- **Impact:** Low — the failure mode is rare in practice but its symptoms (stuck suggestion plugin, ghost popup) are hard to reproduce, so defensive logging is high-leverage.
+- **Status:** Open.
+
+### MAINT-177 — `BugReportDialog` swallows `openUrl` failure but reports success
+- **Domain:** Frontend (bug report)
+- **Location:** `src/components/BugReportDialog.tsx:239-253`
+- **What:** `await openUrl(issueUrl)` is followed by `toast.success(...)` and `onOpenChange(false)`. If `openUrl` rejects (browser blocked, no default browser), the success toast still fires (in the surrounding `try/finally`, the `finally` runs but the success path can already have been observed) and the dialog still closes. The user has a ZIP on disk and no GitHub tab open.
+- **Cost:** S — wrap `openUrl` in a localised try/catch, surface a "URL copied to clipboard, please open manually" fallback toast, keep the dialog open.
+- **Risk:** Low.
+- **Impact:** Medium — the bug-report flow's whole point is for the user to land on the issue page; silently failing it defeats the feature.
+- **Status:** Open.
+
+### MAINT-178 — `BootGate` error screen has only a Retry button (no diagnostics escape hatch)
+- **Domain:** Frontend (boot)
+- **Location:** `src/components/BootGate.tsx:50-79`
+- **What:** For unrecoverable failures (corrupted DB, permission-denied data dir, missing migration), Retry just keeps failing. The user has no way to (a) see the underlying error in detail (`error.cause` chain), (b) export logs, (c) launch the bug-report dialog, (d) copy the data-dir path.
+- **Cost:** S — add a "Show details / Copy diagnostics" secondary action that opens a textarea with `error.cause` chain + platform info, plus a "Open bug report" link.
+- **Risk:** Low.
+- **Impact:** Medium — turns an unrecoverable error from "please reinstall" into "here is enough information to file a bug".
+- **Status:** Open.
+
+### MAINT-179 — GCal Settings success-toast asymmetry between commands
+- **Domain:** Frontend (settings)
+- **Location:** `src/components/GoogleCalendarSettingsTab.tsx:211-224` (`set_gcal_window_days`); contrast with line 295-301 (`set_gcal_privacy_mode`).
+- **What:** `set_gcal_window_days` configures `useIpcCommand` with optimistic update + `onError` toast but no `onSuccess`. `set_gcal_privacy_mode` does both. Users typing a new value into the window-days input get no confirmation that it was accepted. The window-blur clamp path (lines 256-277) has the same gap — it shows `toast.info` only on out-of-range clamping, never a success toast.
+- **Cost:** S — add `onSuccess: () => toast.success(t('gcal.windowUpdated'))` to the hook config; covers both code paths.
+- **Risk:** Low.
+- **Impact:** Low–medium — settings consistency, no behaviour change.
+- **Status:** Open.
+
+### MAINT-180 — `SpaceManageDialog` rows fire IPCs without dedup or cancellation
+- **Domain:** Frontend (spaces management)
+- **Location:** `src/components/SpaceManageDialog.tsx:178-200, 213-234`
+- **What:** Each `SpaceRowEditor` mount fires an emptiness probe (`listBlocks { spaceId, limit: 1 }`) and a journal-template fetch. Re-opening the dialog re-fetches the same data; the IPCs have no shared cache. The `cancelled` flag prevents stale state writes but doesn't stop the IPCs from crossing the bridge.
+- **Cost:** S — lift both probes to the parent dialog, fetch once per `space.id` set, pass results down as props. Optionally add a `useIpcCache` keyed on the IPC name + params.
+- **Risk:** Low.
+- **Impact:** Low–medium — no user-visible bug today, but the IPC volume scales O(N spaces × M opens).
+- **Status:** Open.
+
+### MAINT-181 — `PropertyRowEditor` opens ref picker even when `listBlocks` rejects
+- **Domain:** Frontend (property editor)
+- **Location:** `src/components/PropertyRowEditor.tsx:237-249`
+- **What:** `setRefPickerOpen(true)` runs unconditionally; the IPC `.catch` only logs and toasts. User opens an empty picker labelled "Select page" with no indication anything went wrong.
+- **Cost:** S — move `setRefPickerOpen(true)` into the `.then` after `setRefPages(res.items)`.
+- **Risk:** Low.
+- **Impact:** Low — minor UX cleanup.
+- **Status:** Open.
+
+### MAINT-182 — i18n leak: hardcoded English `'Changes discarded'` toast
+- **Domain:** Frontend (i18n)
+- **Location:** `src/hooks/useBlockKeyboardHandlers.ts:425`
+- **What:** `toast('Changes discarded', { duration: 2000 })` — only hardcoded English string in `src/hooks/`. Per `UX.md` Common Pitfall #16 + AGENTS.md mandatory-pattern, all user-visible strings go through `t()`.
+- **Cost:** Trivial — replace with `toast(t('blockTree.changesDiscarded'), { duration: 2000 })` and add the i18n key to `src/lib/i18n/`.
+- **Risk:** Low.
+- **Impact:** Low — i18n consistency.
+- **Status:** Open.
+
+### MAINT-183 — `markdown-serialize.ts` header claims zero-dep but file imports `sonner` / `logger` / `i18n`
+- **Domain:** Frontend (editor / serializer)
+- **Location:** `src/editor/markdown-serialize.ts:1-15`
+- **What:** Header says "Zero external dependencies. O(n) in the document size." File imports `sonner` (line 13), `i18n` (line 14), `logger` (line 15) for the `notifyUnknownNodeType()` warning toast. Either the comment is outdated or the side effect should move out.
+- **Cost:** S — preferred fix: convert `notifyUnknownNodeType()` into an `onUnknownNode?: (type: string) => void` callback; the call site in the editor wires the toast. Removes the imports, restores serializer purity for testing.
+- **Risk:** Low.
+- **Impact:** Low — maintainability + testability.
+- **Status:** Open.
+
+### MAINT-184 — Picker async-resolve duplication between InputRule and command paths
+- **Domain:** Frontend (editor extensions)
+- **Location:** `src/editor/extensions/block-link-picker.ts:48-104` (command) vs `113-173` (input rule); same shape in `block-ref-picker.ts:44-104` vs `104-160`.
+- **What:** Each picker has two entry points (input rule when typed, command when invoked from selection) that share ~70% of logic: async items lookup, exact-match check, `onCreate` fallback, plain-text fallback, error handling. Bug fixes need to land in two places per picker.
+- **Cost:** S — extract `resolveAndInsertBlockLink(editor, opts, items, onCreate, insertPos)` (and twin for refs) into a small shared helper. Both entry points become 5-line wrappers.
+- **Risk:** Low.
+- **Impact:** Low–medium — duplication harms velocity and is a known foot-gun (one path was patched without the other in past sessions).
+- **Status:** Open.
+
+### MAINT-185 — `use-block-keyboard.ts` keydown callback has 16 deps (relies on parent memoization)
+- **Domain:** Frontend (editor)
+- **Location:** `src/editor/use-block-keyboard.ts:275-335`
+- **What:** `useCallback(handleKeyDown, [16 callbacks])` — listener identity changes whenever any parent callback prop is recreated. Reference pattern (refs-bag) already exists in `use-roving-editor.ts:258-289` — store latest callbacks in a ref, keep the keydown handler stable.
+- **Cost:** S — mirror the refs-bag pattern.
+- **Risk:** Low.
+- **Impact:** Low — most parents already memoize, so the bug rarely surfaces; this is mostly future-proofing.
+- **Status:** Open.
+
+### MAINT-186 — `SuggestionList` 44 px touch target satisfied by utility class, not the documented `min-h-[44px]`
+- **Domain:** Frontend (editor / accessibility)
+- **Location:** `src/editor/SuggestionList.tsx:155-159`
+- **What:** Item className has `[@media(pointer:coarse)]:py-3 touch-target` — the `touch-target` utility (defined in `src/index.css`) provides `min-height: 44px` on coarse pointer. `UX.md` "Touch Target Sizing" line 260 documents the spec as `py-3 min-h-[44px]`. The spec is met but the doc and code drift.
+- **Cost:** Trivial — either add the explicit `[@media(pointer:coarse)]:min-h-[44px]` to the className OR update `UX.md` to mention the `touch-target` utility as the canonical source.
+- **Risk:** Low.
+- **Impact:** Low — doc/code parity, no behaviour change.
+- **Status:** Open.
+
+### MAINT-187 — Hardcoded internal-property keys list duplicated across components
+- **Domain:** Frontend (block properties)
+- **Location:** `src/components/SortableBlock.tsx:271-278` (`['repeat', 'created_at', 'completed_at', 'repeat-seq', 'repeat-origin']`); same shape elsewhere.
+- **What:** The list of "internal" property keys (filtered out of UI display) is hardcoded at every site that filters properties. Adding a new internal key (e.g. `updated_at`) requires hunting them all down.
+- **Cost:** Trivial — define `INTERNAL_PROPERTY_KEYS: ReadonlySet<string>` in `src/lib/block-utils.ts`, import everywhere. Reference from AGENTS.md (covered by MAINT-192).
+- **Risk:** Low.
+- **Impact:** Low — single source of truth.
+- **Status:** Open.
+
+### MAINT-188 — `PageHeader` rebuilds breadcrumb segments in inline IIFE on every render
+- **Domain:** Frontend (page header)
+- **Location:** `src/components/PageHeader.tsx:524-542`
+- **What:** `title.split('/')` and the `.map` to `BreadcrumbCrumb[]` run inside an IIFE inside JSX, so they execute on every render of `PageHeader` (which re-renders on space switches, tab changes, undo/redo, etc.). Cheap per-call, but it's also redundant.
+- **Cost:** Trivial — `useMemo(() => buildSegments(title), [title])`.
+- **Risk:** Low.
+- **Impact:** Low — micro-perf + readability.
+- **Status:** Open.
+
+### MAINT-189 — `PropertyValuePicker` fetches property keys per component mount with no shared cache
+- **Domain:** Frontend (filter pickers)
+- **Location:** `src/components/PropertyValuePicker.tsx:42-49`
+- **What:** `useEffect(() => { listPropertyKeys()... }, [])` fires on every mount. Multiple instances on the same view (e.g. multiple filter rows) each call the IPC. The data is small and rarely changes — perfect candidate for a shared cache.
+- **Cost:** S — extract `usePropertyKeysCache` (Zustand or context) keyed on `currentSpaceId`; invalidate on relevant materializer events.
+- **Risk:** Low.
+- **Impact:** Low — minor IPC reduction; not user-visible.
+- **Status:** Open.
+
+### MAINT-190 — `FilterPillRow` uses `key={index}` because `getFilterKey()` can collide
+- **Domain:** Frontend (filter UI)
+- **Location:** `src/components/FilterPillRow.tsx:104-105`
+- **What:** Existing `biome-ignore lint/suspicious/noArrayIndexKey` comment acknowledges that `getFilterKey()` can return duplicates for structurally different filters. `key={index}` works but is fragile under reorder.
+- **Cost:** S — make `getFilterKey()` collision-free (include filter type + a content hash, or stamp a stable per-add counter).
+- **Risk:** Low.
+- **Impact:** Low — pre-empts future bugs around filter reorder / animation.
+- **Status:** Open.
+
+### MAINT-191 — `PairingDialog` cleanup comment doesn't clarify which side cancellation applies to
+- **Domain:** Frontend (pairing)
+- **Location:** `src/components/PairingDialog.tsx:147-167`
+- **What:** Cleanup correctly cancels the pairing session via `executeCancelPairingCleanup()`. The comment "Cancel any in-progress pairing when the dialog closes or unmounts" is correct but doesn't make clear that the in-flight IPC payload itself has already crossed the bridge — only the *server-side* session state is cancelled.
+- **Cost:** Trivial — one-line comment expansion.
+- **Risk:** Low.
+- **Impact:** Low — saves the next reader a context-switch.
+- **Status:** Open.
+
+### MAINT-192 — UX.md / AGENTS.md additions to reduce false-positive churn on future frontend reviews
+- **Domain:** Documentation
+- **Location:** `UX.md`, `AGENTS.md`
+- **What:** Frontend-wide UX review (the one that filed MAINT-173..MAINT-191 and PERF-28..PERF-29) had a 74% false-positive rate. The bulk of rejected findings pattern-matched against React-class anti-patterns that don't apply to this codebase. Four small doc additions would pre-empt most of that churn:
+  - **(a) UX.md "Common Pitfalls"** — add an entry **"`setState` after unmount in React 18+ is no longer a defect"**: React 18 removed the warning and the call is silently dropped; only flag when the late update would leave incorrect *visible* state.
+  - **(b) UX.md "Lessons Learned → Data & State"** — add **"Reading store state inside callbacks via `useStore.getState()` is intentional"**: it reads the latest state from the Zustand store, not from the closure, so it is *not* a stale-closure bug.
+  - **(c) AGENTS.md "Frontend Development Guidelines → Mandatory patterns"** — add **"Picker debouncing"** entry referencing `useDebouncedCallback` + the 300 ms convention used by `TagFilterPanel`. PERF-28 traces directly to this gap.
+  - **(d) AGENTS.md** — under "Properties system is the primary extension point", add a one-line reference to `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts` (lands together with MAINT-187).
+- **Cost:** Trivial — four small doc inserts.
+- **Risk:** Low.
+- **Impact:** Medium — every future frontend review (human or automated) avoids re-discovering the same false positives.
+- **Status:** Open.
 
 ## TEST — Backend test improvements
 
@@ -885,6 +1107,32 @@ This changes the signature of `read_attachment_file` (no longer returns `Vec<u8>
 **Cost:** S — finite operator arms; query builder already in use elsewhere.
 **Risk:** Low — covered by existing filter-resolver tests.
 **Impact:** Low-medium — bounded by realistic property cardinality, but pushes work to the layer that should be doing it.
+
+### PERF-28 — `TagValuePicker` searches on every keystroke without debounce
+- **Domain:** Frontend (filter pickers)
+- **Location:** `src/components/TagValuePicker.tsx:39-55, 60-80`; reference impl `src/components/TagFilterPanel.tsx:68-82`.
+- **What:** `handleChange` calls `search(value.trim())` synchronously on every keystroke; `search` issues a `listTagsByPrefix({ prefix, limit: 20 })` IPC. Sibling `TagFilterPanel` debounces 300 ms via `useDebouncedCallback`. Single-keystroke users fire 5–10 IPCs per word.
+- **Cost:** S — wrap `search` in `useDebouncedCallback(_, 300)` matching the `TagFilterPanel` pattern.
+- **Risk:** Low.
+- **Impact:** Medium — visible UI thrashing on slow devices / large tag vocabularies.
+- **Status:** Open.
+
+### PERF-29 — `stores/resolve.ts` cache eviction loops `cache.keys().next()` per excess key
+- **Domain:** Frontend (resolve cache)
+- **Location:** `src/stores/resolve.ts:204-211` and `249-253`
+- **What:**
+  ```ts
+  const keys = cache.keys()
+  for (let i = 0; i < excess; i++) {
+    const { value } = keys.next()
+    if (value) cache.delete(value)
+  }
+  ```
+  Iterating the Map iterator one step at a time has higher overhead than `Array.from(cache.keys()).slice(0, excess).forEach(k => cache.delete(k))`. `excess` is bounded by `MAX_CACHE_SIZE`; not catastrophic but trivially fixable.
+- **Cost:** Trivial — two-line replacement at both sites.
+- **Risk:** Low.
+- **Impact:** Low — micro-perf when the cache fills up (e.g. after preloading many pages).
+- **Status:** Open.
 
 ---
 
