@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 647 — Batch MIX-4: closed TEST-FE-1 dangerous subset (bare 50ms waits before negative assertions in 4 hot frontend test files); 1 item via 1 subagent — L-17 dropped due to stalled subagent, deferred to future batch)
+> **Last updated:** 2026-05-03 (Session 648 — Batch MIX-5: closed L-17 (`dispatch_op` fg+bg ordering race fixed by gating bg fan-out on `flush_foreground` Barrier); 1 item via orchestrator-direct fix after MIX-4 subagent stall)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-22 open items in the summary table; 26 detail entries (FE-* sub-tables don't appear in the summary).
+22 open items in the summary table; 25 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -593,19 +593,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 **Cost:** S (~15 min once you've decided what to use as DN).
 **Status:** ACTIONABLE — pure operations, no design decision pending.
-
-### L-17 — `dispatch_op` enqueues fg+bg out of order
-- **Domain:** Materializer
-- **Location:** `src-tauri/src/materializer/dispatch.rs:128-132`
-- **What:** `dispatch_op` calls `enqueue_foreground(ApplyOp(record))` then `enqueue_background_tasks(record, None)`. The two queues have independent consumers — the bg consumer can pull e.g. `RebuildTagsCache` and execute it before the fg consumer has applied the `CreateBlock(tag)` to `blocks`. The cache rebuild then reads pre-op state and `tags_cache` stays stale until the next op happens to re-enqueue the rebuild. Production paths use `dispatch_background_or_warn` *after* the command has committed the op, so this race is mostly limited to test code (and `sync_daemon/snapshot_transfer.rs:651`, the `seed_one_block` test helper); it is downgraded from Medium for that reason.
-- **Why it matters:** For the test paths (and the snapshot-transfer test helper) it shrinks the window of correctness for the very-first op of its kind. If `dispatch_op` is ever adopted on a production code path it becomes a real correctness hazard ("created a tag, search doesn't find it" until I create another).
-- **Cost:** M (2-8h)
-- **Risk:** Medium
-- **Impact:** Low
-- **Recommendation:** Either (a) move the bg fan-out *into* the fg consumer so it runs only after `apply_op_tx` commits — making the consumer the single scheduler of per-op derived work; or (b) thread a `Notify` keyed on `(device_id, seq)` and have the bg side `notified().await` before running the rebuild it spawned. (a) is cleaner.
-- **Pass-1 source:** 02/F10
-- **Status:** Open
-
 
 ### L-55 — `redact_log` newline split-and-rejoin is O(n²) in the worst case
 - **Domain:** Commands (System)
