@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 643 — Batch FE-MIX-1: closed FE-H-7 (useCheckboxSyntax optimistic rollback), FE-H-15 (sidebar drag listener leak), FE-H-17 (BlockPropertyDrawer/PagePropertyTable Promise.allSettled), FE-M-8 (PropertyDefinitionsList reportIpcError migration), M-97 (properties.rs in-tx reserved-property validation); 5 items via 4 subagents + 1 orchestrator-direct — first batch this run with 3 FE-H (real-bug) items)
+> **Last updated:** 2026-05-03 (Session 644 — Batch FE-MIX-2: closed FE-H-1 (executeAgendaFilters cursor pagination), FE-H-21 (Resolve store symmetric inline version bump), FE-H-22 (resolve/page-blocks fail-closed pre-bootstrap), FE-M-15 (picker extensions stale-insertPos guard), M-95 (recover_calendar_gone deliberate-no-clear documented as resolved); 5 items via 4 subagents + 1 orchestrator-direct — clears the entire FE-H queue (all 6 high-severity items resolved across sessions 643+644))
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-27 open items in the summary table; 38 detail entries (FE-* sub-tables don't appear in the summary).
+27 open items in the summary table; 33 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -604,18 +604,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 **Cost:** S (~15 min once you've decided what to use as DN).
 **Status:** ACTIONABLE — pure operations, no design decision pending.
 
-### M-95 — `recover_calendar_gone` does not also clear `oauth_account_email`
-- **Domain:** GCal / Spaces / Drafts
-- **Location:** `src-tauri/src/gcal_push/connector.rs:727-741`
-- **What:** When the calendar is gone, the connector wipes the event map and resets `calendar_id`, but `oauth_account_email` is left untouched. The Settings UI continues to show "connected as user@example.com" while the connector has just reset to "no calendar yet".
-- **Why it matters:** Cosmetic UX consistency — does not affect correctness of the push pipeline. Listed Medium in the M- numbering for parity with M-89's transaction concern, but this is purely a Settings-tab display drift.
-- **Cost:** S
-- **Risk:** Low
-- **Impact:** Low
-- **Recommendation:** Either leave as-is (the email is still the right one — only the calendar reset) or, if FEAT-5f explicitly differentiates "connected, no calendar yet" from "calendar recreated since last open", refresh `oauth_account_email` from the most recent token's id_token claim during the recreate path. Lean toward leaving as-is unless FEAT-5f spec calls for the distinction.
-- **Pass-1 source:** 10/F23
-- **Status:** Open
-
 ### M-98 — `get_block_inner` returns soft-deleted blocks; leaks to `export_page_markdown_inner` and the public `get_block` IPC
 - **Domain:** Commands / queries
 - **Location:** `src-tauri/src/commands/blocks/queries.rs:115-131` (`get_block_inner`); leaks via `src-tauri/src/commands/pages.rs:204` (`export_page_markdown_inner`), `src-tauri/src/commands/pages.rs:648` (`get_page_inner`), `src-tauri/src/commands/blocks/queries.rs:273` (public `get_block` command).
@@ -662,51 +650,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** N/A.
 - **Decision:** No action. Filed for awareness only.
 - **Status:** Documented as deliberate.
-
-### FE-H-1 — Cursor pagination violated in `executeAgendaFilters` default branch
-- **Domain:** Frontend / Agenda
-- **Location:** `src/lib/agenda-filters.ts:287-290`
-- **What:** Default branch (no filters) calls three queries with `limit: 500` and hardcoded `cursor: null`, and never paginates. Violates AGENTS invariant #3 ("Cursor-based pagination on ALL list queries").
-- **Why it matters:** A user with more than 500 due/scheduled blocks silently loses items.
-- **Cost:** S–M
-- **Risk:** Low
-- **Impact:** High — silent data loss in the default agenda view at scale.
-- **Recommendation:** Thread cursor pagination through the default branch like the filtered branches do, or document the carve-out explicitly per AGENTS invariant #3 if 500 is genuinely a safe upper bound.
-- **Source:** FE review 2026-05-02 / F014
-- **Status:** Open
-
-
-### FE-H-21 — `Resolve` store: asymmetric version-bump policy between `set` and `batchSet`
-- **Domain:** Frontend / Resolve store
-- **Location:** `src/stores/resolve.ts:122` (closure flag declaration), `:226-232` (debounce in `set`), `:235-257` (`batchSet` bumps inline at L255)
-- **What:** `set` debounces `version` bumps via a closure flag (`pendingVersionBump` declared at L122) plus a microtask. `batchSet` bumps `version` inline (L255) and never touches the flag. The cache mutations themselves are synchronous and fresh-Map per call, so renders cannot observe mid-update state in either path; the substantive issue is the asymmetric policy between the two writers, not a load-bearing race.
-- **Cost:** S.
-- **Risk:** Low.
-- **Impact:** Low–medium — pick one policy. Demote severity from FE-H to FE-M (the speculative race the original framing described is not reproducible against the synchronous cache code).
-- **Recommendation:** Choose one of (a) make `batchSet` use the same closure-flag debounce, or (b) drop the closure-flag debounce and have `set` bump inline like `batchSet`. (b) is simpler.
-- **Source:** FE review 2026-05-02 / F001
-- **Status:** Open
-
-### FE-H-22 — Resolve / page-blocks empty-string `spaceId` fallback is documented but ambiguous
-- **Domain:** Frontend / Spaces
-- **Location:** `src/stores/resolve.ts:140-150`, `src/stores/page-blocks.ts:170-180`
-- **What:** `useSpaceStore.getState().currentSpaceId ?? ''` is passed to `listBlocks` to force a no-match SQL filter during pre-bootstrap. The pattern relies on the backend treating `''` as no-match — there is no programmatic guarantee. A backend change that interprets `''` as wildcard would silently leak data across the no-bootstrap window. **Especially worth tightening because FEAT-3p9 is in flight and the cross-space barrier is the most important invariant.**
-- **Cost:** S — gate the call behind `if (!currentSpaceId) return` and skip the fetch, OR use a typed sentinel that the backend asserts on.
-- **Risk:** Low.
-- **Impact:** High — defensive correctness for the cross-space invariant.
-- **Source:** FE review 2026-05-02 / F002
-- **Status:** Open
-
-### FE-M-15 — Picker extensions: validate `insertPos` against current doc before inserting
-- **Domain:** Frontend / Editor
-- **Location:** `src/editor/extensions/block-link-picker.ts:61-100` (already has try/catch + `logger.warn` fallback), `src/editor/extensions/block-ref-picker.ts:60-91` (same), `src/editor/extensions/at-tag-picker.ts:49-87` (verify before generalising)
-- **What:** `insertPos` is captured pre-deletion; user can edit between then and async resolution; `insertContentAt(insertPos, ...)` then targets a stale offset. The basic try/catch + `logger.warn` recommendation is **already implemented** at all three picker sites — `block-link-picker.ts` and `block-ref-picker.ts` wrap `insertContentAt` and fall back to plain text on error. The remaining gap is that `insertContentAt` with a stale offset is more likely to silently *clamp* than to throw, so the existing try/catch may not actually fire.
-- **Cost:** S.
-- **Risk:** Low.
-- **Impact:** Low — race window is narrow.
-- **Recommendation:** Before calling `insertContentAt(insertPos, ...)`, validate `insertPos <= editor.state.doc.content.size` and skip the inline insert (fall back to plain text at the current cursor) if the doc has shrunk past it. Verify `at-tag-picker.ts:49-87` follows the same try/catch pattern as the other two before generalising the fix.
-- **Source:** FE review 2026-05-02 / F011
-- **Status:** Open
 
 ### FE-L-5 — `Undo` store batch-undo silent fallback (no UX surface)
 - **Domain:** Frontend / Undo store
