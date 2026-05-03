@@ -23,6 +23,7 @@ export const pages: Record<string, string> = {
   'journal.agendaView': 'Agenda view',
   'journal.noBlocks': 'No blocks for {{date}}.',
   'journal.addFirstBlock': 'Add your first block',
+  'journal.emptyHint': 'Type / for commands · journal templates configurable per space',
   'journal.openInEditor': 'Open in page editor',
   'journal.dayAriaLabel': 'Journal for {{date}}',
   'journal.dueBadge': 'due',

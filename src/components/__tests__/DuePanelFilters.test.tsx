@@ -188,6 +188,22 @@ describe('DuePanelFilters', () => {
     }
   })
 
+  // UX-324 — tooltip explaining the Due axis (the most ambiguous one
+  // for users unfamiliar with Agaric's date model: hard deadline vs
+  // soft scheduled start).
+  it('shows a tooltip explaining the "Due" axis on hover', async () => {
+    const user = userEvent.setup()
+    render(<DuePanelFilters {...defaultProps} />)
+
+    await user.hover(screen.getByRole('button', { name: 'Due' }))
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('tooltip', { name: 'Hard due date — overdue if past' }),
+      ).toBeInTheDocument()
+    })
+  })
+
   it('hide-before-scheduled toggle has aria-label and 44px min-height on coarse pointer', () => {
     render(<DuePanelFilters {...defaultProps} hideBeforeScheduled={false} />)
 

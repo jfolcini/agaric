@@ -210,15 +210,18 @@ export function DaySection({
             message={t('journal.noBlocks', { date: entry.displayDate })}
             compact
             action={
-              <Button
-                variant="ghost"
-                size="sm"
-                className="mt-3 mx-auto flex items-center gap-1"
-                onClick={() => onAddBlock(entry.dateStr)}
-              >
-                <Plus className="h-4 w-4" />
-                {t('journal.addFirstBlock')}
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3 mx-auto flex items-center gap-1"
+                  onClick={() => onAddBlock(entry.dateStr)}
+                >
+                  <Plus className="h-4 w-4" />
+                  {t('journal.addFirstBlock')}
+                </Button>
+                <p className="text-xs text-muted-foreground mt-2">{t('journal.emptyHint')}</p>
+              </>
             }
           />
         ))}

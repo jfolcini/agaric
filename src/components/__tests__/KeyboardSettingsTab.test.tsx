@@ -270,7 +270,11 @@ describe('KeyboardSettingsTab', () => {
   it('shows "Customized" badge for custom shortcuts', () => {
     render(<KeyboardSettingsTab />)
 
-    expect(screen.getByText('Customized')).toBeInTheDocument()
+    const badge = screen.getByText('Customized')
+    expect(badge).toBeInTheDocument()
+    // UX-393: must be rendered as the Badge UI primitive, not plain text.
+    expect(badge).toHaveAttribute('data-slot', 'badge')
+    expect(badge).toHaveAttribute('data-variant', 'secondary')
   })
 
   it('save via Enter key', async () => {

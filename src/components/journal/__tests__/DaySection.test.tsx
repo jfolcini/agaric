@@ -264,6 +264,18 @@ describe('DaySection', () => {
     expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
   })
 
+  // 8b. Full EmptyState renders muted hint about slash commands and journal templates
+  it('renders muted hint about slash commands and journal templates in full empty state', () => {
+    const entry = makeDayEntry({ pageId: null, displayDate: 'Sun, Jun 15, 2025' })
+
+    render(<DaySection entry={entry} mode="daily" onAddBlock={noop} />)
+
+    const hint = screen.getByText('Type / for commands · journal templates configurable per space')
+    expect(hint).toBeInTheDocument()
+    expect(hint.className).toContain('text-xs')
+    expect(hint.className).toContain('text-muted-foreground')
+  })
+
   // 9. Shows compact EmptyState w/ add-block CTA when no pageId and compact=true
   it('shows compact EmptyState with add-block CTA when no pageId and compact=true', () => {
     const entry = makeDayEntry({ pageId: null, displayDate: 'Sun, Jun 15, 2025' })
