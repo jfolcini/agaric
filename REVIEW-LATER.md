@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 644 — Batch FE-MIX-2: closed FE-H-1 (executeAgendaFilters cursor pagination), FE-H-21 (Resolve store symmetric inline version bump), FE-H-22 (resolve/page-blocks fail-closed pre-bootstrap), FE-M-15 (picker extensions stale-insertPos guard), M-95 (recover_calendar_gone deliberate-no-clear documented as resolved); 5 items via 4 subagents + 1 orchestrator-direct — clears the entire FE-H queue (all 6 high-severity items resolved across sessions 643+644))
+> **Last updated:** 2026-05-03 (Session 645 — Batch UX-MIX-2: closed UX-309 (slash discoverability via empty-block placeholder), UX-310 (WelcomeModal reference-syntax highlight), UX-369 (history toggle persists via localStorage), UX-371 (JournalPage Configure-template inline button); 4 items via 4 subagents — eighth back-to-back FE-cleanup-style batch)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-27 open items in the summary table; 33 detail entries (FE-* sub-tables don't appear in the summary).
+23 open items in the summary table; 29 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -44,12 +44,8 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-304 | UX | Swipe-to-delete (mobile) has no visual affordance or threshold cue | S | — |
 | UX-305 | UX | Drag handle on touch has 250 ms long-press requirement, no hint | S | — |
 | UX-306 | UX | Touch gutter "More actions" menu doesn't preview hidden actions | S | — |
-| UX-309 | UX | Slash command palette is not discoverable to new users | S | — |
-| UX-310 | UX | `@` / `[[` / `((` / `#[…]` triggers not surfaced anywhere visible | S | — |
 | UX-313 | UX | Broken-link "click to remove" is hover-only (no touch affordance) | S | — |
 | UX-366 | UX | Cross-space `[[link]]` chips render with literal "Broken link" tooltip | S | — |
-| UX-369 | UX | History "All spaces" toggle resets every session | S | — |
-| UX-371 | UX | Per-space journal template buried in Manage Spaces | S | — |
 
 ### Quick wins (S-cost, ready to grab)
 
@@ -703,24 +699,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-309 — Slash command palette is not discoverable to new users
-- **Domain:** Frontend / Editor
-- **Location:** `src/lib/slash-commands.ts` (64 commands across 8 categories: SLASH_COMMANDS body 22 + PRIORITY 3 + HEADING 6 + REPEAT 11 + EFFORT 6 + ASSIGNEE 2 + LOCATION 4 + REPEAT_END 5 + CALLOUT 5; plus dynamic `table:RxC` synthesised at L479) ; `src/editor/extensions/slash-command.ts:1-131`
-- **What:** No in-editor hint that `/` opens a palette. New users find this only via `?` keyboard help or by accident.
-- **Cost:** Trivial — empty-block placeholder "Type / for commands…"; add a 4th highlight in `WelcomeModal` for reference / slash syntax.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-310 — `@` / `[[` / `((` / `#[…]` triggers not surfaced anywhere visible
-- **Domain:** Frontend / Editor
-- **Location:** `src/editor/extensions/at-tag-picker.ts` ; `block-link-picker.ts` ; `block-ref-picker.ts` ; `tag-ref.ts`
-- **What:** All four syntactic triggers are documented only in the `?` help panel. Without reading docs, the user has no way to discover them.
-- **Cost:** S — add a "Reference syntax" highlight in `WelcomeModal` or a dismissible cheat-sheet pinned to first journal page.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-313 — Broken-link "click to remove" is hover-only (no touch affordance)
 - **Domain:** Frontend / Editor
 - **Location:** `src/editor/extensions/block-link.ts:99-110`
@@ -735,24 +713,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Location:** `src/editor/extensions/block-link.ts:99-110` (deliberate per FEAT-3p7, but UX-confusing)
 - **What:** A user who knows the page exists in another space sees their link presented as deleted. Same visual + wording as a true broken link.
 - **Cost:** S — distinct visual (dashed border + lock icon) and tooltip "Link is in another space — click to remove".
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-369 — History "All spaces" toggle resets every session
-- **Domain:** Frontend / Spaces / History
-- **Location:** `src/components/HistoryView.tsx:45-48` (deliberate per spec — non-persistent by design)
-- **What:** Power users who routinely audit cross-space history must re-flip every visit. Either persist with a clear visual indicator, or accept the friction.
-- **Cost:** Trivial — opt-in localStorage persistence guarded by an explicit settings toggle.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open. (Deliberate design — listed for visibility.)
-
-### UX-371 — Per-space journal template buried in Manage Spaces
-- **Domain:** Frontend / Spaces / Journal
-- **Location:** `src/components/SpaceManageDialog.tsx:425-444`
-- **What:** Powerful feature with no entry from the Journal view itself. Users probably never find it.
-- **Cost:** S — small "Configure template" entry in `JournalPage` kebab menu that deep-links to `SpaceManageDialog` for the current space.
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
