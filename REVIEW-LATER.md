@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 645 — Batch UX-MIX-2: closed UX-309 (slash discoverability via empty-block placeholder), UX-310 (WelcomeModal reference-syntax highlight), UX-369 (history toggle persists via localStorage), UX-371 (JournalPage Configure-template inline button); 4 items via 4 subagents — eighth back-to-back FE-cleanup-style batch)
+> **Last updated:** 2026-05-03 (Session 646 — Batch MIX-3: closed UX-304 (mobile swipe-to-delete progressive cue), FE-L-14 (FilterPillRow stable React key, doc + reorder tests), M-98 (get_active_block_inner soft-deleted leak fix); 3 items via 3 subagents + 4 L-136 ripple test fixes orchestrator-direct)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-23 open items in the summary table; 29 detail entries (FE-* sub-tables don't appear in the summary).
+22 open items in the summary table; 26 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -41,7 +41,6 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
 | TEST-FE-1 | TEST | Bare `setTimeout` waits in tests (24 occurrences across 13 files; the dangerous subset is bare 50ms waits before `not.toHaveBeenCalledWith` negatives — `BlockTree.test.tsx`, `TagFilterPanel.test.tsx`, `useBlockTreeEventListeners.test.ts`, `GraphView.test.tsx`) — AGENTS.md explicitly forbids `await sleep(n)`; replace with `waitFor` or fake timers | M | — |
 | TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `BlockContextMenu` (19), `FormattingToolbar` (16), `useBlockKeyboardHandlers` (10), `GraphView` (8), `BlockPropertyEditor` (7), `HeadingLevelSelector` (7), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently | M | — |
-| UX-304 | UX | Swipe-to-delete (mobile) has no visual affordance or threshold cue | S | — |
 | UX-305 | UX | Drag handle on touch has 250 ms long-press requirement, no hint | S | — |
 | UX-306 | UX | Touch gutter "More actions" menu doesn't preview hidden actions | S | — |
 | UX-313 | UX | Broken-link "click to remove" is hover-only (no touch affordance) | S | — |
@@ -600,17 +599,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 **Cost:** S (~15 min once you've decided what to use as DN).
 **Status:** ACTIONABLE — pure operations, no design decision pending.
 
-### M-98 — `get_block_inner` returns soft-deleted blocks; leaks to `export_page_markdown_inner` and the public `get_block` IPC
-- **Domain:** Commands / queries
-- **Location:** `src-tauri/src/commands/blocks/queries.rs:115-131` (`get_block_inner`); leaks via `src-tauri/src/commands/pages.rs:204` (`export_page_markdown_inner`), `src-tauri/src/commands/pages.rs:648` (`get_page_inner`), `src-tauri/src/commands/blocks/queries.rs:273` (public `get_block` command).
-- **What:** `get_block_inner` intentionally returns soft-deleted blocks (the doc-comment at L115 reads "Fetch a single block by ID **(including soft-deleted blocks)**"). The descendant walk in `export_page_markdown_inner` (`pages.rs:237-261`) DOES filter `deleted_at IS NULL`, so children are excluded — but the page row itself slips through. Result: a soft-deleted page can be exported as `# Title\n\n` (title only, no descendants). Pinned by `commands/tests/page_cmd_tests.rs::export_page_markdown_inner_with_soft_deleted_page_pins_current_behavior` (the test asserts `Ok(_)` with title-only output, citing TEST-11). Same leak affects the public `get_block` IPC and `get_page_inner`.
-- **Why it matters:** Users can export soft-deleted pages that should appear in trash, not as exportable content. The frontend can also fetch soft-deleted blocks via the public `get_block` command, leading to UI inconsistency.
-- **Cost:** M — add `AND deleted_at IS NULL` to `get_block_inner` (or introduce a `get_active_block_inner` variant), then audit all 9 call sites to ensure no path (undo/redo, trash restore, snapshot recovery) was relying on the soft-deleted behavior. The test pinning the buggy `Ok(_)` shape will need to flip to `Err(AppError::NotFound(_))`.
-- **Risk:** Medium — pervasive usage; some call sites may legitimately need soft-deleted blocks (undo/redo flows, trash UI). Each must be reviewed individually.
-- **Impact:** Medium-high — fixes a real semantic gap exposed in the export and public-fetch surfaces.
-- **Recommendation:** Audit before fixing. If MAINT-113 (`ConflictFreeBlockId` newtype) lands first, this fix can ride on the `ActiveBlockId` typing rather than being a separate audit pass.
-- **Status:** Open
-
 ### L-17 — `dispatch_op` enqueues fg+bg out of order
 - **Domain:** Materializer
 - **Location:** `src-tauri/src/materializer/dispatch.rs:128-132`
@@ -658,28 +646,9 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F009
 - **Status:** Open
 
-### FE-L-14 — `FilterPillRow`: `key={index}` on filter list
-- **Domain:** Frontend / Filters
-- **Location:** `src/components/FilterPillRow.tsx:100-115`
-- **What:** Documented why (`getFilterKey` collisions). Real fix is a stable per-filter UUID; tactical fix is the index workaround that's already there.
-- **Cost:** S — depends on filter struct refactor.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F068
-- **Status:** Open
-
 ## UX — User-experience / usability / discoverability
 
 Items in this section come from a feature-map sweep (one analysis subagent per feature area, then 3 validation subagents that re-read each cited file:line and dropped exaggerations and stale claims). Format follows the compact TEST / FE-L convention. None of these are blocking; they are surface-level fixes (no schema, no op-types, no store changes) that improve discoverability, accessibility, or in-UI feedback.
-
-### UX-304 — Swipe-to-delete (mobile) has no visual affordance or threshold cue
-- **Domain:** Frontend / Editor
-- **Location:** `src/hooks/useBlockSwipeActions.ts:1-111` (thresholds at lines 4, 7) ; `src/components/SortableBlock.tsx:350-370`
-- **What:** Reveals at 80 px and auto-deletes at 200 px with no visible hint. Users only discover the gesture by accident, and the auto-delete threshold has no progressive cue (color change / "Release to delete" label) before firing.
-- **Cost:** S — add a swipe-hint indicator on coarse-pointer devices and a colour/label change at the 200 px threshold.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
 
 ### UX-305 — Drag handle on touch has 250 ms long-press requirement, no hint
 - **Domain:** Frontend / Editor
