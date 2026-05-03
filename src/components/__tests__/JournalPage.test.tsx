@@ -2830,9 +2830,11 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      // Wait a tick to give effects a chance to fire
+      // Auto-create runs synchronously in the post-render effect; flush
+      // one macrotask boundary via the canonical act-wrapped microtask
+      // flush so a hypothetical mis-firing call would be visible.
       await act(async () => {
-        await new Promise((r) => setTimeout(r, 50))
+        await new Promise((r) => setTimeout(r, 0))
       })
 
       // No page creation should have occurred from auto-create
@@ -2852,9 +2854,11 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      // Wait a tick to give effects a chance to fire
+      // Auto-create runs synchronously in the post-render effect; flush
+      // one macrotask boundary via the canonical act-wrapped microtask
+      // flush so a hypothetical mis-firing call would be visible.
       await act(async () => {
-        await new Promise((r) => setTimeout(r, 50))
+        await new Promise((r) => setTimeout(r, 0))
       })
 
       // No page creation should have occurred from auto-create
@@ -2879,9 +2883,10 @@ describe('JournalPage', () => {
         expect(screen.getAllByTestId('block-tree')).toHaveLength(1)
       })
 
-      // Wait a tick
+      // Flush one macrotask boundary via the canonical act-wrapped
+      // microtask flush so a hypothetical mis-firing call would be visible.
       await act(async () => {
-        await new Promise((r) => setTimeout(r, 50))
+        await new Promise((r) => setTimeout(r, 0))
       })
 
       // Should not create a page since one already exists
