@@ -127,15 +127,41 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
   // ── Touch render — drag handle + overflow Sheet ─────────────────
   if (isTouch) {
     const hasOverflow = Boolean(onDelete || onShowHistory)
+    // UX-305: on touch, the @dnd-kit PointerSensor requires a 250 ms
+    // press-and-hold before the drag activates. The desktop tooltip
+    // never fires on touch UAs, so the hint must live in `aria-label`.
+    const touchDragHandle = (
+      <GutterButton
+        icon={GripVertical}
+        label={t('block.reorderTouchHint')}
+        ariaLabel={t('block.reorderTouchHint')}
+        testId="drag-handle"
+        className="drag-handle cursor-grab hover:text-foreground"
+        data-context-trigger="true"
+        {...dragAttributes}
+        {...dragListeners}
+      />
+    )
+    // UX-306: enumerate the available secondary actions in the
+    // overflow button's `aria-label` so screen readers can preview
+    // what the Sheet contains before opening it.
+    const moreActionsLabel = (() => {
+      const parts: string[] = []
+      if (onShowHistory) parts.push(t('block.history'))
+      if (onDelete) parts.push(t('block.delete'))
+      return parts.length > 0
+        ? t('block.moreActionsEnumerated', { actions: parts.join(', ') })
+        : t('block.moreActionsLabel')
+    })()
     return (
       <div className="flex flex-col items-end gap-1">
-        {dragHandle}
+        {touchDragHandle}
         {hasOverflow && (
           <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
             <button
               type="button"
               className={cn(GUTTER_BUTTON_BASE, 'rounded-sm hover:bg-accent hover:text-foreground')}
-              aria-label={t('block.moreActionsLabel')}
+              aria-label={moreActionsLabel}
               aria-haspopup="dialog"
               aria-expanded={sheetOpen}
               data-testid="more-actions"
