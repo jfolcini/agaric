@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 635 — Batch UX-TRIVIAL-12: closed UX-318 (QueryResult always-show columns), UX-319 (PropertyDefinitions task-cycle help), UX-320 (BlockPropertyDrawer repeat-syntax help), UX-373 (SpaceSwitcher single-space hint), UX-384 (DataSettingsTab import-progress detail); 5 items via 5 subagents — eighth consecutive clean batch)
+> **Last updated:** 2026-05-03 (Session 636 — Batch MIXED-1: closed MAINT-178 (BootGate diagnostics escape hatch), MAINT-183 (markdown-serialize callback refactor), TEST-6 (sync-merge materialized-state asserts), UX-323 (AgendaFilterBuilder dimension grouping), UX-375 (SpaceManageDialog journal-template Examples panel); 5 items via 5 subagents — ninth consecutive clean batch)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -31,8 +31,6 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-128 | MAINT | God-component decomposition: `PropertyRowEditor.tsx` (550L) — split each typed editor (text/number/date/ref/select) into its own component AND lift the shared state (`localValue`, date hook, select-options, ref-picker, 10+ callbacks) UP into a containing hook. **SCHEDULED** — owner-prioritized; refactor path locked in. Removes the only `biome-ignore lint/complexity/noExcessiveCognitiveComplexity` in the codebase (at L85). | L | — |
 | MAINT-168 | MAINT | Sync trigger / scheduler dual-backoff unification — `useSyncTrigger.ts` (60s → 600s) and `sync_scheduler.rs` (1s → 60s) run independent exponential backoffs that never coordinate. Not a correctness bug; the backend is the authoritative scheduler and silently rejects redundant `startSync` calls. Filed as a documented design note after this session's bird's-eye review. | M | — |
 | MAINT-172 | MAINT | Pagination/queries: space-filter SQL fragment inlined across 13+ files because `sqlx::query_as!` rejects `concat!()`; `space_filter_clause!` macro referenced in comments but unusable. Real maintenance hotspot, sqlx-constrained | M | sqlx upstream |
-| MAINT-178 | MAINT | Frontend — `BootGate` error screen has only Retry; for unrecoverable failures (corrupted DB, permission denied, missing migration) the user is stuck. Add a diagnostics escape hatch (show `error.cause` chain, copy logs, launch bug-report) | S | — |
-| MAINT-183 | MAINT | Frontend — `markdown-serialize.ts` header claims "zero external dependencies" but file imports `sonner`, `logger`, `i18n`. Either rewrite the header or move the toast/i18n side effect to a wrapper at the call site | S | — |
 | MAINT-192 | MAINT | Documentation — AGENTS.md additions to reduce false-positive churn on future reviews: (a) "Frontend Development Guidelines → Mandatory patterns" picker debouncing convention referencing `useDebouncedCallback` + 300 ms (PERF-28 traces directly to this gap); (b) under "Properties system is the primary extension point", a one-line reference to `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts` (lands together with MAINT-187). | S | User approval for AGENTS.md edits |
 | MAINT-193 | MAINT | zizmor baseline triage — 53 GitHub Actions findings suppressed by file:line in `.github/zizmor.yml` when the `zizmor` pre-commit hook was first wired in. Mix of policy-level (`unpinned-uses` × 35: tags vs SHAs) and real fixes (`template-injection` × 6 in `release-tag.yml` — pass `inputs.version` via `env:` instead of `${{ }}` interpolation; `excessive-permissions` × 1 in `release.yml`; `cache-poisoning` × 11; `artipacked` × 7). Triage off the baseline as fixes land. | M | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
@@ -41,7 +39,6 @@ Items flagged during development that need revisiting. Organized by section with
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
-| TEST-6 | TEST | Sync merge tests assert on counter only, not materialized state (`merge_resolves_property_conflict_lww` doesn't query `block_properties`; `merge_block_conflict_creates_copy` doesn't query `blocks` for the conflict copy) | S | — |
 | TEST-FE-1 | TEST | Bare `setTimeout` waits in tests (24 occurrences across 13 files; the dangerous subset is bare 50ms waits before `not.toHaveBeenCalledWith` negatives — `BlockTree.test.tsx`, `TagFilterPanel.test.tsx`, `useBlockTreeEventListeners.test.ts`, `GraphView.test.tsx`) — AGENTS.md explicitly forbids `await sleep(n)`; replace with `waitFor` or fake timers | M | — |
 | TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `BlockContextMenu` (19), `FormattingToolbar` (16), `useBlockKeyboardHandlers` (10), `GraphView` (8), `BlockPropertyEditor` (7), `HeadingLevelSelector` (7), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently | M | — |
 | UX-304 | UX | Swipe-to-delete (mobile) has no visual affordance or threshold cue | S | — |
@@ -51,7 +48,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-310 | UX | `@` / `[[` / `((` / `#[…]` triggers not surfaced anywhere visible | S | — |
 | UX-313 | UX | Broken-link "click to remove" is hover-only (no touch affordance) | S | — |
 | UX-316 | UX | Inline `{{query …}}` expression syntax is cryptic to read | S | — |
-| UX-323 | UX | Agenda filter popover dense (8 dimensions × nested presets) | S | — |
 | UX-337 | UX | Disabled `SearchablePopover` trigger has no tooltip explaining why | S | — |
 | UX-346 | UX | Vim-style `j`/`k` nav has no touch alternative | S | — |
 | UX-365 | UX | Spaces onboarding banner only inside `SpaceManageDialog` | S | — |
@@ -59,7 +55,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-369 | UX | History "All spaces" toggle resets every session | S | — |
 | UX-370 | UX | Space delete-when-empty signalled only via tooltip | S | — |
 | UX-371 | UX | Per-space journal template buried in Manage Spaces | S | — |
-| UX-375 | UX | Per-space journal template variables undocumented in-app | S | — |
 
 ### Quick wins (S-cost, ready to grab)
 
@@ -417,24 +412,6 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 > 3 parallel verification subagents reading the cited code to filter hallucinations.
 > Items below are the verified survivors. Known false positives are not listed.
 
-### MAINT-178 — `BootGate` error screen has only a Retry button (no diagnostics escape hatch)
-- **Domain:** Frontend (boot)
-- **Location:** `src/components/BootGate.tsx:50-79`
-- **What:** For unrecoverable failures (corrupted DB, permission-denied data dir, missing migration), Retry just keeps failing. The user has no way to (a) see the underlying error in detail (`error.cause` chain), (b) export logs, (c) launch the bug-report dialog, (d) copy the data-dir path.
-- **Cost:** S — add a "Show details / Copy diagnostics" secondary action that opens a textarea with `error.cause` chain + platform info, plus a "Open bug report" link.
-- **Risk:** Low.
-- **Impact:** Medium — turns an unrecoverable error from "please reinstall" into "here is enough information to file a bug".
-- **Status:** Open.
-
-### MAINT-183 — `markdown-serialize.ts` header claims zero-dep but file imports `sonner` / `logger` / `i18n`
-- **Domain:** Frontend (editor / serializer)
-- **Location:** `src/editor/markdown-serialize.ts:1-15`
-- **What:** Header says "Zero external dependencies. O(n) in the document size." File imports `sonner` (line 13), `i18n` (line 14), `logger` (line 15) for the `notifyUnknownNodeType()` warning toast. Either the comment is outdated or the side effect should move out.
-- **Cost:** S — preferred fix: convert `notifyUnknownNodeType()` into an `onUnknownNode?: (type: string) => void` callback; the call site in the editor wires the toast. Removes the imports, restores serializer purity for testing.
-- **Risk:** Low.
-- **Impact:** Low — maintainability + testability.
-- **Status:** Open.
-
 ### MAINT-192 — AGENTS.md additions to reduce false-positive churn on future frontend reviews
 - **Domain:** Documentation
 - **Location:** `AGENTS.md`
@@ -476,17 +453,6 @@ Items in this section are test-quality improvements identified during a thorough
 - **Risk:** Low — additive helper.
 - **Impact:** Medium — eliminates a category of CI flakes.
 - **Recommendation:** Pattern after the materializer's `flush_background()` API. A polling helper `async fn wait_for(predicate: impl Fn() -> bool, timeout: Duration)` would suffice for most sites.
-- **Status:** Open.
-
-### TEST-6 — Sync merge tests assert on counter / conflict-copy block but not the original
-- **Domain:** Sync / Merge tests
-- **Location:**
-  - `src-tauri/src/sync_protocol/tests.rs:1115-1171` (`merge_resolves_property_conflict_lww`) — asserts `results.property_lww > 0` but never queries `block_properties` to confirm the LWW winning value is stored
-  - `src-tauri/src/merge/tests.rs:1016-1113` (`merge_block_conflict_creates_copy`) — queries the conflict-copy block via `blocks` (lines 1094-1109) and verifies the original block's text via `dag::text_at` (lines 1078-1090), but never asserts `SELECT content FROM blocks WHERE id = 'B1'` (the original) — so a bug that mutated the original block's row content (instead of leaving it intact) would slip through
-- **What:** Tests verify the merge engine's counter outputs and the conflict-copy row, but stop short of confirming the *original* row is untouched and that LWW writes actually land in `block_properties`.
-- **Cost:** S — add `SELECT … FROM block_properties WHERE block_id = ? AND key = ?` and `SELECT content FROM blocks WHERE id = 'B1'` assertions.
-- **Risk:** Low.
-- **Impact:** Medium — these tests are the only coverage for LWW + conflict-copy semantics.
 - **Status:** Open.
 
 ### TEST-FE-1 — Bare `setTimeout` waits in tests as the only "wait" before negative assertions
@@ -1137,15 +1103,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-323 — Agenda filter popover dense (8 dimensions × nested presets)
-- **Domain:** Frontend / Agenda
-- **Location:** `src/components/AgendaFilterBuilder.tsx:155-191`
-- **What:** Single popover lists all 8 dimensions; users must drill into each to see preset values. No grouped categories ("Dates" / "Task metadata" / "Organisation") and no quick-pick combos.
-- **Cost:** S — group dimensions visually; optionally a small "Quick filters" cluster ("Overdue + TODO", "This week").
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-337 — Disabled `SearchablePopover` trigger has no tooltip explaining why
 - **Domain:** Frontend / Search
 - **Location:** `src/components/SearchablePopover.tsx:109`
@@ -1208,16 +1165,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
-
-### UX-375 — Per-space journal template variables undocumented in-app
-- **Domain:** Frontend / Spaces / Journal
-- **Location:** `src/components/SpaceManageDialog.tsx:425-444`
-- **What:** Placeholder mentions `<% today %>`, `<% time %>`, etc. but no examples or live preview.
-- **Cost:** Trivial — collapsible "Examples" panel with 1–2 sample templates, optional "preview for today" rendered inline.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 
 ---
 
