@@ -40,8 +40,20 @@ export interface UseBlockNavigateToLinkParams {
 export interface UseBlockNavigateToLinkReturn {
   /** Promise-returning navigation handler. */
   handleNavigate: (targetId: string) => Promise<void>
-  /** Stable ref pointing at the latest `handleNavigate` — wire this
-   *  into `useRovingEditor.onNavigate` to break the circular dep. */
+  /**
+   * Stable ref pointing at the latest `handleNavigate` — wire this
+   * into `useRovingEditor.onNavigate` to break the circular dep.
+   *
+   * **Contract (FE-L-9):** consumers MUST always read
+   * `handleNavigateRef.current` at call time. Never cache the dereferenced
+   * function — `handleNavigate` is recreated on every render (its
+   * `useCallback` deps change), and a cached copy will silently invoke
+   * stale closures over `rovingEditorRef`, `load`, `setFocused`, etc.
+   * If a stable invocable is needed (e.g. for an event listener that
+   * only registers once), wrap it as
+   * `(id: string) => handleNavigateRef.current(id)` at the registration
+   * site rather than capturing the ref's current value.
+   */
   handleNavigateRef: RefObject<(id: string) => void>
 }
 

@@ -186,13 +186,20 @@ export function useBlockDatePicker({
   const [datePickerMode, setDatePickerMode] = useState<DatePickerMode>('date')
   const datePickerCursorPos = useRef<number | undefined>(undefined)
 
+  // FE-M-7: invariant — `rovingEditor` is stable across the lifetime
+  // of the BlockTree mount (the hook only ever runs inside a BlockTree
+  // where the editor handle is created once and kept). Mirroring it
+  // into a ref so `handleDatePick` reads the latest object without
+  // listing it as a dependency is safe under that invariant. If a
+  // future caller mounts this hook outside BlockTree (or recreates
+  // the editor mid-mount), this assumption breaks.
   const rovingEditorRef = useRef(rovingEditor)
   rovingEditorRef.current = rovingEditor
 
   const tRef = useRef(t)
   tRef.current = t
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pagesListRef is a stable ref; pageStore is a stable StoreApi; t accessed via ref
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pagesListRef is a stable ref; pageStore is a stable StoreApi; t accessed via ref (see FE-M-7 invariant above)
   const handleDatePick = useCallback(
     async (d: Date) => {
       setDatePickerOpen(false)
