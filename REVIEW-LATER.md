@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Architectural review session — deep review with 5 parallel investigation subagents + planner/reviewer subagent pairs across 9 derived tasks, landed in `pending/`. Inline-applied: MAINT-195 closed by sed rename `BlockNotes` → `Agaric` (PEND-01) and PEND-04 stale-crypto doc cleanup (HKDF/ChaCha references purged from ARCHITECTURE.md / COMPARISON.md / SECURITY.md after MAINT-110-era removal). Remaining 7 PEND tasks scoped + cost-estimated + risk-rated, awaiting prioritization. See `pending/README.md` for the index.)
+> **Last updated:** 2026-05-03 (Session 653 — Batch FE-LASTMILE-1: closed UX-366 (broken-link tooltip rephrased to acknowledge cross-space ambiguity; visual+lock-icon distinction deferred — would require new backend command per Architectural Stability) + FE-L-5 (Undo store now toasts `'Batch undo unavailable; undid one op.'` when `listPageHistory` rejects mid-batch). Plus orchestrator-direct: fixed pre-existing markdownlint violations across all `pending/PEND-*.md` files (78 errors → 0) that had been blocking prek since session 652 landed them via `--no-verify`.)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-20 open items in the summary table; 23 detail entries (FE-* sub-tables don't appear in the summary).
+18 open items in the summary table; 20 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -41,7 +41,6 @@ Items flagged during development that need revisiting. Organized by section with
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
 | TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `FormattingToolbar` (16), `GraphView` (8), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently. `BlockContextMenu` (19, only 9 are bare on `props.onClose`, already complies), `useBlockKeyboardHandlers` (10), `HeadingLevelSelector` (7) audited & confirmed legitimate (all no-arg spies, comment-annotated). `BlockPropertyEditor` (7) audited & all 7 tightened to `toHaveBeenCalledWith(...)`. | M | — |
-| UX-366 | UX | Cross-space `[[link]]` chips render with literal "Broken link" tooltip | S | — |
 
 ### Quick wins (S-cost, ready to grab)
 
@@ -613,29 +612,11 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Decision:** No action. Filed for awareness only.
 - **Status:** Documented as deliberate.
 
-### FE-L-5 — `Undo` store batch-undo silent fallback (no UX surface)
-- **Domain:** Frontend / Undo store
-- **Location:** `src/stores/undo.ts:280-290`
-- **What:** Graceful degradation, intentional. No UX surface when batch-history fetch fails.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Recommendation:** Optional: toast `'Batch undo unavailable; undid one op.'`.
-- **Source:** FE review 2026-05-02 / F009
-- **Status:** Open
-
 ## UX — User-experience / usability / discoverability
 
 Items in this section come from a feature-map sweep (one analysis subagent per feature area, then 3 validation subagents that re-read each cited file:line and dropped exaggerations and stale claims). Format follows the compact TEST / FE-L convention. None of these are blocking; they are surface-level fixes (no schema, no op-types, no store changes) that improve discoverability, accessibility, or in-UI feedback.
 
-### UX-366 — Cross-space `[[link]]` chips render with literal "Broken link" tooltip
-- **Domain:** Frontend / Spaces
-- **Location:** `src/editor/extensions/block-link.ts:99-110` (deliberate per FEAT-3p7, but UX-confusing)
-- **What:** A user who knows the page exists in another space sees their link presented as deleted. Same visual + wording as a true broken link.
-- **Cost:** S — distinct visual (dashed border + lock icon) and tooltip "Link is in another space — click to remove".
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
+_All UX-section items have been resolved. Add new items here when they are identified during development._
 
 ---
 

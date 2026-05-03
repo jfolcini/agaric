@@ -54,6 +54,7 @@ All blocks: not-DONE, not-deleted, not-conflict, not on a template page. **`spac
 ```
 
 The 390-day range exposes BOTH known drift vectors:
+
 - **Horizon drift** — cache stops at `today + 365`; on-the-fly continues to `range_end`. Without a >365-day range, this drift is invisible.
 - **`++` pre-add window drift** — block E's skip-past-today logic uses different bounds in each path; a range spanning multiple weeks past `today` exercises it.
 
@@ -94,7 +95,7 @@ Execution time: <500ms (5 blocks, 2 queries, small temp DB).
 **S (1-2 hours).**
 
 | Step | Time |
-|---|---|
+| --- | --- |
 | Fixture setup (5 blocks + properties) | 30 min |
 | Cached-path query + on-the-fly-path query | 30 min |
 | Assertion + cursor pagination | 15 min |

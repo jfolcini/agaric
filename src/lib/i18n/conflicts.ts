@@ -200,6 +200,7 @@ export const conflicts: Record<string, string> = {
   'undo.undoFailedMessage': 'Undo failed',
   'undo.redoneMessage': 'Redone',
   'undo.redoFailedMessage': 'Redo failed',
+  'undo.batchUnavailable': 'Batch undo unavailable; undid one op.',
   'undo.op.createBlock': 'Undid create block',
   'undo.op.editBlock': 'Undid edit',
   'undo.op.deleteBlock': 'Undid delete',

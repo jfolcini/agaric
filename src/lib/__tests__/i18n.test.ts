@@ -116,6 +116,9 @@ describe('key existence', () => {
     // History
     'history.title',
 
+    // Undo
+    'undo.batchUnavailable',
+
     // Page Header
     'pageHeader.pageTitle',
     'pageHeader.goBack',

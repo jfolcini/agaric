@@ -21,6 +21,7 @@ sed -i 's/BlockNotes/Agaric/g' \
 ```
 
 After the rename:
+
 - `MDNS_SERVICE_NAME = "Agaric"` (was `"BlockNotes"`)
 - mDNS instance fullname format: `Agaric_<device_id>._agaric._tcp.local.`
 - Tests now assert `MDNS_SERVICE_NAME == "Agaric"`
@@ -28,7 +29,7 @@ After the rename:
 ## Cost / Impact / Risk
 
 | | |
-|---|---|
+| --- | --- |
 | Cost | trivial (one sed, ~30 seconds incl. verification) |
 | Impact | low — internal naming consistency only, no user-visible behavior change |
 | Risk | low — confirmed zero paired devices; if any peer pairing existed it would be broken until both sides upgraded |
