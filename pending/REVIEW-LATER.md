@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 654 — Batch ARCH-FOLLOWUP-1: closed PEND-04 (final HKDF/ChaCha residue purged from ARCHITECTURE.md historical note), PEND-05 (projected-agenda parity test landed; `#[ignore]`d on first run because it correctly detected real `.+1w` drift between cached and on-the-fly paths — filed as MAINT-196), PEND-08 (tauri.ts ↔ bindings.ts parity pre-commit hook). 3 PEND files deleted from pending/. Filed MAINT-196 to track the projection-path drift PEND-05 surfaced.)
+> **Last updated:** 2026-05-03 (Session 655 — Batch ARCH-FOLLOWUP-2: closed PEND-13 (page_id ↔ space drift audit landed at `integration_tests::page_id_space_drift_audit_per_block` + `_after_lifecycle_ops`; both pass on first run, no drift surfaced — confirms current correctness of `page_id` denormalization + space property invariants; 3 helpers use `sqlx::query_scalar!` for compile-time SQL drift detection). PEND-13 file deleted from pending/.)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
