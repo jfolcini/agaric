@@ -1,6 +1,10 @@
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { __resetUnknownNodeToastsForTests, parse, serialize } from '../markdown-serializer'
+import {
+  __resetSerializerToastsForTests,
+  notifyUnknownNodeTypeToast,
+} from '../markdown-serialize-toast'
+import { parse, serialize } from '../markdown-serializer'
 import type {
   BlockquoteNode,
   DocNode,
@@ -178,7 +182,9 @@ describe('serialize', () => {
     it('unknown inline node stripped with warning', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const unknown = { type: 'unknown_node' } as unknown as InlineNode
-      expect(serialize(doc(paragraph(text('a'), unknown, text('b'))))).toBe('ab')
+      expect(
+        serialize(doc(paragraph(text('a'), unknown, text('b'))), notifyUnknownNodeTypeToast),
+      ).toBe('ab')
       expect(warn).toHaveBeenCalledOnce()
       warn.mockRestore()
     })
@@ -186,7 +192,9 @@ describe('serialize', () => {
     it('unknown top-level node stripped with warning', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const unknown = { type: 'customBlock', content: [] } as unknown as ParagraphNode
-      expect(serialize(doc(unknown, paragraph(text('ok'))))).toBe('\nok')
+      expect(serialize(doc(unknown, paragraph(text('ok'))), notifyUnknownNodeTypeToast)).toBe(
+        '\nok',
+      )
       expect(warn).toHaveBeenCalledOnce()
       warn.mockRestore()
     })
@@ -1957,7 +1965,9 @@ describe('inline variant dispatch', () => {
     it('is stripped with a single warning (edge: plus surrounding marks close)', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const unknown = { type: 'unknown_node' } as unknown as InlineNode
-      expect(serialize(doc(paragraph(bold('x'), unknown, text('y'))))).toBe('**x**y')
+      expect(
+        serialize(doc(paragraph(bold('x'), unknown, text('y'))), notifyUnknownNodeTypeToast),
+      ).toBe('**x**y')
       expect(warn).toHaveBeenCalledTimes(1)
       warn.mockRestore()
     })
@@ -2042,11 +2052,45 @@ describe('external link scan edge cases', () => {
   })
 })
 
+// -- MAINT-183: serializer is dependency-free; callback contract -------------
+
+describe('MAINT-183: onUnknownNode callback', () => {
+  it('invokes the callback once per inline unknown-node occurrence', () => {
+    const onUnknownNode = vi.fn()
+    const unknown = { type: 'video_embed' } as unknown as InlineNode
+
+    serialize(doc(paragraph(text('a'), unknown, text('b'))), onUnknownNode)
+    serialize(doc(paragraph(text('c'), unknown, text('d'))), onUnknownNode)
+
+    expect(onUnknownNode).toHaveBeenCalledTimes(2)
+    expect(onUnknownNode).toHaveBeenNthCalledWith(1, 'video_embed')
+    expect(onUnknownNode).toHaveBeenNthCalledWith(2, 'video_embed')
+  })
+
+  it('invokes the callback for unknown top-level (block-level) node types', () => {
+    const onUnknownNode = vi.fn()
+    const unknown = { type: 'customBlock', content: [] } as unknown as ParagraphNode
+
+    serialize(doc(unknown, paragraph(text('ok'))), onUnknownNode)
+
+    expect(onUnknownNode).toHaveBeenCalledWith('customBlock')
+  })
+
+  it('omitting the callback drops the unknown node silently (no throw)', () => {
+    const unknown = { type: 'silent' } as unknown as InlineNode
+    expect(() => serialize(doc(paragraph(text('a'), unknown, text('b'))))).not.toThrow()
+  })
+})
+
 // -- UX-281: unknown-node user-facing toast (rate-limited) --------------------
+//
+// Integration tests for the `notifyUnknownNodeTypeToast` helper that wraps
+// the serializer's `onUnknownNode` callback with toast + logger + dedup. The
+// helper lives in `markdown-serialize-toast.ts` (MAINT-183).
 
 describe('UX-281: unknown-node toast', () => {
   beforeEach(() => {
-    __resetUnknownNodeToastsForTests()
+    __resetSerializerToastsForTests()
     vi.mocked(toast.warning).mockClear()
   })
 
@@ -2055,20 +2099,20 @@ describe('UX-281: unknown-node toast', () => {
     const unknown = { type: 'video_embed' } as unknown as InlineNode
 
     // First occurrence — toast fires
-    serialize(doc(paragraph(text('a'), unknown, text('b'))))
+    serialize(doc(paragraph(text('a'), unknown, text('b'))), notifyUnknownNodeTypeToast)
     expect(vi.mocked(toast.warning)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(toast.warning)).toHaveBeenCalledWith(
       "Some content (type: video_embed) couldn't be saved as Markdown and was dropped.",
     )
 
     // Second occurrence of the same type — rate-limited (no new toast)
-    serialize(doc(paragraph(text('c'), unknown, text('d'))))
+    serialize(doc(paragraph(text('c'), unknown, text('d'))), notifyUnknownNodeTypeToast)
     expect(vi.mocked(toast.warning)).toHaveBeenCalledTimes(1)
 
     // Third doc with 50 unknown inline nodes of the same type — still 1 toast
     const manyUnknowns: InlineNode[] = []
     for (let i = 0; i < 50; i++) manyUnknowns.push(unknown)
-    serialize(doc(paragraph(...manyUnknowns)))
+    serialize(doc(paragraph(...manyUnknowns)), notifyUnknownNodeTypeToast)
     expect(vi.mocked(toast.warning)).toHaveBeenCalledTimes(1)
 
     warn.mockRestore()
@@ -2079,8 +2123,8 @@ describe('UX-281: unknown-node toast', () => {
     const fooNode = { type: 'foo' } as unknown as InlineNode
     const barNode = { type: 'bar' } as unknown as InlineNode
 
-    serialize(doc(paragraph(text('a'), fooNode, text('b'))))
-    serialize(doc(paragraph(text('c'), barNode, text('d'))))
+    serialize(doc(paragraph(text('a'), fooNode, text('b'))), notifyUnknownNodeTypeToast)
+    serialize(doc(paragraph(text('c'), barNode, text('d'))), notifyUnknownNodeTypeToast)
 
     expect(vi.mocked(toast.warning)).toHaveBeenCalledTimes(2)
     expect(vi.mocked(toast.warning)).toHaveBeenNthCalledWith(
@@ -2099,14 +2143,14 @@ describe('UX-281: unknown-node toast', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const unknown = { type: 'customBlock', content: [] } as unknown as ParagraphNode
 
-    serialize(doc(unknown, paragraph(text('ok'))))
+    serialize(doc(unknown, paragraph(text('ok'))), notifyUnknownNodeTypeToast)
     expect(vi.mocked(toast.warning)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(toast.warning)).toHaveBeenCalledWith(
       "Some content (type: customBlock) couldn't be saved as Markdown and was dropped.",
     )
 
     // Subsequent same-type top-level occurrences are rate-limited
-    serialize(doc(unknown))
+    serialize(doc(unknown), notifyUnknownNodeTypeToast)
     expect(vi.mocked(toast.warning)).toHaveBeenCalledTimes(1)
 
     warn.mockRestore()
@@ -2116,9 +2160,9 @@ describe('UX-281: unknown-node toast', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const unknown = { type: 'unknown_node' } as unknown as InlineNode
 
-    serialize(doc(paragraph(text('a'), unknown, text('b'))))
-    serialize(doc(paragraph(text('c'), unknown, text('d'))))
-    serialize(doc(paragraph(text('e'), unknown, text('f'))))
+    serialize(doc(paragraph(text('a'), unknown, text('b'))), notifyUnknownNodeTypeToast)
+    serialize(doc(paragraph(text('c'), unknown, text('d'))), notifyUnknownNodeTypeToast)
+    serialize(doc(paragraph(text('e'), unknown, text('f'))), notifyUnknownNodeTypeToast)
 
     // Toast: only once per type per session
     expect(vi.mocked(toast.warning)).toHaveBeenCalledTimes(1)

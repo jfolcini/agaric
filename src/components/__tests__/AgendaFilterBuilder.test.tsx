@@ -139,12 +139,83 @@ describe('AgendaFilterBuilder', () => {
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
 
-    const list = screen.getByRole('list', { name: /Filter dimensions/i })
-    expect(within(list).getByText(t('agendaFilter.status'))).toBeInTheDocument()
-    expect(within(list).getByText(t('agendaFilter.priority'))).toBeInTheDocument()
-    expect(within(list).getByText(t('agendaFilter.dueDate'))).toBeInTheDocument()
-    expect(within(list).getByText(t('agendaFilter.createdDate'))).toBeInTheDocument()
-    expect(within(list).getByText(t('agendaFilter.tag'))).toBeInTheDocument()
+    // UX-323: outer container moved from <ul> to <div> when grouping
+    // landed; query by accessible name instead of role.
+    const picker = screen.getByLabelText(t('agendaFilter.filterDimensions'))
+    expect(within(picker).getByText(t('agendaFilter.status'))).toBeInTheDocument()
+    expect(within(picker).getByText(t('agendaFilter.priority'))).toBeInTheDocument()
+    expect(within(picker).getByText(t('agendaFilter.dueDate'))).toBeInTheDocument()
+    expect(within(picker).getByText(t('agendaFilter.createdDate'))).toBeInTheDocument()
+    expect(within(picker).getByText(t('agendaFilter.tag'))).toBeInTheDocument()
+  })
+
+  // -----------------------------------------------------------------------
+  // UX-323: dimension picker is visually grouped into 3 categories
+  // -----------------------------------------------------------------------
+  it('dimension picker renders all 3 group headings (UX-323)', async () => {
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+
+    const picker = screen.getByLabelText(t('agendaFilter.filterDimensions'))
+    expect(within(picker).getByText(t('agendaFilter.group.taskMetadata'))).toBeInTheDocument()
+    expect(within(picker).getByText(t('agendaFilter.group.dates'))).toBeInTheDocument()
+    expect(within(picker).getByText(t('agendaFilter.group.organisation'))).toBeInTheDocument()
+  })
+
+  it('dimension picker still surfaces all 8 dimensions after grouping (UX-323)', async () => {
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+
+    const picker = screen.getByLabelText(t('agendaFilter.filterDimensions'))
+    expect(within(picker).getByText(t('agendaFilter.status'))).toBeInTheDocument()
+    expect(within(picker).getByText(t('agendaFilter.priority'))).toBeInTheDocument()
+    expect(within(picker).getByText(t('agendaFilter.dueDate'))).toBeInTheDocument()
+    expect(within(picker).getByText(t('agendaFilter.scheduledDate'))).toBeInTheDocument()
+    expect(within(picker).getByText(t('agendaFilter.completedDate'))).toBeInTheDocument()
+    expect(within(picker).getByText(t('agendaFilter.createdDate'))).toBeInTheDocument()
+    expect(within(picker).getByText(t('agendaFilter.tag'))).toBeInTheDocument()
+    expect(within(picker).getByText(t('agendaFilter.property'))).toBeInTheDocument()
+  })
+
+  it('dimensions appear under the correct group heading (UX-323)', async () => {
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+
+    // Each group heading is rendered as a <p> sibling that precedes the
+    // <ul> of dimension items inside the same wrapping <div>. Resolve the
+    // wrapper from the heading and assert the expected dimensions live in
+    // its list.
+    const expectations: Array<[string, string[]]> = [
+      [
+        t('agendaFilter.group.taskMetadata'),
+        [t('agendaFilter.status'), t('agendaFilter.priority')],
+      ],
+      [
+        t('agendaFilter.group.dates'),
+        [
+          t('agendaFilter.dueDate'),
+          t('agendaFilter.scheduledDate'),
+          t('agendaFilter.completedDate'),
+          t('agendaFilter.createdDate'),
+        ],
+      ],
+      [t('agendaFilter.group.organisation'), [t('agendaFilter.tag'), t('agendaFilter.property')]],
+    ]
+
+    for (const [heading, expectedLabels] of expectations) {
+      const headingEl = screen.getByText(heading)
+      const groupWrapper = headingEl.parentElement as HTMLElement
+      expect(groupWrapper).not.toBeNull()
+      for (const label of expectedLabels) {
+        expect(within(groupWrapper).getByText(label)).toBeInTheDocument()
+      }
+    }
   })
 
   // -----------------------------------------------------------------------
@@ -425,8 +496,8 @@ describe('AgendaFilterBuilder', () => {
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
 
-    const list = screen.getByRole('list', { name: /Filter dimensions/i })
-    expect(within(list).getByText(t('agendaFilter.completedDate'))).toBeInTheDocument()
+    const picker = screen.getByLabelText(t('agendaFilter.filterDimensions'))
+    expect(within(picker).getByText(t('agendaFilter.completedDate'))).toBeInTheDocument()
   })
 
   it('completedDate dimension shows past-oriented choices', async () => {
@@ -517,8 +588,8 @@ describe('AgendaFilterBuilder', () => {
     const user = userEvent.setup()
     renderBuilder()
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    const list = screen.getByRole('list', { name: /Filter dimensions/i })
-    expect(within(list).getByText(t('agendaFilter.property'))).toBeInTheDocument()
+    const picker = screen.getByLabelText(t('agendaFilter.filterDimensions'))
+    expect(within(picker).getByText(t('agendaFilter.property'))).toBeInTheDocument()
   })
 
   // -----------------------------------------------------------------------

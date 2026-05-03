@@ -88,6 +88,28 @@ export const ALL_DIMENSIONS: AgendaFilterDimension[] = [
   'property',
 ]
 
+/**
+ * Visual grouping for the dimension picker (UX-323). The flat 8-item list
+ * is hard to scan; grouping into "Task metadata" / "Dates" / "Organisation"
+ * lets users home in on the dimension family they want before reading
+ * individual labels. The union of `dimensions` across all groups must equal
+ * `ALL_DIMENSIONS` — see the regression test in
+ * `src/lib/__tests__/filter-dimension-metadata.test.ts`.
+ */
+export interface AgendaFilterDimensionGroup {
+  labelKey: string
+  dimensions: AgendaFilterDimension[]
+}
+
+export const DIMENSION_GROUPS: AgendaFilterDimensionGroup[] = [
+  { labelKey: 'agendaFilter.group.taskMetadata', dimensions: ['status', 'priority'] },
+  {
+    labelKey: 'agendaFilter.group.dates',
+    dimensions: ['dueDate', 'scheduledDate', 'completedDate', 'createdDate'],
+  },
+  { labelKey: 'agendaFilter.group.organisation', dimensions: ['tag', 'property'] },
+]
+
 export function dimensionLabel(dim: AgendaFilterDimension): string {
   return i18n.t(DIMENSION_OPTIONS[dim].labelKey)
 }

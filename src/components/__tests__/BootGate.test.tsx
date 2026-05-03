@@ -203,6 +203,67 @@ describe('BootGate', () => {
     })
   })
 
+  it('renders Show details button in error state', () => {
+    useBootStore.setState({ state: 'error', error: 'DB connection failed', boot: noopBoot })
+
+    render(
+      <BootGate>
+        <p>App content</p>
+      </BootGate>,
+    )
+
+    expect(screen.getByTestId('boot-show-details')).toBeInTheDocument()
+    expect(screen.getByTestId('boot-show-details')).toHaveTextContent('Show details')
+    // Diagnostics panel is hidden by default.
+    expect(screen.queryByTestId('boot-diagnostics')).not.toBeInTheDocument()
+  })
+
+  it('clicking Show details expands a <pre> with the error text', async () => {
+    const user = userEvent.setup()
+    useBootStore.setState({ state: 'error', error: 'DB connection failed', boot: noopBoot })
+
+    render(
+      <BootGate>
+        <p>App content</p>
+      </BootGate>,
+    )
+
+    await user.click(screen.getByTestId('boot-show-details'))
+
+    const panel = screen.getByTestId('boot-diagnostics')
+    expect(panel).toBeInTheDocument()
+    const pre = panel.querySelector('pre')
+    expect(pre).not.toBeNull()
+    expect(pre?.textContent).toContain('Error: DB connection failed')
+    // Toggle label flips to Hide.
+    expect(screen.getByTestId('boot-show-details')).toHaveTextContent('Hide details')
+  })
+
+  it('Copy diagnostics button calls navigator.clipboard.writeText', async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn(async (_text: string) => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+
+    useBootStore.setState({ state: 'error', error: 'DB connection failed', boot: noopBoot })
+
+    render(
+      <BootGate>
+        <p>App content</p>
+      </BootGate>,
+    )
+
+    await user.click(screen.getByTestId('boot-show-details'))
+    await user.click(screen.getByTestId('boot-copy-diagnostics'))
+
+    expect(writeText).toHaveBeenCalledTimes(1)
+    const payload = writeText.mock.calls[0]?.[0] ?? ''
+    expect(payload).toContain('Error: DB connection failed')
+    expect(payload).toContain('User-Agent:')
+  })
+
   it('retry button resets disabled state when state changes from error', async () => {
     const user = userEvent.setup()
     let resolveBootFn: (() => void) | undefined

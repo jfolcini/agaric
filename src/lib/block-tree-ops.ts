@@ -7,6 +7,7 @@
  * rather than back in the store factory.
  */
 
+import { notifyUnknownNodeTypeToast } from '../editor/markdown-serialize-toast'
 import { parse, serialize } from '../editor/markdown-serializer'
 import type { BlockLevelNode } from '../editor/types'
 import { type FlatBlock, getDragDescendants } from './tree-utils'
@@ -46,7 +47,7 @@ export function isNonEmptyBlock(b: BlockLevelNode): boolean {
 
 /** Serialize a single block-level node by wrapping it in a one-element doc. */
 function serializeSingleBlock(b: BlockLevelNode): string {
-  return serialize({ type: 'doc', content: [b] })
+  return serialize({ type: 'doc', content: [b] }, notifyUnknownNodeTypeToast)
 }
 
 /**

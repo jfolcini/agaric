@@ -43,6 +43,7 @@ import { ExternalLink } from './extensions/external-link'
 import { PropertyPicker, propertyPickerPluginKey } from './extensions/property-picker'
 import { SlashCommand, slashCommandPluginKey } from './extensions/slash-command'
 import { TagRef } from './extensions/tag-ref'
+import { notifyUnknownNodeTypeToast } from './markdown-serialize-toast'
 import { parse, serialize } from './markdown-serializer'
 import type { PickerItem } from './SuggestionList'
 import { cleanupOrphanedPopups } from './suggestion-renderer'
@@ -69,7 +70,7 @@ export interface ContentDelta {
  * Pure function — no editor instance required.
  */
 export function computeContentDelta(originalMarkdown: string, currentJson: DocNode): ContentDelta {
-  const newMarkdown = serialize(currentJson)
+  const newMarkdown = serialize(currentJson, notifyUnknownNodeTypeToast)
   return { newMarkdown, changed: newMarkdown !== originalMarkdown, originalMarkdown }
 }
 
@@ -500,7 +501,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const getMarkdown = useCallback((): string | null => {
     if (!editor) return null
     const json = editor.getJSON() as DocNode
-    return serialize(json)
+    return serialize(json, notifyUnknownNodeTypeToast)
   }, [editor])
 
   return {

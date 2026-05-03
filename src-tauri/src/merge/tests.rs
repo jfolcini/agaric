@@ -1107,6 +1107,24 @@ async fn merge_block_conflict_creates_copy() {
                 Some("B1".to_owned()),
                 "conflict_source should point to original block"
             );
+
+            // TEST-6: confirm the original block's row content is unchanged.
+            // A bug that mutated the original block's content (instead of
+            // leaving it intact and creating a sibling conflict-copy) would
+            // slip past the existing conflict-copy assertions. The original
+            // was inserted with "hello world" (line 1045) and merge_block
+            // must not touch `blocks.content` for B1 — only the conflict
+            // copy block carries "theirs" content.
+            let original_content =
+                sqlx::query!(r#"SELECT content FROM blocks WHERE id = ?"#, "B1",)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                original_content.content.as_deref(),
+                Some("hello world"),
+                "TEST-6: original block's row content should be unchanged after merge"
+            );
         }
         other => panic!("expected ConflictCopy, got: {:?}", other),
     }

@@ -435,6 +435,29 @@ function SpaceRowEditor({
         <p id={journalTemplateHintId} className="text-xs text-muted-foreground">
           {t('space.journalTemplateHint')}
         </p>
+        <details className="text-xs text-muted-foreground" data-testid="journal-template-examples">
+          <summary className="cursor-pointer select-none hover:text-foreground transition-colors">
+            {t('space.journalTemplateExamplesLabel')}
+          </summary>
+          <div className="mt-2 flex flex-col gap-2 pl-4 border-l-2 border-border">
+            <div>
+              <p className="font-medium text-foreground">
+                {t('space.journalTemplateExample1Title')}
+              </p>
+              <pre className="mt-1 bg-muted rounded p-2 font-mono text-[11px] whitespace-pre-wrap">
+                {t('space.journalTemplateExample1')}
+              </pre>
+            </div>
+            <div>
+              <p className="font-medium text-foreground">
+                {t('space.journalTemplateExample2Title')}
+              </p>
+              <pre className="mt-1 bg-muted rounded p-2 font-mono text-[11px] whitespace-pre-wrap">
+                {t('space.journalTemplateExample2')}
+              </pre>
+            </div>
+          </div>
+        </details>
       </div>
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>

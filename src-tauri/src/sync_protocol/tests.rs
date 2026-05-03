@@ -1124,6 +1124,20 @@ async fn merge_resolves_property_conflict_lww() {
         .await
         .unwrap();
 
+    // TEST-6: pre-seed BLK1 in the `blocks` table so the materializer's
+    // SetProperty UPDATE has a row to land on. Mirrors the pattern used
+    // by `merge_property_idempotent_on_repeated_sync` (lines 1327-1334),
+    // which is necessary because `append_local_op_at` only writes to
+    // `op_log` — the materializer's CreateBlock handler is bypassed.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'content', '', NULL, 0)",
+    )
+    .bind(BlockId::test_id("BLK1").as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+
     // Device A sets property "priority" = "high"
     append_local_op_at(
         &pool,
@@ -1165,6 +1179,26 @@ async fn merge_resolves_property_conflict_lww() {
     assert!(
         results.property_lww > 0,
         "should resolve at least one property conflict"
+    );
+
+    // TEST-6: confirm the LWW winner actually lands in the materialized
+    // store. `priority` is a reserved property key (see
+    // `op::is_reserved_property_key` and `materializer/handlers.rs`),
+    // so the SetProperty op materializes into `blocks.priority` rather
+    // than `block_properties.value_text`. Flush so the resolution op
+    // enqueued by `merge_diverged_blocks` is applied before we read.
+    materializer.flush().await.expect("flush after merge");
+    let block_id = BlockId::test_id("BLK1");
+    let block_id_str = block_id.as_str();
+    let stored = sqlx::query!(r#"SELECT priority FROM blocks WHERE id = ?"#, block_id_str,)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored.priority.as_deref(),
+        Some("low"),
+        "TEST-6: LWW winner (device-B's later timestamp = \"low\") should be \
+         persisted in blocks.priority"
     );
 
     materializer.shutdown();
