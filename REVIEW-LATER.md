@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 631 — Batch UX-TRIVIAL-8: closed UX-327 (JournalCalendar aria-busy + dim), UX-347 + UX-349 (Conflict labels + per-type icons), UX-350 (HistoryFilterBar legend popover), UX-359 (PageTitleEditor edit affordance), UX-395 + UX-397 (Help panel footer + Customized badge); 7 items via 5 subagents — fourth consecutive clean batch)
+> **Last updated:** 2026-05-03 (Session 632 — Batch UX-TRIVIAL-9: closed UX-302 (EditableBlock focused selection ring), UX-351 (HistoryListItem visible non-reversible label), UX-358 (PageHeaderMenu Delete danger-zone), UX-381 (SettingsView breadcrumb), UX-386 + UX-391 + UX-392 (KeyboardSettings inline conflict + modifier-only validation); 7 items via 5 subagents — fifth consecutive clean batch)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-59 open items in the summary table; 99 detail entries (FE-* sub-tables don't appear in the summary).
+52 open items in the summary table; 92 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -44,7 +44,6 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-6 | TEST | Sync merge tests assert on counter only, not materialized state (`merge_resolves_property_conflict_lww` doesn't query `block_properties`; `merge_block_conflict_creates_copy` doesn't query `blocks` for the conflict copy) | S | — |
 | TEST-FE-1 | TEST | Bare `setTimeout` waits in tests (24 occurrences across 13 files; the dangerous subset is bare 50ms waits before `not.toHaveBeenCalledWith` negatives — `BlockTree.test.tsx`, `TagFilterPanel.test.tsx`, `useBlockTreeEventListeners.test.ts`, `GraphView.test.tsx`) — AGENTS.md explicitly forbids `await sleep(n)`; replace with `waitFor` or fake timers | M | — |
 | TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `BlockContextMenu` (19), `FormattingToolbar` (16), `useBlockKeyboardHandlers` (10), `GraphView` (8), `BlockPropertyEditor` (7), `HeadingLevelSelector` (7), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently | M | — |
-| UX-302 | UX | Multi-selection has no visible feedback on selected blocks | S | — |
 | UX-304 | UX | Swipe-to-delete (mobile) has no visual affordance or threshold cue | S | — |
 | UX-305 | UX | Drag handle on touch has 250 ms long-press requirement, no hint | S | — |
 | UX-306 | UX | Touch gutter "More actions" menu doesn't preview hidden actions | S | — |
@@ -61,9 +60,7 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-323 | UX | Agenda filter popover dense (8 dimensions × nested presets) | S | — |
 | UX-337 | UX | Disabled `SearchablePopover` trigger has no tooltip explaining why | S | — |
 | UX-346 | UX | Vim-style `j`/`k` nav has no touch alternative | S | — |
-| UX-351 | UX | Non-reversible history entries marked only by `opacity-50` + lock icon | S | — |
 | UX-354 | UX | Graph filter bar has no on-touch affordance | S | — |
-| UX-358 | UX | `PageHeaderMenu` mixes benign and destructive actions in one popover | S | — |
 | UX-365 | UX | Spaces onboarding banner only inside `SpaceManageDialog` | S | — |
 | UX-366 | UX | Cross-space `[[link]]` chips render with literal "Broken link" tooltip | S | — |
 | UX-369 | UX | History "All spaces" toggle resets every session | S | — |
@@ -74,14 +71,10 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-374 | UX | Onboarding banner not re-showable after dismiss | S | — |
 | UX-375 | UX | Per-space journal template variables undocumented in-app | S | — |
 | UX-376 | UX | Pairing dialog defaults to manual passphrase, no QR recommendation | S | — |
-| UX-381 | UX | Settings has 9 tabs with no breadcrumb anywhere | S | — |
 | UX-382 | UX | Welcome modal omits Sync / multi-device story | S | — |
 | UX-384 | UX | Import progress shows file count, not bytes / blocks | S | — |
-| UX-386 | UX | Keyboard conflict warnings inline below row (mobile-unfriendly) | S | — |
 | UX-387 | UX | Sidebar theme button cycles 7 themes silently | S | — |
 | UX-388 | UX | Keyboard help panel has no search / filter for ~77 shortcuts | S | — |
-| UX-391 | UX | Custom shortcut input accepts any non-empty string with no validation | S | — |
-| UX-392 | UX | Conflict warning rendered below row, not inline with keys | S | — |
 
 ### Quick wins (S-cost, ready to grab)
 
@@ -1096,16 +1089,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 Items in this section come from a feature-map sweep (one analysis subagent per feature area, then 3 validation subagents that re-read each cited file:line and dropped exaggerations and stale claims). Format follows the compact TEST / FE-L convention. None of these are blocking; they are surface-level fixes (no schema, no op-types, no store changes) that improve discoverability, accessibility, or in-UI feedback.
 
-
-### UX-302 — Multi-selection styling exists for the static path but not the focused (mounted-editor) path
-- **Domain:** Frontend / Editor
-- **Location:** `src/components/StaticBlock.tsx:249` (selection styling: `isSelected && 'ring-2 ring-primary/50 bg-primary/5'`); `src/components/EditableBlock.tsx:257` (plumbs `isSelected` into `StaticBlock`); `src/components/EditableBlock.tsx:265-…` (focused / mounted-editor branch — no selection styling)
-- **What:** Non-focused selected blocks get a 2-px primary ring + 5%-primary tint via `StaticBlock`. The mounted-editor branch (focused block) does not apply selection styling. In practice the focused block is rarely also "selected" (selection mostly applies to non-focused siblings) so this gap is small. Original framing — "isSelected does not drive any border/background change" — was wrong; only the focused-path is unstyled.
-- **Cost:** Trivial — apply matching `ring`/`bg` classes to the focused branch in `EditableBlock`, or leave as-is and close the item if "focused-and-selected" is judged too rare.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ### UX-304 — Swipe-to-delete (mobile) has no visual affordance or threshold cue
 - **Domain:** Frontend / Editor
 - **Location:** `src/hooks/useBlockSwipeActions.ts:1-111` (thresholds at lines 4, 7) ; `src/components/SortableBlock.tsx:350-370`
@@ -1250,29 +1233,11 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-351 — Non-reversible history entries marked only by `opacity-50` + lock icon
-- **Domain:** Frontend / History (a11y)
-- **Location:** `src/components/HistoryListItem.tsx:230, 314-329`
-- **What:** Single-cue (opacity) presentation risks WCAG contrast failure; the lock icon helps but is small.
-- **Cost:** Trivial — secondary text label "Non-reversible" + retain icon; ensure body remains contrast-compliant.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-354 — Graph filter bar has no leading "Filters" label / on-touch affordance
 - **Domain:** Frontend / Graph
 - **Location:** `src/components/GraphView.tsx:179-191` (wrapper className `'absolute top-2 left-2 right-2 z-10 max-w-[calc(100%-1rem)]'` — full-width, right-edge anchored, NOT just `top-2 left-2` as earlier framing said) ; `GraphFilterBar.tsx` (component body — too broad to cite the whole file)
 - **What:** The bar spans the full width of the graph view but has no leading "Filters" label or first-touch hint. Earlier framing described position as "absolute top-2 left-2 (single-line, easy to miss)" — incomplete; the bar IS full-width.
 - **Cost:** Trivial — small "Filters" label or info banner on first touch render.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-358 — `PageHeaderMenu` co-locates destructive Delete with benign actions in one popover
-- **Domain:** Frontend / Page editor
-- **Location:** `src/components/PageHeaderMenu.tsx:151-281` (popover entries top-to-bottom: Open in New Tab L162-174 → Add Alias → Add Tag → Add Property → `<hr>` → Toggle Template → Toggle Journal Template → `<hr>` → Export → `<hr>` (when `showMoveEntry`) → Move To submenu → `<hr>` L271 → Delete L272-279)
-- **What:** The Delete button sits at the **end** of the popover, after the Move-To submenu and a separator at L271 — Open in New Tab is at the **top** at L164, with multiple entries and `<hr>` separators between them. (Earlier framing — "one `<hr>` away from Open in New Tab" — was geographically wrong; they bookend the menu.) The structural concern (destructive + benign in one popover, easy to misclick on mobile) is still real.
-- **Cost:** S — visually separate the destructive Delete (background tint or separate sub-section); enforce a confirmation dialog with type-to-confirm for Delete.
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
@@ -1368,15 +1333,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Status:** Open.
 
 
-### UX-381 — Settings has 9 tabs with no breadcrumb anywhere
-- **Domain:** Frontend / Settings
-- **Location:** `src/components/SettingsView.tsx:140-163`
-- **What:** Sidebar entry "Settings" doesn't show the active tab. After navigating away and back, users have to scan the tab strip to remember where they were (even though the tab IS restored from localStorage).
-- **Cost:** Trivial — append the active tab name to the sidebar entry, or render a small breadcrumb in Settings header.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ### UX-382 — Welcome modal omits Sync / multi-device story
 - **Domain:** Frontend / Onboarding
 - **Location:** `src/components/WelcomeModal.tsx:39-55`
@@ -1395,15 +1351,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-386 — Keyboard conflict warnings inline below row (mobile-unfriendly)
-- **Domain:** Frontend / Settings / Keyboard
-- **Location:** `src/components/KeyboardSettingsTab.tsx:214-221`
-- **What:** Warnings render as plain text on a separate line below each shortcut; they wrap ungracefully on narrow widths and are only shown after save.
-- **Cost:** Trivial — add a warning icon + colour to the row's left margin; show conflict in real time as the user types in the input.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-387 — Sidebar theme button cycles 3 themes (auto/dark/light) silently — Settings exposes the full 7
 - **Domain:** Frontend / Settings / Theme
 - **Location:** `src/hooks/useTheme.ts:54-55` (`/** Theme cycle for the sidebar toggle button (classic light/dark/auto only). */ const CYCLE: ThemePreference[] = ['auto', 'dark', 'light']`) ; `src/components/AppSidebar.tsx:254-263` (sidebar button calls `onToggleTheme`, tooltip is the generic `t('sidebar.toggleTheme')`) ; `src/components/settings/AppearanceTab.tsx:114-135` (full 7-theme Select: light, dark, auto, solarized-light, solarized-dark, dracula, one-dark-pro)
@@ -1420,24 +1367,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Cost:** S — filter input wired to description + key text; collapse to matching rows.
 - **Risk:** Low.
 - **Impact:** Medium.
-- **Status:** Open.
-
-### UX-391 — Custom shortcut input accepts any non-empty string with no validation
-- **Domain:** Frontend / Keyboard
-- **Location:** `src/components/KeyboardSettingsTab.tsx:57-65` ; `src/lib/keyboard-config/storage.ts:39-52`
-- **What:** `saveEdit` writes whatever the user typed; malformed bindings silently never fire at runtime. Nothing rejects modifier-only / unparseable inputs.
-- **Cost:** S — validation step before `setCustomShortcut`; render an inline error if invalid.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-392 — Conflict warning rendered below row, not inline with keys
-- **Domain:** Frontend / Keyboard
-- **Location:** `src/components/KeyboardSettingsTab.tsx:214-221`
-- **What:** Warning is a separate `<div>` outside the row's flex layout. On narrow screens it wraps awkwardly. Also fires only after save, not while typing.
-- **Cost:** Trivial — colocate next to the keys column; recompute on every keystroke during edit.
-- **Risk:** Low.
-- **Impact:** Low.
 - **Status:** Open.
 
 
