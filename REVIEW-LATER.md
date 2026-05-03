@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 629 — Batch UX-TRIVIAL-6: closed UX-332 (PageBrowser sort tooltip), UX-333 (PageTreeItem `+` always-visible), UX-339 (PropertyDefinitions JSON validation), UX-345 (History Reset/Revert disambiguation), UX-362 (BlockZoomBar Exit-zoom button); 5 of 5 attempted, all clean — second consecutive 5/5 with the pre-resolved-paths approach)
+> **Last updated:** 2026-05-03 (Session 630 — Batch UX-TRIVIAL-7: closed UX-325 (F-37 gutter-cycle warning), UX-334 (TemplatesView × always-visible), UX-364 + UX-368 (SpaceSwitcher prefix + tooltip mappings), UX-378 (PeerListItem inline address validation), UX-394 (findConflicts respects condition field); 6 items via 5 subagents — third consecutive clean batch)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-72 open items in the summary table; 112 detail entries (FE-* sub-tables don't appear in the summary).
+66 open items in the summary table; 106 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -59,9 +59,7 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-319 | UX | Task cycle is locked to TODO→DOING→DONE→CANCELLED→none with rationale not surfaced | S | — |
 | UX-320 | UX | Repeating-task `++` / `.+` syntax is cryptic in the property drawer | S | — |
 | UX-323 | UX | Agenda filter popover dense (8 dimensions × nested presets) | S | — |
-| UX-325 | UX | `F-37` "DONE warning when block has `blocked_by`" is documented but not implemented | S | — |
 | UX-327 | UX | Calendar dot fetch is silent (no skeleton / no busy state) | S | — |
-| UX-334 | UX | TemplatesView "remove template" × hidden until hover (destructive) | S | — |
 | UX-337 | UX | Disabled `SearchablePopover` trigger has no tooltip explaining why | S | — |
 | UX-346 | UX | Vim-style `j`/`k` nav has no touch alternative | S | — |
 | UX-347 | UX | Conflict "Keep Incoming" / "Discard Incoming" is ambiguous | S | — |
@@ -71,10 +69,8 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-354 | UX | Graph filter bar has no on-touch affordance | S | — |
 | UX-358 | UX | `PageHeaderMenu` mixes benign and destructive actions in one popover | S | — |
 | UX-359 | UX | Page title in rich-display mode (with chips) lacks edit affordance | S | — |
-| UX-364 | UX | `SpaceSwitcher` trigger reads as a label, not a switcher | S | — |
 | UX-365 | UX | Spaces onboarding banner only inside `SpaceManageDialog` | S | — |
 | UX-366 | UX | Cross-space `[[link]]` chips render with literal "Broken link" tooltip | S | — |
-| UX-368 | UX | Digit hotkeys (Ctrl+1..9) hint only inside dropdown rows | S | — |
 | UX-369 | UX | History "All spaces" toggle resets every session | S | — |
 | UX-370 | UX | Space delete-when-empty signalled only via tooltip | S | — |
 | UX-371 | UX | Per-space journal template buried in Manage Spaces | S | — |
@@ -83,7 +79,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-374 | UX | Onboarding banner not re-showable after dismiss | S | — |
 | UX-375 | UX | Per-space journal template variables undocumented in-app | S | — |
 | UX-376 | UX | Pairing dialog defaults to manual passphrase, no QR recommendation | S | — |
-| UX-378 | UX | Manual peer-address input has no real-time validation | S | — |
 | UX-381 | UX | Settings has 9 tabs with no breadcrumb anywhere | S | — |
 | UX-382 | UX | Welcome modal omits Sync / multi-device story | S | — |
 | UX-384 | UX | Import progress shows file count, not bytes / blocks | S | — |
@@ -92,7 +87,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-388 | UX | Keyboard help panel has no search / filter for ~77 shortcuts | S | — |
 | UX-391 | UX | Custom shortcut input accepts any non-empty string with no validation | S | — |
 | UX-392 | UX | Conflict warning rendered below row, not inline with keys | S | — |
-| UX-394 | UX | `findConflicts` ignores the `condition` field — false positives | S | — |
 | UX-395 | UX | Help panel footer button "Customize shortcuts" doesn't indicate it leaves the panel | S | — |
 | UX-397 | UX | Help panel doesn't badge customized shortcuts | S | — |
 
@@ -1245,30 +1239,11 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-325 — F-37 DONE-warning ships for `[x]` syntax + slash commands but not for the gutter-cycle path
-- **Domain:** Frontend / Tasks
-- **Location:** `src/hooks/useCheckboxSyntax.ts:41-55` (already fires `toast.warning(t('dependency.dependencyWarning'))` on `[x]` cycle to DONE); `src/hooks/useBlockSlashCommands.ts:160-169` (defines `warnIfBlocked`) and `:182-183` (invokes from `handleTodoState` when `state === 'DONE'`); `src/hooks/useBlockProperties.ts:60-92` (`handleToggleTodo` — gutter-cycle path) does **NOT** call `warnIfBlocked` ; `FEATURE-MAP.md:670` (the F-37 entry — accurate, F-37 ships)
-- **What:** F-37 is implemented in two of three code paths. Only the gutter-button cycle path (`handleToggleTodo`) bypasses the warning. The original framing — "documented but not implemented" — was wrong; `FEATURE-MAP.md:670` is accurate. Git log: `afb28b7 feat: F-37 — task dependency indicator + DONE warning`.
-- **Cost:** S — call `warnIfBlocked` from `useBlockProperties.handleToggleTodo` (mirror the slash-command path).
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-
 ### UX-327 — Calendar dot fetch is silent (no skeleton / no busy state)
 - **Domain:** Frontend / Journal
 - **Location:** `src/components/journal/JournalCalendarDropdown.tsx:127-145`
 - **What:** `countAgendaBatchBySource` fires async on open and on month-nav with no `aria-busy` or skeleton; the calendar renders empty until dots arrive — looks like a glitch on cold disks.
 - **Cost:** Trivial — `aria-busy="true"` on the grid + 4 placeholder dots while loading.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-334 — TemplatesView "remove template" × hidden until hover (destructive)
-- **Domain:** Frontend / Pages / Templates
-- **Location:** `src/components/TemplatesView.tsx:221-234`
-- **What:** Same hover pattern; destructive action with very low desktop discoverability and a tiny `h-3.5 w-3.5` icon.
-- **Cost:** Trivial — show on focus too; consider a per-row kebab menu for less-common actions.
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
@@ -1355,15 +1330,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-364 — `SpaceSwitcher` trigger reads as a label, not a switcher
-- **Domain:** Frontend / Spaces
-- **Location:** `src/components/SpaceSwitcher.tsx:105-126` (Radix `<SelectTrigger>` does render a chevron by default; the gap is the leading text)
-- **What:** Replaces the static "Agaric" branding with the bare space name. No "Space:" prefix or accent micro-icon.
-- **Cost:** Trivial — render a small `<SpaceAccentBadge>` + "Personal" pattern in the trigger; or prefix "Space:".
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-365 — Spaces onboarding banner only inside `SpaceManageDialog`
 - **Domain:** Frontend / Spaces / Onboarding
 - **Location:** `src/components/SpaceManageDialog.tsx:614-630, 645-648` ; `src/lib/i18n/common.ts:67-71`
@@ -1380,16 +1346,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Cost:** S — distinct visual (dashed border + lock icon) and tooltip "Link is in another space — click to remove".
 - **Risk:** Low.
 - **Impact:** Medium.
-- **Status:** Open.
-
-
-### UX-368 — Digit hotkeys (Ctrl+1..9) hint only inside dropdown rows
-- **Domain:** Frontend / Spaces
-- **Location:** `src/components/SpaceSwitcher.tsx:136-152` ; `src/hooks/useAppKeyboardShortcuts.ts:279-295`
-- **What:** Trigger tooltip mentions "Ctrl+1..9" but doesn't list mappings. Once dropdown closes the user has to re-open to find a mapping.
-- **Cost:** Trivial — extend the trigger tooltip to enumerate the first 5 mappings ("Ctrl+1 Personal · Ctrl+2 Work · …").
-- **Risk:** Low.
-- **Impact:** Low.
 - **Status:** Open.
 
 ### UX-369 — History "All spaces" toggle resets every session
@@ -1465,15 +1421,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Status:** Open.
 
 
-### UX-378 — Manual peer-address input has no real-time validation
-- **Domain:** Frontend / Sync
-- **Location:** `src/components/PeerListItem.tsx:49-64, 122-159`
-- **What:** Format hint is `text-xs` and easily missed; invalid `host:port` only surfaces on Save.
-- **Cost:** Trivial — debounced validation with inline error text below the input.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 ### UX-381 — Settings has 9 tabs with no breadcrumb anywhere
 - **Domain:** Frontend / Settings
 - **Location:** `src/components/SettingsView.tsx:140-163`
@@ -1544,15 +1491,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Cost:** Trivial — colocate next to the keys column; recompute on every keystroke during edit.
 - **Risk:** Low.
 - **Impact:** Low.
-- **Status:** Open.
-
-### UX-394 — `findConflicts` ignores the `condition` field — false positives
-- **Domain:** Frontend / Keyboard (correctness)
-- **Location:** `src/lib/keyboard-config/storage.ts:72-91` (test at `src/lib/__tests__/keyboard-config.test.ts:229-238` documents the false-positive)
-- **What:** Conflicts grouped by `(keys, category)` only; conditional shortcuts (e.g. Backspace on empty block vs. at start) get flagged as conflicting even though they never fire simultaneously. Users see a warning that's wrong.
-- **Cost:** S — group by `(keys, category, condition)`; treat `condition === undefined` as wildcard.
-- **Risk:** Low.
-- **Impact:** Medium.
 - **Status:** Open.
 
 ### UX-395 — Help panel footer button "Customize shortcuts" doesn't indicate it leaves the panel
