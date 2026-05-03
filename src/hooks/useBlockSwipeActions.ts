@@ -22,12 +22,19 @@ interface SwipeState {
  * Only active on coarse-pointer (touch) devices.
  *
  * - Swipe left > 80 px → reveals a delete button behind the content
- * - Swipe left > 200 px → auto-confirms deletion
+ * - Swipe left > 200 px → auto-confirms deletion (and `thresholdCrossed`
+ *   flips to `true` mid-drag so callers can render a progressive cue —
+ *   colour change + "Release to delete" label — before the gesture
+ *   actually fires; UX-304).
  * - Vertical scroll > 10 px cancels the gesture (avoids scroll conflicts)
  */
 export function useBlockSwipeActions(onDelete: () => void) {
   const [translateX, setTranslateX] = useState(0)
   const [isRevealed, setIsRevealed] = useState(false)
+  // UX-304: live "you are past the auto-delete threshold" flag, exposed
+  // so the overlay can switch from the muted reveal state to a
+  // destructive "release to delete" affordance before touch-end.
+  const [thresholdCrossed, setThresholdCrossed] = useState(false)
   const stateRef = useRef<SwipeState>({
     startX: 0,
     startY: 0,
@@ -69,6 +76,11 @@ export function useBlockSwipeActions(onDelete: () => void) {
         stateRef.current.swiping = true
         stateRef.current.currentX = touch.clientX
         setTranslateX(Math.max(dx, -AUTO_DELETE_THRESHOLD)) // Clamp to max swipe distance
+        // UX-304: track the auto-delete threshold against the raw delta
+        // (translateX is clamped, so it would always equal the threshold
+        // once reached — we need the unclamped value to flip back if the
+        // user drags partway back without lifting their finger).
+        setThresholdCrossed(dx < -AUTO_DELETE_THRESHOLD)
       }
     },
     [isTouch],
@@ -95,16 +107,19 @@ export function useBlockSwipeActions(onDelete: () => void) {
       setIsRevealed(false)
     }
     stateRef.current.swiping = false
+    setThresholdCrossed(false)
   }, [onDelete])
 
   const reset = useCallback(() => {
     setTranslateX(0)
     setIsRevealed(false)
+    setThresholdCrossed(false)
   }, [])
 
   return {
     translateX,
     isRevealed,
+    thresholdCrossed,
     handlers: { onTouchStart, onTouchMove, onTouchEnd },
     reset,
   }

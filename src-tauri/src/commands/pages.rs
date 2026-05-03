@@ -207,7 +207,13 @@ pub async fn export_page_markdown_inner(
     BlockId::from_string(page_id)?;
 
     // 1. Get the page
-    let page = get_block_inner(pool, page_id.to_string()).await?;
+    //
+    // M-98 — `get_active_block_inner` (not `get_block_inner`) so a
+    // soft-deleted page surfaces as `NotFound` instead of exporting
+    // as `# Title\n\n` with no descendants. The descendant walk
+    // below already filters `deleted_at IS NULL`, so prior to this
+    // fix the page row itself was the only row that could leak.
+    let page = get_active_block_inner(pool, page_id.to_string()).await?;
     if page.block_type != "page" {
         return Err(AppError::Validation("not a page".into()));
     }
@@ -625,11 +631,12 @@ pub struct PageSubtreeResponse {
 
 /// Fetch a page and a paginated slice of its non-conflict subtree.
 ///
-/// Composes [`get_block_inner`] for the root and a `page_id`-column
-/// descendant walk for the children. Validates that the requested block
-/// exists and is actually a `page`. Returns [`AppError::NotFound`] for
-/// unknown IDs and [`AppError::Validation`] when the ID resolves to a
-/// non-page block, or when the page does not belong to `space_id`.
+/// Composes [`get_active_block_inner`] for the root and a
+/// `page_id`-column descendant walk for the children. Validates that
+/// the requested block exists and is actually a `page`. Returns
+/// [`AppError::NotFound`] for unknown **or soft-deleted** IDs (M-98),
+/// and [`AppError::Validation`] when the ID resolves to a non-page
+/// block, or when the page does not belong to `space_id`.
 ///
 /// FEAT-3 Phase 7 — `space_id` is required (not optional). Pages whose
 /// `space` property does not match `space_id` are rejected with
@@ -656,7 +663,12 @@ pub async fn get_page_inner(
     // that the SQL `WHERE id = ?` lookup would otherwise produce.
     BlockId::from_string(page_id)?;
 
-    let page = get_block_inner(pool, page_id.to_string()).await?;
+    // M-98 — `get_active_block_inner` (not `get_block_inner`) so the
+    // page-fetch surface never returns a soft-deleted row to the
+    // frontend / MCP. A tombstoned page now surfaces as
+    // `AppError::NotFound`, matching the unknown-id case the
+    // frontend's deep-link / journal-nav already handles.
+    let page = get_active_block_inner(pool, page_id.to_string()).await?;
     if page.block_type != "page" {
         return Err(AppError::Validation(format!(
             "block '{page_id}' has block_type '{}', expected 'page'",
@@ -807,12 +819,19 @@ pub async fn get_page_unscoped_inner(
     .flatten();
     let Some(space_id) = space_id else {
         // No space property — distinguish "unknown id" (NotFound) from
-        // "exists but unscoped" (Validation) by hitting `get_block_inner`
-        // first; it returns `NotFound` for unknown ids. If the block
-        // exists but has no space, fall through to `Validation` so the
-        // error category matches what an MCP agent would have seen
-        // pre-Phase-7.
-        get_block_inner(pool, page_id.to_string()).await?;
+        // "exists but unscoped" (Validation) by hitting
+        // `get_active_block_inner` first; it returns `NotFound` for
+        // unknown ids. If the block exists and is active but has no
+        // space, fall through to `Validation` so the error category
+        // matches what an MCP agent would have seen pre-Phase-7.
+        //
+        // M-98 — switched from `get_block_inner` to
+        // `get_active_block_inner` so a soft-deleted page surfaces as
+        // `NotFound` to the MCP read tool. Agents must not be able to
+        // discover tombstoned pages via this surface; the only
+        // legitimate path to soft-deleted rows is the (frontend-only)
+        // trash UI.
+        get_active_block_inner(pool, page_id.to_string()).await?;
         return Err(AppError::Validation(format!(
             "page '{page_id}' has no space property"
         )));

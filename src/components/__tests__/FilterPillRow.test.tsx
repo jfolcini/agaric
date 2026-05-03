@@ -141,6 +141,80 @@ describe('FilterPillRow', () => {
     expect(screen.getByText('tag prefix "work"')).toBeInTheDocument()
   })
 
+  // ====================================================================
+  // FE-L-14 / MAINT-190 — stable per-filter React key contract.
+  //
+  // `key={filter._addId}` (stamped at creation in `BacklinkFilterBuilder`)
+  // replaces the old `key={index}` workaround. Re-rendering with a
+  // reordered filter array must (a) not produce React duplicate-key
+  // warnings and (b) preserve DOM-node identity per `_addId` so the same
+  // pill follows its filter across the reorder.
+  // ====================================================================
+  describe('stable React key on reorder (FE-L-14)', () => {
+    it('preserves per-filter <li> identity when filters are reordered', () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        const filtersA: FilterWithKey[] = [
+          { type: 'BlockType', block_type: 'content', _addId: 101 },
+          { type: 'Contains', query: 'alpha', _addId: 102 },
+        ]
+        const { container, rerender } = render(
+          <FilterPillRow filters={filtersA} onRemove={vi.fn()} />,
+        )
+
+        const itemsBefore = Array.from(container.querySelectorAll('li'))
+        expect(itemsBefore).toHaveLength(2)
+        // Tag each <li> so we can detect node identity after reorder.
+        itemsBefore[0]?.setAttribute('data-probe', 'first')
+        itemsBefore[1]?.setAttribute('data-probe', 'second')
+
+        // Re-render with the same filters in reverse order. Stable keys
+        // mean React reorders the existing nodes rather than remounting.
+        const [first, second] = filtersA as [FilterWithKey, FilterWithKey]
+        const filtersB: FilterWithKey[] = [second, first]
+        rerender(<FilterPillRow filters={filtersB} onRemove={vi.fn()} />)
+
+        const itemsAfter = Array.from(container.querySelectorAll('li'))
+        expect(itemsAfter).toHaveLength(2)
+        // The probe attributes followed their filters across the reorder.
+        expect(itemsAfter[0]?.getAttribute('data-probe')).toBe('second')
+        expect(itemsAfter[1]?.getAttribute('data-probe')).toBe('first')
+
+        const keyWarnings = consoleErrorSpy.mock.calls.filter(
+          (call) =>
+            typeof call[0] === 'string' &&
+            call[0].includes('Encountered two children with the same key'),
+        )
+        expect(keyWarnings).toEqual([])
+      } finally {
+        consoleErrorSpy.mockRestore()
+      }
+    })
+
+    it('does not emit duplicate-key warnings for structurally identical filters', () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        // Two byte-identical filters with distinct `_addId` values — exactly
+        // the case where `key={index}` would have been fine but a structural
+        // hash would collide. Stable per-creation IDs avoid both pitfalls.
+        const filters: FilterWithKey[] = [
+          { type: 'Contains', query: 'same', _addId: 201 },
+          { type: 'Contains', query: 'same', _addId: 202 },
+        ]
+        render(<FilterPillRow filters={filters} onRemove={vi.fn()} />)
+
+        const keyWarnings = consoleErrorSpy.mock.calls.filter(
+          (call) =>
+            typeof call[0] === 'string' &&
+            call[0].includes('Encountered two children with the same key'),
+        )
+        expect(keyWarnings).toEqual([])
+      } finally {
+        consoleErrorSpy.mockRestore()
+      }
+    })
+  })
+
   describe('filterSummary', () => {
     it('returns correct summary for PropertyDate filter', () => {
       expect(

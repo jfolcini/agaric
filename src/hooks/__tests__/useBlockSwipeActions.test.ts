@@ -77,6 +77,8 @@ describe('useBlockSwipeActions', () => {
     expect(typeof result.current.handlers.onTouchMove).toBe('function')
     expect(typeof result.current.handlers.onTouchEnd).toBe('function')
     expect(typeof result.current.reset).toBe('function')
+    // UX-304: progressive cue flag is exposed alongside translateX/isRevealed.
+    expect(result.current.thresholdCrossed).toBe(false)
 
     unmount()
   })
@@ -284,5 +286,110 @@ describe('useBlockSwipeActions', () => {
     expect(result.current.isRevealed).toBe(false)
 
     unmount()
+  })
+
+  // ── UX-304: progressive threshold-crossed cue ─────────────────────
+  describe('thresholdCrossed (UX-304)', () => {
+    it('stays false while swipe is between reveal and auto-delete thresholds', () => {
+      mockCoarsePointer()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn()))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(400, 100))
+      })
+      // 150 px left swipe — past REVEAL_THRESHOLD, well under AUTO_DELETE_THRESHOLD.
+      act(() => {
+        result.current.handlers.onTouchMove(touch(250, 100))
+      })
+
+      expect(result.current.thresholdCrossed).toBe(false)
+
+      unmount()
+    })
+
+    it('flips to true mid-drag once the auto-delete threshold is crossed', () => {
+      mockCoarsePointer()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn()))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(400, 100))
+      })
+      // 250 px left swipe — past AUTO_DELETE_THRESHOLD (200).
+      act(() => {
+        result.current.handlers.onTouchMove(touch(150, 100))
+      })
+
+      expect(result.current.thresholdCrossed).toBe(true)
+
+      unmount()
+    })
+
+    it('flips back to false if the user drags partway back below the threshold', () => {
+      mockCoarsePointer()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn()))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(400, 100))
+      })
+      // First cross the threshold.
+      act(() => {
+        result.current.handlers.onTouchMove(touch(150, 100))
+      })
+      expect(result.current.thresholdCrossed).toBe(true)
+
+      // Then drag back to a 150 px swipe — still revealed but no longer crossed.
+      act(() => {
+        result.current.handlers.onTouchMove(touch(250, 100))
+      })
+
+      expect(result.current.thresholdCrossed).toBe(false)
+
+      unmount()
+    })
+
+    it('resets to false on touchEnd', () => {
+      mockCoarsePointer()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn()))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(400, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchMove(touch(150, 100))
+      })
+      expect(result.current.thresholdCrossed).toBe(true)
+
+      act(() => {
+        result.current.handlers.onTouchEnd()
+      })
+
+      expect(result.current.thresholdCrossed).toBe(false)
+
+      unmount()
+    })
+
+    it('reset() clears thresholdCrossed alongside translateX/isRevealed', () => {
+      mockCoarsePointer()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn()))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(400, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchMove(touch(150, 100))
+      })
+      // Threshold-crossed but no touchEnd yet — simulate manual reset.
+      expect(result.current.thresholdCrossed).toBe(true)
+
+      act(() => {
+        result.current.reset()
+      })
+
+      expect(result.current.thresholdCrossed).toBe(false)
+      expect(result.current.translateX).toBe(0)
+      expect(result.current.isRevealed).toBe(false)
+
+      unmount()
+    })
   })
 })

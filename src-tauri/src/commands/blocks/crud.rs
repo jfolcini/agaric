@@ -364,7 +364,15 @@ pub async fn create_block_inner_with_space(
 
         // Re-fetch the materialized BlockRow so the caller (Tauri IPC)
         // can return the same shape `create_block_inner` would.
-        return get_block_inner(pool, new_page_id.into_string()).await;
+        //
+        // M-98 — `get_active_block_inner` (not `get_block_inner`)
+        // because the row was just inserted by `create_page_in_space_inner`
+        // and therefore is not soft-deleted. Using the active variant
+        // is consistent with the rest of the public surface and means
+        // a future bug that leaves a page tombstoned at creation time
+        // will surface here as `NotFound` rather than silently
+        // returning a row with `deleted_at` set.
+        return get_active_block_inner(pool, new_page_id.into_string()).await;
     }
 
     // Non-page block types ignore `space_id` and follow the legacy

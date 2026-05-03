@@ -40,6 +40,9 @@ export const editor: Record<string, string> = {
   'editor.templatePlaceholder': 'Type /template to start from a template, or just start typing...',
   // UX-309: discoverability hint for the slash-command palette on empty blocks.
   'editor.emptyBlockPlaceholder': 'Type / for commands…',
+  // UX-304: label shown over the swipe-to-delete overlay on coarse-pointer
+  // devices once the auto-delete threshold (200 px) is crossed mid-drag.
+  'block.swipe.releaseToDelete': 'Release to delete',
   'editor.unknownNodeType':
     "Some content (type: {{type}}) couldn't be saved as Markdown and was dropped.",
   'editor.brokenLinkTooltip': 'Broken link — click to remove',

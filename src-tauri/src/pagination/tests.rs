@@ -4421,20 +4421,40 @@ mod tests_p7 {
         insert_space_block(&pool, SPACE_A_ID, "Personal").await;
         insert_space_block(&pool, SPACE_B_ID, "Work").await;
 
-        insert_block(&pool, "PG_A_ONLY", "page", "Personal-only", None, Some(1)).await;
-        assign_to_space(&pool, "PG_A_ONLY", SPACE_A_ID).await;
+        insert_block(
+            &pool,
+            "01PAGEA0NKY00000000000000A",
+            "page",
+            "Personal-only",
+            None,
+            Some(1),
+        )
+        .await;
+        assign_to_space(&pool, "01PAGEA0NKY00000000000000A", SPACE_A_ID).await;
 
         // Same-space fetch must succeed (sanity check the happy path
         // before testing the foreign-space branch).
-        let ok = get_page_inner(&pool, "PG_A_ONLY", SPACE_A_ID, None, Some(10))
-            .await
-            .expect("same-space fetch must succeed");
-        assert_eq!(ok.page.id, "PG_A_ONLY");
+        let ok = get_page_inner(
+            &pool,
+            "01PAGEA0NKY00000000000000A",
+            SPACE_A_ID,
+            None,
+            Some(10),
+        )
+        .await
+        .expect("same-space fetch must succeed");
+        assert_eq!(ok.page.id, "01PAGEA0NKY00000000000000A");
 
         // Foreign-space fetch must be rejected.
-        let err = get_page_inner(&pool, "PG_A_ONLY", SPACE_B_ID, None, Some(10))
-            .await
-            .expect_err("foreign-space fetch must be rejected");
+        let err = get_page_inner(
+            &pool,
+            "01PAGEA0NKY00000000000000A",
+            SPACE_B_ID,
+            None,
+            Some(10),
+        )
+        .await
+        .expect_err("foreign-space fetch must be rejected");
         assert!(
             matches!(err, AppError::Validation(_)),
             "foreign-space rejection must be Validation, got {err:?}"
@@ -4460,11 +4480,25 @@ mod tests_p7 {
 
         // Page with NO space property — represents legacy / corrupted
         // state. The membership query has nothing to match on.
-        insert_block(&pool, "PG_NOSPACE", "page", "Unscoped", None, Some(1)).await;
+        insert_block(
+            &pool,
+            "01PAGENSPACE000000000000NS",
+            "page",
+            "Unscoped",
+            None,
+            Some(1),
+        )
+        .await;
 
-        let err = get_page_inner(&pool, "PG_NOSPACE", SPACE_A_ID, None, Some(10))
-            .await
-            .expect_err("unscoped page must be rejected from any space");
+        let err = get_page_inner(
+            &pool,
+            "01PAGENSPACE000000000000NS",
+            SPACE_A_ID,
+            None,
+            Some(10),
+        )
+        .await
+        .expect_err("unscoped page must be rejected from any space");
         assert!(
             matches!(err, AppError::Validation(_)),
             "unscoped page must be Validation, got {err:?}"
@@ -4495,7 +4529,7 @@ mod tests_p7 {
         let mut all_pages: Vec<(String, &'static str)> = Vec::with_capacity(15);
         for (s_idx, space_id) in spaces.iter().enumerate() {
             for p_idx in 0..5 {
-                let page_id = format!("PG_S{s_idx}_P{p_idx}");
+                let page_id = format!("01PAGE0000000000000000S{s_idx}P{p_idx}");
                 insert_block(
                     &pool,
                     &page_id,
@@ -4509,7 +4543,7 @@ mod tests_p7 {
                 // Add one descendant per page so `get_page_inner`'s
                 // subtree walk has something to chew on. The descendant
                 // inherits its parent's space via the `page_id` column.
-                let child_id = format!("CH_S{s_idx}_P{p_idx}");
+                let child_id = format!("01CHKD0000000000000000S{s_idx}P{p_idx}");
                 insert_block_with_page_id(
                     &pool,
                     &child_id,

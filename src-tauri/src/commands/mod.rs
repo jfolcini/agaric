@@ -67,8 +67,8 @@ pub use attachments::{
 pub use blocks::{
     batch_resolve, batch_resolve_inner, create_block, create_block_inner,
     create_block_inner_with_space, delete_block, delete_block_inner, edit_block, edit_block_inner,
-    get_block, get_block_inner, list_blocks, list_blocks_inner, move_block, move_block_inner,
-    purge_all_deleted, purge_all_deleted_inner, purge_block, purge_block_inner,
+    get_active_block_inner, get_block, get_block_inner, list_blocks, list_blocks_inner, move_block,
+    move_block_inner, purge_all_deleted, purge_all_deleted_inner, purge_block, purge_block_inner,
     restore_all_deleted, restore_all_deleted_inner, restore_block, restore_block_inner,
     trash_descendant_counts, trash_descendant_counts_inner,
 };
