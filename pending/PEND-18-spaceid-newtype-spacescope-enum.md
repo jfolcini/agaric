@@ -80,6 +80,7 @@ impl SpaceScope {
 Reviewer flagged: specta 2.0.0-rc.24 has **no in-codebase precedent** for `#[serde(tag, content)]` enums. Validate before committing the enum design.
 
 **Deliverables:**
+
 1. Define a throwaway `SpaceScope` exactly as proposed below (in a feature-gated module to avoid polluting the build).
 2. Add a `#[tauri::command]` accepting `SpaceScope` and a unit test that round-trips through `serde_json` and through the specta binding emitter.
 3. Generate `bindings.ts` via `cargo test specta_tests --ignored`. Inspect: does the TS shape look correct (tagged enum with `kind` + `space_id`)? If specta produces something broken or unusable, this whole plan needs redesign (e.g., use `Option<SpaceId>` IPC-side + translate at boundary).
@@ -87,11 +88,11 @@ Reviewer flagged: specta 2.0.0-rc.24 has **no in-codebase precedent** for `#[ser
 
 **Kill criteria:** if either specta or sqlx misbehaves, the plan needs material redesign. Don't proceed to Phase 1 without green from both.
 
-### Phase 1 — Define types (no callers changed). S (1-2h after spike).
+### Phase 1 — Define types (no callers changed). S (1-2h after spike)
 
 Land `SpaceId` + `SpaceScope` in a new `src-tauri/src/space.rs` (parallel to `ulid.rs`). Unit tests for FromStr validation, serde round-trip, `as_filter_param()`. Verify specta binding generation via `cargo build`. **Reversibility: trivial.**
 
-### Phase 2 — Migrate `_inner` functions, one domain at a time. M (4-6h total).
+### Phase 2 — Migrate `_inner` functions, one domain at a time. M (4-6h total)
 
 Each `_inner` becomes `scope: SpaceScope` instead of `space_id: Option<String>`. The SQL bind site changes from `space_id` (an `Option<String>`) to `scope.as_filter_param()` (an `Option<&str>`) — **SQL fragments stay byte-identical**. Tauri command wrappers temporarily translate the IPC-side `Option<String>` to `SpaceScope` before calling `_inner`:
 
@@ -112,17 +113,18 @@ Reviewer correction: ~15 test files hardcode `space_id: None`/`Some(TEST_SPACE_I
 
 Land this immediately after Phase 2 (or interleaved per-domain).
 
-### Phase 3 — IPC boundary + frontend update (atomic, after Phase 2/2.5 complete). M (2-3h).
+### Phase 3 — IPC boundary + frontend update (atomic, after Phase 2/2.5 complete). M (2-3h)
 
 **Reviewer correction: Phase 3 cannot defer the frontend update.** The IPC wire shape changes; `bindings.ts` regenerates; `tauri.ts` wrappers MUST update in the same commit, or the frontend breaks at runtime.
 
 Steps in one commit:
+
 1. Tauri command signatures take `SpaceScope` directly.
 2. `cargo test specta_tests --ignored` regenerates `bindings.ts`.
 3. `tauri.ts` wrappers updated to construct `SpaceScope::Global`/`SpaceScope::Active(...)` from the JS-side shape (`spaceId: string | null` mapped to the tagged enum).
 4. Verified by `tauri-mock-parity` hook + PEND-08 parity hook (when landed) + `prek run --all-files`.
 
-### Phase 4 — Frontend internal type tightening (optional, deferred).
+### Phase 4 — Frontend internal type tightening (optional, deferred)
 
 TypeScript adopts a richer mirror type internally (still `spaceId: string | null` at the IPC boundary, but a `SpaceScope` discriminated union inside the app). Nice-to-have; orthogonal to Phase 3.
 
@@ -150,7 +152,7 @@ TypeScript adopts a richer mirror type internally (still `spaceId: string | null
 ## Cost (reviewer-revised)
 
 | Phase | Time |
-|---|---|
+| --- | --- |
 | 0 — specta + sqlx + tagged-enum spike (NEW) | 1-2h |
 | 1 — types + tests | 1-2h |
 | 2 — migrate `_inner` (10 domains × ~30-45 min) | 4-6h |

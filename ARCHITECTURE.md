@@ -1658,10 +1658,10 @@ Per-session passphrase + QR code. Ephemeral — discarded after pairing or 5-min
 **`PairingSession`** struct holds the passphrase and creation instant. `is_expired()` checks the
 5-minute timeout.
 
-**History:** earlier revisions derived a session key via HKDF-SHA256 and encrypted pairing
-messages with ChaCha20-Poly1305 over a separate channel. Removed in MAINT-110 — the rustls layer
-already provides confidentiality and authenticity, and doubling up was extra surface for no
-threat-model benefit (single user, no adversaries).
+**History:** earlier revisions wrapped pairing messages in an application-layer crypto stack
+running alongside TLS. Removed in MAINT-110 — the rustls layer already provides confidentiality
+and authenticity over the pairing channel, and doubling up was extra surface for no threat-model
+benefit (single user, no adversaries).
 
 **Rejected:** Persistent shared passphrase (hard to rotate), SPAKE2 (correct but adds crypto
 dependency for marginal gain at this threat model).

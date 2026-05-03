@@ -13,6 +13,7 @@ The space-filter SQL fragment is duplicated across **16 compile-time inlining si
 ```
 
 Sites by file (verified):
+
 - `pagination/{hierarchy.rs ×2, agenda.rs ×2, links.rs, undated.rs, tags.rs, properties.rs, trash.rs, history.rs}` — 10 compile-time sites
 - `backlink/{grouped.rs ×2, query.rs}` — 3
 - `commands/{agenda.rs ×3, blocks/queries.rs}` — 4 compile-time sites
@@ -60,7 +61,7 @@ Uses placeholder `?SPACE`, not a numbered parameter.
 
 `src-tauri/build.rs` reads the template at compile time and generates per-bind-index files into `OUT_DIR`:
 
-```
+```text
 OUT_DIR/space_filter_bind_2.sql   ← ?SPACE → ?2
 OUT_DIR/space_filter_bind_3.sql   ← ?SPACE → ?3
 ...
@@ -102,6 +103,7 @@ Each migrated site: `cargo build` → `cargo sqlx prepare` → `cargo nextest ru
 ## Per-callsite parity tests
 
 For each migrated file, write **one parity test** that:
+
 1. Calls the migrated function with `space_id=Some(SPACE_PERSONAL_ULID)` against a fixture.
 2. Calls the same function with `space_id=None`.
 3. Asserts results identical to a pre-migration `insta` snapshot.
@@ -144,7 +146,7 @@ echo "OK: space-filter canonical check passed"
 ## Files touched
 
 | File | Change |
-|---|---|
+| --- | --- |
 | `src-tauri/sql_fragments/space_filter_template.sql` | New — canonical fragment |
 | `src-tauri/build.rs` | Modified — generate OUT_DIR files |
 | ~15 source files (listed above) | Inline fragment → `include_str!(concat!(env!("OUT_DIR"), "/space_filter_bind_<N>.sql"))` |
@@ -163,7 +165,7 @@ echo "OK: space-filter canonical check passed"
 **M (7-11h total).**
 
 | Phase | Time |
-|---|---|
+| --- | --- |
 | 0 — Spike: verify `include_str!` + `sqlx::query!` composition (NEW, mandatory) | 1-2h |
 | 1 — template + build.rs codegen | 2-3h |
 | 2a — simple sites (~7) | 1-2h |

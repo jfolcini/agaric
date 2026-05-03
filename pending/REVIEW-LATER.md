@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 653 — Batch FE-LASTMILE-1: closed UX-366 (broken-link tooltip rephrased to acknowledge cross-space ambiguity; visual+lock-icon distinction deferred — would require new backend command per Architectural Stability) + FE-L-5 (Undo store now toasts `'Batch undo unavailable; undid one op.'` when `listPageHistory` rejects mid-batch). Plus orchestrator-direct: fixed pre-existing markdownlint violations across all `pending/PEND-*.md` files (78 errors → 0) that had been blocking prek since session 652 landed them via `--no-verify`.)
+> **Last updated:** 2026-05-03 (Session 654 — Batch ARCH-FOLLOWUP-1: closed PEND-04 (final HKDF/ChaCha residue purged from ARCHITECTURE.md historical note), PEND-05 (projected-agenda parity test landed; `#[ignore]`d on first run because it correctly detected real `.+1w` drift between cached and on-the-fly paths — filed as MAINT-196), PEND-08 (tauri.ts ↔ bindings.ts parity pre-commit hook). 3 PEND files deleted from pending/. Filed MAINT-196 to track the projection-path drift PEND-05 surfaced.)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-18 open items in the summary table; 20 detail entries (FE-* sub-tables don't appear in the summary).
+19 open items in the summary table; 21 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -34,6 +34,7 @@ Items flagged during development that need revisiting. Organized by section with
 | MAINT-192 | MAINT | Documentation — AGENTS.md additions to reduce false-positive churn on future reviews: (a) "Frontend Development Guidelines → Mandatory patterns" picker debouncing convention referencing `useDebouncedCallback` + 300 ms (PERF-28 traces directly to this gap); (b) under "Properties system is the primary extension point", a one-line reference to `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts` (lands together with MAINT-187). | S | User approval for AGENTS.md edits |
 | MAINT-194 | MAINT | `useBlockKeyboard` listener-attach perf — re-do MAINT-185 correctly (post-revert). Original ref-bag pattern broke listener stale-element invariant; need to memoize callbacks at call site OR add explicit `editor.view.dom.parentElement` watcher. | M | — |
 | MAINT-193 | MAINT | zizmor baseline triage — 53 GitHub Actions findings suppressed by file:line in `.github/zizmor.yml` when the `zizmor` pre-commit hook was first wired in. Mix of policy-level (`unpinned-uses` × 35: tags vs SHAs) and real fixes (`template-injection` × 6 in `release-tag.yml` — pass `inputs.version` via `env:` instead of `${{ }}` interpolation; `excessive-permissions` × 1 in `release.yml`; `cache-poisoning` × 11; `artipacked` × 7). Triage off the baseline as fixes land. | M | — |
+| MAINT-196 | MAINT | Projected-agenda projection path drift: `list_projected_agenda_inner` cached path emits 112 entries for a `.+1w` block over a 390-day window vs 110 from `list_projected_agenda_on_the_fly` — a real 2-entry divergence on the dot-plus completion-based mode. Surfaced by the PEND-05 parity test (now `#[ignore]`d in `agenda_cmd_tests::projected_agenda_cached_equals_on_the_fly`); A/B/C/E blocks are in parity. The deeper fix is to refactor the projection logic into a single function called by both paths, eliminating the drift surface entirely. Re-enable the parity test once the refactor lands. | M | — |
 | PERF-19 | PERF | Backlink pagination cursor uses linear scan for non-Created sorts (2 sites) | S | — |
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S | — |
 | PUB-3 | PUB | Employer IP clearance before public release | S | Employer review |
@@ -437,6 +438,17 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
   - (b) Adopt the ref-bag pattern from MAINT-185 BUT add an explicit `useEffect` that watches `editor.view.dom.parentElement` (via a ref-callback re-attach trigger) and re-binds the listener when the parent element changes.
   - (c) Use a tree-level event listener on `document` and dispatch by `editor.isFocused` instead of binding to the editor's parent. (Cleanest, but requires careful focus-state tracking.)
 - **Status:** Open. Filed by the e8b0ac2 revert.
+
+### MAINT-196 — Projected-agenda projection-path drift between cached + on-the-fly
+
+- **Domain:** Backend / Agenda
+- **Location:** `src-tauri/src/cache/projected_agenda.rs:rebuild_projected_agenda_cache` vs `src-tauri/src/commands/agenda.rs:list_projected_agenda_on_the_fly`
+- **What:** PEND-05's parity test (`agenda_cmd_tests::projected_agenda_cached_equals_on_the_fly`, currently `#[ignore]`d on this exact MAINT-196) caught a real divergence on the `.+1w` (completion-based weekly) repeat mode: the cached path emits 112 entries for a single `.+1w` block over a 390-day window, while the on-the-fly path emits 110 — a 2-entry drift. Blocks A (daily + count), B (weekly + until), C (+3d + count), and E (`++1w` skip-past-today) are all in parity; only the `.+` mode diverges.
+- **Why it matters:** Users see different agendas depending on whether the cache is warm or cold for `.+`-recurring tasks. Invisible bug class — would hide for months otherwise.
+- **Cost:** M — refactor the projection logic (`shift_date_once` + the per-mode windowing) into a single function called by both paths so the drift surface is eliminated. Once unified, re-enable the parity test by removing the `#[ignore]` attribute on `projected_agenda_cached_equals_on_the_fly`.
+- **Risk:** Medium — projection logic is hot-path; refactor needs careful nextest coverage on every existing repeat-mode test.
+- **Impact:** Medium — invisible-but-real correctness bug, plus enabling the safety-net test prevents future drift.
+- **Status:** Open. Filed during PEND-05 close (session 654).
 
 ## TEST — Backend test improvements
 
