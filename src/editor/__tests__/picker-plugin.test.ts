@@ -28,10 +28,14 @@ afterEach(() => {
 async function loadHelper(): Promise<{
   createPickerPlugin: typeof import('../extensions/picker-plugin').createPickerPlugin
   captured: { current: CapturedOptions | undefined }
-  rendererArgs: { current: { label: unknown; key: unknown } | undefined }
+  rendererArgs: {
+    current: { label: unknown; key: unknown; triggerChar: unknown } | undefined
+  }
 }> {
   const captured: { current: CapturedOptions | undefined } = { current: undefined }
-  const rendererArgs: { current: { label: unknown; key: unknown } | undefined } = {
+  const rendererArgs: {
+    current: { label: unknown; key: unknown; triggerChar: unknown } | undefined
+  } = {
     current: undefined,
   }
   vi.resetModules()
@@ -42,8 +46,8 @@ async function loadHelper(): Promise<{
     },
   }))
   vi.doMock('../suggestion-renderer', () => ({
-    createSuggestionRenderer: (label: unknown, key: unknown) => {
-      rendererArgs.current = { label, key }
+    createSuggestionRenderer: (label: unknown, key: unknown, triggerChar: unknown) => {
+      rendererArgs.current = { label, key, triggerChar }
       return {
         onStart: vi.fn(),
         onUpdate: vi.fn(),
@@ -191,10 +195,10 @@ describe('createPickerPlugin — defaulting', () => {
 })
 
 describe('createPickerPlugin — render', () => {
-  it('default render() invokes createSuggestionRenderer(displayName, pluginKey)', async () => {
+  it('default render() invokes createSuggestionRenderer(displayName, pluginKey, char)', async () => {
     const { createPickerPlugin, captured, rendererArgs } = await loadHelper()
     const pluginKey = new PluginKey('renderTest')
-    createPickerPlugin(makeCfg({ displayName: 'Block links', pluginKey }))
+    createPickerPlugin(makeCfg({ displayName: 'Block links', pluginKey, char: '[[' }))
 
     const renderFactory = captured.current?.['render'] as () => {
       onStart: unknown
@@ -204,7 +208,11 @@ describe('createPickerPlugin — render', () => {
     }
     expect(renderFactory).toBeTypeOf('function')
     const lifecycle = renderFactory()
-    expect(rendererArgs.current).toEqual({ label: 'Block links', key: pluginKey })
+    expect(rendererArgs.current).toEqual({
+      label: 'Block links',
+      key: pluginKey,
+      triggerChar: '[[',
+    })
     expect(lifecycle.onStart).toBeTypeOf('function')
     expect(lifecycle.onUpdate).toBeTypeOf('function')
     expect(lifecycle.onKeyDown).toBeTypeOf('function')

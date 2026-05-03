@@ -29,6 +29,14 @@ vi.mock('lucide-react', () => ({
       className={props.className}
     />
   ),
+  ChevronRight: (props: { size: number; className?: string }) => (
+    <svg
+      data-testid="chevron-right-icon"
+      width={props.size}
+      height={props.size}
+      className={props.className}
+    />
+  ),
   Paperclip: (props: { size: number; className?: string }) => (
     <svg
       data-testid="paperclip-icon"
@@ -534,6 +542,24 @@ describe('BlockInlineControls', () => {
         { timeout: 5000 },
       )
     })
+
+    // UX-321b: a chevron icon signals that the chip is click-through to the
+    // properties drawer (rather than a static count badge).
+    it('renders a ChevronRight icon inside the overflow chip', () => {
+      renderControls(makeProps({ filteredProperties: fourProps }))
+      const overflow = screen.getByTestId('property-overflow')
+      const chevron = screen.getByTestId('chevron-right-icon')
+      expect(chevron).toBeInTheDocument()
+      expect(overflow.contains(chevron)).toBe(true)
+    })
+
+    // UX-321a: aria-label and tooltip text mention the keyboard shortcut so
+    // screen-reader users learn the binding alongside the count.
+    it('aria-label mentions the Ctrl+Shift+P keyboard shortcut', () => {
+      renderControls(makeProps({ filteredProperties: fourProps }))
+      const overflow = screen.getByTestId('property-overflow')
+      expect(overflow.getAttribute('aria-label')).toContain('Ctrl+Shift+P')
+    })
   })
 
   it('calls onEditProp when property chip is clicked', async () => {
@@ -579,6 +605,63 @@ describe('BlockInlineControls', () => {
     renderControls(makeProps({ attachmentCount: 2, onToggleAttachments: onToggle }))
     await user.click(screen.getByRole('button', { name: /attachment/i }))
     expect(onToggle).toHaveBeenCalledOnce()
+  })
+
+  // UX-308: badge plays a one-shot bump animation on count change.
+  describe('attachment badge bump animation (UX-308)', () => {
+    it('does not apply animate-in classes on initial mount', () => {
+      renderControls(makeProps({ attachmentCount: 2 }))
+      const badge = screen.getByTestId('attachment-badge')
+      expect(badge.className).not.toContain('animate-in')
+      expect(badge.className).not.toContain('zoom-in-95')
+    })
+
+    it('applies animate-in classes after the count increments', async () => {
+      const props = makeProps({ attachmentCount: 2 })
+      const { rerender } = render(
+        <TooltipProvider>
+          <BlockInlineControls {...props} />
+        </TooltipProvider>,
+      )
+      expect(screen.getByTestId('attachment-badge').className).not.toContain('animate-in')
+
+      rerender(
+        <TooltipProvider>
+          <BlockInlineControls {...{ ...props, attachmentCount: 3 }} />
+        </TooltipProvider>,
+      )
+
+      await waitFor(() => {
+        const badge = screen.getByTestId('attachment-badge')
+        expect(badge.className).toContain('animate-in')
+        expect(badge.className).toContain('fade-in-0')
+        expect(badge.className).toContain('zoom-in-95')
+        expect(badge.className).toContain('duration-150')
+      })
+    })
+
+    it('remounts the badge so the CSS animation replays on each increment', async () => {
+      const props = makeProps({ attachmentCount: 1 })
+      const { rerender } = render(
+        <TooltipProvider>
+          <BlockInlineControls {...props} />
+        </TooltipProvider>,
+      )
+      const initialBadge = screen.getByTestId('attachment-badge')
+
+      rerender(
+        <TooltipProvider>
+          <BlockInlineControls {...{ ...props, attachmentCount: 2 }} />
+        </TooltipProvider>,
+      )
+
+      await waitFor(() => {
+        const updatedBadge = screen.getByTestId('attachment-badge')
+        // `key` changes force a remount, so the second render's badge must be
+        // a different DOM node (and therefore replays the CSS animation).
+        expect(updatedBadge).not.toBe(initialBadge)
+      })
+    })
   })
 
   it('has no a11y violations (default state)', async () => {

@@ -34,6 +34,11 @@ export interface SuggestionListProps {
   command: (item: PickerItem) => void
   /** Accessible label for the suggestion listbox (e.g. "Tags", "Block links"). */
   label?: string
+  /**
+   * Trigger character that opened this picker (e.g. '@', '[[', '((', '/', '::').
+   * Used to pick a context-appropriate empty-state message (UX-312).
+   */
+  triggerChar?: string
   ref?: React.Ref<SuggestionListRef>
 }
 
@@ -41,7 +46,13 @@ export interface SuggestionListRef {
   onKeyDown: (opts: { event: KeyboardEvent }) => boolean
 }
 
-export const SuggestionList = ({ ref, items, command, label }: SuggestionListProps) => {
+export const SuggestionList = ({
+  ref,
+  items,
+  command,
+  label,
+  triggerChar,
+}: SuggestionListProps) => {
   const { t } = useTranslation()
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -105,9 +116,20 @@ export const SuggestionList = ({ ref, items, command, label }: SuggestionListPro
   }, [items, hasCategories])
 
   if (items.length === 0) {
+    // UX-312: pick a context-appropriate empty-state message based on the
+    // trigger character. Falls back to the generic "No results" for triggers
+    // without a tailored copy (e.g. '/', '::').
+    const emptyKey =
+      triggerChar === '[['
+        ? 'suggestion.noResults.blockLink'
+        : triggerChar === '@'
+          ? 'suggestion.noResults.atTag'
+          : triggerChar === '(('
+            ? 'suggestion.noResults.blockRef'
+            : 'suggestion.noResults'
     return (
       <output className="suggestion-empty p-2 text-sm text-muted-foreground" aria-live="polite">
-        {t('suggestion.noResults')}
+        {t(emptyKey)}
       </output>
     )
   }
@@ -156,7 +178,7 @@ export const SuggestionList = ({ ref, items, command, label }: SuggestionListPro
       className={cn(
         'suggestion-item flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 [@media(pointer:coarse)]:min-h-[44px] touch-target focus-outline',
         index === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
-        item.isCreate && 'border-t border-border bg-accent/5',
+        item.isCreate && 'border-t border-border border-l-2 border-l-primary bg-accent/15',
       )}
       data-testid="suggestion-item"
       onClick={() => selectItem(index)}

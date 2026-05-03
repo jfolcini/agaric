@@ -40,7 +40,7 @@ export const block: Record<string, string> = {
   'blockRef.fallback': '(( {{id}}... ))',
   'block.attachments': '{{count}} attachment(s)',
   'block.attachmentsTip': '{{count}} attachment(s) — click to toggle',
-  'block.showAllProperties': 'Show all {{count}} properties',
+  'block.showAllProperties': 'Show all {{count}} properties (Ctrl+Shift+P)',
   'repeat.daily': 'daily',
   'repeat.weekly': 'weekly',
   'repeat.monthly': 'monthly',

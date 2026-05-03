@@ -196,9 +196,13 @@ describe('SuggestionList', () => {
     const plusIcon = createBtn.querySelector('.text-primary')
     expect(plusIcon).toBeInTheDocument()
 
-    // Verify the border-t and bg-accent/5 styling classes are applied on the button
+    // UX-311: stronger background + left primary-accent border replaces the
+    // earlier subtle `bg-accent/5` tint so the create-new option stays
+    // visible on long mobile lists.
     expect(createBtn.className).toContain('border-t')
-    expect(createBtn.className).toContain('bg-accent/5')
+    expect(createBtn.className).toContain('border-l-2')
+    expect(createBtn.className).toContain('border-l-primary')
+    expect(createBtn.className).toContain('bg-accent/15')
   })
 
   it('resets selected index when items change', () => {
@@ -710,5 +714,81 @@ describe('SuggestionList', () => {
       expect(handled).toBe(true)
     })
     expect(screen.getByText('Item 0')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  // -- UX-311: Stronger create-new visibility ----------------------------------
+
+  it('"Create new" item carries left primary-accent border + bg-accent/15 (UX-311)', () => {
+    const command = vi.fn()
+    const items: PickerItem[] = [
+      { id: '1', label: 'Existing Page' },
+      { id: 'create-new', label: 'My New Page', isCreate: true },
+    ]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    const createBtn = screen.getAllByRole('option')[1] as HTMLElement
+    expect(createBtn.className).toContain('border-l-2')
+    expect(createBtn.className).toContain('border-l-primary')
+    expect(createBtn.className).toContain('bg-accent/15')
+  })
+
+  it('non-create items do NOT receive the create-new accent classes (UX-311)', () => {
+    const command = vi.fn()
+    const items: PickerItem[] = [
+      { id: '1', label: 'Existing Page' },
+      { id: 'create-new', label: 'My New Page', isCreate: true },
+    ]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    const existingBtn = screen.getAllByRole('option')[0] as HTMLElement
+    expect(existingBtn.className).not.toContain('border-l-primary')
+    expect(existingBtn.className).not.toContain('bg-accent/15')
+  })
+
+  // -- UX-312: Context-aware empty state ---------------------------------------
+
+  it('empty state for `[[` trigger suggests creating a new page (UX-312)', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={[]} command={command} triggerChar="[[" />)
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'No results — press Enter to create a new page',
+    )
+  })
+
+  it('empty state for `@` trigger suggests creating a new tag (UX-312)', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={[]} command={command} triggerChar="@" />)
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'No results — press Enter to create a new tag',
+    )
+  })
+
+  it('empty state for `((` trigger explains block refs need an existing block (UX-312)', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={[]} command={command} triggerChar="((" />)
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'No results — block references can only point at existing blocks',
+    )
+  })
+
+  it('empty state for unmapped triggers (e.g. "/", "::") falls back to "No results" (UX-312)', () => {
+    const command = vi.fn()
+    const { rerender } = render(<SuggestionList items={[]} command={command} triggerChar="/" />)
+    expect(screen.getByRole('status')).toHaveTextContent('No results')
+    expect(screen.getByRole('status').textContent).toBe('No results')
+
+    rerender(<SuggestionList items={[]} command={command} triggerChar="::" />)
+    expect(screen.getByRole('status').textContent).toBe('No results')
+  })
+
+  it('empty state with no triggerChar prop falls back to "No results" (UX-312)', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={[]} command={command} />)
+    expect(screen.getByRole('status').textContent).toBe('No results')
   })
 })

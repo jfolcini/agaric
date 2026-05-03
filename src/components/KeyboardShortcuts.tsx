@@ -158,7 +158,7 @@ export function KeyboardShortcuts({
                   <tr>
                     <td
                       colSpan={2}
-                      className="pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                      className="sticky top-0 z-10 bg-background pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
                     >
                       {t(group.category)}
                     </td>

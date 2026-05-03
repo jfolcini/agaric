@@ -392,6 +392,66 @@ describe('TagFilterPanel', () => {
     expect(screen.getByText(t('tagFilter.noMatchesFound'))).toBeInTheDocument()
   })
 
+  // UX-340: switching tag filter mode (AND/OR/NOT) used to leave stale results
+  // on screen with no loading indicator. Verify the spinner overlay appears and
+  // the stale results stay visible (dimmed) while the mode-switch query is in
+  // flight.
+  it('shows loading spinner over dimmed stale results during mode switch (UX-340)', async () => {
+    // list_tags_by_prefix response
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
+    await typeAndWaitForTags(input, 'work')
+
+    // First query_by_tags (AND mode): resolves immediately with one stale result
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makeBlock({ id: 'B1', content: 'stale result' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    await user.click(screen.getByRole('button', { name: /Add/i }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Sanity: stale result is visible and no spinner yet
+    expect(screen.getByText('stale result')).toBeInTheDocument()
+    expect(screen.queryByTestId('tag-filter-results-loading')).toBeNull()
+
+    // Next query_by_tags (mode switch) hangs so we can inspect mid-flight state
+    let resolveQuery: (value: unknown) => void = () => {}
+    mockedInvoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveQuery = resolve
+        }),
+    )
+
+    // Switch from AND to OR → fires a new query that stays pending
+    await user.click(screen.getByRole('button', { name: /^OR$/i }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // While the new query is in flight:
+    //   1) the spinner overlay is shown
+    expect(screen.getByTestId('tag-filter-results-loading')).toBeInTheDocument()
+    //   2) the stale result is STILL rendered (not replaced by skeleton)
+    expect(screen.getByText('stale result')).toBeInTheDocument()
+    //   3) the results grid is marked busy and dimmed
+    const resultsSection = document.querySelector('.tag-filter-results')
+    expect(resultsSection).not.toBeNull()
+    const grid = resultsSection?.querySelector('[role="grid"]')
+    expect(grid).not.toBeNull()
+    expect(grid).toHaveAttribute('aria-busy', 'true')
+    expect(grid?.className).toContain('opacity-50')
+
+    // Cleanup: resolve the pending query
+    await act(async () => {
+      resolveQuery({ items: [], next_cursor: null, has_more: false })
+      await vi.advanceTimersByTimeAsync(0)
+    })
+  })
+
   it('does not show results before any tag is selected', () => {
     render(<TagFilterPanel />)
     expect(screen.queryByText(t('tagFilter.noMatchesFound'))).not.toBeInTheDocument()

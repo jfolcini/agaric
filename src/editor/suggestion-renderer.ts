@@ -112,7 +112,11 @@ export function cleanupOrphanedPopups(): number {
   return count
 }
 
-export function createSuggestionRenderer(label?: string, pluginKey?: PluginKey) {
+export function createSuggestionRenderer(
+  label?: string,
+  pluginKey?: PluginKey,
+  triggerChar?: string,
+) {
   let renderer: ReactRenderer<SuggestionListRef> | null = null
   let popup: HTMLDivElement | null = null
   let outsideClickHandler: ((e: PointerEvent) => void) | null = null
@@ -145,7 +149,7 @@ export function createSuggestionRenderer(label?: string, pluginKey?: PluginKey) 
       }
 
       renderer = new ReactRenderer(SuggestionList, {
-        props: { ...props, label },
+        props: { ...props, label, triggerChar },
         editor: props.editor,
       })
 

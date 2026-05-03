@@ -42,9 +42,16 @@ import {
   useSidebar,
 } from './ui/sidebar'
 
-/** Compute the CSS class for the sync status dot colour. */
+/**
+ * Compute the CSS class for the sync status dot colour.
+ *
+ * UX-380: distinguish "offline" (network problem, nothing the user can do)
+ * from "no peers" (pairing problem, the user needs to add a device). Offline
+ * wins over no-peers because peer state is meaningless without a network.
+ */
 function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
-  if (!hasPeers) return 'bg-muted-foreground'
+  if (syncState === 'offline') return 'bg-muted-foreground'
+  if (!hasPeers) return 'bg-status-pending'
   switch (syncState) {
     case 'idle':
       return 'bg-sync-idle'
