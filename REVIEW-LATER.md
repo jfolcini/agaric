@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 648 — Batch MIX-5: closed L-17 (`dispatch_op` fg+bg ordering race fixed by gating bg fan-out on `flush_foreground` Barrier); 1 item via orchestrator-direct fix after MIX-4 subagent stall)
+> **Last updated:** 2026-05-03 (Session 649 — Batch MIX-6: closed TEST-FE-1 entirely (4 actual violations in JournalPage + ViewHeader fixed orchestrator-direct; 5 of 7 listed files were already using AGENTS.md-canonical `act(async () => setTimeout(r, 0))` microtask flush, never violations), audited `useBlockKeyboardHandlers` portion of TEST-FE-2 (10 sites, 0 tightenings — all no-arg by contract, comment-annotated), updated MAINT-193 breakdown to drop the stale `template-injection × 6` cluster (already defused by MAINT-114))
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-22 open items in the summary table; 25 detail entries (FE-* sub-tables don't appear in the summary).
+21 open items in the summary table; 24 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -39,8 +39,7 @@ Items flagged during development that need revisiting. Organized by section with
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
-| TEST-FE-1 | TEST | Bare `setTimeout` waits in tests — dangerous subset (50ms before `not.toHaveBeenCalledWith` negatives) RESOLVED in session 647 across `BlockTree`, `TagFilterPanel`, `useBlockTreeEventListeners`, `GraphView`; 7 low-priority files remain (`SpaceManageDialog`, `JournalPage`, `useGraphSimulation`, `checkbox-input-rule`, `useGraphWorkerSimulation`, `ErrorBoundary`, `ViewHeader`) | S | — |
-| TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `BlockContextMenu` (19), `FormattingToolbar` (16), `useBlockKeyboardHandlers` (10), `GraphView` (8), `BlockPropertyEditor` (7), `HeadingLevelSelector` (7), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently | M | — |
+| TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `BlockContextMenu` (19), `FormattingToolbar` (16), `GraphView` (8), `BlockPropertyEditor` (7), `HeadingLevelSelector` (7), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently. `useBlockKeyboardHandlers` (10) audited & confirmed legitimate (no-arg spies). | M | — |
 | UX-305 | UX | Drag handle on touch has 250 ms long-press requirement, no hint | S | — |
 | UX-306 | UX | Touch gutter "More actions" menu doesn't preview hidden actions | S | — |
 | UX-313 | UX | Broken-link "click to remove" is hover-only (no touch affordance) | S | — |
@@ -413,19 +412,18 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Impact:** Medium — every future frontend review (human or automated) avoids re-discovering the same false positives.
 - **Status:** Open. Gated on AGENTS.md self-rule "No changes to this file (AGENTS.md) without explicit user approval. Ever." Awaiting user approval.
 
-### MAINT-193 — `zizmor` baseline triage (53 GitHub Actions findings suppressed at hook-introduction time)
+### MAINT-193 — `zizmor` baseline triage (47 remaining GitHub Actions findings suppressed at hook-introduction time)
 
 - **Domain:** GitHub Actions security
-- **Location:** `.github/zizmor.yml`, `.github/workflows/{ci,release,release-tag,_validate}.yml`
-- **What:** When the `zizmor` pre-commit hook was first wired into `prek.toml`, the audit reported 53 deduped findings across 5 rules. To avoid blocking every commit until they were all fixed, the findings were captured as a file:line baseline in `.github/zizmor.yml` so the hook only fires on **new** findings going forward. The baseline is a known-debt list, not a clean bill of health. Breakdown:
+- **Location:** `.github/zizmor.yml`, `.github/workflows/{ci,release,_validate}.yml`
+- **What:** When the `zizmor` pre-commit hook was first wired into `prek.toml`, the audit reported 53 deduped findings across 5 rules. To avoid blocking every commit until they were all fixed, the findings were captured as a file:line baseline in `.github/zizmor.yml` so the hook only fires on **new** findings going forward. The baseline is a known-debt list, not a clean bill of health. The original `template-injection` × 6 cluster (all in the now-removed `release-tag.yml`) was defused by MAINT-114's fold of `release-tag.yml` into `release.yml`'s `bump-version` job, which routes `inputs.version` through `env: INPUT_VERSION:` + `"$INPUT_VERSION"` — those entries are gone from the baseline. Remaining breakdown:
   - **`unpinned-uses` × 35** (High) — every `actions/checkout@v5`, `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`, `actions/setup-node@v5`, etc. is pinned to a tag/branch instead of a SHA. This is a policy decision; many projects intentionally pin to tags. If we want SHA pinning, automate it via Renovate or Dependabot (it's mechanical).
-  - **`template-injection` × 6** (High, all in `release-tag.yml`) — `scripts/bump-version.sh "${{ github.event.inputs.version }}"` and `echo "::notice title=Tagged ${{ github.event.inputs.version }}::..."` interpolate `inputs.version` directly into shell. Mitigation is small and idiomatic: `env: VERSION: ${{ inputs.version }}` then `"$VERSION"`. Threat-model context (per `AGENTS.md`): `workflow_dispatch` is collaborator-only, but the fix is cheap and worth doing.
   - **`cache-poisoning` × 11** (High, mostly tag-pushes building artifacts with `actions/cache` enabled). Either disable caching for tag builds or accept the risk and document.
   - **`artipacked` × 7** (Medium, Low confidence) — `actions/checkout` without `persist-credentials: false`. Auto-fixable via zizmor; one-liner per checkout.
   - **`excessive-permissions` × 1** (High, in `release.yml`) — workflow-level token grants more than the steps actually need. Audit and tighten.
-- **Cost:** S–M. The `template-injection` cluster is ~6 lines of YAML across `release-tag.yml`. The `artipacked` cluster is mechanical (auto-fix). `unpinned-uses` is a policy decision plus a Renovate config. `excessive-permissions` is one workflow header to tighten.
+- **Cost:** S–M. The `artipacked` cluster is mechanical (auto-fix). `unpinned-uses` is a policy decision plus a Renovate config. `excessive-permissions` is one workflow header to tighten.
 - **Risk:** Low — these are workflow-only changes; existing tests cover them via `_validate.yml`.
-- **Impact:** Medium — closes real (if low-likelihood) supply-chain / template-injection vectors, and shrinks the baseline file so the hook gives more genuine signal.
+- **Impact:** Medium — closes real (if low-likelihood) supply-chain vectors, and shrinks the baseline file so the hook gives more genuine signal.
 - **Status:** Open. Triage off the baseline as fixes land — when a finding is fixed, drop the matching `file:line` entry from `.github/zizmor.yml`.
 
 ## TEST — Backend test improvements
@@ -445,37 +443,21 @@ Items in this section are test-quality improvements identified during a thorough
 - **Recommendation:** Pattern after the materializer's `flush_background()` API. A polling helper `async fn wait_for(predicate: impl Fn() -> bool, timeout: Duration)` would suffice for most sites.
 - **Status:** Open.
 
-### TEST-FE-1 — Bare `setTimeout` waits in tests (low-priority remaining sweep)
-- **Domain:** Frontend test infrastructure
-- **Location (remaining low-priority files, the dangerous-subset is fixed):**
-  - `src/components/__tests__/SpaceManageDialog.test.tsx:575, 590, 609, 639` (4)
-  - `src/components/__tests__/JournalPage.test.tsx:2826, 2848, 2875` (3)
-  - `src/hooks/__tests__/useGraphSimulation.test.ts:349, 368` (2)
-  - `src/editor/extensions/__tests__/checkbox-input-rule.test.ts:192, 193` (2)
-  - `src/hooks/__tests__/useGraphWorkerSimulation.test.ts:174` (1)
-  - `src/components/__tests__/ErrorBoundary.test.tsx:138` (1)
-  - `src/components/__tests__/ViewHeader.test.tsx:143` (1)
-- **What:** `src/__tests__/AGENTS.md` lines 187, 254, 261 forbid `await sleep(n)` patterns in tests. The **dangerous subset** — bare 50ms waits as the only wait before `not.toHaveBeenCalledWith` negative assertions — was resolved in session 647 across the four hot files (`BlockTree.test.tsx`, `TagFilterPanel.test.tsx`, `useBlockTreeEventListeners.test.ts`, `GraphView.test.tsx`). What remains is the less-dangerous tail: bare timeouts in 7 files that are not before negative assertions and don't carry the same silent-pass risk. They're code-quality cleanup, not flake risk.
-- **Cost:** S — pattern is the same as the dangerous-subset fix (use `waitFor` over an observable signal, or `vi.useFakeTimers()` for debounce). ~7 files left to sweep.
-- **Risk:** Low.
-- **Impact:** Low — the high-impact subset is already fixed; this is residual cleanup.
-- **Status:** Open (downgraded from Medium to Low impact).
-
 ### TEST-FE-2 — Weak `toHaveBeenCalled()` assertions in hot files
 - **Domain:** Frontend test infrastructure
 - **Location:**
   - `src/components/__tests__/BlockContextMenu.test.tsx` (19 occurrences total — but this file is **NOT** the canonical violator: action handlers DO use `toHaveBeenCalledWith('BLOCK_01')` at lines 114, 124, 134, 144, 154, 164, 174, 184, 194; the 9 bare `toHaveBeenCalled()` calls are on `props.onClose`, which legitimately takes no arguments)
   - `src/components/__tests__/FormattingToolbar.test.tsx` (16)
-  - `src/hooks/__tests__/useBlockKeyboardHandlers.test.ts` (10) — likely candidate for genuine violations
+  - `src/hooks/__tests__/useBlockKeyboardHandlers.test.ts` — **AUDITED**: 10 sites, all on `handleFlush` and `rovingEditor.unmount`, both no-arg by their TypeScript signature. Annotated with `// no-args by contract` comments. Adjacent `params.indent.toHaveBeenCalledWith('B')`, `params.remove.toHaveBeenCalledWith('B')`, `params.setFocused.toHaveBeenCalledWith('A')` already pin block-id semantics correctly. **No tightening needed.**
   - `src/components/__tests__/GraphView.test.tsx` (8)
   - `src/components/__tests__/BlockPropertyEditor.test.tsx` (7) — likely candidate for genuine violations
   - `src/components/__tests__/HeadingLevelSelector.test.tsx` (7)
   - `src/hooks/__tests__/useUndoShortcuts.test.ts` (6)
   - `src/components/__tests__/UnlinkedReferences.test.tsx` (5)
-  - 175 total occurrences across 61 files (many legitimate "did fire at all"; high-frequency files most likely contain real cases)
-- **What:** `src/__tests__/AGENTS.md` line 582: "Meaningful assertions — `toHaveBeenCalledWith` with exact args, not just `toHaveBeenCalled`." Find genuine violators in the higher-count files (`useBlockKeyboardHandlers`, `BlockPropertyEditor`) before tightening.
+  - 165 total occurrences across 60 files (many legitimate "did fire at all"; high-frequency files most likely contain real cases)
+- **What:** `src/__tests__/AGENTS.md` line 582: "Meaningful assertions — `toHaveBeenCalledWith` with exact args, not just `toHaveBeenCalled`." Find genuine violators in the higher-count files (`BlockPropertyEditor`) before tightening — the highest-flagged file (`useBlockKeyboardHandlers`) was audited and produced 0 tightenings.
 - **Why it matters:** A documented quality standard. Concentration in hot files (action handlers, keyboard shortcuts) means real correctness regressions could slip through.
-- **Cost:** M — audit the listed files (excluding BlockContextMenu, which already complies) and tighten high-value cases to `toHaveBeenCalledWith(expect.objectContaining({...}))`. The remaining ~50 files are a separate pass.
+- **Cost:** M — audit the remaining listed files (excluding BlockContextMenu and useBlockKeyboardHandlers, which already comply) and tighten high-value cases to `toHaveBeenCalledWith(expect.objectContaining({...}))`. The remaining ~50 files are a separate pass.
 - **Risk:** Low — additive specificity in assertions.
 - **Impact:** Medium-high in the action-handler / keyboard-shortcut files.
 - **Status:** Open.
