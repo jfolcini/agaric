@@ -254,6 +254,52 @@ describe('SpaceManageDialog', () => {
     })
   })
 
+  // UX-370 — when Delete is disabled because the space contains pages,
+  // the only signal was the Tooltip-on-hover. Add an inline help line
+  // under the row so the reason is visible at rest. The hint must
+  // render only when there is a definite "non-empty" probe result for
+  // a non-last space; it must NOT render for empty spaces (Delete is
+  // enabled there) or for the last-remaining-space disabled path
+  // (already covered by the `deleteLastTooltipDisabled` tooltip).
+  it('renders the inline-blocked hint when a non-last space has pages (UX-370)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return nonEmptyPage
+      if (cmd === 'list_spaces') return [PERSONAL, WORK]
+      if (cmd === 'get_properties') return []
+      return null
+    })
+
+    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+
+    // Both rows are non-empty and neither is the last space → both
+    // rows render the inline hint paragraph once the probe resolves.
+    await waitFor(() => {
+      const hints = screen.getAllByTestId('space-delete-blocked-hint')
+      expect(hints).toHaveLength(2)
+      for (const hint of hints) {
+        expect(hint).toHaveTextContent(t('space.deleteSpaceInlineHint'))
+      }
+    })
+  })
+
+  it('does not render the inline-blocked hint when the space is empty (UX-370)', async () => {
+    // Default mocks return `emptyPage` for every space → Delete is
+    // enabled and the inline hint must NOT mount.
+    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+
+    // Wait for the emptiness probe to settle and Delete to enable so
+    // we are asserting against the post-probe DOM, not the
+    // probe-in-flight (`emptiness === null`) state.
+    await waitFor(() => {
+      const buttons = screen.getAllByRole('button', {
+        name: t('space.deleteSpaceLabel'),
+      })
+      expect(buttons.length).toBeGreaterThanOrEqual(2)
+      for (const btn of buttons) expect(btn).not.toBeDisabled()
+    })
+    expect(screen.queryAllByTestId('space-delete-blocked-hint')).toHaveLength(0)
+  })
+
   it('disables the delete button on the only remaining space', async () => {
     useSpaceStore.setState({
       currentSpaceId: PERSONAL.id,

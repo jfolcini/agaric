@@ -374,6 +374,11 @@ function SpaceRowEditor({
           </Tooltip>
         )}
       </div>
+      {!isLastSpace && emptiness === false && (
+        <p className="text-xs text-muted-foreground" data-testid="space-delete-blocked-hint">
+          {t('space.deleteSpaceInlineHint')}
+        </p>
+      )}
       <div className="flex items-center gap-2">
         <span className="text-xs text-muted-foreground">{t('space.accentColorLabel')}:</span>
         {/* biome-ignore lint/a11y/useSemanticElements: a swatch picker is not a `<fieldset>`-style form group; `role="group"` + per-button `aria-pressed` is the conventional WAI-ARIA pattern for a single-select toolbar of toggle buttons */}

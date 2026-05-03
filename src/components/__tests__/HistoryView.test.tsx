@@ -1340,6 +1340,94 @@ describe('HistoryView', () => {
       )
     })
   })
+
+  // ===========================================================================
+  // UX-346 — touch-only ↑/↓ navigation toolbar.
+  //
+  // Vim/arrow keyboard nav has no equivalent on touch devices. The toolbar
+  // renders two buttons that drive the same `setFocusedIndex` updater the
+  // keyboard hook would. Visibility is gated by `[@media(pointer:coarse)]`
+  // — jsdom doesn't evaluate that media query so the element is in the
+  // DOM regardless; tests assert behaviour, not visual hiding.
+  // ===========================================================================
+  describe('UX-346 — touch navigation toolbar', () => {
+    it('renders the touch-nav toolbar when entries exist', async () => {
+      const page = {
+        items: [
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      expect(screen.getByTestId('history-touch-nav')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('history.touchNavPrev') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('history.touchNavNext') })).toBeInTheDocument()
+    })
+
+    it('clicking the ↓ button advances the focused index', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z'),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, '2025-01-15T11:00:00Z'),
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      // First item is auto-focused on load.
+      const items = screen.getAllByTestId(/^history-item-/)
+      expect(items[0]).toHaveClass('ring-2')
+
+      await user.click(screen.getByRole('button', { name: t('history.touchNavNext') }))
+
+      expect(items[0]).not.toHaveClass('ring-2')
+      expect(items[1]).toHaveClass('ring-2')
+    })
+
+    it('disables ↑ at the first row and ↓ at the last row', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z'),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, '2025-01-15T11:00:00Z'),
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      const prevBtn = screen.getByRole('button', { name: t('history.touchNavPrev') })
+      const nextBtn = screen.getByRole('button', { name: t('history.touchNavNext') })
+
+      // At index 0 — Prev disabled, Next enabled.
+      expect(prevBtn).toBeDisabled()
+      expect(nextBtn).not.toBeDisabled()
+
+      // Advance to the last row.
+      await user.click(nextBtn)
+
+      // At the last index — Prev enabled, Next disabled.
+      expect(prevBtn).not.toBeDisabled()
+      expect(nextBtn).toBeDisabled()
+    })
+  })
 })
 
 describe('HistoryView screen reader announcements (UX-282)', () => {

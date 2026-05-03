@@ -518,6 +518,7 @@ export function SearchPanel(): React.ReactElement {
           emptyMessage={t('search.noPagesFound')}
           triggerLabel={t('search.addPage')}
           triggerDisabled={filterPageId !== null}
+          triggerDisabledReason={t('search.addPageDisabledReason')}
         />
 
         <SearchablePopover<TagCacheRow>

@@ -157,6 +157,32 @@ export function QueryBuilderModal({
     showAsTable,
   ])
 
+  // ---- Plain-English readable summary (UX-316) ----
+  // Surfaces a humanised paraphrase of the generated `expression` above the
+  // raw `<code>` block so users unfamiliar with the `type:... key:...` syntax
+  // can verify intent. Mirrors `expression`'s empty-form gate so the line
+  // disappears whenever the raw preview would.
+  const humanReadable = useMemo(() => {
+    if (queryType === 'tag') {
+      if (!tagExpr.trim()) return ''
+      return t('queryBuilder.readable.tag', { expr: tagExpr.trim() })
+    }
+    if (queryType === 'property') {
+      const k = propertyKey.trim()
+      if (!k) return ''
+      const v = propertyValue.trim()
+      if (!v) return t('queryBuilder.readable.propertyKeyOnly', { key: k })
+      const opLabel = t(`queryBuilder.readable.op.${propertyOperator}`)
+      return t('queryBuilder.readable.propertyKeyValue', { key: k, op: opLabel, value: v })
+    }
+    if (queryType === 'backlinks') {
+      const target = backlinkTarget.trim()
+      if (!target) return ''
+      return t('queryBuilder.readable.backlinks', { target })
+    }
+    return ''
+  }, [queryType, tagExpr, propertyKey, propertyValue, propertyOperator, backlinkTarget, t])
+
   // ---- Property-key validation (UX-274) ----
   // Warn when the user enters a key that is not a known property definition.
   // This is a soft warning — submission is not blocked because the property
@@ -304,12 +330,20 @@ export function QueryBuilderModal({
         {expression && (
           <div className="space-y-1">
             <Label>{t('queryBuilder.preview')}</Label>
+            {humanReadable && (
+              <p className="text-xs text-muted-foreground" data-testid="readable-preview">
+                {humanReadable}
+              </p>
+            )}
             <code
               className="block rounded bg-muted px-3 py-2 text-xs break-all"
               data-testid="expression-preview"
             >
               {expression}
             </code>
+            {showAsTable && (
+              <p className="text-xs text-muted-foreground">{t('queryBuilder.readable.table')}</p>
+            )}
           </div>
         )}
 
