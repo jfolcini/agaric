@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-02 (Session 623 — Stale-row sweep: TEST-FE-3 + TEST-FE-4 + TEST-FE-5 + TEST-FE-7 already closed in `ac49a47`; row removal + TEST-FE-7 idiomatic-refactor follow-up (date-fns `subDays`))
+> **Last updated:** 2026-05-02 (Session 624 — Batch UX-TRIVIAL-1: closed UX-300 (CodeLanguageSelector filter), UX-307 (LinkEditPopover label autoFocus), UX-322 (BlockPropertyDrawer isParsing indicator), UX-338 (SearchPanel 3-char placeholder), UX-385 (Export ZIP filename includes space name); UX-337 still open (subagent timed out))
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-102 open items in the summary table; 141 detail entries (FE-* sub-tables don't appear in the summary).
+97 open items in the summary table; 137 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -44,12 +44,10 @@ Items flagged during development that need revisiting. Organized by section with
 | TEST-6 | TEST | Sync merge tests assert on counter only, not materialized state (`merge_resolves_property_conflict_lww` doesn't query `block_properties`; `merge_block_conflict_creates_copy` doesn't query `blocks` for the conflict copy) | S | — |
 | TEST-FE-1 | TEST | Bare `setTimeout` waits in tests (24 occurrences across 13 files; the dangerous subset is bare 50ms waits before `not.toHaveBeenCalledWith` negatives — `BlockTree.test.tsx`, `TagFilterPanel.test.tsx`, `useBlockTreeEventListeners.test.ts`, `GraphView.test.tsx`) — AGENTS.md explicitly forbids `await sleep(n)`; replace with `waitFor` or fake timers | M | — |
 | TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `BlockContextMenu` (19), `FormattingToolbar` (16), `useBlockKeyboardHandlers` (10), `GraphView` (8), `BlockPropertyEditor` (7), `HeadingLevelSelector` (7), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently | M | — |
-| UX-300 | UX | Code-block language selector lacks search/filter | S | — |
 | UX-302 | UX | Multi-selection has no visible feedback on selected blocks | S | — |
 | UX-304 | UX | Swipe-to-delete (mobile) has no visual affordance or threshold cue | S | — |
 | UX-305 | UX | Drag handle on touch has 250 ms long-press requirement, no hint | S | — |
 | UX-306 | UX | Touch gutter "More actions" menu doesn't preview hidden actions | S | — |
-| UX-307 | UX | `LinkEditPopover` doesn't auto-focus label field on Ctrl+K with selection | S | — |
 | UX-308 | UX | New attachment count badge isn't animated on drop/paste | S | — |
 | UX-309 | UX | Slash command palette is not discoverable to new users | S | — |
 | UX-310 | UX | `@` / `[[` / `((` / `#[…]` triggers not surfaced anywhere visible | S | — |
@@ -64,7 +62,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-319 | UX | Task cycle is locked to TODO→DOING→DONE→CANCELLED→none with rationale not surfaced | S | — |
 | UX-320 | UX | Repeating-task `++` / `.+` syntax is cryptic in the property drawer | S | — |
 | UX-321 | UX | Property "+N" overflow chip looks like a badge, not a button | S | — |
-| UX-322 | UX | `useDateInput.isParsing` is exposed but never rendered in property drawer | S | — |
 | UX-323 | UX | Agenda filter popover dense (8 dimensions × nested presets) | S | — |
 | UX-324 | UX | Due Panel filter pills (All / Due / Scheduled / Properties) are unlabelled | S | — |
 | UX-325 | UX | `F-37` "DONE warning when block has `blocked_by`" is documented but not implemented | S | — |
@@ -75,7 +72,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-334 | UX | TemplatesView "remove template" × hidden until hover (destructive) | S | — |
 | UX-336 | UX | CJK search notice doesn't explain the 3-char workaround | S | — |
 | UX-337 | UX | Disabled `SearchablePopover` trigger has no tooltip explaining why | S | — |
-| UX-338 | UX | Search placeholder doesn't mention minimum character count | S | — |
 | UX-339 | UX | Property definition options editor has no JSON validation feedback | S | — |
 | UX-340 | UX | Tag filter loading state hidden when stale results present | S | — |
 | UX-343 | UX | Trash batch-restore confirmation threshold (5) is undiscoverable | S | — |
@@ -113,7 +109,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-382 | UX | Welcome modal omits Sync / multi-device story | S | — |
 | UX-383 | UX | Bug Report redact toggle nested under "Include logs" with `pl-6` | S | — |
 | UX-384 | UX | Import progress shows file count, not bytes / blocks | S | — |
-| UX-385 | UX | Export ZIP filename doesn't include space name | S | — |
 | UX-386 | UX | Keyboard conflict warnings inline below row (mobile-unfriendly) | S | — |
 | UX-387 | UX | Sidebar theme button cycles 7 themes silently | S | — |
 | UX-388 | UX | Keyboard help panel has no search / filter for ~77 shortcuts | S | — |
@@ -1139,15 +1134,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 
 Items in this section come from a feature-map sweep (one analysis subagent per feature area, then 3 validation subagents that re-read each cited file:line and dropped exaggerations and stale claims). Format follows the compact TEST / FE-L convention. None of these are blocking; they are surface-level fixes (no schema, no op-types, no store changes) that improve discoverability, accessibility, or in-UI feedback.
 
-### UX-300 — Code-block language selector lacks search/filter
-- **Domain:** Frontend / Editor
-- **Location:** `src/components/CodeLanguageSelector.tsx:21-69`
-- **What:** Popover lists 17 languages as a static scrollable list with no filter input. Users have to eyeball-scan; painful on mobile.
-- **Cost:** Trivial — add a filter input wired to `match-sorter` (mirrors the page/tag picker pattern).
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
 
 ### UX-302 — Multi-selection styling exists for the static path but not the focused (mounted-editor) path
 - **Domain:** Frontend / Editor
@@ -1183,15 +1169,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Cost:** Trivial — extend the button's `aria-label` to enumerate ("History, Delete") or add a touch-friendly `Popover` preview.
 - **Risk:** Low.
 - **Impact:** Medium.
-- **Status:** Open.
-
-### UX-307 — `LinkEditPopover` doesn't auto-focus label field on Ctrl+K with selection
-- **Domain:** Frontend / Editor
-- **Location:** `src/components/LinkEditPopover.tsx:172-181` (label input — no `autoFocus`) vs `:197` (URL input has `autoFocus`)
-- **What:** When the user invokes Ctrl+K with a selection, the label is pre-filled but the URL input grabs focus, so Tab is required to edit the label first.
-- **Cost:** Trivial — toggle `autoFocus` based on whether selection text was carried in.
-- **Risk:** Low.
-- **Impact:** Low.
 - **Status:** Open.
 
 ### UX-308 — New attachment count badge isn't animated on drop/paste
@@ -1320,15 +1297,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Low.
 - **Status:** Open.
 
-### UX-322 — `useDateInput.isParsing` is exposed but never rendered in property drawer
-- **Domain:** Frontend / Properties
-- **Location:** `src/hooks/useDateInput.ts:101` ; `src/components/BlockPropertyDrawer.tsx:357-399`
-- **What:** Hook exposes a `isParsing` flag for a "parsing…" indicator; drawer never reads it. NL date typing feels silent on slow machines.
-- **Cost:** Trivial — render a small spinner / "Parsing…" label in `PropertyRow` when `isParsing`.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ### UX-323 — Agenda filter popover dense (8 dimensions × nested presets)
 - **Domain:** Frontend / Agenda
 - **Location:** `src/components/AgendaFilterBuilder.tsx:155-191`
@@ -1419,15 +1387,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Location:** `src/components/SearchablePopover.tsx:109`
 - **What:** When disabled (e.g. another filter of the same kind already active), the button greys out silently.
 - **Cost:** Trivial — wrap disabled state in a Tooltip with the reason ("Only one page filter at a time").
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### UX-338 — Search placeholder doesn't mention minimum character count
-- **Domain:** Frontend / Search
-- **Location:** `src/components/SearchPanel.tsx:388-396`
-- **What:** Placeholder is just "Search blocks…". The 3-char min is shown only as a separate notice (lines 509-511) once the user has already typed.
-- **Cost:** Trivial — placeholder = "Search blocks (3+ chars)".
 - **Risk:** Low.
 - **Impact:** Low.
 - **Status:** Open.
@@ -1766,15 +1725,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Location:** `src/components/DataSettingsTab.tsx:136-159`
 - **What:** "Importing file 2 of 5" is the only feedback; large markdown imports look stalled.
 - **Cost:** S — secondary line "(N blocks created · M bytes)" updated as the import worker reports.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### UX-385 — Export ZIP filename doesn't include space name
-- **Domain:** Frontend / Import-Export
-- **Location:** `src/components/DataSettingsTab.tsx:87-99`
-- **What:** Generic `agaric-export-YYYY-MM-DD.zip`. With multiple spaces, users can't tell which one is in a ZIP they downloaded weeks ago.
-- **Cost:** Trivial — include the active space name in the filename.
 - **Risk:** Low.
 - **Impact:** Low.
 - **Status:** Open.
