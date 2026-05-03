@@ -1836,3 +1836,441 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
         "properties must be cascade-deleted when block is purged"
     );
 }
+
+// ======================================================================
+// Group 12: page_id ↔ space drift audit (PEND-13)
+// ======================================================================
+//
+// Three denormalised fields must stay in sync to prevent the space
+// filter from silently producing wrong results:
+//
+//   A. `blocks.page_id` (migration 0027) must equal the nearest
+//      `block_type='page'` ancestor (computed via recursive CTE on
+//      `parent_id`) — or be `block.id` for pages themselves.
+//   B. Every non-space page has exactly one `block_properties` row
+//      with `key='space'`. Spaces (pages flagged `is_space='true'`) do
+//      NOT have a `space` property — they ARE the space.
+//   C. For each non-page block: the space resolved through
+//      `page_id → block_properties` must equal the space resolved by
+//      walking the block's `parent_id` chain to the nearest space
+//      property OR space block id.
+//
+// Both tests use a populated fixture (bootstrapped Personal/Work
+// spaces + user pages + children + a cross-space move). The lifecycle
+// variant additionally exercises `RestoreBlock`, `DeleteBlock`,
+// `PurgeBlock`, and `SetProperty(space=...)` and re-runs the audit
+// after each transition.
+
+/// Recursive-CTE oracle: returns the nearest `block_type='page'`
+/// ancestor of `block_id` by walking the `parent_id` chain. For a
+/// page block, returns its own id (depth-0 seed). For an orphan with
+/// no page ancestor, returns `None`.
+///
+/// Mirrors the SQL in `cache/page_id.rs::rebuild_page_ids_impl` — the
+/// production rebuild's ancestor walk — so a divergence between this
+/// oracle and the stored `blocks.page_id` is by definition drift.
+async fn compute_page_id_via_cte(pool: &SqlitePool, block_id: &str) -> Option<String> {
+    sqlx::query_scalar!(
+        r#"WITH RECURSIVE ancestors(cur_id, cur_type, depth) AS (
+              SELECT b.id, b.block_type, 0 FROM blocks b
+              WHERE b.id = ? AND b.is_conflict = 0
+              UNION ALL
+              SELECT parent.id, parent.block_type, a.depth + 1
+              FROM ancestors a
+              JOIN blocks child ON child.id = a.cur_id
+              JOIN blocks parent ON parent.id = child.parent_id
+              WHERE a.cur_type != 'page'
+                AND child.is_conflict = 0
+                AND parent.is_conflict = 0
+                AND a.depth < 100
+           )
+           SELECT cur_id AS "cur_id!: String"
+           FROM ancestors
+           WHERE cur_type = 'page'
+           ORDER BY depth ASC
+           LIMIT 1"#,
+        block_id
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
+/// Resolves a block's space by following the stored `page_id` to the
+/// owning page, then reading its `space` ref-property. Returns
+/// `None` if the block has no `page_id`, or if the owning page has no
+/// `space` property (e.g. the owning page IS itself a space block —
+/// spaces have `is_space='true'` and never carry a `space` row).
+async fn resolve_space_via_page_id(pool: &SqlitePool, block_id: &str) -> Option<String> {
+    let page_id: Option<String> = sqlx::query_scalar!(
+        r#"SELECT page_id AS "page_id?: String" FROM blocks WHERE id = ?"#,
+        block_id
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+    .flatten();
+
+    let page_id = page_id?;
+
+    sqlx::query_scalar!(
+        r#"SELECT value_ref AS "value_ref?: String"
+           FROM block_properties
+           WHERE block_id = ? AND key = 'space'"#,
+        page_id
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+    .flatten()
+}
+
+/// Resolves a block's space by walking its `parent_id` chain: the
+/// nearest ancestor (including self at depth 0) carrying a
+/// `space` property returns that property's `value_ref`; otherwise the
+/// nearest ancestor flagged `is_space='true'` returns its own id (i.e.
+/// the block lives inside a space block directly with no intermediate
+/// non-space page). Returns `None` only for blocks completely
+/// disconnected from any space.
+async fn resolve_space_via_ancestor_chain(pool: &SqlitePool, block_id: &str) -> Option<String> {
+    sqlx::query_scalar!(
+        r#"WITH RECURSIVE ancestors(cur_id, depth) AS (
+              SELECT b.id, 0 FROM blocks b
+              WHERE b.id = ? AND b.is_conflict = 0
+              UNION ALL
+              SELECT parent.id, a.depth + 1
+              FROM ancestors a
+              JOIN blocks child ON child.id = a.cur_id
+              JOIN blocks parent ON parent.id = child.parent_id
+              WHERE child.is_conflict = 0
+                AND parent.is_conflict = 0
+                AND a.depth < 100
+           )
+           SELECT COALESCE(
+               (SELECT bp.value_ref
+                FROM ancestors a
+                JOIN block_properties bp ON bp.block_id = a.cur_id
+                WHERE bp.key = 'space'
+                ORDER BY a.depth ASC
+                LIMIT 1),
+               (SELECT a.cur_id
+                FROM ancestors a
+                JOIN block_properties bp ON bp.block_id = a.cur_id
+                WHERE bp.key = 'is_space' AND bp.value_text = 'true'
+                ORDER BY a.depth ASC
+                LIMIT 1)
+           ) AS "space?: String""#,
+        block_id
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+    .flatten()
+}
+
+/// Run the three-assertion audit (A: page_id correctness, B: space
+/// property existence on pages, C: transitive consistency on
+/// non-pages) against every live block. `is_conflict = 0 AND
+/// deleted_at IS NULL` filter mirrors the production space-filter
+/// scope: conflict copies have independent lifecycles (invariant #9)
+/// and soft-deleted blocks are not surfaced by list queries.
+async fn run_drift_audit(pool: &SqlitePool, label: &str) {
+    let blocks: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, block_type, page_id FROM blocks \
+         WHERE is_conflict = 0 AND deleted_at IS NULL",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+
+    for (id, btype, stored_page_id) in &blocks {
+        // A: page_id correctness — stored vs CTE-computed must match.
+        let computed = compute_page_id_via_cte(pool, id).await;
+        assert_eq!(
+            stored_page_id.as_deref(),
+            computed.as_deref(),
+            "[{label}] block {id} ({btype}): page_id mismatch — stored={stored_page_id:?} computed={computed:?}"
+        );
+
+        // B: space property existence (pages only). Spaces have
+        // `is_space='true'` and zero `space` rows; non-space pages
+        // have exactly one `space` row.
+        if btype == "page" {
+            let is_space: Option<String> = sqlx::query_scalar!(
+                r#"SELECT value_text AS "value_text?: String"
+                   FROM block_properties
+                   WHERE block_id = ? AND key = 'is_space'"#,
+                id
+            )
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+            .flatten();
+            let space_count: i64 = sqlx::query_scalar!(
+                "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'space'",
+                id
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if is_space.as_deref() == Some("true") {
+                assert_eq!(
+                    space_count, 0,
+                    "[{label}] space block {id} must NOT have a 'space' property"
+                );
+            } else {
+                assert_eq!(
+                    space_count, 1,
+                    "[{label}] non-space page {id} must have exactly one 'space' property"
+                );
+            }
+        }
+
+        // C: transitive consistency (non-pages only). For pages the
+        // notion of "space via page_id" collapses to self and is
+        // covered by assertion B.
+        if btype != "page" {
+            let via_page = resolve_space_via_page_id(pool, id).await;
+            let via_chain = resolve_space_via_ancestor_chain(pool, id).await;
+            assert_eq!(
+                via_page, via_chain,
+                "[{label}] block {id} ({btype}): space mismatch \
+                 via page_id ({via_page:?}) vs ancestor chain ({via_chain:?})"
+            );
+        }
+    }
+}
+
+/// PEND-13 — populated-fixture per-block drift audit. Bootstraps
+/// Personal + Work, creates two pages (one per space) each with a
+/// child + grandchild, and moves one child cross-space. After the
+/// fixture settles, runs the three-assertion audit on every live
+/// block.
+///
+/// This test is expected to PASS on first run; if it ever fails,
+/// that is a real `page_id` ↔ `space` drift discovery, not a flaky
+/// regression.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_id_space_drift_audit_per_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    crate::spaces::bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    // Two pages, one per space.
+    let p1 = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        None,
+        "Personal page".into(),
+        crate::spaces::SPACE_PERSONAL_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+    let w1 = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        None,
+        "Work page".into(),
+        crate::spaces::SPACE_WORK_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+
+    // Child + grandchild under the Personal page.
+    let c_p = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        TYPE_CONTENT.into(),
+        "personal child".into(),
+        Some(p1.as_str().to_owned()),
+        None,
+    )
+    .await
+    .unwrap();
+    let _gc_p = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        TYPE_CONTENT.into(),
+        "personal grandchild".into(),
+        Some(c_p.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Child under the Work page.
+    let _c_w = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        TYPE_CONTENT.into(),
+        "work child".into(),
+        Some(w1.as_str().to_owned()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Cross-space move: c_p (and its grandchild gc_p, via descendant
+    // page_id rewrite in `move_block_inner`) re-parents under w1.
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        c_p.id.clone(),
+        Some(w1.as_str().to_owned()),
+        1_i64,
+    )
+    .await
+    .unwrap();
+
+    settle_bg_tasks(&mat).await;
+
+    run_drift_audit(&pool, "per_block").await;
+}
+
+/// PEND-13 op-type coverage variant. Same fixture base, then
+/// exercises every block lifecycle op (`DeleteBlock`,
+/// `RestoreBlock`, `PurgeBlock`, `SetProperty(key='space')`) and
+/// re-runs the drift audit after each transition.
+///
+/// Soft-deleted blocks are filtered out by the audit (the production
+/// space filter likewise scopes to `deleted_at IS NULL`); purged
+/// blocks are absent from `blocks` entirely; a `SetProperty(space=…)`
+/// on a page must result in the new space being observable through
+/// both resolution paths for every descendant.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_id_space_drift_audit_after_lifecycle_ops() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    crate::spaces::bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    let p1 = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        None,
+        "Personal page".into(),
+        crate::spaces::SPACE_PERSONAL_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+    let w1 = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        None,
+        "Work page".into(),
+        crate::spaces::SPACE_WORK_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+
+    // Two children of p1 (so we can soft-delete one independently).
+    let c_p1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        TYPE_CONTENT.into(),
+        "personal child 1".into(),
+        Some(p1.as_str().to_owned()),
+        None,
+    )
+    .await
+    .unwrap();
+    let c_p2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        TYPE_CONTENT.into(),
+        "personal child 2".into(),
+        Some(p1.as_str().to_owned()),
+        None,
+    )
+    .await
+    .unwrap();
+    let _c_w = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        TYPE_CONTENT.into(),
+        "work child".into(),
+        Some(w1.as_str().to_owned()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    settle_bg_tasks(&mat).await;
+    run_drift_audit(&pool, "lifecycle_baseline").await;
+
+    // 1. DeleteBlock (soft delete) — c_p2 is filtered out of the
+    //    audit; the rest of the fixture stays consistent.
+    let del = delete_block_inner(&pool, DEV, &mat, c_p2.id.clone())
+        .await
+        .unwrap();
+    settle_bg_tasks(&mat).await;
+    run_drift_audit(&pool, "after_delete").await;
+
+    // 2. RestoreBlock — c_p2 reappears in the audit; nothing else
+    //    should have shifted.
+    restore_block_inner(&pool, DEV, &mat, c_p2.id.clone(), del.deleted_at)
+        .await
+        .unwrap();
+    settle_bg_tasks(&mat).await;
+    run_drift_audit(&pool, "after_restore").await;
+
+    // 3. PurgeBlock — soft-delete then hard-purge c_p1; the row is
+    //    physically gone from `blocks` and the audit must remain
+    //    clean.
+    delete_block_inner(&pool, DEV, &mat, c_p1.id.clone())
+        .await
+        .unwrap();
+    settle_bg_tasks(&mat).await;
+    purge_block_inner(&pool, DEV, &mat, c_p1.id.clone())
+        .await
+        .unwrap();
+    settle_bg_tasks(&mat).await;
+    run_drift_audit(&pool, "after_purge").await;
+
+    // 4. SetProperty(space=Personal) on the Work page w1 — moves the
+    //    page (and via `page_id` lookup, every descendant) into the
+    //    Personal space. Both resolution paths must agree.
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        w1.as_str().to_owned(),
+        "space".into(),
+        None,
+        None,
+        None,
+        Some(crate::spaces::SPACE_PERSONAL_ULID.to_owned()),
+        None,
+    )
+    .await
+    .unwrap();
+    settle_bg_tasks(&mat).await;
+    run_drift_audit(&pool, "after_set_property_space").await;
+
+    // Spot-check: the work page's space property is now Personal.
+    let w1_id = w1.as_str().to_owned();
+    let w1_space: Option<String> = sqlx::query_scalar!(
+        r#"SELECT value_ref AS "value_ref?: String"
+           FROM block_properties WHERE block_id = ? AND key = 'space'"#,
+        w1_id
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap()
+    .flatten();
+    assert_eq!(
+        w1_space.as_deref(),
+        Some(crate::spaces::SPACE_PERSONAL_ULID),
+        "set_property(space=Personal) must re-home the work page to Personal"
+    );
+}

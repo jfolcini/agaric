@@ -20,7 +20,7 @@ Origin: a deep architectural review session run with five parallel investigation
 | PEND-10 | iroh transport adoption (replaces mDNS+WebSocket+TLS+TOFU stack) | L (3.5-5 months) | ready as a **planned spike + multi-phase migration** (revised after reviewer caught LOC undercount of ~87% — actual delete is ~14.6k LOC including test files, not ~7.8k; timeline 14-19 weeks; 13 risks + 13 open questions; iroh post-1.0 status is the headline kill criterion) |
 | PEND-11 | Space indicator redesign (thin top stripe + sidebar picker only) | — | (out-of-band plan, separate UX track) |
 | PEND-12 | build.rs codegen for space-filter SQL fragment (unblocks MAINT-172) | M (7-11h) | ready (revised after reviewer caught: site count was 16 not 20, `include_str!`+sqlx composition needs Phase 0 spike, bind indices 2-8 not 1-8, hook false-positive risk on comments/tests) |
-| PEND-13 | Drift test for `page_id` ↔ `space` consistency | S (1.5-2.5h) | ready (revised after reviewer caught 3 fixture compilation errors: `Materializer::new` not `::build`, `BlockId` return shape, `create_block_inner` 7-arg signature; assertion B was a placeholder; op-coverage expanded) |
+| PEND-13 | Drift test for `page_id` ↔ `space` consistency | S (1.5-2.5h) | ✅ done session 655 — `page_id_space_drift_audit_per_block` + `page_id_space_drift_audit_after_lifecycle_ops` landed in `src-tauri/src/integration_tests.rs` (+441 LOC); both pass on first run (no drift surfaced — confirms invariants currently hold); 3 helpers + shared `run_drift_audit` use `sqlx::query_scalar!` so .sqlx cache catches future SQL drift; all recursive CTEs filter `is_conflict = 0` + bound `depth < 100` per AGENTS.md invariant #9. Conflict-copy fixture deferred per plan open-question #2. |
 | PEND-14 | Native `boolean` value type for property system | M (6.5-8h) | ready (revised after reviewer caught: `#[serde(default)]` requirement on `value_bool`, missing `create_property_def_inner` match-arm update, SQLite 3.37+ minimum requirement, deferred filtering/sorting) |
 | PEND-15 | Hard space separation — no cross-space links | L (7-12 weeks) | ready (revised after reviewer caught: critical sequencing constraint with PEND-09 — Phase 1 MUST land before CRDT cutover; severance Option (a) struck, Option (b) mandated; tag-scoping migration sub-phase added; `set_property` ref-type validation specified; cost upgraded from 4-8w to 7-12w) |
 | PEND-16 | Daily-journal double-block render race | — | (out-of-band bug fix, separate track) |
@@ -36,8 +36,8 @@ Origin: a deep architectural review session run with five parallel investigation
 - PEND-04 (stale crypto docs) — ✅ shipped (bulk: session 652; residue: session 654)
 - PEND-05 (agenda parity test) — ✅ shipped session 654 (test `#[ignore]`d, drift filed as MAINT-196)
 - PEND-08 (parity hook) — ✅ shipped session 654
-- PEND-07 (STRICT tables policy) — pure policy + small hook, ~1h
-- PEND-13 (`page_id` ↔ space drift test) — single test addition, 1.5-2.5h
+- PEND-13 (`page_id` ↔ space drift test) — ✅ shipped session 655
+- PEND-07 (STRICT tables policy) — pure policy + small hook, ~1h. **Gated on AGENTS.md edit approval.**
 - PEND-14 (boolean property type) — schema + dispatch + frontend, 6.5-8h
 
 **Mid-tier** — useful but more invasive:
