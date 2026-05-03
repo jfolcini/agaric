@@ -479,6 +479,13 @@ const SidebarRail = ({ ref, className, ...props }: React.ComponentProps<'button'
     moved: false,
     wasCollapsed: false,
   })
+  // FE-H-15: track the active drag's listener handles so an unmount mid-drag
+  // can detach them from `document` (the pointerup handler never fires in that
+  // case, leaving stale listeners attached otherwise).
+  const dragListenersRef = React.useRef<{
+    move: (e: PointerEvent) => void
+    up: (e: PointerEvent) => void
+  } | null>(null)
 
   const onDoubleClick = React.useCallback(() => {
     setSidebarWidth(SIDEBAR_WIDTH_DEFAULT)
@@ -515,6 +522,7 @@ const SidebarRail = ({ ref, className, ...props }: React.ComponentProps<'button'
             state.dragging = false
             document.removeEventListener('pointermove', onPointerMove)
             document.removeEventListener('pointerup', onPointerUp)
+            dragListenersRef.current = null
             document.documentElement.style.cursor = ''
             document.body.style.userSelect = ''
             setIsResizing(false)
@@ -529,6 +537,7 @@ const SidebarRail = ({ ref, className, ...props }: React.ComponentProps<'button'
         state.dragging = false
         document.removeEventListener('pointermove', onPointerMove)
         document.removeEventListener('pointerup', onPointerUp)
+        dragListenersRef.current = null
         document.documentElement.style.cursor = ''
         document.body.style.userSelect = ''
         if (state.moved) {
@@ -541,11 +550,25 @@ const SidebarRail = ({ ref, className, ...props }: React.ComponentProps<'button'
 
       document.addEventListener('pointermove', onPointerMove)
       document.addEventListener('pointerup', onPointerUp)
+      dragListenersRef.current = { move: onPointerMove, up: onPointerUp }
       document.documentElement.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
     },
     [open, sidebarWidth, setSidebarWidth, toggleSidebar, setIsResizing, setOpen],
   )
+
+  // FE-H-15: if the rail unmounts mid-drag, detach the still-attached
+  // `document` listeners so they do not leak and reference stale state.
+  React.useEffect(() => {
+    return () => {
+      const handles = dragListenersRef.current
+      if (handles) {
+        document.removeEventListener('pointermove', handles.move)
+        document.removeEventListener('pointerup', handles.up)
+        dragListenersRef.current = null
+      }
+    }
+  }, [])
 
   return (
     <button

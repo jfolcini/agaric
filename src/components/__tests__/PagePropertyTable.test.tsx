@@ -16,9 +16,24 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { reportIpcError } from '../../lib/report-ipc-error'
 import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
 
+// Wrap `reportIpcError` in a spy that delegates to the real implementation.
+// Lets FE-H-17 partial-failure assertions inspect call arguments while
+// existing tests that rely on the real toast/logger side-effects keep passing.
+vi.mock('../../lib/report-ipc-error', async () => {
+  const actual = await vi.importActual<typeof import('../../lib/report-ipc-error')>(
+    '../../lib/report-ipc-error',
+  )
+  return {
+    ...actual,
+    reportIpcError: vi.fn(actual.reportIpcError),
+  }
+})
+
 const mockedInvoke = vi.mocked(invoke)
+const mockedReportIpcError = vi.mocked(reportIpcError)
 
 vi.mock('lucide-react', () => ({
   ArrowDown: () => <svg data-testid="arrow-down-icon" />,
@@ -634,6 +649,46 @@ describe('PagePropertyTable error handling', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.loadFailed'))
     })
+  })
+
+  it('FE-H-17: partial failure (listPropertyDefs rejects) renders properties and reports failure', async () => {
+    // get_properties succeeds, list_property_defs rejects — the table should
+    // still render the property row from the successful side and surface the
+    // defs failure via reportIpcError instead of failing the whole load.
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_properties') return [makeProp('author', { value_text: 'Alice' })]
+      if (cmd === 'list_property_defs') throw new Error('defs IPC failed')
+      return null
+    })
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+
+    // (a) The successful side renders. Expand to see the property row.
+    await user.click(await screen.findByRole('button', { name: /Properties/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'author' })),
+      ).toBeInTheDocument()
+    })
+
+    // (b) reportIpcError was called for the listPropertyDefs failure with the
+    // module/messageKey/context expected by FE-H-17.
+    expect(mockedReportIpcError).toHaveBeenCalledWith(
+      'PagePropertyTable',
+      'pageProperty.loadFailed',
+      expect.any(Error),
+      expect.any(Function),
+      expect.objectContaining({ pageId: 'PAGE_1', fetch: 'listPropertyDefs' }),
+    )
+    // The successful fetch must NOT trigger a report.
+    expect(mockedReportIpcError).not.toHaveBeenCalledWith(
+      'PagePropertyTable',
+      'pageProperty.loadFailed',
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ fetch: 'getProperties' }),
+    )
   })
 
   it('save error shows toast', async () => {

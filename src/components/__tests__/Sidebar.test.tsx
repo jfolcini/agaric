@@ -195,6 +195,42 @@ describe('Sidebar', () => {
     expect(menuButtons[0]).toHaveTextContent('Home')
     expect(menuButtons[1]).toHaveTextContent('Settings')
   })
+
+  // FE-H-15: rail's onPointerDown attaches pointermove/pointerup listeners to
+  // `document`. If the sidebar unmounts mid-drag (e.g. route change) before
+  // pointerup fires, the listeners must still be detached or they leak and
+  // reference stale closure state.
+  it('FE-H-15 — removes pointermove/pointerup listeners on unmount mid-drag', () => {
+    const addSpy = vi.spyOn(document, 'addEventListener')
+    const removeSpy = vi.spyOn(document, 'removeEventListener')
+
+    try {
+      const { unmount } = renderSidebar()
+
+      const rail = document.querySelector('[data-sidebar="rail"]') as HTMLElement
+      expect(rail).not.toBeNull()
+
+      // Start a drag — this attaches pointermove/pointerup to `document`.
+      fireEvent.pointerDown(rail, { button: 0, clientX: 100 })
+
+      // Capture the exact handles the rail registered so we can assert the
+      // cleanup removes the SAME function references (a fix that removes
+      // arbitrary functions wouldn't actually plug the leak).
+      const addedMove = addSpy.mock.calls.find((c) => c[0] === 'pointermove')?.[1]
+      const addedUp = addSpy.mock.calls.find((c) => c[0] === 'pointerup')?.[1]
+      expect(typeof addedMove).toBe('function')
+      expect(typeof addedUp).toBe('function')
+
+      // Unmount mid-drag — pointerup never fired.
+      unmount()
+
+      expect(removeSpy).toHaveBeenCalledWith('pointermove', addedMove)
+      expect(removeSpy).toHaveBeenCalledWith('pointerup', addedUp)
+    } finally {
+      addSpy.mockRestore()
+      removeSpy.mockRestore()
+    }
+  })
 })
 
 describe('swipe-to-open gesture', () => {

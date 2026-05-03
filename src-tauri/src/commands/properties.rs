@@ -194,23 +194,6 @@ pub async fn set_todo_state_inner(
                 "Todo state must be 1-50 characters".into(),
             ));
         }
-
-        // BUG-20: Validate against todo_state property definition options.
-        // `set_property_in_tx` already performs this check when the
-        // definition exists; this fallback guards the case where the
-        // definition has been deleted, ensuring the built-in defaults are
-        // still enforced. MAINT-147 (e): the validation logic is shared
-        // with `set_priority_inner` via `validate_reserved_property_value`.
-        let def_row =
-            sqlx::query!("SELECT options FROM property_definitions WHERE key = 'todo_state'")
-                .fetch_optional(pool)
-                .await?;
-        validate_reserved_property_value(
-            def_row.is_some(),
-            "todo_state",
-            s,
-            &["TODO", "DOING", "DONE"],
-        )?;
     }
 
     // H-4: open one IMMEDIATE tx covering every write below — the
@@ -219,6 +202,29 @@ pub async fn set_todo_state_inner(
     // could leave a `done` state with no `completed_at` and no
     // next-occurrence sibling — see REVIEW-LATER H-4 for the rationale.
     let mut tx = CommandTx::begin_immediate(pool, "set_todo_state").await?;
+
+    // BUG-20: Validate against todo_state property definition options.
+    // `set_property_in_tx` already performs this check when the
+    // definition exists; this fallback guards the case where the
+    // definition has been deleted, ensuring the built-in defaults are
+    // still enforced. MAINT-147 (e): the validation logic is shared
+    // with `set_priority_inner` via `validate_reserved_property_value`.
+    //
+    // M-97: this fetch was previously issued against `pool` *before*
+    // opening the tx; folded inside so the validation read and the
+    // write share atomicity (single source of truth = the live tx).
+    if let Some(ref s) = state {
+        let def_row =
+            sqlx::query!("SELECT options FROM property_definitions WHERE key = 'todo_state'")
+                .fetch_optional(&mut **tx)
+                .await?;
+        validate_reserved_property_value(
+            def_row.is_some(),
+            "todo_state",
+            s,
+            &["TODO", "DOING", "DONE"],
+        )?;
+    }
 
     // FEAT-5i — snapshot pre-mutation agenda-relevant state once for
     // the post-commit `notify_gcal_for_op` call below. Skip the extra
@@ -370,32 +376,54 @@ pub async fn set_priority_inner(
                 "priority must be 1-50 characters".into(),
             ));
         }
+    }
 
-        // M-20: rely on the user-extended `priority` property definition
-        // options for validation (handled inside `set_property_in_tx`).
-        // If the definition row has been deleted, fall back to the
-        // built-in seeded options so reserved-key validation remains
-        // enforced. Mirrors `set_todo_state_inner` via the shared
-        // `validate_reserved_property_value` helper (MAINT-147 (e)).
+    // M-97: open the CommandTx before the property_definitions read so
+    // the fallback validation and the write share atomicity. Previously
+    // the fetch ran against `pool` and we then delegated to
+    // `set_property_inner`, which opens its own tx — the validation
+    // window and the write window were separate. Folding everything
+    // into one tx removes that gap. Body inlined from
+    // `set_property_inner` (with `caller_context = None`) to keep the
+    // tx scope wide enough to host the fallback read.
+    let mut tx = CommandTx::begin_immediate(pool, "set_priority").await?;
+
+    // M-20: rely on the user-extended `priority` property definition
+    // options for validation (handled inside `set_property_in_tx`).
+    // If the definition row has been deleted, fall back to the
+    // built-in seeded options so reserved-key validation remains
+    // enforced. Mirrors `set_todo_state_inner` via the shared
+    // `validate_reserved_property_value` helper (MAINT-147 (e)).
+    if let Some(ref l) = level {
         let def_row =
             sqlx::query!("SELECT options FROM property_definitions WHERE key = 'priority'")
-                .fetch_optional(pool)
+                .fetch_optional(&mut **tx)
                 .await?;
         validate_reserved_property_value(def_row.is_some(), "priority", l, &["1", "2", "3"])?;
     }
-    set_property_inner(
-        pool,
-        device_id,
-        materializer,
-        block_id,
-        "priority".to_string(),
-        level,
-        None,
-        None,
-        None,
-        None,
+
+    // FEAT-5i — snapshot pre-mutation agenda-relevant state so the
+    // post-commit `notify_gcal_for_op` call can compute the
+    // `old_affected_dates` half of the `DirtyEvent`. Skip the extra
+    // SELECT when no connector is wired (common in tests).
+    let gcal_snapshot = if materializer.is_gcal_hook_active() {
+        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
+    } else {
+        None
+    };
+
+    let (block, op_record) = set_property_in_tx(
+        &mut tx, device_id, block_id, "priority", level, None, None, None,
     )
-    .await
+    .await?;
+    // Clone `op_record` for the dispatch queue so the post-commit
+    // `notify_gcal_for_op` call below still has the original.
+    tx.enqueue_background(op_record.clone());
+    tx.commit_and_dispatch(materializer).await?;
+    if let Some(snapshot) = gcal_snapshot {
+        materializer.notify_gcal_for_op(&op_record, &snapshot);
+    }
+    Ok(block)
 }
 
 /// Set the due date on a block (ISO date YYYY-MM-DD or clear).

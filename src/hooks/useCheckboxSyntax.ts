@@ -35,6 +35,10 @@ export function useCheckboxSyntax({
   return useCallback(
     (state: 'TODO' | 'DONE') => {
       if (!focusedBlockId) return
+      // FE-H-7: snapshot prior todo_state so the optimistic mutation can be
+      // reverted if `setTodoStateCmd` rejects.
+      const priorTodoState =
+        pageStore.getState().blocks.find((b) => b.id === focusedBlockId)?.todo_state ?? null
       setTodoStateCmd(focusedBlockId, state)
         .then(() => {
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
@@ -57,6 +61,13 @@ export function useCheckboxSyntax({
         .catch((err) => {
           logger.error('useCheckboxSyntax', 'setTodoState failed', { focusedBlockId, state }, err)
           toast.error(t('blockTree.setTaskStateFailed'))
+          // FE-H-7: revert the optimistic mutation so UI state stays in sync
+          // with the backend after a rejected `setTodoStateCmd`.
+          pageStore.setState((s) => ({
+            blocks: s.blocks.map((b) =>
+              b.id === focusedBlockId ? { ...b, todo_state: priorTodoState } : b,
+            ),
+          }))
         })
       pageStore.setState((s) => ({
         blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, todo_state: state } : b)),
