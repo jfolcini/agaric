@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 641 — Batch FE-TRIVIAL-4: closed FE-M-6 (useBlockSlashCommands input.click try/catch), FE-M-14 (priority-levels best-effort doc), FE-L-3 (page-blocks registry guard), FE-L-7 (markdown-parse depth-limit logger.debug); 4 items via 4 successful subagents (FE-M-8 dropped — stalled subagent, retried next batch))
+> **Last updated:** 2026-05-03 (Session 642 — Batch FE-DOC-1: closed FE-M-7 (useBlockDatePicker invariant doc), FE-L-4 (Tabs nextTabId comment), FE-L-9 (useBlockNavigateToLink contract doc), L-136 (export_page_markdown_inner ULID validation); 4 items orchestrator-direct — doc/comment + small Rust validation, no subagents)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-27 open items in the summary table; 47 detail entries (FE-* sub-tables don't appear in the summary).
+27 open items in the summary table; 43 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -674,17 +674,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Decision:** No action. Filed for awareness only.
 - **Status:** Documented as deliberate.
 
-### L-136 — `export_page_markdown_inner` (and siblings) don't validate ULID format upfront
-- **Domain:** Commands / pages
-- **Location:** `src-tauri/src/commands/pages.rs:196-207` (`export_page_markdown_inner`); same pattern at `src-tauri/src/commands/pages.rs:648` (`get_page_inner`).
-- **What:** Neither function calls `BlockId::from_string(page_id)?` upfront. Malformed inputs (e.g. `"not-a-ulid"`) bind directly to `WHERE id = ?` in the SQL query, which simply returns no rows, so the function surfaces `AppError::NotFound` instead of the more precise `AppError::Validation`. Pinned by `commands/tests/page_cmd_tests.rs::export_page_markdown_inner_with_malformed_id_returns_not_found` (asserts the current `NotFound` shape, citing TEST-11). Other commands (e.g. `set_property_inner` via `validate_set_property`) DO validate input upfront.
-- **Why it matters:** The frontend usually validates ULIDs before sending, so this is rarely user-visible — but the imprecise error class makes diagnostics harder when something does go wrong (a malformed ID looks indistinguishable from a deleted page in the logs).
-- **Cost:** S — one line at the top of each function: `BlockId::from_string(page_id)?;`. The test pinning the current `NotFound` shape will need to flip to `Err(AppError::Validation(_))`.
-- **Risk:** Low.
-- **Impact:** Low — improves error precision for malformed input; no behavior change for well-formed IDs.
-- **Recommendation:** Audit other page-accepting `inner` functions (`get_page_inner`, `delete_page_inner` if exists) for the same gap and fix in one pass.
-- **Status:** Open.
-
 ### FE-H-1 — Cursor pagination violated in `executeAgendaFilters` default branch
 - **Domain:** Frontend / Agenda
 - **Location:** `src/lib/agenda-filters.ts:287-290`
@@ -750,16 +739,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F002
 - **Status:** Open
 
-### FE-M-7 — `useBlockDatePicker`: ref-capture pattern needs invariant doc
-- **Domain:** Frontend / Hooks
-- **Location:** `src/hooks/useBlockDatePicker.ts:189-200`
-- **What:** `rovingEditor` and `t` are read via refs that aren't in the deps array, with a `biome-ignore`. Pattern works today but is easy to break — the existing comment explains the *intent* but not the *invariant* (rovingEditor stable across the lifetime of the BlockTree mount).
-- **Cost:** Trivial — strengthen the comment to call out the invariant explicitly.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F029
-- **Status:** Open
-
 ### FE-M-8 — Property pickers: PropertyValuePicker has no user-facing toast; PropertyDefinitionsList uses `String(error)`
 - **Domain:** Frontend / Properties
 - **Location:** `src/components/PropertyValuePicker.tsx:42-49`, `src/components/PropertyDefinitionsList.tsx:73-74, 93-94, 106-108`
@@ -782,16 +761,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F011
 - **Status:** Open
 
-### FE-L-4 — `Tabs` store `nextTabId` module-scoped counter
-- **Domain:** Frontend / Tabs store
-- **Location:** `src/stores/tabs.ts:40-50`
-- **What:** Single-threaded browser is the documented architecture; no actual bug. Either move into Zustand state or add a one-line comment.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F006
-- **Status:** Open
-
 ### FE-L-5 — `Undo` store batch-undo silent fallback (no UX surface)
 - **Domain:** Frontend / Undo store
 - **Location:** `src/stores/undo.ts:280-290`
@@ -801,16 +770,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low.
 - **Recommendation:** Optional: toast `'Batch undo unavailable; undid one op.'`.
 - **Source:** FE review 2026-05-02 / F009
-- **Status:** Open
-
-### FE-L-9 — `useBlockNavigateToLink` ref-indirection contract not documented at the consumer side
-- **Domain:** Frontend / Hooks
-- **Location:** `src/hooks/useBlockNavigateToLink.ts:55-122`
-- **What:** Caller must always read `.current` at call time, never cache. Consider a stable wrapper that does the deref internally.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F033
 - **Status:** Open
 
 ### FE-L-14 — `FilterPillRow`: `key={index}` on filter list
