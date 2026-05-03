@@ -10,6 +10,7 @@
  * Zero external dependencies. O(n) in the input length.
  */
 
+import { logger } from '../lib/logger'
 import type {
   BlockLevelNode,
   BlockLinkNode,
@@ -469,6 +470,12 @@ export function parse(markdown: string, depth = 0): DocNode {
   // Beyond the cap, fall back to returning the remaining input as plain text
   // so the caller always gets a valid DocNode.
   if (depth > MAX_PARSE_DEPTH) {
+    // FE-L-7: log truncation at debug level to help diagnose pathological pastes.
+    logger.debug('markdown-parse', 'depth limit reached, truncating', {
+      depth,
+      maxDepth: MAX_PARSE_DEPTH,
+      length: markdown.length,
+    })
     return {
       type: 'doc',
       content: [{ type: 'paragraph', content: [{ type: 'text', text: markdown }] }],

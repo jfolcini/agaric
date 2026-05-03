@@ -393,7 +393,16 @@ function handleAttach(ctx: SlashCommandContext): void {
       toast.error(ctx.t('blockTree.attachFileFailed'))
     }
   }
-  input.click()
+  // FE-M-6: `input.click()` can throw on some platforms (e.g. when the user
+  // gesture has been lost or the browser/webview blocks programmatic file
+  // dialogs). Surface the failure instead of letting it bubble as an
+  // unhandled rejection.
+  try {
+    input.click()
+  } catch (err) {
+    toast.error(ctx.t('attachments.openFileDialogFailed'))
+    logger.warn('useBlockSlashCommands', 'input.click failed', undefined, err)
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,9 +1,16 @@
 import { invoke } from '@tauri-apps/api/core'
+import { render } from '@testing-library/react'
+import { createElement, type ReactElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 import { makeBlock } from '../../__tests__/fixtures'
-import { createPageBlockStore, type PageBlockState } from '../page-blocks'
+import {
+  createPageBlockStore,
+  type PageBlockState,
+  PageBlockStoreProvider,
+  pageBlockRegistry,
+} from '../page-blocks'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -1585,6 +1592,42 @@ describe('PageBlockStore', () => {
       await store.getState().remove('A')
 
       expect(mockOnNewAction).not.toHaveBeenCalled()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // pageBlockRegistry guard (FE-L-3)
+  // ---------------------------------------------------------------------------
+  describe('pageBlockRegistry cleanup guard', () => {
+    it('does not delete a newer registration when an older provider unmounts', () => {
+      const pageId = 'GUARD_PAGE'
+      pageBlockRegistry.delete(pageId)
+
+      // PageBlockStoreProvider declares `children` as a required prop, so the props
+      // arg must include it. We cast to a permissive shape here to keep the props
+      // object simple while satisfying both TS and Biome's noChildrenProp rule.
+      const Provider = PageBlockStoreProvider as unknown as (props: {
+        pageId: string
+        children?: ReactNode
+      }) => ReactElement
+
+      // Mount provider A → registers store A.
+      const a = render(createElement(Provider, { pageId }, 'a'))
+      const storeA = pageBlockRegistry.get(pageId)
+      expect(storeA).toBeDefined()
+
+      // Mount provider B for the same pageId → overwrites the slot with store B.
+      const b = render(createElement(Provider, { pageId }, 'b'))
+      const storeB = pageBlockRegistry.get(pageId)
+      expect(storeB).toBeDefined()
+      expect(storeB).not.toBe(storeA)
+
+      // Unmount provider A: its cleanup must NOT delete B's registration.
+      a.unmount()
+      expect(pageBlockRegistry.get(pageId)).toBe(storeB)
+
+      b.unmount()
+      expect(pageBlockRegistry.has(pageId)).toBe(false)
     })
   })
 })
