@@ -112,6 +112,22 @@ describe('GraphFilterBar', () => {
     ).not.toBeInTheDocument()
   })
 
+  // UX-354: visible "Filters" text label adjacent to the icon so sighted touch
+  // users recognize the bar as a filter UI. Hidden on mobile (`hidden sm:inline`)
+  // to preserve the icon-only treatment on coarse-pointer devices.
+  it('renders a visible "Filters" text label adjacent to the icon (UX-354)', () => {
+    const { container } = render(
+      <GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />,
+    )
+
+    const label = screen.getByText(t('graph.filter.label'))
+    expect(label).toBeInTheDocument()
+    // Hidden on mobile, visible from `sm:` breakpoint up.
+    expect(label).toHaveClass('hidden', 'sm:inline')
+    // The accessible name on the fieldset (via legend.sr-only) is unchanged.
+    expect(container.querySelector('legend.sr-only')).toHaveTextContent(t('graph.filter.addFilter'))
+  })
+
   it('renders a pill for each active filter', () => {
     const filters: GraphFilter[] = [
       { type: 'status', values: ['TODO'] },

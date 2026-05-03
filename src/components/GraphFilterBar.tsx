@@ -435,6 +435,9 @@ export function GraphFilterBar({
       </div>
 
       <Filter className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+      <span className="hidden sm:inline text-xs font-medium text-muted-foreground">
+        {t('graph.filter.label')}
+      </span>
 
       {filters.map((filter, i) => {
         const label = filterLabel(filter, t)

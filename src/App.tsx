@@ -73,7 +73,7 @@ function App() {
   const headerLabel = useHeaderLabel()
   const conflictCount = useConflictCount()
   const trashCount = useTrashCount()
-  const { isDark, toggleTheme } = useTheme()
+  const { theme: currentTheme, isDark, toggleTheme } = useTheme()
   const syncState = useSyncStore((s) => s.state)
   const syncPeers = useSyncStore((s) => s.peers)
   const lastSyncedAt = useSyncStore((s) => s.lastSyncedAt)
@@ -393,6 +393,7 @@ function App() {
           isOnline={isOnline}
           lastSyncedAt={lastSyncedAt}
           isDark={isDark}
+          currentTheme={currentTheme}
           onToggleTheme={toggleTheme}
           onNewPage={handleNewPage}
           onSyncClick={handleSyncClick}

@@ -16,6 +16,7 @@
 import { ChevronsLeft, Keyboard, Moon, Plus, RefreshCw, Sun, WifiOff } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
+import { THEME_NAME_KEY, type ThemePreference } from '../hooks/useTheme'
 import { formatRelativeTime } from '../lib/format-relative-time'
 import { getShortcutKeys } from '../lib/keyboard-config'
 import type { SpaceRow } from '../lib/tauri'
@@ -92,6 +93,7 @@ export interface AppSidebarProps {
   isOnline: boolean
   lastSyncedAt: string | null
   isDark: boolean
+  currentTheme: ThemePreference
   onToggleTheme: () => void
   onNewPage: () => void
   onSyncClick: () => void
@@ -111,6 +113,7 @@ export function AppSidebar({
   isOnline,
   lastSyncedAt,
   isDark,
+  currentTheme,
   onToggleTheme,
   onNewPage,
   onSyncClick,
@@ -277,8 +280,17 @@ export function AppSidebar({
             </div>
           </SidebarMenuItem>
           <SidebarMenuItem>
+            {/*
+             * UX-387 — surface the current theme in the tooltip so the
+             * 3-state cycle (auto / dark / light) is no longer silent.
+             * The visible label still reads "Toggle theme" so the
+             * expanded sidebar stays terse; only the tooltip carries
+             * the disambiguating state.
+             */}
             <SidebarMenuButton
-              tooltip={t('sidebar.toggleTheme')}
+              tooltip={t('sidebar.toggleThemeWithCurrent', {
+                current: t(THEME_NAME_KEY[currentTheme]),
+              })}
               onClick={onToggleTheme}
               data-testid="theme-toggle"
             >

@@ -32,6 +32,7 @@ function defaultProps(overrides: Partial<AppSidebarProps> = {}): AppSidebarProps
     isOnline: true,
     lastSyncedAt: null,
     isDark: false,
+    currentTheme: 'auto',
     onToggleTheme: vi.fn(),
     onNewPage: vi.fn(),
     onSyncClick: vi.fn(),
@@ -186,6 +187,30 @@ describe('AppSidebar', () => {
     const { container } = renderSidebar()
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // UX-387 — the theme-toggle button cycles auto → dark → light, but the
+  // generic "Toggle theme" tooltip gave no signal of the current state.
+  // The tooltip must now show the resolved theme name so the next click's
+  // outcome is predictable.
+  it('shows the current theme name in the theme-toggle tooltip (UX-387)', async () => {
+    const user = userEvent.setup()
+    render(
+      <SidebarProvider defaultOpen={false}>
+        <AppSidebar {...defaultProps({ currentTheme: 'dark', isDark: true })} />
+      </SidebarProvider>,
+    )
+
+    const themeBtn = screen.getByTestId('theme-toggle')
+    await user.hover(themeBtn)
+
+    await waitFor(() => {
+      const tooltip = screen.getByRole('tooltip')
+      expect(tooltip.textContent).toContain(
+        t('sidebar.toggleThemeWithCurrent', { current: t('sidebar.themeName.dark') }),
+      )
+      expect(tooltip.textContent).toContain(t('sidebar.themeName.dark'))
+    })
   })
 
   // UX-396 — the shortcuts button must surface the current keyboard
