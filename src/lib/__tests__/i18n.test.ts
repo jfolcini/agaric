@@ -134,6 +134,7 @@ describe('key existence', () => {
 
     // Editor
     'editor.templatePlaceholder',
+    'editor.emptyBlockPlaceholder',
 
     // Property
     'property.drawerTitle',

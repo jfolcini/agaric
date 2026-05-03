@@ -35,6 +35,9 @@ vi.mock('lucide-react', () => ({
   Layers: (props: { className?: string }) => (
     <svg data-testid="icon-layers" className={props.className} />
   ),
+  AtSign: (props: { className?: string }) => (
+    <svg data-testid="icon-at-sign" className={props.className} />
+  ),
   XIcon: (props: { className?: string }) => (
     <svg data-testid="x-icon" className={props.className} />
   ),
@@ -85,7 +88,7 @@ describe('WelcomeModal', () => {
     expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
   })
 
-  it('displays all five feature highlights', () => {
+  it('displays all six feature highlights', () => {
     render(<WelcomeModal />)
 
     expect(screen.getByText('Blocks + pages')).toBeInTheDocument()
@@ -93,6 +96,7 @@ describe('WelcomeModal', () => {
     expect(screen.getByText('Tags + properties')).toBeInTheDocument()
     expect(screen.getByText('Sync across devices')).toBeInTheDocument()
     expect(screen.getByText('Separate work and personal')).toBeInTheDocument()
+    expect(screen.getByText('Reference syntax')).toBeInTheDocument()
   })
 
   // UX-278: feature list must use <ul role="list"> + <li> for proper SR semantics.
@@ -103,13 +107,14 @@ describe('WelcomeModal', () => {
     expect(list.tagName).toBe('UL')
 
     const items = screen.getAllByRole('listitem')
-    expect(items).toHaveLength(5)
+    expect(items).toHaveLength(6)
     // Each <li> hosts one feature title
     expect(items[0]).toHaveTextContent('Blocks + pages')
     expect(items[1]).toHaveTextContent('Keyboard shortcuts')
     expect(items[2]).toHaveTextContent('Tags + properties')
     expect(items[3]).toHaveTextContent('Sync across devices')
     expect(items[4]).toHaveTextContent('Separate work and personal')
+    expect(items[5]).toHaveTextContent('Reference syntax')
   })
 
   // UX-382: Sync is Agaric's biggest differentiator (local-first,
@@ -121,7 +126,7 @@ describe('WelcomeModal', () => {
     render(<WelcomeModal />)
 
     const items = screen.getAllByRole('listitem')
-    expect(items).toHaveLength(5)
+    expect(items).toHaveLength(6)
     expect(items[3]).toHaveTextContent('Sync across devices')
   })
 
@@ -134,13 +139,34 @@ describe('WelcomeModal', () => {
     render(<WelcomeModal />)
 
     const items = screen.getAllByRole('listitem')
-    expect(items).toHaveLength(5)
+    expect(items).toHaveLength(6)
     expect(items[4]).toHaveTextContent('Separate work and personal')
     expect(items[4]).toHaveTextContent(
       'Spaces keep notes private and isolated. Switch contexts without mixing data.',
     )
     // Layers is the conventional lucide icon for spaces/workspaces.
     expect(items[4]?.querySelector('[data-testid="icon-layers"]')).not.toBeNull()
+  })
+
+  // UX-310: the four reference-syntax triggers (`@`, `[[`, `((`, `#[…]`)
+  // were only documented in the `?` help panel. Surface them as a 6th
+  // welcome highlight so new users discover them on first launch
+  // without reading docs. Pins the entry to position 6 with the AtSign
+  // icon and asserts the trigger characters appear in the description
+  // so a regression that drops or paraphrases the entry trips the test.
+  it('highlights "Reference syntax" as the 6th feature (UX-310)', () => {
+    render(<WelcomeModal />)
+
+    const items = screen.getAllByRole('listitem')
+    expect(items).toHaveLength(6)
+    expect(items[5]).toHaveTextContent('Reference syntax')
+    // All four documented triggers must be visible in the description.
+    expect(items[5]).toHaveTextContent('@')
+    expect(items[5]).toHaveTextContent('[[')
+    expect(items[5]).toHaveTextContent('((')
+    expect(items[5]).toHaveTextContent('#[')
+    // AtSign is the conventional lucide icon for `@`-style references.
+    expect(items[5]?.querySelector('[data-testid="icon-at-sign"]')).not.toBeNull()
   })
 
   it('"Get Started" dismisses and sets localStorage', async () => {

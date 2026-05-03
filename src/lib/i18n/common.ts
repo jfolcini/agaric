@@ -72,6 +72,8 @@ export const common: Record<string, string> = {
   'space.journalTemplateExample1': '# <% today %>\n\nNotes:\n\nTasks:\n',
   'space.journalTemplateExample2Title': 'Standup template',
   'space.journalTemplateExample2': '## <% today %> standup\n\nYesterday:\n\nToday:\n\nBlockers:',
+  // UX-371 — entry from JournalPage that deep-links into SpaceManageDialog.
+  'space.configureJournalTemplate': 'Configure journal template',
   'space.createSpaceLabel': 'Create new space',
   'space.createSpaceCta': 'Create',
   'space.createSpaceFailed': 'Failed to create space',
@@ -233,6 +235,9 @@ export const common: Record<string, string> = {
   'welcome.featureSpaces': 'Separate work and personal',
   'welcome.featureSpacesDesc':
     'Spaces keep notes private and isolated. Switch contexts without mixing data.',
+  'welcome.featureReferences': 'Reference syntax',
+  'welcome.featureReferencesDesc':
+    '@ \u2014 tags  \u00b7  [[ \u2014 page links  \u00b7  (( \u2014 block refs  \u00b7  #[\u2026] \u2014 explicit tag',
   'welcome.getStarted': 'Get Started',
   'welcome.createSamplePages': 'Create sample pages',
   'welcome.samplePagesCreated': 'Sample pages created!',
