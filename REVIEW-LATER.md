@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 646 — Batch MIX-3: closed UX-304 (mobile swipe-to-delete progressive cue), FE-L-14 (FilterPillRow stable React key, doc + reorder tests), M-98 (get_active_block_inner soft-deleted leak fix); 3 items via 3 subagents + 4 L-136 ripple test fixes orchestrator-direct)
+> **Last updated:** 2026-05-03 (Session 647 — Batch MIX-4: closed TEST-FE-1 dangerous subset (bare 50ms waits before negative assertions in 4 hot frontend test files); 1 item via 1 subagent — L-17 dropped due to stalled subagent, deferred to future batch)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -39,7 +39,7 @@ Items flagged during development that need revisiting. Organized by section with
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
-| TEST-FE-1 | TEST | Bare `setTimeout` waits in tests (24 occurrences across 13 files; the dangerous subset is bare 50ms waits before `not.toHaveBeenCalledWith` negatives — `BlockTree.test.tsx`, `TagFilterPanel.test.tsx`, `useBlockTreeEventListeners.test.ts`, `GraphView.test.tsx`) — AGENTS.md explicitly forbids `await sleep(n)`; replace with `waitFor` or fake timers | M | — |
+| TEST-FE-1 | TEST | Bare `setTimeout` waits in tests — dangerous subset (50ms before `not.toHaveBeenCalledWith` negatives) RESOLVED in session 647 across `BlockTree`, `TagFilterPanel`, `useBlockTreeEventListeners`, `GraphView`; 7 low-priority files remain (`SpaceManageDialog`, `JournalPage`, `useGraphSimulation`, `checkbox-input-rule`, `useGraphWorkerSimulation`, `ErrorBoundary`, `ViewHeader`) | S | — |
 | TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `BlockContextMenu` (19), `FormattingToolbar` (16), `useBlockKeyboardHandlers` (10), `GraphView` (8), `BlockPropertyEditor` (7), `HeadingLevelSelector` (7), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently | M | — |
 | UX-305 | UX | Drag handle on touch has 250 ms long-press requirement, no hint | S | — |
 | UX-306 | UX | Touch gutter "More actions" menu doesn't preview hidden actions | S | — |
@@ -445,26 +445,21 @@ Items in this section are test-quality improvements identified during a thorough
 - **Recommendation:** Pattern after the materializer's `flush_background()` API. A polling helper `async fn wait_for(predicate: impl Fn() -> bool, timeout: Duration)` would suffice for most sites.
 - **Status:** Open.
 
-### TEST-FE-1 — Bare `setTimeout` waits in tests as the only "wait" before negative assertions
+### TEST-FE-1 — Bare `setTimeout` waits in tests (low-priority remaining sweep)
 - **Domain:** Frontend test infrastructure
-- **Location:**
-  - `src/components/__tests__/BlockTree.test.tsx:1246, 3661, 3756, 3779, 3898, 4039, 4861, 5732, 5780, 5798, 5834` (11 bare waits, several before `not.toHaveBeenCalledWith` negatives)
+- **Location (remaining low-priority files, the dangerous-subset is fixed):**
   - `src/components/__tests__/SpaceManageDialog.test.tsx:575, 590, 609, 639` (4)
   - `src/components/__tests__/JournalPage.test.tsx:2826, 2848, 2875` (3)
   - `src/hooks/__tests__/useGraphSimulation.test.ts:349, 368` (2)
   - `src/editor/extensions/__tests__/checkbox-input-rule.test.ts:192, 193` (2)
-  - `src/components/__tests__/TagFilterPanel.test.tsx:945` (350ms wall-clock for debounce, with explicit comment "without fake timers")
-  - `src/components/__tests__/GraphView.test.tsx:960` (0ms tick, bare)
   - `src/hooks/__tests__/useGraphWorkerSimulation.test.ts:174` (1)
   - `src/components/__tests__/ErrorBoundary.test.tsx:138` (1)
   - `src/components/__tests__/ViewHeader.test.tsx:143` (1)
-  - `src/hooks/__tests__/useBlockTreeEventListeners.test.ts:115` (50ms)
-- **What:** `src/__tests__/AGENTS.md` lines 187, 254, 261 explicitly forbid `await sleep(n)` patterns in tests ("the flake only looks fixed"). 28 occurrences across 11 files; the dangerous subset is bare 50ms waits used as the only "wait" before `expect(invoke).not.toHaveBeenCalledWith(...)` negatives — a 50ms wait passes trivially if the side effect ever takes longer than 50ms, so the test cannot tell broken from slow.
-- **Why it matters:** Negative-assertion tests with bare timeouts give false confidence. Wall-clock waits for debounce (TagFilterPanel:945) waste 350ms per run and add cross-worker timing variance — pitfall #5 in AGENTS.md says exactly this.
-- **Cost:** S–M — for negative assertions, await an observable signal first (`await waitFor(() => expect(invoke).toHaveBeenCalledWith('positive_signal', ...))`) then assert absence of the negative one; for debounce, `vi.useFakeTimers()` + `vi.advanceTimersByTime()`. ~13 files to touch.
-- **Risk:** Low — converting wall-clock waits to deterministic `waitFor` strictly improves robustness.
-- **Impact:** Medium — eliminates an entire class of silent-pass holes.
-- **Status:** Open.
+- **What:** `src/__tests__/AGENTS.md` lines 187, 254, 261 forbid `await sleep(n)` patterns in tests. The **dangerous subset** — bare 50ms waits as the only wait before `not.toHaveBeenCalledWith` negative assertions — was resolved in session 647 across the four hot files (`BlockTree.test.tsx`, `TagFilterPanel.test.tsx`, `useBlockTreeEventListeners.test.ts`, `GraphView.test.tsx`). What remains is the less-dangerous tail: bare timeouts in 7 files that are not before negative assertions and don't carry the same silent-pass risk. They're code-quality cleanup, not flake risk.
+- **Cost:** S — pattern is the same as the dangerous-subset fix (use `waitFor` over an observable signal, or `vi.useFakeTimers()` for debounce). ~7 files left to sweep.
+- **Risk:** Low.
+- **Impact:** Low — the high-impact subset is already fixed; this is residual cleanup.
+- **Status:** Open (downgraded from Medium to Low impact).
 
 ### TEST-FE-2 — Weak `toHaveBeenCalled()` assertions in hot files
 - **Domain:** Frontend test infrastructure
