@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { SortOption } from '../../hooks/usePageBrowserSort'
 
 export interface PageBrowserHeaderProps {
@@ -98,13 +99,20 @@ export function PageBrowserHeader({
             />
           </div>
           <Select value={sortOption} onValueChange={(v) => onSortChange(v as SortOption)}>
-            <SelectTrigger
-              size="sm"
-              className="w-auto min-w-[7rem]"
-              aria-label={t('pageBrowser.sortLabel')}
-            >
-              <SelectValue />
-            </SelectTrigger>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <SelectTrigger
+                    size="sm"
+                    className="w-auto min-w-[7rem]"
+                    aria-label={t('pageBrowser.sortLabel')}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                </TooltipTrigger>
+                <TooltipContent>{t('pageBrowser.sortPersistedTooltip')}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <SelectContent>
               <SelectItem value="alphabetical">{t('pageBrowser.sortAlphabetical')}</SelectItem>
               <SelectItem value="recent">{t('pageBrowser.sortRecent')}</SelectItem>

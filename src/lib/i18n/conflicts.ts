@@ -218,9 +218,10 @@ export const conflicts: Record<string, string> = {
   'history.revertFailed': 'Failed to revert operations',
   'history.restoreUndoFailed': 'Could not undo the restore',
   'history.restoreUndone': 'Restore undone',
-  'history.restoreToHereLabel': 'Restore to this point',
-  'history.restoreToHereTooltip': 'Revert all operations after this point',
-  'history.restoreToHereTouchLabel': 'Restore',
+  'history.restoreToHereLabel': 'Reset to this point',
+  'history.restoreToHereTooltip':
+    'Undoes every operation after this point — use the per-entry Revert action for individual entries.',
+  'history.restoreToHereTouchLabel': 'Reset',
   'history.restoreToTitle': 'Restore to {{timestamp}}?',
   'history.restoreToDescription':
     'All operations after this point will be reverted. Non-reversible operations (purge) will be skipped. This action itself can be undone, and the original operations remain in history.',

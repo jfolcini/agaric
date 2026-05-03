@@ -577,21 +577,19 @@ describe('HistoryListItem', () => {
   describe('restore to here button', () => {
     it('renders restore button for reversible ops', () => {
       renderInListbox(defaultProps())
-      expect(screen.getByRole('button', { name: /restore to this point/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /reset to this point/i })).toBeInTheDocument()
     })
 
     it('does not render restore button for non-reversible ops', () => {
       renderInListbox(defaultProps({ isNonReversible: true }))
-      expect(
-        screen.queryByRole('button', { name: /restore to this point/i }),
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /reset to this point/i })).not.toBeInTheDocument()
     })
 
     it('calls onRestoreToHere when clicked', async () => {
       const user = userEvent.setup()
       const onRestoreToHere = vi.fn()
       renderInListbox(defaultProps({ onRestoreToHere }))
-      await user.click(screen.getByRole('button', { name: /restore to this point/i }))
+      await user.click(screen.getByRole('button', { name: /reset to this point/i }))
       expect(onRestoreToHere).toHaveBeenCalledWith(defaultProps().entry)
     })
 
@@ -599,7 +597,7 @@ describe('HistoryListItem', () => {
       const user = userEvent.setup()
       const onRowClick = vi.fn()
       renderInListbox(defaultProps({ onRowClick }))
-      await user.click(screen.getByRole('button', { name: /restore to this point/i }))
+      await user.click(screen.getByRole('button', { name: /reset to this point/i }))
       expect(onRowClick).not.toHaveBeenCalled()
     })
 
@@ -618,6 +616,29 @@ describe('HistoryListItem', () => {
     it('does not render the touch label for non-reversible ops', () => {
       renderInListbox(defaultProps({ isNonReversible: true }))
       expect(screen.queryByTestId('restore-to-here-touch-label')).not.toBeInTheDocument()
+    })
+
+    // -- UX-345: disambiguate point-in-time reset from per-entry revert ------
+    // Pins the new copy so the label/touch-label/tooltip stay distinct from
+    // the per-entry "Revert" action and don't drift back to "Restore". The
+    // tooltip body lives inside Radix's portal and only mounts on
+    // hover/focus, so trigger pointer hover before asserting the tooltip text.
+    it('uses the disambiguated "Reset" copy for label, touch label, and tooltip', async () => {
+      const user = userEvent.setup()
+      renderInListbox(defaultProps())
+      const button = screen.getByRole('button', { name: 'Reset to this point' })
+      // aria-label distinguishes this point-in-time action from per-entry Revert.
+      expect(button).toBeInTheDocument()
+      // Touch-only visible label is the short "Reset" form.
+      expect(screen.getByTestId('restore-to-here-touch-label')).toHaveTextContent('Reset')
+      // Tooltip text disambiguates from the per-entry Revert action. Radix
+      // mirrors the body into a sr-only `role="tooltip"` node, so multiple
+      // matches are expected — assert at least one carries the new copy.
+      await user.hover(button)
+      const tooltipMatches = await screen.findAllByText(
+        /Undoes every operation after this point — use the per-entry Revert action for individual entries\./,
+      )
+      expect(tooltipMatches.length).toBeGreaterThan(0)
     })
   })
 
@@ -773,22 +794,22 @@ describe('BlockHistoryItem', () => {
 
   it('shows restore button only for edit_block with rawContent', () => {
     renderInList(blockDefaultProps({ entry: makeEntry(1, 'edit_block', { to_text: 'content' }) }))
-    expect(screen.getByRole('button', { name: /restore to this point/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /reset to this point/i })).toBeInTheDocument()
   })
 
   it('does not show restore button for edit_block without rawContent', () => {
     renderInList(blockDefaultProps({ entry: makeEntry(1, 'edit_block', { some_field: 'val' }) }))
-    expect(screen.queryByRole('button', { name: /restore to this point/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /reset to this point/i })).not.toBeInTheDocument()
   })
 
   it('does not show restore button for create_block', () => {
     renderInList(blockDefaultProps({ entry: makeEntry(1, 'create_block', { content: 'new' }) }))
-    expect(screen.queryByRole('button', { name: /restore to this point/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /reset to this point/i })).not.toBeInTheDocument()
   })
 
   it('does not show restore button for delete_block', () => {
     renderInList(blockDefaultProps({ entry: makeEntry(1, 'delete_block', { block_id: 'B1' }) }))
-    expect(screen.queryByRole('button', { name: /restore to this point/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /reset to this point/i })).not.toBeInTheDocument()
   })
 
   it('calls onRestore when restore button is clicked', async () => {
@@ -796,7 +817,7 @@ describe('BlockHistoryItem', () => {
     const onRestore = vi.fn()
     const entry = makeEntry(1, 'edit_block', { to_text: 'content' })
     renderInList(blockDefaultProps({ entry, onRestore }))
-    await user.click(screen.getByRole('button', { name: /restore to this point/i }))
+    await user.click(screen.getByRole('button', { name: /reset to this point/i }))
     expect(onRestore).toHaveBeenCalledWith(entry)
   })
 

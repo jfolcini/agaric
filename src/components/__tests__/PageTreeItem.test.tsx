@@ -263,6 +263,28 @@ describe('PageTreeItem', () => {
     })
   })
 
+  describe('UX-333 — Plus buttons are visible on desktop without hover', () => {
+    it('namespace Plus button is not hidden behind opacity-0/group-hover', () => {
+      const child = makeLeaf('child', 'ns/child', 'P1')
+      const node = makeNamespace('ns', 'ns', [child])
+      render(<PageTreeItem node={node} {...defaultProps} />)
+
+      const btn = screen.getByRole('button', { name: /Create page under ns/ })
+      expect(btn.className).not.toContain('opacity-0')
+      expect(btn.className).not.toContain('group-hover:opacity-100')
+    })
+
+    it('hybrid Plus button is not hidden behind opacity-0/group-hover', () => {
+      const child = makeLeaf('sub', 'work/sub', 'P2')
+      const node = makeHybrid('work', 'work', 'P1', [child])
+      render(<PageTreeItem node={node} {...defaultProps} />)
+
+      const btn = screen.getByRole('button', { name: /Create page under work/ })
+      expect(btn.className).not.toContain('opacity-0')
+      expect(btn.className).not.toContain('group-hover:opacity-100')
+    })
+  })
+
   describe('UX-1 — focus-visible ring + aria-labels on hand-rolled buttons', () => {
     const ringClasses = [
       'focus-visible:ring-[3px]',

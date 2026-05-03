@@ -299,8 +299,10 @@ describe('PropertyDefinitionsList', () => {
     mockedInvoke.mockRejectedValueOnce(new Error('Invalid JSON'))
 
     const optionsInput = screen.getByLabelText('Options JSON')
-    await user.clear(optionsInput)
-    await user.type(optionsInput, 'not-valid-json')
+    // UX-339: client-side parse validation now disables Save on invalid
+    // input, so the toast-on-server-error path requires a payload that
+    // parses locally but is rejected by the backend mock.
+    fireEvent.change(optionsInput, { target: { value: '["a"]' } })
 
     const saveBtn = screen.getByRole('button', { name: /Save/i })
     await user.click(saveBtn)
@@ -593,6 +595,83 @@ describe('PropertyDefinitionsList', () => {
         })
       })
       expect(getPriorityLevels()).toEqual(['1', '2', '3'])
+    })
+  })
+
+  // UX-339 — inline JSON validation in the options editor. The Save button
+  // is disabled and an inline error is rendered when the input does not
+  // parse as JSON. Empty input is treated as valid (clears options).
+  describe('inline options JSON validation (UX-339)', () => {
+    it('empty input shows no error and Save is enabled', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(
+        pageOf([makePropDef('status', 'select', '["open","closed"]')]),
+      )
+
+      render(<PropertyDefinitionsList />)
+
+      expect(await screen.findByText('Status')).toBeInTheDocument()
+
+      const editBtn = screen.getByRole('button', { name: /Edit options/i })
+      await user.click(editBtn)
+
+      const optionsInput = screen.getByLabelText(t('propertiesView.optionsJsonLabel'))
+      fireEvent.change(optionsInput, { target: { value: '' } })
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(optionsInput).not.toHaveAttribute('aria-invalid', 'true')
+
+      const saveBtn = screen.getByRole('button', { name: /^Save$/i })
+      expect(saveBtn).toBeEnabled()
+    })
+
+    it('valid JSON shows no error and Save is enabled', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(
+        pageOf([makePropDef('status', 'select', '["open","closed"]')]),
+      )
+
+      render(<PropertyDefinitionsList />)
+
+      expect(await screen.findByText('Status')).toBeInTheDocument()
+
+      const editBtn = screen.getByRole('button', { name: /Edit options/i })
+      await user.click(editBtn)
+
+      const optionsInput = screen.getByLabelText(t('propertiesView.optionsJsonLabel'))
+      fireEvent.change(optionsInput, { target: { value: '["a"]' } })
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(optionsInput).not.toHaveAttribute('aria-invalid', 'true')
+
+      const saveBtn = screen.getByRole('button', { name: /^Save$/i })
+      expect(saveBtn).toBeEnabled()
+    })
+
+    it('invalid JSON shows inline error and disables Save', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(
+        pageOf([makePropDef('status', 'select', '["open","closed"]')]),
+      )
+
+      render(<PropertyDefinitionsList />)
+
+      expect(await screen.findByText('Status')).toBeInTheDocument()
+
+      const editBtn = screen.getByRole('button', { name: /Edit options/i })
+      await user.click(editBtn)
+
+      const optionsInput = screen.getByLabelText(t('propertiesView.optionsJsonLabel'))
+      fireEvent.change(optionsInput, { target: { value: '[unclosed' } })
+
+      const error = await screen.findByRole('alert')
+      expect(error).toHaveTextContent(/Invalid JSON:/)
+      expect(error).toHaveAttribute('id', 'property-options-json-error')
+      expect(optionsInput).toHaveAttribute('aria-invalid', 'true')
+      expect(optionsInput).toHaveAttribute('aria-describedby', 'property-options-json-error')
+
+      const saveBtn = screen.getByRole('button', { name: /^Save$/i })
+      expect(saveBtn).toBeDisabled()
     })
   })
 })

@@ -142,6 +142,7 @@ export const properties: Record<string, string> = {
   'property.editKeyLabel': 'Edit property {{key}}',
   'property.selectValue': '{{key}}: {{value}}',
   'propertiesView.optionsJsonLabel': 'Options JSON',
+  'propertiesView.invalidJsonHint': 'Invalid JSON: {{error}}',
   'tagFilter.notMode': 'NOT',
   'tagFilter.notModeTooltip': 'Show blocks WITHOUT any selected tag',
   'property.saved': 'Property saved',

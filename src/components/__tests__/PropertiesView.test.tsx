@@ -13,7 +13,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -433,12 +433,14 @@ describe('PropertiesView', () => {
     const editBtn = screen.getByRole('button', { name: /Edit options/i })
     await user.click(editBtn)
 
-    // Modify the options input (avoid brackets — userEvent treats [ as key descriptor)
+    // Modify the options input. Must be valid JSON or UX-339's
+    // client-side validator disables Save before the server-rejection
+    // mock can fire. fireEvent.change avoids userEvent's interpretation
+    // of bracket characters as key descriptors.
     const optionsInput = screen.getByLabelText(t('propertiesView.optionsJsonLabel'))
-    await user.clear(optionsInput)
-    await user.type(optionsInput, 'open,closed,pending')
+    fireEvent.change(optionsInput, { target: { value: '["open","closed","pending"]' } })
 
-    // Mock update to reject
+    // Mock update to reject (server-side rejection, not client-side parse).
     mockedInvoke.mockRejectedValueOnce(new Error('Invalid JSON'))
 
     const saveBtn = screen.getByRole('button', { name: /Save/i })
