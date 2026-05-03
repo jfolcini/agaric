@@ -8,11 +8,12 @@
  * History session starts current-space-only by design.
  */
 
-import { X } from 'lucide-react'
+import { HelpCircle, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -25,6 +26,17 @@ import { Switch } from '@/components/ui/switch'
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+
+/**
+ * UX-350 — convert backend op-type enum values (snake_case, e.g. `edit_block`)
+ * to camelCase (`editBlock`) for i18n key lookup. The i18n key naming
+ * convention (enforced by `src/lib/__tests__/i18n.test.ts`) requires
+ * alphanumeric segments separated by dots; underscores are reserved for the
+ * `_one` / `_other` plural suffixes only.
+ */
+function snakeToCamel(s: string): string {
+  return s.replace(/_([a-z])/g, (_match, ch: string) => ch.toUpperCase())
+}
 
 const OP_TYPES = [
   { value: 'edit_block', labelKey: 'history.opTypeEdit' },
@@ -98,6 +110,36 @@ export function HistoryFilterBar({
           ))}
         </SelectContent>
       </Select>
+      {/* UX-350: ? help icon opens a popover legend explaining each
+          op type — addresses the lack of in-UI explanation for the 12
+          internal op-type values shown in the Select. */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground"
+            aria-label={t('history.opTypeLegendLabel')}
+            data-testid="history-filter-legend-trigger"
+          >
+            <HelpCircle className="h-4 w-4" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-80" align="start">
+          <h4 className="text-sm font-semibold mb-2">{t('history.opTypeLegendTitle')}</h4>
+          <dl className="text-xs space-y-1.5">
+            {OP_TYPES.map((opType) => (
+              <div key={opType.value} className="flex gap-2">
+                <dt className="font-mono shrink-0 w-32">{t(opType.labelKey)}</dt>
+                <dd className="text-muted-foreground">
+                  {t(`history.opTypeDescription.${snakeToCamel(opType.value)}`)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </PopoverContent>
+      </Popover>
       {/* UX-275 sub-fix 3: inline ✕ to clear an active filter without
           opening the dropdown. */}
       {opTypeFilter !== null && (

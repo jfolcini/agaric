@@ -13,6 +13,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
+import { setCustomShortcut } from '@/lib/keyboard-config/storage'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
 import { KeyboardShortcuts } from '../KeyboardShortcuts'
@@ -365,6 +366,52 @@ describe('KeyboardShortcuts', () => {
       window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
 
       expect(onOpenChange).not.toHaveBeenCalled()
+    })
+  })
+
+  // UX-395: the footer "Customize" button navigates away to Settings → Keyboard.
+  // Make the label say "Customize in Settings" and add a ChevronRight glyph
+  // after the text to telegraph the navigation.
+  describe('customize footer button (UX-395)', () => {
+    it('button label reads "Customize in Settings"', () => {
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const button = screen.getByTestId('keyboard-customize-button')
+      expect(button).toHaveTextContent('Customize in Settings')
+    })
+
+    it('button renders a ChevronRight icon after the label', () => {
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const button = screen.getByTestId('keyboard-customize-button')
+      // lucide-react renders SVGs with a `lucide-chevron-right` class.
+      const chevron = button.querySelector('svg.lucide-chevron-right')
+      expect(chevron).not.toBeNull()
+    })
+  })
+
+  // UX-397: customised shortcuts in the help panel are flagged with a
+  // "Customized" badge so users can tell which rows reflect their own
+  // bindings vs. defaults.
+  describe('customized badge (UX-397)', () => {
+    it('renders a "Customized" badge in the row of an overridden shortcut', () => {
+      setCustomShortcut('focusSearch', 'Ctrl + G')
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const focusSearchLabel = screen.getByText(t('keyboard.focusSearch'))
+      const row = focusSearchLabel.closest('tr') as HTMLElement
+      expect(row).toBeTruthy()
+      expect(row.textContent).toContain(t('keyboard.settings.customized'))
+    })
+
+    it('does not render a "Customized" badge for default (un-overridden) shortcuts', () => {
+      // No overrides set in localStorage.
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const focusSearchLabel = screen.getByText(t('keyboard.focusSearch'))
+      const row = focusSearchLabel.closest('tr') as HTMLElement
+      expect(row).toBeTruthy()
+      expect(row.textContent).not.toContain(t('keyboard.settings.customized'))
     })
   })
 })

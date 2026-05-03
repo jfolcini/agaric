@@ -5,9 +5,10 @@
  * a sidebar button. Uses the Sheet component for a slide-in panel.
  */
 
-import { Keyboard, Settings as SettingsIcon } from 'lucide-react'
+import { ChevronRight, Keyboard, Settings as SettingsIcon } from 'lucide-react'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -27,6 +28,7 @@ interface ShortcutDef {
   keys: string
   condition?: string
   description: string
+  isCustom?: boolean
 }
 
 function buildShortcutGroups(): { category: string; shortcuts: ShortcutDef[] }[] {
@@ -38,6 +40,7 @@ function buildShortcutGroups(): { category: string; shortcuts: ShortcutDef[] }[]
       keys: s.keys,
       description: s.description,
       ...(s.condition != null && { condition: s.condition }),
+      ...(s.isCustom && { isCustom: true }),
     })
     groupMap.set(s.category, list)
   }
@@ -176,6 +179,11 @@ export function KeyboardShortcuts({
                               {t(shortcut.condition)}
                             </small>
                           )}
+                          {shortcut.isCustom && (
+                            <Badge variant="secondary" className="ml-1 text-xs">
+                              {t('keyboard.settings.customized')}
+                            </Badge>
+                          )}
                         </span>
                       </td>
                       <td className="py-3 text-muted-foreground">{t(shortcut.description)}</td>
@@ -229,6 +237,7 @@ export function KeyboardShortcuts({
           >
             <SettingsIcon className="h-4 w-4" />
             {t('keyboard.customizeButton')}
+            <ChevronRight className="h-3.5 w-3.5 ml-auto" aria-hidden="true" />
           </Button>
         </SheetFooter>
       </SheetContent>

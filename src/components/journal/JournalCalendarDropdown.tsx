@@ -120,16 +120,21 @@ export function JournalCalendarDropdown({
   const [flipAbove, setFlipAbove] = useState(false)
   const [shiftLeft, setShiftLeft] = useState(0)
   const [agendaBySource, setAgendaBySource] = useState<Record<string, Record<string, number>>>({})
+  const [loading, setLoading] = useState(true)
 
   const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: monthKey encodes the month
   useEffect(() => {
     let cancelled = false
+    setLoading(true)
     const dates = getCalendarDateRange(currentDate)
     countAgendaBatchBySource({ dates, spaceId: currentSpaceId })
       .then((data) => {
-        if (!cancelled) setAgendaBySource(data)
+        if (!cancelled) {
+          setAgendaBySource(data)
+          setLoading(false)
+        }
       })
       .catch((err: unknown) => {
         logger.warn(
@@ -138,6 +143,7 @@ export function JournalCalendarDropdown({
           undefined,
           err,
         )
+        if (!cancelled) setLoading(false)
       })
     return () => {
       cancelled = true
@@ -187,6 +193,7 @@ export function JournalCalendarDropdown({
         ref={calRef}
         role="dialog"
         aria-modal="true"
+        aria-busy={loading}
         aria-label={t('journal.datePickerLabel')}
         className={cn(
           'absolute right-0 z-50 rounded-md border bg-popover p-2 shadow-md',
@@ -211,6 +218,7 @@ export function JournalCalendarDropdown({
             hasProperty: datesWithProperty,
           }}
           components={{ DayButton: CalendarDayButton }}
+          className={cn('transition-opacity', loading && 'opacity-70')}
         />
         {/* Color dot legend */}
         <ul

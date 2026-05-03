@@ -26,6 +26,7 @@ vi.mock('../ui/calendar', () => ({
     return (
       <div
         data-testid="mock-calendar"
+        className={(props['className'] as string) ?? undefined}
         data-has-content={modifiers?.['hasContent']?.length ?? 0}
         data-has-due={modifiers?.['hasDue']?.length ?? 0}
         data-has-scheduled={modifiers?.['hasScheduled']?.length ?? 0}
@@ -200,6 +201,31 @@ describe('JournalCalendarDropdown', () => {
         }),
       )
     })
+  })
+
+  it('marks the dialog aria-busy and dims the calendar while the fetch is pending, then clears both on resolve', async () => {
+    let resolveFetch: (value: Record<string, Record<string, number>>) => void = () => {}
+    const pending = new Promise<Record<string, Record<string, number>>>((resolve) => {
+      resolveFetch = resolve
+    })
+    mockedInvoke.mockReturnValueOnce(pending)
+
+    render(<JournalCalendarDropdown {...defaultProps} />)
+
+    // While the fetch is hanging: aria-busy is "true" and the calendar is dimmed.
+    const dialog = screen.getByRole('dialog', { name: /date picker/i })
+    expect(dialog).toHaveAttribute('aria-busy', 'true')
+    const calendar = screen.getByTestId('mock-calendar')
+    expect(calendar.className).toContain('opacity-70')
+
+    // Resolve the fetch.
+    resolveFetch({})
+
+    // After resolution: aria-busy flips to "false" and the opacity dim is gone.
+    await waitFor(() => {
+      expect(dialog).toHaveAttribute('aria-busy', 'false')
+    })
+    expect(screen.getByTestId('mock-calendar').className).not.toContain('opacity-70')
   })
 
   it('passes highlighted days as modifiers to Calendar', () => {
