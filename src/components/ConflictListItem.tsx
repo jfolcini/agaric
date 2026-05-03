@@ -14,7 +14,7 @@
  *    show a warning banner and disable the Keep action.
  */
 
-import { AlertTriangle, Check, ExternalLink, X } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Check, ExternalLink, Pencil, Settings, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
@@ -47,6 +47,17 @@ function conflictTypeBadgeClass(type: 'Text' | 'Property' | 'Move'): string {
       return 'bg-conflict-move text-conflict-move-foreground border-border'
   }
 }
+
+/**
+ * UX-349: Per-type icon for the conflict-type badge so the type is
+ * distinguishable for color-blind users (the badge color alone is not
+ * sufficient).
+ */
+const conflictTypeIcon = {
+  Text: Pencil,
+  Property: Settings,
+  Move: ArrowRight,
+} as const
 
 /** Resolve the display timestamp for a conflict block from its ULID. */
 function getConflictTimestamp(block: BlockRow): string {
@@ -84,6 +95,7 @@ export function ConflictListItem({
 }: ConflictListItemProps): React.ReactElement {
   const { t } = useTranslation()
   const conflictType = inferConflictType(block, original)
+  const ConflictTypeIcon = conflictTypeIcon[conflictType]
   // UX-265 sub-fix 4: original block expected (parent_id set) but not loaded.
   const originalMissing = block.parent_id != null && original == null
   const keepDisabled = originalMissing
@@ -148,6 +160,11 @@ export function ConflictListItem({
                     )}
                     aria-label={t(`conflict.type${conflictType}`)}
                   >
+                    <ConflictTypeIcon
+                      className="h-3 w-3 mr-1"
+                      aria-hidden="true"
+                      data-testid="conflict-type-icon"
+                    />
                     {conflictType}
                   </Badge>
                 </TooltipTrigger>
@@ -225,6 +242,9 @@ export function ConflictListItem({
             </TooltipTrigger>
             <TooltipContent>
               <p>{keepAriaDescription}</p>
+              {!keepDisabled && (
+                <p className="text-xs text-muted-foreground">{t('conflict.useIncomingHelp')}</p>
+              )}
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -246,6 +266,7 @@ export function ConflictListItem({
             </TooltipTrigger>
             <TooltipContent>
               <p>{t('conflict.discardTooltip')}</p>
+              <p className="text-xs text-muted-foreground">{t('conflict.rejectIncomingHelp')}</p>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>

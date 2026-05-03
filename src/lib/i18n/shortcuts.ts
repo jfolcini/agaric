@@ -7,7 +7,7 @@
  */
 
 export const shortcuts: Record<string, string> = {
-  'keyboard.customizeButton': 'Customize shortcuts',
+  'keyboard.customizeButton': 'Customize in Settings',
   'keyboard.sheetDescription': 'Available keyboard shortcuts and syntax reference for the editor.',
   'keyboard.shortcutHeader': 'Shortcut',
   'keyboard.actionHeader': 'Action',

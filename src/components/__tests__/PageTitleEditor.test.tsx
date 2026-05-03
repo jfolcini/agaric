@@ -11,6 +11,7 @@ vi.mock('lucide-react', () => ({
   Info: () => <svg data-testid="info-icon" />,
   Lightbulb: () => <svg data-testid="lightbulb-icon" />,
   MoreVertical: () => <svg data-testid="more-vertical-icon" />,
+  Pencil: (props: Record<string, unknown>) => <svg data-testid="pencil-icon" {...props} />,
   Plus: () => <svg data-testid="plus-icon" />,
   Redo2: () => <svg data-testid="redo2-icon" />,
   StickyNote: () => <svg data-testid="sticky-note-icon" />,
@@ -54,6 +55,32 @@ describe('PageTitleEditor rendering', () => {
 
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
     expect(ref.current?.textContent).toBe('My Page')
+  })
+
+  it('plain-text branch signals editability with cursor-text', () => {
+    render(<PageTitleEditor {...defaultProps} />)
+
+    const el = screen.getByRole('textbox', { name: /page title/i })
+    expect(el).toHaveClass('cursor-text')
+  })
+
+  it('plain-text branch does not render the edit hint icon', () => {
+    render(<PageTitleEditor {...defaultProps} />)
+
+    expect(screen.queryByTestId('pencil-icon')).not.toBeInTheDocument()
+  })
+
+  it('rich-display branch signals editability with cursor-text', () => {
+    render(<PageTitleEditor {...defaultProps} title="Hello [[01HXXXXXXX]] world" />)
+
+    const el = screen.getByRole('textbox', { name: /page title/i })
+    expect(el).toHaveClass('cursor-text')
+  })
+
+  it('rich-display branch renders a hover-revealed Pencil edit hint', () => {
+    render(<PageTitleEditor {...defaultProps} title="Hello [[01HXXXXXXX]] world" />)
+
+    expect(screen.getByTestId('pencil-icon')).toBeInTheDocument()
   })
 })
 

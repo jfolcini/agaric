@@ -584,7 +584,7 @@ describe('ConflictListItem', () => {
 
   // -- UX-5: Ambiguous/hidden state on Keep button + missing-original banner --
   describe('UX-5 — Keep button visible label & collapsed-row banner', () => {
-    it('renders "Keep incoming" as the visible Keep button label', () => {
+    it('renders "Use incoming" as the visible Keep button label', () => {
       const block = makeConflict({ id: 'C1', content: 'incoming text' })
 
       render(
@@ -600,7 +600,7 @@ describe('ConflictListItem', () => {
 
       const keepBtn = screen.getByTestId('conflict-keep-btn')
       expect(keepBtn.textContent).toContain(t('conflict.keepIncoming'))
-      expect(keepBtn.textContent).toContain('Keep incoming')
+      expect(keepBtn.textContent).toContain('Use incoming')
     })
 
     it('shows the originalMissing banner on the collapsed row (not gated by isExpanded)', () => {
@@ -654,6 +654,132 @@ describe('ConflictListItem', () => {
         const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
+    })
+  })
+
+  // -- UX-347: clearer Keep/Discard button labels + help-text tooltip --
+  describe('UX-347 — clearer button labels and help text', () => {
+    it('keep button reads "Use incoming" (not "Keep")', () => {
+      const block = makeConflict({ id: 'C1', content: 'text' })
+
+      render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
+        </ul>,
+      )
+
+      const keepBtn = screen.getByTestId('conflict-keep-btn')
+      expect(keepBtn.textContent).toContain('Use incoming')
+      expect(keepBtn.textContent).not.toContain('Keep incoming')
+    })
+
+    it('discard button reads "Reject incoming" (not "Discard")', () => {
+      const block = makeConflict({ id: 'C1', content: 'text' })
+
+      render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
+        </ul>,
+      )
+
+      const discardBtn = screen.getByTestId('conflict-discard-btn')
+      expect(discardBtn.textContent).toContain('Reject incoming')
+      expect(discardBtn.textContent).not.toContain('Discard Incoming')
+    })
+
+    it('Keep tooltip includes the use-incoming help text', async () => {
+      const user = userEvent.setup()
+      const block = makeConflict({ id: 'C1', content: 'text' })
+
+      render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
+        </ul>,
+      )
+
+      await user.hover(screen.getByTestId('conflict-keep-btn'))
+      await waitFor(() => {
+        const contents = document.querySelectorAll('[data-slot="tooltip-content"]')
+        const visible = Array.from(contents).find((c) =>
+          c.textContent?.includes(t('conflict.useIncomingHelp')),
+        )
+        expect(visible).toBeTruthy()
+      })
+    })
+
+    it('Discard tooltip includes the reject-incoming help text', async () => {
+      const user = userEvent.setup()
+      const block = makeConflict({ id: 'C1', content: 'text' })
+
+      render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
+        </ul>,
+      )
+
+      await user.hover(screen.getByTestId('conflict-discard-btn'))
+      await waitFor(() => {
+        const contents = document.querySelectorAll('[data-slot="tooltip-content"]')
+        const visible = Array.from(contents).find((c) =>
+          c.textContent?.includes(t('conflict.rejectIncomingHelp')),
+        )
+        expect(visible).toBeTruthy()
+      })
+    })
+  })
+
+  // -- UX-349: per-type icon on conflict-type badge -----------------------
+  describe('UX-349 — per-type icon for color-blind users', () => {
+    it('Text-conflict badge contains a Pencil icon', () => {
+      const block = makeConflict({ id: 'C1', content: 'text', conflict_type: null })
+
+      const { container } = render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
+        </ul>,
+      )
+
+      const badge = container.querySelector('.conflict-type-badge')
+      const icon = badge?.querySelector('[data-testid="conflict-type-icon"]')
+      expect(icon).toBeTruthy()
+      expect(icon?.getAttribute('aria-hidden')).toBe('true')
+      expect(icon?.classList.contains('lucide-pencil')).toBe(true)
+    })
+
+    it('Property-conflict badge contains a Settings icon', () => {
+      const block = makeConflict({ id: 'C1', content: 'p', conflict_type: 'Property' })
+
+      const { container } = render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
+        </ul>,
+      )
+
+      const badge = container.querySelector('.conflict-type-badge')
+      const icon = badge?.querySelector('[data-testid="conflict-type-icon"]')
+      expect(icon).toBeTruthy()
+      expect(icon?.classList.contains('lucide-settings')).toBe(true)
+    })
+
+    it('Move-conflict badge contains an ArrowRight icon', () => {
+      const block = makeConflict({
+        id: 'C1',
+        content: 'm',
+        conflict_type: 'Move',
+        parent_id: 'NEW',
+        position: 1,
+      })
+
+      const { container } = render(
+        <ul>
+          <ConflictListItem {...defaultProps} block={block} original={originalBlock} />
+        </ul>,
+      )
+
+      const badge = container.querySelector('.conflict-type-badge')
+      const icon = badge?.querySelector('[data-testid="conflict-type-icon"]')
+      expect(icon).toBeTruthy()
+      expect(icon?.classList.contains('lucide-arrow-right')).toBe(true)
     })
   })
 

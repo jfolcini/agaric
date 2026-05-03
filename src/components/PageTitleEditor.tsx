@@ -1,3 +1,4 @@
+import { Pencil } from 'lucide-react'
 import type React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -20,7 +21,7 @@ function hasInlineTokens(text: string): boolean {
 }
 
 const TITLE_CLASS = cn(
-  'flex-1 text-xl font-semibold outline-hidden rounded-md px-1',
+  'flex-1 text-xl font-semibold outline-hidden rounded-md px-1 cursor-text',
   'focus:ring-2 focus:ring-ring/50',
   'hover:bg-accent/5 focus-within:bg-accent/5 transition-colors',
 )
@@ -65,38 +66,44 @@ export function PageTitleEditor({
 
   // Rich display mode: render parsed title with pill chips
   return (
-    // biome-ignore lint/a11y/useSemanticElements: display div mirrors the contentEditable textbox role for consistency
-    <div
-      role="textbox"
-      tabIndex={0}
-      aria-label={t('pageHeader.pageTitle')}
-      className={TITLE_CLASS}
-      onClick={() => {
-        setEditing(true)
-        requestAnimationFrame(() => {
-          titleRef.current?.focus()
-        })
-      }}
-      onFocus={() => {
-        setEditing(true)
-        requestAnimationFrame(() => {
-          titleRef.current?.focus()
-        })
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
+    <div className="relative group flex flex-1 items-center">
+      {/* biome-ignore lint/a11y/useSemanticElements: display div mirrors the contentEditable textbox role for consistency */}
+      <div
+        role="textbox"
+        tabIndex={0}
+        aria-label={t('pageHeader.pageTitle')}
+        className={TITLE_CLASS}
+        onClick={() => {
           setEditing(true)
           requestAnimationFrame(() => {
             titleRef.current?.focus()
           })
-        }
-      }}
-    >
-      {/* PageTitleEditor wraps content in role="textbox"; keep chips inert
-          to avoid nested-interactive. `onTagClick` is threaded so the gate
-          can be flipped later. See UX-249. */}
-      {renderRichContent(title, { interactive: false, onTagClick, ...richCallbacks })}
+        }}
+        onFocus={() => {
+          setEditing(true)
+          requestAnimationFrame(() => {
+            titleRef.current?.focus()
+          })
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            setEditing(true)
+            requestAnimationFrame(() => {
+              titleRef.current?.focus()
+            })
+          }
+        }}
+      >
+        {/* PageTitleEditor wraps content in role="textbox"; keep chips inert
+            to avoid nested-interactive. `onTagClick` is threaded so the gate
+            can be flipped later. See UX-249. */}
+        {renderRichContent(title, { interactive: false, onTagClick, ...richCallbacks })}
+      </div>
+      <Pencil
+        aria-hidden="true"
+        className="absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-60 group-focus-within:opacity-60 transition-opacity pointer-events-none"
+      />
     </div>
   )
 }

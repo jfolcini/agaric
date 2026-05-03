@@ -61,6 +61,7 @@ vi.mock('lucide-react', () => ({
   List: (props: Record<string, unknown>) => <svg data-testid="list-icon" {...props} />,
   MapPin: () => <svg data-testid="map-pin-icon" />,
   MoreVertical: () => <svg data-testid="more-vertical-icon" />,
+  Pencil: (props: Record<string, unknown>) => <svg data-testid="pencil-icon" {...props} />,
   Plus: () => <svg data-testid="plus-icon" />,
   Redo2: () => <svg data-testid="redo2-icon" />,
   Repeat: () => <svg data-testid="repeat-icon" />,
