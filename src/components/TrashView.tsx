@@ -21,6 +21,7 @@ import { toast } from 'sonner'
 import { BatchActionToolbar } from '@/components/BatchActionToolbar'
 import { Button } from '@/components/ui/button'
 import { SearchInput } from '@/components/ui/search-input'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
@@ -363,16 +364,31 @@ export function TrashView(): React.ReactElement {
           <Button variant="ghost" size="sm" onClick={clearSelection}>
             {t('trash.deselectAllButton')}
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={requestBatchRestore}
-            data-testid="trash-batch-restore-btn"
-            aria-keyshortcuts="Shift+R"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            {t('trash.restoreSelectedButton')}
-          </Button>
+          {/* UX-343 — surface the BATCH_RESTORE_CONFIRM_THRESHOLD boundary so
+              users know a confirmation kicks in for selections > 5. */}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={requestBatchRestore}
+                  data-testid="trash-batch-restore-btn"
+                  aria-keyshortcuts="Shift+R"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  {t('trash.restoreSelectedButton')}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>
+                  {t('trash.restoreThresholdTooltip', {
+                    threshold: BATCH_RESTORE_CONFIRM_THRESHOLD,
+                  })}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           <Button
             variant="destructive"
             size="sm"

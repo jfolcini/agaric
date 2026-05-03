@@ -231,10 +231,20 @@ export function GraphView(): React.ReactElement {
        * `aria-label`, which still gives the SVG a label when ATs surface it
        * via its default graphics role.
        */}
+      {/*
+       * UX-355: pair the SVG with a visually-hidden hint so keyboard users
+       * discover that nodes are activatable. `aria-describedby` points at
+       * the `sr-only` paragraph so ATs read the hint alongside the SVG's
+       * accessible name without affecting visual layout.
+       */}
+      <p id="graph-keyboard-hint" className="sr-only">
+        {t('graph.keyboardHint')}
+      </p>
       <svg
         ref={svgRef}
         className="absolute inset-0 h-full w-full"
         aria-label={t('graph.title')}
+        aria-describedby="graph-keyboard-hint"
         data-testid="graph-svg"
       />
       <div className="absolute bottom-3 right-3 flex flex-col gap-1">

@@ -886,6 +886,27 @@ describe('LinkedReferences', () => {
     expect(screen.getByRole('button', { name: /show filters/i })).toBeInTheDocument()
   })
 
+  // 26a. UX-363: filter button shows visible "Filters" text label
+  it('filter button shows visible "Filters" text label (UX-363)', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockInvokeWith(resp)
+
+    renderLinkedReferences({ pageId: 'PAGE1' })
+
+    await screen.findByText('Page One (1)')
+
+    // Visible "Filters" text inside the icon button (sibling of the icon).
+    const filterBtn = screen.getByRole('button', { name: /show filters/i })
+    expect(filterBtn).toContainElement(screen.getByText('Filters'))
+  })
+
   // 27. "More filters" toggles advanced filter panel
   it('"More filters" toggles advanced filter panel', async () => {
     const user = userEvent.setup()

@@ -133,6 +133,10 @@ function drawNodes(g: GSel, simNodes: GraphNode[]): NodeSel {
     .style('pointer-events', 'none')
     .style('user-select', 'none')
 
+  // UX-357: native SVG <title> tooltip carries the full label so truncated
+  // names ("prefix…") are still discoverable on hover.
+  node.append('title').text((d) => d.label)
+
   return node
 }
 

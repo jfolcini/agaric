@@ -143,6 +143,7 @@ export const conflicts: Record<string, string> = {
   'trash.restoreAllButton': 'Restore all',
   'trash.purgeAllButton': 'Purge all',
   'trash.restoreSelectedButton': 'Restore selected',
+  'trash.restoreThresholdTooltip': 'Confirms restore for more than {{threshold}} items',
   'trash.purgeSelectedButton': 'Purge selected',
   'trash.emptyTrashButton': 'Empty trash',
   'trash.restoreAllHeaderButton': 'Restore all',

@@ -439,6 +439,24 @@ describe('PropertyDefinitionsList', () => {
     expect(deleteBtn).toHaveAttribute('aria-label', 'Delete property my-prop')
   })
 
+  // UX-344 — delete button must be reachable on desktop without hovering
+  // the row. Pin the visibility so a future "hide-until-hover" regression
+  // is caught at test time.
+  it('delete button is always visible (no opacity-0 / group-hover gating)', async () => {
+    mockedInvoke.mockResolvedValueOnce(pageOf([makePropDef('my-prop', 'text')]))
+
+    render(<PropertyDefinitionsList />)
+
+    const deleteBtn = await screen.findByRole('button', {
+      name: t('properties.deleteDefinition', { key: 'my-prop' }),
+    })
+    expect(deleteBtn).toBeInTheDocument()
+
+    const className = deleteBtn.className
+    expect(className).not.toMatch(/(^|\s)opacity-0(\s|$)/)
+    expect(className).not.toMatch(/group-hover:opacity-100/)
+  })
+
   // UX-211: Options JSON placeholder resolves via t()
   it('options JSON input placeholder resolves via t() (UX-211)', async () => {
     const user = userEvent.setup()
