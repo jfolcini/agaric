@@ -111,8 +111,12 @@ describe('useBlockTreeEventListeners', () => {
 
       dispatchBlockEvent('SET_PRIORITY_1')
 
-      // Give a tick for any async handler to fire
-      await new Promise((r) => setTimeout(r, 50))
+      // The async handler returns a resolved promise via the synchronous
+      // `if (!focusedBlockId) return` guard before reaching any `await`,
+      // so no microtask chain is scheduled. Flush one microtask for
+      // defensive determinism, then assert absence of the negative side
+      // effect (TEST-FE-1).
+      await Promise.resolve()
 
       const callsForSetPriority = mockedInvoke.mock.calls.filter(
         (c: unknown[]) => c[0] === 'set_priority',

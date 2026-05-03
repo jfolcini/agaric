@@ -1234,16 +1234,19 @@ describe('BlockTree task cycling', () => {
       expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
     })
 
-    // Fire Ctrl+Enter keydown
-    const event = new KeyboardEvent('keydown', {
-      key: 'Enter',
-      ctrlKey: true,
-      bubbles: true,
+    // Fire Ctrl+Enter keydown — handler synchronously short-circuits when
+    // no block is focused. Wrap the dispatch in act(async) so React work
+    // and any chained microtasks flush deterministically before asserting
+    // absence of the negative side effect (TEST-FE-1).
+    await act(async () => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        ctrlKey: true,
+        bubbles: true,
+      })
+      document.dispatchEvent(event)
     })
-    document.dispatchEvent(event)
 
-    // Should not call set_todo_state
-    await new Promise((r) => setTimeout(r, 50))
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_todo_state', expect.anything())
   })
 })
@@ -3653,12 +3656,13 @@ describe('BlockTree handleMergeWithPrev', () => {
       expect(handler).toBeDefined()
     })
 
-    act(() => {
+    // Handler short-circuits sync on first block. Wrap in act(async) so
+    // any chained microtask settles before asserting absence of the IPC
+    // calls (TEST-FE-1).
+    await act(async () => {
       ;(capturedBlockKeyboardOpts?.['onMergeWithPrev'] as () => void)?.()
     })
 
-    // No edit_block or delete_block should be called
-    await new Promise((r) => setTimeout(r, 50))
     expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
   })
@@ -3748,12 +3752,13 @@ describe('BlockTree handleIndent / handleDedent', () => {
       expect(handler).toBeDefined()
     })
 
-    act(() => {
+    // Indent on first block is a sync no-op. Wrap in act(async) so any
+    // chained microtask settles before asserting move_block was not
+    // dispatched (TEST-FE-1).
+    await act(async () => {
       ;(capturedBlockKeyboardOpts?.['onIndent'] as () => void)?.()
     })
 
-    // No move_block should be called
-    await new Promise((r) => setTimeout(r, 50))
     expect(mockedInvoke).not.toHaveBeenCalledWith('move_block', expect.anything())
   })
 
@@ -3771,12 +3776,13 @@ describe('BlockTree handleIndent / handleDedent', () => {
       expect(handler).toBeDefined()
     })
 
-    act(() => {
+    // Dedent on a root-level block is a sync no-op (already at root).
+    // Wrap in act(async) so any chained microtask settles before asserting
+    // move_block was not dispatched (TEST-FE-1).
+    await act(async () => {
       ;(capturedBlockKeyboardOpts?.['onDedent'] as () => void)?.()
     })
 
-    // No move_block should be called (already at root)
-    await new Promise((r) => setTimeout(r, 50))
     expect(mockedInvoke).not.toHaveBeenCalledWith('move_block', expect.anything())
   })
 })
@@ -3891,11 +3897,13 @@ describe('BlockTree priority keyboard shortcuts', () => {
       expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
     })
 
-    act(() => {
+    // The set-priority listener short-circuits sync when no block is
+    // focused. Wrap in act(async) so any chained microtask settles before
+    // asserting set_priority was not invoked (TEST-FE-1).
+    await act(async () => {
       document.dispatchEvent(new Event('set-priority-1'))
     })
 
-    await new Promise((r) => setTimeout(r, 50))
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_priority', expect.anything())
   })
 })
@@ -4032,11 +4040,20 @@ describe('BlockTree handleDatePick date format', () => {
     })
 
     await act(async () => {
-      mockCalendarOnSelect?.(new Date(2025, 2, 15))
+      await mockCalendarOnSelect?.(new Date(2025, 2, 15))
     })
 
-    // Should NOT call create_block since the page already exists
-    await new Promise((r) => setTimeout(r, 50))
+    // Positive signal: handleDateMode awaits `list_blocks` (page lookup)
+    // before deciding whether to create. Wait for it, then assert the
+    // create_block path was NOT taken because the page already exists
+    // (TEST-FE-1).
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'list_blocks',
+        expect.objectContaining({ blockType: 'page' }),
+      )
+    })
+
     expect(mockedInvoke).not.toHaveBeenCalledWith(
       'create_block',
       expect.objectContaining({ content: '2025-03-15' }),
@@ -4852,13 +4869,14 @@ describe('BlockTree Enter creates new sibling block', () => {
     // Clear the mock to track only future calls
     mockedInvoke.mockClear()
 
-    // Now change focus away from the non-empty just-created block
-    act(() => {
+    // Now change focus away from the non-empty just-created block. The
+    // cleanup useEffect runs synchronously after commit; wrap the focus
+    // change in act(async) so React commits + chained microtasks settle
+    // deterministically before asserting absence of delete_block
+    // (TEST-FE-1).
+    await act(async () => {
       useBlockStore.setState({ focusedBlockId: 'A' })
     })
-
-    // Wait a tick to ensure the cleanup effect has run
-    await new Promise((r) => setTimeout(r, 50))
 
     // Verify delete_block was NOT called (block has content)
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', {
@@ -5727,16 +5745,14 @@ describe('H-9: auto-create first block on empty page', () => {
       renderBlockTree({ parentId: 'PAGE_1' })
     })
 
-    // Flush the resolved promise microtask chain (create_block .then)
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 50))
+    // Wait for the create_block .then chain to commit the new block into
+    // the store and focus it (positive observable end state, TEST-FE-1).
+    await waitFor(() => {
+      expect(pageStore.getState().blocks).toHaveLength(1)
+      expect(useBlockStore.getState().focusedBlockId).toBe('NEW_BLOCK_1')
     })
 
-    const { blocks } = pageStore.getState()
-    const { focusedBlockId } = useBlockStore.getState()
-    expect(blocks).toHaveLength(1)
-    expect(blocks[0]?.id).toBe('NEW_BLOCK_1')
-    expect(focusedBlockId).toBe('NEW_BLOCK_1')
+    expect(pageStore.getState().blocks[0]?.id).toBe('NEW_BLOCK_1')
   })
 
   it('does not auto-create when blocks already exist', async () => {
@@ -5775,9 +5791,13 @@ describe('H-9: auto-create first block on empty page', () => {
 
     renderBlockTree({ parentId: 'PAGE_1' })
 
-    // Wait a tick to give effects a chance to fire
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 50))
+    // Positive signal: the page-load effect kicks off `list_blocks`
+    // immediately on mount. Once that has fired we know the auto-create
+    // effect has had a chance to evaluate its guard and short-circuit on
+    // `loading=true` — at which point we can safely assert that
+    // `create_block` was NOT dispatched (TEST-FE-1).
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', expect.anything())
     })
 
     expect(mockedInvoke).not.toHaveBeenCalledWith(
@@ -5793,9 +5813,12 @@ describe('H-9: auto-create first block on empty page', () => {
 
     renderBlockTree()
 
-    // Wait a tick to give effects a chance to fire
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 50))
+    // Positive signal: load() always invokes `list_blocks` on mount, so
+    // once that has fired we know the auto-create effect has had a chance
+    // to evaluate its guard and short-circuit on `rootParentId === null`
+    // before we assert absence of the negative side effect (TEST-FE-1).
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', expect.anything())
     })
 
     expect(mockedInvoke).not.toHaveBeenCalledWith(
@@ -5824,14 +5847,17 @@ describe('H-9: auto-create first block on empty page', () => {
 
     renderBlockTree({ parentId: 'PAGE_1', autoCreateFirstBlock: false })
 
-    // Wait for load to complete (blocks empty, page loaded)
+    // Positive signal: wait for load to complete (loading=false). After
+    // the load effect commits, the auto-create effect's deps update and
+    // it re-runs synchronously — so once `loading=false` is observed and
+    // microtasks have been flushed via act(async), any auto-create call
+    // would already have been dispatched. Then assert absence of the
+    // negative side effect (TEST-FE-1).
     await waitFor(() => {
       expect(pageStore.getState().loading).toBe(false)
     })
-
-    // Wait a tick to give effects a chance to fire
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 50))
+      await Promise.resolve()
     })
 
     expect(mockedInvoke).not.toHaveBeenCalledWith(
