@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 649 — Batch MIX-6: closed TEST-FE-1 entirely (4 actual violations in JournalPage + ViewHeader fixed orchestrator-direct; 5 of 7 listed files were already using AGENTS.md-canonical `act(async () => setTimeout(r, 0))` microtask flush, never violations), audited `useBlockKeyboardHandlers` portion of TEST-FE-2 (10 sites, 0 tightenings — all no-arg by contract, comment-annotated), updated MAINT-193 breakdown to drop the stale `template-injection × 6` cluster (already defused by MAINT-114))
+> **Last updated:** 2026-05-03 (Session 650 — Batch MIX-7: TEST-FE-2 audit pass over `BlockPropertyEditor` (7-for-7 genuine violations TIGHTENED with `toHaveBeenCalledWith(...)` — real catches including `computePosition` placement option) + `HeadingLevelSelector` (7-for-7 legitimate no-arg, comment-annotated). 14 sites cleaned across 2 files via 2 parallel subagents.)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -39,7 +39,7 @@ Items flagged during development that need revisiting. Organized by section with
 | PUB-5 | PUB | Tauri updater — endpoint URL pinned to `jfolcini/agaric`; remaining work is user-only (generate Minisign keypair, paste pubkey into `tauri.conf.json`, add 2 GH Actions secrets, uncomment env vars in `release.yml`) | S | User-only |
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
-| TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `BlockContextMenu` (19), `FormattingToolbar` (16), `GraphView` (8), `BlockPropertyEditor` (7), `HeadingLevelSelector` (7), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently. `useBlockKeyboardHandlers` (10) audited & confirmed legitimate (no-arg spies). | M | — |
+| TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `FormattingToolbar` (16), `GraphView` (8), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently. `BlockContextMenu` (19, only 9 are bare on `props.onClose`, already complies), `useBlockKeyboardHandlers` (10), `HeadingLevelSelector` (7) audited & confirmed legitimate (all no-arg spies, comment-annotated). `BlockPropertyEditor` (7) audited & all 7 tightened to `toHaveBeenCalledWith(...)`. | M | — |
 | UX-305 | UX | Drag handle on touch has 250 ms long-press requirement, no hint | S | — |
 | UX-306 | UX | Touch gutter "More actions" menu doesn't preview hidden actions | S | — |
 | UX-313 | UX | Broken-link "click to remove" is hover-only (no touch affordance) | S | — |
@@ -445,19 +445,20 @@ Items in this section are test-quality improvements identified during a thorough
 
 ### TEST-FE-2 — Weak `toHaveBeenCalled()` assertions in hot files
 - **Domain:** Frontend test infrastructure
-- **Location:**
-  - `src/components/__tests__/BlockContextMenu.test.tsx` (19 occurrences total — but this file is **NOT** the canonical violator: action handlers DO use `toHaveBeenCalledWith('BLOCK_01')` at lines 114, 124, 134, 144, 154, 164, 174, 184, 194; the 9 bare `toHaveBeenCalled()` calls are on `props.onClose`, which legitimately takes no arguments)
+- **Location (un-audited):**
   - `src/components/__tests__/FormattingToolbar.test.tsx` (16)
-  - `src/hooks/__tests__/useBlockKeyboardHandlers.test.ts` — **AUDITED**: 10 sites, all on `handleFlush` and `rovingEditor.unmount`, both no-arg by their TypeScript signature. Annotated with `// no-args by contract` comments. Adjacent `params.indent.toHaveBeenCalledWith('B')`, `params.remove.toHaveBeenCalledWith('B')`, `params.setFocused.toHaveBeenCalledWith('A')` already pin block-id semantics correctly. **No tightening needed.**
   - `src/components/__tests__/GraphView.test.tsx` (8)
-  - `src/components/__tests__/BlockPropertyEditor.test.tsx` (7) — likely candidate for genuine violations
-  - `src/components/__tests__/HeadingLevelSelector.test.tsx` (7)
   - `src/hooks/__tests__/useUndoShortcuts.test.ts` (6)
   - `src/components/__tests__/UnlinkedReferences.test.tsx` (5)
-  - 165 total occurrences across 60 files (many legitimate "did fire at all"; high-frequency files most likely contain real cases)
-- **What:** `src/__tests__/AGENTS.md` line 582: "Meaningful assertions — `toHaveBeenCalledWith` with exact args, not just `toHaveBeenCalled`." Find genuine violators in the higher-count files (`BlockPropertyEditor`) before tightening — the highest-flagged file (`useBlockKeyboardHandlers`) was audited and produced 0 tightenings.
-- **Why it matters:** A documented quality standard. Concentration in hot files (action handlers, keyboard shortcuts) means real correctness regressions could slip through.
-- **Cost:** M — audit the remaining listed files (excluding BlockContextMenu and useBlockKeyboardHandlers, which already comply) and tighten high-value cases to `toHaveBeenCalledWith(expect.objectContaining({...}))`. The remaining ~50 files are a separate pass.
+  - 158 total occurrences across 59 files (many legitimate "did fire at all"; high-frequency files most likely contain real cases)
+- **Audited & resolved:**
+  - `src/components/__tests__/BlockContextMenu.test.tsx` (19) — action handlers already use `toHaveBeenCalledWith('BLOCK_01')`; the 9 bare calls are on `props.onClose` which legitimately takes no args. **Already complies.**
+  - `src/hooks/__tests__/useBlockKeyboardHandlers.test.ts` (10) — all on `handleFlush` and `rovingEditor.unmount`, both no-arg by their TypeScript signature. Annotated with `// no-args by contract` (s649).
+  - `src/components/__tests__/HeadingLevelSelector.test.tsx` (7) — all on `mockChain` / `mockFocus` / `mockRun` (TipTap chain API zero-arg) and `preventDefaultSpy`. Annotated with `// no-args by contract` (s650). Note: `mockToggleHeading({ level })` was already correctly tightened in the original test.
+  - `src/components/__tests__/BlockPropertyEditor.test.tsx` (7) — all 7 were genuine violations and were tightened to `toHaveBeenCalledWith(...)` (s650): toast message ('Failed to save property'), `autoUpdate` 3-arg signature (anchor/popup/update), `computePosition` 3-arg with `expect.objectContaining({ placement: 'bottom-start' })`, `setRefSearch('a')`. Real catches.
+- **What:** `src/__tests__/AGENTS.md` line 582: "Meaningful assertions — `toHaveBeenCalledWith` with exact args, not just `toHaveBeenCalled`." Audited files split ~50/50 between "all legitimate no-arg" and "all genuine violations" — there's no shortcut, each file needs to be cross-referenced against the production code's call signature.
+- **Why it matters:** A documented quality standard. Concentration in hot files means real correctness regressions could slip through (the `BlockPropertyEditor` audit caught 7 real violations including assertions that didn't pin `placement: 'bottom-start'` on `computePosition`).
+- **Cost:** M — audit the 4 remaining files (`FormattingToolbar`, `GraphView`, `useUndoShortcuts`, `UnlinkedReferences`) by cross-referencing each spy's signature against its production-code call site. The remaining ~50 files (~93 occurrences, mostly legitimate by the audit-so-far ratio) are a separate pass.
 - **Risk:** Low — additive specificity in assertions.
 - **Impact:** Medium-high in the action-handler / keyboard-shortcut files.
 - **Status:** Open.
