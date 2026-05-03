@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import { useHistoryKeyboardNav } from '../hooks/useHistoryKeyboardNav'
 import { entryKey, useHistorySelection } from '../hooks/useHistorySelection'
+import { useLocalStoragePreference } from '../hooks/useLocalStoragePreference'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { categorizeHistoryError, type HistoryErrorCategory } from '../lib/categorize-history-error'
@@ -41,11 +42,17 @@ export function HistoryView(): React.ReactElement {
   const [confirmRestore, setConfirmRestore] = useState(false)
   // FEAT-3 Phase 8 — current-space scoping. Default `false` ⇒ pass the
   // current space id so only ops on pages in this space are returned.
-  // Toggling on drops the filter (cross-space "All spaces" mode). State
-  // is intentionally NOT persisted: every History session must restart
-  // current-space-only — the privacy-preserving default.
+  // Toggling on drops the filter (cross-space "All spaces" mode).
+  //
+  // UX-369 — opt-in localStorage persistence so power users who audit
+  // cross-space history don't have to re-flip the toggle every visit.
+  // `useLocalStoragePreference` falls back to in-memory state when
+  // localStorage is unavailable (private mode / quota exceeded).
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  const [showAllSpaces, setShowAllSpaces] = useState(false)
+  const [showAllSpaces, setShowAllSpaces] = useLocalStoragePreference<boolean>(
+    'agaric:history:allSpacesToggle',
+    false,
+  )
   const { expandedKeys, diffCache, loadingDiffs, handleToggleDiff } = useHistoryDiffToggle<string>(
     (entry) => entryKey(entry),
   )

@@ -1548,9 +1548,9 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
   // The default behaviour is current-space-only: HistoryView reads
   // `currentSpaceId` from `useSpaceStore` and passes it as `spaceId` on
   // the IPC. Toggling "All spaces" drops the filter (passes `spaceId:
-  // null` so the backend returns ops from every space). State is NOT
-  // persisted across History sessions — each session starts with the
-  // privacy-preserving default.
+  // null` so the backend returns ops from every space). UX-369 added
+  // localStorage persistence for the toggle — see the dedicated describe
+  // block below for that contract.
   // ===========================================================================
   describe('FEAT-3 Phase 8 — space scoping', () => {
     afterEach(() => {
@@ -1561,6 +1561,10 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
         availableSpaces: [],
         isReady: false,
       })
+      // UX-369 — the "All spaces" toggle is now persisted to
+      // localStorage, so a flipped toggle in one test would otherwise
+      // leak `true` into the next test's initial render.
+      localStorage.removeItem('agaric:history:allSpacesToggle')
     })
 
     it('passes the current space id to the IPC by default', async () => {
@@ -1649,6 +1653,42 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
 
       expect(await screen.findByText(t('history.noEntriesFound'))).toBeInTheDocument()
       expect(screen.queryByText(t('history.emptyCurrentSpace'))).not.toBeInTheDocument()
+    })
+  })
+
+  // ===========================================================================
+  // UX-369 — "All spaces" toggle persists across remounts via localStorage.
+  //
+  // Power users who routinely audit cross-space history previously had to
+  // re-flip the toggle every visit. The toggle now reads/writes
+  // `agaric:history:allSpacesToggle` so its state survives session restarts.
+  // ===========================================================================
+  describe('UX-369 — All spaces toggle persistence', () => {
+    afterEach(() => {
+      localStorage.removeItem('agaric:history:allSpacesToggle')
+    })
+
+    it('persists the "All spaces" toggle state across remounts', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      const { unmount } = render(<HistoryView />)
+
+      // Initial render reflects the default (off).
+      const toggle = await screen.findByRole('switch', { name: /All spaces/i })
+      expect(toggle).not.toBeChecked()
+
+      // Flip the toggle ON; the hook writes `true` to localStorage.
+      await user.click(toggle)
+      expect(toggle).toBeChecked()
+
+      // Unmount and remount — a fresh HistoryView instance should read the
+      // persisted value back from localStorage.
+      unmount()
+      render(<HistoryView />)
+
+      const remountedToggle = await screen.findByRole('switch', { name: /All spaces/i })
+      expect(remountedToggle).toBeChecked()
     })
   })
 })

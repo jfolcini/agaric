@@ -234,7 +234,9 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const {
     resolveTagName = (id: string) => `#${id.slice(0, 8)}...`,
     resolveBlockTitle = (id: string) => `[[${id.slice(0, 8)}...]]`,
-    placeholder = 'Type / for commands, @ for tags, [[ for links...',
+    // UX-309: surface the slash-command palette as the discoverable hint;
+    // callers (e.g. BlockTree) override with the i18n-keyed translation.
+    placeholder = 'Type / for commands…',
     searchTags = () => [],
     searchPages = () => [],
     onCreatePage,

@@ -197,16 +197,20 @@ export function BlockTree({
   })
 
   // ── Context-aware placeholder for the editor ────────────────────────
+  // UX-309: default empty-block placeholder advertises the slash-command palette,
+  // which was previously only discoverable via `?` keyboard help. The first child
+  // of an empty page keeps the more specific template hint.
   const editorPlaceholder = useMemo(() => {
-    if (!focusedBlockId || blocks.length === 0) return undefined
+    const defaultPlaceholder = t('editor.emptyBlockPlaceholder')
+    if (!focusedBlockId || blocks.length === 0) return defaultPlaceholder
     const focused = blocks.find((b) => b.id === focusedBlockId)
-    if (!focused) return undefined
+    if (!focused) return defaultPlaceholder
     const isFirstChild = blocks[0]?.id === focusedBlockId
     const isEmpty = !focused.content || focused.content.trim() === ''
     if (isFirstChild && isEmpty) {
       return t('editor.templatePlaceholder')
     }
-    return undefined
+    return defaultPlaceholder
   }, [focusedBlockId, blocks, t])
 
   const rovingEditor = useRovingEditor({
@@ -226,7 +230,7 @@ export function BlockTree({
     onCheckbox: (state: 'TODO' | 'DONE') => handleCheckboxRef.current(state),
     searchPropertyKeys,
     onPropertySelect: (item: PickerItem) => handlePropertySelectRef.current(item),
-    ...(editorPlaceholder ? { placeholder: editorPlaceholder } : {}),
+    placeholder: editorPlaceholder,
   })
 
   rovingEditorRef.current = rovingEditor

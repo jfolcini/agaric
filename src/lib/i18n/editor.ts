@@ -38,6 +38,8 @@ export const editor: Record<string, string> = {
   'slashCommand.categories.queries': 'Queries',
   'slashCommand.categories.repeat': 'Repeat',
   'editor.templatePlaceholder': 'Type /template to start from a template, or just start typing...',
+  // UX-309: discoverability hint for the slash-command palette on empty blocks.
+  'editor.emptyBlockPlaceholder': 'Type / for commands…',
   'editor.unknownNodeType':
     "Some content (type: {{type}}) couldn't be saved as Markdown and was dropped.",
   'editor.brokenLinkTooltip': 'Broken link — click to remove',

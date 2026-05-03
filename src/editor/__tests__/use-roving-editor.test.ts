@@ -555,6 +555,21 @@ describe('useRovingEditor integration (renderHook)', () => {
     unmountHook()
   })
 
+  // UX-309 — empty-block placeholder advertises the slash-command palette so
+  // new users can discover it without hitting the `?` keyboard help.
+  it('default placeholder advertises the slash-command palette', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    const ext = (result.current.editor as Editor).extensionManager.extensions.find(
+      (e) => e.name === 'placeholder',
+    )
+    expect(ext).toBeDefined()
+    expect(ext?.options.placeholder).toBe('Type / for commands…')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
   it('mount() sets activeBlockId and originalMarkdown', async () => {
     const { result, unmount: unmountHook } = await setup()
 

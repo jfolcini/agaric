@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next'
-import { FileText, Keyboard, Layers, RefreshCw, Tag } from 'lucide-react'
+import { AtSign, FileText, Keyboard, Layers, RefreshCw, Tag } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -61,6 +61,11 @@ const FEATURES = [
     icon: Layers,
     titleKey: 'welcome.featureSpaces',
     descKey: 'welcome.featureSpacesDesc',
+  },
+  {
+    icon: AtSign,
+    titleKey: 'welcome.featureReferences',
+    descKey: 'welcome.featureReferencesDesc',
   },
 ] as const
 

@@ -12,9 +12,13 @@
  * lets the user jump to any date. Days with content are highlighted.
  */
 
+import { Settings2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCalendarPageDates } from '../hooks/useCalendarPageDates'
 import { useJournalAutoCreate } from '../hooks/useJournalAutoCreate'
 import { useJournalBlockCreation } from '../hooks/useJournalBlockCreation'
@@ -29,6 +33,7 @@ import { MonthlyView } from './journal/MonthlyView'
 import { WeeklyView } from './journal/WeeklyView'
 import { LinkPreviewTooltip } from './LinkPreviewTooltip'
 import { LoadingSkeleton } from './LoadingSkeleton'
+import { SpaceManageDialog } from './SpaceManageDialog'
 
 export type { DayEntry } from '../lib/date-utils'
 // Re-export for backward compatibility
@@ -52,6 +57,7 @@ export function JournalPage({
   onBlockClick: _onBlockClick,
   onNavigateToPage,
 }: JournalPageProps): React.ReactElement {
+  const { t } = useTranslation()
   const { mode, currentDate, scrollToDate, scrollToPanel, clearScrollTarget } = useJournalStore(
     useShallow((s) => ({
       mode: s.mode,
@@ -62,6 +68,11 @@ export function JournalPage({
     })),
   )
   const { pageMap, loading, addPage } = useCalendarPageDates()
+  // UX-371 — surface the per-space journal-template configuration from the
+  // Journal view itself; previously only reachable through Manage Spaces.
+  // SpaceManageDialog has no scroll-to-section prop, so the dialog opens at
+  // the top and the user navigates to the template field from there.
+  const [manageOpen, setManageOpen] = useState(false)
   const { createdPages, handleAddBlock } = useJournalBlockCreation({
     pageMap,
     onPageCreated: addPage,
@@ -139,6 +150,29 @@ export function JournalPage({
         </div>
       )}
 
+      {/* UX-371 — small inline entry to the per-space journal template editor.
+          Hidden in agenda mode where journal templates do not apply. */}
+      {!loading && mode !== 'agenda' && (
+        <div className="flex justify-end">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t('space.configureJournalTemplate')}
+                  onClick={() => setManageOpen(true)}
+                  data-testid="journal-configure-template-trigger"
+                >
+                  <Settings2 className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('space.configureJournalTemplate')}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
+      )}
+
       {/* View content */}
       {!loading && mode === 'daily' && (
         <DailyView
@@ -165,6 +199,10 @@ export function JournalPage({
 
       {/* Link preview tooltip — covers all external links in journal */}
       <LinkPreviewTooltip container={journalContainerEl} />
+
+      {/* UX-371 — manage-spaces dialog hosts the per-space `journal_template`
+          textarea (see SpaceManageDialog L425-444). */}
+      <SpaceManageDialog open={manageOpen} onOpenChange={setManageOpen} />
     </div>
   )
 }

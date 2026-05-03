@@ -105,6 +105,15 @@ vi.mock('../AgendaResults', () => ({
   ),
 }))
 
+// ── Mock SpaceManageDialog (UX-371) ─────────────────────────────────
+// Render a sentinel only when `open === true` so the new
+// configure-template entry can be exercised without pulling the dialog's
+// internals into this suite.
+vi.mock('../SpaceManageDialog', () => ({
+  SpaceManageDialog: ({ open }: { open: boolean; onOpenChange: (open: boolean) => void }) =>
+    open ? <div role="dialog" aria-label="Manage spaces" data-testid="space-manage-mock" /> : null,
+}))
+
 // ── Mock MonthlyDayCell (UX-83) ─────────────────────────────────────
 vi.mock('../journal/MonthlyDayCell', () => ({
   MonthlyDayCell: (props: Record<string, unknown>) => {
@@ -3650,6 +3659,33 @@ describe('JournalPage', () => {
       // And Work's slice still holds the 2026-06-10 monthly view.
       expect(state.currentDateBySpace['SPACE_WORK']).toBe('2026-06-10')
       expect(state.modeBySpace['SPACE_WORK']).toBe('monthly')
+    })
+  })
+
+  // ── Configure journal template entry (UX-371) ───────────────────────
+
+  describe('configure journal template entry (UX-371)', () => {
+    it('renders the entry and clicking it opens the SpaceManageDialog', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      // Dialog is closed initially.
+      expect(screen.queryByTestId('space-manage-mock')).not.toBeInTheDocument()
+
+      // The entry is rendered inside JournalPage (data-testid keeps the
+      // assertion unambiguous if a sibling control exposes the same label).
+      const trigger = screen.getByTestId('journal-configure-template-trigger')
+      expect(trigger).toHaveAccessibleName(/configure journal template/i)
+
+      await user.click(trigger)
+
+      expect(screen.getByTestId('space-manage-mock')).toBeInTheDocument()
     })
   })
 })
