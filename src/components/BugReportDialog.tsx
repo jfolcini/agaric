@@ -374,22 +374,29 @@ export function BugReportDialog({
               </div>
             </div>
 
-            {includeLogs && (
-              <div className="flex items-start gap-3 pl-6">
-                <Switch
-                  id="bug-report-redact"
-                  checked={redact}
-                  onCheckedChange={setRedact}
-                  aria-label={t('bugReport.redactLabel')}
-                />
-                <div className="space-y-0.5">
-                  <Label htmlFor="bug-report-redact" muted={false}>
-                    {t('bugReport.redactLabel')}
-                  </Label>
-                  <p className="text-xs text-muted-foreground">{t('bugReport.redactHint')}</p>
-                </div>
+            {/* UX-383: Redact is a sibling row at the same indent as Include
+                logs (not nested under it) so it's always visible. When
+                Include logs is OFF the underlying Switch is disabled —
+                Radix forwards `disabled` to the native disabled
+                attribute and the Switch primitive applies
+                `disabled:opacity-50 disabled:cursor-not-allowed`. We
+                additionally mute the label + hint so the dependency on
+                Include logs is obvious at a glance. */}
+            <div className="flex items-start gap-3">
+              <Switch
+                id="bug-report-redact"
+                checked={redact}
+                onCheckedChange={setRedact}
+                disabled={!includeLogs}
+                aria-label={t('bugReport.redactLabel')}
+              />
+              <div className={cn('space-y-0.5', !includeLogs && 'opacity-50')}>
+                <Label htmlFor="bug-report-redact" muted={false}>
+                  {t('bugReport.redactLabel')}
+                </Label>
+                <p className="text-xs text-muted-foreground">{t('bugReport.redactHint')}</p>
               </div>
-            )}
+            </div>
           </div>
 
           {/* Preview */}

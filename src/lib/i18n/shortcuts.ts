@@ -117,6 +117,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.settings.conflictWarning': 'Conflicts with: {{shortcuts}}',
   'keyboard.settings.customized': 'Customized',
   'keyboard.settings.typeNewBinding': 'Type new key binding...',
+  'keyboard.settings.formatHint': 'Format: Ctrl + Shift + E',
   'keyboard.settings.emptyBinding': 'Key binding cannot be empty',
   'keyboard.category.tabs': 'Tabs',
   'keyboard.openInNewTab': 'Open current page in new tab',
