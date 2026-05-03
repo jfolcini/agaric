@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 640 — Batch FE-TRIVIAL-3: closed FE-M-1 + FE-M-2 (useDuePanelData logger + stale guard, paired), FE-M-4 (useHistoryDiffToggle ref pattern), FE-M-5 (useListMultiSelect items via ref), FE-L-6 (parseISODate strict validation), FE-L-12 (agenda-filters spaceId centralization); 6 items via 5 subagents — thirteenth consecutive clean batch)
+> **Last updated:** 2026-05-03 (Session 641 — Batch FE-TRIVIAL-4: closed FE-M-6 (useBlockSlashCommands input.click try/catch), FE-M-14 (priority-levels best-effort doc), FE-L-3 (page-blocks registry guard), FE-L-7 (markdown-parse depth-limit logger.debug); 4 items via 4 successful subagents (FE-M-8 dropped — stalled subagent, retried next batch))
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-27 open items in the summary table; 51 detail entries (FE-* sub-tables don't appear in the summary).
+27 open items in the summary table; 47 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -750,16 +750,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F002
 - **Status:** Open
 
-### FE-M-6 — `useBlockSlashCommands` attach handler: `input.click()` not wrapped in try/catch
-- **Domain:** Frontend / Editor
-- **Location:** `src/hooks/useBlockSlashCommands.ts:368-396`
-- **What:** The single residual issue is `input.click()` at L395 not wrapped in try/catch. (The earlier framing mentioned two other concerns that don't hold: (b) the `if (!file) return` at L372-373 is the user dismissing the file-dialog — a deliberate cancel path, not an error path; (c) `await addAttachment(...)` at L383 is awaited inside the `async onchange` handler — there is nothing to `void`.)
-- **Cost:** Trivial — try/catch around `input.click()`; on error, surface a toast and clean up the input element.
-- **Risk:** Low.
-- **Impact:** Low. Demote severity from FE-M to FE-L (single trivial concern).
-- **Source:** FE review 2026-05-02 / F032
-- **Status:** Open
-
 ### FE-M-7 — `useBlockDatePicker`: ref-capture pattern needs invariant doc
 - **Domain:** Frontend / Hooks
 - **Location:** `src/hooks/useBlockDatePicker.ts:189-200`
@@ -781,17 +771,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F054 + F058
 - **Status:** Open
 
-### FE-M-14 — `priority-levels.ts`: listener notification non-transactional, partial failures swallowed
-- **Domain:** Frontend / Priority levels
-- **Location:** `src/lib/priority-levels.ts:63-81`
-- **What:** Listener throw is logged but state has already mutated. Best-effort, but the comment doesn't say so.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Recommendation:** Document explicitly, or wrap in try/catch and roll back module state on the first throw.
-- **Source:** FE review 2026-05-02 / F015
-- **Status:** Open
-
 ### FE-M-15 — Picker extensions: validate `insertPos` against current doc before inserting
 - **Domain:** Frontend / Editor
 - **Location:** `src/editor/extensions/block-link-picker.ts:61-100` (already has try/catch + `logger.warn` fallback), `src/editor/extensions/block-ref-picker.ts:60-91` (same), `src/editor/extensions/at-tag-picker.ts:49-87` (verify before generalising)
@@ -801,16 +780,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low — race window is narrow.
 - **Recommendation:** Before calling `insertContentAt(insertPos, ...)`, validate `insertPos <= editor.state.doc.content.size` and skip the inline insert (fall back to plain text at the current cursor) if the doc has shrunk past it. Verify `at-tag-picker.ts:49-87` follows the same try/catch pattern as the other two before generalising the fix.
 - **Source:** FE review 2026-05-02 / F011
-- **Status:** Open
-
-### FE-L-3 — `page-blocks` registry race comment could be defensive
-- **Domain:** Frontend / Page blocks store
-- **Location:** `src/stores/page-blocks.ts:535-541`
-- **What:** Race is theoretical — React's commit ordering prevents it. Defensive guard `if (registry.get(pageId) === store) registry.delete(pageId)` is a 2-line cheap insurance.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F005
 - **Status:** Open
 
 ### FE-L-4 — `Tabs` store `nextTabId` module-scoped counter
@@ -833,17 +802,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Recommendation:** Optional: toast `'Batch undo unavailable; undid one op.'`.
 - **Source:** FE review 2026-05-02 / F009
 - **Status:** Open
-
-### FE-L-7 — `markdown-parse.ts`: silent depth-limit truncation
-- **Domain:** Frontend / Editor
-- **Location:** `src/editor/markdown-parse.ts:465-480`
-- **What:** Depth limit is intentional. One-line `logger.debug` would help diagnose pathological pastes.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F013
-- **Status:** Open
-
 
 ### FE-L-9 — `useBlockNavigateToLink` ref-indirection contract not documented at the consumer side
 - **Domain:** Frontend / Hooks
