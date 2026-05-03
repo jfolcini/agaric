@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Sheet,
@@ -80,6 +81,7 @@ export function KeyboardShortcuts({
   onOpenChange,
 }: KeyboardShortcutsProps): React.ReactElement {
   const [internalOpen, setInternalOpen] = useState(false)
+  const [filter, setFilter] = useState('')
   const { t } = useTranslation()
 
   const isControlled = controlledOpen !== undefined
@@ -87,6 +89,23 @@ export function KeyboardShortcuts({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: rebuild from localStorage when sheet opens
   const shortcutGroups = useMemo(() => buildShortcutGroups(), [open])
+
+  // UX-388: filter visible shortcuts by description, key text, or category.
+  const filteredGroups = useMemo(() => {
+    if (!filter.trim()) return shortcutGroups
+    const needle = filter.toLowerCase()
+    return shortcutGroups
+      .map((group) => ({
+        category: group.category,
+        shortcuts: group.shortcuts.filter(
+          (s) =>
+            t(s.description).toLowerCase().includes(needle) ||
+            s.keys.toLowerCase().includes(needle) ||
+            t(group.category).toLowerCase().includes(needle),
+        ),
+      }))
+      .filter((group) => group.shortcuts.length > 0)
+  }, [shortcutGroups, filter, t])
 
   const setOpen = useCallback(
     (value: boolean) => {
@@ -142,6 +161,14 @@ export function KeyboardShortcuts({
             {t('shortcuts.title')}
           </SheetTitle>
           <SheetDescription>{t('keyboard.sheetDescription')}</SheetDescription>
+          <Input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder={t('keyboard.filterPlaceholder')}
+            aria-label={t('keyboard.filterLabel')}
+            className="mt-2"
+            data-testid="shortcuts-filter"
+          />
         </SheetHeader>
         <ScrollArea className="px-4 pb-4" data-testid="shortcuts-table">
           <table className="w-full text-sm">
@@ -156,7 +183,18 @@ export function KeyboardShortcuts({
               </tr>
             </thead>
             <tbody>
-              {shortcutGroups.map((group) => (
+              {filteredGroups.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={2}
+                    className="py-6 text-center text-sm text-muted-foreground"
+                    data-testid="shortcuts-filter-empty"
+                  >
+                    {t('keyboard.filterEmpty')}
+                  </td>
+                </tr>
+              )}
+              {filteredGroups.map((group) => (
                 <React.Fragment key={group.category}>
                   <tr>
                     <td

@@ -9,6 +9,9 @@
 export const shortcuts: Record<string, string> = {
   'keyboard.customizeButton': 'Customize in Settings',
   'keyboard.sheetDescription': 'Available keyboard shortcuts and syntax reference for the editor.',
+  'keyboard.filterPlaceholder': 'Search shortcuts…',
+  'keyboard.filterLabel': 'Filter shortcuts',
+  'keyboard.filterEmpty': 'No shortcuts match your filter',
   'keyboard.shortcutHeader': 'Shortcut',
   'keyboard.actionHeader': 'Action',
   'keyboard.descriptionHeader': 'Description',

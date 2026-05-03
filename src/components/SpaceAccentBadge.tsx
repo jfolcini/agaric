@@ -11,7 +11,7 @@
  *
  * Accessibility:
  *  - `aria-label` carries the space name + click affordance.
- *  - `title` (tooltip) shows the bare name.
+ *  - `title` (tooltip) shows the name + click affordance.
  *  - 44px touch target on `[@media(pointer:coarse)]` per AGENTS.md.
  *  - `focus-visible:ring-[3px] ring-ring/50` matches the Button /
  *    Input focus pattern.
@@ -103,7 +103,7 @@ export function SpaceAccentBadge({
       type="button"
       onClick={handleClick}
       aria-label={t('space.accentBadge', { name: space.name })}
-      title={space.name}
+      title={t('space.accentBadgeTitle', { name: space.name })}
       data-testid="space-accent-badge"
       data-space-id={space.id}
       style={{ backgroundColor: accentVar(space.accent_color) }}

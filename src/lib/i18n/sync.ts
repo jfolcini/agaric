@@ -27,6 +27,7 @@ export const sync: Record<string, string> = {
   'pairing.orSeparator': 'OR',
   'pairing.typePassphraseButton': 'Type Passphrase',
   'pairing.scanQrCodeButton': 'Scan QR Code',
+  'pairing.recommendedBadge': 'Recommended',
   'pairing.wordPlaceholder': '{{ordinal}} word',
   'pairing.wordLabel': 'Passphrase word {{num}}',
   'pairing.entryFormWord': '{{ordinal}} word',

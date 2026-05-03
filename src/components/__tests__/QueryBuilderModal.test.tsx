@@ -267,6 +267,29 @@ describe('QueryBuilderModal', () => {
     expect(insertBtn).toBeDisabled()
   })
 
+  // -----------------------------------------------------------------------
+  // UX-317: operator dropdown rows show text descriptions next to the glyph
+  // (the trigger keeps showing only the symbol via Radix auto-mirror).
+  // -----------------------------------------------------------------------
+  it('renders operator dropdown options with both glyph and text description', async () => {
+    const user = userEvent.setup()
+    render(<QueryBuilderModal {...defaultProps} />)
+
+    await user.click(screen.getByRole('radio', { name: /^Property$/i }))
+
+    // Each operator row exposes a human-readable description alongside the
+    // symbol so users unfamiliar with the glyphs (=, ≠, <, >, ≤, ≥) can
+    // disambiguate. Descriptions are portaled out of the native <option>
+    // by the mocked SelectItem `endContent` slot — querying via getByText
+    // finds them anywhere in the document.
+    expect(screen.getByText('equals')).toBeInTheDocument()
+    expect(screen.getByText('not equal')).toBeInTheDocument()
+    expect(screen.getByText('less than')).toBeInTheDocument()
+    expect(screen.getByText('greater than')).toBeInTheDocument()
+    expect(screen.getByText('less than or equal')).toBeInTheDocument()
+    expect(screen.getByText('greater than or equal')).toBeInTheDocument()
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<QueryBuilderModal {...defaultProps} />)
 

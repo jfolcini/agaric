@@ -791,4 +791,18 @@ describe('SuggestionList', () => {
     render(<SuggestionList items={[]} command={command} />)
     expect(screen.getByRole('status').textContent).toBe('No results')
   })
+
+  // -- UX-315: Inline keyboard hint footer -------------------------------------
+
+  it('renders an aria-hidden footer with navigate/select/close hints (UX-315)', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={sampleItems} command={command} />)
+
+    const footer = screen.getByTestId('suggestion-list-footer')
+    expect(footer).toBeInTheDocument()
+    expect(footer).toHaveAttribute('aria-hidden', 'true')
+    expect(footer).toHaveTextContent('↑↓ navigate')
+    expect(footer).toHaveTextContent('Enter to select')
+    expect(footer).toHaveTextContent('Esc to close')
+  })
 })

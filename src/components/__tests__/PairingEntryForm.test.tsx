@@ -93,6 +93,30 @@ describe('PairingEntryForm', () => {
     expect(screen.getByRole('button', { name: /Scan QR code/i })).toBeInTheDocument()
   })
 
+  // UX-376: QR is the faster pairing path; render it first so it lands as
+  // the primary call-to-action in the toggle row.
+  it('renders the QR scan button before the manual passphrase button (UX-376)', () => {
+    render(<PairingEntryForm {...defaultProps} />)
+
+    const toggle = document.querySelector('.pairing-entry-toggle')
+    expect(toggle).toBeInTheDocument()
+    const buttons = toggle?.querySelectorAll('button') ?? []
+    expect(buttons.length).toBe(2)
+    expect(buttons[0]?.textContent).toMatch(/Scan QR code/i)
+    expect(buttons[1]?.textContent).toMatch(/Type passphrase/i)
+  })
+
+  // UX-376: signpost QR as the recommended path with a Badge inside the
+  // QR scan button.
+  it('renders a "Recommended" Badge inside the QR scan button (UX-376)', () => {
+    render(<PairingEntryForm {...defaultProps} />)
+
+    const scanBtn = screen.getByRole('button', { name: /Scan QR code/i })
+    const badge = scanBtn.querySelector('[data-slot="badge"]')
+    expect(badge).toBeInTheDocument()
+    expect(badge?.textContent).toBe('Recommended')
+  })
+
   it('calls onEntryModeChange when scan button is clicked', async () => {
     const user = userEvent.setup()
     const onEntryModeChange = vi.fn()

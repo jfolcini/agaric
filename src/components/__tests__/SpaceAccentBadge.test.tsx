@@ -66,10 +66,12 @@ describe('SpaceAccentBadge', () => {
     expect(badge).toHaveAttribute('aria-label', expect.stringContaining('Personal'))
   })
 
-  it('title attribute shows the bare space name (tooltip)', () => {
+  it('title attribute mentions the space name and click-to-switch hint', () => {
     render(<SpaceAccentBadge space={WORK} />)
     const badge = screen.getByTestId('space-accent-badge')
-    expect(badge).toHaveAttribute('title', 'Work')
+    const title = badge.getAttribute('title') ?? ''
+    expect(title).toContain('Work')
+    expect(title).toContain('click to switch')
   })
 
   it('renders a `?` placeholder for an empty / whitespace name', () => {
