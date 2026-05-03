@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 625 — Batch UX-TRIVIAL-2: closed UX-308 (attachment badge animation), UX-311 (picker create-new contrast), UX-312 (picker context-aware empty state), UX-321 (overflow chip ChevronRight + shortcut), UX-340 (TagFilterPanel loading overlay), UX-380 (sync no-peers vs offline tokens), UX-389 (KeyboardShortcuts sticky headers); 7 items, 5 subagents, no overlaps)
+> **Last updated:** 2026-05-03 (Session 626 — Batch UX-TRIVIAL-3: closed UX-324 (DuePanelFilters tooltips), UX-330 (DaySection empty hint), UX-352 (CompactionCard auto-expand), UX-393 (KeyboardSettingsTab Badge); 4 of 5 attempted, UX-313 subagent stuck and cancelled by user — UX-313 stays open)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-90 open items in the summary table; 130 detail entries (FE-* sub-tables don't appear in the summary).
+86 open items in the summary table; 126 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -59,10 +59,8 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-319 | UX | Task cycle is locked to TODO→DOING→DONE→CANCELLED→none with rationale not surfaced | S | — |
 | UX-320 | UX | Repeating-task `++` / `.+` syntax is cryptic in the property drawer | S | — |
 | UX-323 | UX | Agenda filter popover dense (8 dimensions × nested presets) | S | — |
-| UX-324 | UX | Due Panel filter pills (All / Due / Scheduled / Properties) are unlabelled | S | — |
 | UX-325 | UX | `F-37` "DONE warning when block has `blocked_by`" is documented but not implemented | S | — |
 | UX-327 | UX | Calendar dot fetch is silent (no skeleton / no busy state) | S | — |
-| UX-330 | UX | Daily-view empty state doesn't mention `/` or templates | S | — |
 | UX-332 | UX | PageBrowser sort preference persists silently — no UI cue | S | — |
 | UX-333 | UX | "+" button on namespace folders hidden until hover on desktop | S | — |
 | UX-334 | UX | TemplatesView "remove template" × hidden until hover (destructive) | S | — |
@@ -77,7 +75,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-349 | UX | Conflict type badges differ only by colour | S | — |
 | UX-350 | UX | History op-type filter has no in-UI explanation | S | — |
 | UX-351 | UX | Non-reversible history entries marked only by `opacity-50` + lock icon | S | — |
-| UX-352 | UX | `CompactionCard` collapsed by default at top of HistoryView | S | — |
 | UX-354 | UX | Graph filter bar has no on-touch affordance | S | — |
 | UX-355 | UX | Graph node Enter/Space activation is undocumented | S | — |
 | UX-357 | UX | Graph node labels truncated at 20 chars without `<title>` tooltip | S | — |
@@ -109,7 +106,6 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-390 | UX | Custom shortcut input has no documented format | S | — |
 | UX-391 | UX | Custom shortcut input accepts any non-empty string with no validation | S | — |
 | UX-392 | UX | Conflict warning rendered below row, not inline with keys | S | — |
-| UX-393 | UX | "Customized" badge in keyboard settings is plain text-primary | S | — |
 | UX-394 | UX | `findConflicts` ignores the `condition` field — false positives | S | — |
 | UX-395 | UX | Help panel footer button "Customize shortcuts" doesn't indicate it leaves the panel | S | — |
 | UX-397 | UX | Help panel doesn't badge customized shortcuts | S | — |
@@ -1263,15 +1259,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-324 — Due Panel filter pills (All / Due / Scheduled / Properties) are unlabelled
-- **Domain:** Frontend / Agenda
-- **Location:** `src/components/DuePanelFilters.tsx:32-73`
-- **What:** Bare buttons with `aria-pressed`. Users unfamiliar with Agaric's date model don't know the difference between "Due" and "Scheduled".
-- **Cost:** Trivial — `Tooltip` per pill explaining each axis.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ### UX-325 — F-37 DONE-warning ships for `[x]` syntax + slash commands but not for the gutter-cycle path
 - **Domain:** Frontend / Tasks
 - **Location:** `src/hooks/useCheckboxSyntax.ts:41-55` (already fires `toast.warning(t('dependency.dependencyWarning'))` on `[x]` cycle to DONE); `src/hooks/useBlockSlashCommands.ts:160-169` (defines `warnIfBlocked`) and `:182-183` (invokes from `handleTodoState` when `state === 'DONE'`); `src/hooks/useBlockProperties.ts:60-92` (`handleToggleTodo` — gutter-cycle path) does **NOT** call `warnIfBlocked` ; `FEATURE-MAP.md:670` (the F-37 entry — accurate, F-37 ships)
@@ -1290,17 +1277,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
-
-
-### UX-330 — Daily-view empty state doesn't mention `/` or templates
-- **Domain:** Frontend / Journal
-- **Location:** `src/components/journal/DaySection.tsx:208-223`
-- **What:** Generic "Add first block" button. Users don't learn about slash commands or per-space journal templates from this surface.
-- **Cost:** Trivial — secondary muted line "Type / for commands · journal templates configurable per space".
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 
 ### UX-332 — PageBrowser sort preference persists silently — no UI cue
 - **Domain:** Frontend / Pages
@@ -1429,16 +1405,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
-
-### UX-352 — `CompactionCard` collapsed by default at top of HistoryView
-- **Domain:** Frontend / Compaction
-- **Location:** `src/components/CompactionCard.tsx:23, 65-71` ; `HistoryView.tsx:166`
-- **What:** Action surface is invisible on cold load; users may never see it. Once eligible-ops > 0, the user should be nudged.
-- **Cost:** Trivial — auto-expand when `eligible > 0`, or render a small badge on the collapsed header.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 
 ### UX-354 — Graph filter bar has no leading "Filters" label / on-touch affordance
 - **Domain:** Frontend / Graph
@@ -1718,15 +1684,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Location:** `src/components/KeyboardSettingsTab.tsx:214-221`
 - **What:** Warning is a separate `<div>` outside the row's flex layout. On narrow screens it wraps awkwardly. Also fires only after save, not while typing.
 - **Cost:** Trivial — colocate next to the keys column; recompute on every keystroke during edit.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
-### UX-393 — "Customized" badge in keyboard settings is plain text-primary
-- **Domain:** Frontend / Keyboard
-- **Location:** `src/components/KeyboardSettingsTab.tsx:167-171`
-- **What:** Easy to miss; doesn't read as a status badge.
-- **Cost:** Trivial — switch to the `Badge` primitive (`variant="secondary"`).
 - **Risk:** Low.
 - **Impact:** Low.
 - **Status:** Open.
