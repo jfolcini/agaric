@@ -137,7 +137,7 @@ describe('KeyboardShortcuts', () => {
     // Verify syntax entries are rendered in monospace code elements
     const syntaxTable = screen.getByTestId('syntax-table')
     const codeElements = syntaxTable.querySelectorAll('code')
-    expect(codeElements.length).toBe(13)
+    expect(codeElements.length).toBe(14)
 
     const codeTexts = Array.from(codeElements).map((el) => el.textContent)
     expect(codeTexts).toContain('**text**')
@@ -145,6 +145,19 @@ describe('KeyboardShortcuts', () => {
     expect(codeTexts).toContain('`text`')
     expect(codeTexts).toContain('[[page]]')
     expect(codeTexts).toContain('@tag')
+  })
+
+  // UX-310: the syntax cheat-sheet must document the `((` block-reference
+  // picker trigger alongside the other 3 user-typed picker triggers
+  // (`@tag`, `[[page]]`, `/command`).
+  it('renders the ((block)) block-reference syntax entry (UX-310)', () => {
+    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+    const syntaxTable = screen.getByTestId('syntax-table')
+    const codeTexts = Array.from(syntaxTable.querySelectorAll('code')).map((el) => el.textContent)
+    expect(codeTexts).toContain('((block))')
+
+    expect(screen.getByText(t('keyboard.syntax.blockReference'))).toBeInTheDocument()
   })
 
   it('opens sheet when ? key is pressed on document', () => {

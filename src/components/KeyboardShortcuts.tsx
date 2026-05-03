@@ -66,6 +66,7 @@ const SYNTAX_ENTRIES: SyntaxEntry[] = [
   { syntax: '- [x] task', description: 'keyboard.syntax.doneCheckbox' },
   { syntax: '@tag', description: 'keyboard.syntax.tagReference' },
   { syntax: '[[page]]', description: 'keyboard.syntax.pageLink' },
+  { syntax: '((block))', description: 'keyboard.syntax.blockReference' },
   { syntax: '/command', description: 'keyboard.syntax.slashCommand' },
 ]
 

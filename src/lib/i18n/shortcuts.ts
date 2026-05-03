@@ -105,6 +105,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.syntax.doneCheckbox': 'DONE checkbox',
   'keyboard.syntax.tagReference': 'Tag reference',
   'keyboard.syntax.pageLink': 'Page link',
+  'keyboard.syntax.blockReference': 'Block reference',
   'keyboard.syntax.slashCommand': 'Slash command menu',
   'keyboard.settings.title': 'Keyboard Shortcuts',
   'keyboard.settings.description':

@@ -13,6 +13,8 @@
  */
 
 import { mergeAttributes, Node } from '@tiptap/core'
+import { toast } from 'sonner'
+import { t } from '../../lib/i18n'
 
 export interface BlockLinkOptions {
   /** Resolve a block/page ULID to its display title. Falls back to truncated ULID. */
@@ -97,7 +99,11 @@ export const BlockLink = Node.create<BlockLinkOptions>({
         dom.setAttribute('data-testid', 'block-link-chip')
         dom.setAttribute('contenteditable', 'false')
         if (status === 'deleted') {
-          dom.setAttribute('title', 'Broken link — click to remove')
+          const tooltip = t('editor.brokenLinkTooltip')
+          dom.setAttribute('title', tooltip)
+          // `title` is hover-only on most touch UAs; `aria-label` ensures
+          // screen-reader (and touch) users get the same announcement.
+          dom.setAttribute('aria-label', tooltip)
         }
       }
 
@@ -115,6 +121,10 @@ export const BlockLink = Node.create<BlockLinkOptions>({
               .focus()
               .deleteRange({ from: pos, to: pos + node.nodeSize })
               .run()
+            // UX-313: surface the same explanation touch users miss from the
+            // hover-only `title` tooltip. Outside the if-block would skip the
+            // toast on no-op deletes (pos == null), which is correct.
+            toast.success(t('editor.brokenLinkRemoved'))
           }
           return
         }

@@ -2,7 +2,8 @@
  * Tests for the BlockLink extension.
  */
 
-import { describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BlockLink } from '../extensions/block-link'
 
 describe('BlockLink', () => {
@@ -123,5 +124,64 @@ describe('BlockLink broken link recovery (UX-25)', () => {
     expect(focusFn).toHaveBeenCalled()
     expect(deleteRangeFn).toHaveBeenCalledWith({ from: pos, to: pos + 1 })
     expect(runFn).toHaveBeenCalled()
+  })
+})
+
+describe('BlockLink broken link a11y + toast feedback (UX-313)', () => {
+  /** Helper duplicated from the UX-25 block above (same shape, isolated scope). */
+  function createNodeView(options: {
+    id: string
+    resolveStatus?: (id: string) => 'active' | 'deleted'
+    editor?: unknown
+    getPos?: () => number
+  }) {
+    const ext = BlockLink.configure({
+      resolveTitle: (id) => `Title:${id}`,
+      resolveStatus: options.resolveStatus,
+    })
+    // biome-ignore lint/complexity/noBannedTypes: test needs dynamic call on TipTap extension config
+    const factory = (ext.config.addNodeView as Function)?.call(ext)
+    const fakeNode = { type: { name: 'block_link' }, attrs: { id: options.id }, nodeSize: 1 }
+    // biome-ignore lint/complexity/noBannedTypes: test needs dynamic call on TipTap NodeView factory
+    const view = (factory as Function)({
+      node: fakeNode,
+      editor: options.editor ?? {},
+      getPos: options.getPos ?? (() => 0),
+    })
+    return { dom: view.dom as HTMLSpanElement, view }
+  }
+
+  beforeEach(() => {
+    vi.mocked(toast.success).mockClear()
+  })
+
+  it('broken link chip exposes the i18n tooltip via both title and aria-label', () => {
+    const { dom } = createNodeView({
+      id: 'DELETED03',
+      resolveStatus: () => 'deleted',
+    })
+
+    expect(dom.getAttribute('title')).toBe('Broken link — click to remove')
+    expect(dom.getAttribute('aria-label')).toBe('Broken link — click to remove')
+  })
+
+  it('clicking a broken link chip fires toast.success with the i18n message', () => {
+    const runFn = vi.fn()
+    const deleteRangeFn = vi.fn(() => ({ run: runFn }))
+    const focusFn = vi.fn(() => ({ deleteRange: deleteRangeFn }))
+    const chainFn = vi.fn(() => ({ focus: focusFn }))
+    const mockEditor = { chain: chainFn }
+
+    const { dom } = createNodeView({
+      id: 'DELETED04',
+      resolveStatus: () => 'deleted',
+      editor: mockEditor,
+      getPos: () => 7,
+    })
+
+    dom.click()
+
+    expect(runFn).toHaveBeenCalled()
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Broken link removed (undo with Ctrl+Z)')
   })
 })

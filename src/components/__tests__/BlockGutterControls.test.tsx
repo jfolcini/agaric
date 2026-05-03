@@ -359,13 +359,45 @@ describe('BlockGutterControls (touch / pointer:coarse)', () => {
     expect(screen.getByTestId('more-vertical-icon')).toBeInTheDocument()
   })
 
-  it('overflow button has the localized aria-label and dialog hint', () => {
+  it('overflow button exposes the dialog hint via aria attributes', () => {
     renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
 
     const overflow = screen.getByTestId('more-actions')
-    expect(overflow).toHaveAttribute('aria-label', t('block.moreActionsLabel'))
+    // The aria-label is now enumerated based on available actions
+    // (UX-306) — see the dedicated tests below for that contract.
     expect(overflow).toHaveAttribute('aria-haspopup', 'dialog')
     expect(overflow).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  // ── UX-305: touch drag handle long-press hint ─────────────────────
+  it('drag handle aria-label surfaces the long-press hint on touch (UX-305)', () => {
+    renderWithTooltip(
+      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
+    )
+
+    const dragHandle = screen.getByTestId('drag-handle')
+    expect(dragHandle).toHaveAttribute('aria-label', t('block.reorderTouchHint'))
+  })
+
+  // ── UX-306: more-actions aria-label enumerates available actions ──
+  it('more-actions aria-label enumerates History and Delete when both are provided (UX-306)', () => {
+    renderWithTooltip(
+      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
+    )
+
+    const overflow = screen.getByTestId('more-actions')
+    const expected = t('block.moreActionsEnumerated', {
+      actions: `${t('block.history')}, ${t('block.delete')}`,
+    })
+    expect(overflow).toHaveAttribute('aria-label', expected)
+  })
+
+  it('more-actions aria-label enumerates only Delete when onShowHistory is undefined (UX-306)', () => {
+    renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
+
+    const overflow = screen.getByTestId('more-actions')
+    const expected = t('block.moreActionsEnumerated', { actions: t('block.delete') })
+    expect(overflow).toHaveAttribute('aria-label', expected)
   })
 
   it('does not render the overflow button when no secondary actions are wired', () => {
