@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 637 — Batch UX-TRIVIAL-13: closed UX-316 (QueryBuilderModal readable preview), UX-337 (SearchablePopover disabled-trigger tooltip), UX-346 (HistoryView touch-nav arrows), UX-365 (WelcomeModal Spaces highlight), UX-370 (SpaceManageDialog Delete inline help); 5 items via 5 subagents — tenth consecutive clean batch)
+> **Last updated:** 2026-05-03 (Session 638 — Batch FE-TRIVIAL-1: closed L-137 (AddFilterRow double-fire), FE-M-3 (useBlockTreeEventListeners ref-thrash), FE-M-13 (block-ref hardcoded English), FE-L-1 (Undo store setPageState helper), FE-L-15 (useDebouncedCallback stable identity); 5 items via 5 subagents — eleventh consecutive clean batch)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-27 open items in the summary table; 67 detail entries (FE-* sub-tables don't appear in the summary).
+27 open items in the summary table; 62 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -685,17 +685,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Recommendation:** Audit other page-accepting `inner` functions (`get_page_inner`, `delete_page_inner` if exists) for the same gap and fix in one pass.
 - **Status:** Open.
 
-### L-137 — `AddFilterRow` Apply button fires `handleApply` twice (form submit + button click)
-- **Domain:** Frontend (backlink filter UI)
-- **Location:** `src/components/backlink-filter/AddFilterRow.tsx:220-277` (the form wrapper + the Apply button).
-- **What:** The Apply button has both `onClick={handleApply}` AND lives inside a `<form onSubmit={handleApply}>`. Browsers default `<button>` inside a `<form>` to `type="submit"`, so a single click fires BOTH the click handler AND the form's submit handler — `handleApply` runs twice per click. Surfaced by MAINT-190's reviewer when a stricter `toHaveBeenCalledTimes(1)` test failed; the build subagent worked around it by snapshotting `mock.calls.length` rather than asserting an exact count, with an inline comment in `BacklinkFilterBuilder.test.tsx:739-752` documenting the workaround.
-- **Why it matters:** No user-facing impact — `BacklinkFilterBuilder.handleAddFilter`'s dedup guard (`filters.some((f) => getFilterKey(f) === key)`) blocks the second invocation's effect. But the workaround in tests is a maintenance liability: future readers see a loose `mock.calls.length` snapshot and don't know whether the looseness is necessary or accidental. Fixing the double-fire lets tests assert exact call counts again.
-- **Cost:** S — either (a) add `type="button"` to the Apply button so it doesn't auto-submit the form, or (b) drop the `onClick` and rely on form `onSubmit` alone. (a) is simpler and lower-risk.
-- **Risk:** Low — the dedup already blocks the double-effect; the fix only removes the redundant call.
-- **Impact:** Low — code-quality cleanup; lets MAINT-190's tests use exact `toHaveBeenCalledTimes(1)` assertions.
-- **Recommendation:** Fix as (a). Update `BacklinkFilterBuilder.test.tsx:739-752` to use exact-count assertions and remove the workaround comment when this lands.
-- **Status:** Open.
-
 ### FE-H-1 — Cursor pagination violated in `executeAgendaFilters` default branch
 - **Domain:** Frontend / Agenda
 - **Location:** `src/lib/agenda-filters.ts:287-290`
@@ -782,16 +771,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F039
 - **Status:** Open
 
-### FE-M-3 — `useBlockTreeEventListeners` deps include unstable `rovingEditor.editor`
-- **Domain:** Frontend / Hooks
-- **Location:** `src/hooks/useBlockTreeEventListeners.ts:131-137`
-- **What:** Effect re-registers listeners every render. `rovingEditorRef` already exists (lines 62–63) and is used by other effects in the same hook (140–161); use it here too.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Medium — listener thrash on a hot path.
-- **Source:** FE review 2026-05-02 / F040
-- **Status:** Open
-
 ### FE-M-4 — `useHistoryDiffToggle`: `expandedKeys` and `diffCache` in deps cause callback churn
 - **Domain:** Frontend / History
 - **Location:** `src/hooks/useHistoryDiffToggle.ts:51` (deps: `[expandedKeys, diffCache, keyFn]`); reads at `:20` (`expandedKeys.has(key)`) and `:29` (`diffCache.has(key)`)
@@ -874,17 +853,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Source:** FE review 2026-05-02 / F018
 - **Status:** Open
 
-### FE-M-13 — `editor/extensions/block-link.ts` & `block-ref.ts`: hardcoded English titles for broken links
-- **Domain:** Frontend / Editor
-- **Location:** `src/editor/extensions/block-link.ts:98-105`, `src/editor/extensions/block-ref.ts:98-105`
-- **What:** `'Broken link — click to remove'` and `'Broken ref — target block deleted'` hardcoded; should use `t()` per AGENTS.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Recommendation:** `t('editor.brokenLink')` / `t('editor.brokenBlockRef')`.
-- **Source:** FE review 2026-05-02 / F012
-- **Status:** Open
-
 ### FE-M-14 — `priority-levels.ts`: listener notification non-transactional, partial failures swallowed
 - **Domain:** Frontend / Priority levels
 - **Location:** `src/lib/priority-levels.ts:63-81`
@@ -905,16 +873,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Impact:** Low — race window is narrow.
 - **Recommendation:** Before calling `insertContentAt(insertPos, ...)`, validate `insertPos <= editor.state.doc.content.size` and skip the inline insert (fall back to plain text at the current cursor) if the doc has shrunk past it. Verify `at-tag-picker.ts:49-87` follows the same try/catch pattern as the other two before generalising the fix.
 - **Source:** FE review 2026-05-02 / F011
-- **Status:** Open
-
-### FE-L-1 — `Undo` store: `new Map(state.pages)` boilerplate repeated 9 times
-- **Domain:** Frontend / Undo store
-- **Location:** `src/stores/undo.ts:127, 145, 163, 191, 216, 289, 332, 358, 366`
-- **What:** Nine sites copy `new Map(state.pages)` then `.set()` then setState. Boilerplate is simple, not error-prone, but extracting a `setPageState(pageId, updates)` helper would cut ~40 lines.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Source:** FE review 2026-05-02 / F003
 - **Status:** Open
 
 ### FE-L-2 — `Resolve` store: dedupe the two eviction loops into a helper
@@ -1018,17 +976,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Risk:** Low.
 - **Impact:** Low.
 - **Source:** FE review 2026-05-02 / F068
-- **Status:** Open
-
-### FE-L-15 — `useDebouncedCallback` returns a new object every render
-- **Domain:** Frontend / Hooks
-- **Location:** `src/hooks/useDebouncedCallback.ts:52`
-- **What:** `return { schedule, cancel }` creates a fresh object on every render of the owning component, even though the underlying functions close over stable refs (`timerRef`, `callbackRef`) and therefore have semantically stable behavior. Consumers that put the returned object in a `useCallback` / `useMemo` dependency array will see the dependency change every render and recreate the downstream callback unnecessarily. Flagged by the PERF-28 reviewer: `TagValuePicker.handleChange` (`[onChange, debounced]`) recreates every render; the debounce logic is still correct, just the `useCallback` wrapper ends up being a no-op. `TagFilterPanel` sidesteps the issue by not wrapping the handler in `useCallback` at all — inconsistent pattern between two consumers of the same hook.
-- **Fix:** Wrap the return in `useMemo(() => ({ schedule, cancel }), [])`. Since both functions close over refs only (no closure captures of state or props), the empty dep array is safe. Alternatively, move the functions out of the hook body and have them receive `timerRef`/`callbackRef`/`delay` as args — but the `useMemo` version is less invasive.
-- **Cost:** Trivial — one `useMemo` wrap + re-run the hook's existing test.
-- **Risk:** Low — the returned identity was implicitly "per-render" before, but no known consumer relies on that behavior. A stable identity is the conventional React expectation.
-- **Impact:** Low — eliminates the downstream `useCallback` churn in `TagValuePicker` (and any future consumer that does the same). No user-visible change.
-- **Source:** PERF-28 reviewer flagged 2026-05-02 (session 609).
 - **Status:** Open
 
 ## UX — User-experience / usability / discoverability
