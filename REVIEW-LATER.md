@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 650 — Batch MIX-7: TEST-FE-2 audit pass over `BlockPropertyEditor` (7-for-7 genuine violations TIGHTENED with `toHaveBeenCalledWith(...)` — real catches including `computePosition` placement option) + `HeadingLevelSelector` (7-for-7 legitimate no-arg, comment-annotated). 14 sites cleaned across 2 files via 2 parallel subagents.)
+> **Last updated:** 2026-05-03 (Session 651 — Batch UX-WIP-RECLAIM: salvaged 4 sessions of pre-existing UX-313/UX-305/UX-306 WIP from the working tree; closed UX-305 (touch drag handle long-press hint via aria-label), UX-306 (overflow button enumerated aria-label), UX-313 (broken-link aria-label + toast.success on click-to-remove), plus a bonus `((block))` cheat-sheet entry in KeyboardShortcuts. Discarded UX-371-duplicate JournalControls files — UX-371 was already shipped in s645 via JournalPage.tsx with a different i18n namespace.)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-21 open items in the summary table; 24 detail entries (FE-* sub-tables don't appear in the summary).
+18 open items in the summary table; 21 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -40,9 +40,6 @@ Items flagged during development that need revisiting. Organized by section with
 | PUB-8 | PUB | Android release keystore + 4 GH Actions secrets (apksigner wiring already shipped in `release.yml`) | S | User-only |
 | TEST-4 | TEST | Sync daemon tests use 18 fixed sleeps (50–800ms) as race-prone "barriers" because no `wait_for_*` helper exists on `SyncDaemon` / `SyncScheduler` | M | — |
 | TEST-FE-2 | TEST | Weak `toHaveBeenCalled()` assertions without arg matchers in hot files: `FormattingToolbar` (16), `GraphView` (8), `useUndoShortcuts` (6), `UnlinkedReferences` (5) — wrong-block / wrong-arg regressions could pass silently. `BlockContextMenu` (19, only 9 are bare on `props.onClose`, already complies), `useBlockKeyboardHandlers` (10), `HeadingLevelSelector` (7) audited & confirmed legitimate (all no-arg spies, comment-annotated). `BlockPropertyEditor` (7) audited & all 7 tightened to `toHaveBeenCalledWith(...)`. | M | — |
-| UX-305 | UX | Drag handle on touch has 250 ms long-press requirement, no hint | S | — |
-| UX-306 | UX | Touch gutter "More actions" menu doesn't preview hidden actions | S | — |
-| UX-313 | UX | Broken-link "click to remove" is hover-only (no touch affordance) | S | — |
 | UX-366 | UX | Cross-space `[[link]]` chips render with literal "Broken link" tooltip | S | — |
 
 ### Quick wins (S-cost, ready to grab)
@@ -614,33 +611,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 ## UX — User-experience / usability / discoverability
 
 Items in this section come from a feature-map sweep (one analysis subagent per feature area, then 3 validation subagents that re-read each cited file:line and dropped exaggerations and stale claims). Format follows the compact TEST / FE-L convention. None of these are blocking; they are surface-level fixes (no schema, no op-types, no store changes) that improve discoverability, accessibility, or in-UI feedback.
-
-### UX-305 — Drag handle on touch has 250 ms long-press requirement, no hint
-- **Domain:** Frontend / Editor
-- **Location:** `src/components/BlockGutterControls.tsx:111-121` ; `src/hooks/useBlockDnD.ts:106` (`PointerSensor delay: 250`)
-- **What:** Touch drag requires long-press; the handle has `aria-label` but no on-touch tooltip / hint indicating the press-and-hold requirement.
-- **Cost:** Trivial — add a one-time hint or a `:active`-pulsing animation on first touch interaction.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-306 — Touch gutter "More actions" menu doesn't preview hidden actions
-- **Domain:** Frontend / Editor
-- **Location:** `src/components/BlockGutterControls.tsx:124-182`
-- **What:** On coarse pointer, history + delete collapse into a `MoreVertical` button with `aria-label` but no tooltip listing what's inside.
-- **Cost:** Trivial — extend the button's `aria-label` to enumerate ("History, Delete") or add a touch-friendly `Popover` preview.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-313 — Broken-link "click to remove" is hover-only (no touch affordance)
-- **Domain:** Frontend / Editor
-- **Location:** `src/editor/extensions/block-link.ts:99-110`
-- **What:** Tooltip "Broken link — click to remove" only appears on hover. Touch users see a non-functional-looking chip with no removal cue.
-- **Cost:** S — touch overlay × button, or a confirm step on the click handler with explanatory toast.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
 
 ### UX-366 — Cross-space `[[link]]` chips render with literal "Broken link" tooltip
 - **Domain:** Frontend / Spaces
