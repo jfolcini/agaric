@@ -308,7 +308,10 @@ describe('BlockRefPicker input rule (MAINT-130(c))', () => {
       },
       run: () => true,
     }
-    const mockEditor = { chain: () => chainProxy } as unknown
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: { doc: { content: { size: 1000 } } },
+    } as unknown
 
     const mockItems = vi
       .fn()
@@ -352,7 +355,10 @@ describe('BlockRefPicker input rule (MAINT-130(c))', () => {
       },
       run: () => true,
     }
-    const mockEditor = { chain: () => chainProxy } as unknown
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: { doc: { content: { size: 1000 } } },
+    } as unknown
 
     const mockItems = vi.fn().mockResolvedValue([])
 
@@ -386,7 +392,10 @@ describe('BlockRefPicker input rule (MAINT-130(c))', () => {
       },
       run: () => true,
     }
-    const mockEditor = { chain: () => chainProxy } as unknown
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: { doc: { content: { size: 1000 } } },
+    } as unknown
 
     // Three near-matches, none exactly equal to "alice" (case-insensitive)
     const mockItems = vi.fn().mockResolvedValue([
@@ -428,7 +437,10 @@ describe('BlockRefPicker input rule (MAINT-130(c))', () => {
       },
       run: () => true,
     }
-    const mockEditor = { chain: () => chainProxy } as unknown
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: { doc: { content: { size: 1000 } } },
+    } as unknown
 
     const mockItems = vi.fn().mockRejectedValue(new Error('items failed'))
 
@@ -457,6 +469,68 @@ describe('BlockRefPicker input rule (MAINT-130(c))', () => {
     )
 
     warnSpy.mockRestore()
+  })
+})
+
+// ── FE-M-15 ──────────────────────────────────────────────────────────────
+//
+// `insertContentAt(insertPos, ...)` clamps silently rather than throwing
+// when `insertPos` is past the doc's end. The user can edit (or clear) the
+// doc between the picker capturing `insertPos` and the async resolve
+// landing — so the existing try/catch fallback never fires on that path.
+// The picker must validate `insertPos <= doc.content.size` before calling
+// `insertContentAt`, and fall back to plain text at the current cursor
+// when the offset is stale.
+
+describe('BlockRefPicker stale-insertPos guard (FE-M-15)', () => {
+  it('falls back to plain text at cursor when insertPos > doc.content.size', async () => {
+    const insertContentCalls: unknown[] = []
+    const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
+    const chainProxy: Record<string, unknown> = {
+      focus: () => chainProxy,
+      insertContent: (content: unknown) => {
+        insertContentCalls.push(content)
+        return chainProxy
+      },
+      insertContentAt: (pos: number, content: unknown) => {
+        insertContentAtCalls.push({ pos, content })
+        return chainProxy
+      },
+      run: () => true,
+    }
+    // Simulate the doc shrinking after the picker captured insertPos: the
+    // captured offset (10) is greater than the live doc.content.size (5).
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: { doc: { content: { size: 5 } } },
+    } as unknown
+
+    const mockItems = vi
+      .fn()
+      .mockResolvedValue([{ id: 'BLOCK_ULID_1', label: 'Some Block', isCreate: false }])
+    const ext = BlockRefPicker.configure({ items: mockItems })
+
+    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
+    const rules = (ext.config.addInputRules as Function).call({
+      options: ext.options,
+      editor: mockEditor,
+    })
+    const rule = rules[0]
+
+    const mockState = { tr: { delete: vi.fn() } }
+    rule.handler({
+      state: mockState,
+      range: { from: 10, to: 24 },
+      match: ['((Some Block))', 'Some Block'],
+    })
+
+    // Wait for the async resolve to land on the cursor-fallback path.
+    await vi.waitFor(() => expect(insertContentCalls.length).toBeGreaterThan(0))
+
+    // Plain text inserted at the current cursor (insertContent),
+    // NOT the inline node at the stale offset.
+    expect(insertContentCalls).toEqual(['Some Block'])
+    expect(insertContentAtCalls).toEqual([])
   })
 })
 
@@ -497,7 +571,7 @@ describe('resolveBlockRefFromSelection command (MAINT-130(c))', () => {
       chain: () => chainProxy,
       state: {
         selection: { from: 5, to: 5 },
-        doc: { textBetween: () => '' },
+        doc: { textBetween: () => '', content: { size: 1000 } },
       },
     } as unknown
 
@@ -515,7 +589,7 @@ describe('resolveBlockRefFromSelection command (MAINT-130(c))', () => {
       chain: () => chainProxy,
       state: {
         selection: { from: 5, to: 10 },
-        doc: { textBetween: () => '   ' },
+        doc: { textBetween: () => '   ', content: { size: 1000 } },
       },
     } as unknown
 
@@ -533,7 +607,7 @@ describe('resolveBlockRefFromSelection command (MAINT-130(c))', () => {
       chain: () => chainProxy,
       state: {
         selection: { from: 5, to: 15 },
-        doc: { textBetween: () => 'Some Block' },
+        doc: { textBetween: () => 'Some Block', content: { size: 1000 } },
       },
     } as unknown
 
@@ -560,7 +634,7 @@ describe('resolveBlockRefFromSelection command (MAINT-130(c))', () => {
       chain: () => chainProxy,
       state: {
         selection: { from: 3, to: 11 },
-        doc: { textBetween: () => 'New Block' },
+        doc: { textBetween: () => 'New Block', content: { size: 1000 } },
       },
     } as unknown
 
@@ -586,7 +660,7 @@ describe('resolveBlockRefFromSelection command (MAINT-130(c))', () => {
       chain: () => chainProxy,
       state: {
         selection: { from: 2, to: 12 },
-        doc: { textBetween: () => 'Error Block' },
+        doc: { textBetween: () => 'Error Block', content: { size: 1000 } },
       },
     } as unknown
 

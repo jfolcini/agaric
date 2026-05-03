@@ -329,26 +329,27 @@ describe('preload', () => {
     })
   })
 
-  it('preload(undefined) keys entries under the global sentinel', async () => {
-    // FEAT-3p7 — boot-before-space-hydrates pass: preload runs without
-    // a space id and entries land under `__global__::*`. The next pass
-    // (after the space store hydrates) re-keys them under the real space.
+  it('FE-H-22 — preload(undefined) is a no-op (skips IPC entirely)', async () => {
+    // Pre-bootstrap state: the space store has not hydrated yet.
+    // Earlier code forwarded `spaceId ?? ''` into `list_blocks` and
+    // relied on the backend treating `''` as a no-match SQL filter
+    // (entries landed under `__global__::*` until a real space id
+    // arrived). FE-H-22 fails closed instead: no IPC, no cache writes
+    // — the cross-space barrier is too important to delegate to an
+    // unwritten backend contract. `useAppSpaceLifecycle` re-invokes
+    // preload once the space store hydrates and a real id is threaded
+    // through.
     useSpaceStore.setState({ currentSpaceId: null, isReady: false })
-    const mockPages = [{ id: 'PAGE_PRE', content: 'Pre-hydrate Page', deleted_at: null }]
-
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
-      if (cmd === 'list_tags_by_prefix') return []
-      return null
-    })
+    const cacheSizeBefore = useResolveStore.getState().cache.size
 
     await useResolveStore.getState().preload()
 
+    expect(mockedInvoke).not.toHaveBeenCalled()
     const state = useResolveStore.getState()
-    expect(state.cache.get(keyFor(GLOBAL_SPACE_ID, 'PAGE_PRE'))).toEqual({
-      title: 'Pre-hydrate Page',
-      deleted: false,
-    })
+    expect(state.cache.size).toBe(cacheSizeBefore)
+    expect(state._preloaded).toBe(false)
+    // Belt-and-braces: nothing keyed under the global sentinel either.
+    expect(state.cache.has(keyFor(GLOBAL_SPACE_ID, 'PAGE_PRE'))).toBe(false)
   })
 })
 
@@ -356,7 +357,7 @@ describe('preload', () => {
 // set
 // ---------------------------------------------------------------------------
 describe('set', () => {
-  it('adds entry to cache and bumps version (after microtask)', async () => {
+  it('adds entry to cache and bumps version inline', () => {
     const versionBefore = useResolveStore.getState().version
 
     useResolveStore.getState().set('ID_1', 'My Page', false)
@@ -366,9 +367,8 @@ describe('set', () => {
       title: 'My Page',
       deleted: false,
     })
-    // Version bump is debounced via microtask
-    await new Promise<void>((r) => queueMicrotask(r))
-    expect(useResolveStore.getState().version).toBe(versionBefore + 1)
+    // FE-H-21 — `set` bumps `version` synchronously (no microtask wait).
+    expect(state.version).toBe(versionBefore + 1)
   })
 
   it('updates existing entry', () => {
@@ -395,32 +395,20 @@ describe('set', () => {
     expect(pagesList).toHaveLength(1)
   })
 
-  it('debounces version bumps across multiple synchronous set() calls (PERF-7)', async () => {
+  it('set and batchSet both bump version inline (FE-H-21 symmetric contract)', () => {
+    // FE-H-21 — pin the symmetric inline-bump policy: each `set` and each
+    // `batchSet` bumps `version` synchronously, on its own. No microtask
+    // coalescing; no asymmetry between the single-entry and batch writers.
     const versionBefore = useResolveStore.getState().version
 
     useResolveStore.getState().set('A', 'Alpha', false)
-    useResolveStore.getState().set('B', 'Beta', false)
-    useResolveStore.getState().set('C', 'Charlie', false)
-
-    // Version hasn't bumped yet (debounced via microtask)
-    expect(useResolveStore.getState().version).toBe(versionBefore)
-    // Data is already in cache though
-    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'A'))).toEqual({
-      title: 'Alpha',
-      deleted: false,
-    })
-    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'B'))).toEqual({
-      title: 'Beta',
-      deleted: false,
-    })
-    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'C'))).toEqual({
-      title: 'Charlie',
-      deleted: false,
-    })
-
-    // After microtask, version bumps exactly once
-    await new Promise<void>((r) => queueMicrotask(r))
     expect(useResolveStore.getState().version).toBe(versionBefore + 1)
+
+    useResolveStore.getState().batchSet([
+      { id: 'B', title: 'Beta', deleted: false },
+      { id: 'C', title: 'Charlie', deleted: false },
+    ])
+    expect(useResolveStore.getState().version).toBe(versionBefore + 2)
   })
 })
 

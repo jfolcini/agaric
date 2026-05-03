@@ -106,9 +106,12 @@ import { makeBlock } from '../../__tests__/fixtures'
 import { useBlockStore } from '../../stores/blocks'
 import { useNavigationStore } from '../../stores/navigation'
 import { pageBlockRegistry } from '../../stores/page-blocks'
+import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
 import { useUndoStore } from '../../stores/undo'
 import { PageEditor } from '../PageEditor'
+
+const TEST_SPACE_ID = '01TESTSPACE0000000000000XX'
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
@@ -137,6 +140,10 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'My Page' }], label: 'My Page' }],
     activeTabIndex: 0,
   })
+  // FE-H-22: page-blocks `load()` now early-returns when `currentSpaceId`
+  // is null. Seed a non-null space so existing tests keep driving the
+  // IPC path.
+  useSpaceStore.setState({ currentSpaceId: TEST_SPACE_ID })
 })
 
 describe('PageEditor', () => {

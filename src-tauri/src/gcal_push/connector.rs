@@ -758,8 +758,19 @@ fn classify_date_err(err: &AppError) -> DateFailure {
 /// takes any `sqlx::Executor` (including `&mut Transaction`).  This
 /// keeps both call sites — pool-based [`models::set_setting`] and
 /// transaction-bound recovery — funneled through the same UPDATE
-/// shape and `NotFound` policy.  `oauth_account_email` is
-/// intentionally untouched here (that is finding M-95).
+/// shape and `NotFound` policy.
+///
+/// M-95 (resolved, deliberately untouched): `oauth_account_email`
+/// is intentionally NOT cleared here. The OAuth identity hasn't
+/// changed — only the calendar resource is gone. The Settings UI
+/// continues to show "connected as user@example.com" because that
+/// is still accurate; only the calendar will be re-created on the
+/// next push cycle. This is pinned by
+/// `recover_calendar_gone_m89_does_not_clear_oauth_account_email`.
+/// Re-clearing the email would be a UX regression, not an
+/// improvement, unless a future FEAT-5f variant explicitly
+/// differentiates "connected, no calendar yet" from
+/// "calendar recreated since last open".
 async fn recover_calendar_gone(
     pool: &SqlitePool,
     emitter: &Arc<dyn GcalEventEmitter>,
@@ -2536,9 +2547,10 @@ mod tests_m89 {
 
     #[tokio::test]
     async fn recover_calendar_gone_m89_does_not_clear_oauth_account_email() {
-        // Optional assertion (per the brief) — proves the recovery
-        // does not over-reach and accidentally wipe other settings.
-        // `oauth_account_email` is finding M-95, out of scope here.
+        // Pins the M-95 resolution: `recover_calendar_gone` deliberately
+        // does NOT clear `oauth_account_email` — the OAuth identity is
+        // still accurate, only the calendar resource is gone. See the
+        // `recover_calendar_gone` doc-comment for the full rationale.
         let (pool, _dir) = fresh_pool().await;
 
         seed_map_rows(&pool, 2).await;

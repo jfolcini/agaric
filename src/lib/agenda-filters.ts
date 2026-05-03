@@ -6,6 +6,7 @@
  */
 
 import type { AgendaFilter } from '../components/AgendaFilterBuilder'
+import type { PageResponse } from './bindings'
 import { formatDate, getDateRangeForFilter } from './date-utils'
 import type { BlockRow } from './tauri'
 import { listBlocks, listTagsByPrefix, listUndatedTasks, queryByProperty } from './tauri'
@@ -31,6 +32,31 @@ export interface ExecuteFiltersResult {
   blocks: BlockRow[]
   hasMore: boolean
   cursor: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Pagination helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk a cursor-paginated IPC to exhaustion, accumulating every page's
+ * `items`. Used by the no-filters default branch (FE-H-1) so users with
+ * more than `AGENDA_QUERY_LIMIT` due / scheduled / undated blocks don't
+ * silently lose data — see AGENTS invariant #3.
+ */
+async function paginateAll<T>(
+  fetchPage: (cursor: string | undefined) => Promise<PageResponse<T>>,
+): Promise<T[]> {
+  const all: T[] = []
+  let cursor: string | undefined
+  let hasMore = true
+  while (hasMore) {
+    const resp = await fetchPage(cursor)
+    all.push(...resp.items)
+    hasMore = resp.has_more
+    cursor = resp.next_cursor ?? undefined
+  }
+  return all
 }
 
 // ---------------------------------------------------------------------------
@@ -305,30 +331,43 @@ export async function executeAgendaFilters(
   const normalizedSpaceId = spaceId ?? ''
 
   if (filters.length === 0) {
-    // Default: blocks with due_date or scheduled_date, plus undated tasks
-    const [dueResp, schedResp, undatedResp] = await Promise.all([
-      queryByProperty({ key: 'due_date', limit: AGENDA_QUERY_LIMIT, spaceId: normalizedSpaceId }),
-      queryByProperty({
-        key: 'scheduled_date',
-        limit: AGENDA_QUERY_LIMIT,
-        spaceId: normalizedSpaceId,
-      }),
-      listUndatedTasks({ limit: AGENDA_QUERY_LIMIT, spaceId: normalizedSpaceId }),
+    // Default: blocks with due_date or scheduled_date, plus undated tasks.
+    // FE-H-1 — paginate each query to exhaustion via `paginateAll` so we
+    // honour AGENTS invariant #3 (cursor-based pagination on ALL list
+    // queries) and never silently drop items past `AGENDA_QUERY_LIMIT`.
+    const [dueItems, schedItems, undatedItems] = await Promise.all([
+      paginateAll((cursor) =>
+        queryByProperty({
+          key: 'due_date',
+          cursor,
+          limit: AGENDA_QUERY_LIMIT,
+          spaceId: normalizedSpaceId,
+        }),
+      ),
+      paginateAll((cursor) =>
+        queryByProperty({
+          key: 'scheduled_date',
+          cursor,
+          limit: AGENDA_QUERY_LIMIT,
+          spaceId: normalizedSpaceId,
+        }),
+      ),
+      paginateAll((cursor) =>
+        listUndatedTasks({ cursor, limit: AGENDA_QUERY_LIMIT, spaceId: normalizedSpaceId }),
+      ),
     ])
     // Merge and deduplicate by id
     const seen = new Set<string>()
     const merged: BlockRow[] = []
-    for (const b of [...dueResp.items, ...schedResp.items, ...undatedResp.items]) {
+    for (const b of [...dueItems, ...schedItems, ...undatedItems]) {
       if (!seen.has(b.id)) {
         seen.add(b.id)
         merged.push(b)
       }
     }
-    return {
-      blocks: merged,
-      hasMore: dueResp.has_more || schedResp.has_more || undatedResp.has_more,
-      cursor: null,
-    }
+    // FE-H-1 — every page already drained above, so the result envelope's
+    // `hasMore` / `cursor` collapse to the post-pagination invariant.
+    return { blocks: merged, hasMore: false, cursor: null }
   }
 
   // Execute each filter dimension and intersect

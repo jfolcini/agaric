@@ -92,10 +92,10 @@ interface ResolveStore {
    * boot and again after sync.
    *
    * `spaceId` (FEAT-3p7) — narrows the page fetch to the active space
-   * so only current-space pages enter the cache. Pass `null`/
-   * `undefined` to skip the space filter (legacy behaviour). Tags are
-   * fetched globally either way (the picker is space-scoped, but tag
-   * resolution is not).
+   * so only current-space pages enter the cache. FE-H-22 — passing
+   * `null`/`undefined` is now a silent no-op: callers must wait for
+   * the space store to hydrate before invoking preload, otherwise
+   * the IPC is skipped entirely (fail closed on cross-space leaks).
    *
    * `forceRefresh` is a semantic flag — fetched data always wins over
    * stale cache entries regardless. Kept for callsite intent
@@ -131,8 +131,6 @@ interface ResolveStore {
 }
 
 export const useResolveStore = create<ResolveStore>((set, get) => {
-  let pendingVersionBump = false
-
   return {
     cache: new Map(),
     pagesList: [],
@@ -140,28 +138,32 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
     _preloaded: false,
 
     preload: async (spaceId, _forceRefresh = false) => {
-      const writeSpaceId = spaceId ?? GLOBAL_SPACE_ID
+      // FE-H-22 — fail closed during pre-bootstrap. Earlier we forwarded
+      // `spaceId ?? ''` to `listBlocks` and relied on the backend
+      // treating `''` as a no-match SQL filter. That contract is
+      // unwritten; a backend change to interpret `''` as wildcard would
+      // silently leak cross-space pages through the resolve cache. The
+      // cross-space barrier is the most-protected invariant — skip the
+      // fetch entirely until the space store hydrates and a real
+      // `spaceId` is threaded through.
+      if (spaceId == null) return
       try {
         // Fetch all pages with cursor-based pagination, scoped to the
-        // active space when one was passed (FEAT-3p7).
+        // active space (FEAT-3p7).
         const pagesList: Array<{ id: string; title: string }> = []
         const fetchedPages = new Map<string, ResolveEntry>()
         let cursor: string | undefined
         let hasMore = true
         while (hasMore) {
-          // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
-          // fallback is intentional pre-bootstrap behaviour: empty
-          // string forces a no-match SQL filter rather than a runtime
-          // null deref.
           const pagesResp = await listBlocks({
             blockType: 'page',
             limit: 1000,
             cursor,
-            spaceId: spaceId ?? '',
+            spaceId,
           })
           for (const p of pagesResp.items) {
             const title = p.content ?? 'Untitled'
-            fetchedPages.set(keyFor(writeSpaceId, p.id), {
+            fetchedPages.set(keyFor(spaceId, p.id), {
               title,
               deleted: p.deleted_at !== null,
             })
@@ -172,13 +174,13 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         }
 
         // Fetch all tags. Tags are not space-scoped on the wire (the
-        // tag table is global), but we key them under `writeSpaceId`
-        // so a `clearAllForSpace` flush wipes them too — the next
-        // preload re-fetches them under the new space's prefix.
+        // tag table is global), but we key them under `spaceId` so a
+        // `clearAllForSpace` flush wipes them too — the next preload
+        // re-fetches them under the new space's prefix.
         const tags = await listTagsByPrefix({ prefix: '' })
         const fetchedTags = new Map<string, ResolveEntry>()
         for (const t of tags) {
-          fetchedTags.set(keyFor(writeSpaceId, t.tag_id), {
+          fetchedTags.set(keyFor(spaceId, t.tag_id), {
             title: t.name,
             deleted: false,
           })
@@ -207,6 +209,11 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       }
     },
 
+    // FE-H-21 — `set` and `batchSet` both bump `version` inline so the
+    // re-render policy is symmetric across single and batch writers.
+    // (Earlier behaviour debounced `set` via a microtask + closure flag,
+    // which left an asymmetric contract — `batchSet` always bumped, `set`
+    // sometimes coalesced. Inline is simpler and consistent.)
     set: (id, title, deleted) => {
       const spaceId = activeSpaceId()
       const compositeKey = keyFor(spaceId, id)
@@ -224,16 +231,8 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         if (pagesList.length > MAX_PAGES_LIST_SIZE) {
           pagesList = pagesList.slice(-MAX_PAGES_LIST_SIZE)
         }
-        return { cache, pagesList }
+        return { cache, pagesList, version: state.version + 1 }
       })
-      // Debounce version bump via microtask to avoid re-render storms
-      if (!pendingVersionBump) {
-        pendingVersionBump = true
-        queueMicrotask(() => {
-          set((s) => ({ version: s.version + 1 }))
-          pendingVersionBump = false
-        })
-      }
     },
 
     batchSet: (entries) => {

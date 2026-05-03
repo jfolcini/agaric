@@ -47,12 +47,32 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
           state.tr.delete(range.from, range.to)
 
           const resolveAndInsert = async () => {
+            // FE-M-15: insertContentAt clamps silently when insertPos is past
+            // the doc's end (e.g. user cleared/shrank the doc while the async
+            // resolve was in flight), so the existing try/catch never fires
+            // on that path. Validate before each insertContentAt(insertPos,
+            // ...) call; on a stale offset, fall back to plain text at the
+            // current cursor.
+            const isStale = () => insertPos > editor.state.doc.content.size
+            const insertPlainAtCursor = () => {
+              editor.chain().focus().insertContent(innerText).run()
+            }
+
             try {
               const items = await extensionOptions.items(innerText)
               const exactMatch = items.find(
                 (item) => !item.isCreate && item.label.toLowerCase() === innerText.toLowerCase(),
               )
               if (exactMatch) {
+                if (isStale()) {
+                  logger.warn(
+                    'AtTagPicker',
+                    'insertPos stale after items resolved; falling back to plain text at cursor',
+                    { text: innerText, insertPos, docSize: editor.state.doc.content.size },
+                  )
+                  insertPlainAtCursor()
+                  return
+                }
                 editor
                   .chain()
                   .focus()
@@ -63,6 +83,15 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
                   .run()
               } else if (extensionOptions.onCreate) {
                 const newId = await extensionOptions.onCreate(innerText)
+                if (isStale()) {
+                  logger.warn(
+                    'AtTagPicker',
+                    'insertPos stale after onCreate resolved; falling back to plain text at cursor',
+                    { text: innerText, insertPos, docSize: editor.state.doc.content.size },
+                  )
+                  insertPlainAtCursor()
+                  return
+                }
                 editor
                   .chain()
                   .focus()
@@ -72,6 +101,10 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
                   })
                   .run()
               } else {
+                if (isStale()) {
+                  insertPlainAtCursor()
+                  return
+                }
                 editor.chain().focus().insertContentAt(insertPos, innerText).run()
               }
             } catch (err) {
@@ -81,6 +114,10 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
                 { text: innerText },
                 err,
               )
+              if (isStale()) {
+                insertPlainAtCursor()
+                return
+              }
               editor.chain().focus().insertContentAt(insertPos, innerText).run()
             }
           }
