@@ -267,6 +267,7 @@ export function AddFilterRow({
 
       {category && (
         <Button
+          type="button"
           variant="default"
           size="xs"
           className="h-7 text-xs [@media(pointer:coarse)]:w-full"
@@ -277,6 +278,7 @@ export function AddFilterRow({
         </Button>
       )}
       <Button
+        type="button"
         variant="ghost"
         size="xs"
         className="h-7 text-xs [@media(pointer:coarse)]:w-full"

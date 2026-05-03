@@ -103,6 +103,26 @@ function getOrCreatePage(pages: Map<string, PageUndoState>, pageId: string): Pag
   return { redoStack: [], undoDepth: 0, redoGroupSizes: [] }
 }
 
+/**
+ * Return a new `pages` Map with the entry for `pageId` replaced by the
+ * result of `updater(current)`. If the updater returns `undefined`, the
+ * entry is deleted. Pure — no closure over `set` / `get`.
+ */
+function setPageState(
+  pages: Map<string, PageUndoState>,
+  pageId: string,
+  updater: (current: PageUndoState | undefined) => PageUndoState | undefined,
+): Map<string, PageUndoState> {
+  const newPages = new Map(pages)
+  const next = updater(newPages.get(pageId))
+  if (next === undefined) {
+    newPages.delete(pageId)
+  } else {
+    newPages.set(pageId, next)
+  }
+  return newPages
+}
+
 export const useUndoStore = create<UndoStore>((set, get) => {
   /** Guard: page IDs with undo currently in progress. */
   const undoInProgress = new Set<string>()
@@ -124,12 +144,12 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       const depth = pageState.undoDepth
 
       // Optimistic update: increment immediately
-      const newPages = new Map(state.pages)
-      newPages.set(pageId, {
-        ...pageState,
-        undoDepth: depth + 1,
+      set({
+        pages: setPageState(state.pages, pageId, () => ({
+          ...pageState,
+          undoDepth: depth + 1,
+        })),
       })
-      set({ pages: newPages })
 
       return depth
     })()
@@ -141,35 +161,31 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       })
 
       // On success: add to redo stack
-      set((state) => {
-        const newPages = new Map(state.pages)
-        const current = newPages.get(pageId) ?? {
-          redoStack: [],
-          undoDepth: currentDepth + 1,
-          redoGroupSizes: [],
-        }
-        newPages.set(pageId, {
-          ...current,
-          redoStack: [result.reversed_op, ...current.redoStack].slice(0, MAX_REDO_STACK),
-        })
-        return { pages: newPages }
-      })
+      set((state) => ({
+        pages: setPageState(state.pages, pageId, (current) => {
+          const base = current ?? {
+            redoStack: [],
+            undoDepth: currentDepth + 1,
+            redoGroupSizes: [],
+          }
+          return {
+            ...base,
+            redoStack: [result.reversed_op, ...base.redoStack].slice(0, MAX_REDO_STACK),
+          }
+        }),
+      }))
 
       return result
     } catch (err) {
       logger.error('UndoStore', 'undo operation failed', { pageId }, err)
       // On error: roll back the optimistic increment
-      set((state) => {
-        const newPages = new Map(state.pages)
-        const current = newPages.get(pageId)
-        if (current && current.undoDepth > 0) {
-          newPages.set(pageId, {
-            ...current,
-            undoDepth: current.undoDepth - 1,
-          })
-        }
-        return { pages: newPages }
-      })
+      set((state) => ({
+        pages: setPageState(state.pages, pageId, (current) =>
+          current && current.undoDepth > 0
+            ? { ...current, undoDepth: current.undoDepth - 1 }
+            : current,
+        ),
+      }))
       return null
     }
   }
@@ -188,13 +204,13 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       const [first, ...remainingStack] = pageState.redoStack
 
       // Optimistic update: pop from redo stack and decrement undoDepth
-      const newPages = new Map(state.pages)
-      newPages.set(pageId, {
-        ...pageState,
-        redoStack: remainingStack,
-        undoDepth: pageState.undoDepth - 1,
+      set({
+        pages: setPageState(state.pages, pageId, () => ({
+          ...pageState,
+          redoStack: remainingStack,
+          undoDepth: pageState.undoDepth - 1,
+        })),
       })
-      set({ pages: newPages })
 
       return first as OpRef
     })()
@@ -212,18 +228,17 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     } catch (err) {
       logger.error('UndoStore', 'redo operation failed', { pageId }, err)
       // On error: roll back the optimistic update
-      set((state) => {
-        const newPages = new Map(state.pages)
-        const current = newPages.get(pageId)
-        if (current) {
-          newPages.set(pageId, {
-            ...current,
-            redoStack: [opRef, ...current.redoStack],
-            undoDepth: current.undoDepth + 1,
-          })
-        }
-        return { pages: newPages }
-      })
+      set((state) => ({
+        pages: setPageState(state.pages, pageId, (current) =>
+          current
+            ? {
+                ...current,
+                redoStack: [opRef, ...current.redoStack],
+                undoDepth: current.undoDepth + 1,
+              }
+            : current,
+        ),
+      }))
       return null
     }
   }
@@ -285,17 +300,13 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         }
 
         // Record group size for redo (always, even for single ops)
-        set((state) => {
-          const newPages = new Map(state.pages)
-          const current = newPages.get(pageId)
-          if (current) {
-            newPages.set(pageId, {
-              ...current,
-              redoGroupSizes: [...current.redoGroupSizes, groupSize],
-            })
-          }
-          return { pages: newPages }
-        })
+        set((state) => ({
+          pages: setPageState(state.pages, pageId, (current) =>
+            current
+              ? { ...current, redoGroupSizes: [...current.redoGroupSizes, groupSize] }
+              : current,
+          ),
+        }))
 
         return firstResult
       } finally {
@@ -328,17 +339,13 @@ export const useUndoStore = create<UndoStore>((set, get) => {
 
         // Pop the group size after at least one successful redo
         if (redoneCount > 0 && pageState.redoGroupSizes.length > 0) {
-          set((state) => {
-            const newPages = new Map(state.pages)
-            const current = newPages.get(pageId)
-            if (current && current.redoGroupSizes.length > 0) {
-              newPages.set(pageId, {
-                ...current,
-                redoGroupSizes: current.redoGroupSizes.slice(0, -1),
-              })
-            }
-            return { pages: newPages }
-          })
+          set((state) => ({
+            pages: setPageState(state.pages, pageId, (current) =>
+              current && current.redoGroupSizes.length > 0
+                ? { ...current, redoGroupSizes: current.redoGroupSizes.slice(0, -1) }
+                : current,
+            ),
+          }))
         }
 
         return firstResult
@@ -354,19 +361,19 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     },
 
     onNewAction: (pageId: string) => {
-      set((state) => {
-        const newPages = new Map(state.pages)
-        newPages.set(pageId, { redoStack: [], undoDepth: 0, redoGroupSizes: [] })
-        return { pages: newPages }
-      })
+      set((state) => ({
+        pages: setPageState(state.pages, pageId, () => ({
+          redoStack: [],
+          undoDepth: 0,
+          redoGroupSizes: [],
+        })),
+      }))
     },
 
     clearPage: (pageId: string) => {
-      set((state) => {
-        const newPages = new Map(state.pages)
-        newPages.delete(pageId)
-        return { pages: newPages }
-      })
+      set((state) => ({
+        pages: setPageState(state.pages, pageId, () => undefined),
+      }))
     },
   }
 })

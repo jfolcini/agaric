@@ -40,6 +40,9 @@ export const editor: Record<string, string> = {
   'editor.templatePlaceholder': 'Type /template to start from a template, or just start typing...',
   'editor.unknownNodeType':
     "Some content (type: {{type}}) couldn't be saved as Markdown and was dropped.",
+  'editor.brokenLinkTooltip': 'Broken link — click to remove',
+  'editor.brokenLinkRemoved': 'Broken link removed (undo with Ctrl+Z)',
+  'editor.brokenRefTooltip': 'Broken ref — target block deleted',
   'attachments.loadFailed': 'Failed to load attachments',
   'attachments.addFailed': 'Failed to add attachment',
   'attachments.deleteFailed': 'Failed to delete attachment',

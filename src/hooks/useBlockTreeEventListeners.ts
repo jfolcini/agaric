@@ -123,18 +123,13 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
   useEffect(() => {
     const handleDateEvent = () => {
       if (!focusedBlockId) return
-      datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
+      datePickerCursorPos.current =
+        rovingEditorRef.current.editor?.state.selection.$anchor.pos ?? undefined
       setDatePickerMode('date')
       setDatePickerOpen(true)
     }
     return onBlockEvent(document, 'OPEN_DATE_PICKER', handleDateEvent)
-  }, [
-    focusedBlockId,
-    rovingEditor.editor,
-    datePickerCursorPos,
-    setDatePickerMode,
-    setDatePickerOpen,
-  ])
+  }, [focusedBlockId, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
 
   // ── Listen for toolbar due-date picker event ─────────────────────────
   useEffect(() => {

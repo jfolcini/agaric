@@ -177,6 +177,19 @@ describe('BacklinkFilterBuilder', () => {
       ])
     })
 
+    it('clicking Apply fires onFiltersChange exactly once (L-137)', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'type')
+      await user.selectOptions(screen.getByLabelText('Block type value'), 'page')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledTimes(1)
+    })
+
     it('adds a Status filter (shortcut for PropertyText key=todo)', async () => {
       const user = userEvent.setup()
       const onFiltersChange = vi.fn()
@@ -736,11 +749,7 @@ describe('BacklinkFilterBuilder', () => {
           />,
         )
 
-        // Snapshot call count after first add — the button defaults to
-        // `type="submit"` inside a form, so click + form submit can both
-        // invoke `handleApply`. The dedup guard below must block *all*
-        // invocation paths, so we only require the count to *not grow*.
-        const callsAfterFirstAdd = onFiltersChange.mock.calls.length
+        expect(onFiltersChange).toHaveBeenCalledTimes(1)
 
         // Second add of the byte-identical filter — dedup must reject it.
         await user.click(screen.getByRole('button', { name: /Add filter/i }))
@@ -749,7 +758,7 @@ describe('BacklinkFilterBuilder', () => {
         await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
         expect(toast.error).toHaveBeenCalledWith('Filter already applied')
-        expect(onFiltersChange.mock.calls.length).toBe(callsAfterFirstAdd)
+        expect(onFiltersChange).toHaveBeenCalledTimes(1)
 
         const keyWarnings = consoleErrorSpy.mock.calls.filter(
           (call) =>
