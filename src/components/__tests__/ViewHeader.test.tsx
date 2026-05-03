@@ -12,7 +12,7 @@
  *  5. A11y: portaled + inline header contents have no violations.
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { logger } from '../../lib/logger'
@@ -139,8 +139,14 @@ describe('ViewHeader', () => {
     await waitFor(() => {
       expect(mockedWarn).toHaveBeenCalledTimes(1)
     })
-    // Belt-and-braces: wait a tick more to be sure no additional warn lands.
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    // Dedupe holds across an additional macrotask boundary: siblings 2 and
+    // 3 short-circuited synchronously on `warnedOutletKeys.has(...)` so no
+    // additional `setTimeout(0)` warns are pending. Flush via the canonical
+    // act-wrapped microtask so a future regression that re-introduced a
+    // per-sibling timer would still be caught.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
     expect(mockedWarn).toHaveBeenCalledTimes(1)
   })
 

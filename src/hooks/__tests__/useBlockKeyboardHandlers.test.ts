@@ -148,7 +148,7 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
       result.current.handleDeleteBlock()
     })
 
-    expect(params.rovingEditor.unmount).toHaveBeenCalled()
+    expect(params.rovingEditor.unmount).toHaveBeenCalled() // no-args by contract
     expect(params.remove).toHaveBeenCalledWith('B')
     expect(params.setFocused).toHaveBeenCalledWith('A')
     expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockDeleted')
@@ -237,7 +237,7 @@ describe('useBlockKeyboardHandlers handleIndent', () => {
       result.current.handleIndent()
     })
 
-    expect(params.handleFlush).toHaveBeenCalled()
+    expect(params.handleFlush).toHaveBeenCalled() // no-args by contract
     expect(params.indent).toHaveBeenCalledWith('B')
     expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockIndented')
   })
@@ -263,7 +263,7 @@ describe('useBlockKeyboardHandlers handleDedent', () => {
       result.current.handleDedent()
     })
 
-    expect(params.handleFlush).toHaveBeenCalled()
+    expect(params.handleFlush).toHaveBeenCalled() // no-args by contract
     expect(params.dedent).toHaveBeenCalledWith('B')
     expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockDedented')
   })
@@ -278,7 +278,7 @@ describe('useBlockKeyboardHandlers handleMoveUp/Down', () => {
       result.current.handleMoveUp()
     })
 
-    expect(params.handleFlush).toHaveBeenCalled()
+    expect(params.handleFlush).toHaveBeenCalled() // no-args by contract
     expect(params.moveUp).toHaveBeenCalledWith('B')
     expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockMovedUp')
   })
@@ -291,7 +291,7 @@ describe('useBlockKeyboardHandlers handleMoveUp/Down', () => {
       result.current.handleMoveDown()
     })
 
-    expect(params.handleFlush).toHaveBeenCalled()
+    expect(params.handleFlush).toHaveBeenCalled() // no-args by contract
     expect(params.moveDown).toHaveBeenCalledWith('B')
     expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockMovedDown')
   })
@@ -317,7 +317,7 @@ describe('useBlockKeyboardHandlers handleMoveUpById/DownById', () => {
       result.current.handleMoveUpById('C')
     })
 
-    expect(params.handleFlush).toHaveBeenCalled()
+    expect(params.handleFlush).toHaveBeenCalled() // no-args by contract
     expect(params.moveUp).toHaveBeenCalledWith('C')
   })
 
@@ -329,7 +329,7 @@ describe('useBlockKeyboardHandlers handleMoveUpById/DownById', () => {
       result.current.handleMoveDownById('A')
     })
 
-    expect(params.handleFlush).toHaveBeenCalled()
+    expect(params.handleFlush).toHaveBeenCalled() // no-args by contract
     expect(params.moveDown).toHaveBeenCalledWith('A')
   })
 })
@@ -667,7 +667,7 @@ describe('useBlockKeyboardHandlers handleMergeById', () => {
       await result.current.handleMergeById('C')
     })
 
-    expect(params.rovingEditor.unmount).toHaveBeenCalled()
+    expect(params.rovingEditor.unmount).toHaveBeenCalled() // no-args by contract
     expect(params.edit).toHaveBeenCalledWith('B', 'BetaEdited Charlie')
   })
 
@@ -714,7 +714,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
       await result.current.handleEnterSave()
     })
 
-    expect(params.handleFlush).toHaveBeenCalled()
+    expect(params.handleFlush).toHaveBeenCalled() // no-args by contract
     expect(params.createBelow).toHaveBeenCalledWith('B')
     expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
   })
@@ -787,7 +787,7 @@ describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
       result.current.handleEscapeCancel()
     })
 
-    expect(params.rovingEditor.unmount).toHaveBeenCalled()
+    expect(params.rovingEditor.unmount).toHaveBeenCalled() // no-args by contract
     expect(params.setFocused).toHaveBeenCalledWith(null)
     expect(vi.mocked(toast)).toHaveBeenCalledWith('blockTree.changesDiscarded', { duration: 2000 })
   })
