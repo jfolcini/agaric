@@ -311,15 +311,17 @@ export function HistoryListItem({
           </TooltipProvider>
         )}
 
-        {/* Lock icon for non-reversible ops */}
+        {/* Lock icon + visible "Non-reversible" label for non-reversible ops.
+            UX-351: opacity-50 alone is a single visual cue (WCAG concern); the
+            visible text label adds a second cue for both visual and SR users. */}
         {isNonReversible && (
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Lock
-                  className="h-4 w-4 shrink-0 text-muted-foreground"
-                  aria-label={t('history.nonReversibleLabel')}
-                />
+                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground shrink-0">
+                  <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>{t('history.nonReversibleLabel')}</span>
+                </span>
               </TooltipTrigger>
               <TooltipContent>
                 <p>{t('history.nonReversibleTooltip')}</p>

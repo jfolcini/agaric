@@ -119,6 +119,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.settings.typeNewBinding': 'Type new key binding...',
   'keyboard.settings.formatHint': 'Format: Ctrl + Shift + E',
   'keyboard.settings.emptyBinding': 'Key binding cannot be empty',
+  'keyboard.settings.validationModifierOnly': 'Binding must include at least one non-modifier key',
   'keyboard.category.tabs': 'Tabs',
   'keyboard.openInNewTab': 'Open current page in new tab',
   'keyboard.closeActiveTab': 'Close active tab',

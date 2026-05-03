@@ -242,6 +242,83 @@ describe('KeyboardSettingsTab', () => {
     expect(screen.getByText('Key binding cannot be empty')).toBeInTheDocument()
   })
 
+  it('UX-391: modifier-only binding (e.g. "Ctrl + Shift") disables Save and shows inline error', async () => {
+    const user = userEvent.setup()
+    render(<KeyboardSettingsTab />)
+
+    const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
+    await user.click(editButtons[0] as HTMLElement)
+
+    const input = screen.getByPlaceholderText('Type new key binding...')
+    await user.clear(input)
+    await user.type(input, 'Ctrl + Shift')
+
+    // Save should be disabled when only modifiers are typed.
+    const saveButton = screen.getByRole('button', { name: t('keyboard.settings.saveButton') })
+    expect(saveButton).toBeDisabled()
+
+    // Inline error must be visible and wired via aria-describedby + aria-invalid.
+    const error = screen.getByText('Binding must include at least one non-modifier key')
+    expect(error).toBeInTheDocument()
+    expect(error).toHaveAttribute('role', 'alert')
+    const errorId = error.getAttribute('id')
+    expect(errorId).toMatch(/^kbd-validation-error-/)
+    expect(input.getAttribute('aria-invalid')).toBe('true')
+    expect(input.getAttribute('aria-describedby')).toBe(errorId)
+
+    // setCustomShortcut must NOT be called for modifier-only input.
+    expect(mockSetCustomShortcut).not.toHaveBeenCalled()
+  })
+
+  it('UX-391: valid binding ("Ctrl + E") clears the validation error and enables Save', async () => {
+    const user = userEvent.setup()
+    render(<KeyboardSettingsTab />)
+
+    const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
+    await user.click(editButtons[0] as HTMLElement)
+
+    const input = screen.getByPlaceholderText('Type new key binding...')
+    await user.clear(input)
+    await user.type(input, 'Ctrl + E')
+
+    // No validation error visible.
+    expect(
+      screen.queryByText('Binding must include at least one non-modifier key'),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('Key binding cannot be empty')).not.toBeInTheDocument()
+
+    // Save enabled and aria attributes cleared.
+    const saveButton = screen.getByRole('button', { name: t('keyboard.settings.saveButton') })
+    expect(saveButton).not.toBeDisabled()
+    expect(input.getAttribute('aria-invalid')).toBeNull()
+    expect(input.getAttribute('aria-describedby')).toBeNull()
+  })
+
+  it('UX-386/UX-392: conflict warning renders inside the keys column, not as a row sibling', () => {
+    mockFindConflicts.mockReturnValue([
+      {
+        ids: ['prevBlock', 'nextBlock'],
+        keys: 'Arrow Up / Left',
+        category: 'keyboard.category.navigation',
+      },
+    ])
+
+    render(<KeyboardSettingsTab />)
+
+    const warning = screen.getAllByText(/Conflicts with:/i)[0] as HTMLElement
+    expect(warning).toBeInTheDocument()
+
+    // Walk up to the nearest keys-column container (data-testid="kbd-keys-column").
+    let ancestor: HTMLElement | null = warning.parentElement
+    while (ancestor && ancestor.getAttribute('data-testid') !== 'kbd-keys-column') {
+      ancestor = ancestor.parentElement
+    }
+    expect(ancestor).not.toBeNull()
+    // The keys-column ancestor must be the actual styled column wrapper (sm:w-56 sm:shrink-0).
+    expect(ancestor?.className).toMatch(/sm:w-56/)
+    expect(ancestor?.className).toMatch(/sm:shrink-0/)
+  })
+
   it('UX-8: empty-binding error is wired to the input via aria-describedby + aria-invalid', async () => {
     const user = userEvent.setup()
     render(<KeyboardSettingsTab />)

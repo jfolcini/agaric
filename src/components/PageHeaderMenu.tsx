@@ -269,14 +269,16 @@ export function PageHeaderMenu({
             </>
           )}
           <hr className="my-1 h-px bg-border border-none" />
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
-            onClick={onDeleteRequest}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            {t('pageHeader.deletePage')}
-          </button>
+          <div className="rounded bg-destructive/5 p-0.5">
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 touch-target focus-visible:ring-[3px] focus-visible:ring-destructive/50 focus-visible:outline-hidden"
+              onClick={onDeleteRequest}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              {t('pageHeader.deletePage')}
+            </button>
+          </div>
         </PopoverContent>
       </Popover>
     </div>
