@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 626 — Batch UX-TRIVIAL-3: closed UX-324 (DuePanelFilters tooltips), UX-330 (DaySection empty hint), UX-352 (CompactionCard auto-expand), UX-393 (KeyboardSettingsTab Badge); 4 of 5 attempted, UX-313 subagent stuck and cancelled by user — UX-313 stays open)
+> **Last updated:** 2026-05-03 (Session 627 — Batch UX-TRIVIAL-4: closed UX-379 (AppSidebar tooltip last-synced), UX-383 (BugReport redact sibling row), UX-390 (KeyboardSettings format hint); 3 of 5 attempted, UX-332 + UX-344 subagents stuck and cancelled by user — both stay open)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-86 open items in the summary table; 126 detail entries (FE-* sub-tables don't appear in the summary).
+83 open items in the summary table; 123 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -95,15 +95,12 @@ Items flagged during development that need revisiting. Organized by section with
 | UX-375 | UX | Per-space journal template variables undocumented in-app | S | — |
 | UX-376 | UX | Pairing dialog defaults to manual passphrase, no QR recommendation | S | — |
 | UX-378 | UX | Manual peer-address input has no real-time validation | S | — |
-| UX-379 | UX | Sidebar "last synced" timestamp hidden when sidebar collapses | S | — |
 | UX-381 | UX | Settings has 9 tabs with no breadcrumb anywhere | S | — |
 | UX-382 | UX | Welcome modal omits Sync / multi-device story | S | — |
-| UX-383 | UX | Bug Report redact toggle nested under "Include logs" with `pl-6` | S | — |
 | UX-384 | UX | Import progress shows file count, not bytes / blocks | S | — |
 | UX-386 | UX | Keyboard conflict warnings inline below row (mobile-unfriendly) | S | — |
 | UX-387 | UX | Sidebar theme button cycles 7 themes silently | S | — |
 | UX-388 | UX | Keyboard help panel has no search / filter for ~77 shortcuts | S | — |
-| UX-390 | UX | Custom shortcut input has no documented format | S | — |
 | UX-391 | UX | Custom shortcut input accepts any non-empty string with no validation | S | — |
 | UX-392 | UX | Conflict warning rendered below row, not inline with keys | S | — |
 | UX-394 | UX | `findConflicts` ignores the `condition` field — false positives | S | — |
@@ -1589,15 +1586,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Impact:** Medium.
 - **Status:** Open.
 
-### UX-379 — Sidebar "last synced" timestamp hidden when sidebar collapses
-- **Domain:** Frontend / Sync
-- **Location:** `src/components/AppSidebar.tsx:233-240` (`group-data-[collapsible=icon]:hidden`)
-- **What:** Dot stays visible but the timestamp disappears in icon mode — user can't tell "idle for 3 minutes" from "idle for 3 hours".
-- **Cost:** Trivial — fold the timestamp into the sync button's `Tooltip` so it's accessible in both modes.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Status:** Open.
-
 ### UX-381 — Settings has 9 tabs with no breadcrumb anywhere
 - **Domain:** Frontend / Settings
 - **Location:** `src/components/SettingsView.tsx:140-163`
@@ -1614,15 +1602,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Cost:** Trivial — add a 4th "Sync across devices" highlight or replace one of the existing.
 - **Risk:** Low.
 - **Impact:** Medium.
-- **Status:** Open.
-
-### UX-383 — Bug Report redact toggle nested under "Include logs" with `pl-6`
-- **Domain:** Frontend / Bug report
-- **Location:** `src/components/BugReportDialog.tsx:356-371`
-- **What:** Redaction option is hidden inside another toggle's expanded group; users may miss it before submitting.
-- **Cost:** Trivial — small lock icon + "Redact" label or move to a sibling row that disables when "Include logs" is off.
-- **Risk:** Low.
-- **Impact:** Low.
 - **Status:** Open.
 
 ### UX-384 — Import progress shows file count, not bytes / blocks
@@ -1657,15 +1636,6 @@ Items in this section come from a feature-map sweep (one analysis subagent per f
 - **Location:** `src/components/KeyboardShortcuts.tsx:143-187`
 - **What:** Long flat scrollable table with 8 category headers; users have to eyeball-scan every time.
 - **Cost:** S — filter input wired to description + key text; collapse to matching rows.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Status:** Open.
-
-### UX-390 — Custom shortcut input has no documented format
-- **Domain:** Frontend / Keyboard
-- **Location:** `src/components/KeyboardSettingsTab.tsx:126-129` ; `src/lib/i18n/shortcuts.ts:119`
-- **What:** Placeholder is "Type new key binding…" with no example. Users don't know whether to write `Ctrl + Shift + E`, `Ctrl-Shift-E`, or what.
-- **Cost:** Trivial — add a one-line "Format: `Ctrl + Shift + E`, alternatives with `/`" hint.
 - **Risk:** Low.
 - **Impact:** Medium.
 - **Status:** Open.
