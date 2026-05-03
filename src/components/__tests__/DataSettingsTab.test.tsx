@@ -7,6 +7,7 @@
  *  - File selection calls importMarkdown
  *  - Shows import result after success
  *  - Export button calls exportGraphAsZip
+ *  - Export filename embeds the sanitized active space name (UX-385)
  *  - Shows error toast on export failure
  *  - Has no a11y violations (axe)
  */
@@ -15,6 +16,8 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import type { SpaceRow } from '../../lib/tauri'
+import { useSpaceStore } from '../../stores/space'
 import { DataSettingsTab } from '../DataSettingsTab'
 
 const mockExportGraphAsZip = vi.fn()
@@ -35,6 +38,13 @@ import { toast } from 'sonner'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Reset the space store between tests so a per-test override (e.g.
+  // the UX-385 filename test below) doesn't leak into siblings.
+  useSpaceStore.setState({
+    currentSpaceId: null,
+    availableSpaces: [],
+    isReady: false,
+  })
 })
 
 describe('DataSettingsTab', () => {
@@ -126,6 +136,38 @@ describe('DataSettingsTab', () => {
         expect.stringMatching(/agaric-export-.+\.zip/),
       )
       expect(toast.success).toHaveBeenCalledWith('Export complete')
+    })
+  })
+
+  it('export filename includes the sanitized active space name (UX-385)', async () => {
+    const user = userEvent.setup()
+    const mockBlob = new Blob(['zip'], { type: 'application/zip' })
+    mockExportGraphAsZip.mockResolvedValueOnce(mockBlob)
+
+    const STAR_SPACE: SpaceRow = {
+      id: 'SPACE_STAR',
+      name: '🌟 My Project',
+      accent_color: 'accent-emerald',
+    }
+    useSpaceStore.setState({
+      currentSpaceId: STAR_SPACE.id,
+      availableSpaces: [STAR_SPACE],
+      isReady: true,
+    })
+
+    render(<DataSettingsTab />)
+
+    const exportBtn = screen.getByRole('button', { name: /Export All/i })
+    await user.click(exportBtn)
+
+    await waitFor(() => {
+      expect(mockDownloadBlob).toHaveBeenCalledWith(
+        mockBlob,
+        // Sanitized: lowercased, non-alphanumeric runs collapsed to `-`,
+        // leading/trailing dashes trimmed. So "🌟 My Project" becomes
+        // "my-project" in the filename.
+        expect.stringMatching(/^agaric-export-my-project-\d{4}-\d{2}-\d{2}\.zip$/),
+      )
     })
   })
 

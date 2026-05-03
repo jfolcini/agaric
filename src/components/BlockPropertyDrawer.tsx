@@ -359,6 +359,7 @@ export function PropertyRow({
     dateInput,
     datePreview,
     dateError,
+    isParsing,
     handleChange: handleDateChange,
     handleBlur: handleDateBlur,
   } = useDateInput({ initialValue: value, onSave: isDate ? onSave : undefined })
@@ -391,6 +392,9 @@ export function PropertyRow({
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
           }}
         />
+        {isDate && isParsing && (
+          <p className="text-[10px] text-muted-foreground mt-0.5">{t('property.dateParsing')}</p>
+        )}
         {isDate && datePreview && (
           <p className="text-[10px] text-muted-foreground mt-0.5">{datePreview}</p>
         )}

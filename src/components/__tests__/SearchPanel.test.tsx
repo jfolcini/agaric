@@ -119,6 +119,14 @@ describe('SearchPanel', () => {
     expect(screen.getByPlaceholderText(t('search.searchPlaceholder'))).toBeInTheDocument()
   })
 
+  // UX-338 — placeholder must mention the 3-character minimum so users see
+  // the requirement before they type, not only after.
+  it('placeholder mentions the 3-character minimum', () => {
+    render(<SearchPanel />)
+    const input = screen.getByLabelText(t('search.searchLabel')) as HTMLInputElement
+    expect(input.placeholder).toMatch(/3\+\s*chars/i)
+  })
+
   it('shows no results before first search', () => {
     render(<SearchPanel />)
     expect(screen.queryByText(t('search.noResultsFound'))).not.toBeInTheDocument()
