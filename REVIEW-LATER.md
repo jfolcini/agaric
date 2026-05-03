@@ -1,6 +1,6 @@
 # Review Later
 
-> **Last updated:** 2026-05-03 (Session 642 — Batch FE-DOC-1: closed FE-M-7 (useBlockDatePicker invariant doc), FE-L-4 (Tabs nextTabId comment), FE-L-9 (useBlockNavigateToLink contract doc), L-136 (export_page_markdown_inner ULID validation); 4 items orchestrator-direct — doc/comment + small Rust validation, no subagents)
+> **Last updated:** 2026-05-03 (Session 643 — Batch FE-MIX-1: closed FE-H-7 (useCheckboxSyntax optimistic rollback), FE-H-15 (sidebar drag listener leak), FE-H-17 (BlockPropertyDrawer/PagePropertyTable Promise.allSettled), FE-M-8 (PropertyDefinitionsList reportIpcError migration), M-97 (properties.rs in-tx reserved-property validation); 5 items via 4 subagents + 1 orchestrator-direct — first batch this run with 3 FE-H (real-bug) items)
 
 Items flagged during development that need revisiting. Organized by section with cost estimates.
 
@@ -19,7 +19,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-27 open items in the summary table; 43 detail entries (FE-* sub-tables don't appear in the summary).
+27 open items in the summary table; 38 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -616,17 +616,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Pass-1 source:** 10/F23
 - **Status:** Open
 
-### M-97 — `commands/properties.rs` reserved-property validation queries `property_definitions` outside the transaction
-- **Domain:** Commands (Properties)
-- **Location:** `src-tauri/src/commands/properties.rs:204-207, 380-384`
-- **What:** Both `set_priority_inner` and `set_todo_state_inner` issue a `fetch_optional` against `property_definitions` *before* opening the `CommandTx`. The single-user threat model means concurrent deletion of a property definition by another process is not a realistic race, and `set_property_in_tx` (called inside the transaction) repeats the validation. The pattern is suboptimal but not a correctness bug in the single-user context.
-- **Why it matters:** Future-bug magnet. If the in-tx validation path is ever inlined or simplified, the out-of-tx fetch becomes the primary check and stops being safe. Folding it into `CommandTx::begin_immediate` is a 3-line move and removes the duplication.
-- **Cost:** S — straightforward refactor.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Recommendation:** Move the `fetch_optional` to inside the existing transaction so the validation and the eventual write share atomicity. No behaviour change in single-user usage; cleaner contract for future readers.
-- **Status:** Open
-
 ### M-98 — `get_block_inner` returns soft-deleted blocks; leaks to `export_page_markdown_inner` and the public `get_block` IPC
 - **Domain:** Commands / queries
 - **Location:** `src-tauri/src/commands/blocks/queries.rs:115-131` (`get_block_inner`); leaks via `src-tauri/src/commands/pages.rs:204` (`export_page_markdown_inner`), `src-tauri/src/commands/pages.rs:648` (`get_page_inner`), `src-tauri/src/commands/blocks/queries.rs:273` (public `get_block` command).
@@ -687,37 +676,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Status:** Open
 
 
-### FE-H-7 — `useCheckboxSyntax`: optimistic update has no rollback on IPC rejection
-- **Domain:** Frontend / Editor
-- **Location:** `src/hooks/useCheckboxSyntax.ts:38-60`
-- **What:** Hook mutates `pageStore` optimistically (lines 58–60) before `setTodoStateCmd()` resolves. On rejection only a toast fires — the UI state stays out of sync with the backend.
-- **Cost:** S — capture prior `todo_state` before the optimistic update; revert on rejection.
-- **Risk:** Low.
-- **Impact:** Medium — user sees the new checkbox state even though the backend never accepted it.
-- **Source:** FE review 2026-05-02 / F037
-- **Status:** Open
-
-### FE-H-15 — Sidebar rail drag handler leaks `pointermove`/`pointerup` listeners on unmount-during-drag
-- **Domain:** Frontend / UI primitives
-- **Location:** `src/components/ui/sidebar.tsx:488-548` (registration: 542-543)
-- **What:** `onPointerDown` adds listeners to `document` and only removes them in the `pointerup` handler. If the sidebar component unmounts mid-drag (e.g., a route change), the listeners stay attached to `document` and reference stale state.
-- **Cost:** S — track active drag in a ref, remove listeners in a cleanup effect.
-- **Risk:** Low.
-- **Impact:** Medium — small but real memory leak + stale-state callback risk.
-- **Source:** FE review 2026-05-02 / F025
-- **Status:** Open
-
-### FE-H-17 — `BlockPropertyDrawer` / `PagePropertyTable`: `Promise.all` partial-failure handling
-- **Domain:** Frontend / Properties
-- **Location:** `src/components/BlockPropertyDrawer.tsx:79-90`, `src/components/PagePropertyTable.tsx:48-60`
-- **What:** Both use `Promise.all([getProperties(...), listPropertyDefs()])` then guard with `Array.isArray(props) ? props : []`. The defensive guard signals real uncertainty about response shape, and a single rejection rejects the whole load (catch logs but the user just sees an empty drawer with no specific feedback).
-- **Cost:** S.
-- **Risk:** Low.
-- **Impact:** Medium.
-- **Recommendation:** Use `Promise.allSettled` and report each failure individually via `reportIpcError`, or land the response-shape guarantee in the IPC layer so the defensive guards can come out.
-- **Source:** FE review 2026-05-02 / F049
-- **Status:** Open
-
 ### FE-H-21 — `Resolve` store: asymmetric version-bump policy between `set` and `batchSet`
 - **Domain:** Frontend / Resolve store
 - **Location:** `src/stores/resolve.ts:122` (closure flag declaration), `:226-232` (debounce in `set`), `:235-257` (`batchSet` bumps inline at L255)
@@ -737,17 +695,6 @@ Full setup recipe in `BUILD.md` → "Release signing in CI" (under "Android Buil
 - **Risk:** Low.
 - **Impact:** High — defensive correctness for the cross-space invariant.
 - **Source:** FE review 2026-05-02 / F002
-- **Status:** Open
-
-### FE-M-8 — Property pickers: PropertyValuePicker has no user-facing toast; PropertyDefinitionsList uses `String(error)`
-- **Domain:** Frontend / Properties
-- **Location:** `src/components/PropertyValuePicker.tsx:42-49`, `src/components/PropertyDefinitionsList.tsx:73-74, 93-94, 106-108`
-- **What:** PropertyValuePicker logs the failure via `logger.warn` at L46 (so it is *not* silent to the logger) but surfaces no user-facing toast — the dropdown silently empties from the user's perspective. PropertyDefinitionsList toasts `t('property.errorLoad', { error: String(error) })` etc. — `String({})` is `"[object Object]"` for plain objects (Tauri IPC rejections arrive as plain objects via `serializeError`), so the toast is unhelpful in practice.
-- **Cost:** Trivial.
-- **Risk:** Low.
-- **Impact:** Low.
-- **Recommendation:** Replace inline error formatting with the existing `reportIpcError(...)` helper from `src/lib/report-ipc-error.ts`.
-- **Source:** FE review 2026-05-02 / F054 + F058
 - **Status:** Open
 
 ### FE-M-15 — Picker extensions: validate `insertPos` against current doc before inserting
