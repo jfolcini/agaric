@@ -1,4 +1,5 @@
 import JSZip from 'jszip'
+import { logger } from './logger'
 import { exportPageMarkdown, listBlocks } from './tauri'
 
 /**
@@ -18,10 +19,18 @@ export async function exportGraphAsZip(spaceId: string | null): Promise<Blob> {
   const resp = await listBlocks({ blockType: 'page', limit: 1000, spaceId: spaceId ?? '' })
   const pages = resp.items
 
-  // Export each page to markdown
+  // Export each page to markdown. Per-page failures are logged and skipped so a
+  // single broken page does not reject the whole export — partial output is more
+  // useful than none.
   const seen = new Set<string>()
   for (const page of pages) {
-    const md = await exportPageMarkdown(page.id)
+    let md: string
+    try {
+      md = await exportPageMarkdown(page.id)
+    } catch (err) {
+      logger.warn('export-graph', 'page export failed', { pageId: page.id }, err)
+      continue
+    }
     // Sanitize filename: replace invalid chars, ensure uniqueness
     let name = (page.content ?? 'Untitled').replace(/[/\\:*?"<>|]/g, '_').trim() || 'Untitled'
     if (seen.has(name)) {

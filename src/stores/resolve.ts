@@ -60,6 +60,18 @@ function activeSpaceId(): string {
   return useSpaceStore.getState().currentSpaceId ?? GLOBAL_SPACE_ID
 }
 
+/**
+ * Delete oldest entries (first N entries in Map iteration order) until
+ * `cache.size <= maxSize`. Mutates `cache` in place. No-op when already
+ * within budget. Pure helper — only touches the passed Map.
+ */
+function evictOldest<K, V>(cache: Map<K, V>, maxSize: number): void {
+  if (cache.size <= maxSize) return
+  const excess = cache.size - maxSize
+  const toEvict = Array.from(cache.keys()).slice(0, excess)
+  for (const key of toEvict) cache.delete(key)
+}
+
 interface ResolveEntry {
   title: string
   deleted: boolean
@@ -201,12 +213,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       set((state) => {
         const cache = new Map(state.cache)
         cache.set(compositeKey, { title, deleted })
-        if (cache.size > MAX_CACHE_SIZE) {
-          // Delete oldest entries (first N entries in Map iteration order)
-          const excess = cache.size - MAX_CACHE_SIZE
-          const toEvict = Array.from(cache.keys()).slice(0, excess)
-          for (const key of toEvict) cache.delete(key)
-        }
+        evictOldest(cache, MAX_CACHE_SIZE)
         // Also update pagesList if it's a new non-deleted entry
         // (pages created via onCreatePage should appear in picker).
         // pagesList is keyed by raw ULID — only one space's pages
@@ -240,12 +247,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
             deleted: e.deleted,
           })
         }
-        if (cache.size > MAX_CACHE_SIZE) {
-          // Delete oldest entries (first N entries in Map iteration order)
-          const excess = cache.size - MAX_CACHE_SIZE
-          const toEvict = Array.from(cache.keys()).slice(0, excess)
-          for (const key of toEvict) cache.delete(key)
-        }
+        evictOldest(cache, MAX_CACHE_SIZE)
         return { cache, version: state.version + 1 }
       })
     },

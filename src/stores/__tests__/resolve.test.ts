@@ -695,6 +695,48 @@ describe('cache eviction', () => {
     expect(state.cache.has(keyFor(TEST_SPACE_ID, 'c'))).toBe(true)
   })
 
+  it('set() and batchSet() share the same eviction policy (FE-L-2)', () => {
+    // Pin the eviction-from-both-writers invariant: flooding past
+    // MAX_CACHE_SIZE via either writer must evict the oldest entries
+    // in identical insertion order, with the cache capped at the limit.
+    const cache = new Map<string, { title: string; deleted: boolean }>()
+    for (let i = 0; i < 10_000; i++) {
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
+    }
+    useResolveStore.setState({ cache })
+
+    // Flood via set() — 5 new entries push the cache 5 over MAX_CACHE_SIZE,
+    // so the 5 oldest (id-0..id-4) must be evicted.
+    for (let i = 0; i < 5; i++) {
+      useResolveStore.getState().set(`set-${i}`, `S${i}`, false)
+    }
+    let state = useResolveStore.getState()
+    expect(state.cache.size).toBe(10_000)
+    for (let i = 0; i < 5; i++) {
+      expect(state.cache.has(keyFor(TEST_SPACE_ID, `id-${i}`))).toBe(false)
+    }
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'id-5'))).toBe(true)
+
+    // Flood via batchSet() — 5 more entries evict the next 5 oldest
+    // survivors (id-5..id-9).
+    useResolveStore
+      .getState()
+      .batchSet(
+        Array.from({ length: 5 }, (_, i) => ({ id: `batch-${i}`, title: `B${i}`, deleted: false })),
+      )
+    state = useResolveStore.getState()
+    expect(state.cache.size).toBe(10_000)
+    for (let i = 5; i < 10; i++) {
+      expect(state.cache.has(keyFor(TEST_SPACE_ID, `id-${i}`))).toBe(false)
+    }
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'id-10'))).toBe(true)
+    // Both writers' inserts survive.
+    for (let i = 0; i < 5; i++) {
+      expect(state.cache.has(keyFor(TEST_SPACE_ID, `set-${i}`))).toBe(true)
+      expect(state.cache.has(keyFor(TEST_SPACE_ID, `batch-${i}`))).toBe(true)
+    }
+  })
+
   it('set() evicts oldest pagesList entries at MAX_PAGES_LIST_SIZE', () => {
     // Pre-fill pagesList to 5,000 entries
     const pagesList = Array.from({ length: 5_000 }, (_, i) => ({

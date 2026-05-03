@@ -493,6 +493,55 @@ describe('UnlinkedReferences', () => {
     expect(screen.getByText('block 1')).toBeInTheDocument()
   })
 
+  // FE-L-13: cursor-append must not mutate the prior group object.
+  // The no-cursor branch does `setGroups(respGroups)`, so the page-1 response's
+  // group object is the very same reference React keeps as `prev`. After a
+  // cursor-append targeting the same page_id, that captured reference's
+  // `.blocks` must still hold the original array (length unchanged) — otherwise
+  // we are mutating shared state.
+  it('cursor-append does not mutate prior group object (FE-L-13)', async () => {
+    const user = userEvent.setup()
+    const priorGroup = makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])
+    const priorBlocks = priorGroup.blocks
+    const page1 = {
+      groups: [priorGroup],
+      next_cursor: 'cursor_page2',
+      has_more: true,
+      total_count: 2,
+      filtered_count: 2,
+      truncated: false,
+    }
+    const page2 = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B2', content: 'block 2' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 2,
+      filtered_count: 2,
+      truncated: false,
+    }
+    let callCount = 0
+    mockedListUnlinked.mockImplementation(async () => {
+      callCount++
+      return callCount === 1 ? page1 : page2
+    })
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('block 1')
+
+    // Trigger the cursor-append branch.
+    await user.click(screen.getByRole('button', { name: /load more unlinked references/i }))
+    expect(await screen.findByText('block 2')).toBeInTheDocument()
+
+    // Invariant: the captured prior group must be untouched. If the merger
+    // had reassigned `existing.blocks` on the shared reference, this length
+    // would now be 2 and `priorGroup.blocks` would no longer be `priorBlocks`.
+    expect(priorGroup.blocks).toBe(priorBlocks)
+    expect(priorGroup.blocks).toHaveLength(1)
+    expect(priorGroup.blocks[0]?.id).toBe('B1')
+  })
+
   // 10. Resets on pageId change
   it('resets on pageId change', async () => {
     const user = userEvent.setup()
