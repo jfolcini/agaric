@@ -289,6 +289,7 @@ function SortableBlockInner({
   const {
     translateX: swipeTranslateX,
     isRevealed: swipeRevealed,
+    thresholdCrossed: swipeThresholdCrossed,
     handlers: swipeHandlers,
     reset: swipeReset,
   } = useBlockSwipeActions(handleSwipeDelete)
@@ -345,16 +346,27 @@ function SortableBlockInner({
         onContextMenu={handleContextMenu}
       >
         {/* ── Swipe-to-delete backdrop (mobile only) ──────────────── */}
+        {/* UX-304: progressive cue — the backdrop is a muted destructive
+            tint while the gesture only reveals the action, then flips to
+            the solid destructive variant + "Release to delete" label
+            once the auto-delete threshold is crossed mid-drag. */}
         {isTouchDevice && onDelete && (swipeRevealed || swipeTranslateX < 0) && (
           <div
-            className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-destructive text-destructive-foreground"
-            style={{ width: 80 }}
+            className={cn(
+              'absolute right-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
+              'transition-colors duration-150',
+              swipeThresholdCrossed
+                ? 'bg-destructive text-destructive-foreground'
+                : 'bg-destructive/10 text-destructive',
+            )}
+            style={{ width: swipeThresholdCrossed ? '100%' : 80 }}
             data-testid="swipe-delete-action"
+            data-threshold-crossed={swipeThresholdCrossed ? 'true' : 'false'}
           >
             <button
               type="button"
               aria-label={t('block.delete')}
-              className="flex items-center justify-center w-full h-full"
+              className="flex items-center justify-center h-full"
               onClick={() => {
                 onDelete(blockId)
                 swipeReset()
@@ -363,6 +375,14 @@ function SortableBlockInner({
               {/* Larger icon for swipe gesture affordance */}
               <Trash2 className="h-5 w-5" />
             </button>
+            {swipeThresholdCrossed && (
+              <span
+                className="hidden text-sm font-medium [@media(pointer:coarse)]:inline"
+                data-testid="swipe-release-hint"
+              >
+                {t('block.swipe.releaseToDelete')}
+              </span>
+            )}
           </div>
         )}
 

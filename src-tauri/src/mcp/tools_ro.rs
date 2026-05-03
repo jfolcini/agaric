@@ -11,9 +11,9 @@
 //! | Tool | Backing `*_inner` | Notes |
 //! |------|-------------------|-------|
 //! | `list_pages` | [`list_pages_inner`](crate::commands::list_pages_inner) | Cursor paginated. Limit clamped server-side to 100. |
-//! | `get_page` | [`get_page_inner`](crate::commands::get_page_inner) | Composes `get_block_inner` + paginated subtree via `page_id`. |
+//! | `get_page` | [`get_page_inner`](crate::commands::get_page_inner) | Composes `get_active_block_inner` + paginated subtree via `page_id`. M-98: soft-deleted pages → `NotFound`. |
 //! | `search` | [`search_blocks_inner`](crate::commands::search_blocks_inner) | FTS5. Result count capped at 50, snippet length at 512 chars. |
-//! | `get_block` | [`get_block_inner`](crate::commands::get_block_inner) | |
+//! | `get_block` | [`get_active_block_inner`](crate::commands::get_active_block_inner) | M-98: soft-deleted blocks → `NotFound`. |
 //! | `list_backlinks` | [`list_backlinks_grouped_inner`](crate::commands::list_backlinks_grouped_inner) | Grouped by source page. |
 //! | `list_tags` | [`list_tags_inner`](crate::commands::list_tags_inner) | Cursor paginated (M-85). Limit clamped server-side to 100. |
 //! | `list_property_defs` | [`list_property_defs_inner`](crate::commands::list_property_defs_inner) | Typed property schema; cursor paginated (M-85). |
@@ -64,9 +64,9 @@ use super::registry::{
     TOOL_LIST_TAGS, TOOL_SEARCH,
 };
 use crate::commands::{
-    get_block_inner, get_page_unscoped_inner, journal_for_date_inner, list_backlinks_grouped_inner,
-    list_pages_inner, list_projected_agenda_inner, list_property_defs_inner, list_tags_inner,
-    search_blocks_inner,
+    get_active_block_inner, get_page_unscoped_inner, journal_for_date_inner,
+    list_backlinks_grouped_inner, list_pages_inner, list_projected_agenda_inner,
+    list_property_defs_inner, list_tags_inner, search_blocks_inner,
 };
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -682,7 +682,10 @@ async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppEr
     let args: GetBlockArgs = parse_args(TOOL_GET_BLOCK, args)?;
     // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
-    let resp = get_block_inner(pool, block_id).await?;
+    // M-98 — `get_active_block_inner` (not `get_block_inner`) so an
+    // agent cannot fetch tombstoned rows. The MCP read surface
+    // mirrors the Tauri IPC `get_block` command's contract.
+    let resp = get_active_block_inner(pool, block_id).await?;
     to_tool_result(&resp)
 }
 

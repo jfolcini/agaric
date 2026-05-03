@@ -739,16 +739,21 @@ async fn export_page_markdown_handles_many_unrelated_tags() {
 //   1. Soft-deleted pages export as `# title\n\n` (Ok), not NotFound —
 //      `get_block_inner` does not filter `deleted_at`, and there is no
 //      explicit check inside `export_page_markdown_inner` either.
+//      RESOLVED via M-98: `export_page_markdown_inner` now calls
+//      `get_active_block_inner`, which filters `deleted_at IS NULL`,
+//      so soft-deleted pages surface as `Err(NotFound)`. The test
+//      below was flipped to assert the new contract.
 //   2. Malformed page IDs (e.g. `"not-a-ulid"`) hit the
 //      `WHERE id = ?` path verbatim and fall through to NotFound,
 //      because the function never invokes `BlockId::from_string` to
 //      reject the input as Validation up front.
 
 /// TEST-11 — Pin the NotFound variant when the page id is absent.
-/// `export_page_markdown_inner` calls `get_block_inner` first, which
-/// returns `AppError::NotFound` for a `WHERE id = ?` miss; if a future
-/// refactor swaps that for an `Internal` (e.g. by ignoring the result
-/// and falling through to the markdown builder), this test fails.
+/// `export_page_markdown_inner` calls `get_active_block_inner` first
+/// (M-98), which returns `AppError::NotFound` for a `WHERE id = ? AND
+/// deleted_at IS NULL` miss; if a future refactor swaps that for an
+/// `Internal` (e.g. by ignoring the result and falling through to the
+/// markdown builder), this test fails.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn export_page_markdown_inner_with_nonexistent_id_returns_not_found() {
     let (pool, _dir) = test_pool().await;
@@ -793,20 +798,18 @@ async fn export_page_markdown_inner_with_non_page_block_returns_validation() {
     );
 }
 
-/// TEST-11 — Pin the current behaviour when a soft-deleted page is
-/// exported.  Production finding (parent agent: triage as TEST-11
-/// follow-up): `export_page_markdown_inner` does **not** filter
-/// `deleted_at` on the page row — `get_block_inner`'s `SELECT ...
-/// WHERE id = ?` returns soft-deleted rows verbatim, and the only
-/// other guard inside the export function is `block_type != "page"`.
-/// As a result a soft-deleted page exports as `# Title\n\n` with no
-/// descendants (the descendant walk *does* filter `deleted_at IS
-/// NULL`, so the cascade-soft-deleted children are excluded).  This
-/// test pins that behaviour so a future fix that adds the
-/// `deleted_at IS NULL` check on the page row (and starts returning
-/// `NotFound`) is intentional and reviewed, not silent.
+/// TEST-11 / M-98 — Pin that a soft-deleted page is no longer
+/// exportable. Pre-fix, `export_page_markdown_inner` called
+/// `get_block_inner` (no `deleted_at` filter) so a soft-deleted page
+/// exported as `# Title\n\n` with no descendants — title-only
+/// content because the descendant walk *did* filter `deleted_at IS
+/// NULL`. M-98 switched the page-row fetch to
+/// `get_active_block_inner`, which adds the same predicate, so the
+/// export now surfaces as `Err(NotFound)`. This test pins the new
+/// contract so a future regression that re-introduces the leak is
+/// caught.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn export_page_markdown_inner_with_soft_deleted_page_pins_current_behavior() {
+async fn export_page_markdown_inner_with_soft_deleted_page_returns_not_found() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -845,18 +848,11 @@ async fn export_page_markdown_inner_with_soft_deleted_page_pins_current_behavior
 
     let result = export_page_markdown_inner(&pool, &page.id).await;
 
-    // PRODUCTION GAP: the export currently succeeds with just the
-    // title (descendants are cascade-deleted and filtered out).  An
-    // arguably-correct production behaviour would be `Err(NotFound)`
-    // — pinning the current `Ok` shape so the gap is visible.
-    let md = result.expect("soft-deleted page currently exports successfully (production gap)");
+    // M-98 — soft-deleted pages must surface as NotFound, not as a
+    // partial title-only export.
     assert!(
-        md.starts_with("# Doomed Page\n\n"),
-        "soft-deleted page export currently emits the title only, got: {md:?}"
-    );
-    assert!(
-        !md.contains("child block"),
-        "cascade-soft-deleted descendants must not appear, got: {md:?}"
+        matches!(result, Err(AppError::NotFound(_))),
+        "soft-deleted page export must return AppError::NotFound (M-98), got: {result:?}"
     );
 }
 

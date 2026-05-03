@@ -1477,9 +1477,11 @@ async fn inner_get_page_unknown_id_not_found() {
     // Even with no bootstrap, `get_page_inner` resolves NotFound first
     // (via `get_block_inner`) before reaching the space-membership
     // check, so the error category is unchanged for unknown IDs.
+    // L-136: must be a valid ULID shape so the BlockId::from_string gate
+    // passes — the test intent is to verify NotFound, not Ulid validation.
     let err = get_page_inner(
         &pool,
-        "NOPE",
+        "01N0PE0000000000000000N0PE",
         crate::spaces::SPACE_PERSONAL_ULID,
         None,
         Some(10),

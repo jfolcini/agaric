@@ -112,7 +112,17 @@ pub async fn list_blocks_inner(
     }
 }
 
-/// Fetch a single block by ID (including soft-deleted blocks).
+/// Fetch a single block by ID, **including soft-deleted blocks**.
+///
+/// This function is intentionally permissive: callers that need to
+/// inspect a row regardless of `deleted_at` (trash UI, restore /
+/// purge / undo flows, snapshot recovery, drift tests) rely on this
+/// shape. Public read surfaces — anything that would expose the
+/// result to the user, an MCP agent, or an export — must NOT use
+/// this function: use [`get_active_block_inner`] instead, which
+/// adds `AND deleted_at IS NULL` and surfaces soft-deleted rows as
+/// [`AppError::NotFound`]. See REVIEW-LATER M-98 for the audit that
+/// established this split.
 ///
 /// # Errors
 ///
@@ -122,6 +132,40 @@ pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<Bloc
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ?"#,
+        block_id
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    row.ok_or_else(|| AppError::NotFound(format!("block '{block_id}'")))
+}
+
+/// Fetch a single **active** (non-soft-deleted) block by ID.
+///
+/// M-98 — The active-only counterpart to [`get_block_inner`]. The
+/// SQL is the same single-row lookup with one additional predicate
+/// (`deleted_at IS NULL`), so a soft-deleted row surfaces as
+/// [`AppError::NotFound`] rather than leaking through to the
+/// caller. Use this from every public read surface (Tauri IPC, MCP
+/// tools, export, page-fetch composition) — anything that would
+/// otherwise expose a tombstoned row to the user. The SQL is
+/// duplicated rather than factored into a shared helper because
+/// the only difference is the `deleted_at` predicate and inlining
+/// keeps the `query_as!` compile-time check trivially auditable
+/// at each site.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — no active block with the given ID exists
+///   (either the row does not exist at all, or it is soft-deleted)
+#[instrument(skip(pool), err)]
+pub async fn get_active_block_inner(
+    pool: &SqlitePool,
+    block_id: String,
+) -> Result<BlockRow, AppError> {
+    let row: Option<BlockRow> = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(pool)
@@ -266,12 +310,20 @@ pub async fn list_blocks(
     .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: fetch a single block by ID. Delegates to [`get_block_inner`].
+/// Tauri command: fetch a single block by ID. Delegates to
+/// [`get_active_block_inner`].
+///
+/// M-98 — the public IPC must never surface soft-deleted rows; the
+/// frontend exposes them only via `list_blocks({ show_deleted:
+/// true })` (the trash view). Switched from `get_block_inner` to
+/// [`get_active_block_inner`] so a soft-deleted block returns
+/// `NotFound` to the IPC caller instead of an apparently-live row
+/// with `deleted_at` set.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_block(pool: State<'_, ReadPool>, block_id: String) -> Result<BlockRow, AppError> {
-    get_block_inner(&pool.0, block_id)
+    get_active_block_inner(&pool.0, block_id)
         .await
         .map_err(sanitize_internal_error)
 }

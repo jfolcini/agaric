@@ -15,12 +15,16 @@ import type { BacklinkFilter, CompareOp } from '../lib/tauri'
 // ---------------------------------------------------------------------------
 
 /**
- * Filter object augmented with a frontend-only `_addId` React key (MAINT-190).
+ * Filter object augmented with a frontend-only `_addId` React key
+ * (MAINT-190; resolves FE-L-14).
  *
  * `BacklinkFilterBuilder` stamps every newly-added filter with a monotonic
  * `_addId`; we use it as the React `key` on each pill `<li>` to give
- * structurally-identical filters distinct identities. The field is invisible
- * to the Rust IPC contract (serde silently drops unknown fields).
+ * structurally-identical filters distinct identities. This is the "stable
+ * per-filter UUID at creation time" fix called for by FE-L-14, propagated
+ * through the type so `FilterPillRow` can rely on it instead of `key={index}`.
+ * The field is invisible to the Rust IPC contract (serde silently drops
+ * unknown fields).
  */
 export type FilterWithKey = BacklinkFilter & { _addId: number }
 
@@ -110,6 +114,8 @@ export function FilterPillRow({
   return (
     <ul aria-label={t('backlink.appliedFiltersLabel')} className="contents list-none m-0 p-0">
       {filters.map((filter, index) => (
+        // `_addId` is a stable per-filter key stamped at creation
+        // (MAINT-190 / FE-L-14) — see `FilterWithKey` above.
         <li key={filter._addId} className="contents">
           <FilterPill
             label={filterSummary(filter, tagResolver, t)}

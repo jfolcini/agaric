@@ -109,6 +109,16 @@ vi.mock('lucide-react', () => ({
   GripVertical: (props: { size: number }) => (
     <svg data-testid="grip-vertical-icon" width={props.size} height={props.size} />
   ),
+  // UX-304: BlockGutterControls renders MoreVertical on coarse-pointer
+  // devices, so the swipe-cue tests below need this icon mocked too.
+  MoreVertical: (props: { size?: number; className?: string }) => (
+    <svg
+      data-testid="more-vertical-icon"
+      width={props.size}
+      height={props.size}
+      className={props.className}
+    />
+  ),
   Paperclip: (props: { size: number; className?: string }) => (
     <svg
       data-testid="paperclip-icon"
@@ -186,6 +196,21 @@ vi.mock('../../lib/tauri', () => ({
 const mockToastError = vi.fn()
 vi.mock('sonner', () => ({
   toast: { error: (...args: unknown[]) => mockToastError(...args) },
+}))
+
+// Controlled mock for the swipe-actions hook (UX-304). Default mirrors the
+// "no swipe in progress" state so existing tests that don't care about the
+// swipe overlay render exactly as before. Per-test overrides drive the
+// progressive-cue assertions further below.
+const mockUseBlockSwipeActions = vi.fn((..._args: unknown[]) => ({
+  translateX: 0,
+  isRevealed: false,
+  thresholdCrossed: false,
+  handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+  reset: vi.fn(),
+}))
+vi.mock('../../hooks/useBlockSwipeActions', () => ({
+  useBlockSwipeActions: (...args: unknown[]) => mockUseBlockSwipeActions(...args),
 }))
 
 import userEvent from '@testing-library/user-event'
@@ -4294,5 +4319,183 @@ describe('UX-230 responsive layout', () => {
     // at 640..767px viewports.
     expect(gutter.className).not.toContain('max-sm:w-0')
     expect(gutter.className).not.toContain('max-sm:overflow-hidden')
+  })
+})
+
+// ── UX-304: progressive swipe-to-delete cue ─────────────────────────────
+//
+// The overlay renders only on coarse-pointer devices and only while a
+// swipe is in progress. These tests stub `useBlockSwipeActions` so we
+// can exercise the visual states deterministically (the hook itself is
+// covered by `useBlockSwipeActions.test.ts`).
+describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
+  const originalMatchMedia = window.matchMedia
+  /** Default mock implementation — re-applied in beforeEach to undo per-test overrides. */
+  const defaultSwipeReturn = () => ({
+    translateX: 0,
+    isRevealed: false,
+    thresholdCrossed: false,
+    handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+    reset: vi.fn(),
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+    mockUseBlockSwipeActions.mockImplementation(defaultSwipeReturn)
+    // Force coarse-pointer for the overlay's JS gate (`matchMedia('(pointer: coarse)')`).
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(pointer: coarse)',
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+  })
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia
+    mockUseBlockSwipeActions.mockImplementation(defaultSwipeReturn)
+  })
+
+  it('renders the muted destructive variant while revealed but below threshold', () => {
+    mockUseBlockSwipeActions.mockImplementation(() => ({
+      translateX: -80,
+      isRevealed: true,
+      thresholdCrossed: false,
+      handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+      reset: vi.fn(),
+    }))
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_SWIPE"
+        content="swipe test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const overlay = screen.getByTestId('swipe-delete-action')
+    expect(overlay).toHaveAttribute('data-threshold-crossed', 'false')
+    // Muted destructive tint — semantic tokens, no hardcoded colors.
+    expect(overlay.className).toContain('bg-destructive/10')
+    expect(overlay.className).toContain('text-destructive')
+    // No "Release to delete" hint until the threshold is crossed.
+    expect(screen.queryByTestId('swipe-release-hint')).not.toBeInTheDocument()
+  })
+
+  it('switches to the solid destructive variant once the threshold is crossed', () => {
+    mockUseBlockSwipeActions.mockImplementation(() => ({
+      translateX: -200,
+      isRevealed: true,
+      thresholdCrossed: true,
+      handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+      reset: vi.fn(),
+    }))
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_SWIPE"
+        content="swipe test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const overlay = screen.getByTestId('swipe-delete-action')
+    expect(overlay).toHaveAttribute('data-threshold-crossed', 'true')
+    expect(overlay.className).toContain('bg-destructive')
+    expect(overlay.className).toContain('text-destructive-foreground')
+    // The muted variant must no longer apply.
+    expect(overlay.className).not.toContain('bg-destructive/10')
+  })
+
+  it('renders the "Release to delete" hint once the threshold is crossed', () => {
+    mockUseBlockSwipeActions.mockImplementation(() => ({
+      translateX: -200,
+      isRevealed: true,
+      thresholdCrossed: true,
+      handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+      reset: vi.fn(),
+    }))
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_SWIPE"
+        content="swipe test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const hint = screen.getByTestId('swipe-release-hint')
+    expect(hint).toBeInTheDocument()
+    expect(hint).toHaveTextContent('Release to delete')
+  })
+
+  it('gates the release hint behind the coarse-pointer media query', () => {
+    mockUseBlockSwipeActions.mockImplementation(() => ({
+      translateX: -200,
+      isRevealed: true,
+      thresholdCrossed: true,
+      handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+      reset: vi.fn(),
+    }))
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_SWIPE"
+        content="swipe test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const hint = screen.getByTestId('swipe-release-hint')
+    // Hidden by default; only revealed under `[@media(pointer:coarse)]`.
+    expect(hint.className).toContain('hidden')
+    expect(hint.className).toContain('[@media(pointer:coarse)]:inline')
+  })
+
+  it('does not render the overlay at all on fine-pointer devices', () => {
+    // Override the coarse-pointer matchMedia to fine-pointer.
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+    mockUseBlockSwipeActions.mockImplementation(() => ({
+      translateX: -200,
+      isRevealed: true,
+      thresholdCrossed: true,
+      handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+      reset: vi.fn(),
+    }))
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_SWIPE"
+        content="swipe test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByTestId('swipe-delete-action')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('swipe-release-hint')).not.toBeInTheDocument()
   })
 })

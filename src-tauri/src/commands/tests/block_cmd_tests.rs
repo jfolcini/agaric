@@ -1726,8 +1726,17 @@ async fn get_block_nonexistent_returns_not_found() {
     );
 }
 
+/// M-98 — Pin the deliberate "include soft-deleted rows" contract on
+/// `get_block_inner`. Trash UI / restore / purge / undo / snapshot
+/// flows depend on this shape: the public read surfaces moved to
+/// [`get_active_block_inner`] (which filters `deleted_at IS NULL`)
+/// in the M-98 audit, leaving `get_block_inner` for callers that
+/// genuinely need to inspect tombstoned rows. If a future refactor
+/// adds the filter back into this function, this test fails — at
+/// which point either the trash/restore flows need their own helper
+/// or the audit conclusion needs to be revisited.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_block_returns_deleted_block_too() {
+async fn get_block_inner_returns_soft_deleted_block() {
     let (pool, _dir) = test_pool().await;
 
     insert_block(&pool, "DELBLK", "content", "will be deleted", None, Some(1)).await;
@@ -1739,7 +1748,10 @@ async fn get_block_returns_deleted_block_too() {
         .await
         .unwrap();
 
-    // get_block should still return it (unlike list_blocks which excludes deleted)
+    // get_block_inner must still return soft-deleted rows so trash /
+    // restore / undo paths can inspect them (unlike list_blocks which
+    // excludes deleted rows by default, and unlike get_active_block_inner
+    // which surfaces them as NotFound).
     let block = get_block_inner(&pool, "DELBLK".into()).await.unwrap();
     assert_eq!(
         block.id, "DELBLK",
@@ -1748,7 +1760,77 @@ async fn get_block_returns_deleted_block_too() {
     assert_eq!(
         block.deleted_at,
         Some(FIXED_TS.into()),
-        "get_block should return deleted_at for soft-deleted blocks"
+        "get_block_inner should return deleted_at for soft-deleted blocks"
+    );
+}
+
+// ======================================================================
+// get_active_block_inner
+// ======================================================================
+
+/// M-98 — Pin that `get_active_block_inner` returns active rows.
+/// The active-only counterpart of `get_block_inner` is the public
+/// read surface (Tauri IPC `get_block`, MCP `get_block`,
+/// `export_page_markdown_inner`, `get_page_inner`). On a live row
+/// it must round-trip the same shape as `get_block_inner`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_active_block_inner_returns_live_block() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "LIVE01", "content", "alive", None, Some(1)).await;
+
+    let block = get_active_block_inner(&pool, "LIVE01".into())
+        .await
+        .unwrap();
+    assert_eq!(block.id, "LIVE01", "returned block ID should match");
+    assert_eq!(
+        block.content,
+        Some("alive".into()),
+        "content should match inserted value"
+    );
+    assert!(
+        block.deleted_at.is_none(),
+        "live block must not carry deleted_at"
+    );
+}
+
+/// M-98 — Pin that `get_active_block_inner` rejects soft-deleted
+/// rows with `NotFound`. This is the bug-fix contract: a tombstoned
+/// row must NEVER reach the public read surface. If a future
+/// refactor drops the `AND deleted_at IS NULL` predicate from the
+/// SQL, this test fails and the leak is caught at CI time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_active_block_inner_returns_not_found_for_soft_deleted() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "TOMB01", "content", "tombstoned", None, Some(1)).await;
+
+    // Soft-delete the block.
+    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = 'TOMB01'")
+        .bind(FIXED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let result = get_active_block_inner(&pool, "TOMB01".into()).await;
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "get_active_block_inner must surface soft-deleted rows as NotFound (M-98), got: {result:?}"
+    );
+}
+
+/// M-98 — Pin that `get_active_block_inner` returns NotFound for
+/// IDs that don't exist at all (same shape as `get_block_inner` for
+/// missing rows — the predicate just adds a second case where we
+/// hit NotFound).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_active_block_inner_nonexistent_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+
+    let result = get_active_block_inner(&pool, "NOPE".into()).await;
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "get_active_block_inner on a missing ID should return NotFound, got: {result:?}"
     );
 }
 
