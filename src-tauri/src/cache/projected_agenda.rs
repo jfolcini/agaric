@@ -29,8 +29,8 @@ const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 /// the first flush would leave the cache half-written if the rebuild
 /// were not transactional. The rebuild keeps DELETE + every chunked
 /// INSERT inside a single transaction so a partial-flush crash rolls
-/// back cleanly — atomicity is preserved (AGENTS.md "CQRS hybrid model"
-/// invariant + the M-19 spec callout). The chunk size is large enough
+/// back cleanly — atomicity is preserved (AGENTS.md "event sourcing with
+/// materialized views" invariant + the M-19 spec callout). The chunk size is large enough
 /// that the per-flush overhead is amortised but small enough to keep
 /// peak memory bounded.
 const CHUNK_SIZE: usize = 10_000;

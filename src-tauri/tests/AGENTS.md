@@ -1,6 +1,6 @@
 # Rust Backend Test Infrastructure
 
-> **See also:** [AGENTS.md § Key Architectural Invariants](../../AGENTS.md#key-architectural-invariants) for the 9 invariants every test must respect (op log append-only, CQRS atomicity, cursor pagination, foreign keys ON, ULID uppercase, `is_conflict = 0` filtering on recursive CTEs, …). This document focuses on test patterns, fixtures, and Rust-specific conventions.
+> **See also:** [AGENTS.md § Key Architectural Invariants](../../AGENTS.md#key-architectural-invariants) for the 9 invariants every test must respect (op log append-only, event-sourcing + primary-state atomicity, cursor pagination, foreign keys ON, ULID uppercase, `is_conflict = 0` filtering on recursive CTEs, …). This document focuses on test patterns, fixtures, and Rust-specific conventions.
 
 ## Overview
 

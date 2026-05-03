@@ -14,7 +14,7 @@ Anytype, faster than Logseq.
 2. [Data Model](#2-data-model)
 3. [Database](#3-database)
 4. [Operation Log](#4-operation-log)
-5. [Materializer (CQRS — hybrid model)](#5-materializer-cqrs--hybrid-model)
+5. [Materializer (event sourcing + materialized views)](#5-materializer-event-sourcing--materialized-views)
 6. [Content Format & Serializer](#6-content-format--serializer)
 7. [Editor Architecture](#7-editor-architecture)
 8. [Frontend Architecture](#8-frontend-architecture)
@@ -392,23 +392,26 @@ The LCA algorithm walks `prev_edit` chains:
 
 ---
 
-## 5. Materializer (CQRS — hybrid model)
+## 5. Materializer (event sourcing + materialized views)
 
-Local commands write ops to the log **and** apply them to core tables (`blocks`, `block_tags`,
-`block_properties`) in a single transaction. The materializer handles two distinct jobs:
+Local commands append ops to the log **and** apply them to core tables (`blocks`, `block_tags`,
+`block_properties`) in a single transaction (synchronous primary-state materialization). The
+materializer handles two distinct jobs:
 
 1. **Remote ops (foreground queue):** Ops received during sync arrive as raw `op_log` entries
    without going through the command layer. The materializer applies them to core tables via
    `ApplyOp`. Idempotent patterns (`INSERT OR IGNORE`) mean local ops that were already applied
    by commands are harmless no-ops.
-2. **Cache maintenance (background queue):** Rebuilds derived caches (`tags_cache`,
-   `pages_cache`, `agenda_cache`, `block_links`, `block_tag_inherited`, FTS5) asynchronously
-   after both local and remote ops.
+2. **Materialized-view maintenance (background queue):** Rebuilds derived materialized views
+   (`tags_cache`, `pages_cache`, `agenda_cache`, `block_links`, `block_tag_inherited`, FTS5)
+   asynchronously after both local and remote ops.
 
-This is a pragmatic hybrid — not pure CQRS. The dual-write avoids race conditions (atomic
-transaction), eliminates async latency on local edits, and lets the UI read core tables
-immediately. The materializer never duplicates local writes because its idempotent SQL patterns
-(`INSERT OR IGNORE`, `UPDATE ... WHERE`) make re-application a safe no-op.
+This is event sourcing with synchronous primary-state materialization plus asynchronous
+materialized views — not pure CQRS, where the read model is built entirely asynchronously. The
+dual-write to op log + primary state in one transaction avoids race conditions, eliminates async
+latency on local edits, and lets the UI read core tables immediately. The materializer never
+duplicates local writes because its idempotent SQL patterns (`INSERT OR IGNORE`,
+`UPDATE ... WHERE`) make re-application a safe no-op.
 
 ### Queue architecture
 
@@ -1888,7 +1891,7 @@ the write pool. `call_tool` returns RPITIT with an explicit `+ Send` bound so th
 drive it across `tokio::spawn`. Adding a new tool is three changes: (1) a `pub(crate) const
 TOOL_<NAME>` in `registry.rs`, (2) a `ToolDescription` entry in `list_tools`, (3) a match arm
 in `call_tool` that delegates to the matching `*_inner` command handler — so the op-log /
-CQRS / sqlx-compile-time-query invariants of the frontend path apply verbatim to agent calls.
+event-sourcing / sqlx-compile-time-query invariants of the frontend path apply verbatim to agent calls.
 
 Currently shipped tools:
 
@@ -2424,7 +2427,7 @@ empirically validated through bugs found, fixes applied, and alternatives reject
   Agaric uses self-signed ECDSA P-256 certificates with TOFU pinning. The custom
   `PinningCertVerifier` (~100 LOC) is the right tool.
 - **`apalis` / `faktory` / `tower::retry` + `tower::buffer` / `tokio_util::DelayQueue` for the
-  materializer.** The materializer is a CQRS replay engine, not a job queue. The `ApplyOp`
+  materializer.** The materializer is an event-replay engine driving materialized views, not a job queue. The `ApplyOp`
   cursor advance must live in the same `BEGIN IMMEDIATE` transaction as the op apply (C-2b) —
   no library exposes that. Two-tier retry, per-task-type dedup, and the persistent retry queue
   for idempotent per-block tasks are domain-specific. A swap shuffles complexity, not reduces

@@ -1,6 +1,6 @@
 # Developer Documentation — Agaric
 
-Local-first block-based note-taking app inspired by Org-mode and Logseq. React 19 + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log with CQRS materializer for offline-first sync.
+Local-first block-based note-taking app inspired by Org-mode and Logseq. React 19 + TipTap frontend, Rust + SQLite backend via Tauri 2. Event sourcing with materialized views, offline-first sync.
 
 > **No changes to this file (AGENTS.md) without explicit user approval. Ever.**
 
@@ -57,7 +57,7 @@ prek run --all-files         # Pre-commit hooks
 ## Key Architectural Invariants
 
 1. **Op log is strictly append-only** — never mutate, never delete (except compaction)
-2. **CQRS hybrid model** — commands write both the op log and primary state atomically (single `BEGIN IMMEDIATE` transaction); materializer rebuilds derived caches (FTS, tag inheritance, page-id lookup, agenda projection, link graphs)
+2. **Event sourcing with materialized views** — commands append to the op log AND write the primary state atomically in a single `BEGIN IMMEDIATE` transaction (synchronous primary-state materialization); the materializer rebuilds derived materialized views (FTS, tag inheritance, page-id lookup, agenda projection, link graphs) asynchronously in the background
 3. **Cursor-based pagination** on ALL list queries — no offset pagination. Carve-outs: (a) named small-cardinality lookups that return a fixed-size set (`list_property_keys` — bounded in practice by user vocabulary, not data volume) may return a flat `Vec<T>` with a `limit` parameter; (b) "fetch the Nth row" operations (e.g., `undo_page_op_inner` using `LIMIT 1 OFFSET ?`) where N is upper-bounded by a small constant (≤1000) are not list queries and may use `OFFSET` — document the rationale inline at the call site.
 4. **Single TipTap instance** — roving editor, static divs for non-focused blocks
 5. **Biome only** — no ESLint, no Prettier
